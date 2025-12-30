@@ -1,0 +1,33 @@
+You are classifying a factual proposition into a relationship type.
+
+Given this proposition:
+"{{ proposition.text }}"
+
+With the following entity mentions:
+{% for mention in proposition.mentions %}
+- {{ mention.span }} ({{ mention.type }}, role={{ mention.role }})
+{% endfor %}
+
+And these allowed relationships from the schema:
+{% for rel in allowedRelationships %}
+- (:{{ rel.from.name }})-[:{{ rel.name }}]->(:{{ rel.to.name }}): {{ rel.description }}
+{% endfor %}
+
+Determine what relationship type this proposition implies, if any.
+
+Consider:
+1. The subject mention (role=SUBJECT) typically maps to the relationship source
+2. The object mention (role=OBJECT) typically maps to the relationship target
+3. The relationship type must match the entity types (from/to) in the schema
+4. Some propositions may not imply a relationship (just state facts about a single entity)
+
+Provide your response as JSON:
+{
+  "hasRelationship": true/false,
+  "relationshipType": "RELATIONSHIP_NAME" or null,
+  "fromMentionSpan": "entity span for source" or null,
+  "toMentionSpan": "entity span for target" or null,
+  "reasoning": "brief explanation"
+}
+
+If no valid relationship can be inferred, set hasRelationship to false.

@@ -1,0 +1,21 @@
+You are answering a question based on relevant propositions (facts).
+
+Question: "{{ question }}"
+
+Relevant propositions:
+{% for prop in propositions %}
+- {{ prop }}
+{% endfor %}
+
+Synthesize a natural language answer that:
+1. Directly answers the question using information from the propositions
+2. Only includes information that is supported by the propositions
+3. Acknowledges if the answer is partial or uncertain
+
+If the propositions don't contain enough information to answer the question,
+say so clearly.
+
+Respond with JSON:
+{
+  "answer": "Your natural language answer here"
+}

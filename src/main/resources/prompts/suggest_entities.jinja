@@ -1,0 +1,28 @@
+You are analyzing sources.
+
+{% if context.directions %}
+    Consider the following direction: {{ context.directions }}
+{% endif %}
+
+Given the following text, identify and summarize all entities mentioned.
+Include the entity id only if it's provided in the text as a UUID, not a name.
+Entity types must only come from the following list:
+
+{% for domainType in context.schema.domainTypes %}
+    - {{ domainType.clazz.simpleName }}: {{ domainType.description }}
+       Parents: {{ domainType.parents | map(attribute='clazz') | map(attribute='simpleName') | join(', ') }}
+       Properties:
+        {% for property in domainType.properties %}
+          - {{ property.name }} ({{  property.cardinality }}): {{ property.description }}
+        {% endfor %}
+    ------------------
+{% endfor %}
+
+IMPORTANT: You must find every entity of any of these types. Do not skip any.
+
+You must be sure that every entity is of one of the types above.
+For example, are you sure something is a company and not a location?
+Use the most specific domain type possible (eg Car is a Vehicle, but use Car if you can).
+
+# TEXT
+{{ chunk.text }}

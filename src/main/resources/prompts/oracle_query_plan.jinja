@@ -1,0 +1,34 @@
+You are translating a natural language question into a Prolog query.
+
+Question: "{{ question }}"
+
+Available predicates (each takes 2 arguments):
+{% for pred in predicates %}
+- {{ pred }}(X, Y)
+{% endfor %}
+
+Sample facts from the knowledge base:
+{% for fact in sampleFacts %}
+{{ fact }}
+{% endfor %}
+
+Generate a Prolog query to answer this question. The query should:
+1. Use only the available predicates listed above
+2. Use uppercase variable names (X, Y, Person, Topic, etc.)
+3. Be a valid Prolog goal (no trailing period)
+
+If the question cannot be answered with the available predicates, set prologQuery to null.
+
+Examples:
+- "Who is an expert in Kubernetes?" -> expert_in(X, 'kubernetes')
+- "What does Alice know?" -> expert_in('alice', Topic)
+- "Who are friends with Bob?" -> friend_of(X, 'bob')
+- "Where does Alice work?" -> works_at('alice', Company)
+
+Respond with JSON:
+{
+  "prologQuery": "the_query(X, Y)" or null,
+  "resultVariables": ["X", "Y"],
+  "negativeAnswer": "No, [appropriate negative response]",
+  "reasoning": "brief explanation"
+}

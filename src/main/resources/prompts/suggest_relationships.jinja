@@ -1,0 +1,19 @@
+Given the following text, identify and summarize all relationships.
+Relationships must only come from the following list:
+
+{% for rel in possibleRelationships %}
+    - (:{{ rel.from.name }})-[:{{ rel.name }}]->(:{{ rel.to.name }}): cardinality={{ rel.cardinality }},
+    {{ rel.description }}
+{% endfor %}
+
+Relationships may only be between following entities:
+{% for entity in entitiesToUse %}
+    - (:{{ entity.labels()|join(':') }} {id='{{ entity.id }}', name='{{ entity.name }}', description='
+    {{ entity.description }}'})
+{% endfor %}
+
+IMPORTANT: You must find all relationships implied in the text between any of these types.
+Do not skip any.
+
+# TEXT
+{{ chunk.text }}

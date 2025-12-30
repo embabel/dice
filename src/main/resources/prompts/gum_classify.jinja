@@ -1,0 +1,22 @@
+You are classifying the relationship between a NEW proposition and EXISTING propositions.
+
+NEW PROPOSITION:
+Text: "{{ newProposition.text }}"
+Confidence: {{ newProposition.confidence }}
+Reasoning: {{ newProposition.reasoning | default('N/A') }}
+
+EXISTING PROPOSITIONS:
+{% for prop in candidates %}
+[{{ loop.index0 }}] ID: {{ prop.id }}
+    Text: "{{ prop.text }}"
+    Confidence: {{ prop.confidence }}
+{% endfor %}
+
+For each existing proposition, classify its relationship to the NEW proposition:
+
+- IDENTICAL: They express the same information (can be merged)
+- SIMILAR: They are related but not identical (may reinforce each other)
+- CONTRADICTORY: They express conflicting information
+- UNRELATED: They are about different topics
+
+Provide a similarity score (0.0-1.0) and brief reasoning for each.

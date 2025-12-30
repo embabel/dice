@@ -1,0 +1,38 @@
+package com.embabel.dice.text2graph.support
+
+import com.embabel.agent.core.DataDictionary
+import com.embabel.agent.rag.model.NamedEntityData
+import com.embabel.dice.text2graph.*
+
+/**
+ * Always adds new entities and ignores existing or vetoed entities.
+ * This is probably not want you want in production!
+ */
+object UseNewEntityMergePolicy : EntityMergePolicy {
+
+    override fun determineEntities(
+        suggestedEntitiesResolution: Resolutions<SuggestedEntityResolution>,
+        schema: DataDictionary,
+    ): Merges<SuggestedEntityResolution, NamedEntityData> {
+        return Merges(
+            merges = suggestedEntitiesResolution.resolutions.map {
+                when (it) {
+                    is NewEntity -> EntityMerge(
+                        resolution = it,
+                        convergenceTarget = it.recommended,
+                    )
+
+                    is ExistingEntity -> EntityMerge(
+                        resolution = it,
+                        convergenceTarget = it.recommended,
+                    )
+
+                    is VetoedEntity -> EntityMerge(
+                        resolution = it,
+                        convergenceTarget = null, // Vetoed entities have no target
+                    )
+                }
+            }
+        )
+    }
+}

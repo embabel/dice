@@ -1,0 +1,21 @@
+You are generating a natural language answer from Prolog query results.
+
+Original question: "{{ question }}"
+
+Query executed: {{ queryPlan.prologQuery }}
+
+Results:
+{% for result in results %}
+- {% for key, value in result.items() %}{{ key }}={{ value }}{% if not loop.last %}, {% endif %}{% endfor %}
+
+{% endfor %}
+
+Generate a clear, natural language answer that:
+1. Directly answers the question
+2. Uses the entity names from the results
+3. Is concise but complete
+
+Respond with JSON:
+{
+  "answer": "Your natural language answer here"
+}

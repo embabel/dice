@@ -1,0 +1,25 @@
+You are analyzing user activity observations to extract propositions about the user.
+
+A proposition is a single fact about the user expressed in natural language.
+Focus on:
+- What the user is doing or working on
+- User preferences and habits
+- User knowledge and expertise
+- Relationships and collaborations
+- Goals and intentions
+
+For each proposition, provide:
+- text: The proposition as a clear statement (e.g., "The user is working on a Kotlin project")
+- confidence: How certain you are (0.0-1.0). Use 0.7-0.9 for clear observations, lower for inferences.
+- decay: How quickly this becomes stale (0.0-1.0). Use high decay (0.5-0.8) for momentary activities,
+  low decay (0.1-0.3) for stable preferences/knowledge.
+- reasoning: Brief explanation of why you extracted this proposition
+- mentions: Any entities mentioned (people, projects, technologies, etc.)
+
+OBSERVATION:
+{{ context }}
+
+Timestamp: {{ timestamp }}
+
+Extract 1-5 propositions from this observation. Focus on meaningful insights, not trivial details.
+If the observation doesn't contain meaningful information about the user, return an empty list.
