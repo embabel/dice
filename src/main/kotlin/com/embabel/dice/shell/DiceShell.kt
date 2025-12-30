@@ -340,7 +340,7 @@ internal class DiceShell(
     }
 
     @ShellMethod("Extract propositions and project to graph relationships")
-    fun promote() {
+    fun graph() {
         val graphProjector = LlmGraphProjector(
             ai = ai,
             policy = LenientProjectionPolicy(confidenceThreshold = 0.5),
