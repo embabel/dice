@@ -2,6 +2,8 @@ package com.embabel.dice.proposition.revision
 
 import com.embabel.agent.api.common.Ai
 import com.embabel.common.ai.model.LlmOptions
+import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
@@ -133,10 +135,12 @@ class LlmPropositionReviser(
     ): RevisionResult {
         // 1. Retrieve similar propositions using vector similarity with threshold
         val similarWithScores = repository.findSimilarWithScores(
-            text = newProposition.text,
-            topK = retrievalTopK,
-            minSimilarity = minSimilarity,
-        ).filter { (prop, _) -> prop.status == PropositionStatus.ACTIVE }
+            SimpleTextSimilaritySearchRequest(
+                query = newProposition.text,
+                topK = retrievalTopK,
+                similarityThreshold = minSimilarity,
+            )
+        ).filter { it.match.status == PropositionStatus.ACTIVE }
 
         if (similarWithScores.isEmpty()) {
             // No similar propositions above threshold - store as new (skip LLM call)
@@ -145,14 +149,14 @@ class LlmPropositionReviser(
             return RevisionResult.New(newProposition)
         }
 
-        val similar = similarWithScores.map { it.first }
+        val similar = similarWithScores.map { it.match }
         logger.debug(
             "Found {} candidates above {} similarity for: {}",
             similar.size, minSimilarity, newProposition.text.take(50)
         )
 
         // 2. Apply decay to retrieved propositions for ranking
-        val decayed = similar.map { it.withDecayApplied(decayK) }
+        val decayed = similar.map { prop -> prop.withDecayApplied(decayK) }
 
         // 3. Classify relationships using LLM
         val classified = classify(newProposition, decayed)
@@ -315,3 +319,9 @@ data class ClassificationItem(
     @param:JsonPropertyDescription("Brief reasoning for this classification")
     val reasoning: String,
 )
+
+private data class SimpleTextSimilaritySearchRequest(
+    override val query: String,
+    override val similarityThreshold: ZeroToOne,
+    override val topK: Int,
+) : TextSimilaritySearchRequest

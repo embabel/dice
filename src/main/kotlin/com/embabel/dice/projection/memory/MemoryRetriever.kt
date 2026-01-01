@@ -1,5 +1,7 @@
 package com.embabel.dice.projection.memory
 
+import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import java.time.Duration
@@ -86,7 +88,13 @@ class DefaultMemoryRetriever(
         topK: Int,
     ): List<Proposition> {
         // Get candidates from similarity search
-        val similarPropositions = store.findSimilar(query, topK = topK * 2)
+        val similarPropositions = store.findSimilar(
+            SimpleTextSimilaritySearchRequest(
+                query = query,
+                similarityThreshold = 0.0,
+                topK = topK * 2
+            )
+        )
 
         // Also get propositions for the user
         val userPropositions = store.findByEntity(scope.userId)
@@ -168,3 +176,9 @@ class DefaultMemoryRetriever(
                 (confidenceScore * confidenceWeight)
     }
 }
+
+private data class SimpleTextSimilaritySearchRequest(
+    override val query: String,
+    override val similarityThreshold: ZeroToOne,
+    override val topK: Int,
+) : TextSimilaritySearchRequest

@@ -1,5 +1,8 @@
 package com.embabel.dice.proposition.revision
 
+import com.embabel.common.core.types.SimilarityResult
+import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
@@ -238,15 +241,15 @@ class TestPropositionRepository : PropositionRepository {
             prop.mentions.any { it.resolvedId == entityId }
         }
 
-    override fun findSimilar(text: String, topK: Int): List<Proposition> =
-        propositions.values.toList().take(topK)
+    override fun findSimilar(request: TextSimilaritySearchRequest): List<Proposition> =
+        propositions.values.toList().take(request.topK)
 
     override fun findSimilarWithScores(
-        text: String,
-        topK: Int,
-        minSimilarity: Double,
-    ): List<Pair<Proposition, Double>> =
-        propositions.values.map { it to 0.8 }.take(topK)
+        request: TextSimilaritySearchRequest,
+    ): List<SimilarityResult<Proposition>> =
+        propositions.values
+            .map { SimilarityResult(match = it, score = 0.8) }
+            .take(request.topK)
 
     override fun findByStatus(status: PropositionStatus): List<Proposition> =
         propositions.values.filter { it.status == status }
@@ -275,10 +278,12 @@ class TestPropositionReviser : PropositionReviser {
     ): RevisionResult {
         // Get similar propositions from repository
         val similar = repository.findSimilarWithScores(
-            text = newProposition.text,
-            topK = 5,
-            minSimilarity = 0.5,
-        ).filter { (prop, _) -> prop.status == PropositionStatus.ACTIVE }
+            SimpleTextSimilaritySearchRequest(
+                query = newProposition.text,
+                topK = 5,
+                similarityThreshold = 0.5,
+            )
+        ).filter { it.match.status == PropositionStatus.ACTIVE }
 
         if (similar.isEmpty()) {
             repository.save(newProposition)
@@ -289,7 +294,7 @@ class TestPropositionReviser : PropositionReviser {
         val classified = if (nextClassification.isNotEmpty()) {
             nextClassification.also { nextClassification = emptyList() }
         } else {
-            classify(newProposition, similar.map { it.first })
+            classify(newProposition, similar.map { it.match })
         }
 
         val identical = classified.find { it.relation == PropositionRelation.IDENTICAL }
@@ -368,3 +373,9 @@ class TestPropositionReviser : PropositionReviser {
         )
     }
 }
+
+private data class SimpleTextSimilaritySearchRequest(
+    override val query: String,
+    override val similarityThreshold: ZeroToOne,
+    override val topK: Int,
+) : TextSimilaritySearchRequest

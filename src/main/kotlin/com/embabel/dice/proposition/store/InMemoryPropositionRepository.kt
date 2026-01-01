@@ -1,6 +1,9 @@
 package com.embabel.dice.proposition.store
 
 import com.embabel.common.ai.model.EmbeddingService
+import com.embabel.common.core.types.SimilarityResult
+import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
@@ -30,26 +33,25 @@ class InMemoryPropositionRepository(
             proposition.mentions.any { it.resolvedId == entityId }
         }
 
-    override fun findSimilar(text: String, topK: Int): List<Proposition> =
-        findSimilarWithScores(text, topK).map { it.first }
+    override fun findSimilar(request: TextSimilaritySearchRequest): List<Proposition> =
+        findSimilarWithScores(request).map { it.match }
 
     override fun findSimilarWithScores(
-        text: String,
-        topK: Int,
-        minSimilarity: Double,
-    ): List<Pair<Proposition, Double>> {
+        request: TextSimilaritySearchRequest,
+    ): List<SimilarityResult<Proposition>> {
         if (propositions.isEmpty()) return emptyList()
 
-        val queryEmbedding = embeddingService.embed(text)
+        val queryEmbedding = embeddingService.embed(request.query)
+        val minSimilarity = request.similarityThreshold
 
         return propositions.values
             .mapNotNull { prop ->
                 val propEmbedding = embeddings[prop.id] ?: return@mapNotNull null
                 val similarity = cosineSimilarity(queryEmbedding, propEmbedding)
-                if (similarity >= minSimilarity) prop to similarity else null
+                if (similarity >= minSimilarity) SimilarityResult(match = prop, score = similarity) else null
             }
-            .sortedByDescending { (_, similarity) -> similarity }
-            .take(topK)
+            .sortedByDescending { it.score }
+            .take(request.topK)
     }
 
     private fun cosineSimilarity(a: FloatArray, b: FloatArray): Double {

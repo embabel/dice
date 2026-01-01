@@ -1,5 +1,8 @@
 package com.embabel.dice.proposition
 
+import com.embabel.common.core.types.SimilarityResult
+import com.embabel.common.core.types.TextSimilaritySearchRequest
+
 /**
  * Storage interface for propositions.
  * Implementations may use different backends (in-memory, database, vector store).
@@ -30,25 +33,22 @@ interface PropositionRepository {
 
     /**
      * Find propositions similar to the given text using vector similarity.
-     * @param text The query text
-     * @param topK Maximum number of results
      * @return Similar propositions ordered by similarity (most similar first)
      */
-    // TODO replace with TextSimilaritySearchRequest when we've unpicked it from common
-    fun findSimilar(text: String, topK: Int = 10): List<Proposition>
+    fun findSimilar(textSimilaritySearchRequest: TextSimilaritySearchRequest): List<Proposition>
 
     /**
      * Find propositions similar to the given text with similarity scores.
-     * @param text The query text
-     * @param topK Maximum number of results
-     * @param minSimilarity Minimum similarity threshold (0.0-1.0)
      * @return Pairs of (proposition, similarity) ordered by similarity (most similar first)
      */
     fun findSimilarWithScores(
-        text: String,
-        topK: Int = 10,
-        minSimilarity: Double = 0.0,
-    ): List<Pair<Proposition, Double>> = findSimilar(text, topK).map { it to 0.0 } // Default impl
+        textSimilaritySearchRequest: TextSimilaritySearchRequest,
+    ): List<SimilarityResult<Proposition>> = findSimilar(textSimilaritySearchRequest).map {
+        SimilarityResult(
+            match = it,
+            score = 1.0, // TODO Placeholder; real implementation should compute actual similarity
+        )
+    }
 
     /**
      * Find all propositions with the given status.
