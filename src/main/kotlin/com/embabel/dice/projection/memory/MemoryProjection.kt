@@ -69,11 +69,27 @@ interface MemoryProjection {
  *
  * @param store The proposition store to query
  * @param confidenceThreshold Minimum confidence for including propositions
+ * @param memoryTypeClassifier Strategy for classifying propositions into memory types
  */
-class DefaultMemoryProjection(
+data class DefaultMemoryProjection(
     private val store: PropositionRepository,
     private val confidenceThreshold: Double = 0.6,
+    private val memoryTypeClassifier: MemoryTypeClassifier = KeywordMatchingMemoryTypeClassifier,
 ) : MemoryProjection {
+
+    companion object {
+
+        /** Default instance with standard settings */
+        @JvmStatic
+        fun against(store: PropositionRepository) =
+            DefaultMemoryProjection(store)
+    }
+
+    fun withConfidenceThreshold(threshold: Double) =
+        copy(confidenceThreshold = threshold)
+
+    fun withMemoryTypeClassifier(classifier: MemoryTypeClassifier) =
+        copy(memoryTypeClassifier = classifier)
 
     override fun projectUserProfile(
         userId: String,
@@ -81,7 +97,7 @@ class DefaultMemoryProjection(
     ): UserProfile {
         val propositions = store.findByEntity(userId)
             .filter { it.confidence >= confidenceThreshold }
-            .filter { it.inferMemoryType() == MemoryType.SEMANTIC }
+            .filter { memoryTypeClassifier.classify(it) == MemoryType.SEMANTIC }
             .sortedByDescending { it.confidence }
 
         return UserProfile(
@@ -99,7 +115,7 @@ class DefaultMemoryProjection(
     ): List<Event> {
         val propositions = store.findByEntity(userId)
             .filter { it.created.isAfter(since) }
-            .filter { it.inferMemoryType() == MemoryType.EPISODIC }
+            .filter { memoryTypeClassifier.classify(it) == MemoryType.EPISODIC }
             .sortedByDescending { it.created }
             .take(limit)
 
@@ -118,7 +134,7 @@ class DefaultMemoryProjection(
     ): List<BehavioralRule> {
         val propositions = store.findByEntity(userId)
             .filter { it.confidence >= confidenceThreshold }
-            .filter { it.inferMemoryType() == MemoryType.PROCEDURAL }
+            .filter { memoryTypeClassifier.classify(it) == MemoryType.PROCEDURAL }
             .sortedByDescending { it.confidence }
 
         return propositions.map { prop ->

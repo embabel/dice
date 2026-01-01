@@ -535,7 +535,7 @@ internal class DiceShell(
             ?.resolvedId ?: "alice-unknown"
 
         println("\n=== Memory Type Classification ===")
-        val byType = extractionResult.allPropositions.groupBy { it.inferMemoryType() }
+        val byType = extractionResult.allPropositions.groupBy { KeywordMatchingMemoryTypeClassifier.apply { it } }
         for ((type, props) in byType) {
             println("\n$type (${props.size} propositions):")
             props.forEach { println("  - ${it.text}") }

@@ -23,34 +23,6 @@ enum class MemoryType {
 }
 
 /**
- * Scopes memory queries to a specific context.
- *
- * @property userId The user this memory belongs to
- * @property conversationId Specific conversation, or null for cross-conversation
- * @property projectId Specific project context, or null for global
- * @property namespace Custom grouping for domain-specific scoping
- */
-data class MemoryScope(
-    val userId: String,
-    val conversationId: String? = null,
-    val projectId: String? = null,
-    val namespace: String? = null,
-) {
-    companion object {
-        /** Create a global scope for a user (no conversation/project filtering) */
-        fun global(userId: String) = MemoryScope(userId)
-
-        /** Create a conversation-scoped memory */
-        fun conversation(userId: String, conversationId: String) =
-            MemoryScope(userId, conversationId = conversationId)
-
-        /** Create a project-scoped memory */
-        fun project(userId: String, projectId: String) =
-            MemoryScope(userId, projectId = projectId)
-    }
-}
-
-/**
  * User profile projected from semantic propositions.
  * Aggregates facts about a user into a consumable format.
  *
@@ -172,26 +144,17 @@ data class WorkingMemory(
 }
 
 /**
- * Extension function to infer memory type from a proposition's characteristics.
+ * Strategy interface for classifying propositions into memory types.
+ * Implementations can use different heuristics based on domain needs.
  */
-fun Proposition.inferMemoryType(): MemoryType {
-    // Procedural: patterns like "prefers", "when...do", "always", "should"
-    val proceduralPatterns = listOf("prefer", "when ", "always ", "should ", "never ", "like to", "tend to")
-    if (proceduralPatterns.any { text.lowercase().contains(it) }) {
-        return MemoryType.PROCEDURAL
-    }
+fun interface MemoryTypeClassifier {
 
-    // Episodic: high decay or event-like language
-    val episodicPatterns = listOf("yesterday", "today", "last week", "recently", "just ", "happened", "met ", "went ")
-    if (decay > 0.5 || episodicPatterns.any { text.lowercase().contains(it) }) {
-        return MemoryType.EPISODIC
-    }
+    /**
+     * Classify a proposition into a memory type.
+     * @param proposition The proposition to classify
+     * @return The inferred memory type
+     */
+    fun classify(proposition: Proposition): MemoryType
 
-    // Semantic: high confidence, low decay, factual
-    if (confidence > 0.7 && decay < 0.3) {
-        return MemoryType.SEMANTIC
-    }
-
-    // Default to working memory
-    return MemoryType.WORKING
 }
+
