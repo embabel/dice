@@ -1,5 +1,6 @@
 package com.embabel.dice.proposition
 
+import com.embabel.agent.rag.model.Retrievable
 import com.embabel.common.core.types.HasInfoString
 import com.embabel.common.core.types.ZeroToOne
 import java.time.Instant
@@ -9,6 +10,7 @@ import java.util.*
  * The lifecycle status of a proposition.
  */
 enum class PropositionStatus {
+
     /** Current belief, actively used for queries and projections */
     ACTIVE,
 
@@ -46,7 +48,7 @@ enum class PropositionStatus {
  * @property status Current lifecycle status
  */
 data class Proposition(
-    val id: String = UUID.randomUUID().toString(),
+    override val id: String = UUID.randomUUID().toString(),
     val text: String,
     override val mentions: List<EntityMention>,
     override val confidence: ZeroToOne,
@@ -56,11 +58,17 @@ data class Proposition(
     val created: Instant = Instant.now(),
     val revised: Instant = Instant.now(),
     val status: PropositionStatus = PropositionStatus.ACTIVE,
-) : Derivation, ReferencesEntities, HasInfoString {
+    override val metadata: Map<String, Any> = emptyMap(),
+    override val uri: String? = null,
+) : Derivation, ReferencesEntities, Retrievable {
 
     init {
         require(confidence in 0.0..1.0) { "Confidence must be between 0.0 and 1.0" }
         require(decay in 0.0..1.0) { "Decay must be between 0.0 and 1.0" }
+    }
+
+    override fun embeddableValue(): String {
+        return text
     }
 
     override fun infoString(verbose: Boolean?, indent: Int): String {

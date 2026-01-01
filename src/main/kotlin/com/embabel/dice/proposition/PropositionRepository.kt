@@ -34,6 +34,7 @@ interface PropositionRepository {
      * @param topK Maximum number of results
      * @return Similar propositions ordered by similarity (most similar first)
      */
+    // TODO replace with TextSimilaritySearchRequest when we've unpicked it from common
     fun findSimilar(text: String, topK: Int = 10): List<Proposition>
 
     /**

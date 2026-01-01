@@ -66,6 +66,7 @@
             <groupId>com.embabel.agent</groupId>
             <artifactId>embabel-agent-starter-shell</artifactId>
             <version>${embabel-agent.version}</version>
+            <optional>true</optional>
         </dependency>
 
         <!-- https://mvnrepository.com/artifact/org.javers/javers-core -->
