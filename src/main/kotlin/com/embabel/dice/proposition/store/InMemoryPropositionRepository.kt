@@ -3,7 +3,6 @@ package com.embabel.dice.proposition.store
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
-import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
@@ -33,16 +32,16 @@ class InMemoryPropositionRepository(
             proposition.mentions.any { it.resolvedId == entityId }
         }
 
-    override fun findSimilar(request: TextSimilaritySearchRequest): List<Proposition> =
-        findSimilarWithScores(request).map { it.match }
+    override fun findSimilar(textSimilaritySearchRequest: TextSimilaritySearchRequest): List<Proposition> =
+        findSimilarWithScores(textSimilaritySearchRequest).map { it.match }
 
     override fun findSimilarWithScores(
-        request: TextSimilaritySearchRequest,
+        textSimilaritySearchRequest: TextSimilaritySearchRequest,
     ): List<SimilarityResult<Proposition>> {
         if (propositions.isEmpty()) return emptyList()
 
-        val queryEmbedding = embeddingService.embed(request.query)
-        val minSimilarity = request.similarityThreshold
+        val queryEmbedding = embeddingService.embed(textSimilaritySearchRequest.query)
+        val minSimilarity = textSimilaritySearchRequest.similarityThreshold
 
         return propositions.values
             .mapNotNull { prop ->
@@ -51,7 +50,7 @@ class InMemoryPropositionRepository(
                 if (similarity >= minSimilarity) SimilarityResult(match = prop, score = similarity) else null
             }
             .sortedByDescending { it.score }
-            .take(request.topK)
+            .take(textSimilaritySearchRequest.topK)
     }
 
     private fun cosineSimilarity(a: FloatArray, b: FloatArray): Double {

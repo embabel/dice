@@ -1,13 +1,20 @@
 package com.embabel.dice.proposition
 
+import com.embabel.agent.rag.model.Retrievable
+import com.embabel.agent.rag.service.TextSearch
+import com.embabel.agent.rag.service.VectorSearch
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.common.util.loggerFor
 
 /**
  * Storage interface for propositions.
  * Implementations may use different backends (in-memory, database, vector store).
+ *
+ * Implements [VectorSearch] and [TextSearch] for compatibility with RAG operations,
+ * but only supports [Proposition] as the retrievable type.
  */
-interface PropositionRepository {
+interface PropositionRepository : VectorSearch, TextSearch {
 
     /**
      * Save a proposition. If a proposition with the same ID exists, it will be replaced.
@@ -75,4 +82,36 @@ interface PropositionRepository {
      * Get the total count of propositions.
      */
     fun count(): Int
+
+    // VectorSearch implementation - only supports Proposition
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : Retrievable> vectorSearch(
+        request: TextSimilaritySearchRequest,
+        clazz: Class<T>,
+    ): List<SimilarityResult<T>> {
+        if(clazz != Proposition::class.java) {
+            loggerFor<PropositionRepository>().warn( "PropositionRepository only supports Proposition, not {}", clazz.simpleName)
+            return emptyList()
+        }
+        return findSimilarWithScores(request) as List<SimilarityResult<T>>
+    }
+
+    // TextSearch implementation - delegates to vector search (no separate full-text index)
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : Retrievable> textSearch(
+        request: TextSimilaritySearchRequest,
+        clazz: Class<T>,
+    ): List<SimilarityResult<T>> {
+        if(clazz != Proposition::class.java) {
+            loggerFor<PropositionRepository>().warn("PropositionRepository only supports Proposition, not {}", clazz.simpleName)
+            return emptyList()
+        }
+        // Default implementation falls back to vector search
+        // Implementations with full-text indexing can override this
+        return findSimilarWithScores(request) as List<SimilarityResult<T>>
+    }
+
+    override val luceneSyntaxNotes: String
+        get() = "Default implementation uses vector similarity, not Lucene full-text search. " +
+                "Query string is used as-is for embedding similarity."
 }
