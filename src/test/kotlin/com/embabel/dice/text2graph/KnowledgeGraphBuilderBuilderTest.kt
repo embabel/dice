@@ -30,6 +30,7 @@ class KnowledgeGraphBuilderBuilderTest {
         val sourceAnalysisConfig = SourceAnalysisConfig(
             directions = "Bar",
             schema = dd,
+            entityResolver = AlwaysCreateEntityResolver,
         )
         val projector = InMemoryObjectGraphGraphProjector()
 
