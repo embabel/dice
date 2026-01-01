@@ -1,20 +1,9 @@
-package com.embabel.dice.text2graph
+package com.embabel.dice.common
 
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.model.SimpleNamedEntityData
-import com.embabel.common.core.types.HasInfoString
-import com.embabel.dice.text2graph.event.DiceEvent
 import java.time.Instant
-
-/**
- * Resolution
- */
-interface Resolution<S, R> : HasInfoString {
-    val suggested: S
-    val existing: R?
-    val recommended: R?
-}
 
 sealed interface SuggestedEntityResolution : Resolution<SuggestedEntity, NamedEntityData>
 
@@ -92,6 +81,6 @@ interface EntityResolver {
     fun resolve(
         suggestedEntities: SuggestedEntities,
         schema: DataDictionary,
-    ): Resolutions<SuggestedEntityResolution>
+    ): com.embabel.dice.text2graph.Resolutions<SuggestedEntityResolution>
 
 }

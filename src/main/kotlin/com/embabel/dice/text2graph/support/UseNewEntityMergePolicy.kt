@@ -11,23 +11,23 @@ import com.embabel.dice.text2graph.*
 object UseNewEntityMergePolicy : EntityMergePolicy {
 
     override fun determineEntities(
-        suggestedEntitiesResolution: Resolutions<SuggestedEntityResolution>,
+        suggestedEntitiesResolution: Resolutions<com.embabel.dice.common.SuggestedEntityResolution>,
         schema: DataDictionary,
-    ): Merges<SuggestedEntityResolution, NamedEntityData> {
+    ): Merges<com.embabel.dice.common.SuggestedEntityResolution, NamedEntityData> {
         return Merges(
             merges = suggestedEntitiesResolution.resolutions.map {
                 when (it) {
-                    is NewEntity -> EntityMerge(
+                    is com.embabel.dice.common.NewEntity -> EntityMerge(
                         resolution = it,
                         convergenceTarget = it.recommended,
                     )
 
-                    is ExistingEntity -> EntityMerge(
+                    is com.embabel.dice.common.ExistingEntity -> EntityMerge(
                         resolution = it,
                         convergenceTarget = it.recommended,
                     )
 
-                    is VetoedEntity -> EntityMerge(
+                    is com.embabel.dice.common.VetoedEntity -> EntityMerge(
                         resolution = it,
                         convergenceTarget = null, // Vetoed entities have no target
                     )

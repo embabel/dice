@@ -3,6 +3,7 @@ package com.embabel.dice.proposition.extraction
 import com.embabel.agent.api.common.Ai
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.common.ai.model.LlmOptions
+import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.proposition.*
 import com.embabel.dice.text2graph.*
 import com.embabel.dice.text2graph.builder.SourceAnalysisConfig
@@ -81,7 +82,7 @@ class LlmPropositionExtractor(
 
     override fun resolvePropositions(
         suggestedPropositions: SuggestedPropositions,
-        resolutions: Resolutions<SuggestedEntityResolution>,
+        resolutions: Resolutions<com.embabel.dice.common.SuggestedEntityResolution>,
     ): List<Proposition> {
         // Build a map from mention key to resolved entity ID
         val resolutionMap = buildResolutionMap(resolutions)
@@ -101,7 +102,7 @@ class LlmPropositionExtractor(
     }
 
     private fun buildResolutionMap(
-        resolutions: Resolutions<SuggestedEntityResolution>
+        resolutions: Resolutions<com.embabel.dice.common.SuggestedEntityResolution>
     ): Map<MentionKey, String> {
         val map = mutableMapOf<MentionKey, String>()
 

@@ -3,7 +3,7 @@ package com.embabel.dice.text2graph
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
 
-typealias EntityMerge = Merge<SuggestedEntityResolution, NamedEntityData>
+typealias EntityMerge = Merge<com.embabel.dice.common.SuggestedEntityResolution, NamedEntityData>
 
 
 /**
@@ -17,7 +17,7 @@ interface EntityMergePolicy {
      * Determine final entities to write based on the suggested entities resolution.
      */
     fun determineEntities(
-        suggestedEntitiesResolution: Resolutions<SuggestedEntityResolution>,
+        suggestedEntitiesResolution: Resolutions<com.embabel.dice.common.SuggestedEntityResolution>,
         schema: DataDictionary,
-    ): Merges<SuggestedEntityResolution, NamedEntityData>
+    ): Merges<com.embabel.dice.common.SuggestedEntityResolution, NamedEntityData>
 }

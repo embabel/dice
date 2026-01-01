@@ -2,9 +2,10 @@ package com.embabel.dice.text2graph.support
 
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.agent.rag.model.NamedEntityData
+import com.embabel.dice.text2graph.SourceAnalyzer
 import com.embabel.dice.text2graph.*
 import com.embabel.dice.text2graph.builder.SourceAnalysisConfig
-import com.embabel.dice.text2graph.event.DiceEventListener
+import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.text2graph.resolver.AcceptSuggestionRelationshipResolver
 import org.slf4j.LoggerFactory
 
@@ -15,7 +16,7 @@ import org.slf4j.LoggerFactory
  */
 class MultiPassKnowledgeGraphBuilder(
     private val sourceAnalyzer: SourceAnalyzer,
-    private val entityResolver: EntityResolver,
+    private val entityResolver: com.embabel.dice.common.EntityResolver,
     private val relationshipResolver: RelationshipResolver = AcceptSuggestionRelationshipResolver,
     private val entityMergePolicy: EntityMergePolicy = UseNewEntityMergePolicy,
     private val relationshipMergePolicy: RelationshipMergePolicy = AcceptRecommendedRelationshipMergePolicy,
@@ -28,7 +29,7 @@ class MultiPassKnowledgeGraphBuilder(
         chunks: Iterable<Chunk>,
         context: SourceAnalysisConfig,
     ): KnowledgeGraphDelta {
-        val entityMerges = mutableListOf<Merge<SuggestedEntityResolution, NamedEntityData>>()
+        val entityMerges = mutableListOf<Merge<com.embabel.dice.common.SuggestedEntityResolution, NamedEntityData>>()
         val relationshipMerges = mutableListOf<Merge<SuggestedRelationshipResolution, RelationshipInstance>>()
 
         for (chunk in chunks) {
@@ -52,7 +53,7 @@ class MultiPassKnowledgeGraphBuilder(
             ).merges
             newEntityMerges
                 .map { it.resolution }
-                .filterIsInstance<NewEntity>()
+                .filterIsInstance<com.embabel.dice.common.NewEntity>()
                 .forEach { diceEventListener.onEvent(it) }
             entityMerges += newEntityMerges
             val newRelationshipMerges = relationshipMergePolicy.mergeRelationships(

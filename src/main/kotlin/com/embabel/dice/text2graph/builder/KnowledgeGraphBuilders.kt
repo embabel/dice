@@ -1,7 +1,7 @@
 package com.embabel.dice.text2graph.builder
 
 import com.embabel.agent.rag.model.Chunk
-import com.embabel.dice.text2graph.EntityResolver
+import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.text2graph.KnowledgeGraphBuilder
 import com.embabel.dice.text2graph.SourceAnalyzer
 import com.embabel.dice.text2graph.support.MultiPassKnowledgeGraphBuilder

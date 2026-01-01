@@ -5,9 +5,9 @@ import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.proposition.*
 import com.embabel.dice.proposition.revision.PropositionReviser
 import com.embabel.dice.proposition.revision.RevisionResult
-import com.embabel.dice.text2graph.EntityResolver
+import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.text2graph.Resolutions
-import com.embabel.dice.text2graph.SuggestedEntityResolution
+import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.text2graph.builder.SourceAnalysisConfig
 import org.slf4j.LoggerFactory
 import kotlin.reflect.KClass
@@ -98,7 +98,7 @@ class PropositionPipelineBuilder(
     }
 
     fun build(): PropositionPipeline =
-        PropositionPipeline(extractor, entityResolver, store, projectors.toList(), reviser)
+        PropositionPipeline(extractor, store, projectors.toList(), reviser)
 }
 
 /**
@@ -168,7 +168,6 @@ data class PropositionExtractionResult(
  */
 class PropositionPipeline(
     private val extractor: PropositionExtractor,
-    private val entityResolver: EntityResolver,
     private val store: PropositionRepository,
     private val projectors: List<Projector<*>> = emptyList(),
     private val reviser: PropositionReviser? = null,
@@ -280,7 +279,7 @@ class PropositionPipeline(
         logger.debug("Created {} suggested entities", suggestedEntities.suggestedEntities.size)
 
         // Step 3: Resolve entities using existing resolver
-        val resolutions = entityResolver.resolve(suggestedEntities, config.schema)
+        val resolutions = config.entityResolver.resolve(suggestedEntities, config.schema)
         logger.debug("Resolved {} entities", resolutions.resolutions.size)
 
         // Step 4: Apply resolutions to create final propositions

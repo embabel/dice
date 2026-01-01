@@ -1,5 +1,7 @@
 package com.embabel.dice.text2graph
 
+import com.embabel.dice.common.Resolution
+
 /**
  * Convergence between a resolution, with an ultimate convergence target
  * that we can write a store, whether persistent or in memory.

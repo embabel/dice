@@ -4,6 +4,8 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.model.SimpleNamedEntityData
+import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.text2graph.SuggestedRelationship
 import com.embabel.dice.text2graph.*
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -200,15 +202,15 @@ class GraphProjectorTest {
             parentId = "",
         )
 
-        val entityMerges: Merges<SuggestedEntityResolution, NamedEntityData> = Merges(
+        val entityMerges: Merges<com.embabel.dice.common.SuggestedEntityResolution, NamedEntityData> = Merges(
             merges = entities.map { entity ->
                 val suggestedEntity = SuggestedEntity(
                     labels = entity.labels().toList(),
                     name = entity.name,
                     summary = entity.description
                 )
-                Merge<SuggestedEntityResolution, NamedEntityData>(
-                    resolution = NewEntity(suggestedEntity),
+                Merge<com.embabel.dice.common.SuggestedEntityResolution, NamedEntityData>(
+                    resolution = _root_ide_package_.com.embabel.dice.common.NewEntity(suggestedEntity),
                     convergenceTarget = entity
                 )
             }

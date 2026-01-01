@@ -1,6 +1,10 @@
 package com.embabel.dice.text2graph.support
 
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.dice.text2graph.SourceAnalyzer
+import com.embabel.dice.common.SuggestedEntities
+import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.text2graph.SuggestedRelationships
 import com.embabel.dice.text2graph.*
 import com.embabel.dice.text2graph.builder.SourceAnalysisConfig
 import org.slf4j.LoggerFactory
@@ -77,7 +81,7 @@ class ParallelSourceAnalyzer(
 
     override fun suggestRelationships(
         chunk: Chunk,
-        suggestedEntitiesResolution: Resolutions<SuggestedEntityResolution>,
+        suggestedEntitiesResolution: Resolutions<com.embabel.dice.common.SuggestedEntityResolution>,
         context: SourceAnalysisConfig,
     ): SuggestedRelationships {
         val futures = analyzers.map { analyzer ->

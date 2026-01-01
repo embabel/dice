@@ -5,6 +5,7 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.ingestion.ContentChunker
 import com.embabel.agent.rag.ingestion.TikaHierarchicalContentReader
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.pipeline.PropositionBuilders
 import com.embabel.dice.projection.graph.GraphProjector
 import com.embabel.dice.projection.graph.LenientProjectionPolicy
@@ -23,8 +24,8 @@ import com.embabel.dice.text2graph.SourceAnalyzer
 import com.embabel.dice.text2graph.builder.InMemoryObjectGraphGraphProjector
 import com.embabel.dice.text2graph.builder.KnowledgeGraphBuilders
 import com.embabel.dice.text2graph.builder.SourceAnalysisConfig
-import com.embabel.dice.text2graph.resolver.AlwaysCreateEntityResolver
-import com.embabel.dice.text2graph.resolver.InMemoryEntityResolver
+import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
+import com.embabel.dice.common.resolver.InMemoryEntityResolver
 import com.embabel.dice.text2graph.support.LlmSourceAnalyzer
 import com.embabel.dice.text2graph.support.ParallelSourceAnalyzer
 import com.embabel.dice.text2graph.support.SourceAnalyzerProperties
@@ -32,7 +33,6 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.slf4j.LoggerFactory
 import org.springframework.shell.standard.ShellComponent
 import org.springframework.shell.standard.ShellMethod
-import org.springframework.shell.standard.ShellOption
 import java.io.FileInputStream
 
 
@@ -40,6 +40,7 @@ import java.io.FileInputStream
 internal class DiceShell(
     private val aiBuilder: AiBuilder,
     private val sourceAnalyzerProperties: SourceAnalyzerProperties,
+    private val entityResolver: EntityResolver = InMemoryEntityResolver(),
 ) {
 
     private val logger = LoggerFactory.getLogger(javaClass)
@@ -133,6 +134,7 @@ internal class DiceShell(
             .knowledgeGraphBuilder()
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = holmesSchema,
+            entityResolver = entityResolver,
         )
 
         val delta = knowledgeGraphBuilder.computeDelta(chunks, sourceAnalysisConfig)
@@ -176,6 +178,7 @@ internal class DiceShell(
         )
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = schema,
+            entityResolver = entityResolver,
         )
 
         val projector = InMemoryObjectGraphGraphProjector()
@@ -227,7 +230,8 @@ internal class DiceShell(
         )
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = schema,
-        )
+            entityResolver = entityResolver,
+            )
 
 //        val entities = projector.project(chunks, sourceAnalysisContext)
 //        println(entities)
@@ -264,7 +268,8 @@ internal class DiceShell(
         )
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = schema,
-        )
+            entityResolver = entityResolver,
+            )
 
         val result = pipeline.process(chunks, sourceAnalysisConfig)
 
@@ -313,7 +318,8 @@ internal class DiceShell(
 
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = holmesSchema,
-        )
+            entityResolver = entityResolver,
+            )
 
         val result = pipeline.process(chunks, sourceAnalysisConfig)
 
@@ -370,7 +376,8 @@ internal class DiceShell(
 
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = schema,
-        )
+            entityResolver = entityResolver,
+            )
 
         println("\n=== Processing and Promoting ===")
 
@@ -514,7 +521,8 @@ internal class DiceShell(
 
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = schema,
-        )
+            entityResolver = entityResolver,
+            )
 
         println("\n=== Extracting Propositions ===")
         val extractionResult = pipeline.process(chunks, sourceAnalysisConfig)
@@ -703,7 +711,8 @@ internal class DiceShell(
 
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = prologDemoSchema,
-        )
+            entityResolver = entityResolver,
+            )
 
         println("\n=== Prolog Projection Demo ===\n")
 
@@ -886,7 +895,8 @@ internal class DiceShell(
 
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = prologDemoSchema,
-        )
+            entityResolver = entityResolver,
+            )
 
         println("\n=== Oracle Demo: Natural Language Q&A ===\n")
 

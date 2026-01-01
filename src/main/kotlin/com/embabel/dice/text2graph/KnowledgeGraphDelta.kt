@@ -11,19 +11,19 @@ import com.embabel.common.core.types.HasInfoString
  */
 data class KnowledgeGraphDelta(
     override val chunkIds: Set<String>,
-    val entityMerges: Merges<SuggestedEntityResolution, NamedEntityData>,
+    val entityMerges: Merges<com.embabel.dice.common.SuggestedEntityResolution, NamedEntityData>,
     val relationshipMerges: Merges<SuggestedRelationshipResolution, RelationshipInstance>,
 ) : HasInfoString, Sourced {
 
     fun newEntities(): List<NamedEntityData> {
         return entityMerges.merges
-            .filter { it.resolution is NewEntity }
+            .filter { it.resolution is com.embabel.dice.common.NewEntity }
             .mapNotNull { it.convergenceTarget }
     }
 
     fun mergedEntities(): List<EntityMerge> {
         return entityMerges.merges
-            .filter { it.resolution is ExistingEntity }
+            .filter { it.resolution is com.embabel.dice.common.ExistingEntity }
             .filter { it.convergenceTarget != null }
     }
 

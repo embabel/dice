@@ -2,11 +2,13 @@ package com.embabel.dice.text2graph.builder
 
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
+import com.embabel.dice.common.SuggestedEntities
+import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.shell.Detective
 import com.embabel.dice.shell.Doctor
 import com.embabel.dice.shell.Place
 import com.embabel.dice.text2graph.*
-import com.embabel.dice.text2graph.resolver.InMemoryEntityResolver
+import com.embabel.dice.common.resolver.InMemoryEntityResolver
 import com.embabel.dice.text2graph.support.UseNewEntityMergePolicy
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -45,7 +47,7 @@ class InMemoryEntityResolverTest {
         val resolutions = resolver.resolve(suggested, schema)
 
         assertEquals(1, resolutions.resolutions.size)
-        assertTrue(resolutions.resolutions[0] is NewEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.NewEntity)
         assertEquals("Alice", resolutions.resolutions[0].recommended?.name)
         assertEquals(1, resolver.size())
     }
@@ -65,7 +67,7 @@ class InMemoryEntityResolverTest {
         val resolutions = resolver.resolve(second, schema)
 
         assertEquals(1, resolutions.resolutions.size)
-        assertTrue(resolutions.resolutions[0] is ExistingEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity)
         assertEquals(1, resolver.size()) // Should not create a new entity
     }
 
@@ -81,7 +83,7 @@ class InMemoryEntityResolverTest {
         )
         val resolutions = resolver.resolve(second, schema)
 
-        assertTrue(resolutions.resolutions[0] is ExistingEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity)
         assertEquals(1, resolver.size())
     }
 
@@ -97,7 +99,7 @@ class InMemoryEntityResolverTest {
         )
         val resolutions = resolver.resolve(second, schema)
 
-        assertTrue(resolutions.resolutions[0] is ExistingEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity)
         assertEquals(1, resolver.size())
     }
 
@@ -113,7 +115,7 @@ class InMemoryEntityResolverTest {
         )
         val resolutions = resolver.resolve(second, schema)
 
-        assertTrue(resolutions.resolutions[0] is ExistingEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity)
         assertEquals(1, resolver.size())
     }
 
@@ -129,7 +131,7 @@ class InMemoryEntityResolverTest {
         )
         val resolutions = resolver.resolve(second, schema)
 
-        assertTrue(resolutions.resolutions[0] is ExistingEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity)
         assertEquals(1, resolver.size())
     }
 
@@ -146,7 +148,7 @@ class InMemoryEntityResolverTest {
         )
         val resolutions = resolver.resolve(second, schema)
 
-        assertTrue(resolutions.resolutions[0] is ExistingEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity)
         assertEquals(1, resolver.size())
     }
 
@@ -163,7 +165,7 @@ class InMemoryEntityResolverTest {
         )
         val resolutions = resolver.resolve(second, schema)
 
-        assertTrue(resolutions.resolutions[0] is NewEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.NewEntity)
         assertEquals(2, resolver.size())
     }
 
@@ -180,7 +182,7 @@ class InMemoryEntityResolverTest {
         )
         val resolutions = resolver.resolve(second, schema)
 
-        assertTrue(resolutions.resolutions[0] is NewEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.NewEntity)
         assertEquals(2, resolver.size())
     }
 
@@ -196,7 +198,7 @@ class InMemoryEntityResolverTest {
         )
         val resolutions = resolver.resolve(second, schema)
 
-        assertTrue(resolutions.resolutions[0] is ExistingEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity)
         assertEquals(1, resolver.size())
     }
 
@@ -215,7 +217,7 @@ class InMemoryEntityResolverTest {
         )
         val resolutions = resolver.resolve(second, schema)
 
-        assertTrue(resolutions.resolutions[0] is NewEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.NewEntity)
         assertEquals(2, resolver.size())
     }
 
@@ -235,9 +237,9 @@ class InMemoryEntityResolverTest {
         val resolutions = resolver.resolve(second, schema)
 
         assertEquals(3, resolutions.resolutions.size)
-        assertTrue(resolutions.resolutions[0] is ExistingEntity) // alice -> Alice
-        assertTrue(resolutions.resolutions[1] is NewEntity) // Bob is new
-        assertTrue(resolutions.resolutions[2] is ExistingEntity) // REX -> Rex
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity) // alice -> Alice
+        assertTrue(resolutions.resolutions[1] is com.embabel.dice.common.NewEntity) // Bob is new
+        assertTrue(resolutions.resolutions[2] is com.embabel.dice.common.ExistingEntity) // REX -> Rex
         assertEquals(3, resolver.size())
     }
 
@@ -254,7 +256,7 @@ class InMemoryEntityResolverTest {
 
         // Same entity should be new after clear
         val resolutions = resolver.resolve(suggested, schema)
-        assertTrue(resolutions.resolutions[0] is NewEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.NewEntity)
     }
 
     @Test
@@ -273,7 +275,7 @@ class InMemoryEntityResolverTest {
         )
         val resolutions = strictResolver.resolve(second, schema)
 
-        assertTrue(resolutions.resolutions[0] is NewEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.NewEntity)
     }
 
     @Test
@@ -304,7 +306,7 @@ class InMemoryEntityResolverTest {
         )
         val resolutions = resolver.resolve(second, schema)
 
-        assertTrue(resolutions.resolutions[0] is ExistingEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity)
         assertEquals(1, resolver.size())
     }
 
@@ -321,7 +323,7 @@ class InMemoryEntityResolverTest {
         )
         val resolutions = resolver.resolve(second, schema)
 
-        assertTrue(resolutions.resolutions[0] is ExistingEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity)
         assertEquals(1, resolver.size())
     }
 
@@ -338,7 +340,7 @@ class InMemoryEntityResolverTest {
         )
         val resolutions = resolver.resolve(second, schema)
 
-        assertTrue(resolutions.resolutions[0] is NewEntity)
+        assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.NewEntity)
         assertEquals(2, resolver.size())
     }
 
@@ -400,7 +402,7 @@ class InMemoryEntityResolverTest {
             )
             val chunk1Resolutions = resolver.resolve(chunk1, holmesSchema)
             assertEquals(1, chunk1Resolutions.resolutions.size)
-            assertTrue(chunk1Resolutions.resolutions[0] is NewEntity)
+            assertTrue(chunk1Resolutions.resolutions[0] is com.embabel.dice.common.NewEntity)
             val originalId = chunk1Resolutions.resolutions[0].recommended!!.id
 
             // Second chunk: "Holmes" as Detective
@@ -418,7 +420,7 @@ class InMemoryEntityResolverTest {
 
             assertEquals(1, chunk2Resolutions.resolutions.size)
             assertTrue(
-                chunk2Resolutions.resolutions[0] is ExistingEntity,
+                chunk2Resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity,
                 "Detective 'Holmes' should match existing Person 'Sherlock Holmes' because Detective extends Person"
             )
             assertEquals(
@@ -447,7 +449,7 @@ class InMemoryEntityResolverTest {
             )
             val chunk1Resolutions = resolver.resolve(chunk1, holmesSchema)
             assertEquals(1, chunk1Resolutions.resolutions.size)
-            assertTrue(chunk1Resolutions.resolutions[0] is NewEntity)
+            assertTrue(chunk1Resolutions.resolutions[0] is com.embabel.dice.common.NewEntity)
             val originalId = chunk1Resolutions.resolutions[0].recommended!!.id
 
             // Second chunk: "Sherlock Holmes" as Person
@@ -465,7 +467,7 @@ class InMemoryEntityResolverTest {
 
             assertEquals(1, chunk2Resolutions.resolutions.size)
             assertTrue(
-                chunk2Resolutions.resolutions[0] is ExistingEntity,
+                chunk2Resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity,
                 "Person 'Sherlock Holmes' should match existing Detective 'Holmes' because Detective extends Person"
             )
             assertEquals(
@@ -511,7 +513,7 @@ class InMemoryEntityResolverTest {
             val chunk2Resolutions = resolver.resolve(chunk2, holmesSchema)
 
             assertTrue(
-                chunk2Resolutions.resolutions[0] is ExistingEntity,
+                chunk2Resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity,
                 "Should match even if stored labels are fully qualified"
             )
         }
@@ -545,7 +547,7 @@ class InMemoryEntityResolverTest {
             )
             val chunk1Resolutions = resolver.resolve(chunk1, holmesSchema)
             assertEquals(1, chunk1Resolutions.resolutions.size)
-            assertTrue(chunk1Resolutions.resolutions[0] is NewEntity)
+            assertTrue(chunk1Resolutions.resolutions[0] is com.embabel.dice.common.NewEntity)
             val originalId = chunk1Resolutions.resolutions[0].recommended!!.id
 
             println("Stored entity labels: ${chunk1Resolutions.resolutions[0].recommended!!.labels()}")
@@ -568,7 +570,7 @@ class InMemoryEntityResolverTest {
 
             assertEquals(1, chunk2Resolutions.resolutions.size)
             assertTrue(
-                chunk2Resolutions.resolutions[0] is ExistingEntity,
+                chunk2Resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity,
                 "Detective 'Holmes' should match Person 'Sherlock Holmes' even with fully qualified labels"
             )
             assertEquals(
@@ -614,7 +616,7 @@ class InMemoryEntityResolverTest {
             val chunk2Resolutions = resolver.resolve(chunk2, holmesSchema)
 
             val resolution = chunk2Resolutions.resolutions[0]
-            assertTrue(resolution is ExistingEntity, "Should match existing entity")
+            assertTrue(resolution is com.embabel.dice.common.ExistingEntity, "Should match existing entity")
 
             val mergedLabels = resolution.recommended!!.labels()
             assertTrue(
@@ -659,7 +661,7 @@ class InMemoryEntityResolverTest {
             val chunk2Resolutions = resolver.resolve(chunk2, holmesSchema)
 
             assertTrue(
-                chunk2Resolutions.resolutions[0] is ExistingEntity,
+                chunk2Resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity,
                 "Simple 'Person' should match fully qualified 'com.embabel.dice.shell.Person'"
             )
             assertEquals(1, resolver.size())
@@ -687,7 +689,7 @@ class InMemoryEntityResolverTest {
             val chunk1Resolutions = resolver.resolve(chunk1, schema)
 
             assertEquals(1, chunk1Resolutions.resolutions.size, "Should have exactly 1 resolution")
-            assertTrue(chunk1Resolutions.resolutions[0] is NewEntity)
+            assertTrue(chunk1Resolutions.resolutions[0] is com.embabel.dice.common.NewEntity)
 
             // Second chunk: Watson again (should match existing)
             val chunk2 = createSuggestedEntities(
@@ -696,7 +698,7 @@ class InMemoryEntityResolverTest {
             val chunk2Resolutions = resolver.resolve(chunk2, schema)
 
             assertEquals(1, chunk2Resolutions.resolutions.size, "Should have exactly 1 resolution")
-            assertTrue(chunk2Resolutions.resolutions[0] is ExistingEntity)
+            assertTrue(chunk2Resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity)
 
             // Third chunk: Watson again
             val chunk3 = createSuggestedEntities(
@@ -705,7 +707,7 @@ class InMemoryEntityResolverTest {
             val chunk3Resolutions = resolver.resolve(chunk3, schema)
 
             assertEquals(1, chunk3Resolutions.resolutions.size, "Should have exactly 1 resolution")
-            assertTrue(chunk3Resolutions.resolutions[0] is ExistingEntity)
+            assertTrue(chunk3Resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity)
 
             // Should only have 1 unique entity in the resolver
             assertEquals(1, resolver.size(), "Should only have 1 unique entity")
@@ -716,7 +718,7 @@ class InMemoryEntityResolverTest {
          */
         @Test
         fun `delta should not contain duplicate entities when same entity appears in multiple chunks`() {
-            val entityMerges = mutableListOf<Merge<SuggestedEntityResolution, NamedEntityData>>()
+            val entityMerges = mutableListOf<Merge<com.embabel.dice.common.SuggestedEntityResolution, NamedEntityData>>()
 
             // Chunk 1: Watson as new entity
             val chunk1 = createSuggestedEntities(
@@ -796,7 +798,7 @@ class InMemoryEntityResolverTest {
                 assertEquals(1, resolutions.resolutions.size)
 
                 val resolution = resolutions.resolutions[0]
-                assertTrue(resolution is ExistingEntity, "$name should match existing Holmes")
+                assertTrue(resolution is com.embabel.dice.common.ExistingEntity, "$name should match existing Holmes")
 
                 val resolvedId = resolution.recommended!!.id
                 allIds.add(resolvedId)
@@ -813,7 +815,7 @@ class InMemoryEntityResolverTest {
          */
         @Test
         fun `should correctly handle multiple different entities across chunks`() {
-            val entityMerges = mutableListOf<Merge<SuggestedEntityResolution, NamedEntityData>>()
+            val entityMerges = mutableListOf<Merge<com.embabel.dice.common.SuggestedEntityResolution, NamedEntityData>>()
 
             // Chunk 1: Holmes and Watson
             val chunk1 = createSuggestedEntities(
@@ -901,7 +903,7 @@ class InMemoryEntityResolverTest {
             )
             val chunk1Resolutions = resolver.resolve(chunk1, holmesSchema)
             assertEquals(1, chunk1Resolutions.resolutions.size)
-            assertTrue(chunk1Resolutions.resolutions[0] is NewEntity)
+            assertTrue(chunk1Resolutions.resolutions[0] is com.embabel.dice.common.NewEntity)
             val originalId = chunk1Resolutions.resolutions[0].recommended!!.id
 
             // Second chunk: "Holmes" as Doctor (LLM misclassified)
@@ -919,7 +921,7 @@ class InMemoryEntityResolverTest {
 
             assertEquals(1, chunk2Resolutions.resolutions.size)
             assertTrue(
-                chunk2Resolutions.resolutions[0] is ExistingEntity,
+                chunk2Resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity,
                 "Doctor 'Holmes' should match Detective 'Sherlock Holmes' because they share parent Person"
             )
             assertEquals(
@@ -949,7 +951,7 @@ class InMemoryEntityResolverTest {
             )
             val chunk1Resolutions = resolver.resolve(chunk1, holmesSchema)
             assertEquals(1, chunk1Resolutions.resolutions.size)
-            assertTrue(chunk1Resolutions.resolutions[0] is NewEntity)
+            assertTrue(chunk1Resolutions.resolutions[0] is com.embabel.dice.common.NewEntity)
             val originalId = chunk1Resolutions.resolutions[0].recommended!!.id
 
             // Second chunk: Same person now identified as Doctor
@@ -967,7 +969,7 @@ class InMemoryEntityResolverTest {
 
             assertEquals(1, chunk2Resolutions.resolutions.size)
             assertTrue(
-                chunk2Resolutions.resolutions[0] is ExistingEntity,
+                chunk2Resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity,
                 "Doctor 'Dr. Ainstree' should match existing Person 'Dr. Ainstree' because Doctor extends Person"
             )
             assertEquals(
@@ -1018,7 +1020,7 @@ class InMemoryEntityResolverTest {
             val chunk2Resolutions = resolver.resolve(chunk2, holmesSchema)
 
             assertTrue(
-                chunk2Resolutions.resolutions[0] is ExistingEntity,
+                chunk2Resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity,
                 "Person 'Watson' should match existing Doctor 'Dr. Watson'"
             )
             assertEquals(originalId, chunk2Resolutions.resolutions[0].recommended!!.id)
@@ -1032,7 +1034,7 @@ class InMemoryEntityResolverTest {
          */
         @Test
         fun `should handle multiple doctors with varying type specificity`() {
-            val entityMerges = mutableListOf<Merge<SuggestedEntityResolution, NamedEntityData>>()
+            val entityMerges = mutableListOf<Merge<com.embabel.dice.common.SuggestedEntityResolution, NamedEntityData>>()
 
             // Chunk 1: Watson as Doctor, others as Person
             val chunk1 = SuggestedEntities(
@@ -1079,11 +1081,11 @@ class InMemoryEntityResolverTest {
 
             // Both should match existing entities
             assertTrue(
-                chunk2Resolutions.resolutions[0] is ExistingEntity,
+                chunk2Resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity,
                 "Doctor 'Dr. Ainstree' should match existing Person 'Dr. Ainstree'"
             )
             assertTrue(
-                chunk2Resolutions.resolutions[1] is ExistingEntity,
+                chunk2Resolutions.resolutions[1] is com.embabel.dice.common.ExistingEntity,
                 "Doctor 'Sir Jasper Meek' should match existing Person 'Sir Jasper Meek'"
             )
 
@@ -1145,8 +1147,8 @@ class InMemoryEntityResolverTest {
             val chunk3Resolutions = resolver.resolve(chunk3, holmesSchema)
 
             // All should resolve to same entity
-            assertTrue(chunk2Resolutions.resolutions[0] is ExistingEntity)
-            assertTrue(chunk3Resolutions.resolutions[0] is ExistingEntity)
+            assertTrue(chunk2Resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity)
+            assertTrue(chunk3Resolutions.resolutions[0] is com.embabel.dice.common.ExistingEntity)
             assertEquals(originalId, chunk2Resolutions.resolutions[0].recommended!!.id)
             assertEquals(originalId, chunk3Resolutions.resolutions[0].recommended!!.id)
             assertEquals(1, resolver.size())
@@ -1157,7 +1159,7 @@ class InMemoryEntityResolverTest {
          */
         @Test
         fun `delta newOrModifiedEntities should reflect upgraded labels`() {
-            val entityMerges = mutableListOf<Merge<SuggestedEntityResolution, NamedEntityData>>()
+            val entityMerges = mutableListOf<Merge<com.embabel.dice.common.SuggestedEntityResolution, NamedEntityData>>()
 
             // Chunk 1: Dr. Ainstree as Person
             val chunk1 = SuggestedEntities(

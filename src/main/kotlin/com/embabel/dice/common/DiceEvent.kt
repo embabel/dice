@@ -1,4 +1,4 @@
-package com.embabel.dice.text2graph.event
+package com.embabel.dice.common
 
 import com.embabel.common.core.types.Timestamped
 import com.fasterxml.jackson.annotation.JsonTypeInfo
