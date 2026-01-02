@@ -23,7 +23,7 @@ interface PropositionExtractor {
      */
     fun extract(
         chunk: Chunk,
-        context: SourceAnalysisConfig,
+        context: SourceAnalysisContext,
     ): SuggestedPropositions
 
     /**

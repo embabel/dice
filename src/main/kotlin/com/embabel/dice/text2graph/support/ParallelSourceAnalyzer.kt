@@ -35,7 +35,7 @@ class ParallelSourceAnalyzer(
 
     override fun suggestEntities(
         chunk: Chunk,
-        context: SourceAnalysisConfig,
+        context: SourceAnalysisContext,
     ): SuggestedEntities {
         val futures = analyzers.map { analyzer ->
             CompletableFuture.supplyAsync({
@@ -79,7 +79,7 @@ class ParallelSourceAnalyzer(
     override fun suggestRelationships(
         chunk: Chunk,
         suggestedEntitiesResolution: Resolutions<SuggestedEntityResolution>,
-        context: SourceAnalysisConfig,
+        context: SourceAnalysisContext,
     ): SuggestedRelationships {
         val futures = analyzers.map { analyzer ->
             CompletableFuture.supplyAsync({

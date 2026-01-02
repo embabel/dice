@@ -2,7 +2,7 @@ package com.embabel.dice.text2graph.builder
 
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.EntityResolver
-import com.embabel.dice.common.SourceAnalysisConfig
+import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.text2graph.KnowledgeGraphBuilder
 import com.embabel.dice.text2graph.SourceAnalyzer
 import com.embabel.dice.text2graph.support.MultiPassKnowledgeGraphBuilder
@@ -51,11 +51,11 @@ class KgbBuilder(
          */
         fun project(
             chunks: List<Chunk>,
-            sourceAnalysisConfig: SourceAnalysisConfig
+            sourceAnalysisContext: SourceAnalysisContext
         ): List<Any> {
             val kbg = knowledgeGraphBuilder()
-            val delta = kbg.computeDelta(chunks, sourceAnalysisConfig)
-            return graphProjector.project(sourceAnalysisConfig.schema, delta)
+            val delta = kbg.computeDelta(chunks, sourceAnalysisContext)
+            return graphProjector.project(sourceAnalysisContext.schema, delta)
         }
 
         /**
@@ -63,11 +63,11 @@ class KgbBuilder(
          */
         fun <T> root(
             chunks: List<Chunk>,
-            sourceAnalysisConfig: SourceAnalysisConfig,
+            sourceAnalysisContext: SourceAnalysisContext,
             clazz: Class<T>,
             predicate: (T) -> Boolean,
         ): T? {
-            val objects = project(chunks, sourceAnalysisConfig)
+            val objects = project(chunks, sourceAnalysisContext)
             return objects
                 .filterIsInstance(clazz)
                 .firstOrNull { predicate(it) }

@@ -2,7 +2,7 @@ package com.embabel.dice.text2graph
 
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.Resolutions
-import com.embabel.dice.common.SourceAnalysisConfig
+import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntityResolution
 
@@ -19,7 +19,7 @@ interface SourceAnalyzer {
      */
     fun suggestEntities(
         chunk: Chunk,
-        context: SourceAnalysisConfig,
+        context: SourceAnalysisContext,
     ): SuggestedEntities
 
     /**
@@ -28,6 +28,6 @@ interface SourceAnalyzer {
     fun suggestRelationships(
         chunk: Chunk,
         suggestedEntitiesResolution: Resolutions<SuggestedEntityResolution>,
-        context: SourceAnalysisConfig,
+        context: SourceAnalysisContext,
     ): SuggestedRelationships
 }

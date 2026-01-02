@@ -3,7 +3,7 @@ package com.embabel.dice.text2graph
 import com.embabel.agent.api.common.Ai
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
-import com.embabel.dice.common.SourceAnalysisConfig
+import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.text2graph.builder.InMemoryObjectGraphGraphProjector
 import com.embabel.dice.text2graph.builder.KnowledgeGraphBuilders
@@ -27,14 +27,13 @@ class KnowledgeGraphBuilderBuilderTest {
             .knowledgeGraphBuilder()
 
         val chunks = listOf<Chunk>()
-        val sourceAnalysisConfig = SourceAnalysisConfig(
-            directions = "Bar",
+        val sourceAnalysisContext = SourceAnalysisContext(
             schema = dd,
             entityResolver = AlwaysCreateEntityResolver,
         )
         val projector = InMemoryObjectGraphGraphProjector()
 
-        val delta = kgb.computeDelta(chunks, sourceAnalysisConfig)
+        val delta = kgb.computeDelta(chunks, sourceAnalysisContext)
         delta?.let { projector.project(dd, it) }
     }
 

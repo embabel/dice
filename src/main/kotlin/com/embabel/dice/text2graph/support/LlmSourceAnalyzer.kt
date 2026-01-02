@@ -47,7 +47,7 @@ class LlmSourceAnalyzer(
 
     override fun suggestEntities(
         chunk: Chunk,
-        context: SourceAnalysisConfig
+        context: SourceAnalysisContext
     ): SuggestedEntities {
         val entities = ai
             .withLlm(llmOptions)
@@ -69,7 +69,7 @@ class LlmSourceAnalyzer(
     override fun suggestRelationships(
         chunk: Chunk,
         suggestedEntitiesResolution: Resolutions<SuggestedEntityResolution>,
-        context: SourceAnalysisConfig
+        context: SourceAnalysisContext
     ): SuggestedRelationships {
         val entitiesToUse =
             suggestedEntitiesResolution.resolutions

@@ -3,7 +3,7 @@ package com.embabel.dice.text2graph.support
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.dice.common.DiceEventListener
-import com.embabel.dice.common.SourceAnalysisConfig
+import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.text2graph.*
 import com.embabel.dice.text2graph.resolver.AcceptSuggestionRelationshipResolver
 import org.slf4j.LoggerFactory
@@ -26,7 +26,7 @@ class MultiPassKnowledgeGraphBuilder(
 
     override fun computeDelta(
         chunks: Iterable<Chunk>,
-        context: SourceAnalysisConfig,
+        context: SourceAnalysisContext,
     ): KnowledgeGraphDelta {
         val entityMerges = mutableListOf<Merge<com.embabel.dice.common.SuggestedEntityResolution, NamedEntityData>>()
         val relationshipMerges = mutableListOf<Merge<SuggestedRelationshipResolution, RelationshipInstance>>()

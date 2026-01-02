@@ -4,7 +4,7 @@ import com.embabel.agent.api.common.Ai
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.common.Resolutions
-import com.embabel.dice.common.SourceAnalysisConfig
+import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.proposition.*
@@ -26,7 +26,7 @@ class LlmPropositionExtractor(
 
     override fun extract(
         chunk: Chunk,
-        context: SourceAnalysisConfig,
+        context: SourceAnalysisContext,
     ): SuggestedPropositions {
         logger.debug("Extracting propositions from chunk {}", chunk.id)
 

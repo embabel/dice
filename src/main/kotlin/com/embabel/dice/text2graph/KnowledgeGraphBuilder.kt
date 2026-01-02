@@ -1,7 +1,7 @@
 package com.embabel.dice.text2graph
 
 import com.embabel.agent.rag.model.Chunk
-import com.embabel.dice.common.SourceAnalysisConfig
+import com.embabel.dice.common.SourceAnalysisContext
 
 /**
  * Updates a knowledge graph from chunks of text
@@ -19,7 +19,7 @@ interface KnowledgeGraphBuilder {
      */
     fun computeDelta(
         chunks: Iterable<Chunk>,
-        context: SourceAnalysisConfig,
+        context: SourceAnalysisContext,
     ): KnowledgeGraphDelta?
 
 }
