@@ -23,29 +23,6 @@ enum class MemoryType {
 }
 
 /**
- * User profile projected from semantic propositions.
- * Aggregates facts about a user into a consumable format.
- *
- * @property facts List of fact statements about the user
- * @property confidence Average confidence across source propositions
- * @property decay Decay rate (defaults to 0.0 for profiles)
- * @property sourcePropositionIds Provenance tracking
- */
-data class UserProfile(
-    val facts: List<String>,
-    override val confidence: Double,
-    override val decay: Double = 0.0,
-    override val sourcePropositionIds: List<String>,
-) : Projected {
-
-    /** Format profile for LLM context injection */
-    fun asContext(): String = buildString {
-        appendLine("User Profile:")
-        facts.forEach { appendLine("- $it") }
-    }
-}
-
-/**
  * An event projected from episodic propositions.
  *
  * @property description What happened
@@ -92,55 +69,6 @@ data class BehavioralRule(
     } else {
         action
     }
-}
-
-/**
- * Working memory combines multiple memory types for current session context.
- * This is what gets injected into LLM prompts.
- *
- * @property userProfile Semantic facts about the user
- * @property recentEvents Recent episodic memories
- * @property behavioralRules Procedural rules to follow
- * @property sessionPropositions Raw propositions from current session
- * @property budget Maximum number of items to include in context
- */
-data class WorkingMemory(
-    val userProfile: UserProfile,
-    val recentEvents: List<Event>,
-    val behavioralRules: List<BehavioralRule>,
-    val sessionPropositions: List<Proposition>,
-    val budget: Int,
-) {
-    /** Format working memory for LLM context injection */
-    fun asContext(): String = buildString {
-        if (userProfile.facts.isNotEmpty()) {
-            appendLine("## User Profile")
-            userProfile.facts.forEach { appendLine("- $it") }
-            appendLine()
-        }
-
-        if (recentEvents.isNotEmpty()) {
-            appendLine("## Recent Events")
-            recentEvents.forEach { appendLine("- ${it.asContext()}") }
-            appendLine()
-        }
-
-        if (behavioralRules.isNotEmpty()) {
-            appendLine("## Behavioral Guidelines")
-            behavioralRules.forEach { appendLine("- ${it.asContext()}") }
-            appendLine()
-        }
-
-        if (sessionPropositions.isNotEmpty()) {
-            appendLine("## Current Session Context")
-            sessionPropositions.take(budget).forEach { appendLine("- ${it.text}") }
-        }
-    }
-
-    /** Total number of items in working memory */
-    val totalItems: Int
-        get() = userProfile.facts.size + recentEvents.size +
-                behavioralRules.size + sessionPropositions.size
 }
 
 /**

@@ -575,7 +575,7 @@ internal class DiceShell(
         )
         println("Total items: ${workingMemory.totalItems}")
         println("\n--- Context for LLM ---")
-        println(workingMemory.asContext())
+        println(workingMemory.contribution())
 
         // Demonstrate memory retrieval
         println("\n=== Memory Retrieval ===")
