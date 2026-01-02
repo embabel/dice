@@ -1,7 +1,6 @@
 package com.embabel.dice.common.resolver
 
 import com.embabel.agent.core.DataDictionary
-import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.model.SimpleNamedEntityData
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.ExistingEntity
@@ -13,11 +12,10 @@ import com.embabel.dice.common.VetoedEntity
 import com.embabel.dice.shell.Detective
 import com.embabel.dice.shell.Doctor
 import com.embabel.dice.shell.Place
-import com.embabel.dice.text2graph.Resolutions
+import com.embabel.dice.common.Resolutions
 import com.embabel.dice.text2graph.builder.Animal
 import com.embabel.dice.text2graph.builder.Person
 import org.junit.jupiter.api.Assertions.*
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows

@@ -1,6 +1,8 @@
 package com.embabel.dice.text2graph.resolver
 
 import com.embabel.agent.core.DataDictionary
+import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.text2graph.SuggestedRelationships
 import com.embabel.dice.text2graph.*
 
@@ -10,7 +12,7 @@ import com.embabel.dice.text2graph.*
 object AcceptSuggestionRelationshipResolver : RelationshipResolver {
 
     override fun resolveRelationships(
-        entityResolution: Resolutions<com.embabel.dice.common.SuggestedEntityResolution>,
+        entityResolution: Resolutions<SuggestedEntityResolution>,
         suggestedRelationships: SuggestedRelationships,
         schema: DataDictionary,
     ): Resolutions<SuggestedRelationshipResolution> {

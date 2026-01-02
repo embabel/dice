@@ -6,6 +6,7 @@ import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.ExistingEntity
 import com.embabel.dice.common.NewEntity
+import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution

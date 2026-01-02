@@ -2,6 +2,8 @@ package com.embabel.dice.text2graph.support
 
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
+import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.text2graph.*
 
 /**
@@ -11,7 +13,7 @@ import com.embabel.dice.text2graph.*
 object UseNewEntityMergePolicy : EntityMergePolicy {
 
     override fun determineEntities(
-        suggestedEntitiesResolution: Resolutions<com.embabel.dice.common.SuggestedEntityResolution>,
+        suggestedEntitiesResolution: Resolutions<SuggestedEntityResolution>,
         schema: DataDictionary,
     ): Merges<com.embabel.dice.common.SuggestedEntityResolution, NamedEntityData> {
         return Merges(

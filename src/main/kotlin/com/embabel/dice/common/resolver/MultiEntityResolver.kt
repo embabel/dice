@@ -6,7 +6,7 @@ import com.embabel.dice.common.ExistingEntity
 import com.embabel.dice.common.NewEntity
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntityResolution
-import com.embabel.dice.text2graph.Resolutions
+import com.embabel.dice.common.Resolutions
 
 /**
  * Entity resolver that delegates to multiple resolvers in order.

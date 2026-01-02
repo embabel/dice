@@ -3,6 +3,7 @@ package com.embabel.dice.text2graph
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.EntityData
 import com.embabel.common.util.loggerFor
+import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntityResolution
 
 data class SuggestedRelationship(

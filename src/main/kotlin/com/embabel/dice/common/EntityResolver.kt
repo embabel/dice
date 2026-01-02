@@ -81,6 +81,6 @@ interface EntityResolver {
     fun resolve(
         suggestedEntities: SuggestedEntities,
         schema: DataDictionary,
-    ): com.embabel.dice.text2graph.Resolutions<SuggestedEntityResolution>
+    ): Resolutions<SuggestedEntityResolution>
 
 }

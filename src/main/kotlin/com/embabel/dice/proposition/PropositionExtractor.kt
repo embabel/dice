@@ -1,7 +1,7 @@
 package com.embabel.dice.proposition
 
 import com.embabel.agent.rag.model.Chunk
-import com.embabel.dice.text2graph.Resolutions
+import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution

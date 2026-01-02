@@ -1,6 +1,7 @@
 package com.embabel.dice.text2graph.support
 
 import com.embabel.agent.core.DataDictionary
+import com.embabel.dice.common.Resolutions
 import com.embabel.dice.text2graph.*
 
 /**
