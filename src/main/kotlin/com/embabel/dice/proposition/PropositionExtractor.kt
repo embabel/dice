@@ -5,7 +5,7 @@ import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution
-import com.embabel.dice.text2graph.builder.SourceAnalysisConfig
+import com.embabel.dice.t.SourceAnalysisConfig
 
 /**
  * Extracts propositions from text chunks.

@@ -1,4 +1,4 @@
-package com.embabel.dice.text2graph.builder
+package com.embabel.dice.t
 
 import com.embabel.agent.core.DataDictionary
 import com.embabel.dice.common.EntityResolver

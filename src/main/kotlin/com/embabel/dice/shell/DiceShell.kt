@@ -6,6 +6,8 @@ import com.embabel.agent.rag.ingestion.ContentChunker
 import com.embabel.agent.rag.ingestion.TikaHierarchicalContentReader
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.EntityResolver
+import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
+import com.embabel.dice.common.resolver.InMemoryEntityResolver
 import com.embabel.dice.pipeline.PropositionBuilders
 import com.embabel.dice.projection.graph.GraphProjector
 import com.embabel.dice.projection.graph.LenientProjectionPolicy
@@ -20,12 +22,10 @@ import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.extraction.LlmPropositionExtractor
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.query.oracle.ToolOracle
+import com.embabel.dice.t.SourceAnalysisConfig
 import com.embabel.dice.text2graph.SourceAnalyzer
 import com.embabel.dice.text2graph.builder.InMemoryObjectGraphGraphProjector
 import com.embabel.dice.text2graph.builder.KnowledgeGraphBuilders
-import com.embabel.dice.text2graph.builder.SourceAnalysisConfig
-import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
-import com.embabel.dice.common.resolver.InMemoryEntityResolver
 import com.embabel.dice.text2graph.support.LlmSourceAnalyzer
 import com.embabel.dice.text2graph.support.ParallelSourceAnalyzer
 import com.embabel.dice.text2graph.support.SourceAnalyzerProperties
@@ -231,7 +231,7 @@ internal class DiceShell(
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = schema,
             entityResolver = entityResolver,
-            )
+        )
 
 //        val entities = projector.project(chunks, sourceAnalysisContext)
 //        println(entities)
@@ -269,7 +269,7 @@ internal class DiceShell(
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = schema,
             entityResolver = entityResolver,
-            )
+        )
 
         val result = pipeline.process(chunks, sourceAnalysisConfig)
 
@@ -319,7 +319,7 @@ internal class DiceShell(
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = holmesSchema,
             entityResolver = entityResolver,
-            )
+        )
 
         val result = pipeline.process(chunks, sourceAnalysisConfig)
 
@@ -377,7 +377,7 @@ internal class DiceShell(
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = schema,
             entityResolver = entityResolver,
-            )
+        )
 
         println("\n=== Processing and Promoting ===")
 
@@ -522,7 +522,7 @@ internal class DiceShell(
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = schema,
             entityResolver = entityResolver,
-            )
+        )
 
         println("\n=== Extracting Propositions ===")
         val extractionResult = pipeline.process(chunks, sourceAnalysisConfig)
@@ -712,7 +712,7 @@ internal class DiceShell(
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = prologDemoSchema,
             entityResolver = entityResolver,
-            )
+        )
 
         println("\n=== Prolog Projection Demo ===\n")
 
@@ -896,7 +896,7 @@ internal class DiceShell(
         val sourceAnalysisConfig = SourceAnalysisConfig(
             schema = prologDemoSchema,
             entityResolver = entityResolver,
-            )
+        )
 
         println("\n=== Oracle Demo: Natural Language Q&A ===\n")
 

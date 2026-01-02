@@ -2,10 +2,9 @@ package com.embabel.dice.text2graph.support
 
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.agent.rag.model.NamedEntityData
-import com.embabel.dice.text2graph.SourceAnalyzer
-import com.embabel.dice.text2graph.*
-import com.embabel.dice.text2graph.builder.SourceAnalysisConfig
 import com.embabel.dice.common.DiceEventListener
+import com.embabel.dice.t.SourceAnalysisConfig
+import com.embabel.dice.text2graph.*
 import com.embabel.dice.text2graph.resolver.AcceptSuggestionRelationshipResolver
 import org.slf4j.LoggerFactory
 

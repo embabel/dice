@@ -7,14 +7,13 @@ import com.embabel.agent.rag.model.Chunk
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.common.Resolutions
-import com.embabel.dice.text2graph.SourceAnalyzer
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution
+import com.embabel.dice.t.SourceAnalysisConfig
+import com.embabel.dice.text2graph.SourceAnalyzer
 import com.embabel.dice.text2graph.SuggestedRelationship
 import com.embabel.dice.text2graph.SuggestedRelationships
-import com.embabel.dice.text2graph.*
-import com.embabel.dice.text2graph.builder.SourceAnalysisConfig
 import org.slf4j.LoggerFactory
 import org.springframework.boot.context.properties.ConfigurationProperties
 
@@ -24,7 +23,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
  */
 @ConfigurationProperties("embabel.dice.source-analyzer")
 data class SourceAnalyzerProperties(
-    
+
     /**
      * List of LLM configurations. If multiple are specified, they run in parallel
      * and results are merged with agreement voting.

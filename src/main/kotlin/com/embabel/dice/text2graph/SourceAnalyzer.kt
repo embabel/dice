@@ -4,7 +4,7 @@ import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntityResolution
-import com.embabel.dice.text2graph.builder.SourceAnalysisConfig
+import com.embabel.dice.t.SourceAnalysisConfig
 
 /**
  * Analyze text
