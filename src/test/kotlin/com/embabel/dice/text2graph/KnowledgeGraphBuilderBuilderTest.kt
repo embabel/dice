@@ -3,8 +3,8 @@ package com.embabel.dice.text2graph
 import com.embabel.agent.api.common.Ai
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.dice.common.SourceAnalysisConfig
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
-import com.embabel.dice.t.SourceAnalysisConfig
 import com.embabel.dice.text2graph.builder.InMemoryObjectGraphGraphProjector
 import com.embabel.dice.text2graph.builder.KnowledgeGraphBuilders
 import com.embabel.dice.text2graph.support.LlmSourceAnalyzer

@@ -6,6 +6,7 @@ import com.embabel.agent.rag.ingestion.ContentChunker
 import com.embabel.agent.rag.ingestion.TikaHierarchicalContentReader
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.EntityResolver
+import com.embabel.dice.common.SourceAnalysisConfig
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
 import com.embabel.dice.pipeline.PropositionBuilders
@@ -22,7 +23,6 @@ import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.extraction.LlmPropositionExtractor
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.query.oracle.ToolOracle
-import com.embabel.dice.t.SourceAnalysisConfig
 import com.embabel.dice.text2graph.SourceAnalyzer
 import com.embabel.dice.text2graph.builder.InMemoryObjectGraphGraphProjector
 import com.embabel.dice.text2graph.builder.KnowledgeGraphBuilders

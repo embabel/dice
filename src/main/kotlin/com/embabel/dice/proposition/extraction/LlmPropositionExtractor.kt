@@ -4,10 +4,10 @@ import com.embabel.agent.api.common.Ai
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.SourceAnalysisConfig
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.proposition.*
-import com.embabel.dice.t.SourceAnalysisConfig
 import org.slf4j.LoggerFactory
 
 /**

@@ -6,11 +6,7 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.common.ai.model.LlmOptions
-import com.embabel.dice.common.Resolutions
-import com.embabel.dice.common.SuggestedEntities
-import com.embabel.dice.common.SuggestedEntity
-import com.embabel.dice.common.SuggestedEntityResolution
-import com.embabel.dice.t.SourceAnalysisConfig
+import com.embabel.dice.common.*
 import com.embabel.dice.text2graph.SourceAnalyzer
 import com.embabel.dice.text2graph.SuggestedRelationship
 import com.embabel.dice.text2graph.SuggestedRelationships

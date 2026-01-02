@@ -1,7 +1,6 @@
-package com.embabel.dice.t
+package com.embabel.dice.common
 
 import com.embabel.agent.core.DataDictionary
-import com.embabel.dice.common.EntityResolver
 
 /**
  * Analyze sources

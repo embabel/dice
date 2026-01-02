@@ -4,11 +4,11 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.SourceAnalysisConfig
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.proposition.*
 import com.embabel.dice.proposition.revision.PropositionReviser
 import com.embabel.dice.proposition.revision.RevisionResult
-import com.embabel.dice.t.SourceAnalysisConfig
 import org.slf4j.LoggerFactory
 import kotlin.reflect.KClass
 
