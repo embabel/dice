@@ -1,5 +1,6 @@
 package com.embabel.dice.projection.memory
 
+import com.embabel.dice.common.EntityRequest
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import java.time.Instant
@@ -95,7 +96,7 @@ data class DefaultMemoryProjection(
         userId: String,
         scope: MemoryScope,
     ): UserProfile {
-        val propositions = store.findByEntity(userId)
+        val propositions = store.findByEntity(EntityRequest.forUser(userId))
             .filter { it.confidence >= confidenceThreshold }
             .filter { memoryTypeClassifier.classify(it) == MemoryType.SEMANTIC }
             .sortedByDescending { it.confidence }
@@ -113,7 +114,7 @@ data class DefaultMemoryProjection(
         since: Instant,
         limit: Int,
     ): List<Event> {
-        val propositions = store.findByEntity(userId)
+        val propositions = store.findByEntity(EntityRequest.forUser(userId))
             .filter { it.created.isAfter(since) }
             .filter { memoryTypeClassifier.classify(it) == MemoryType.EPISODIC }
             .sortedByDescending { it.created }
@@ -132,7 +133,7 @@ data class DefaultMemoryProjection(
     override fun projectBehavioralRules(
         userId: String,
     ): List<BehavioralRule> {
-        val propositions = store.findByEntity(userId)
+        val propositions = store.findByEntity(EntityRequest.forUser(userId))
             .filter { it.confidence >= confidenceThreshold }
             .filter { memoryTypeClassifier.classify(it) == MemoryType.PROCEDURAL }
             .sortedByDescending { it.confidence }

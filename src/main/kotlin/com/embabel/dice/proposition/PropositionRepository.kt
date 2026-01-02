@@ -6,6 +6,7 @@ import com.embabel.agent.rag.service.VectorSearch
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.util.loggerFor
+import com.embabel.dice.common.EntityRequest
 
 /**
  * Storage interface for propositions.
@@ -36,7 +37,7 @@ interface PropositionRepository : VectorSearch, TextSearch {
     /**
      * Find all propositions that mention a specific entity.
      */
-    fun findByEntity(entityId: String): List<Proposition>
+    fun findByEntity(entityRequest: EntityRequest): List<Proposition>
 
     /**
      * Find propositions similar to the given text using vector similarity.
@@ -85,8 +86,11 @@ interface PropositionRepository : VectorSearch, TextSearch {
         request: TextSimilaritySearchRequest,
         clazz: Class<T>,
     ): List<SimilarityResult<T>> {
-        if(clazz != Proposition::class.java) {
-            loggerFor<PropositionRepository>().warn("PropositionRepository only supports Proposition, not {}", clazz.simpleName)
+        if (clazz != Proposition::class.java) {
+            loggerFor<PropositionRepository>().warn(
+                "PropositionRepository only supports Proposition, not {}",
+                clazz.simpleName
+            )
             return emptyList()
         }
         return findSimilarWithScores(request) as List<SimilarityResult<T>>
@@ -98,8 +102,11 @@ interface PropositionRepository : VectorSearch, TextSearch {
         request: TextSimilaritySearchRequest,
         clazz: Class<T>,
     ): List<SimilarityResult<T>> {
-        if(clazz != Proposition::class.java) {
-            loggerFor<PropositionRepository>().warn("PropositionRepository only supports Proposition, not {}", clazz.simpleName)
+        if (clazz != Proposition::class.java) {
+            loggerFor<PropositionRepository>().warn(
+                "PropositionRepository only supports Proposition, not {}",
+                clazz.simpleName
+            )
             return emptyList()
         }
         // Default implementation falls back to vector search

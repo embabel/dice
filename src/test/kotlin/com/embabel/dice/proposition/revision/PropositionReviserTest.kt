@@ -3,6 +3,7 @@ package com.embabel.dice.proposition.revision
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
+import com.embabel.dice.common.EntityRequest
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
@@ -240,9 +241,9 @@ class TestPropositionRepository : PropositionRepository {
 
     override fun findById(id: String): Proposition? = propositions[id]
 
-    override fun findByEntity(entityId: String): List<Proposition> =
+    override fun findByEntity(entityRequest: EntityRequest): List<Proposition> =
         propositions.values.filter { prop ->
-            prop.mentions.any { it.resolvedId == entityId }
+            prop.mentions.any { it.resolvedId == entityRequest.id }
         }
 
     override fun findSimilar(request: TextSimilaritySearchRequest): List<Proposition> =

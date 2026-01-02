@@ -3,6 +3,7 @@ package com.embabel.dice.proposition.store
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.common.EntityRequest
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
@@ -23,7 +24,7 @@ class InMemoryPropositionRepository(
     override val luceneSyntaxNotes: String
         get() = "no lucene support"
 
-    override fun save(proposition: Proposition) : Proposition {
+    override fun save(proposition: Proposition): Proposition {
         propositions[proposition.id] = proposition
         embeddings[proposition.id] = embeddingService.embed(proposition.text)
         return proposition
@@ -31,9 +32,9 @@ class InMemoryPropositionRepository(
 
     override fun findById(id: String): Proposition? = propositions[id]
 
-    override fun findByEntity(entityId: String): List<Proposition> =
+    override fun findByEntity(entityRequest: EntityRequest): List<Proposition> =
         propositions.values.filter { proposition ->
-            proposition.mentions.any { it.resolvedId == entityId }
+            proposition.mentions.any { it.resolvedId == entityRequest.id }
         }
 
     override fun findSimilar(textSimilaritySearchRequest: TextSimilaritySearchRequest): List<Proposition> =

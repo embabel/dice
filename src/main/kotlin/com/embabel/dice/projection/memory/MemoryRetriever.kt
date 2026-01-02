@@ -1,7 +1,6 @@
 package com.embabel.dice.projection.memory
 
-import com.embabel.common.core.types.TextSimilaritySearchRequest
-import com.embabel.common.core.types.ZeroToOne
+import com.embabel.dice.common.EntityRequest
 import com.embabel.dice.proposition.Proposition
 import java.time.Instant
 
@@ -34,7 +33,7 @@ interface MemoryRetriever {
      * @return All propositions mentioning this entity
      */
     fun recallAbout(
-        entityId: String,
+        entityId: EntityRequest,
         scope: MemoryScope,
     ): List<Proposition>
 
