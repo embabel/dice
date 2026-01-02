@@ -230,9 +230,13 @@ class PropositionReviserTest {
 class TestPropositionRepository : PropositionRepository {
     private val propositions = ConcurrentHashMap<String, Proposition>()
 
-    override fun save(proposition: Proposition) {
+    override fun save(proposition: Proposition): Proposition {
         propositions[proposition.id] = proposition
+        return proposition
     }
+
+    override val luceneSyntaxNotes: String
+        get() = "not supported"
 
     override fun findById(id: String): Proposition? = propositions[id]
 

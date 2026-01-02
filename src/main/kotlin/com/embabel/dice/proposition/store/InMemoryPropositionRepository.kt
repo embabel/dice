@@ -10,7 +10,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * In-memory implementation of PropositionRepository with vector similarity search.
- * Thread-safe using ConcurrentHashMap.
+ * Thread-safe using ConcurrentHashMap, but not intended for production use.
  * Embeddings are computed and cached for cosine similarity search.
  */
 class InMemoryPropositionRepository(
@@ -20,9 +20,13 @@ class InMemoryPropositionRepository(
     private val propositions = ConcurrentHashMap<String, Proposition>()
     private val embeddings = ConcurrentHashMap<String, FloatArray>()
 
-    override fun save(proposition: Proposition) {
+    override val luceneSyntaxNotes: String
+        get() = "no lucene support"
+
+    override fun save(proposition: Proposition) : Proposition {
         propositions[proposition.id] = proposition
         embeddings[proposition.id] = embeddingService.embed(proposition.text)
+        return proposition
     }
 
     override fun findById(id: String): Proposition? = propositions[id]

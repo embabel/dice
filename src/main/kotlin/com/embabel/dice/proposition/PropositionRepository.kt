@@ -19,7 +19,7 @@ interface PropositionRepository : VectorSearch, TextSearch {
     /**
      * Save a proposition. If a proposition with the same ID exists, it will be replaced.
      */
-    fun save(proposition: Proposition)
+    fun save(proposition: Proposition): Proposition
 
     /**
      * Save multiple propositions.
@@ -42,7 +42,8 @@ interface PropositionRepository : VectorSearch, TextSearch {
      * Find propositions similar to the given text using vector similarity.
      * @return Similar propositions ordered by similarity (most similar first)
      */
-    fun findSimilar(textSimilaritySearchRequest: TextSimilaritySearchRequest): List<Proposition>
+    fun findSimilar(textSimilaritySearchRequest: TextSimilaritySearchRequest): List<Proposition> =
+        findSimilarWithScores(textSimilaritySearchRequest).map { it.match }
 
     /**
      * Find propositions similar to the given text with similarity scores.
@@ -50,12 +51,7 @@ interface PropositionRepository : VectorSearch, TextSearch {
      */
     fun findSimilarWithScores(
         textSimilaritySearchRequest: TextSimilaritySearchRequest,
-    ): List<SimilarityResult<Proposition>> = findSimilar(textSimilaritySearchRequest).map {
-        SimilarityResult(
-            match = it,
-            score = 1.0, // TODO Placeholder; real implementation should compute actual similarity
-        )
-    }
+    ): List<SimilarityResult<Proposition>>
 
     /**
      * Find all propositions with the given status.
@@ -90,7 +86,7 @@ interface PropositionRepository : VectorSearch, TextSearch {
         clazz: Class<T>,
     ): List<SimilarityResult<T>> {
         if(clazz != Proposition::class.java) {
-            loggerFor<PropositionRepository>().warn( "PropositionRepository only supports Proposition, not {}", clazz.simpleName)
+            loggerFor<PropositionRepository>().warn("PropositionRepository only supports Proposition, not {}", clazz.simpleName)
             return emptyList()
         }
         return findSimilarWithScores(request) as List<SimilarityResult<T>>
@@ -111,7 +107,4 @@ interface PropositionRepository : VectorSearch, TextSearch {
         return findSimilarWithScores(request) as List<SimilarityResult<T>>
     }
 
-    override val luceneSyntaxNotes: String
-        get() = "Default implementation uses vector similarity, not Lucene full-text search. " +
-                "Query string is used as-is for embedding similarity."
 }
