@@ -4,6 +4,7 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.proposition.*
 import com.embabel.dice.proposition.revision.PropositionReviser
@@ -260,17 +261,17 @@ class PropositionPipeline(
      * are stored directly.
      *
      * @param chunk The chunk to process
-     * @param config Configuration including schema
+     * @param context Configuration including schema
      * @return Processing result with propositions and optional revision results
      */
     fun processChunk(
         chunk: Chunk,
-        config: PropositionExtractionContext,
+        context: SourceAnalysisContext,
     ): ChunkPropositionResult {
         logger.debug("Processing chunk: {}", chunk.id)
 
         // Step 1: Extract propositions from chunk
-        val suggestedPropositions = extractor.extract(chunk, config)
+        val suggestedPropositions = extractor.extract(chunk, context)
         logger.debug("Extracted {} propositions", suggestedPropositions.propositions.size)
 
         // Step 2: Convert mentions to suggested entities
@@ -278,7 +279,7 @@ class PropositionPipeline(
         logger.debug("Created {} suggested entities", suggestedEntities.suggestedEntities.size)
 
         // Step 3: Resolve entities using existing resolver
-        val resolutions = config.entityResolver.resolve(suggestedEntities, config.schema)
+        val resolutions = context.entityResolver.resolve(suggestedEntities, context.schema)
         logger.debug("Resolved {} entities", resolutions.resolutions.size)
 
         // Step 4: Apply resolutions to create final propositions
@@ -318,17 +319,17 @@ class PropositionPipeline(
      * Process multiple chunks through the pipeline.
      *
      * @param chunks The chunks to process
-     * @param config Configuration including schema
+     * @param context Configuration including schema
      * @return Aggregated processing results
      */
     fun process(
         chunks: List<Chunk>,
-        config: PropositionExtractionContext,
+        context: SourceAnalysisContext,
     ): PropositionExtractionResult {
         logger.info("Processing {} chunks{}", chunks.size, if (reviser != null) " with revision" else "")
 
         val chunkResults = chunks.map { chunk ->
-            processChunk(chunk, config)
+            processChunk(chunk, context)
         }
 
         val allPropositions = chunkResults.flatMap { it.propositions }

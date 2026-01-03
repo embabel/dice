@@ -1,16 +1,19 @@
 You are extracting factual propositions from text.
 
-{% if context.directions %}
-    Consider the following direction: {{ context.directions }}
-{% endif %}
-
 Given the following text, extract all factual statements about entities.
 Each proposition should be a simple, self-contained English sentence expressing a single fact.
 
-Entity types (from schema):
+Entity types (from schema): [
 {% for domainType in context.schema.domainTypes %}
-    - {{ domainType.clazz.simpleName }}: {{ domainType.description }}
+    - {{ domainType.ownLabel }}: {{ domainType.description }}
 {% endfor %}
+]
+
+Known entities, likely to be linked: [
+{% for entity in context.knownEntities %}
+    - {{ entity.name }} ({{ entity.type }}, id={{ entity.id }}) - description: {{ entity.description }}
+{% endfor %}
+]
 
 For each proposition, provide:
 - text: The factual statement in natural English

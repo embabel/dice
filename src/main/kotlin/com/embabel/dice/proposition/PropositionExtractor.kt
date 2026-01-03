@@ -1,32 +1,7 @@
 package com.embabel.dice.proposition
 
-import com.embabel.agent.api.common.nested.ObjectCreationExample
-import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.*
-
-/**
- * Context for proposition extraction.
- *
- * @param schema Data dictionary defining the schema
- * @param entityResolver Resolver for entity disambiguation
- * @param examples Optional LLM examples for few-shot prompting
- * @param template Template name for LLM extraction. Template should use "context" and "chunk"
- * in the model.
- */
-class PropositionExtractionContext @JvmOverloads constructor(
-    schema: DataDictionary,
-    entityResolver: EntityResolver,
-    val examples: List<ObjectCreationExample<PropositionsResult>> = emptyList(),
-    val template: String = "propose_facts",
-) : SourceAnalysisContext(schema, entityResolver)
-
-/**
- * Class for parsing LLM output.
- */
-data class PropositionsResult(
-    val propositions: List<SuggestedProposition>,
-)
 
 /**
  * Extracts propositions from text chunks.
@@ -48,7 +23,7 @@ interface PropositionExtractor {
      */
     fun extract(
         chunk: Chunk,
-        context: PropositionExtractionContext,
+        context: SourceAnalysisContext,
     ): SuggestedPropositions
 
     /**

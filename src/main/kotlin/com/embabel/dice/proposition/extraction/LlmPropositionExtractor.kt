@@ -1,9 +1,11 @@
 package com.embabel.dice.proposition.extraction
 
 import com.embabel.agent.api.common.Ai
+import com.embabel.agent.api.common.nested.ObjectCreationExample
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.proposition.*
@@ -11,35 +13,86 @@ import org.slf4j.LoggerFactory
 
 /**
  * LLM-based proposition extractor.
- * Uses the propose_facts.jinja template to extract propositions from chunks.
+ * Uses a Jinja template to extract propositions from chunks.
  *
  * @param ai AI service for LLM calls
  * @param llmOptions LLM configuration
+ * @param template Template name for proposition extraction. Unless
+ * the TemplateResolver in use has been customized, this will be the path to a Jinja template.
+ * under /src/main/resources/prompts
+ * The templates should expect "context" and "chunk" variables.
+ * The default is "dice/extract_propositions". Users can override this
+ * or use it as an example for a custom template. It can include other elements
+ * with paths under the TemplateRenderer's configured base path.
+ * @param examples Optional list of examples for few-shot prompting.
  */
-class LlmPropositionExtractor(
+data class LlmPropositionExtractor(
+    private val llmOptions: LlmOptions,
     private val ai: Ai,
-    private val llmOptions: LlmOptions = LlmOptions(),
+    private val template: String = "dice/extract_propositions",
+    private val examples: List<ObjectCreationExample<PropositionsResult>> = emptyList(),
 ) : PropositionExtractor {
+
+    companion object {
+
+        @JvmStatic
+        fun withLlm(
+            llm: LlmOptions,
+        ): Builder {
+            return Builder(llm)
+        }
+
+        class Builder(
+            private val llmOptions: LlmOptions,
+        ) {
+
+            fun withAi(ai: Ai): LlmPropositionExtractor =
+                LlmPropositionExtractor(
+                    ai = ai,
+                    llmOptions = llmOptions,
+                )
+        }
+    }
 
     private val logger = LoggerFactory.getLogger(LlmPropositionExtractor::class.java)
 
+    fun withExample(example: ObjectCreationExample<PropositionsResult>): LlmPropositionExtractor {
+        return this.copy(
+            examples = this.examples + example,
+        )
+    }
+
+    fun withExamples(
+        examples: List<ObjectCreationExample<PropositionsResult>>
+    ): LlmPropositionExtractor {
+        return this.copy(
+            examples = this.examples + examples,
+        )
+    }
+
+    fun withTemplate(templateName: String): LlmPropositionExtractor {
+        return this.copy(
+            template = templateName,
+        )
+    }
+
     override fun extract(
         chunk: Chunk,
-        context: PropositionExtractionContext,
+        context: SourceAnalysisContext,
     ): SuggestedPropositions {
         logger.debug("Extracting propositions from chunk {}", chunk.id)
 
         val result = ai
             .withLlm(llmOptions)
-            .withId("propose-facts")
+            .withId("extract-propositions")
             .creating(PropositionsResult::class.java)
-            .withExamples(context.examples)
+            .withExamples(examples)
             .fromTemplate(
-                templateName = context.template,
+                templateName = template,
                 model = mapOf(
                     "context" to context,
                     "chunk" to chunk,
-                )
+                ) + context.templateModel,
             )
 
         logger.debug("Extracted {} propositions from chunk {}", result.propositions.size, chunk.id)
@@ -123,3 +176,10 @@ class LlmPropositionExtractor(
     }
 
 }
+
+/**
+ * Class for parsing LLM output.
+ */
+data class PropositionsResult(
+    val propositions: List<SuggestedProposition>,
+)

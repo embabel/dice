@@ -5,6 +5,7 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.ingestion.ContentChunker
 import com.embabel.agent.rag.ingestion.TikaHierarchicalContentReader
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
@@ -18,7 +19,6 @@ import com.embabel.dice.projection.prolog.DefaultPrologProjector
 import com.embabel.dice.projection.prolog.PrologEngine
 import com.embabel.dice.projection.prolog.PrologSchema
 import com.embabel.dice.proposition.Proposition
-import com.embabel.dice.proposition.PropositionExtractionContext
 import com.embabel.dice.proposition.PropositionExtractor
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.extraction.LlmPropositionExtractor
@@ -106,10 +106,10 @@ internal class DiceShell(
         val llmOptions = sourceAnalyzerProperties.llms.firstOrNull()
         if (llmOptions != null) {
             logger.info("Creating proposition extractor with LLM: {}", llmOptions.model)
-            LlmPropositionExtractor(ai, llmOptions)
+            LlmPropositionExtractor(llmOptions, ai)
         } else {
             logger.info("Creating proposition extractor with default LLM")
-            LlmPropositionExtractor(ai)
+            LlmPropositionExtractor(LlmOptions(), ai)
         }
     }
 
@@ -267,12 +267,12 @@ internal class DiceShell(
                 parentId = "",
             )
         )
-        val context = PropositionExtractionContext(
+        val sourceAnalysisContext = SourceAnalysisContext(
             schema = schema,
             entityResolver = entityResolver,
         )
 
-        val result = pipeline.process(chunks, context)
+        val result = pipeline.process(chunks, sourceAnalysisContext)
 
         println("\n=== Proposition Extraction Results ===")
         println("Total propositions: ${result.totalPropositions}")
@@ -317,12 +317,12 @@ internal class DiceShell(
             .withStore(propositionRepository)
             .build()
 
-        val context = PropositionExtractionContext(
+        val sourceAnalysisContext = SourceAnalysisContext(
             schema = holmesSchema,
             entityResolver = entityResolver,
         )
 
-        val result = pipeline.process(chunks, context)
+        val result = pipeline.process(chunks, sourceAnalysisContext)
 
         println("\n=== Proposition Extraction Results ===")
         println("Total propositions: ${result.totalPropositions}")
@@ -375,7 +375,7 @@ internal class DiceShell(
             )
         )
 
-        val context = PropositionExtractionContext(
+        val sourceAnalysisContext = SourceAnalysisContext(
             schema = schema,
             entityResolver = entityResolver,
         )
@@ -383,7 +383,7 @@ internal class DiceShell(
         println("\n=== Processing and Promoting ===")
 
         // First extract propositions
-        val extractionResult = pipeline.process(chunks, context)
+        val extractionResult = pipeline.process(chunks, sourceAnalysisContext)
 
         println("\n--- Extraction Results ---")
         println("Total propositions: ${extractionResult.totalPropositions}")
@@ -403,7 +403,7 @@ internal class DiceShell(
 
         // Then project to graph
         println("\n--- Projecting to Relationships ---")
-        val graphResult = pipeline.project(GraphProjector::class, extractionResult, context.schema)
+        val graphResult = pipeline.project(GraphProjector::class, extractionResult, sourceAnalysisContext.schema)
 
         println("\n--- Projection Results ---")
         println("Projected: ${graphResult.successCount}")
@@ -520,13 +520,13 @@ internal class DiceShell(
             )
         )
 
-        val context = PropositionExtractionContext(
+        val sourceAnalysisContext = SourceAnalysisContext(
             schema = schema,
             entityResolver = entityResolver,
         )
 
         println("\n=== Extracting Propositions ===")
-        val extractionResult = pipeline.process(chunks, context)
+        val extractionResult = pipeline.process(chunks, sourceAnalysisContext)
         println("Extracted ${extractionResult.totalPropositions} propositions")
 
         // Find Alice's entity ID (assuming she was resolved)
@@ -710,7 +710,7 @@ internal class DiceShell(
             )
         )
 
-        val context = PropositionExtractionContext(
+        val sourceAnalysisContext = SourceAnalysisContext(
             schema = prologDemoSchema,
             entityResolver = entityResolver,
         )
@@ -719,7 +719,7 @@ internal class DiceShell(
 
         // Step 1: Extract propositions
         println("--- Step 1: Extracting Propositions ---")
-        val extractionResult = pipeline.process(chunks, context)
+        val extractionResult = pipeline.process(chunks, sourceAnalysisContext)
         println("Extracted ${extractionResult.totalPropositions} propositions")
         println("Fully resolved: ${extractionResult.fullyResolvedCount}")
 
@@ -894,7 +894,7 @@ internal class DiceShell(
             )
         )
 
-        val context = PropositionExtractionContext(
+        val sourceAnalysisContext = SourceAnalysisContext(
             schema = prologDemoSchema,
             entityResolver = entityResolver,
         )
@@ -903,7 +903,7 @@ internal class DiceShell(
 
         // Step 1: Build the knowledge base
         println("--- Building Knowledge Base ---")
-        val extractionResult = pipeline.process(chunks, context)
+        val extractionResult = pipeline.process(chunks, sourceAnalysisContext)
         println("Extracted ${extractionResult.totalPropositions} propositions")
 
         val graphResult = pipeline.project(GraphProjector::class, extractionResult, prologDemoSchema)
