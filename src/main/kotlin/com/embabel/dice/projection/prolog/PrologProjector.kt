@@ -2,12 +2,9 @@ package com.embabel.dice.projection.prolog
 
 import com.embabel.agent.core.DataDictionary
 import com.embabel.dice.projection.graph.GraphProjector
+import org.jetbrains.annotations.ApiStatus
 import com.embabel.dice.projection.graph.ProjectedRelationship
-import com.embabel.dice.proposition.ProjectionFailed
-import com.embabel.dice.proposition.ProjectionResult
-import com.embabel.dice.proposition.ProjectionSuccess
-import com.embabel.dice.proposition.Projector
-import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.*
 import org.slf4j.LoggerFactory
 
 /**
@@ -79,6 +76,7 @@ import org.slf4j.LoggerFactory
  *
  * This avoids duplicating LLM classification logic across projectors.
  */
+@ApiStatus.Experimental
 interface PrologProjector : Projector<PrologFact> {
 
     /**
@@ -148,7 +146,7 @@ class DefaultPrologProjector(
             ?: return ProjectionFailed(
                 proposition,
                 "No GraphProjector configured. Use projectAll(relationships) with pre-classified relationships, " +
-                    "or configure a GraphProjector for direct proposition projection."
+                        "or configure a GraphProjector for direct proposition projection."
             )
 
         // Delegate classification to the GraphProjector
@@ -157,6 +155,7 @@ class DefaultPrologProjector(
                 val fact = projectRelationship(graphResult.projected)
                 ProjectionSuccess(proposition, fact)
             }
+
             is ProjectionFailed -> ProjectionFailed(proposition, graphResult.reason)
             is com.embabel.dice.proposition.ProjectionSkipped ->
                 ProjectionFailed(proposition, graphResult.reason)

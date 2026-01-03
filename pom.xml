@@ -69,6 +69,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- JetBrains annotations for @ApiStatus -->
+        <dependency>
+            <groupId>org.jetbrains</groupId>
+            <artifactId>annotations</artifactId>
+            <version>26.0.1</version>
+        </dependency>
+
         <!-- https://mvnrepository.com/artifact/org.javers/javers-core -->
         <dependency>
             <groupId>org.javers</groupId>
