@@ -1,6 +1,7 @@
 package com.embabel.dice.proposition
 
 import com.embabel.agent.rag.model.Retrievable
+import com.embabel.agent.rag.service.CoreSearchOperations
 import com.embabel.agent.rag.service.TextSearch
 import com.embabel.agent.rag.service.VectorSearch
 import com.embabel.common.core.types.SimilarityResult
@@ -15,7 +16,18 @@ import com.embabel.dice.common.EntityRequest
  * Implements [VectorSearch] and [TextSearch] for compatibility with RAG operations,
  * but only supports [Proposition] as the retrievable type.
  */
-interface PropositionRepository : VectorSearch, TextSearch {
+interface PropositionRepository : CoreSearchOperations {
+
+    override fun supportedRetrievableTypes(): Set<Class<out Retrievable>> {
+        return setOf(Proposition::class.java)
+    }
+
+    override fun <T : Retrievable> findById(
+        id: String,
+        clazz: Class<T>
+    ): T? {
+        return findById(id) as T?
+    }
 
     /**
      * Save a proposition. If a proposition with the same ID exists, it will be replaced.
