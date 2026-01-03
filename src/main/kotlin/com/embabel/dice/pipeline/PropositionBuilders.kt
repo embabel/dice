@@ -4,7 +4,6 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.Resolutions
-import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.proposition.*
 import com.embabel.dice.proposition.revision.PropositionReviser
@@ -266,7 +265,7 @@ class PropositionPipeline(
      */
     fun processChunk(
         chunk: Chunk,
-        config: SourceAnalysisContext,
+        config: PropositionExtractionContext,
     ): ChunkPropositionResult {
         logger.debug("Processing chunk: {}", chunk.id)
 
@@ -324,7 +323,7 @@ class PropositionPipeline(
      */
     fun process(
         chunks: List<Chunk>,
-        config: SourceAnalysisContext,
+        config: PropositionExtractionContext,
     ): PropositionExtractionResult {
         logger.info("Processing {} chunks{}", chunks.size, if (reviser != null) " with revision" else "")
 

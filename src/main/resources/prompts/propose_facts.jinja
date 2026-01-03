@@ -1,7 +1,7 @@
 You are extracting factual propositions from text.
 
 {% if context.directions %}
-Consider the following direction: {{ context.directions }}
+    Consider the following direction: {{ context.directions }}
 {% endif %}
 
 Given the following text, extract all factual statements about entities.
@@ -9,16 +9,16 @@ Each proposition should be a simple, self-contained English sentence expressing 
 
 Entity types (from schema):
 {% for domainType in context.schema.domainTypes %}
-- {{ domainType.clazz.simpleName }}: {{ domainType.description }}
+    - {{ domainType.clazz.simpleName }}: {{ domainType.description }}
 {% endfor %}
 
 For each proposition, provide:
 - text: The factual statement in natural English
 - mentions: List of entities referenced, each with:
-  - span: The exact text as it appears in the proposition
-  - suggestedType: Entity type from the schema above
-  - suggestedId: UUID if already known, otherwise null
-  - role: SUBJECT, OBJECT, or OTHER
+- span: The exact text as it appears in the proposition
+- suggestedType: Entity type from the schema above
+- suggestedId: UUID if already known, otherwise null
+- role: SUBJECT, OBJECT, or OTHER
 - confidence: 0.0-1.0 how certain you are this fact is true
 - decay: 0.0-1.0 how quickly this information becomes stale (0.0=permanent fact, 1.0=very temporary)
 - reasoning: Brief explanation of why you extracted this
@@ -27,30 +27,15 @@ Guidelines:
 - Extract one proposition per fact (avoid compound statements)
 - Each proposition should have at most TWO entity mentions (one SUBJECT, one OBJECT)
 - If a sentence implies multiple relationships, create multiple propositions
-  Example: "Alice introduced Bob to Charlie" → two propositions:
-    1. "Alice introduced Bob" (Alice=SUBJECT, Bob=OBJECT)
-    2. "Alice introduced Charlie" (Alice=SUBJECT, Charlie=OBJECT)
+Example: "Alice introduced Bob to Charlie" → two propositions:
+1. "Alice introduced Bob" (Alice=SUBJECT, Bob=OBJECT)
+2. "Alice introduced Charlie" (Alice=SUBJECT, Charlie=OBJECT)
 - Use entity types from the schema only
 - High confidence for explicit statements, lower for inferences
 - Low decay for biographical facts (name, expertise), high decay for current state (location, mood)
 - Include unresolved entities (e.g., "someone", "a company") - mark them with null suggestedId
 - IMPORTANT: Extract ALL relevant facts, do not skip any
 
-Example output format:
-{
-  "propositions": [
-    {
-      "text": "Jim is an expert in GOAP",
-      "mentions": [
-        {"span": "Jim", "suggestedType": "Person", "suggestedId": null, "role": "SUBJECT"},
-        {"span": "GOAP", "suggestedType": "Technology", "suggestedId": null, "role": "OBJECT"}
-      ],
-      "confidence": 0.95,
-      "decay": 0.1,
-      "reasoning": "Explicit statement about expertise"
-    }
-  ]
-}
 
 # TEXT
 {{ chunk.text }}

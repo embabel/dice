@@ -4,7 +4,6 @@ import com.embabel.agent.api.common.Ai
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.common.Resolutions
-import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.proposition.*
@@ -26,7 +25,7 @@ class LlmPropositionExtractor(
 
     override fun extract(
         chunk: Chunk,
-        context: SourceAnalysisContext,
+        context: PropositionExtractionContext,
     ): SuggestedPropositions {
         logger.debug("Extracting propositions from chunk {}", chunk.id)
 
@@ -34,9 +33,10 @@ class LlmPropositionExtractor(
             .withLlm(llmOptions)
             .withId("propose-facts")
             .creating(PropositionsResult::class.java)
+            .withExamples(context.examples)
             .fromTemplate(
-                "propose_facts",
-                mapOf(
+                templateName = context.template,
+                model = mapOf(
                     "context" to context,
                     "chunk" to chunk,
                 )
@@ -121,11 +121,5 @@ class LlmPropositionExtractor(
 
         return map
     }
-}
 
-/**
- * Internal class for parsing LLM output.
- */
-internal data class PropositionsResult(
-    val propositions: List<SuggestedProposition>,
-)
+}
