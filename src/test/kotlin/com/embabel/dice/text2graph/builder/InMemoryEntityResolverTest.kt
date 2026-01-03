@@ -40,7 +40,8 @@ class InMemoryEntityResolverTest {
             SuggestedEntity(
                 labels = listOf("Person"),
                 name = "Alice",
-                summary = "A person"
+                summary = "A person",
+                chunkId = "test-chunk"
             )
         )
 
@@ -56,13 +57,13 @@ class InMemoryEntityResolverTest {
     fun `should match existing entity with exact same name`() {
         // First, add an entity
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person")
+            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person", chunkId = "test-chunk")
         )
         resolver.resolve(first, schema)
 
         // Then try to add the same entity
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "Same person")
+            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "Same person", chunkId = "test-chunk")
         )
         val resolutions = resolver.resolve(second, schema)
 
@@ -74,12 +75,12 @@ class InMemoryEntityResolverTest {
     @Test
     fun `should match with case-insensitive name`() {
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person")
+            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person", chunkId = "test-chunk")
         )
         resolver.resolve(first, schema)
 
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "ALICE", summary = "Same person")
+            SuggestedEntity(labels = listOf("Person"), name = "ALICE", summary = "Same person", chunkId = "test-chunk")
         )
         val resolutions = resolver.resolve(second, schema)
 
@@ -90,12 +91,12 @@ class InMemoryEntityResolverTest {
     @Test
     fun `should match with different case variations`() {
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Sherlock Holmes", summary = "A detective")
+            SuggestedEntity(labels = listOf("Person"), name = "Sherlock Holmes", summary = "A detective", chunkId = "test-chunk")
         )
         resolver.resolve(first, schema)
 
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "sherlock holmes", summary = "Same detective")
+            SuggestedEntity(labels = listOf("Person"), name = "sherlock holmes", summary = "Same detective", chunkId = "test-chunk")
         )
         val resolutions = resolver.resolve(second, schema)
 
@@ -106,12 +107,12 @@ class InMemoryEntityResolverTest {
     @Test
     fun `should match when title is added or removed`() {
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Watson", summary = "A doctor")
+            SuggestedEntity(labels = listOf("Person"), name = "Watson", summary = "A doctor", chunkId = "test-chunk")
         )
         resolver.resolve(first, schema)
 
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Dr. Watson", summary = "Same doctor")
+            SuggestedEntity(labels = listOf("Person"), name = "Dr. Watson", summary = "Same doctor", chunkId = "test-chunk")
         )
         val resolutions = resolver.resolve(second, schema)
 
@@ -122,12 +123,12 @@ class InMemoryEntityResolverTest {
     @Test
     fun `should match when suffix is added or removed`() {
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "John Smith Jr.", summary = "A person")
+            SuggestedEntity(labels = listOf("Person"), name = "John Smith Jr.", summary = "A person", chunkId = "test-chunk")
         )
         resolver.resolve(first, schema)
 
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "John Smith", summary = "Same person")
+            SuggestedEntity(labels = listOf("Person"), name = "John Smith", summary = "Same person", chunkId = "test-chunk")
         )
         val resolutions = resolver.resolve(second, schema)
 
@@ -138,13 +139,13 @@ class InMemoryEntityResolverTest {
     @Test
     fun `should match with small typos using Levenshtein distance`() {
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Sherlock", summary = "A detective")
+            SuggestedEntity(labels = listOf("Person"), name = "Sherlock", summary = "A detective", chunkId = "test-chunk")
         )
         resolver.resolve(first, schema)
 
         // "Sherlok" is 1 character different from "Sherlock" (8 chars, 0.125 ratio < 0.2)
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Sherlok", summary = "Same detective")
+            SuggestedEntity(labels = listOf("Person"), name = "Sherlok", summary = "Same detective", chunkId = "test-chunk")
         )
         val resolutions = resolver.resolve(second, schema)
 
@@ -155,13 +156,13 @@ class InMemoryEntityResolverTest {
     @Test
     fun `should not match with too many differences`() {
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person")
+            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person", chunkId = "test-chunk")
         )
         resolver.resolve(first, schema)
 
         // "Bobby" is too different from "Alice"
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Bobby", summary = "Different person")
+            SuggestedEntity(labels = listOf("Person"), name = "Bobby", summary = "Different person", chunkId = "test-chunk")
         )
         val resolutions = resolver.resolve(second, schema)
 
@@ -172,13 +173,13 @@ class InMemoryEntityResolverTest {
     @Test
     fun `should not match entities with incompatible labels`() {
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Rex", summary = "A person named Rex")
+            SuggestedEntity(labels = listOf("Person"), name = "Rex", summary = "A person named Rex", chunkId = "test-chunk")
         )
         resolver.resolve(first, schema)
 
         // Same name but different label
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Animal"), name = "Rex", summary = "A dog named Rex")
+            SuggestedEntity(labels = listOf("Animal"), name = "Rex", summary = "A dog named Rex", chunkId = "test-chunk")
         )
         val resolutions = resolver.resolve(second, schema)
 
@@ -189,12 +190,12 @@ class InMemoryEntityResolverTest {
     @Test
     fun `should match entities with case-insensitive labels`() {
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person")
+            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person", chunkId = "test-chunk")
         )
         resolver.resolve(first, schema)
 
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("PERSON"), name = "Alice", summary = "Same person")
+            SuggestedEntity(labels = listOf("PERSON"), name = "Alice", summary = "Same person", chunkId = "test-chunk")
         )
         val resolutions = resolver.resolve(second, schema)
 
@@ -207,13 +208,13 @@ class InMemoryEntityResolverTest {
         val resolver = InMemoryEntityResolver(InMemoryEntityResolver.Config(minLengthForFuzzy = 4))
 
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Bob", summary = "A person")
+            SuggestedEntity(labels = listOf("Person"), name = "Bob", summary = "A person", chunkId = "test-chunk")
         )
         resolver.resolve(first, schema)
 
         // "Rob" is 1 char different from "Bob" but should not match due to short length
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Rob", summary = "Different person")
+            SuggestedEntity(labels = listOf("Person"), name = "Rob", summary = "Different person", chunkId = "test-chunk")
         )
         val resolutions = resolver.resolve(second, schema)
 
@@ -224,15 +225,15 @@ class InMemoryEntityResolverTest {
     @Test
     fun `should handle multiple entities in single resolution`() {
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person"),
-            SuggestedEntity(labels = listOf("Animal"), name = "Rex", summary = "A dog")
+            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person", chunkId = "test-chunk"),
+            SuggestedEntity(labels = listOf("Animal"), name = "Rex", summary = "A dog", chunkId = "test-chunk")
         )
         resolver.resolve(first, schema)
 
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "alice", summary = "Same person"),
-            SuggestedEntity(labels = listOf("Person"), name = "Bob", summary = "New person"),
-            SuggestedEntity(labels = listOf("Animal"), name = "REX", summary = "Same dog")
+            SuggestedEntity(labels = listOf("Person"), name = "alice", summary = "Same person", chunkId = "test-chunk"),
+            SuggestedEntity(labels = listOf("Person"), name = "Bob", summary = "New person", chunkId = "test-chunk"),
+            SuggestedEntity(labels = listOf("Animal"), name = "REX", summary = "Same dog", chunkId = "test-chunk")
         )
         val resolutions = resolver.resolve(second, schema)
 
@@ -246,7 +247,7 @@ class InMemoryEntityResolverTest {
     @Test
     fun `should clear resolved entities`() {
         val suggested = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person")
+            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person", chunkId = "test-chunk")
         )
         resolver.resolve(suggested, schema)
         assertEquals(1, resolver.size())
@@ -265,13 +266,13 @@ class InMemoryEntityResolverTest {
         val strictResolver = InMemoryEntityResolver(InMemoryEntityResolver.Config(maxDistanceRatio = 0.05))
 
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Sherlock", summary = "A detective")
+            SuggestedEntity(labels = listOf("Person"), name = "Sherlock", summary = "A detective", chunkId = "test-chunk")
         )
         strictResolver.resolve(first, schema)
 
         // With strict ratio, "Sherlok" should NOT match "Sherlock"
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Sherlok", summary = "Different")
+            SuggestedEntity(labels = listOf("Person"), name = "Sherlok", summary = "Different", chunkId = "test-chunk")
         )
         val resolutions = strictResolver.resolve(second, schema)
 
@@ -280,29 +281,28 @@ class InMemoryEntityResolverTest {
 
     @Test
     fun `should preserve chunk IDs in resolution`() {
-        val chunkIds = setOf("chunk-1", "chunk-2")
         val suggested = SuggestedEntities(
-            chunkIds = chunkIds,
             suggestedEntities = listOf(
-                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person")
+                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person", chunkId = "chunk-1"),
+                SuggestedEntity(labels = listOf("Person"), name = "Bob", summary = "A person", chunkId = "chunk-2")
             )
         )
 
         val resolutions = resolver.resolve(suggested, schema)
 
-        assertEquals(chunkIds, resolutions.chunkIds)
+        assertEquals(setOf("chunk-1", "chunk-2"), resolutions.chunkIds)
     }
 
     @Test
     fun `should match partial names - last name only`() {
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Sherlock Holmes", summary = "A detective")
+            SuggestedEntity(labels = listOf("Person"), name = "Sherlock Holmes", summary = "A detective", chunkId = "test-chunk")
         )
         resolver.resolve(first, schema)
 
         // "Holmes" should match "Sherlock Holmes"
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Holmes", summary = "Same detective")
+            SuggestedEntity(labels = listOf("Person"), name = "Holmes", summary = "Same detective", chunkId = "test-chunk")
         )
         val resolutions = resolver.resolve(second, schema)
 
@@ -313,13 +313,13 @@ class InMemoryEntityResolverTest {
     @Test
     fun `should match partial names - Victor Savage to Savage`() {
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Victor Savage", summary = "A victim")
+            SuggestedEntity(labels = listOf("Person"), name = "Victor Savage", summary = "A victim", chunkId = "test-chunk")
         )
         resolver.resolve(first, schema)
 
         // "Savage" should match "Victor Savage"
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Savage", summary = "Same victim")
+            SuggestedEntity(labels = listOf("Person"), name = "Savage", summary = "Same victim", chunkId = "test-chunk")
         )
         val resolutions = resolver.resolve(second, schema)
 
@@ -330,13 +330,13 @@ class InMemoryEntityResolverTest {
     @Test
     fun `should not match short partial names`() {
         val first = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "John Doe", summary = "A person")
+            SuggestedEntity(labels = listOf("Person"), name = "John Doe", summary = "A person", chunkId = "test-chunk")
         )
         resolver.resolve(first, schema)
 
         // "Doe" is only 3 chars, should not match
         val second = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Doe", summary = "Different person")
+            SuggestedEntity(labels = listOf("Person"), name = "Doe", summary = "Different person", chunkId = "test-chunk")
         )
         val resolutions = resolver.resolve(second, schema)
 
@@ -346,7 +346,6 @@ class InMemoryEntityResolverTest {
 
     private fun createSuggestedEntities(vararg entities: SuggestedEntity): SuggestedEntities {
         return SuggestedEntities(
-            chunkIds = setOf("test-chunk"),
             suggestedEntities = entities.toList()
         )
     }
@@ -391,12 +390,12 @@ class InMemoryEntityResolverTest {
         fun `should merge Person Sherlock Holmes with Detective Holmes`() {
             // First chunk: "Sherlock Holmes" as Person
             val chunk1 = SuggestedEntities(
-                chunkIds = setOf("chunk1"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Person"),
                         name = "Sherlock Holmes",
-                        summary = "A remarkable lodger"
+                        summary = "A remarkable lodger",
+                        chunkId = "chunk1"
                     )
                 )
             )
@@ -407,12 +406,12 @@ class InMemoryEntityResolverTest {
 
             // Second chunk: "Holmes" as Detective
             val chunk2 = SuggestedEntities(
-                chunkIds = setOf("chunk2"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Detective"),
                         name = "Holmes",
-                        summary = "The detective solving the case"
+                        summary = "The detective solving the case",
+                        chunkId = "chunk2"
                     )
                 )
             )
@@ -438,12 +437,12 @@ class InMemoryEntityResolverTest {
         fun `should merge Detective Holmes with Person Sherlock Holmes`() {
             // First chunk: "Holmes" as Detective
             val chunk1 = SuggestedEntities(
-                chunkIds = setOf("chunk1"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Detective"),
                         name = "Holmes",
-                        summary = "The detective"
+                        summary = "The detective",
+                        chunkId = "chunk1"
                     )
                 )
             )
@@ -454,12 +453,12 @@ class InMemoryEntityResolverTest {
 
             // Second chunk: "Sherlock Holmes" as Person
             val chunk2 = SuggestedEntities(
-                chunkIds = setOf("chunk2"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Person"),
                         name = "Sherlock Holmes",
-                        summary = "The lodger"
+                        summary = "The lodger",
+                        chunkId = "chunk2"
                     )
                 )
             )
@@ -485,12 +484,12 @@ class InMemoryEntityResolverTest {
         fun `should handle fully qualified labels in stored entities`() {
             // First, manually check what labels look like after resolution
             val chunk1 = SuggestedEntities(
-                chunkIds = setOf("chunk1"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Person"),
                         name = "Sherlock Holmes",
-                        summary = "A person"
+                        summary = "A person",
+                        chunkId = "chunk1"
                     )
                 )
             )
@@ -501,12 +500,12 @@ class InMemoryEntityResolverTest {
 
             // Second chunk with Detective label
             val chunk2 = SuggestedEntities(
-                chunkIds = setOf("chunk2"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Detective"),
                         name = "Holmes",
-                        summary = "A detective"
+                        summary = "A detective",
+                        chunkId = "chunk2"
                     )
                 )
             )
@@ -536,12 +535,12 @@ class InMemoryEntityResolverTest {
 
             // First chunk: LLM returns fully qualified Person label
             val chunk1 = SuggestedEntities(
-                chunkIds = setOf("chunk1"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("com.embabel.dice.shell.Person"),
                         name = "Sherlock Holmes",
-                        summary = "A remarkable lodger"
+                        summary = "A remarkable lodger",
+                        chunkId = "chunk1"
                     )
                 )
             )
@@ -554,12 +553,12 @@ class InMemoryEntityResolverTest {
 
             // Second chunk: LLM returns fully qualified Detective label
             val chunk2 = SuggestedEntities(
-                chunkIds = setOf("chunk2"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("com.embabel.dice.shell.Detective"),
                         name = "Holmes",
-                        summary = "The detective"
+                        summary = "The detective",
+                        chunkId = "chunk2"
                     )
                 )
             )
@@ -589,12 +588,12 @@ class InMemoryEntityResolverTest {
         fun `merged entity should have both Person and Detective labels`() {
             // First chunk: Person
             val chunk1 = SuggestedEntities(
-                chunkIds = setOf("chunk1"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Person"),
                         name = "Sherlock Holmes",
-                        summary = "A remarkable lodger"
+                        summary = "A remarkable lodger",
+                        chunkId = "chunk1"
                     )
                 )
             )
@@ -604,12 +603,12 @@ class InMemoryEntityResolverTest {
 
             // Second chunk: Detective
             val chunk2 = SuggestedEntities(
-                chunkIds = setOf("chunk2"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Detective"),
                         name = "Holmes",
-                        summary = "The detective solving the case"
+                        summary = "The detective solving the case",
+                        chunkId = "chunk2"
                     )
                 )
             )
@@ -636,12 +635,12 @@ class InMemoryEntityResolverTest {
         fun `should match simple label against fully qualified label`() {
             // First: fully qualified
             val chunk1 = SuggestedEntities(
-                chunkIds = setOf("chunk1"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("com.embabel.dice.shell.Person"),
                         name = "Dr. Watson",
-                        summary = "A doctor"
+                        summary = "A doctor",
+                        chunkId = "chunk1"
                     )
                 )
             )
@@ -649,12 +648,12 @@ class InMemoryEntityResolverTest {
 
             // Second: simple label
             val chunk2 = SuggestedEntities(
-                chunkIds = setOf("chunk2"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Person"),
                         name = "Watson",
-                        summary = "Holmes's friend"
+                        summary = "Holmes's friend",
+                        chunkId = "chunk2"
                     )
                 )
             )
@@ -684,7 +683,7 @@ class InMemoryEntityResolverTest {
         fun `resolver should return exactly one resolution per suggested entity`() {
             // First chunk: create Watson
             val chunk1 = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Dr. Watson", summary = "A doctor")
+                SuggestedEntity(labels = listOf("Person"), name = "Dr. Watson", summary = "A doctor", chunkId = "test-chunk")
             )
             val chunk1Resolutions = resolver.resolve(chunk1, schema)
 
@@ -693,7 +692,7 @@ class InMemoryEntityResolverTest {
 
             // Second chunk: Watson again (should match existing)
             val chunk2 = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Watson", summary = "The doctor")
+                SuggestedEntity(labels = listOf("Person"), name = "Watson", summary = "The doctor", chunkId = "test-chunk")
             )
             val chunk2Resolutions = resolver.resolve(chunk2, schema)
 
@@ -702,7 +701,7 @@ class InMemoryEntityResolverTest {
 
             // Third chunk: Watson again
             val chunk3 = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Dr. Watson", summary = "Holmes's friend")
+                SuggestedEntity(labels = listOf("Person"), name = "Dr. Watson", summary = "Holmes's friend", chunkId = "test-chunk")
             )
             val chunk3Resolutions = resolver.resolve(chunk3, schema)
 
@@ -722,28 +721,28 @@ class InMemoryEntityResolverTest {
 
             // Chunk 1: Watson as new entity
             val chunk1 = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Dr. Watson", summary = "A doctor")
+                SuggestedEntity(labels = listOf("Person"), name = "Dr. Watson", summary = "A doctor", chunkId = "chunk1")
             )
             val chunk1Resolutions = resolver.resolve(chunk1, schema)
             entityMerges += UseNewEntityMergePolicy.determineEntities(chunk1Resolutions, schema).merges
 
             // Chunk 2: Watson again (merged)
             val chunk2 = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Watson", summary = "The doctor")
+                SuggestedEntity(labels = listOf("Person"), name = "Watson", summary = "The doctor", chunkId = "chunk2")
             )
             val chunk2Resolutions = resolver.resolve(chunk2, schema)
             entityMerges += UseNewEntityMergePolicy.determineEntities(chunk2Resolutions, schema).merges
 
             // Chunk 3: Watson again (merged)
             val chunk3 = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Dr. Watson", summary = "Friend of Holmes")
+                SuggestedEntity(labels = listOf("Person"), name = "Dr. Watson", summary = "Friend of Holmes", chunkId = "chunk3")
             )
             val chunk3Resolutions = resolver.resolve(chunk3, schema)
             entityMerges += UseNewEntityMergePolicy.determineEntities(chunk3Resolutions, schema).merges
 
             // Chunk 4: Watson again (merged)
             val chunk4 = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Watson", summary = "A loyal companion")
+                SuggestedEntity(labels = listOf("Person"), name = "Watson", summary = "A loyal companion", chunkId = "chunk4")
             )
             val chunk4Resolutions = resolver.resolve(chunk4, schema)
             entityMerges += UseNewEntityMergePolicy.determineEntities(chunk4Resolutions, schema).merges
@@ -781,7 +780,7 @@ class InMemoryEntityResolverTest {
         fun `all merged resolutions should reference the same original entity ID`() {
             // Create initial entity
             val chunk1 = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Sherlock Holmes", summary = "A detective")
+                SuggestedEntity(labels = listOf("Person"), name = "Sherlock Holmes", summary = "A detective", chunkId = "test-chunk")
             )
             val chunk1Resolutions = resolver.resolve(chunk1, schema)
             val originalId = chunk1Resolutions.resolutions[0].recommended!!.id
@@ -792,7 +791,7 @@ class InMemoryEntityResolverTest {
 
             for (name in names) {
                 val chunk = createSuggestedEntities(
-                    SuggestedEntity(labels = listOf("Person"), name = name, summary = "The detective")
+                    SuggestedEntity(labels = listOf("Person"), name = name, summary = "The detective", chunkId = "test-chunk")
                 )
                 val resolutions = resolver.resolve(chunk, schema)
                 assertEquals(1, resolutions.resolutions.size)
@@ -819,25 +818,25 @@ class InMemoryEntityResolverTest {
 
             // Chunk 1: Holmes and Watson
             val chunk1 = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Sherlock Holmes", summary = "Detective"),
-                SuggestedEntity(labels = listOf("Person"), name = "Dr. Watson", summary = "Doctor")
+                SuggestedEntity(labels = listOf("Person"), name = "Sherlock Holmes", summary = "Detective", chunkId = "chunk1"),
+                SuggestedEntity(labels = listOf("Person"), name = "Dr. Watson", summary = "Doctor", chunkId = "chunk1")
             )
             val chunk1Resolutions = resolver.resolve(chunk1, schema)
             entityMerges += UseNewEntityMergePolicy.determineEntities(chunk1Resolutions, schema).merges
 
             // Chunk 2: Watson and Mrs Hudson (Holmes not mentioned)
             val chunk2 = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Watson", summary = "The doctor"),
-                SuggestedEntity(labels = listOf("Person"), name = "Mrs. Hudson", summary = "Landlady")
+                SuggestedEntity(labels = listOf("Person"), name = "Watson", summary = "The doctor", chunkId = "chunk2"),
+                SuggestedEntity(labels = listOf("Person"), name = "Mrs. Hudson", summary = "Landlady", chunkId = "chunk2")
             )
             val chunk2Resolutions = resolver.resolve(chunk2, schema)
             entityMerges += UseNewEntityMergePolicy.determineEntities(chunk2Resolutions, schema).merges
 
             // Chunk 3: All three mentioned
             val chunk3 = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Holmes", summary = "The detective"),
-                SuggestedEntity(labels = listOf("Person"), name = "Dr. Watson", summary = "His friend"),
-                SuggestedEntity(labels = listOf("Person"), name = "Mrs Hudson", summary = "Their landlady")
+                SuggestedEntity(labels = listOf("Person"), name = "Holmes", summary = "The detective", chunkId = "chunk3"),
+                SuggestedEntity(labels = listOf("Person"), name = "Dr. Watson", summary = "His friend", chunkId = "chunk3"),
+                SuggestedEntity(labels = listOf("Person"), name = "Mrs Hudson", summary = "Their landlady", chunkId = "chunk3")
             )
             val chunk3Resolutions = resolver.resolve(chunk3, schema)
             entityMerges += UseNewEntityMergePolicy.determineEntities(chunk3Resolutions, schema).merges
@@ -892,12 +891,12 @@ class InMemoryEntityResolverTest {
         fun `should merge sibling types that share a common parent`() {
             // First chunk: "Sherlock Holmes" as Detective
             val chunk1 = SuggestedEntities(
-                chunkIds = setOf("chunk1"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Detective"),
                         name = "Sherlock Holmes",
-                        summary = "A brilliant detective"
+                        summary = "A brilliant detective",
+                        chunkId = "chunk1"
                     )
                 )
             )
@@ -908,12 +907,12 @@ class InMemoryEntityResolverTest {
 
             // Second chunk: "Holmes" as Doctor (LLM misclassified)
             val chunk2 = SuggestedEntities(
-                chunkIds = setOf("chunk2"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Doctor"),
                         name = "Holmes",
-                        summary = "A man who is ill"
+                        summary = "A man who is ill",
+                        chunkId = "chunk2"
                     )
                 )
             )
@@ -940,12 +939,12 @@ class InMemoryEntityResolverTest {
         fun `should upgrade Person to Doctor when more specific type discovered`() {
             // First chunk: "Dr. Ainstree" as Person (LLM didn't recognize doctor role yet)
             val chunk1 = SuggestedEntities(
-                chunkIds = setOf("chunk1"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Person"),
                         name = "Dr. Ainstree",
-                        summary = "A man mentioned in the conversation"
+                        summary = "A man mentioned in the conversation",
+                        chunkId = "chunk1"
                     )
                 )
             )
@@ -956,12 +955,12 @@ class InMemoryEntityResolverTest {
 
             // Second chunk: Same person now identified as Doctor
             val chunk2 = SuggestedEntities(
-                chunkIds = setOf("chunk2"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Doctor"),
                         name = "Dr. Ainstree",
-                        summary = "A leading London specialist in tropical disease"
+                        summary = "A leading London specialist in tropical disease",
+                        chunkId = "chunk2"
                     )
                 )
             )
@@ -994,12 +993,12 @@ class InMemoryEntityResolverTest {
         fun `should merge Doctor with subsequent Person mention`() {
             // First chunk: Doctor
             val chunk1 = SuggestedEntities(
-                chunkIds = setOf("chunk1"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Doctor"),
                         name = "Dr. Watson",
-                        summary = "A general practitioner"
+                        summary = "A general practitioner",
+                        chunkId = "chunk1"
                     )
                 )
             )
@@ -1008,12 +1007,12 @@ class InMemoryEntityResolverTest {
 
             // Second chunk: Same person as Person (less specific)
             val chunk2 = SuggestedEntities(
-                chunkIds = setOf("chunk2"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Person"),
                         name = "Watson",
-                        summary = "Holmes's friend"
+                        summary = "Holmes's friend",
+                        chunkId = "chunk2"
                     )
                 )
             )
@@ -1038,22 +1037,24 @@ class InMemoryEntityResolverTest {
 
             // Chunk 1: Watson as Doctor, others as Person
             val chunk1 = SuggestedEntities(
-                chunkIds = setOf("chunk1"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Doctor"),
                         name = "Dr. Watson",
-                        summary = "A general practitioner"
+                        summary = "A general practitioner",
+                        chunkId = "chunk1"
                     ),
                     SuggestedEntity(
                         labels = listOf("Person"),
                         name = "Dr. Ainstree",
-                        summary = "Someone Watson mentions"
+                        summary = "Someone Watson mentions",
+                        chunkId = "chunk1"
                     ),
                     SuggestedEntity(
                         labels = listOf("Person"),
                         name = "Sir Jasper Meek",
-                        summary = "A man mentioned"
+                        summary = "A man mentioned",
+                        chunkId = "chunk1"
                     )
                 )
             )
@@ -1062,17 +1063,18 @@ class InMemoryEntityResolverTest {
 
             // Chunk 2: More context reveals Ainstree and Meek are doctors
             val chunk2 = SuggestedEntities(
-                chunkIds = setOf("chunk2"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Doctor"),
                         name = "Dr. Ainstree",
-                        summary = "A leading London specialist in tropical disease"
+                        summary = "A leading London specialist in tropical disease",
+                        chunkId = "chunk2"
                     ),
                     SuggestedEntity(
                         labels = listOf("Doctor"),
                         name = "Sir Jasper Meek",
-                        summary = "One of the best medical men in London"
+                        summary = "One of the best medical men in London",
+                        chunkId = "chunk2"
                     )
                 )
             )
@@ -1108,12 +1110,12 @@ class InMemoryEntityResolverTest {
         fun `should merge multiple type transitions for same entity`() {
             // Round 1: Person
             val chunk1 = SuggestedEntities(
-                chunkIds = setOf("chunk1"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Person"),
                         name = "Penrose Fisher",
-                        summary = "A man mentioned"
+                        summary = "A man mentioned",
+                        chunkId = "chunk1"
                     )
                 )
             )
@@ -1122,12 +1124,12 @@ class InMemoryEntityResolverTest {
 
             // Round 2: Doctor (upgrade)
             val chunk2 = SuggestedEntities(
-                chunkIds = setOf("chunk2"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Doctor"),
                         name = "Penrose Fisher",
-                        summary = "One of the best medical men in London"
+                        summary = "One of the best medical men in London",
+                        chunkId = "chunk2"
                     )
                 )
             )
@@ -1135,12 +1137,12 @@ class InMemoryEntityResolverTest {
 
             // Round 3: Person again (should still match)
             val chunk3 = SuggestedEntities(
-                chunkIds = setOf("chunk3"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Person"),
                         name = "Fisher",
-                        summary = "Another doctor suggested"
+                        summary = "Another doctor suggested",
+                        chunkId = "chunk3"
                     )
                 )
             )
@@ -1163,12 +1165,12 @@ class InMemoryEntityResolverTest {
 
             // Chunk 1: Dr. Ainstree as Person
             val chunk1 = SuggestedEntities(
-                chunkIds = setOf("chunk1"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Person"),
                         name = "Dr. Ainstree",
-                        summary = "A man mentioned"
+                        summary = "A man mentioned",
+                        chunkId = "chunk1"
                     )
                 )
             )
@@ -1177,12 +1179,12 @@ class InMemoryEntityResolverTest {
 
             // Chunk 2: Dr. Ainstree as Doctor (upgrade)
             val chunk2 = SuggestedEntities(
-                chunkIds = setOf("chunk2"),
                 suggestedEntities = listOf(
                     SuggestedEntity(
                         labels = listOf("Doctor"),
                         name = "Dr. Ainstree",
-                        summary = "A leading London specialist in tropical disease"
+                        summary = "A leading London specialist in tropical disease",
+                        chunkId = "chunk2"
                     )
                 )
             )

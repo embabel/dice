@@ -10,6 +10,7 @@ import com.embabel.dice.common.*
 import com.embabel.dice.text2graph.SourceAnalyzer
 import com.embabel.dice.text2graph.SuggestedRelationship
 import com.embabel.dice.text2graph.SuggestedRelationships
+import com.fasterxml.jackson.annotation.JsonPropertyDescription
 import org.slf4j.LoggerFactory
 import org.springframework.boot.context.properties.ConfigurationProperties
 
@@ -61,8 +62,9 @@ class LlmSourceAnalyzer(
                 )
             )
         return SuggestedEntities(
-            chunkIds = setOf(chunk.id),
-            suggestedEntities = entities.entities,
+            suggestedEntities = entities.entities.map {
+                it.toSuggestedEntity(chunk.id)
+            }
         )
     }
 
@@ -118,8 +120,33 @@ private fun DataDictionary.possibleRelationshipsBetween(entitiesToUse: List<Name
  * LLM generated
  */
 internal data class Entities(
-    val entities: List<SuggestedEntity>,
+    val entities: List<SuggestedEntityInfo>,
 )
+
+/**
+ * SuggestedEntity data without chunkId
+ */
+internal data class SuggestedEntityInfo(
+    val labels: List<String>,
+    val name: String,
+    val summary: String,
+    @param:JsonPropertyDescription("Will be a UUID. Include only if provided")
+    private val id: String? = null,
+    @field:JsonPropertyDescription("Map from property name to value")
+    val properties: Map<String, Any> = emptyMap(),
+) {
+
+    fun toSuggestedEntity(chunkId: String): SuggestedEntity {
+        return SuggestedEntity(
+            labels = labels,
+            name = name,
+            summary = summary,
+            chunkId = chunkId,
+            id = id,
+            properties = properties,
+        )
+    }
+}
 
 private data class Relationships(
     val relationships: List<SuggestedRelationship>,

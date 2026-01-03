@@ -43,7 +43,7 @@ class ParallelSourceAnalyzer(
                     analyzer.suggestEntities(chunk, context)
                 }.getOrElse { e ->
                     logger.warn("Analyzer failed for chunk ${chunk.id}: ${e.message}", e)
-                    SuggestedEntities(setOf(chunk.id), emptyList())
+                    SuggestedEntities(emptyList())
                 }
             }, executor)
         }
@@ -71,7 +71,6 @@ class ParallelSourceAnalyzer(
         )
 
         return SuggestedEntities(
-            chunkIds = setOf(chunk.id),
             suggestedEntities = selectedEntities,
         )
     }

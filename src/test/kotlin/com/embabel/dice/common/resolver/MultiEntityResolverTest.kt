@@ -43,13 +43,12 @@ class MultiEntityResolverTest {
     fun `should handle empty suggested entities`() {
         val resolver = MultiEntityResolver(listOf(AlwaysCreateEntityResolver))
         val suggested = SuggestedEntities(
-            chunkIds = setOf("chunk-1"),
             suggestedEntities = emptyList()
         )
 
         val resolutions = resolver.resolve(suggested, schema)
 
-        assertEquals(setOf("chunk-1"), resolutions.chunkIds)
+        assertTrue(resolutions.chunkIds.isEmpty())
         assertTrue(resolutions.resolutions.isEmpty())
     }
 
@@ -57,7 +56,7 @@ class MultiEntityResolverTest {
     fun `should use single resolver when only one provided`() {
         val resolver = MultiEntityResolver(listOf(AlwaysCreateEntityResolver))
         val suggested = createSuggestedEntities(
-            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person")
+            SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person", chunkId = "test-chunk")
         )
 
         val resolutions = resolver.resolve(suggested, schema)
@@ -70,17 +69,16 @@ class MultiEntityResolverTest {
     @Test
     fun `should preserve chunk IDs in resolution`() {
         val resolver = MultiEntityResolver(listOf(AlwaysCreateEntityResolver))
-        val chunkIds = setOf("chunk-1", "chunk-2")
         val suggested = SuggestedEntities(
-            chunkIds = chunkIds,
             suggestedEntities = listOf(
-                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person")
+                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person", chunkId = "chunk-1"),
+                SuggestedEntity(labels = listOf("Person"), name = "Bob", summary = "A person", chunkId = "chunk-2")
             )
         )
 
         val resolutions = resolver.resolve(suggested, schema)
 
-        assertEquals(chunkIds, resolutions.chunkIds)
+        assertEquals(setOf("chunk-1", "chunk-2"), resolutions.chunkIds)
     }
 
     @Nested
@@ -93,7 +91,7 @@ class MultiEntityResolverTest {
             val multiResolver = MultiEntityResolver(listOf(resolver1, resolver2))
 
             val suggested = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person")
+                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "A person", chunkId = "test-chunk")
             )
 
             val resolutions = multiResolver.resolve(suggested, schema)
@@ -112,7 +110,7 @@ class MultiEntityResolverTest {
 
             // Add entity to resolver2 first
             val preExisting = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "Pre-existing")
+                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "Pre-existing", chunkId = "test-chunk")
             )
             resolver2.resolve(preExisting, schema)
 
@@ -120,7 +118,7 @@ class MultiEntityResolverTest {
 
             // Now resolve the same entity
             val suggested = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "New suggestion")
+                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "New suggestion", chunkId = "test-chunk")
             )
             val resolutions = multiResolver.resolve(suggested, schema)
 
@@ -137,7 +135,7 @@ class MultiEntityResolverTest {
             // Pre-populate resolver2 with the entity
             resolver2.resolve(
                 createSuggestedEntities(
-                    SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "Pre-existing")
+                    SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "Pre-existing", chunkId = "test-chunk")
                 ),
                 schema
             )
@@ -145,7 +143,7 @@ class MultiEntityResolverTest {
             val multiResolver = MultiEntityResolver(listOf(resolver1, resolver2, resolver3))
 
             val suggested = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "New suggestion")
+                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "New suggestion", chunkId = "test-chunk")
             )
             val resolutions = multiResolver.resolve(suggested, schema)
 
@@ -166,7 +164,7 @@ class MultiEntityResolverTest {
             // Pre-populate resolver2 with only one entity
             resolver2.resolve(
                 createSuggestedEntities(
-                    SuggestedEntity(labels = listOf("Person"), name = "Bob", summary = "Pre-existing Bob")
+                    SuggestedEntity(labels = listOf("Person"), name = "Bob", summary = "Pre-existing Bob", chunkId = "test-chunk")
                 ),
                 schema
             )
@@ -174,8 +172,8 @@ class MultiEntityResolverTest {
             val multiResolver = MultiEntityResolver(listOf(resolver1, resolver2))
 
             val suggested = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "New Alice"),
-                SuggestedEntity(labels = listOf("Person"), name = "Bob", summary = "Mentioned Bob")
+                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "New Alice", chunkId = "test-chunk"),
+                SuggestedEntity(labels = listOf("Person"), name = "Bob", summary = "Mentioned Bob", chunkId = "test-chunk")
             )
             val resolutions = multiResolver.resolve(suggested, schema)
 
@@ -196,7 +194,7 @@ class MultiEntityResolverTest {
             // Pre-populate resolver2 with middle entity only
             resolver2.resolve(
                 createSuggestedEntities(
-                    SuggestedEntity(labels = listOf("Person"), name = "Bob", summary = "Pre-existing")
+                    SuggestedEntity(labels = listOf("Person"), name = "Bob", summary = "Pre-existing", chunkId = "test-chunk")
                 ),
                 schema
             )
@@ -204,9 +202,9 @@ class MultiEntityResolverTest {
             val multiResolver = MultiEntityResolver(listOf(resolver1, resolver2))
 
             val suggested = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "First"),
-                SuggestedEntity(labels = listOf("Person"), name = "Bob", summary = "Second"),
-                SuggestedEntity(labels = listOf("Person"), name = "Charlie", summary = "Third")
+                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "First", chunkId = "test-chunk"),
+                SuggestedEntity(labels = listOf("Person"), name = "Bob", summary = "Second", chunkId = "test-chunk"),
+                SuggestedEntity(labels = listOf("Person"), name = "Charlie", summary = "Third", chunkId = "test-chunk")
             )
             val resolutions = multiResolver.resolve(suggested, schema)
 
@@ -231,14 +229,14 @@ class MultiEntityResolverTest {
 
             // First call - should use InMemoryResolver to create new entity
             val first = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "First mention")
+                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "First mention", chunkId = "test-chunk")
             )
             val firstResolutions = multiResolver.resolve(first, schema)
             assertTrue(firstResolutions.resolutions[0] is NewEntity)
 
             // Second call - should find existing from InMemoryResolver
             val second = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "Second mention")
+                SuggestedEntity(labels = listOf("Person"), name = "Alice", summary = "Second mention", chunkId = "test-chunk")
             )
             val secondResolutions = multiResolver.resolve(second, schema)
             assertTrue(secondResolutions.resolutions[0] is ExistingEntity)
@@ -255,7 +253,7 @@ class MultiEntityResolverTest {
             // Simulate database having pre-existing entities
             databaseResolver.resolve(
                 createSuggestedEntities(
-                    SuggestedEntity(labels = listOf("Person"), name = "Sherlock Holmes", summary = "Famous detective")
+                    SuggestedEntity(labels = listOf("Person"), name = "Sherlock Holmes", summary = "Famous detective", chunkId = "test-chunk")
                 ),
                 holmesSchema
             )
@@ -264,8 +262,8 @@ class MultiEntityResolverTest {
 
             // Resolve a new entity and an existing one
             val suggested = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Watson", summary = "Doctor"),
-                SuggestedEntity(labels = listOf("Person"), name = "Holmes", summary = "Detective")
+                SuggestedEntity(labels = listOf("Person"), name = "Watson", summary = "Doctor", chunkId = "test-chunk"),
+                SuggestedEntity(labels = listOf("Person"), name = "Holmes", summary = "Detective", chunkId = "test-chunk")
             )
             val resolutions = multiResolver.resolve(suggested, holmesSchema)
 
@@ -303,7 +301,7 @@ class MultiEntityResolverTest {
             val multiResolver = MultiEntityResolver(listOf(vetoingResolver, AlwaysCreateEntityResolver))
 
             val suggested = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Banned", summary = "Should be vetoed")
+                SuggestedEntity(labels = listOf("Person"), name = "Banned", summary = "Should be vetoed", chunkId = "test-chunk")
             )
             val resolutions = multiResolver.resolve(suggested, schema)
 
@@ -323,7 +321,7 @@ class MultiEntityResolverTest {
             // Pre-populate resolver2 with Person
             resolver2.resolve(
                 createSuggestedEntities(
-                    SuggestedEntity(labels = listOf("Person"), name = "Sherlock Holmes", summary = "A lodger")
+                    SuggestedEntity(labels = listOf("Person"), name = "Sherlock Holmes", summary = "A lodger", chunkId = "test-chunk")
                 ),
                 holmesSchema
             )
@@ -332,7 +330,7 @@ class MultiEntityResolverTest {
 
             // Now suggest as Detective - should match in resolver2
             val suggested = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Detective"), name = "Holmes", summary = "The detective")
+                SuggestedEntity(labels = listOf("Detective"), name = "Holmes", summary = "The detective", chunkId = "test-chunk")
             )
             val resolutions = multiResolver.resolve(suggested, holmesSchema)
 
@@ -347,7 +345,7 @@ class MultiEntityResolverTest {
             // Pre-populate resolver2 with Person
             resolver2.resolve(
                 createSuggestedEntities(
-                    SuggestedEntity(labels = listOf("Person"), name = "Dr. Ainstree", summary = "A man")
+                    SuggestedEntity(labels = listOf("Person"), name = "Dr. Ainstree", summary = "A man", chunkId = "test-chunk")
                 ),
                 holmesSchema
             )
@@ -356,7 +354,7 @@ class MultiEntityResolverTest {
 
             // Suggest as Doctor - should match and merge
             val suggested = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Doctor"), name = "Dr. Ainstree", summary = "A specialist")
+                SuggestedEntity(labels = listOf("Doctor"), name = "Dr. Ainstree", summary = "A specialist", chunkId = "test-chunk")
             )
             val resolutions = multiResolver.resolve(suggested, holmesSchema)
 
@@ -396,7 +394,7 @@ class MultiEntityResolverTest {
             val multiResolver = MultiEntityResolver(listOf(alwaysExistingResolver, AlwaysCreateEntityResolver))
 
             val suggested = createSuggestedEntities(
-                SuggestedEntity(labels = listOf("Person"), name = "Anyone", summary = "Should match fixed")
+                SuggestedEntity(labels = listOf("Person"), name = "Anyone", summary = "Should match fixed", chunkId = "test-chunk")
             )
             val resolutions = multiResolver.resolve(suggested, schema)
 
@@ -415,10 +413,10 @@ class MultiEntityResolverTest {
 
             // Pre-populate resolver2 with some entities
             val preExisting = existingNames.map {
-                SuggestedEntity(labels = listOf("Person"), name = it, summary = "Pre-existing $it")
+                SuggestedEntity(labels = listOf("Person"), name = it, summary = "Pre-existing $it", chunkId = "pre")
             }
             resolver2.resolve(
-                SuggestedEntities(chunkIds = setOf("pre"), suggestedEntities = preExisting),
+                SuggestedEntities(suggestedEntities = preExisting),
                 schema
             )
 
@@ -427,10 +425,10 @@ class MultiEntityResolverTest {
             // Request mix of new and existing
             val allNames = existingNames + newNames
             val suggested = allNames.map {
-                SuggestedEntity(labels = listOf("Person"), name = it, summary = "Requested $it")
+                SuggestedEntity(labels = listOf("Person"), name = it, summary = "Requested $it", chunkId = "test")
             }
             val resolutions = multiResolver.resolve(
-                SuggestedEntities(chunkIds = setOf("test"), suggestedEntities = suggested),
+                SuggestedEntities(suggestedEntities = suggested),
                 schema
             )
 
@@ -448,7 +446,6 @@ class MultiEntityResolverTest {
 
     private fun createSuggestedEntities(vararg entities: SuggestedEntity): SuggestedEntities {
         return SuggestedEntities(
-            chunkIds = setOf("test-chunk"),
             suggestedEntities = entities.toList()
         )
     }

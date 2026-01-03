@@ -1,7 +1,10 @@
 package com.embabel.dice.proposition
 
 import com.embabel.agent.rag.model.Chunk
-import com.embabel.dice.common.*
+import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.SourceAnalysisContext
+import com.embabel.dice.common.SuggestedEntities
+import com.embabel.dice.common.SuggestedEntityResolution
 
 /**
  * Extracts propositions from text chunks.
@@ -66,14 +69,4 @@ data class MentionKey(
     }
 }
 
-/**
- * Extension function to create SuggestedEntity from a SuggestedMention.
- */
-fun SuggestedMention.toSuggestedEntity(): SuggestedEntity =
-    SuggestedEntity(
-        labels = listOf(suggestedType),
-        name = span,
-        summary = "Entity mentioned in proposition",
-        id = suggestedId,
-        properties = emptyMap(),
-    )
+

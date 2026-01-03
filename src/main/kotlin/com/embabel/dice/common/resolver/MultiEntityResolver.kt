@@ -1,12 +1,7 @@
 package com.embabel.dice.common.resolver
 
 import com.embabel.agent.core.DataDictionary
-import com.embabel.dice.common.EntityResolver
-import com.embabel.dice.common.ExistingEntity
-import com.embabel.dice.common.NewEntity
-import com.embabel.dice.common.SuggestedEntities
-import com.embabel.dice.common.SuggestedEntityResolution
-import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.*
 
 /**
  * Entity resolver that delegates to multiple resolvers in order.
@@ -50,7 +45,6 @@ class MultiEntityResolver(
             // Build a subset of entities that still need resolution
             val unresolvedEntities = unresolvedIndices.map { suggestedEntities.suggestedEntities[it] }
             val subset = SuggestedEntities(
-                chunkIds = suggestedEntities.chunkIds,
                 suggestedEntities = unresolvedEntities
             )
 
@@ -66,12 +60,14 @@ class MultiEntityResolver(
                         bestResolutions[originalIndex] = resolution
                         unresolvedIndices.remove(originalIndex)
                     }
+
                     is NewEntity -> {
                         // Only use NewEntity if we don't have a resolution yet
                         if (bestResolutions[originalIndex] == null) {
                             bestResolutions[originalIndex] = resolution
                         }
                     }
+
                     else -> {
                         // Handle VetoedEntity or other types
                         if (bestResolutions[originalIndex] == null) {

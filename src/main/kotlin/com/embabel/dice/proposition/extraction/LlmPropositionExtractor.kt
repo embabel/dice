@@ -4,10 +4,7 @@ import com.embabel.agent.api.common.Ai
 import com.embabel.agent.api.common.nested.ObjectCreationExample
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.common.ai.model.LlmOptions
-import com.embabel.dice.common.Resolutions
-import com.embabel.dice.common.SourceAnalysisContext
-import com.embabel.dice.common.SuggestedEntities
-import com.embabel.dice.common.SuggestedEntityResolution
+import com.embabel.dice.common.*
 import com.embabel.dice.proposition.*
 import org.slf4j.LoggerFactory
 
@@ -120,7 +117,16 @@ data class LlmPropositionExtractor(
             }
         }
 
-        val suggestedEntities = uniqueMentions.values.map { it.toSuggestedEntity() }
+        val suggestedEntities = uniqueMentions.values.map {
+            SuggestedEntity(
+                labels = listOf(it.suggestedType),
+                name = it.span,
+                summary = "Entity mentioned in proposition",
+                id = it.suggestedId,
+                properties = emptyMap(),
+                chunkId = suggestedPropositions.chunkId,
+            )
+        }
 
         logger.debug(
             "Converted {} propositions to {} unique suggested entities",
@@ -129,7 +135,6 @@ data class LlmPropositionExtractor(
         )
 
         return SuggestedEntities(
-            chunkIds = setOf(suggestedPropositions.chunkId),
             suggestedEntities = suggestedEntities,
         )
     }

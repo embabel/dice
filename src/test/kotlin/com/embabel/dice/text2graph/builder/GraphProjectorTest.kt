@@ -207,7 +207,8 @@ class GraphProjectorTest {
                 val suggestedEntity = SuggestedEntity(
                     labels = entity.labels().toList(),
                     name = entity.name,
-                    summary = entity.description
+                    summary = entity.description,
+                    chunkId = chunk.id
                 )
                 Merge<com.embabel.dice.common.SuggestedEntityResolution, NamedEntityData>(
                     resolution = _root_ide_package_.com.embabel.dice.common.NewEntity(suggestedEntity),
