@@ -119,7 +119,7 @@ data class LlmPropositionExtractor(
 
         val suggestedEntities = uniqueMentions.values.map {
             SuggestedEntity(
-                labels = listOf(it.suggestedType),
+                labels = listOf(it.type),
                 name = it.span,
                 summary = "Entity mentioned in proposition",
                 id = it.suggestedId,

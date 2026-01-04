@@ -2,7 +2,6 @@ package com.embabel.dice.pipeline
 
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
-import com.embabel.agent.rag.model.SimpleNamedEntityData
 import com.embabel.dice.common.*
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
@@ -10,7 +9,6 @@ import com.embabel.dice.proposition.*
 import com.embabel.dice.text2graph.builder.Animal
 import com.embabel.dice.text2graph.builder.Person
 import org.junit.jupiter.api.Assertions.*
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
@@ -39,7 +37,7 @@ class PropositionPipelineTest {
             val mentions = entityNames.mapIndexed { index, name ->
                 SuggestedMention(
                     span = name.trim(),
-                    suggestedType = "Person",
+                    type = "Person",
                     role = if (index == 0) "SUBJECT" else "OBJECT",
                 )
             }
@@ -73,7 +71,7 @@ class PropositionPipelineTest {
                         seen.add(key)
                         entities.add(
                             SuggestedEntity(
-                                labels = listOf(mention.suggestedType),
+                                labels = listOf(mention.type),
                                 name = mention.span,
                                 summary = "Entity: ${mention.span}",
                                 chunkId = suggestedPropositions.chunkId,
@@ -101,7 +99,7 @@ class PropositionPipelineTest {
                 val resolvedMentions = suggestedProp.mentions.map { mention ->
                     EntityMention(
                         span = mention.span,
-                        type = mention.suggestedType,
+                        type = mention.type,
                         role = MentionRole.valueOf(mention.role),
                         resolvedId = nameToId[mention.span.lowercase()],
                     )
@@ -262,8 +260,10 @@ class PropositionPipelineTest {
             for (prop in result.allPropositions) {
                 val aliceMention = prop.mentions.find { it.span == "Alice" }
                 if (aliceMention != null) {
-                    assertEquals(aliceId, aliceMention.resolvedId,
-                        "All Alice mentions should have the same resolved ID")
+                    assertEquals(
+                        aliceId, aliceMention.resolvedId,
+                        "All Alice mentions should have the same resolved ID"
+                    )
                 }
             }
         }
@@ -390,7 +390,11 @@ class PropositionPipelineTest {
             // - Bob: new in chunk-1, but matched as existing in chunk-2
             // - Charlie: new in chunk-2, but matched as existing in chunk-3
             val updatedEntities = result.updatedEntities()
-            assertEquals(3, updatedEntities.size, "Should have 3 updated entities. Found: ${updatedEntities.map { it.name }}")
+            assertEquals(
+                3,
+                updatedEntities.size,
+                "Should have 3 updated entities. Found: ${updatedEntities.map { it.name }}"
+            )
             assertTrue(updatedEntities.any { it.name == "Alice" })
             assertTrue(updatedEntities.any { it.name == "Bob" })
             assertTrue(updatedEntities.any { it.name == "Charlie" })

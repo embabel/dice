@@ -8,15 +8,15 @@ import com.fasterxml.jackson.annotation.JsonPropertyDescription
  * Lighter weight than EntityMention - contains only what the LLM provides.
  *
  * @property span The text as it appears in the proposition
- * @property suggestedType Entity type label from schema (e.g., "Person")
+ * @property type Entity type label from schema (e.g., "Person")
  * @property suggestedId Entity ID if the LLM can identify a specific entity
  * @property role The role of this mention in the proposition
  */
 data class SuggestedMention(
-    @param:JsonPropertyDescription("The text as it appears in the proposition (e.g., 'Jim')")
+    @param:JsonPropertyDescription("The text as it appears in the proposition (e.g., Jim). No quotes. Must be legal in a JSON string")
     val span: String,
-    @param:JsonPropertyDescription("Entity type from schema (e.g., 'Person', 'Technology')")
-    val suggestedType: String,
+    @param:JsonPropertyDescription("Suggested entity type from schema (e.g., 'Person', 'Technology')")
+    val type: String,
     @param:JsonPropertyDescription("Entity ID if identifiable, null otherwise")
     val suggestedId: String? = null,
     @param:JsonPropertyDescription("Role: SUBJECT, OBJECT, or OTHER")
@@ -28,7 +28,7 @@ data class SuggestedMention(
     fun toEntityMention(resolvedId: String? = suggestedId): EntityMention =
         EntityMention(
             span = span,
-            type = suggestedType,
+            type = type,
             resolvedId = resolvedId,
             role = parseRole(),
             hints = buildHints(),
