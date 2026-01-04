@@ -2,13 +2,12 @@ package com.embabel.dice.proposition.content
 
 import com.embabel.agent.api.common.Ai
 import com.embabel.common.ai.model.EmbeddingService
+import com.embabel.common.ai.model.LlmOptions
 import com.embabel.common.core.types.TextSimilaritySearchRequest
-import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.common.EntityRequest
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
-import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.proposition.revision.LlmPropositionReviser
 import com.embabel.dice.proposition.revision.PropositionReviser
 import com.embabel.dice.proposition.revision.RevisionResult
@@ -159,7 +158,7 @@ class ContentIngestionPipeline(
         includeContradicted: Boolean = false,
     ): List<Proposition> {
         val results = repository.findSimilar(
-            SimpleTextSimilaritySearchRequest(
+            TextSimilaritySearchRequest(
                 query = query,
                 similarityThreshold = 0.0,
                 topK = topK * 2
@@ -264,8 +263,3 @@ class ContentIngestionPipeline(
     }
 }
 
-private data class SimpleTextSimilaritySearchRequest(
-    override val query: String,
-    override val similarityThreshold: ZeroToOne,
-    override val topK: Int,
-) : TextSimilaritySearchRequest

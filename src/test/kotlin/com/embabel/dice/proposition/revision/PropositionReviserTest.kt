@@ -2,7 +2,6 @@ package com.embabel.dice.proposition.revision
 
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
-import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.common.EntityRequest
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
@@ -283,7 +282,7 @@ class TestPropositionReviser : PropositionReviser {
     ): RevisionResult {
         // Get similar propositions from repository
         val similar = repository.findSimilarWithScores(
-            SimpleTextSimilaritySearchRequest(
+            TextSimilaritySearchRequest(
                 query = newProposition.text,
                 topK = 5,
                 similarityThreshold = 0.5,
@@ -379,8 +378,3 @@ class TestPropositionReviser : PropositionReviser {
     }
 }
 
-private data class SimpleTextSimilaritySearchRequest(
-    override val query: String,
-    override val similarityThreshold: ZeroToOne,
-    override val topK: Int,
-) : TextSimilaritySearchRequest

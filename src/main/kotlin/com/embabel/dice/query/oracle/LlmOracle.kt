@@ -3,7 +3,6 @@ package com.embabel.dice.query.oracle
 import com.embabel.agent.api.common.Ai
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.common.core.types.TextSimilaritySearchRequest
-import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.projection.prolog.PrologEngine
 import com.embabel.dice.projection.prolog.PrologProjectionResult
 import com.embabel.dice.projection.prolog.PrologSchema
@@ -115,7 +114,7 @@ class LlmOracle(
 
         // Search propositions for relevant information
         val relevantProps = store.findSimilar(
-            SimpleTextSimilaritySearchRequest(
+            TextSimilaritySearchRequest(
                 query = question.text,
                 similarityThreshold = 0.0,
                 topK = 5
@@ -227,8 +226,3 @@ internal data class GeneratedAnswer(
     val answer: String,
 )
 
-private data class SimpleTextSimilaritySearchRequest(
-    override val query: String,
-    override val similarityThreshold: ZeroToOne,
-    override val topK: Int,
-) : TextSimilaritySearchRequest
