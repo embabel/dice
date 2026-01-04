@@ -7,14 +7,14 @@ import com.embabel.dice.proposition.Proposition
  * Working memory combines multiple memory types for current session context.
  * This is what gets injected into LLM prompts.
  *
- * @property userProfile Semantic facts about the user
+ * @property userPersona User persona snapshot with semantic facts
  * @property recentEvents Recent episodic memories
  * @property behavioralRules Procedural rules to follow
  * @property sessionPropositions Raw propositions from current session
  * @property budget Maximum number of items to include in context
  */
 data class WorkingMemory(
-    val userProfile: UserProfile,
+    val userPersona: UserPersonaSnapshot,
     val recentEvents: List<Event>,
     val behavioralRules: List<BehavioralRule>,
     val sessionPropositions: List<Proposition>,
@@ -22,9 +22,9 @@ data class WorkingMemory(
 ): PromptContributor {
 
     override fun contribution(): String = buildString {
-        if (userProfile.facts.isNotEmpty()) {
-            appendLine("## User Profile")
-            userProfile.facts.forEach { appendLine("- $it") }
+        if (userPersona.facts.isNotEmpty()) {
+            appendLine("## User Persona")
+            userPersona.facts.forEach { appendLine("- $it") }
             appendLine()
         }
 
@@ -48,6 +48,6 @@ data class WorkingMemory(
 
     /** Total number of items in working memory */
     val totalItems: Int
-        get() = userProfile.facts.size + recentEvents.size +
+        get() = userPersona.facts.size + recentEvents.size +
                 behavioralRules.size + sessionPropositions.size
 }

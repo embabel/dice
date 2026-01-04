@@ -153,7 +153,7 @@ data class ContentPropositionItem(
 )
 
 data class ContentMentionItem(
-    @param:JsonPropertyDescription("The entity name/span as it appears in the text")
+    @param:JsonPropertyDescription("The entity name/span as it appears in the text. DO NOT ENCLOSE IN QUOTES--must be legal JSON string content")
     val span: String,
     @param:JsonPropertyDescription("The entity type (e.g., Person, Project, Technology)")
     val type: String,

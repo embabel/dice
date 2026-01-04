@@ -9,22 +9,22 @@ import java.time.Instant
 /**
  * Default implementation of MemoryProjection backed by a PropositionStore.
  *
- * @param store The proposition store to query
+ * @param propositionRepository The proposition store to query
  * @param confidenceThreshold Minimum confidence for including propositions
  * @param memoryTypeClassifier Strategy for classifying propositions into memory types
  */
 data class DefaultMemoryProjection(
-    private val store: PropositionRepository,
+    private val propositionRepository: PropositionRepository,
     private val confidenceThreshold: Double = 0.6,
     private val memoryTypeClassifier: MemoryTypeClassifier = KeywordMatchingMemoryTypeClassifier,
 ) : MemoryProjection {
 
     companion object {
 
-        /** Default instance with standard settings */
+        /** Default instance with standard settings, against the given PropositionRepository */
         @JvmStatic
-        fun against(store: PropositionRepository) =
-            DefaultMemoryProjection(store)
+        fun against(propositionRepository: PropositionRepository) =
+            DefaultMemoryProjection(propositionRepository)
     }
 
     fun withConfidenceThreshold(threshold: Double) =
@@ -33,16 +33,16 @@ data class DefaultMemoryProjection(
     fun withMemoryTypeClassifier(classifier: MemoryTypeClassifier) =
         copy(memoryTypeClassifier = classifier)
 
-    override fun projectUserProfile(
+    override fun projectUserPersonaSnapshot(
         userId: String,
         scope: MemoryScope,
-    ): UserProfile {
-        val propositions = store.findByEntity(EntityRequest.Companion.forUser(userId))
+    ): UserPersonaSnapshot {
+        val propositions = propositionRepository.findByEntity(EntityRequest.forUser(userId))
             .filter { it.confidence >= confidenceThreshold }
             .filter { memoryTypeClassifier.classify(it) == MemoryType.SEMANTIC }
             .sortedByDescending { it.confidence }
 
-        return UserProfile(
+        return UserPersonaSnapshot(
             facts = propositions.map { it.text },
             confidence = if (propositions.isEmpty()) 0.0
             else propositions.map { it.confidence }.average(),
@@ -55,7 +55,7 @@ data class DefaultMemoryProjection(
         since: Instant,
         limit: Int,
     ): List<Event> {
-        val propositions = store.findByEntity(EntityRequest.Companion.forUser(userId))
+        val propositions = propositionRepository.findByEntity(EntityRequest.Companion.forUser(userId))
             .filter { it.created.isAfter(since) }
             .filter { memoryTypeClassifier.classify(it) == MemoryType.EPISODIC }
             .sortedByDescending { it.created }
@@ -74,7 +74,7 @@ data class DefaultMemoryProjection(
     override fun projectBehavioralRules(
         userId: String,
     ): List<BehavioralRule> {
-        val propositions = store.findByEntity(EntityRequest.Companion.forUser(userId))
+        val propositions = propositionRepository.findByEntity(EntityRequest.Companion.forUser(userId))
             .filter { it.confidence >= confidenceThreshold }
             .filter { memoryTypeClassifier.classify(it) == MemoryType.PROCEDURAL }
             .sortedByDescending { it.confidence }
@@ -96,16 +96,16 @@ data class DefaultMemoryProjection(
         sessionPropositions: List<Proposition>,
         budget: Int,
     ): WorkingMemory {
-        val profile = projectUserProfile(scope.userId, scope)
+        val persona = projectUserPersonaSnapshot(scope.userId, scope)
         val events = projectRecentEvents(scope.userId, limit = budget / 4)
         val rules = projectBehavioralRules(scope.userId)
 
         // Calculate how many session propositions we can include
-        val usedBudget = profile.facts.size + events.size + rules.size
+        val usedBudget = persona.facts.size + events.size + rules.size
         val sessionBudget = (budget - usedBudget).coerceAtLeast(0)
 
         return WorkingMemory(
-            userProfile = profile,
+            userPersona = persona,
             recentEvents = events,
             behavioralRules = rules,
             sessionPropositions = sessionPropositions.take(sessionBudget),

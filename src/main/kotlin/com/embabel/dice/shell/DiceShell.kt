@@ -548,7 +548,7 @@ internal class DiceShell(
         val memoryProjection = DefaultMemoryProjection(propositionRepository)
 
         println("\n=== User Profile (Semantic Memory) ===")
-        val profile = memoryProjection.projectUserProfile(aliceId)
+        val profile = memoryProjection.projectUserPersonaSnapshot(aliceId)
         println("Facts (${profile.facts.size}):")
         profile.facts.forEach { println("  - $it") }
         println("Aggregate confidence: ${String.format("%.2f", profile.confidence)}")

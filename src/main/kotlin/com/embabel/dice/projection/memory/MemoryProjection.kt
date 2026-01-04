@@ -10,17 +10,17 @@ import java.time.Instant
 interface MemoryProjection {
 
     /**
-     * Project user profile from semantic propositions.
-     * Aggregates facts about the user into a consumable format.
+     * Project user persona snapshot from semantic propositions.
+     * Aggregates known facts about the user into a consumable format.
      *
-     * @param userId The user to build profile for
+     * @param userId The user to build persona for
      * @param scope Memory scope for filtering
-     * @return User profile with facts and confidence
+     * @return User persona snapshot with facts and confidence
      */
-    fun projectUserProfile(
+    fun projectUserPersonaSnapshot(
         userId: String,
         scope: MemoryScope = MemoryScope.global(userId),
-    ): UserProfile
+    ): UserPersonaSnapshot
 
     /**
      * Project recent events from episodic propositions.
