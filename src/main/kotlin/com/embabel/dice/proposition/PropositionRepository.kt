@@ -2,12 +2,12 @@ package com.embabel.dice.proposition
 
 import com.embabel.agent.rag.model.Retrievable
 import com.embabel.agent.rag.service.CoreSearchOperations
+import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.agent.rag.service.TextSearch
 import com.embabel.agent.rag.service.VectorSearch
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.util.loggerFor
-import com.embabel.dice.common.EntityRequest
 
 /**
  * Storage interface for propositions.
@@ -60,7 +60,7 @@ interface PropositionRepository : CoreSearchOperations {
     /**
      * Find all propositions that mention a specific entity.
      */
-    fun findByEntity(entityRequest: EntityRequest): List<Proposition>
+    fun findByEntity(entityIdentifier: EntityIdentifier): List<Proposition>
 
     /**
      * Find propositions similar to the given text using vector similarity.

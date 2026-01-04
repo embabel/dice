@@ -2,6 +2,7 @@ package com.embabel.dice.pipeline
 
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.dice.common.*
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
@@ -571,9 +572,9 @@ class PropositionPipelineTest {
 
         override fun findById(id: String): Proposition? = propositions[id]
 
-        override fun findByEntity(entityRequest: EntityRequest): List<Proposition> {
+        override fun findByEntity(entityIdentifier: EntityIdentifier): List<Proposition> {
             return propositions.values.filter { prop ->
-                prop.mentions.any { it.resolvedId == entityRequest.id }
+                prop.mentions.any { it.resolvedId == entityIdentifier.id }
             }
         }
 

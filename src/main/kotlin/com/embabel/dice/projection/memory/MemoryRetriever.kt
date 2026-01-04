@@ -1,6 +1,6 @@
 package com.embabel.dice.projection.memory
 
-import com.embabel.dice.common.EntityRequest
+import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.dice.proposition.Proposition
 import java.time.Instant
 
@@ -33,7 +33,7 @@ interface MemoryRetriever {
      * @return All propositions mentioning this entity
      */
     fun recallAbout(
-        entityId: EntityRequest,
+        entityId: EntityIdentifier,
         scope: MemoryScope,
     ): List<Proposition>
 

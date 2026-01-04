@@ -1,7 +1,7 @@
 package com.embabel.dice.projection.memory
 
+import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.common.core.types.TextSimilaritySearchRequest
-import com.embabel.dice.common.EntityRequest
 import com.embabel.dice.projection.memory.support.KeywordMatchingMemoryTypeClassifier
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
@@ -39,7 +39,7 @@ class DefaultMemoryRetriever(
         )
 
         // Also get propositions for the user
-        val userPropositions = store.findByEntity(EntityRequest.forUser(scope.userId))
+        val userPropositions = store.findByEntity(EntityIdentifier.forUser(scope.userId))
 
         // Combine and deduplicate
         val candidates = (similarPropositions + userPropositions)
@@ -54,7 +54,7 @@ class DefaultMemoryRetriever(
     }
 
     override fun recallAbout(
-        entityId: EntityRequest,
+        entityId: EntityIdentifier,
         scope: MemoryScope,
     ): List<Proposition> {
         return store.findByEntity(entityId)
@@ -67,7 +67,7 @@ class DefaultMemoryRetriever(
         topK: Int,
     ): List<Proposition> {
         // Get all propositions for the user and filter by inferred type
-        val userPropositions = store.findByEntity(EntityRequest.forUser(scope.userId))
+        val userPropositions = store.findByEntity(EntityIdentifier.forUser(scope.userId))
 
         return userPropositions
             .filter { memoryTypeClassifier.classify(it) == memoryType }
@@ -80,7 +80,7 @@ class DefaultMemoryRetriever(
         since: Instant,
         limit: Int,
     ): List<Proposition> {
-        val userPropositions = store.findByEntity(EntityRequest.forUser(scope.userId))
+        val userPropositions = store.findByEntity(EntityIdentifier.forUser(scope.userId))
 
         return userPropositions
             .filter { it.created.isAfter(since) }

@@ -1,10 +1,10 @@
 package com.embabel.dice.proposition.content
 
 import com.embabel.agent.api.common.Ai
+import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.common.core.types.TextSimilaritySearchRequest
-import com.embabel.dice.common.EntityRequest
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
@@ -178,7 +178,7 @@ class ContentIngestionPipeline(
      * @param entityId The entity ID
      * @return Propositions mentioning this entity
      */
-    fun aboutEntity(entityId: EntityRequest): List<Proposition> =
+    fun aboutEntity(entityId: EntityIdentifier): List<Proposition> =
         repository.findByEntity(entityId)
             .filter { it.status == PropositionStatus.ACTIVE }
             .map { it.withDecayApplied() }

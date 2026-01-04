@@ -1,9 +1,9 @@
 package com.embabel.dice.proposition.store
 
+import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
-import com.embabel.dice.common.EntityRequest
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
@@ -32,9 +32,9 @@ class InMemoryPropositionRepository(
 
     override fun findById(id: String): Proposition? = propositions[id]
 
-    override fun findByEntity(entityRequest: EntityRequest): List<Proposition> =
+    override fun findByEntity(entityIdentifier: EntityIdentifier): List<Proposition> =
         propositions.values.filter { proposition ->
-            proposition.mentions.any { it.resolvedId == entityRequest.id }
+            proposition.mentions.any { it.resolvedId == entityIdentifier.id }
         }
 
     override fun findSimilar(textSimilaritySearchRequest: TextSimilaritySearchRequest): List<Proposition> =
