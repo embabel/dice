@@ -18,11 +18,11 @@ import com.embabel.dice.common.EntityRequest
  */
 interface PropositionRepository : CoreSearchOperations {
 
-    override fun supportedRetrievableTypes(): Set<Class<out Retrievable>> {
-        return setOf(Proposition::class.java)
+    override fun supportsType(type: Class<*>): Boolean {
+        return type == Proposition::class.java
     }
 
-    override fun <T : Retrievable> findById(
+    override fun <T> findById(
         id: String,
         clazz: Class<T>
     ): T? {

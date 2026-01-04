@@ -20,7 +20,7 @@ data class SuggestedEntity(
     val name: String,
     val summary: String,
     val chunkId: String,
-    private val id: String? = null,
+    val id: String? = null,
     val properties: Map<String, Any> = emptyMap(),
 ) {
     @JsonIgnore
