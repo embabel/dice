@@ -10,7 +10,7 @@ import com.embabel.common.core.types.ZeroToOne
  * - **Decay**: How quickly it becomes stale (0.0 = eternal, 1.0 = ephemeral)
  * - **Grounding**: What sources support this derivation
  *
- * Both [Proposition]s (raw extracted knowledge) and [Projected] items
+ * Both [Proposition]s (raw extracted knowledge) and [Projection] items
  * (derived representations) implement this interface, enabling uniform
  * handling of uncertain, traceable knowledge.
  *

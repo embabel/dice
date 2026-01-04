@@ -1,6 +1,6 @@
 package com.embabel.dice.projection.prolog
 
-import com.embabel.dice.proposition.Projected
+import com.embabel.dice.proposition.Projection
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.io.InputStream
@@ -92,7 +92,7 @@ data class PrologFact(
     override val confidence: Double,
     override val decay: Double = 0.0,
     override val sourcePropositionIds: List<String>,
-) : Projected {
+) : Projection {
 
     /**
      * Format as Prolog syntax: predicate('arg1', 'arg2').

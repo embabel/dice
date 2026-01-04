@@ -7,7 +7,7 @@ import java.time.Instant
  * Projects propositions into memory structures for agent consumption.
  * Memory is a view over propositions, not a separate storage system.
  */
-interface MemoryProjection {
+interface MemoryProjector {
 
     /**
      * Project user persona snapshot from semantic propositions.

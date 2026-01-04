@@ -25,7 +25,7 @@ data class ProjectedRelationship(
     override val decay: Double = 0.0,
     override val description: String? = null,
     override val sourcePropositionIds: List<String>,
-) : RelationshipInstance, Projected, HasInfoString {
+) : RelationshipInstance, Projection, HasInfoString {
 
     /** Alias for sourceId */
     val fromId: String get() = sourceId

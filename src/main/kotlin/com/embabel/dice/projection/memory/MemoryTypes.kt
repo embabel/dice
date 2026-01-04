@@ -1,6 +1,6 @@
 package com.embabel.dice.projection.memory
 
-import com.embabel.dice.proposition.Projected
+import com.embabel.dice.proposition.Projection
 import com.embabel.dice.proposition.Proposition
 import java.time.Instant
 
@@ -39,7 +39,7 @@ data class Event(
     override val confidence: Double = 1.0,
     override val decay: Double = 0.0,
     override val sourcePropositionIds: List<String>,
-) : Projected {
+) : Projection {
 
     /** Format event for display */
     fun asContext(): String = "$eventTime: $description"
@@ -61,7 +61,7 @@ data class BehavioralRule(
     override val confidence: Double,
     override val decay: Double = 0.0,
     override val sourcePropositionIds: List<String>,
-) : Projected {
+) : Projection {
 
     /** Format rule for LLM context injection */
     fun asContext(): String = if (condition != null) {

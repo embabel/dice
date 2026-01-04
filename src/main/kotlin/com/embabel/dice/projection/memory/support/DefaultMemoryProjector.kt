@@ -13,18 +13,18 @@ import java.time.Instant
  * @param confidenceThreshold Minimum confidence for including propositions
  * @param memoryTypeClassifier Strategy for classifying propositions into memory types
  */
-data class DefaultMemoryProjection(
+data class DefaultMemoryProjector(
     private val propositionRepository: PropositionRepository,
     private val confidenceThreshold: Double = 0.6,
     private val memoryTypeClassifier: MemoryTypeClassifier = KeywordMatchingMemoryTypeClassifier,
-) : MemoryProjection {
+) : MemoryProjector {
 
     companion object {
 
         /** Default instance with standard settings, against the given PropositionRepository */
         @JvmStatic
         fun against(propositionRepository: PropositionRepository) =
-            DefaultMemoryProjection(propositionRepository)
+            DefaultMemoryProjector(propositionRepository)
     }
 
     fun withConfidenceThreshold(threshold: Double) =

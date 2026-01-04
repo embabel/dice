@@ -12,8 +12,11 @@ import com.embabel.dice.common.resolver.InMemoryEntityResolver
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.projection.graph.LenientProjectionPolicy
 import com.embabel.dice.projection.graph.LlmGraphProjector
-import com.embabel.dice.projection.memory.*
-import com.embabel.dice.projection.memory.support.DefaultMemoryProjection
+import com.embabel.dice.projection.memory.DefaultMemoryConsolidator
+import com.embabel.dice.projection.memory.DefaultMemoryRetriever
+import com.embabel.dice.projection.memory.MemoryScope
+import com.embabel.dice.projection.memory.MemoryType
+import com.embabel.dice.projection.memory.support.DefaultMemoryProjector
 import com.embabel.dice.projection.memory.support.KeywordMatchingMemoryTypeClassifier
 import com.embabel.dice.projection.prolog.DefaultPrologProjector
 import com.embabel.dice.projection.prolog.PrologEngine
@@ -545,7 +548,7 @@ internal class DiceShell(
         }
 
         // Create memory projection
-        val memoryProjection = DefaultMemoryProjection(propositionRepository)
+        val memoryProjection = DefaultMemoryProjector(propositionRepository)
 
         println("\n=== User Profile (Semantic Memory) ===")
         val profile = memoryProjection.projectUserPersonaSnapshot(aliceId)

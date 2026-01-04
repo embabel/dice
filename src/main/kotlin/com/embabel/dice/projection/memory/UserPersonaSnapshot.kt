@@ -1,7 +1,7 @@
 package com.embabel.dice.projection.memory
 
 import com.embabel.common.ai.prompt.PromptContributor
-import com.embabel.dice.proposition.Projected
+import com.embabel.dice.proposition.Projection
 
 /**
  * Point-in-time snapshot of a user's persona projected from semantic propositions.
@@ -17,7 +17,7 @@ data class UserPersonaSnapshot(
     override val confidence: Double,
     override val decay: Double = 0.0,
     override val sourcePropositionIds: List<String>,
-) : Projected, PromptContributor {
+) : Projection, PromptContributor {
 
     /** Format persona snapshot for LLM context injection */
     override fun contribution(): String = buildString {

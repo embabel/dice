@@ -8,7 +8,7 @@ import com.embabel.common.core.types.HasInfoString
  * Extends [Derivation] to inherit confidence, decay, and grounding.
  * Provides traceability back to source propositions.
  */
-interface Projected : Derivation {
+interface Projection : Derivation {
     /**
      * IDs of the propositions that this projection derives from.
      * This is the grounding for projected items.
@@ -29,7 +29,7 @@ interface Projected : Derivation {
  *
  * @param T The type of projection result (e.g., ProjectedRelationship, PrologFact)
  */
-interface Projector<T : Projected> {
+interface Projector<T : Projection> {
 
     /**
      * Project a single proposition to a target representation.
@@ -64,14 +64,14 @@ interface Projector<T : Projected> {
  *
  * @param T The type of successful projection
  */
-sealed interface ProjectionResult<out T : Projected> : HasInfoString {
+sealed interface ProjectionResult<out T : Projection> : HasInfoString {
     val proposition: Proposition
 }
 
 /**
  * Proposition was successfully projected.
  */
-data class ProjectionSuccess<T : Projected>(
+data class ProjectionSuccess<T : Projection>(
     override val proposition: Proposition,
     val projected: T,
 ) : ProjectionResult<T> {
@@ -82,7 +82,7 @@ data class ProjectionSuccess<T : Projected>(
 /**
  * Proposition was skipped because it didn't meet projection criteria.
  */
-data class ProjectionSkipped<T : Projected>(
+data class ProjectionSkipped<T : Projection>(
     override val proposition: Proposition,
     val reason: String,
 ) : ProjectionResult<T> {
@@ -93,7 +93,7 @@ data class ProjectionSkipped<T : Projected>(
 /**
  * Proposition couldn't be projected due to an error or incompatibility.
  */
-data class ProjectionFailed<T : Projected>(
+data class ProjectionFailed<T : Projection>(
     override val proposition: Proposition,
     val reason: String,
 ) : ProjectionResult<T> {
@@ -104,7 +104,7 @@ data class ProjectionFailed<T : Projected>(
 /**
  * Aggregated results from projecting multiple propositions.
  */
-data class ProjectionResults<T : Projected>(
+data class ProjectionResults<T : Projection>(
     val results: List<ProjectionResult<T>>,
 ) {
     val successes: List<ProjectionSuccess<T>>
