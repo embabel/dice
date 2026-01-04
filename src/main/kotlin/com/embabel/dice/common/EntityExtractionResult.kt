@@ -3,6 +3,19 @@ package com.embabel.dice.common
 import com.embabel.agent.rag.model.NamedEntityData
 
 /**
+ * Statistics about entity extraction outcomes.
+ */
+data class EntityExtractionStats(
+    /** Number of new entities (not matched to existing) */
+    val newCount: Int,
+    /** Number of entities matched to existing ones */
+    val updatedCount: Int,
+) {
+    /** Total number of entities */
+    val total: Int get() = newCount + updatedCount
+}
+
+/**
  * Result of entity extraction and resolution.
  * Provides access to entities that need to be persisted.
  */
@@ -24,4 +37,11 @@ interface EntityExtractionResult {
      * All entities that need to be persisted (new + updated).
      */
     fun entitiesToPersist(): List<NamedEntityData> = newEntities() + updatedEntities()
+
+    /** Statistics about entity extraction outcomes */
+    val entityExtractionStats: EntityExtractionStats
+        get() = EntityExtractionStats(
+            newCount = newEntities().size,
+            updatedCount = updatedEntities().size,
+        )
 }

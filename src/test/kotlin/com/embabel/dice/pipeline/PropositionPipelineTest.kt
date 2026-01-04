@@ -618,6 +618,11 @@ class PropositionPipelineTest {
             return entity
         }
 
+        override fun update(entity: NamedEntityData): NamedEntityData {
+            entities[entity.id] = entity
+            return entity
+        }
+
         override fun createRelationship(a: EntityIdentifier, b: EntityIdentifier, relationship: RelationshipData) {
             // Not needed for persist tests
         }
@@ -730,14 +735,17 @@ class PropositionPipelineTest {
 
             // No new entities
             assertEquals(0, result.newEntities().size)
+            // But Alice is an updated entity (pre-existing)
+            assertEquals(1, result.updatedEntities().size)
 
             // persist should still work
             result.persist(propositionRepo, entityRepo)
 
-            // No entities saved (all were pre-existing)
-            assertEquals(0, entityRepo.savedEntities.size)
+            // Updated entities are also persisted
+            assertEquals(1, entityRepo.savedEntities.size)
+            assertEquals("Alice", entityRepo.savedEntities.first().name)
 
-            // But proposition should be saved
+            // Proposition should be saved
             assertEquals(1, propositionRepo.count())
         }
 

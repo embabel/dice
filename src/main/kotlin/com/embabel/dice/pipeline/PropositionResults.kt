@@ -9,26 +9,43 @@ import com.embabel.dice.proposition.SuggestedPropositions
 import com.embabel.dice.proposition.revision.RevisionResult
 
 /**
+ * Statistics about proposition revision outcomes.
+ */
+data class PropositionExtractionStats(
+    /** Number of propositions that were new (not similar to existing) */
+    val newCount: Int,
+    /** Number of propositions that were merged with existing identical ones */
+    val mergedCount: Int,
+    /** Number of propositions that reinforced existing similar ones */
+    val reinforcedCount: Int,
+    /** Number of propositions that contradicted existing ones */
+    val contradictedCount: Int,
+    /** Number of propositions that generalized existing ones */
+    val generalizedCount: Int,
+) {
+    /** Total number of propositions processed */
+    val total: Int get() = newCount + mergedCount + reinforcedCount + contradictedCount + generalizedCount
+
+    companion object {
+        fun from(revisionResults: List<RevisionResult>): PropositionExtractionStats = PropositionExtractionStats(
+            newCount = revisionResults.count { it is RevisionResult.New },
+            mergedCount = revisionResults.count { it is RevisionResult.Merged },
+            reinforcedCount = revisionResults.count { it is RevisionResult.Reinforced },
+            contradictedCount = revisionResults.count { it is RevisionResult.Contradicted },
+            generalizedCount = revisionResults.count { it is RevisionResult.Generalized },
+        )
+    }
+}
+
+/**
  * Common interface for proposition revision statistics.
  */
 interface PropositionExtractionResult {
     /** All revision results */
     val revisionResults: List<RevisionResult>
 
-    /** Number of propositions that were new (not similar to existing) */
-    val newCount: Int get() = revisionResults.count { it is RevisionResult.New }
-
-    /** Number of propositions that were merged with existing identical ones */
-    val mergedCount: Int get() = revisionResults.count { it is RevisionResult.Merged }
-
-    /** Number of propositions that reinforced existing similar ones */
-    val reinforcedCount: Int get() = revisionResults.count { it is RevisionResult.Reinforced }
-
-    /** Number of propositions that contradicted existing ones */
-    val contradictedCount: Int get() = revisionResults.count { it is RevisionResult.Contradicted }
-
-    /** Number of propositions that generalized existing ones */
-    val generalizedCount: Int get() = revisionResults.count { it is RevisionResult.Generalized }
+    /** Statistics about revision outcomes */
+    val propositionExtractionStats: PropositionExtractionStats get() = PropositionExtractionStats.from(revisionResults)
 
     /** Whether revision was enabled */
     val hasRevision: Boolean get() = revisionResults.isNotEmpty()
@@ -54,12 +71,20 @@ interface PropositionExtractionResult {
         }
 }
 
+/**
+ * Result of entity and proposition extraction that can be persisted.
+ * Combines [EntityExtractionResult] and [PropositionExtractionResult].
+ * Guides callers to know what to persist, within their own transaction scope.
+ */
 interface PersistablePropositionResults : EntityExtractionResult, PropositionExtractionResult {
 
     /**
      * All propositions extracted (before any revision).
      */
     val propositions: List<Proposition>
+
+    fun propositionsToPersist(): List<Proposition> =
+        if (hasRevision) revisedPropositionsToPersist else propositions
 
     /**
      * Persist extracted entities and propositions to their respective repositories.
@@ -71,15 +96,15 @@ interface PersistablePropositionResults : EntityExtractionResult, PropositionExt
         propositionRepository: PropositionRepository,
         namedEntityDataRepository: NamedEntityDataRepository
     ) {
-        // Save new entities
         newEntities().forEach { entity ->
             namedEntityDataRepository.save(entity)
         }
-        // TODO what about updated entities?
+        updatedEntities().forEach { entity ->
+            namedEntityDataRepository.update(entity)
+        }
 
         // Save propositions - use revision results if available, otherwise all propositions
-        val toSave = if (hasRevision) revisedPropositionsToPersist else propositions
-        propositionRepository.saveAll(toSave)
+        propositionRepository.saveAll(propositionsToPersist())
     }
 }
 

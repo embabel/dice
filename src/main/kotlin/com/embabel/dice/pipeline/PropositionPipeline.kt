@@ -163,15 +163,16 @@ class PropositionPipeline private constructor(
         )
 
         if (result.hasRevision) {
+            val stats = result.propositionExtractionStats
             logger.info(
                 "Extracted {} propositions from {} chunks: {} new, {} generalized, {} merged, {} reinforced, {} contradicted ({} fully resolved)",
                 allPropositions.size,
                 chunks.size,
-                result.newCount,
-                result.generalizedCount,
-                result.mergedCount,
-                result.reinforcedCount,
-                result.contradictedCount,
+                stats.newCount,
+                stats.generalizedCount,
+                stats.mergedCount,
+                stats.reinforcedCount,
+                stats.contradictedCount,
                 allPropositions.count { it.isFullyResolved() }
             )
         } else {
