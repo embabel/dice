@@ -129,14 +129,14 @@ internal class DiceShell(
         val chunks = chunker.chunk(doc)
         println("Created ${chunks.size} chunks")
 
-        val knowledgeGraphBuilder = KnowledgeGraphBuilders
-            .withSourceAnalyzer(sourceAnalyzer)
-            .withEntityResolver(InMemoryEntityResolver())
-            .knowledgeGraphBuilder()
         val sourceAnalysisContext = SourceAnalysisContext(
             schema = holmesSchema,
             entityResolver = entityResolver,
         )
+        val knowledgeGraphBuilder = KnowledgeGraphBuilders
+            .withSourceAnalyzer(sourceAnalyzer)
+            .withEntityResolver(entityResolver)
+            .knowledgeGraphBuilder()
 
         val delta = knowledgeGraphBuilder.computeDelta(chunks, sourceAnalysisContext)
 
@@ -158,12 +158,6 @@ internal class DiceShell(
 
     @ShellMethod("Analyze sample data")
     fun mem() {
-
-        val knowledgeGraphBuilder = KnowledgeGraphBuilders
-            .withSourceAnalyzer(sourceAnalyzer)
-            .withEntityResolver(AlwaysCreateEntityResolver)
-            .knowledgeGraphBuilder()
-
         val chunks = listOf(
             Chunk(
                 id = "1",
@@ -181,6 +175,10 @@ internal class DiceShell(
             schema = schema,
             entityResolver = entityResolver,
         )
+        val knowledgeGraphBuilder = KnowledgeGraphBuilders
+            .withSourceAnalyzer(sourceAnalyzer)
+            .withEntityResolver(entityResolver)
+            .knowledgeGraphBuilder()
 
         val projector = InMemoryObjectGraphGraphProjector()
         val delta = knowledgeGraphBuilder.computeDelta(chunks, sourceAnalysisContext)
@@ -210,11 +208,6 @@ internal class DiceShell(
                 .withShowLlmResponses(true)
                 .ai(),
         )
-        val projector = KnowledgeGraphBuilders
-            .withSourceAnalyzer(sourceAnalyzer)
-            .withEntityResolver(AlwaysCreateEntityResolver)
-            .projector()
-
         val chunks = listOf(
             Chunk(
                 id = "1",
@@ -233,6 +226,10 @@ internal class DiceShell(
             schema = schema,
             entityResolver = entityResolver,
         )
+        val projector = KnowledgeGraphBuilders
+            .withSourceAnalyzer(sourceAnalyzer)
+            .withEntityResolver(entityResolver)
+            .projector()
 
 //        val entities = projector.project(chunks, sourceAnalysisContext)
 //        println(entities)
@@ -250,8 +247,7 @@ internal class DiceShell(
     fun propositions() {
         val pipeline = PropositionBuilders
             .withExtractor(propositionExtractor)
-            .withEntityResolver(InMemoryEntityResolver())
-            .withStore(propositionRepository)
+                        .withStore(propositionRepository)
             .build()
 
         val chunks = listOf(
@@ -313,8 +309,7 @@ internal class DiceShell(
 
         val pipeline = PropositionBuilders
             .withExtractor(propositionExtractor)
-            .withEntityResolver(InMemoryEntityResolver())
-            .withStore(propositionRepository)
+                        .withStore(propositionRepository)
             .build()
 
         val sourceAnalysisContext = SourceAnalysisContext(
@@ -355,9 +350,7 @@ internal class DiceShell(
 
         val pipeline = PropositionBuilders
             .withExtractor(propositionExtractor)
-            .withEntityResolver(InMemoryEntityResolver())
             .withStore(propositionRepository)
-            .withProjector(graphProjector)
             .build()
 
         val chunks = listOf(
@@ -403,7 +396,7 @@ internal class DiceShell(
 
         // Then project to graph
         println("\n--- Projecting to Relationships ---")
-        val graphResult = pipeline.project(GraphProjector::class, extractionResult, sourceAnalysisContext.schema)
+        val graphResult = graphProjector.projectAll(extractionResult.allPropositions, sourceAnalysisContext.schema)
 
         println("\n--- Projection Results ---")
         println("Projected: ${graphResult.successCount}")
@@ -497,8 +490,7 @@ internal class DiceShell(
     fun memory() {
         val pipeline = PropositionBuilders
             .withExtractor(propositionExtractor)
-            .withEntityResolver(InMemoryEntityResolver())
-            .withStore(propositionRepository)
+                        .withStore(propositionRepository)
             .build()
 
         // Sample text with various types of information about a user
@@ -536,7 +528,7 @@ internal class DiceShell(
             ?.resolvedId ?: "alice-unknown"
 
         println("\n=== Memory Type Classification ===")
-        val byType = extractionResult.allPropositions.groupBy { KeywordMatchingMemoryTypeClassifier.apply { it } }
+        val byType = extractionResult.allPropositions.groupBy { KeywordMatchingMemoryTypeClassifier.classify(it) }
         for ((type, props) in byType) {
             println("\n$type (${props.size} propositions):")
             props.forEach { println("  - ${it.text}") }
@@ -687,10 +679,7 @@ internal class DiceShell(
 
         val pipeline = PropositionBuilders
             .withExtractor(propositionExtractor)
-            .withEntityResolver(InMemoryEntityResolver())
             .withStore(propositionRepository)
-            .withProjector(graphProjector)
-            .withProjector(prologProjector)
             .build()
 
         val chunks = listOf(
@@ -737,7 +726,7 @@ internal class DiceShell(
 
         // Step 2: Project to graph relationships
         println("\n--- Step 2: Projecting to Graph Relationships ---")
-        val graphResult = pipeline.project(GraphProjector::class, extractionResult, prologDemoSchema)
+        val graphResult = graphProjector.projectAll(extractionResult.allPropositions, prologDemoSchema)
         println("Projected: ${graphResult.successCount} relationships")
         println("Skipped: ${graphResult.skipCount}")
         println("Failed: ${graphResult.failureCount}")
@@ -871,10 +860,7 @@ internal class DiceShell(
 
         val pipeline = PropositionBuilders
             .withExtractor(propositionExtractor)
-            .withEntityResolver(InMemoryEntityResolver())
             .withStore(propositionRepository)
-            .withProjector(graphProjector)
-            .withProjector(prologProjector)
             .build()
 
         val chunks = listOf(
@@ -906,7 +892,7 @@ internal class DiceShell(
         val extractionResult = pipeline.process(chunks, sourceAnalysisContext)
         println("Extracted ${extractionResult.totalPropositions} propositions")
 
-        val graphResult = pipeline.project(GraphProjector::class, extractionResult, prologDemoSchema)
+        val graphResult = graphProjector.projectAll(extractionResult.allPropositions, prologDemoSchema)
         println("Projected ${graphResult.successCount} relationships")
 
         val prologResult = prologProjector.projectAll(graphResult.projected)

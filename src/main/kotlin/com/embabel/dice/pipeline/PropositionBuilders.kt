@@ -1,17 +1,16 @@
 package com.embabel.dice.pipeline
 
-import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
-import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntityResolution
-import com.embabel.dice.proposition.*
+import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionExtractor
+import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.SuggestedPropositions
 import com.embabel.dice.proposition.revision.PropositionReviser
 import com.embabel.dice.proposition.revision.RevisionResult
 import org.slf4j.LoggerFactory
-import kotlin.reflect.KClass
-
 /**
  * Fluent API for building proposition extraction pipelines.
  *
@@ -19,34 +18,24 @@ import kotlin.reflect.KClass
  * ```kotlin
  * val pipeline = PropositionBuilders
  *     .withExtractor(LlmPropositionExtractor(ai))
- *     .withEntityResolver(InMemoryEntityResolver())
  *     .withStore(InMemoryPropositionRepository(embeddingService))
  *     .withReviser(LlmPropositionReviser(ai))  // Optional: enables merge/reinforce/contradict
- *     .withProjector(LlmGraphProjector(ai))
- *     .withProjector(DefaultPrologProjector(prologSchema = schema))
  *     .build()
  *
- * val result = pipeline.process(chunks, config)
+ * val result = pipeline.process(chunks, context)
  * // With revision enabled, result includes revision statistics:
  * // - result.newCount, result.mergedCount, result.reinforcedCount, result.contradictedCount
- * val graphResults = pipeline.project<GraphProjector>(result, config)
+ *
+ * // Project to different formats as needed:
+ * val graphResults = graphProjector.projectAll(result.allPropositions, schema)
+ * val prologResults = prologProjector.projectAll(result.allPropositions, schema)
  * ```
  */
 object PropositionBuilders {
 
     @JvmStatic
-    fun withExtractor(extractor: PropositionExtractor): EntityResolverStep =
-        EntityResolverStep(extractor)
-}
-
-/**
- * Builder step for configuring entity resolver.
- */
-class EntityResolverStep(
-    private val extractor: PropositionExtractor,
-) {
-    fun withEntityResolver(entityResolver: EntityResolver): StoreStep =
-        StoreStep(extractor, entityResolver)
+    fun withExtractor(extractor: PropositionExtractor): StoreStep =
+        StoreStep(extractor)
 }
 
 /**
@@ -54,14 +43,13 @@ class EntityResolverStep(
  */
 class StoreStep(
     private val extractor: PropositionExtractor,
-    private val entityResolver: EntityResolver,
 ) {
     /**
      * Use a custom proposition store.
      * Note: InMemoryPropositionRepository requires an EmbeddingService for vector similarity search.
      */
     fun withStore(store: PropositionRepository): PropositionPipelineBuilder =
-        PropositionPipelineBuilder(extractor, entityResolver, store)
+        PropositionPipelineBuilder(extractor, store)
 }
 
 /**
@@ -69,22 +57,9 @@ class StoreStep(
  */
 class PropositionPipelineBuilder(
     private val extractor: PropositionExtractor,
-    private val entityResolver: EntityResolver,
     private val store: PropositionRepository,
-    private val projectors: MutableList<Projector<*>> = mutableListOf(),
     private var reviser: PropositionReviser? = null,
 ) {
-    /**
-     * Add a projector for transforming propositions to a typed output.
-     * Multiple projectors can be added for different projection types.
-     *
-     * @param projector Any projector implementation (GraphProjector, PrologProjector, etc.)
-     */
-    fun <T : Projected> withProjector(projector: Projector<T>): PropositionPipelineBuilder {
-        projectors.add(projector)
-        return this
-    }
-
     /**
      * Add a reviser to merge/reinforce/contradict propositions against existing ones.
      * When enabled, new propositions are compared against existing ones in the repository
@@ -98,7 +73,7 @@ class PropositionPipelineBuilder(
     }
 
     fun build(): PropositionPipeline =
-        PropositionPipeline(extractor, store, projectors.toList(), reviser)
+        PropositionPipeline(extractor, store, reviser)
 }
 
 /**
@@ -169,88 +144,12 @@ data class PropositionExtractionResult(
 class PropositionPipeline(
     private val extractor: PropositionExtractor,
     private val store: PropositionRepository,
-    private val projectors: List<Projector<*>> = emptyList(),
     private val reviser: PropositionReviser? = null,
 ) {
     private val logger = LoggerFactory.getLogger(PropositionPipeline::class.java)
 
     /** Whether revision is enabled for this pipeline */
     val hasRevision: Boolean get() = reviser != null
-
-    /**
-     * Get a projector by its class type.
-     *
-     * @param projectorClass The class of the projector to retrieve
-     * @return The projector instance, or null if not configured
-     */
-    @Suppress("UNCHECKED_CAST")
-    fun <P : Projector<*>> projector(projectorClass: KClass<P>): P? =
-        projectors.firstOrNull { projectorClass.isInstance(it) } as P?
-
-    /**
-     * Get a projector by its class type (reified version).
-     */
-    inline fun <reified P : Projector<*>> projector(): P? = projector(P::class)
-
-    /**
-     * Check if a projector of the given type is configured.
-     */
-    fun <P : Projector<*>> hasProjector(projectorClass: KClass<P>): Boolean =
-        projectors.any { projectorClass.isInstance(it) }
-
-    /**
-     * Check if a projector of the given type is configured (reified version).
-     */
-    inline fun <reified P : Projector<*>> hasProjector(): Boolean = hasProjector(P::class)
-
-    /**
-     * Project propositions using the specified projector type.
-     *
-     * @param projectorClass The class of the projector to use
-     * @param extractionResult The extraction result containing propositions
-     * @param schema The data dictionary for projection
-     * @return Projection results
-     * @throws IllegalStateException if no projector of the given type is configured
-     */
-    @Suppress("UNCHECKED_CAST")
-    fun <T : Projected, P : Projector<T>> project(
-        projectorClass: KClass<P>,
-        extractionResult: PropositionExtractionResult,
-        schema: DataDictionary,
-    ): ProjectionResults<T> {
-        val projector = projector(projectorClass)
-            ?: throw IllegalStateException("No ${projectorClass.simpleName} configured. Use withProjector() when building the pipeline.")
-
-        logger.info("Projecting {} propositions with {}", extractionResult.totalPropositions, projectorClass.simpleName)
-
-        val results = (projector as Projector<T>).projectAll(extractionResult.allPropositions, schema)
-
-        logger.info(
-            "Projection complete: {} projected, {} skipped, {} failed",
-            results.successCount,
-            results.skipCount,
-            results.failureCount
-        )
-
-        return results
-    }
-
-    /**
-     * Project propositions using a projector instance directly.
-     *
-     * @param projector The projector to use
-     * @param propositions The propositions to project
-     * @param schema The data dictionary for projection
-     * @return Projection results
-     */
-    fun <T : Projected> project(
-        projector: Projector<T>,
-        propositions: List<Proposition>,
-        schema: DataDictionary,
-    ): ProjectionResults<T> {
-        logger.info("Projecting {} propositions", propositions.size)
-        return projector.projectAll(propositions, schema)
-    }
 
     /**
      * Process a single chunk through the pipeline.
@@ -361,11 +260,6 @@ class PropositionPipeline(
 
         return result
     }
-
-    /**
-     * Get all configured projectors.
-     */
-    fun projectors(): List<Projector<*>> = projectors
 
     /**
      * Get the proposition store for querying.

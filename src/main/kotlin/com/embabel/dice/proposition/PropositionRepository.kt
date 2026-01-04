@@ -18,14 +18,25 @@ import com.embabel.dice.common.EntityRequest
  */
 interface PropositionRepository : CoreSearchOperations {
 
-    override fun supportsType(type: Class<*>): Boolean {
-        return type == Proposition::class.java
+    override fun supportsType(type: String): Boolean {
+        return type == Proposition::class.java.simpleName
     }
 
     override fun <T> findById(
         id: String,
         clazz: Class<T>
     ): T? {
+        return findById(id) as T?
+    }
+
+    override fun <T : Retrievable> findById(id: String, type: String): T? {
+        if (type != Proposition::class.java.simpleName) {
+            loggerFor<PropositionRepository>().warn(
+                "PropositionRepository only supports Proposition, not {}",
+                type
+            )
+            return null
+        }
         return findById(id) as T?
     }
 
