@@ -607,6 +607,8 @@ class PropositionPipelineTest {
      */
     private class InMemoryTestEntityRepository : NamedEntityDataRepository {
 
+        override val luceneSyntaxNotes: String = "In-memory test repository"
+
         private val entities = mutableMapOf<String, NamedEntityData>()
 
         val savedEntities: List<NamedEntityData> get() = entities.values.toList()
@@ -626,6 +628,12 @@ class PropositionPipelineTest {
 
         override fun findByLabel(label: String): List<NamedEntityData> =
             entities.values.filter { entity -> entity.labels().any { it.equals(label, ignoreCase = true) } }
+
+        override fun textSearch(request: com.embabel.common.core.types.TextSimilaritySearchRequest): List<com.embabel.common.core.types.SimilarityResult<NamedEntityData>> =
+            emptyList()
+
+        override fun vectorSearch(request: com.embabel.common.core.types.TextSimilaritySearchRequest): List<com.embabel.common.core.types.SimilarityResult<NamedEntityData>> =
+            emptyList()
 
         fun clear() {
             entities.clear()

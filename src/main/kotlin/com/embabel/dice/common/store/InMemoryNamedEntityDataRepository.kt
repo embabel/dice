@@ -5,6 +5,8 @@ import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.agent.rag.service.RelationshipData
 import com.embabel.common.ai.model.EmbeddingService
+import com.embabel.common.core.types.SimilarityResult
+import com.embabel.common.core.types.TextSimilaritySearchRequest
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.sqrt
 
@@ -20,11 +22,42 @@ class InMemoryNamedEntityDataRepository(
 ) : NamedEntityDataRepository {
 
     private val entities = ConcurrentHashMap<String, NamedEntityData>()
+
     private val embeddings = ConcurrentHashMap<String, FloatArray>()
 
-    // ===========================================
-    // Write Operations
-    // ===========================================
+    override fun vectorSearch(
+        request: TextSimilaritySearchRequest
+    ): List<SimilarityResult<NamedEntityData>> {
+        val queryEmbedding = embeddingService.embed(request.query)
+        val results = embeddings.mapNotNull { (id, embedding) ->
+            val entity = entities[id] ?: return@mapNotNull null
+            val similarity = cosineSimilarity(queryEmbedding, embedding)
+            SimilarityResult(
+                match = entity,
+                score = similarity
+            )
+        }
+        return results
+            .sortedByDescending { it.score }
+            .take(request.topK)
+    }
+
+    override fun textSearch(request: TextSimilaritySearchRequest): List<SimilarityResult<NamedEntityData>> {
+        return entities.values
+            .filter { entity ->
+                // Simple case-insensitive substring match for demo purposes
+                entity.name.contains(request.query, ignoreCase = true) ||
+                        entity.description.contains(request.query, ignoreCase = true)
+            }
+            .map { entity ->
+                SimilarityResult(
+                    match = entity,
+                    score = 1.0 // Placeholder score for text matches
+                )
+            }
+    }
+
+    override val luceneSyntaxNotes = "basic"
 
     override fun save(entity: NamedEntityData): NamedEntityData {
         entities[entity.id] = entity

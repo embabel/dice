@@ -2,7 +2,7 @@ package com.embabel.dice.common.resolver
 
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.SimpleNamedEntityData
-import com.embabel.agent.rag.service.CoreSearchOperations
+import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.common.core.types.SimpleSimilaritySearchResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.ExistingEntity
@@ -23,10 +23,10 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
-class CoreSearchOperationsEntityResolverTest {
+class NamedEntityDataRepositoryEntityResolverTest {
 
-    private lateinit var searchOperations: CoreSearchOperations
-    private lateinit var resolver: CoreSearchOperationsEntityResolver
+    private lateinit var repository: NamedEntityDataRepository
+    private lateinit var resolver: NamedEntityDataRepositoryEntityResolver
 
     private val schema = DataDictionary.fromClasses(Person::class.java, Animal::class.java)
 
@@ -40,8 +40,8 @@ class CoreSearchOperationsEntityResolverTest {
 
     @BeforeEach
     fun setUp() {
-        searchOperations = mockk()
-        resolver = CoreSearchOperationsEntityResolver(searchOperations)
+        repository = mockk()
+        resolver = NamedEntityDataRepositoryEntityResolver(repository)
     }
 
     private fun createSuggestedEntities(vararg entities: SuggestedEntity): SuggestedEntities {
@@ -69,7 +69,7 @@ class CoreSearchOperationsEntityResolverTest {
         @Test
         fun `should create new entity when no search results`() {
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns emptyList()
 
             val suggested = createSuggestedEntities(
@@ -88,7 +88,7 @@ class CoreSearchOperationsEntityResolverTest {
             val existingEntity = createNamedEntity("alice-id", "Alice", setOf("Person"))
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns listOf(SimpleSimilaritySearchResult(existingEntity, 0.9))
 
             val suggested = createSuggestedEntities(
@@ -107,7 +107,7 @@ class CoreSearchOperationsEntityResolverTest {
             val existingEntity = createNamedEntity("alice-id", "Alice", setOf("Person"))
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns listOf(SimpleSimilaritySearchResult(existingEntity, 0.9))
 
             val suggested = createSuggestedEntities(
@@ -123,7 +123,7 @@ class CoreSearchOperationsEntityResolverTest {
         @Test
         fun `should preserve chunk IDs in resolution`() {
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns emptyList()
 
             val suggested = SuggestedEntities(
@@ -152,7 +152,7 @@ class CoreSearchOperationsEntityResolverTest {
             val existingEntity = createNamedEntity("alice-id", "Alice", setOf("Person"))
 
             every {
-                searchOperations.findById("alice-id", SimpleNamedEntityData::class.java)
+                repository.findById("alice-id")
             } returns existingEntity
 
             val suggested = createSuggestedEntities(
@@ -169,7 +169,7 @@ class CoreSearchOperationsEntityResolverTest {
 
             assertEquals(1, resolutions.resolutions.size)
             assertTrue(resolutions.resolutions[0] is ExistingEntity)
-            verify { searchOperations.findById("alice-id", SimpleNamedEntityData::class.java) }
+            verify { repository.findById("alice-id") }
         }
 
         @Test
@@ -177,11 +177,11 @@ class CoreSearchOperationsEntityResolverTest {
             val existingEntity = createNamedEntity("alice-id-2", "Alice", setOf("Person"))
 
             every {
-                searchOperations.findById("alice-id", SimpleNamedEntityData::class.java)
+                repository.findById("alice-id")
             } returns null
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns listOf(SimpleSimilaritySearchResult(existingEntity, 0.9))
 
             val suggested = createSuggestedEntities(
@@ -203,13 +203,13 @@ class CoreSearchOperationsEntityResolverTest {
 
         @Test
         fun `should not use findById when disabled in config`() {
-            val resolverNoFindById = CoreSearchOperationsEntityResolver(
-                searchOperations,
-                CoreSearchOperationsEntityResolver.Config(useFindById = false)
+            val resolverNoFindById = NamedEntityDataRepositoryEntityResolver(
+                repository,
+                NamedEntityDataRepositoryEntityResolver.Config(useFindById = false)
             )
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns emptyList()
 
             val suggested = createSuggestedEntities(
@@ -224,7 +224,7 @@ class CoreSearchOperationsEntityResolverTest {
 
             resolverNoFindById.resolve(suggested, schema)
 
-            verify(exactly = 0) { searchOperations.findById(any(), SimpleNamedEntityData::class.java) }
+            verify(exactly = 0) { repository.findById(any()) }
         }
     }
 
@@ -236,7 +236,7 @@ class CoreSearchOperationsEntityResolverTest {
             var capturedQuery: String? = null
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } answers {
                 val request = firstArg<TextSimilaritySearchRequest>()
                 capturedQuery = request.query
@@ -267,15 +267,15 @@ class CoreSearchOperationsEntityResolverTest {
 
         @Test
         fun `should not use fuzzy matching when disabled`() {
-            val resolverNoFuzzy = CoreSearchOperationsEntityResolver(
-                searchOperations,
-                CoreSearchOperationsEntityResolver.Config(useFuzzyTextSearch = false)
+            val resolverNoFuzzy = NamedEntityDataRepositoryEntityResolver(
+                repository,
+                NamedEntityDataRepositoryEntityResolver.Config(useFuzzyTextSearch = false)
             )
 
             var capturedQuery: String? = null
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } answers {
                 val request = firstArg<TextSimilaritySearchRequest>()
                 capturedQuery = request.query
@@ -302,7 +302,7 @@ class CoreSearchOperationsEntityResolverTest {
             var capturedQuery: String? = null
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } answers {
                 val request = firstArg<TextSimilaritySearchRequest>()
                 capturedQuery = request.query
@@ -334,7 +334,7 @@ class CoreSearchOperationsEntityResolverTest {
             val animalEntity = createNamedEntity("rex-id", "Rex", setOf("Animal"))
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns listOf(SimpleSimilaritySearchResult(animalEntity, 0.9))
 
             val suggested = createSuggestedEntities(
@@ -357,7 +357,7 @@ class CoreSearchOperationsEntityResolverTest {
             val personEntity = createNamedEntity("holmes-id", "Sherlock Holmes", setOf("Person"))
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns listOf(SimpleSimilaritySearchResult(personEntity, 0.9))
 
             val suggested = createSuggestedEntities(
@@ -380,7 +380,7 @@ class CoreSearchOperationsEntityResolverTest {
             val doctorEntity = createNamedEntity("watson-id", "Watson", setOf("Doctor"))
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns listOf(SimpleSimilaritySearchResult(doctorEntity, 0.9))
 
             val suggested = createSuggestedEntities(
@@ -407,7 +407,7 @@ class CoreSearchOperationsEntityResolverTest {
             val existingEntity = createNamedEntity("watson-id", "Watson", setOf("Person"))
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns listOf(SimpleSimilaritySearchResult(existingEntity, 0.9))
 
             val suggested = createSuggestedEntities(
@@ -429,7 +429,7 @@ class CoreSearchOperationsEntityResolverTest {
             val existingEntity = createNamedEntity("holmes-id", "Sherlock Holmes", setOf("Person"))
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns listOf(SimpleSimilaritySearchResult(existingEntity, 0.9))
 
             val suggested = createSuggestedEntities(
@@ -451,7 +451,7 @@ class CoreSearchOperationsEntityResolverTest {
             val existingEntity = createNamedEntity("doe-id", "John Doe", setOf("Person"))
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns listOf(SimpleSimilaritySearchResult(existingEntity, 0.9))
 
             val suggested = createSuggestedEntities(
@@ -469,7 +469,7 @@ class CoreSearchOperationsEntityResolverTest {
             val existingEntity = createNamedEntity("sherlock-id", "Sherlock", setOf("Person"))
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns listOf(SimpleSimilaritySearchResult(existingEntity, 0.9))
 
             val suggested = createSuggestedEntities(
@@ -492,7 +492,7 @@ class CoreSearchOperationsEntityResolverTest {
             val existingEntity = createNamedEntity("alice-id", "Alice", setOf("Person"))
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns listOf(SimpleSimilaritySearchResult(existingEntity, 0.9))
 
             val suggested = createSuggestedEntities(
@@ -511,9 +511,9 @@ class CoreSearchOperationsEntityResolverTest {
 
         @Test
         fun `should use vector search when enabled`() {
-            val resolverWithVector = CoreSearchOperationsEntityResolver(
-                searchOperations,
-                CoreSearchOperationsEntityResolver.Config(
+            val resolverWithVector = NamedEntityDataRepositoryEntityResolver(
+                repository,
+                NamedEntityDataRepositoryEntityResolver.Config(
                     useTextSearch = false,
                     useVectorSearch = true
                 )
@@ -522,7 +522,7 @@ class CoreSearchOperationsEntityResolverTest {
             val existingEntity = createNamedEntity("alice-id", "Alice", setOf("Person"))
 
             every {
-                searchOperations.vectorSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.vectorSearch(any<TextSimilaritySearchRequest>())
             } returns listOf(SimpleSimilaritySearchResult(existingEntity, 0.85))
 
             val suggested = createSuggestedEntities(
@@ -538,17 +538,14 @@ class CoreSearchOperationsEntityResolverTest {
 
             assertTrue(resolutions.resolutions[0] is ExistingEntity)
             verify {
-                searchOperations.vectorSearch(
-                    any<TextSimilaritySearchRequest>(),
-                    SimpleNamedEntityData::class.java
-                )
+                repository.vectorSearch(any<TextSimilaritySearchRequest>())
             }
         }
 
         @Test
         fun `should not use vector search when disabled`() {
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns emptyList()
 
             val suggested = createSuggestedEntities(
@@ -557,7 +554,7 @@ class CoreSearchOperationsEntityResolverTest {
 
             resolver.resolve(suggested, schema)
 
-            verify(exactly = 0) { searchOperations.vectorSearch(any(), SimpleNamedEntityData::class.java) }
+            verify(exactly = 0) { repository.vectorSearch(any()) }
         }
     }
 
@@ -569,11 +566,11 @@ class CoreSearchOperationsEntityResolverTest {
             val aliceEntity = createNamedEntity("alice-id", "Alice", setOf("Person"))
 
             every {
-                searchOperations.textSearch(match { it.query.contains("Alice") }, SimpleNamedEntityData::class.java)
+                repository.textSearch(match { it.query.contains("Alice") })
             } returns listOf(SimpleSimilaritySearchResult(aliceEntity, 0.9))
 
             every {
-                searchOperations.textSearch(match { it.query.contains("Bob") }, SimpleNamedEntityData::class.java)
+                repository.textSearch(match { it.query.contains("Bob") })
             } returns emptyList()
 
             val suggested = createSuggestedEntities(
@@ -596,7 +593,7 @@ class CoreSearchOperationsEntityResolverTest {
         @Test
         fun `should maintain entity order in results`() {
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns emptyList()
 
             val suggested = createSuggestedEntities(
@@ -620,11 +617,11 @@ class CoreSearchOperationsEntityResolverTest {
         @Test
         fun `should handle findById exception gracefully`() {
             every {
-                searchOperations.findById("bad-id", SimpleNamedEntityData::class.java)
+                repository.findById("bad-id")
             } throws RuntimeException("Database error")
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns emptyList()
 
             val suggested = createSuggestedEntities(
@@ -647,7 +644,7 @@ class CoreSearchOperationsEntityResolverTest {
         @Test
         fun `should handle textSearch exception gracefully`() {
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } throws RuntimeException("Search error")
 
             val suggested = createSuggestedEntities(
@@ -663,16 +660,16 @@ class CoreSearchOperationsEntityResolverTest {
 
         @Test
         fun `should handle vectorSearch exception gracefully`() {
-            val resolverWithVector = CoreSearchOperationsEntityResolver(
-                searchOperations,
-                CoreSearchOperationsEntityResolver.Config(
+            val resolverWithVector = NamedEntityDataRepositoryEntityResolver(
+                repository,
+                NamedEntityDataRepositoryEntityResolver.Config(
                     useTextSearch = false,
                     useVectorSearch = true
                 )
             )
 
             every {
-                searchOperations.vectorSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.vectorSearch(any<TextSimilaritySearchRequest>())
             } throws RuntimeException("Vector search error")
 
             val suggested = createSuggestedEntities(
@@ -703,15 +700,15 @@ class CoreSearchOperationsEntityResolverTest {
                 }
             }
 
-            val customResolver = CoreSearchOperationsEntityResolver(
-                searchOperations,
+            val customResolver = NamedEntityDataRepositoryEntityResolver(
+                repository,
                 matchStrategies = listOf(LabelCompatibilityStrategy(), firstLetterStrategy)
             )
 
             val existingEntity = createNamedEntity("alex-id", "Alexander", setOf("Person"))
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns listOf(SimpleSimilaritySearchResult(existingEntity, 0.9))
 
             val suggested = createSuggestedEntities(
@@ -735,15 +732,15 @@ class CoreSearchOperationsEntityResolverTest {
                 }
             }
 
-            val customResolver = CoreSearchOperationsEntityResolver(
-                searchOperations,
+            val customResolver = NamedEntityDataRepositoryEntityResolver(
+                repository,
                 matchStrategies = listOf(vetoVillainStrategy) + defaultMatchStrategies()
             )
 
             val existingEntity = createNamedEntity("villain-id", "Super Villain", setOf("Person"))
 
             every {
-                searchOperations.textSearch(any<TextSimilaritySearchRequest>(), SimpleNamedEntityData::class.java)
+                repository.textSearch(any<TextSimilaritySearchRequest>())
             } returns listOf(SimpleSimilaritySearchResult(existingEntity, 0.95))
 
             val suggested = createSuggestedEntities(

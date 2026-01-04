@@ -2,15 +2,14 @@ package com.embabel.dice.common.resolver
 
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
-import com.embabel.agent.rag.model.SimpleNamedEntityData
-import com.embabel.agent.rag.service.CoreSearchOperations
+import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.*
 import org.slf4j.LoggerFactory
 
 /**
- * Entity resolver that uses [CoreSearchOperations] to find existing entities
+ * Entity resolver that uses [NamedEntityDataRepository] to find existing entities
  * in a backing store (e.g., Lucene index, vector database).
  *
  * Supports multiple search strategies:
@@ -21,18 +20,18 @@ import org.slf4j.LoggerFactory
  * Match evaluation is delegated to configurable [MatchStrategy] implementations,
  * allowing customization of how search results are evaluated for equivalence.
  *
- * @param searchOperations The search operations backend
+ * @param repository The search operations backend
  * @param config Configuration for search behavior and thresholds
  * @param matchStrategies Strategies for evaluating if a search result matches a suggestion.
  *                        Strategies are tried in order; first match wins.
  */
-class CoreSearchOperationsEntityResolver(
-    private val searchOperations: CoreSearchOperations,
+class NamedEntityDataRepositoryEntityResolver @JvmOverloads constructor(
+    private val repository: NamedEntityDataRepository,
     private val config: Config = Config(),
     private val matchStrategies: List<MatchStrategy> = defaultMatchStrategies(),
 ) : EntityResolver {
 
-    private val logger = LoggerFactory.getLogger(CoreSearchOperationsEntityResolver::class.java)
+    private val logger = LoggerFactory.getLogger(NamedEntityDataRepositoryEntityResolver::class.java)
 
     /**
      * Configuration for search behavior.
@@ -136,14 +135,14 @@ class CoreSearchOperationsEntityResolver(
 
     private fun findById(id: String): NamedEntityData? {
         return try {
-            searchOperations.findById(id, SimpleNamedEntityData::class.java)
+            repository.findById(id)
         } catch (e: Exception) {
             logger.warn("Error finding entity by ID '{}': {}", id, e.message)
             null
         }
     }
 
-    private fun textSearch(suggested: SuggestedEntity): List<SimilarityResult<SimpleNamedEntityData>> {
+    private fun textSearch(suggested: SuggestedEntity): List<SimilarityResult<NamedEntityData>> {
         val query = buildTextQuery(suggested)
         val request = TextSimilaritySearchRequest(
             query = query,
@@ -151,14 +150,14 @@ class CoreSearchOperationsEntityResolver(
             topK = config.topK,
         )
         return try {
-            searchOperations.textSearch(request, SimpleNamedEntityData::class.java)
+            repository.textSearch(request)
         } catch (e: Exception) {
             logger.warn("Text search failed for '{}': {}", suggested.name, e.message)
             emptyList()
         }
     }
 
-    private fun vectorSearch(suggested: SuggestedEntity): List<SimilarityResult<SimpleNamedEntityData>> {
+    private fun vectorSearch(suggested: SuggestedEntity): List<SimilarityResult<NamedEntityData>> {
         // Use name + summary for semantic search
         val query = "${suggested.name} ${suggested.summary}"
         val request = TextSimilaritySearchRequest(
@@ -167,7 +166,7 @@ class CoreSearchOperationsEntityResolver(
             topK = config.topK,
         )
         return try {
-            searchOperations.vectorSearch(request, SimpleNamedEntityData::class.java)
+            repository.vectorSearch(request)
         } catch (e: Exception) {
             logger.warn("Vector search failed for '{}': {}", suggested.name, e.message)
             emptyList()
@@ -208,7 +207,8 @@ class CoreSearchOperationsEntityResolver(
      * Escape special Lucene query syntax characters.
      */
     private fun escapeLucene(text: String): String {
-        val specialChars = setOf('+', '-', '&', '|', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', '*', '?', ':', '\\', '/')
+        val specialChars =
+            setOf('+', '-', '&', '|', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', '*', '?', ':', '\\', '/')
         val sb = StringBuilder()
         for (c in text) {
             if (c in specialChars) {
