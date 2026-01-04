@@ -8,27 +8,61 @@ import com.embabel.dice.common.*
 import com.embabel.dice.proposition.*
 import org.slf4j.LoggerFactory
 
+
+interface ExtractionConfig {
+    val lockToSchema: Boolean
+}
+
+/**
+ * Model passed to the Jinja template for proposition extraction.
+ */
+data class TemplateModel(
+    val context: SourceAnalysisContext,
+    val chunk: Chunk,
+    override val lockToSchema: Boolean,
+) : ExtractionConfig
+
 /**
  * LLM-based proposition extractor.
  * Uses a Jinja template to extract propositions from chunks.
  *
- * @param ai AI service for LLM calls
+ * ## Custom Templates
+ *
+ * Custom templates can include the default template and add domain-specific focus:
+ *
+ * ```jinja
+ * {% include "dice/extract_propositions.jinja" %}
+ *
+ * FOCUS:
+ *
+ * Extract facts about the user and the user's musical preferences:
+ *
+ * - The user's level of knowledge about music theory
+ * - Favorite genres, artists, and songs
+ * - Instruments they play or want to learn
+ * - Listening habits and contexts
+ * ...
+ * ```
+ *
  * @param llmOptions LLM configuration
+ * @param ai AI service for LLM calls
  * @param template Template name for proposition extraction. Unless
- * the TemplateResolver in use has been customized, this will be the path to a Jinja template.
- * under /src/main/resources/prompts
- * The templates should expect "context" and "chunk" variables.
+ * the TemplateResolver in use has been customized, this will be the path to a Jinja template
+ * under /src/main/resources/prompts.
+ * The templates should expect an object of type [TemplateModel] as input with name "model".
  * The default is "dice/extract_propositions". Users can override this
- * or use it as an example for a custom template. It can include other elements
- * with paths under the TemplateRenderer's configured base path.
+ * or use it as an example for a custom template.
  * @param examples Optional list of examples for few-shot prompting.
+ * @param lockToSchema If true, only extract propositions with entity types from the schema.
+ * If false, prefer schema types but allow important propositions outside the schema.
  */
 data class LlmPropositionExtractor(
     private val llmOptions: LlmOptions,
     private val ai: Ai,
     private val template: String = "dice/extract_propositions",
     private val examples: List<ObjectCreationExample<PropositionsResult>> = emptyList(),
-) : PropositionExtractor {
+    override val lockToSchema: Boolean = true,
+) : PropositionExtractor, ExtractionConfig {
 
     companion object {
 
@@ -73,6 +107,12 @@ data class LlmPropositionExtractor(
         )
     }
 
+    fun withLockToSchema(lock: Boolean): LlmPropositionExtractor {
+        return this.copy(
+            lockToSchema = lock,
+        )
+    }
+
     override fun extract(
         chunk: Chunk,
         context: SourceAnalysisContext,
@@ -87,8 +127,11 @@ data class LlmPropositionExtractor(
             .fromTemplate(
                 templateName = template,
                 model = mapOf(
-                    "context" to context,
-                    "chunk" to chunk,
+                    "model" to TemplateModel(
+                        context = context,
+                        chunk = chunk,
+                        lockToSchema = lockToSchema,
+                    ),
                 ) + context.templateModel,
             )
 

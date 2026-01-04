@@ -135,7 +135,7 @@ different "view" optimized for specific query patterns:
        └──► [Your Projector] ──► Custom representation
 ```
 
-### Prolog Projection
+### Prolog Projection (Experimental)
 
 The Prolog projector converts propositions to Prolog facts for logical inference:
 
@@ -232,7 +232,7 @@ com.embabel.dice
 │   └── PrologTools           # @LlmTool annotated Prolog operations
 │
 ├── pipeline/                 # Extraction pipeline orchestration
-│   └── PropositionBuilders   # Fluent pipeline builder
+│   └── PropositionPipeline   # Fluent pipeline with cross-chunk resolution
 │
 └── text2graph/               # Knowledge graph building
     ├── KnowledgeGraphBuilder # Multi-pass graph construction
@@ -245,6 +245,7 @@ com.embabel.dice
 Add to your `pom.xml`:
 
 ```xml
+
 <dependency>
     <groupId>com.embabel</groupId>
     <artifactId>dice</artifactId>
@@ -256,7 +257,7 @@ Add to your `pom.xml`:
 
 - **tuProlog (2p-kt)**: Pure Kotlin Prolog engine for inference
 - **Spring Boot**: Application framework
-- **Spring Shell**: Interactive CLI
+- **Spring Shell**: Interactive CLI (not brought into downstream projects)
 - **OpenAI/Anthropic**: LLM providers for extraction and Q&A
 - **Kotlin**: Primary language
 
