@@ -67,11 +67,12 @@ class PropositionReviserTest {
         fun `all relation types are available`() {
             val relations = PropositionRelation.entries
 
-            assertEquals(4, relations.size)
+            assertEquals(5, relations.size)
             assertTrue(relations.contains(PropositionRelation.IDENTICAL))
             assertTrue(relations.contains(PropositionRelation.SIMILAR))
             assertTrue(relations.contains(PropositionRelation.UNRELATED))
             assertTrue(relations.contains(PropositionRelation.CONTRADICTORY))
+            assertTrue(relations.contains(PropositionRelation.GENERALIZES))
         }
     }
 

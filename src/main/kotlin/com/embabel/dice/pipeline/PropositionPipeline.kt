@@ -1,103 +1,14 @@
 package com.embabel.dice.pipeline
 
 import com.embabel.agent.rag.model.Chunk
-import com.embabel.agent.rag.model.NamedEntityData
-import com.embabel.dice.common.*
+import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
 import com.embabel.dice.common.resolver.MultiEntityResolver
-import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionExtractor
 import com.embabel.dice.proposition.PropositionRepository
-import com.embabel.dice.proposition.SuggestedPropositions
 import com.embabel.dice.proposition.revision.PropositionReviser
 import com.embabel.dice.proposition.revision.RevisionResult
 import org.slf4j.LoggerFactory
-
-/**
- * Result of processing a single chunk through the proposition pipeline.
- */
-data class ChunkPropositionResult(
-    val chunkId: String,
-    val suggestedPropositions: SuggestedPropositions,
-    val entityResolutions: Resolutions<SuggestedEntityResolution>,
-    val propositions: List<Proposition>,
-    val revisionResults: List<RevisionResult> = emptyList(),
-) : EntityExtractionResult {
-    /** Number of propositions that were new (not similar to existing) */
-    val newCount: Int get() = revisionResults.count { it is RevisionResult.New }
-
-    /** Number of propositions that were merged with existing identical ones */
-    val mergedCount: Int get() = revisionResults.count { it is RevisionResult.Merged }
-
-    /** Number of propositions that reinforced existing similar ones */
-    val reinforcedCount: Int get() = revisionResults.count { it is RevisionResult.Reinforced }
-
-    /** Number of propositions that contradicted existing ones */
-    val contradictedCount: Int get() = revisionResults.count { it is RevisionResult.Contradicted }
-
-    /** Whether revision was enabled for this chunk */
-    val hasRevision: Boolean get() = revisionResults.isNotEmpty()
-
-    // ===========================================
-    // EntityExtractionResult Implementation
-    // ===========================================
-
-    override fun newEntities(): List<NamedEntityData> =
-        entityResolutions.resolutions
-            .filterIsInstance<NewEntity>()
-            .map { it.suggested.suggestedEntity }
-
-    override fun updatedEntities(): List<NamedEntityData> =
-        entityResolutions.resolutions
-            .filterIsInstance<ExistingEntity>()
-            .map { it.existing }
-}
-
-/**
- * Result of processing multiple chunks through the proposition pipeline.
- * Implements [EntityExtractionResult] for access to entities needing persistence.
- *
- * This result contains all extracted data but does NOT persist anything.
- * The caller is responsible for persisting entities and propositions as needed.
- */
-data class PropositionExtractionResult(
-    val chunkResults: List<ChunkPropositionResult>,
-    val allPropositions: List<Proposition>,
-) : EntityExtractionResult {
-
-    val totalPropositions: Int get() = allPropositions.size
-    val fullyResolvedCount: Int get() = allPropositions.count { it.isFullyResolved() }
-    val partiallyResolvedCount: Int get() = allPropositions.count { !it.isFullyResolved() && it.mentions.any { m -> m.resolvedId != null } }
-    val unresolvedCount: Int get() = allPropositions.count { it.mentions.none { m -> m.resolvedId != null } }
-
-    /** All revision results across all chunks */
-    val allRevisionResults: List<RevisionResult> get() = chunkResults.flatMap { it.revisionResults }
-
-    /** Whether revision was enabled */
-    val hasRevision: Boolean get() = chunkResults.any { it.hasRevision }
-
-    /** Total new propositions (not similar to existing) */
-    val newCount: Int get() = chunkResults.sumOf { it.newCount }
-
-    /** Total merged propositions */
-    val mergedCount: Int get() = chunkResults.sumOf { it.mergedCount }
-
-    /** Total reinforced propositions */
-    val reinforcedCount: Int get() = chunkResults.sumOf { it.reinforcedCount }
-
-    /** Total contradicted propositions */
-    val contradictedCount: Int get() = chunkResults.sumOf { it.contradictedCount }
-
-    // ===========================================
-    // EntityExtractionResult Implementation
-    // ===========================================
-
-    override fun newEntities(): List<NamedEntityData> =
-        chunkResults.flatMap { it.newEntities() }.distinctBy { it.id }
-
-    override fun updatedEntities(): List<NamedEntityData> =
-        chunkResults.flatMap { it.updatedEntities() }.distinctBy { it.id }
-}
 
 /**
  * Pipeline for extracting propositions from chunks.
@@ -112,7 +23,7 @@ data class PropositionExtractionResult(
  * val result = pipeline.process(chunks, context)
  * ```
  *
- * This pipeline does NOT persist anything. It returns a [PropositionExtractionResult]
+ * This pipeline does NOT persist anything. It returns a [PropositionResults]
  * containing all extracted entities and propositions. The caller is responsible for
  * persisting these to the appropriate repositories.
  *
@@ -127,6 +38,7 @@ class PropositionPipeline private constructor(
 ) {
 
     companion object {
+
         /**
          * Create a new pipeline with the given extractor.
          *
@@ -229,7 +141,7 @@ class PropositionPipeline private constructor(
     fun process(
         chunks: List<Chunk>,
         context: SourceAnalysisContext,
-    ): PropositionExtractionResult {
+    ): PropositionResults {
         logger.info("Processing {} chunks{}", chunks.size, if (reviser != null) " with revision" else "")
 
         // Wrap the resolver with InMemoryEntityResolver for cross-chunk entity resolution.
@@ -245,17 +157,18 @@ class PropositionPipeline private constructor(
 
         val allPropositions = chunkResults.flatMap { it.propositions }
 
-        val result = PropositionExtractionResult(
+        val result = PropositionResults(
             chunkResults = chunkResults,
             allPropositions = allPropositions,
         )
 
         if (result.hasRevision) {
             logger.info(
-                "Extracted {} propositions from {} chunks: {} new, {} merged, {} reinforced, {} contradicted ({} fully resolved)",
+                "Extracted {} propositions from {} chunks: {} new, {} generalized, {} merged, {} reinforced, {} contradicted ({} fully resolved)",
                 allPropositions.size,
                 chunks.size,
                 result.newCount,
+                result.generalizedCount,
                 result.mergedCount,
                 result.reinforcedCount,
                 result.contradictedCount,

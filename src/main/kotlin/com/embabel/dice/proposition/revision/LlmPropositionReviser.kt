@@ -4,6 +4,7 @@ import com.embabel.agent.api.common.Ai
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.common.core.types.SimilarityCutoff
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.common.util.trim
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
@@ -108,6 +109,7 @@ data class LlmPropositionReviser(
         // 4. Find the best match
         val identical = classified.find { it.relation == PropositionRelation.IDENTICAL }
         val contradictory = classified.find { it.relation == PropositionRelation.CONTRADICTORY }
+        val generalizes = classified.filter { it.relation == PropositionRelation.GENERALIZES }
         val mostSimilar = classified
             .filter { it.relation == PropositionRelation.SIMILAR }
             .maxByOrNull { it.similarity }
@@ -138,6 +140,17 @@ data class LlmPropositionReviser(
                     original.text, reducedConfidence, newProposition.text
                 )
                 RevisionResult.Contradicted(contradicted, newProposition)
+            }
+
+            // Handle generalizes - store as new (it's a higher-level abstraction)
+            generalizes.isNotEmpty() -> {
+                repository.save(newProposition)
+                val generalizedProps = generalizes.map { it.proposition }
+                logger.debug(
+                    "Generalized: {} generalizes {} existing propositions",
+                    newProposition.text, generalizedProps.size
+                )
+                RevisionResult.Generalized(newProposition, generalizedProps)
             }
 
             // Handle similar - reinforce/revise
@@ -190,7 +203,8 @@ data class LlmPropositionReviser(
                 )
             )
         logger.info(
-            "Classified proposition against {} candidates: {}",
+            "Classified proposition {} against {} candidates:\n\t{}",
+            trim(s = newProposition.text, max = 60, keepRight = 3),
             candidates.size,
             response.classifications.joinToString { "${it.propositionId}=${it.relation}" }
         )
@@ -204,6 +218,7 @@ data class LlmPropositionReviser(
                     "IDENTICAL" -> PropositionRelation.IDENTICAL
                     "SIMILAR" -> PropositionRelation.SIMILAR
                     "CONTRADICTORY" -> PropositionRelation.CONTRADICTORY
+                    "GENERALIZES" -> PropositionRelation.GENERALIZES
                     else -> PropositionRelation.UNRELATED
                 },
                 similarity = classification.similarity.coerceIn(0.0, 1.0),

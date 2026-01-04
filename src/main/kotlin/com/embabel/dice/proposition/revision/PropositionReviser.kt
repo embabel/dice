@@ -20,6 +20,9 @@ enum class PropositionRelation {
 
     /** Propositions contradict each other - confidence adjustment needed */
     CONTRADICTORY,
+
+    /** New proposition generalizes or abstracts existing ones - stored as new */
+    GENERALIZES,
 }
 
 /**
@@ -57,6 +60,12 @@ sealed class RevisionResult {
     /** Stored as a new proposition (no similar ones found) */
     data class New(
         val proposition: Proposition,
+    ) : RevisionResult()
+
+    /** Stored as a new proposition that generalizes existing ones */
+    data class Generalized(
+        val proposition: Proposition,
+        val generalizes: List<Proposition>,
     ) : RevisionResult()
 }
 
@@ -119,7 +128,7 @@ data class ClassificationResponse(
 data class ClassificationItem(
     @param:JsonPropertyDescription("ID of the proposition being classified")
     val propositionId: String,
-    @param:JsonPropertyDescription("Relation type: IDENTICAL, SIMILAR, CONTRADICTORY, or UNRELATED")
+    @param:JsonPropertyDescription("Relation type: IDENTICAL, SIMILAR, CONTRADICTORY, UNRELATED, or GENERALIZES")
     val relation: String,
     @param:JsonPropertyDescription("Similarity score 0.0-1.0")
     val similarity: Double,
