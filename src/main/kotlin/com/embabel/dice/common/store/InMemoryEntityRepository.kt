@@ -10,7 +10,7 @@ import kotlin.math.sqrt
 
 /**
  * In-memory implementation of EntityRepository with vector similarity search.
- * Thread-safe using ConcurrentHashMap, but not intended for production use.
+ * Thread-safe using ConcurrentHashMap, but not intended for user production use
  * Embeddings are computed and cached for cosine similarity search.
  *
  * @param embeddingService Service for computing text embeddings
@@ -96,7 +96,7 @@ class InMemoryEntityRepository(
         val results = entities.values
             .filter { entity ->
                 entity.name.lowercase().contains(query) ||
-                    entity.description?.lowercase()?.contains(query) == true
+                        entity.description?.lowercase()?.contains(query) == true
             }
             .map { entity ->
                 // Score based on match quality

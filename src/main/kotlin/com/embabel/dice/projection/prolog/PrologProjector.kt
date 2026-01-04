@@ -57,13 +57,11 @@ import org.slf4j.LoggerFactory
  * }
  * ```
  *
- * Then register it with the pipeline:
+ * Then use with the pipeline results:
  * ```kotlin
- * PropositionBuilders
- *     .withExtractor(extractor)
- *     .withEntityResolver(resolver)
- *     .withProjector(MyProjector())
- *     .build()
+ * val pipeline = PropositionPipeline.withExtractor(extractor)
+ * val result = pipeline.process(chunks, context)
+ * val facts = myProjector.projectAll(result.allPropositions, schema)
  * ```
  *
  * ## Recommended Flow for Prolog

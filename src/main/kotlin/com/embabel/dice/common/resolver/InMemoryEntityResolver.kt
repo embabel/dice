@@ -8,6 +8,7 @@ import com.embabel.dice.common.resolver.matcher.*
 /**
  * Entity resolver that remembers entities it's been asked to resolve
  * and tries to reuse them.
+ * Useful for deduplicating entities within a single session.
  *
  * Uses configurable [MatchStrategy] implementations for matching, which by default include:
  * - Label compatibility checking (including type hierarchy)

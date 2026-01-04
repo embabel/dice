@@ -2,6 +2,7 @@ package com.embabel.dice.projection.memory
 
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.EntityRequest
+import com.embabel.dice.projection.memory.support.KeywordMatchingMemoryTypeClassifier
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import java.time.Duration

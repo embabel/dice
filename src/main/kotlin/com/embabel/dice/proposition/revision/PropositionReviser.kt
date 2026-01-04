@@ -2,6 +2,7 @@ package com.embabel.dice.proposition.revision
 
 import com.embabel.agent.api.common.Ai
 import com.embabel.common.ai.model.LlmOptions
+import com.embabel.common.core.types.SimilarityCutoff
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.proposition.Proposition
@@ -118,16 +119,65 @@ interface PropositionReviser {
 /**
  * LLM-based implementation of PropositionReviser.
  * Uses structured output to classify and revise propositions.
+ *
+ * Example usage:
+ * ```kotlin
+ * val reviser = LlmPropositionReviser
+ *     .withLlm(llmOptions)
+ *     .withAi(ai)
+ *     .withRetrievalTopK(10)
+ *     .withMinSimilarity(0.6)
+ * ```
+ *
+ * @param llmOptions LLM configuration
+ * @param ai AI service for LLM calls
+ * @param topK Number of similar propositions to retrieve for classification
+ * @param similarityThreshold Minimum similarity threshold - skip LLM if no candidates above this
+ * @param decayK Decay constant for time-based confidence reduction
  */
-class LlmPropositionReviser(
+data class LlmPropositionReviser(
+    private val llmOptions: LlmOptions,
     private val ai: Ai,
-    private val llmOptions: LlmOptions = LlmOptions(),
-    private val retrievalTopK: Int = 5,
-    private val minSimilarity: Double = 0.5, // Skip LLM if no candidates above this threshold
+    override val topK: Int = 5,
+    override val similarityThreshold: Double = 0.5,
     private val decayK: Double = 2.0,
-) : PropositionReviser {
+) : PropositionReviser, SimilarityCutoff {
+
+    companion object {
+
+        @JvmStatic
+        fun withLlm(llm: LlmOptions): Builder = Builder(llm)
+
+        class Builder(private val llmOptions: LlmOptions) {
+
+            fun withAi(ai: Ai): LlmPropositionReviser =
+                LlmPropositionReviser(
+                    llmOptions = llmOptions,
+                    ai = ai,
+                )
+        }
+    }
 
     private val logger = LoggerFactory.getLogger(LlmPropositionReviser::class.java)
+
+    /**
+     * Set the number of similar propositions to retrieve for classification.
+     */
+    fun withTopK(topK: Int): LlmPropositionReviser =
+        copy(topK = topK)
+
+    /**
+     * Set the minimum similarity threshold.
+     * Candidates below this threshold are skipped (no LLM call).
+     */
+    fun withSimilarityThreshold(threshold: Double): LlmPropositionReviser =
+        copy(similarityThreshold = threshold)
+
+    /**
+     * Set the decay constant for time-based confidence reduction.
+     */
+    fun withDecayK(k: Double): LlmPropositionReviser =
+        copy(decayK = k)
 
     override fun revise(
         newProposition: Proposition,
@@ -137,22 +187,22 @@ class LlmPropositionReviser(
         val similarWithScores = repository.findSimilarWithScores(
             SimpleTextSimilaritySearchRequest(
                 query = newProposition.text,
-                topK = retrievalTopK,
-                similarityThreshold = minSimilarity,
+                topK = topK,
+                similarityThreshold = similarityThreshold,
             )
         ).filter { it.match.status == PropositionStatus.ACTIVE }
 
         if (similarWithScores.isEmpty()) {
             // No similar propositions above threshold - store as new (skip LLM call)
             repository.save(newProposition)
-            logger.debug("New proposition (no similar above {}): {}", minSimilarity, newProposition.text)
+            logger.debug("New proposition (no similar above {}): {}", similarityThreshold, newProposition.text)
             return RevisionResult.New(newProposition)
         }
 
         val similar = similarWithScores.map { it.match }
         logger.debug(
             "Found {} candidates above {} similarity for: {}",
-            similar.size, minSimilarity, newProposition.text.take(50)
+            similar.size, similarityThreshold, newProposition.text.take(50)
         )
 
         // 2. Apply decay to retrieved propositions for ranking

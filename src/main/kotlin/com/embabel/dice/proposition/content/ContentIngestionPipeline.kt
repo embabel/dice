@@ -8,6 +8,7 @@ import com.embabel.dice.common.EntityRequest
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.proposition.revision.LlmPropositionReviser
 import com.embabel.dice.proposition.revision.PropositionReviser
 import com.embabel.dice.proposition.revision.RevisionResult
@@ -225,7 +226,9 @@ class ContentIngestionPipeline(
         ): ContentIngestionPipeline {
             val repository = InMemoryPropositionRepository(embeddingService)
             val proposer = LlmPropositionExtractor(ai, templateName = templateName)
-            val reviser = LlmPropositionReviser(ai)
+            val reviser = LlmPropositionReviser
+                .withLlm(LlmOptions())
+                .withAi(ai)
 
             return ContentIngestionPipeline(
                 proposer = proposer,
@@ -248,7 +251,9 @@ class ContentIngestionPipeline(
             templateName: String = "content_propose",
         ): ContentIngestionPipeline {
             val proposer = LlmPropositionExtractor(ai, templateName = templateName)
-            val reviser = LlmPropositionReviser(ai)
+            val reviser = LlmPropositionReviser
+                .withLlm(LlmOptions())
+                .withAi(ai)
 
             return ContentIngestionPipeline(
                 proposer = proposer,

@@ -8,13 +8,13 @@ import com.embabel.agent.rag.model.Chunk
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.SourceAnalysisContext
-import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
-import com.embabel.dice.pipeline.PropositionBuilders
-import com.embabel.dice.projection.graph.GraphProjector
+import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.projection.graph.LenientProjectionPolicy
 import com.embabel.dice.projection.graph.LlmGraphProjector
 import com.embabel.dice.projection.memory.*
+import com.embabel.dice.projection.memory.support.DefaultMemoryProjection
+import com.embabel.dice.projection.memory.support.KeywordMatchingMemoryTypeClassifier
 import com.embabel.dice.projection.prolog.DefaultPrologProjector
 import com.embabel.dice.projection.prolog.PrologEngine
 import com.embabel.dice.projection.prolog.PrologSchema
@@ -245,10 +245,8 @@ internal class DiceShell(
 
     @ShellMethod("Extract propositions from sample data")
     fun propositions() {
-        val pipeline = PropositionBuilders
+        val pipeline = PropositionPipeline
             .withExtractor(propositionExtractor)
-                        .withStore(propositionRepository)
-            .build()
 
         val chunks = listOf(
             Chunk(
@@ -325,10 +323,8 @@ internal class DiceShell(
         val chunks = chunker.chunk(doc)
         println("Created ${chunks.size} chunks")
 
-        val pipeline = PropositionBuilders
+        val pipeline = PropositionPipeline
             .withExtractor(propositionExtractor)
-                        .withStore(propositionRepository)
-            .build()
 
         val sourceAnalysisContext = SourceAnalysisContext(
             schema = holmesSchema,
@@ -366,10 +362,8 @@ internal class DiceShell(
             policy = LenientProjectionPolicy(confidenceThreshold = 0.5),
         )
 
-        val pipeline = PropositionBuilders
+        val pipeline = PropositionPipeline
             .withExtractor(propositionExtractor)
-            .withStore(propositionRepository)
-            .build()
 
         val chunks = listOf(
             Chunk(
@@ -506,10 +500,8 @@ internal class DiceShell(
 
     @ShellMethod("Demonstrate memory projection from propositions")
     fun memory() {
-        val pipeline = PropositionBuilders
+        val pipeline = PropositionPipeline
             .withExtractor(propositionExtractor)
-                        .withStore(propositionRepository)
-            .build()
 
         // Sample text with various types of information about a user
         val chunks = listOf(
@@ -695,10 +687,8 @@ internal class DiceShell(
         val prologSchema = PrologSchema.withDefaults()
         val prologProjector = DefaultPrologProjector(prologSchema = prologSchema)
 
-        val pipeline = PropositionBuilders
+        val pipeline = PropositionPipeline
             .withExtractor(propositionExtractor)
-            .withStore(propositionRepository)
-            .build()
 
         val chunks = listOf(
             Chunk(
@@ -876,10 +866,8 @@ internal class DiceShell(
         val prologSchema = PrologSchema.withDefaults()
         val prologProjector = DefaultPrologProjector(prologSchema = prologSchema)
 
-        val pipeline = PropositionBuilders
+        val pipeline = PropositionPipeline
             .withExtractor(propositionExtractor)
-            .withStore(propositionRepository)
-            .build()
 
         val chunks = listOf(
             Chunk(

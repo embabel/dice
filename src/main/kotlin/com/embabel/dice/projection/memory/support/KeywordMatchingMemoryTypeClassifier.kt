@@ -1,5 +1,7 @@
-package com.embabel.dice.projection.memory
+package com.embabel.dice.projection.memory.support
 
+import com.embabel.dice.projection.memory.MemoryType
+import com.embabel.dice.projection.memory.MemoryTypeClassifier
 import com.embabel.dice.proposition.Proposition
 
 /**
@@ -9,7 +11,8 @@ import com.embabel.dice.proposition.Proposition
 object KeywordMatchingMemoryTypeClassifier : MemoryTypeClassifier {
 
     private val proceduralPatterns = listOf("prefer", "when ", "always ", "should ", "never ", "like to", "tend to")
-    private val episodicPatterns = listOf("yesterday", "today", "last week", "recently", "just ", "happened", "met ", "went ")
+    private val episodicPatterns =
+        listOf("yesterday", "today", "last week", "recently", "just ", "happened", "met ", "went ")
 
     override fun classify(proposition: Proposition): MemoryType {
         // Procedural: patterns like "prefers", "when...do", "always", "should"
