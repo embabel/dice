@@ -1,9 +1,8 @@
 package com.embabel.dice.pipeline
 
 import com.embabel.agent.rag.model.Chunk
-import com.embabel.dice.common.Resolutions
-import com.embabel.dice.common.SourceAnalysisContext
-import com.embabel.dice.common.SuggestedEntityResolution
+import com.embabel.agent.rag.model.NamedEntityData
+import com.embabel.dice.common.*
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionExtractor
 import com.embabel.dice.proposition.PropositionRepository
@@ -73,7 +72,7 @@ class PropositionPipelineBuilder(
     }
 
     fun build(): PropositionPipeline =
-        PropositionPipeline(extractor, store, reviser)
+        PropositionPipeline(extractor, reviser, store)
 }
 
 /**
@@ -85,7 +84,7 @@ data class ChunkPropositionResult(
     val entityResolutions: Resolutions<SuggestedEntityResolution>,
     val propositions: List<Proposition>,
     val revisionResults: List<RevisionResult> = emptyList(),
-) {
+) : EntityExtractionResult {
     /** Number of propositions that were new (not similar to existing) */
     val newCount: Int get() = revisionResults.count { it is RevisionResult.New }
 
@@ -100,15 +99,34 @@ data class ChunkPropositionResult(
 
     /** Whether revision was enabled for this chunk */
     val hasRevision: Boolean get() = revisionResults.isNotEmpty()
+
+    // ===========================================
+    // EntityExtractionResult Implementation
+    // ===========================================
+
+    override fun newEntities(): List<NamedEntityData> =
+        entityResolutions.resolutions
+            .filterIsInstance<NewEntity>()
+            .map { it.suggested.suggestedEntity }
+
+    override fun updatedEntities(): List<NamedEntityData> =
+        entityResolutions.resolutions
+            .filterIsInstance<ExistingEntity>()
+            .map { it.existing }
 }
 
 /**
  * Result of processing multiple chunks through the proposition pipeline.
+ * Implements [EntityExtractionResult] for access to entities needing persistence.
+ *
+ * This result contains all extracted data but does NOT persist anything.
+ * The caller is responsible for persisting entities and propositions as needed.
  */
 data class PropositionExtractionResult(
     val chunkResults: List<ChunkPropositionResult>,
     val allPropositions: List<Proposition>,
-) {
+) : EntityExtractionResult {
+
     val totalPropositions: Int get() = allPropositions.size
     val fullyResolvedCount: Int get() = allPropositions.count { it.isFullyResolved() }
     val partiallyResolvedCount: Int get() = allPropositions.count { !it.isFullyResolved() && it.mentions.any { m -> m.resolvedId != null } }
@@ -131,21 +149,45 @@ data class PropositionExtractionResult(
 
     /** Total contradicted propositions */
     val contradictedCount: Int get() = chunkResults.sumOf { it.contradictedCount }
+
+    // ===========================================
+    // EntityExtractionResult Implementation
+    // ===========================================
+
+    override fun newEntities(): List<NamedEntityData> =
+        chunkResults.flatMap { it.newEntities() }.distinctBy { it.id }
+
+    override fun updatedEntities(): List<NamedEntityData> =
+        chunkResults.flatMap { it.updatedEntities() }.distinctBy { it.id }
 }
 
 /**
  * Pipeline for extracting propositions from chunks.
- * Coordinates extraction, entity resolution, storage, and projection to typed outputs.
+ * Coordinates extraction and entity resolution.
  *
- * When a [PropositionReviser] is configured, the pipeline will compare new propositions
- * against existing ones and merge, reinforce, or mark contradictions instead of simply
- * storing all propositions.
+ * This pipeline does NOT persist anything. It returns a [PropositionExtractionResult]
+ * containing all extracted entities and propositions. The caller is responsible for
+ * persisting these to the appropriate repositories.
+ *
+ * When a [PropositionReviser] is configured with a [PropositionRepository], the pipeline
+ * will compare new propositions against existing ones and classify them as new, merged,
+ * reinforced, or contradicted.
+ *
+ * @param extractor The proposition extractor to use
+ * @param reviser Optional reviser for comparing against existing propositions
+ * @param propositionRepository Required if reviser is set, for reading existing propositions
  */
 class PropositionPipeline(
     private val extractor: PropositionExtractor,
-    private val store: PropositionRepository,
     private val reviser: PropositionReviser? = null,
+    private val propositionRepository: PropositionRepository? = null,
 ) {
+    init {
+        if (reviser != null && propositionRepository == null) {
+            throw IllegalArgumentException("PropositionRepository is required when using a reviser")
+        }
+    }
+
     private val logger = LoggerFactory.getLogger(PropositionPipeline::class.java)
 
     /** Whether revision is enabled for this pipeline */
@@ -153,15 +195,17 @@ class PropositionPipeline(
 
     /**
      * Process a single chunk through the pipeline.
-     * Extracts propositions, resolves entities, and stores results.
+     * Extracts propositions and resolves entities.
      *
      * If a reviser is configured, propositions are compared against existing ones
-     * and merged/reinforced/contradicted as appropriate. Otherwise, all propositions
-     * are stored directly.
+     * and classified. Otherwise, propositions are returned without revision.
+     *
+     * Note: This method does NOT persist anything. The caller should persist
+     * entities and propositions from the returned result.
      *
      * @param chunk The chunk to process
-     * @param context Configuration including schema
-     * @return Processing result with propositions and optional revision results
+     * @param context Configuration including schema and entity resolver
+     * @return Processing result with propositions, entities, and optional revision results
      */
     fun processChunk(
         chunk: Chunk,
@@ -185,10 +229,9 @@ class PropositionPipeline(
         val propositions = extractor.resolvePropositions(suggestedPropositions, resolutions)
         logger.debug("Created {} propositions", propositions.size)
 
-        // Step 5: Store or revise propositions
-        val revisionResults = if (reviser != null) {
-            // Revise each proposition against existing ones
-            val results = reviser.reviseAll(propositions, store)
+        // Step 5: Optionally revise propositions against existing ones
+        val revisionResults = if (reviser != null && propositionRepository != null) {
+            val results = reviser.reviseAll(propositions, propositionRepository)
             logger.debug(
                 "Revised {} propositions: {} new, {} merged, {} reinforced, {} contradicted",
                 results.size,
@@ -199,9 +242,6 @@ class PropositionPipeline(
             )
             results
         } else {
-            // No reviser - store all propositions directly
-            store.saveAll(propositions)
-            logger.debug("Stored {} propositions", propositions.size)
             emptyList()
         }
 
@@ -260,9 +300,4 @@ class PropositionPipeline(
 
         return result
     }
-
-    /**
-     * Get the proposition store for querying.
-     */
-    fun store(): PropositionRepository = store
 }

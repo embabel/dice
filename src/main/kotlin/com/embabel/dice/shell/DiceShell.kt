@@ -276,6 +276,21 @@ internal class DiceShell(
         println("Partially resolved: ${result.partiallyResolvedCount}")
         println("Unresolved: ${result.unresolvedCount}")
 
+        println("\n--- Entities ---")
+        val newEntities = result.newEntities()
+        val updatedEntities = result.updatedEntities()
+        println("New entities: ${newEntities.size}, Updated entities: ${updatedEntities.size}")
+        for (entity in newEntities) {
+            println("\n  [NEW] ${entity.name} (${entity.labels().joinToString(", ")})")
+            println("    ID: ${entity.id}")
+            entity.description?.let { println("    Description: $it") }
+        }
+        for (entity in updatedEntities) {
+            println("\n  [UPDATED] ${entity.name} (${entity.labels().joinToString(", ")})")
+            println("    ID: ${entity.id}")
+            entity.description?.let { println("    Description: $it") }
+        }
+
         println("\n--- Propositions ---")
         for (prop in result.allPropositions) {
             println("\n${prop.text}")
@@ -286,8 +301,11 @@ internal class DiceShell(
             }
         }
 
-        println("\n--- Stored Propositions (via store) ---")
-        val stored = pipeline.store().findAll()
+        // Persist propositions (caller responsibility with pure pipeline)
+        propositionRepository.saveAll(result.allPropositions)
+
+        println("\n--- Stored Propositions (after save) ---")
+        val stored = propositionRepository.findAll()
         println("Store contains ${stored.size} propositions")
     }
 
