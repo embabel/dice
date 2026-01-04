@@ -88,8 +88,7 @@ data class LlmPropositionReviser(
         ).filter { it.match.status == PropositionStatus.ACTIVE }
 
         if (similarWithScores.isEmpty()) {
-            // No similar propositions above threshold - store as new (skip LLM call)
-            repository.save(newProposition)
+            // No similar propositions above threshold - return as new (skip LLM call)
             logger.debug("New proposition (no similar above {}): {}", similarityThreshold, newProposition.text)
             return RevisionResult.New(newProposition)
         }
@@ -120,12 +119,11 @@ data class LlmPropositionReviser(
                 val original = repository.findById(identical.proposition.id)
                     ?: identical.proposition
                 val merged = mergePropositions(original, newProposition)
-                repository.save(merged)
                 logger.debug("Merged: {} + {} -> {}", original.text, newProposition.text, merged.text)
                 RevisionResult.Merged(original, merged)
             }
 
-            // Handle contradiction - reduce old confidence, store new
+            // Handle contradiction - reduce old confidence
             contradictory != null -> {
                 val original = repository.findById(contradictory.proposition.id)
                     ?: contradictory.proposition
@@ -133,8 +131,6 @@ data class LlmPropositionReviser(
                 val contradicted = original
                     .withConfidence(reducedConfidence)
                     .withStatus(PropositionStatus.CONTRADICTED)
-                repository.save(contradicted)
-                repository.save(newProposition)
                 logger.debug(
                     "Contradicted: {} (conf: {}) vs new: {}",
                     original.text, reducedConfidence, newProposition.text
@@ -142,9 +138,8 @@ data class LlmPropositionReviser(
                 RevisionResult.Contradicted(contradicted, newProposition)
             }
 
-            // Handle generalizes - store as new (it's a higher-level abstraction)
+            // Handle generalizes - it's a higher-level abstraction
             generalizes.isNotEmpty() -> {
-                repository.save(newProposition)
                 val generalizedProps = generalizes.map { it.proposition }
                 logger.debug(
                     "Generalized: {} generalizes {} existing propositions",
@@ -158,14 +153,12 @@ data class LlmPropositionReviser(
                 val original = repository.findById(mostSimilar.proposition.id)
                     ?: mostSimilar.proposition
                 val revised = reinforceProposition(original, newProposition)
-                repository.save(revised)
                 logger.debug("Reinforced: {} -> {}", original.text, revised.text)
                 RevisionResult.Reinforced(original, revised)
             }
 
-            // No significant match - store as new
+            // No significant match - return as new
             else -> {
-                repository.save(newProposition)
                 logger.debug("New proposition (unrelated): {}", newProposition.text)
                 RevisionResult.New(newProposition)
             }

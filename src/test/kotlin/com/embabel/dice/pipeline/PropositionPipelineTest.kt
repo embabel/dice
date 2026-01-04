@@ -2,7 +2,10 @@ package com.embabel.dice.pipeline
 
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.service.EntityIdentifier
+import com.embabel.agent.rag.service.NamedEntityDataRepository
+import com.embabel.agent.rag.service.RelationshipData
 import com.embabel.dice.common.*
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
@@ -597,5 +600,207 @@ class PropositionPipelineTest {
         override fun delete(id: String): Boolean = propositions.remove(id) != null
 
         override fun count(): Int = propositions.size
+    }
+
+    /**
+     * Simple in-memory entity repository for testing persist().
+     */
+    private class InMemoryTestEntityRepository : NamedEntityDataRepository {
+
+        private val entities = mutableMapOf<String, NamedEntityData>()
+
+        val savedEntities: List<NamedEntityData> get() = entities.values.toList()
+
+        override fun save(entity: NamedEntityData): NamedEntityData {
+            entities[entity.id] = entity
+            return entity
+        }
+
+        override fun createRelationship(a: EntityIdentifier, b: EntityIdentifier, relationship: RelationshipData) {
+            // Not needed for persist tests
+        }
+
+        override fun delete(id: String): Boolean = entities.remove(id) != null
+
+        override fun findById(id: String): NamedEntityData? = entities[id]
+
+        override fun findByLabel(label: String): List<NamedEntityData> =
+            entities.values.filter { entity -> entity.labels().any { it.equals(label, ignoreCase = true) } }
+
+        fun clear() {
+            entities.clear()
+        }
+    }
+
+    @Nested
+    inner class PersistTests {
+
+        @Test
+        fun `persist saves new entities to repository`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+
+            val chunks = listOf(
+                Chunk(id = "chunk-1", text = "mentions:Alice,Bob", metadata = emptyMap(), parentId = "")
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+            )
+
+            val result = pipeline.process(chunks, context)
+
+            val entityRepo = InMemoryTestEntityRepository()
+            val propositionRepo = InMemoryPropositionRepository()
+
+            result.persist(propositionRepo, entityRepo)
+
+            // Should have saved 2 entities
+            assertEquals(2, entityRepo.savedEntities.size)
+            assertTrue(entityRepo.savedEntities.any { it.name == "Alice" })
+            assertTrue(entityRepo.savedEntities.any { it.name == "Bob" })
+        }
+
+        @Test
+        fun `persist saves propositions to repository`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+
+            val chunks = listOf(
+                Chunk(id = "chunk-1", text = "mentions:Alice,Bob", metadata = emptyMap(), parentId = ""),
+                Chunk(id = "chunk-2", text = "mentions:Charlie", metadata = emptyMap(), parentId = ""),
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+            )
+
+            val result = pipeline.process(chunks, context)
+
+            val entityRepo = InMemoryTestEntityRepository()
+            val propositionRepo = InMemoryPropositionRepository()
+
+            result.persist(propositionRepo, entityRepo)
+
+            // Should have saved 2 propositions (one per chunk)
+            assertEquals(2, propositionRepo.count())
+        }
+
+        @Test
+        fun `persist with no new entities does not fail`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+
+            // Pre-populate resolver with all entities
+            val prePopulatedResolver = InMemoryEntityResolver()
+            prePopulatedResolver.resolve(
+                SuggestedEntities(
+                    suggestedEntities = listOf(
+                        SuggestedEntity(
+                            labels = listOf("Person"),
+                            name = "Alice",
+                            summary = "Pre-existing",
+                            chunkId = "pre",
+                        )
+                    )
+                ),
+                schema,
+            )
+
+            val chunks = listOf(
+                Chunk(id = "chunk-1", text = "mentions:Alice", metadata = emptyMap(), parentId = "")
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = prePopulatedResolver,
+            )
+
+            val result = pipeline.process(chunks, context)
+
+            val entityRepo = InMemoryTestEntityRepository()
+            val propositionRepo = InMemoryPropositionRepository()
+
+            // No new entities
+            assertEquals(0, result.newEntities().size)
+
+            // persist should still work
+            result.persist(propositionRepo, entityRepo)
+
+            // No entities saved (all were pre-existing)
+            assertEquals(0, entityRepo.savedEntities.size)
+
+            // But proposition should be saved
+            assertEquals(1, propositionRepo.count())
+        }
+
+        @Test
+        fun `persist with empty result does nothing`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+            )
+
+            val result = pipeline.process(emptyList(), context)
+
+            val entityRepo = InMemoryTestEntityRepository()
+            val propositionRepo = InMemoryPropositionRepository()
+
+            result.persist(propositionRepo, entityRepo)
+
+            assertEquals(0, entityRepo.savedEntities.size)
+            assertEquals(0, propositionRepo.count())
+        }
+
+        @Test
+        fun `persist deduplicates entities across chunks`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+
+            val chunks = listOf(
+                Chunk(id = "chunk-1", text = "mentions:Alice", metadata = emptyMap(), parentId = ""),
+                Chunk(id = "chunk-2", text = "mentions:Alice", metadata = emptyMap(), parentId = ""),
+                Chunk(id = "chunk-3", text = "mentions:Alice", metadata = emptyMap(), parentId = ""),
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+            )
+
+            val result = pipeline.process(chunks, context)
+
+            val entityRepo = InMemoryTestEntityRepository()
+            val propositionRepo = InMemoryPropositionRepository()
+
+            result.persist(propositionRepo, entityRepo)
+
+            // Should only save Alice once
+            assertEquals(1, entityRepo.savedEntities.size)
+            assertEquals("Alice", entityRepo.savedEntities.first().name)
+        }
+
+        @Test
+        fun `ChunkPropositionResult persist works correctly`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+
+            val chunk = Chunk(id = "chunk-1", text = "mentions:Alice,Bob", metadata = emptyMap(), parentId = "")
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+            )
+
+            val chunkResult = pipeline.processChunk(chunk, context)
+
+            val entityRepo = InMemoryTestEntityRepository()
+            val propositionRepo = InMemoryPropositionRepository()
+
+            chunkResult.persist(propositionRepo, entityRepo)
+
+            assertEquals(2, entityRepo.savedEntities.size)
+            assertEquals(1, propositionRepo.count())
+        }
     }
 }

@@ -107,6 +107,9 @@ val pipeline = ContentIngestionPipeline.create(ai, repository, "gum_propose")
 // Process any ProposableContent
 val result = pipeline.process(content)
 
+// Persist entities and propositions to storage
+result.persist(propositionRepository, entityRepository)
+
 // Access revision results
 result.revisionResults.forEach { revisionResult ->
     when (revisionResult) {
@@ -117,6 +120,10 @@ result.revisionResults.forEach { revisionResult ->
     }
 }
 ```
+
+> **Note**: The pipeline does not persist automatically. You must call `persist()` to save
+> entities and propositions to your repositories. This gives you full control over when
+> and whether to commit extracted data.
 
 ### Projector Architecture
 

@@ -1,8 +1,10 @@
 package com.embabel.dice.pipeline
 
 import com.embabel.agent.rag.model.NamedEntityData
+import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.dice.common.*
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.SuggestedPropositions
 import com.embabel.dice.proposition.revision.RevisionResult
 
@@ -32,18 +34,53 @@ interface PropositionExtractionResult {
     val hasRevision: Boolean get() = revisionResults.isNotEmpty()
 
     /**
-     * Propositions that were persisted as new entries (not updates to existing).
-     * Includes: New, Generalized, and the new proposition from Contradicted results.
+     * All propositions that need to be persisted after revision.
+     * Includes both new propositions and updates to existing ones:
+     * - New: the new proposition
+     * - Merged: the revised (merged) proposition
+     * - Reinforced: the revised (reinforced) proposition
+     * - Contradicted: both the original (with reduced confidence) and the new
+     * - Generalized: the new generalizing proposition
      */
-    val propositionsToPersist: List<Proposition>
-        get() = revisionResults.mapNotNull { result ->
+    val revisedPropositionsToPersist: List<Proposition>
+        get() = revisionResults.flatMap { result ->
             when (result) {
-                is RevisionResult.New -> result.proposition
-                is RevisionResult.Generalized -> result.proposition
-                is RevisionResult.Contradicted -> result.new
-                else -> null
+                is RevisionResult.New -> listOf(result.proposition)
+                is RevisionResult.Merged -> listOf(result.revised)
+                is RevisionResult.Reinforced -> listOf(result.revised)
+                is RevisionResult.Contradicted -> listOf(result.original, result.new)
+                is RevisionResult.Generalized -> listOf(result.proposition)
             }
         }
+}
+
+interface PersistablePropositionResults : EntityExtractionResult, PropositionExtractionResult {
+
+    /**
+     * All propositions extracted (before any revision).
+     */
+    val propositions: List<Proposition>
+
+    /**
+     * Persist extracted entities and propositions to their respective repositories.
+     * - New entities are saved to the entity repository
+     * - If revision was enabled, saves all revised propositions (new, merged, reinforced, etc.)
+     * - If revision was not enabled, saves all extracted propositions
+     */
+    fun persist(
+        propositionRepository: PropositionRepository,
+        namedEntityDataRepository: NamedEntityDataRepository
+    ) {
+        // Save new entities
+        newEntities().forEach { entity ->
+            namedEntityDataRepository.save(entity)
+        }
+        // TODO what about updated entities?
+
+        // Save propositions - use revision results if available, otherwise all propositions
+        val toSave = if (hasRevision) revisedPropositionsToPersist else propositions
+        propositionRepository.saveAll(toSave)
+    }
 }
 
 /**
@@ -53,13 +90,9 @@ data class ChunkPropositionResult(
     val chunkId: String,
     val suggestedPropositions: SuggestedPropositions,
     val entityResolutions: Resolutions<SuggestedEntityResolution>,
-    val propositions: List<Proposition>,
+    override val propositions: List<Proposition>,
     override val revisionResults: List<RevisionResult> = emptyList(),
-) : EntityExtractionResult, PropositionExtractionResult {
-
-    // ===========================================
-    // EntityExtractionResult Implementation
-    // ===========================================
+) : PersistablePropositionResults {
 
     override fun newEntities(): List<NamedEntityData> =
         entityResolutions.resolutions
@@ -82,7 +115,9 @@ data class ChunkPropositionResult(
 data class PropositionResults(
     val chunkResults: List<ChunkPropositionResult>,
     val allPropositions: List<Proposition>,
-) : EntityExtractionResult, PropositionExtractionResult {
+) : PersistablePropositionResults {
+
+    override val propositions: List<Proposition> get() = allPropositions
 
     val totalPropositions: Int get() = allPropositions.size
     val fullyResolvedCount: Int get() = allPropositions.count { it.isFullyResolved() }

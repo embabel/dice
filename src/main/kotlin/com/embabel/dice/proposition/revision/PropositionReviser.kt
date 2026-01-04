@@ -75,16 +75,22 @@ sealed class RevisionResult {
  * The revision process:
  * 1. Retrieve similar propositions using vector similarity
  * 2. Classify relationships (identical, similar, contradictory, unrelated)
- * 3. Merge, reinforce, or store new based on classification
- * 4. Never delete - contradicted propositions get reduced confidence
+ * 3. Return revision result indicating how to handle the proposition
+ *
+ * **Important**: The reviser does NOT persist propositions. It only returns
+ * the revision result. The caller is responsible for persisting using
+ * [PersistablePropositionResults.persist].
  */
 interface PropositionReviser {
 
     /**
      * Revise a new proposition against the existing repository.
      *
+     * Does NOT persist the result - the caller must persist using
+     * [PersistablePropositionResults.persist] after collecting all results.
+     *
      * @param newProposition The newly extracted proposition
-     * @param repository The proposition repository for retrieval and storage
+     * @param repository The proposition repository for retrieval (read-only)
      * @return The result of revision (merged, reinforced, contradicted, or new)
      */
     fun revise(
