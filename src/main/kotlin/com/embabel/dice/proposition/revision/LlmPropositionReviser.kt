@@ -182,7 +182,7 @@ data class LlmPropositionReviser(
 
         val response = ai
             .withLlm(llmOptions)
-            .withId("classify-classify")
+            .withId("classify-proposition")
             .creating(ClassificationResponse::class.java)
             .fromTemplate(
                 "dice/classify_proposition",

@@ -90,10 +90,12 @@ class NamedEntityDataRepositoryEntityResolver @JvmOverloads constructor(
 
         val existingCount = resolutions.count { it is ExistingEntity }
         val newCount = resolutions.count { it is NewEntity }
+        val vetoedCount = resolutions.count { it is VetoedEntity }
         logger.info(
-            "Entity resolution complete: {} matched existing, {} new",
+            "Entity resolution complete: {} matched existing, {} new, {} vetoed (creation not permitted)",
             existingCount,
-            newCount
+            newCount,
+            vetoedCount
         )
 
         resolutions.filterIsInstance<ExistingEntity>().forEach { existing ->
@@ -124,6 +126,9 @@ class NamedEntityDataRepositoryEntityResolver @JvmOverloads constructor(
         suggested: SuggestedEntity,
         schema: DataDictionary
     ): SuggestedEntityResolution {
+        // Check if this type allows creation
+        val creationPermitted = isCreationPermitted(suggested, schema)
+
         // Strategy 1: Try find by ID if available
         if (config.useFindById && suggested.id != null) {
             val existing = findById(suggested.id)
@@ -161,9 +166,125 @@ class NamedEntityDataRepositoryEntityResolver @JvmOverloads constructor(
             }
         }
 
+        // No match found with standard thresholds
+        // If creation is not permitted, try harder with relaxed matching
+        if (!creationPermitted) {
+            val relaxedMatch = tryRelaxedMatching(suggested, schema)
+            if (relaxedMatch != null) {
+                logger.debug(
+                    "Found relaxed match for non-creatable type '{}': {}",
+                    suggested.name, relaxedMatch.name
+                )
+                return ExistingEntity(suggested, relaxedMatch)
+            }
+
+            // Still no match - veto this entity since we can't create it
+            logger.info(
+                "No match found for '{}' ({}) and creation not permitted - vetoing",
+                suggested.name, suggested.labels.firstOrNull() ?: "Entity"
+            )
+            return VetoedEntity(suggested)
+        }
+
         // No match found - create new entity
         logger.debug("No match found for '{}', creating new entity", suggested.name)
         return NewEntity(suggested)
+    }
+
+    /**
+     * Check if the suggested entity's type allows creation of new instances.
+     */
+    private fun isCreationPermitted(suggested: SuggestedEntity, schema: DataDictionary): Boolean {
+        val labels = suggested.labels.map { it.substringAfterLast('.') }.toSet()
+        val domainType = schema.domainTypeForLabels(labels) ?: return true // Unknown types default to creatable
+
+        return try {
+            domainType.creationPermitted
+        } catch (e: Exception) {
+            // Property might not exist in older versions
+            true
+        }
+    }
+
+    /**
+     * Try to find a match with relaxed criteria for types that don't allow creation.
+     * Uses lower thresholds and accepts any label-compatible match.
+     */
+    private fun tryRelaxedMatching(
+        suggested: SuggestedEntity,
+        schema: DataDictionary
+    ): NamedEntityData? {
+        // Try text search with lower threshold
+        if (config.useTextSearch) {
+            val query = buildTextQuery(suggested)
+            val relaxedRequest = TextSimilaritySearchRequest(
+                query = query,
+                similarityThreshold = config.textSearchThreshold * 0.5, // Half the normal threshold
+                topK = config.topK * 2, // Get more candidates
+            )
+            try {
+                val results = repository.textSearch(relaxedRequest)
+                // Accept any label-compatible match
+                for (result in results) {
+                    if (isLabelCompatible(suggested, result.match, schema)) {
+                        return result.match
+                    }
+                }
+            } catch (e: Exception) {
+                logger.debug("Relaxed text search failed for '{}': {}", suggested.name, e.message)
+            }
+        }
+
+        // Try vector search with lower threshold
+        if (config.useVectorSearch) {
+            val query = "${suggested.name} ${suggested.summary}"
+            val relaxedRequest = TextSimilaritySearchRequest(
+                query = query,
+                similarityThreshold = config.vectorSearchThreshold * 0.5,
+                topK = config.topK * 2,
+            )
+            try {
+                val results = repository.vectorSearch(relaxedRequest)
+                for (result in results) {
+                    if (isLabelCompatible(suggested, result.match, schema)) {
+                        return result.match
+                    }
+                }
+            } catch (e: Exception) {
+                logger.debug("Relaxed vector search failed for '{}': {}", suggested.name, e.message)
+            }
+        }
+
+        return null
+    }
+
+    /**
+     * Check if labels are compatible (either matching or in a type hierarchy).
+     */
+    private fun isLabelCompatible(
+        suggested: SuggestedEntity,
+        candidate: NamedEntityData,
+        schema: DataDictionary
+    ): Boolean {
+        val suggestedLabels = suggested.labels.map { it.substringAfterLast('.') }.toSet()
+        val candidateLabels = candidate.labels().map { it.substringAfterLast('.') }.toSet()
+
+        // Direct match
+        if (suggestedLabels.intersect(candidateLabels).isNotEmpty()) {
+            return true
+        }
+
+        // Check type hierarchy
+        val suggestedType = schema.domainTypeForLabels(suggestedLabels)
+        val candidateType = schema.domainTypeForLabels(candidateLabels)
+
+        if (suggestedType != null && candidateType != null) {
+            // Check if one is a subtype of the other
+            return suggestedType.isAssignableFrom(candidateType) ||
+                    candidateType.isAssignableFrom(suggestedType)
+        }
+
+        return false
     }
 
     private fun findById(id: String): NamedEntityData? {

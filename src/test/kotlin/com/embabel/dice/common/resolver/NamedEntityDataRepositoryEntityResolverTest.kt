@@ -847,4 +847,128 @@ class NamedEntityDataRepositoryEntityResolverTest {
             assertEquals(MatchResult.Inconclusive, strategy.evaluate(suggested, candidate, emptySchema))
         }
     }
+
+    @Nested
+    inner class CreationPermittedTests {
+
+        @Test
+        fun `should veto entity when type has creationPermitted false and no match found`() {
+            val mockSchema = mockk<DataDictionary>()
+            val mockDomainType = mockk<com.embabel.agent.core.DomainType>(relaxed = true)
+
+            every { mockSchema.domainTypeForLabels(setOf("RestrictedType")) } returns mockDomainType
+            every { mockDomainType.creationPermitted } returns false
+
+            every {
+                repository.textSearch(any<TextSimilaritySearchRequest>())
+            } returns emptyList()
+
+            val resolver = NamedEntityDataRepositoryEntityResolver(repository)
+            val suggested = createSuggestedEntities(
+                SuggestedEntity(
+                    labels = listOf("RestrictedType"),
+                    name = "Some Entity",
+                    summary = "A restricted entity",
+                    chunkId = "test-chunk"
+                )
+            )
+
+            val resolutions = resolver.resolve(suggested, mockSchema)
+
+            assertEquals(1, resolutions.resolutions.size)
+            assertTrue(resolutions.resolutions[0] is com.embabel.dice.common.VetoedEntity)
+        }
+
+        @Test
+        fun `should create new entity when type has creationPermitted true`() {
+            val mockSchema = mockk<DataDictionary>()
+            val mockDomainType = mockk<com.embabel.agent.core.DomainType>(relaxed = true)
+
+            every { mockSchema.domainTypeForLabels(setOf("CreatableType")) } returns mockDomainType
+            every { mockDomainType.creationPermitted } returns true
+
+            every {
+                repository.textSearch(any<TextSimilaritySearchRequest>())
+            } returns emptyList()
+
+            val resolver = NamedEntityDataRepositoryEntityResolver(repository)
+            val suggested = createSuggestedEntities(
+                SuggestedEntity(
+                    labels = listOf("CreatableType"),
+                    name = "Some Entity",
+                    summary = "A creatable entity",
+                    chunkId = "test-chunk"
+                )
+            )
+
+            val resolutions = resolver.resolve(suggested, mockSchema)
+
+            assertEquals(1, resolutions.resolutions.size)
+            assertTrue(resolutions.resolutions[0] is NewEntity)
+        }
+
+        @Test
+        fun `should find relaxed match when creationPermitted false`() {
+            val mockSchema = mockk<DataDictionary>()
+            val mockDomainType = mockk<com.embabel.agent.core.DomainType>(relaxed = true)
+
+            every { mockSchema.domainTypeForLabels(setOf("RestrictedType")) } returns mockDomainType
+            every { mockDomainType.creationPermitted } returns false
+            every { mockDomainType.isAssignableFrom(any<com.embabel.agent.core.DomainType>()) } returns true
+
+            val existingEntity = createNamedEntity("existing-id", "Similar Entity", setOf("RestrictedType"))
+
+            // First search returns nothing (normal threshold)
+            // Second search (relaxed) returns the entity
+            every {
+                repository.textSearch(match { it.similarityThreshold >= 0.4 })
+            } returns emptyList()
+
+            every {
+                repository.textSearch(match { it.similarityThreshold < 0.4 })
+            } returns listOf(SimpleSimilaritySearchResult(existingEntity, 0.3))
+
+            val resolver = NamedEntityDataRepositoryEntityResolver(repository)
+            val suggested = createSuggestedEntities(
+                SuggestedEntity(
+                    labels = listOf("RestrictedType"),
+                    name = "Some Entity",
+                    summary = "A restricted entity",
+                    chunkId = "test-chunk"
+                )
+            )
+
+            val resolutions = resolver.resolve(suggested, mockSchema)
+
+            assertEquals(1, resolutions.resolutions.size)
+            assertTrue(resolutions.resolutions[0] is ExistingEntity)
+            assertEquals("existing-id", resolutions.resolutions[0].recommended?.id)
+        }
+
+        @Test
+        fun `should default to creatable when type not found in schema`() {
+            val mockSchema = mockk<DataDictionary>()
+
+            every { mockSchema.domainTypeForLabels(any()) } returns null
+
+            every {
+                repository.textSearch(any<TextSimilaritySearchRequest>())
+            } returns emptyList()
+
+            val resolver = NamedEntityDataRepositoryEntityResolver(repository)
+            val suggested = createSuggestedEntities(
+                SuggestedEntity(
+                    labels = listOf("UnknownType"),
+                    name = "Unknown Entity",
+                    summary = "An unknown entity",
+                    chunkId = "test-chunk"
+                )
+            )
+
+            val resolutions = resolver.resolve(suggested, mockSchema)
+
+            assertEquals(1, resolutions.resolutions.size)
+            assertTrue(resolutions.resolutions[0] is NewEntity)
+        }
+    }
 }
