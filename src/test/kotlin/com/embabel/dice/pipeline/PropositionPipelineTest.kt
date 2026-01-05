@@ -3,10 +3,8 @@ package com.embabel.dice.pipeline
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
-import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.service.EntityIdentifier
-import com.embabel.agent.rag.service.NamedEntityDataRepository
-import com.embabel.agent.rag.service.RelationshipData
+import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository
 import com.embabel.dice.common.*
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
@@ -67,7 +65,10 @@ class PropositionPipelineTest {
             )
         }
 
-        override fun toSuggestedEntities(suggestedPropositions: SuggestedPropositions, context: SourceAnalysisContext): SuggestedEntities {
+        override fun toSuggestedEntities(
+            suggestedPropositions: SuggestedPropositions,
+            context: SourceAnalysisContext
+        ): SuggestedEntities {
             val seen = mutableSetOf<MentionKey>()
             val entities = mutableListOf<SuggestedEntity>()
 
@@ -624,48 +625,6 @@ class PropositionPipelineTest {
         override fun count(): Int = propositions.size
     }
 
-    /**
-     * Simple in-memory entity repository for testing persist().
-     */
-    private class InMemoryTestEntityRepository : NamedEntityDataRepository {
-
-        override val luceneSyntaxNotes: String = "In-memory test repository"
-
-        private val entities = mutableMapOf<String, NamedEntityData>()
-
-        val savedEntities: List<NamedEntityData> get() = entities.values.toList()
-
-        override fun save(entity: NamedEntityData): NamedEntityData {
-            entities[entity.id] = entity
-            return entity
-        }
-
-        override fun update(entity: NamedEntityData): NamedEntityData {
-            entities[entity.id] = entity
-            return entity
-        }
-
-        override fun createRelationship(a: EntityIdentifier, b: EntityIdentifier, relationship: RelationshipData) {
-            // Not needed for persist tests
-        }
-
-        override fun delete(id: String): Boolean = entities.remove(id) != null
-
-        override fun findById(id: String): NamedEntityData? = entities[id]
-
-        override fun findByLabel(label: String): List<NamedEntityData> =
-            entities.values.filter { entity -> entity.labels().any { it.equals(label, ignoreCase = true) } }
-
-        override fun textSearch(request: com.embabel.common.core.types.TextSimilaritySearchRequest): List<com.embabel.common.core.types.SimilarityResult<NamedEntityData>> =
-            emptyList()
-
-        override fun vectorSearch(request: com.embabel.common.core.types.TextSimilaritySearchRequest): List<com.embabel.common.core.types.SimilarityResult<NamedEntityData>> =
-            emptyList()
-
-        fun clear() {
-            entities.clear()
-        }
-    }
 
     @Nested
     inner class PersistTests {
@@ -686,15 +645,19 @@ class PropositionPipelineTest {
 
             val result = pipeline.process(chunks, context)
 
-            val entityRepo = InMemoryTestEntityRepository()
+            val entityRepo = InMemoryNamedEntityDataRepository(schema)
             val propositionRepo = InMemoryPropositionRepository()
 
             result.persist(propositionRepo, entityRepo)
 
-            // Should have saved 2 entities
-            assertEquals(2, entityRepo.savedEntities.size)
-            assertTrue(entityRepo.savedEntities.any { it.name == "Alice" })
-            assertTrue(entityRepo.savedEntities.any { it.name == "Bob" })
+            // Should have saved 2 entities - verify via findById
+            val newEntities = result.newEntities()
+            assertEquals(2, newEntities.size)
+            for (entity in newEntities) {
+                assertNotNull(entityRepo.findById(entity.id), "Entity ${entity.name} should be saved")
+            }
+            assertTrue(newEntities.any { it.name == "Alice" })
+            assertTrue(newEntities.any { it.name == "Bob" })
         }
 
         @Test
@@ -714,7 +677,7 @@ class PropositionPipelineTest {
 
             val result = pipeline.process(chunks, context)
 
-            val entityRepo = InMemoryTestEntityRepository()
+            val entityRepo = InMemoryNamedEntityDataRepository(schema)
             val propositionRepo = InMemoryPropositionRepository()
 
             result.persist(propositionRepo, entityRepo)
@@ -755,7 +718,7 @@ class PropositionPipelineTest {
 
             val result = pipeline.process(chunks, context)
 
-            val entityRepo = InMemoryTestEntityRepository()
+            val entityRepo = InMemoryNamedEntityDataRepository(schema)
             val propositionRepo = InMemoryPropositionRepository()
 
             // No new entities
@@ -763,12 +726,16 @@ class PropositionPipelineTest {
             // But Alice is an updated entity (pre-existing)
             assertEquals(1, result.updatedEntities().size)
 
+            // Pre-populate the entity repo with the existing entity (simulating it was already saved)
+            val alice = result.updatedEntities().first()
+            entityRepo.save(alice)
+
             // persist should still work
             result.persist(propositionRepo, entityRepo)
 
-            // Updated entities are also persisted
-            assertEquals(1, entityRepo.savedEntities.size)
-            assertEquals("Alice", entityRepo.savedEntities.first().name)
+            // Updated entities are also persisted - verify via findById
+            assertEquals("Alice", alice.name)
+            assertNotNull(entityRepo.findById(alice.id), "Alice should be saved")
 
             // Proposition should be saved
             assertEquals(1, propositionRepo.count())
@@ -787,12 +754,13 @@ class PropositionPipelineTest {
 
             val result = pipeline.process(emptyList(), context)
 
-            val entityRepo = InMemoryTestEntityRepository()
+            val entityRepo = InMemoryNamedEntityDataRepository(schema)
             val propositionRepo = InMemoryPropositionRepository()
 
             result.persist(propositionRepo, entityRepo)
 
-            assertEquals(0, entityRepo.savedEntities.size)
+            // No entities to persist
+            assertEquals(0, result.entitiesToPersist().size)
             assertEquals(0, propositionRepo.count())
         }
 
@@ -814,14 +782,17 @@ class PropositionPipelineTest {
 
             val result = pipeline.process(chunks, context)
 
-            val entityRepo = InMemoryTestEntityRepository()
+            val entityRepo = InMemoryNamedEntityDataRepository(schema)
             val propositionRepo = InMemoryPropositionRepository()
 
             result.persist(propositionRepo, entityRepo)
 
-            // Should only save Alice once
-            assertEquals(1, entityRepo.savedEntities.size)
-            assertEquals("Alice", entityRepo.savedEntities.first().name)
+            // Should only save Alice once - verify via findById
+            val newEntities = result.newEntities()
+            assertEquals(1, newEntities.size)
+            val alice = newEntities.first()
+            assertEquals("Alice", alice.name)
+            assertNotNull(entityRepo.findById(alice.id), "Alice should be saved")
         }
 
         @Test
@@ -838,12 +809,17 @@ class PropositionPipelineTest {
 
             val chunkResult = pipeline.processChunk(chunk, context)
 
-            val entityRepo = InMemoryTestEntityRepository()
+            val entityRepo = InMemoryNamedEntityDataRepository(schema)
             val propositionRepo = InMemoryPropositionRepository()
 
             chunkResult.persist(propositionRepo, entityRepo)
 
-            assertEquals(2, entityRepo.savedEntities.size)
+            // Verify entities were saved via findById
+            val newEntities = chunkResult.newEntities()
+            assertEquals(2, newEntities.size)
+            for (entity in newEntities) {
+                assertNotNull(entityRepo.findById(entity.id), "Entity ${entity.name} should be saved")
+            }
             assertEquals(1, propositionRepo.count())
         }
     }
