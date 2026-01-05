@@ -64,6 +64,48 @@ data class Proposition(
     override val uri: String? = null,
 ) : Derivation, ReferencesEntities, Retrievable {
 
+    /**
+     * Java-friendly accessor for contextId value.
+     */
+    @get:JvmName("getContextIdValue")
+    val contextIdValue: String get() = contextId.value
+
+    companion object {
+        /**
+         * Java-friendly factory method to create a Proposition.
+         */
+        @JvmStatic
+        fun create(
+            id: String,
+            contextIdValue: String,
+            text: String,
+            mentions: List<EntityMention>,
+            confidence: Double,
+            decay: Double,
+            reasoning: String?,
+            grounding: List<String>,
+            created: Instant,
+            revised: Instant,
+            status: PropositionStatus,
+            metadata: Map<String, Any>,
+            uri: String?,
+        ): Proposition = Proposition(
+            id = id,
+            contextId = ContextId(contextIdValue),
+            text = text,
+            mentions = mentions,
+            confidence = confidence,
+            decay = decay,
+            reasoning = reasoning,
+            grounding = grounding,
+            created = created,
+            revised = revised,
+            status = status,
+            metadata = metadata,
+            uri = uri,
+        )
+    }
+
     init {
         require(confidence in 0.0..1.0) { "Confidence must be between 0.0 and 1.0" }
         require(decay in 0.0..1.0) { "Decay must be between 0.0 and 1.0" }

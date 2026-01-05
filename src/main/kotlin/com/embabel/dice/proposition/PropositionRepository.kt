@@ -1,5 +1,6 @@
 package com.embabel.dice.proposition
 
+import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.model.Retrievable
 import com.embabel.agent.rag.service.CoreSearchOperations
 import com.embabel.agent.rag.service.EntityIdentifier
@@ -68,6 +69,18 @@ interface PropositionRepository : CoreSearchOperations {
      * Find all propositions grounded by a specific chunk.
      */
     fun findByGrounding(chunkId: String): List<Proposition>
+
+    /**
+     * Find propositions associated with the given context ID.
+     * TODO will eventually need more sophisticated querying
+     */
+    fun findByContextId(contextId: ContextId): List<Proposition> =
+        findByContextIdValue(contextId.value)
+
+    /**
+     * Internal method for Java interop - finds by context ID string value.
+     */
+    fun findByContextIdValue(contextIdValue: String): List<Proposition> = findByContextId(ContextId(contextIdValue))
 
     /**
      * Get all propositions.

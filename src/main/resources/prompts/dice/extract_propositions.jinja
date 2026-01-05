@@ -15,6 +15,13 @@ Known entities, likely to be linked: [
 {% endfor %}
 ]
 
+{% if model.existingPropositions %}
+Existing propositions (DO NOT duplicate these):
+{% for prop in model.existingPropositions %}
+- {{ prop.text }}
+{% endfor %}
+{% endif %}
+
 {% if model.context.lockToSchema %}
     Only extract propositions involving the above entity types.
 {% else %}

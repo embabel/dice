@@ -266,6 +266,9 @@ class TestPropositionRepository : PropositionRepository {
     override fun findByGrounding(chunkId: String): List<Proposition> =
         propositions.values.filter { chunkId in it.grounding }
 
+    override fun findByContextId(contextId: com.embabel.agent.core.ContextId): List<Proposition> =
+        propositions.values.filter { it.contextId == contextId }
+
     override fun findAll(): List<Proposition> = propositions.values.toList()
 
     override fun delete(id: String): Boolean = propositions.remove(id) != null

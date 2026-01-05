@@ -56,7 +56,10 @@ data class TemplateModel(
  * @param examples Optional list of examples for few-shot prompting.
  * @param lockToSchema If true, only extract propositions with entity types from the schema.
  * If false, prefer schema types but allow important propositions outside the schema.
- * @param existingPropositionsToShow Number of existing propositions to show in logs.
+ * @param existingPropositionsToShow Number of existing propositions to show in the prompt.
+ * @param propositionRepository Optional repository to fetch existing propositions from.
+ * When provided, existing propositions for the context will be included in the prompt
+ * to help the LLM avoid duplicates and maintain consistency.
  */
 data class LlmPropositionExtractor(
     private val llmOptions: LlmOptions,
@@ -65,6 +68,7 @@ data class LlmPropositionExtractor(
     private val examples: List<ObjectCreationExample<PropositionsResult>> = emptyList(),
     override val lockToSchema: Boolean = true,
     val existingPropositionsToShow: Int = 10,
+    private val propositionRepository: PropositionRepository? = null,
 ) : PropositionExtractor, ExtractionConfig {
 
     companion object {
@@ -90,6 +94,9 @@ data class LlmPropositionExtractor(
 
     private val logger = LoggerFactory.getLogger(LlmPropositionExtractor::class.java)
 
+    /**
+     * Set the number of existing propositions to show in prompts.
+     */
     fun withExistingPropositionsToShow(
         count: Int
     ): LlmPropositionExtractor {
@@ -118,16 +125,45 @@ data class LlmPropositionExtractor(
         )
     }
 
+    /**
+     * Set whether to lock extraction to the schema.
+     */
     fun withLockToSchema(lock: Boolean): LlmPropositionExtractor {
         return this.copy(
             lockToSchema = lock,
         )
     }
 
-    private fun extractExistingPropositions(): List<Proposition> {
-        // Placeholder for extracting existing propositions if needed
-        // In a real implementation, this would fetch from a database or context
-        return emptyList()
+    /**
+     * Set the proposition repository to fetch existing propositions from.
+     * When provided, existing propositions for the context will be included in the prompt.
+     */
+    fun withPropositionRepository(repository: PropositionRepository): LlmPropositionExtractor {
+        return this.copy(
+            propositionRepository = repository,
+        )
+    }
+
+    private fun extractExistingPropositions(context: SourceAnalysisContext): List<Proposition> {
+        if (propositionRepository == null) {
+            return emptyList()
+        }
+
+        val existing = propositionRepository.findByContextId(context.contextId)
+            .filter { it.status == PropositionStatus.ACTIVE }
+            .sortedByDescending { it.confidence }
+            .take(existingPropositionsToShow)
+
+        if (existing.isNotEmpty()) {
+            logger.debug(
+                "Found {} existing propositions for context {} (showing top {})",
+                propositionRepository.findByContextId(context.contextId).size,
+                context.contextId,
+                existing.size
+            )
+        }
+
+        return existing
     }
 
     override fun extract(
@@ -136,7 +172,7 @@ data class LlmPropositionExtractor(
     ): SuggestedPropositions {
         logger.debug("Extracting propositions from chunk {}", chunk.id)
 
-        val existingPropositions = extractExistingPropositions()
+        val existingPropositions = extractExistingPropositions(context)
 
         val result = ai
             .withLlm(llmOptions)

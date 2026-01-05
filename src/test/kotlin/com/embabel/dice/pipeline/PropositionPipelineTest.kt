@@ -613,6 +613,10 @@ class PropositionPipelineTest {
             return propositions.values.filter { chunkId in it.grounding }
         }
 
+        override fun findByContextId(contextId: com.embabel.agent.core.ContextId): List<Proposition> {
+            return propositions.values.filter { it.contextId == contextId }
+        }
+
         override fun findAll(): List<Proposition> = propositions.values.toList()
 
         override fun delete(id: String): Boolean = propositions.remove(id) != null

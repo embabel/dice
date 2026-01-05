@@ -1,5 +1,6 @@
 package com.embabel.dice.proposition.store
 
+import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
@@ -80,6 +81,9 @@ class InMemoryPropositionRepository(
 
     override fun findByGrounding(chunkId: String): List<Proposition> =
         propositions.values.filter { chunkId in it.grounding }
+
+    override fun findByContextId(contextId: ContextId): List<Proposition> =
+        propositions.values.filter { it.contextId == contextId }
 
     override fun findAll(): List<Proposition> = propositions.values.toList()
 
