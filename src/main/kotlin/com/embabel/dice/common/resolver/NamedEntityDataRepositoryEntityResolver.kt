@@ -78,9 +78,42 @@ class NamedEntityDataRepositoryEntityResolver @JvmOverloads constructor(
         suggestedEntities: SuggestedEntities,
         schema: DataDictionary
     ): Resolutions<SuggestedEntityResolution> {
+        logger.info(
+            "Resolving {} suggested entities from chunks {}",
+            suggestedEntities.suggestedEntities.size,
+            suggestedEntities.chunkIds
+        )
+
         val resolutions = suggestedEntities.suggestedEntities.map { suggested ->
             resolveEntity(suggested, schema)
         }
+
+        val existingCount = resolutions.count { it is ExistingEntity }
+        val newCount = resolutions.count { it is NewEntity }
+        logger.info(
+            "Entity resolution complete: {} matched existing, {} new",
+            existingCount,
+            newCount
+        )
+
+        resolutions.filterIsInstance<ExistingEntity>().forEach { existing ->
+            logger.debug(
+                "  Matched '{}' ({}) -> existing '{}' (id={})",
+                existing.suggested.name,
+                existing.suggested.labels.firstOrNull() ?: "Entity",
+                existing.existing.name,
+                existing.existing.id
+            )
+        }
+        resolutions.filterIsInstance<NewEntity>().forEach { newEntity ->
+            logger.debug(
+                "  New entity: '{}' ({}) id={}",
+                newEntity.suggested.name,
+                newEntity.suggested.labels.firstOrNull() ?: "Entity",
+                newEntity.suggested.suggestedEntity.id
+            )
+        }
+
         return Resolutions(
             chunkIds = suggestedEntities.chunkIds,
             resolutions = resolutions,

@@ -88,7 +88,7 @@ interface PersistablePropositionResults : EntityExtractionResult, PropositionExt
 
     /**
      * Persist extracted entities and propositions to their respective repositories.
-     * - New entities are saved to the entity repository
+     * - Only saves entities that are actually referenced by propositions being persisted
      * - If revision was enabled, saves all revised propositions (new, merged, reinforced, etc.)
      * - If revision was not enabled, saves all extracted propositions
      */
@@ -96,15 +96,27 @@ interface PersistablePropositionResults : EntityExtractionResult, PropositionExt
         propositionRepository: PropositionRepository,
         namedEntityDataRepository: NamedEntityDataRepository
     ) {
-        newEntities().forEach { entity ->
-            namedEntityDataRepository.save(entity)
-        }
-        updatedEntities().forEach { entity ->
-            namedEntityDataRepository.update(entity)
-        }
+        val propsToSave = propositionsToPersist()
+
+        // Only persist entities that are actually referenced by propositions being saved
+        val referencedEntityIds = propsToSave
+            .flatMap { it.mentions }
+            .mapNotNull { it.resolvedId }
+            .toSet()
+
+        newEntities()
+            .filter { it.id in referencedEntityIds }
+            .forEach { entity ->
+                namedEntityDataRepository.save(entity)
+            }
+        updatedEntities()
+            .filter { it.id in referencedEntityIds }
+            .forEach { entity ->
+                namedEntityDataRepository.update(entity)
+            }
 
         // Save propositions - use revision results if available, otherwise all propositions
-        propositionRepository.saveAll(propositionsToPersist())
+        propositionRepository.saveAll(propsToSave)
     }
 }
 
