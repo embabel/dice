@@ -20,6 +20,8 @@ Existing propositions (DO NOT duplicate these):
 {% for prop in model.existingPropositions %}
 - {{ prop.text }}
 {% endfor %}
+{% else %}
+NO propositions have been extracted yet
 {% endif %}
 
 {% if model.context.lockToSchema %}
