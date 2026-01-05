@@ -91,7 +91,7 @@ class PropositionPipeline private constructor(
         logger.debug("Extracted {} propositions", suggestedPropositions.propositions.size)
 
         // Step 2: Convert mentions to suggested entities
-        val suggestedEntities = extractor.toSuggestedEntities(suggestedPropositions)
+        val suggestedEntities = extractor.toSuggestedEntities(suggestedPropositions, context)
         logger.debug("Created {} suggested entities", suggestedEntities.suggestedEntities.size)
 
         // Step 3: Resolve entities using existing resolver
@@ -99,7 +99,7 @@ class PropositionPipeline private constructor(
         logger.debug("Resolved {} entities", resolutions.resolutions.size)
 
         // Step 4: Apply resolutions to create final propositions
-        val propositions = extractor.resolvePropositions(suggestedPropositions, resolutions)
+        val propositions = extractor.resolvePropositions(suggestedPropositions, resolutions, context)
         logger.debug("Created {} propositions", propositions.size)
 
         // Step 5: Optionally revise propositions against existing ones

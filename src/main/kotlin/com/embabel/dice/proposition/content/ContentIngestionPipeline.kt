@@ -103,7 +103,8 @@ class ContentIngestionPipeline(
         logger.debug("Extracted {} propositions", suggestions.size)
 
         // 2. Convert to propositions with grounding
-        val propositions = proposer.toPropositions(suggestions, contentId)
+        val propositions =
+            proposer.toPropositions(suggestions = suggestions, sourceId = contentId, contextId = content.contextId)
 
         // 3. Revise: For each proposition, retrieve similar and revise
         val results = propositions.map { proposition ->

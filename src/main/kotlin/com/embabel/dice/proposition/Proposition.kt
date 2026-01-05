@@ -1,7 +1,7 @@
 package com.embabel.dice.proposition
 
+import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.model.Retrievable
-import com.embabel.common.core.types.HasInfoString
 import com.embabel.common.core.types.ZeroToOne
 import java.time.Instant
 import java.util.*
@@ -37,6 +37,7 @@ enum class PropositionStatus {
  * propositions during the extraction phase.
  *
  * @property id Unique identifier for this proposition
+ * @property contextId The context in which this proposition is relevant
  * @property text The statement in natural language (e.g., "Jim is an expert in GOAP")
  * @property mentions Entity references within the text (typically 1-2, with SUBJECT/OBJECT roles)
  * @property confidence LLM-generated certainty (0.0-1.0)
@@ -49,6 +50,7 @@ enum class PropositionStatus {
  */
 data class Proposition(
     override val id: String = UUID.randomUUID().toString(),
+    val contextId: ContextId,
     val text: String,
     override val mentions: List<EntityMention>,
     override val confidence: ZeroToOne,

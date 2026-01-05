@@ -1,6 +1,7 @@
 package com.embabel.dice.shell
 
 import com.embabel.agent.api.common.AiBuilder
+import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.ingestion.ContentChunker
 import com.embabel.agent.rag.ingestion.TikaHierarchicalContentReader
@@ -48,6 +49,9 @@ internal class DiceShell(
 ) {
 
     private val logger = LoggerFactory.getLogger(javaClass)
+
+    /** Default context ID for shell commands */
+    private val shellContextId = ContextId("dice-shell")
 
     val schema: DataDictionary = run {
         val schema = DataDictionary.fromClasses(Person::class.java, Animal::class.java)
@@ -135,6 +139,7 @@ internal class DiceShell(
         val sourceAnalysisContext = SourceAnalysisContext(
             schema = holmesSchema,
             entityResolver = entityResolver,
+            contextId = shellContextId,
         )
         val knowledgeGraphBuilder = KnowledgeGraphBuilders
             .withSourceAnalyzer(sourceAnalyzer)
@@ -177,6 +182,7 @@ internal class DiceShell(
         val sourceAnalysisContext = SourceAnalysisContext(
             schema = schema,
             entityResolver = entityResolver,
+            contextId = shellContextId,
         )
         val knowledgeGraphBuilder = KnowledgeGraphBuilders
             .withSourceAnalyzer(sourceAnalyzer)
@@ -228,6 +234,7 @@ internal class DiceShell(
         val sourceAnalysisContext = SourceAnalysisContext(
             schema = schema,
             entityResolver = entityResolver,
+            contextId = shellContextId,
         )
         val projector = KnowledgeGraphBuilders
             .withSourceAnalyzer(sourceAnalyzer)
@@ -267,6 +274,7 @@ internal class DiceShell(
         val sourceAnalysisContext = SourceAnalysisContext(
             schema = schema,
             entityResolver = entityResolver,
+            contextId = shellContextId,
         )
 
         val result = pipeline.process(chunks, sourceAnalysisContext)
@@ -332,6 +340,7 @@ internal class DiceShell(
         val sourceAnalysisContext = SourceAnalysisContext(
             schema = holmesSchema,
             entityResolver = entityResolver,
+            contextId = shellContextId,
         )
 
         val result = pipeline.process(chunks, sourceAnalysisContext)
@@ -386,6 +395,7 @@ internal class DiceShell(
         val sourceAnalysisContext = SourceAnalysisContext(
             schema = schema,
             entityResolver = entityResolver,
+            contextId = shellContextId,
         )
 
         println("\n=== Processing and Promoting ===")
@@ -528,6 +538,7 @@ internal class DiceShell(
         val sourceAnalysisContext = SourceAnalysisContext(
             schema = schema,
             entityResolver = entityResolver,
+            contextId = shellContextId,
         )
 
         println("\n=== Extracting Propositions ===")
@@ -601,12 +612,14 @@ internal class DiceShell(
         // Add some "existing" propositions (simulating long-term memory)
         val existingProps = listOf(
             Proposition(
+                contextId = shellContextId,
                 text = "Alice is a software engineer",
                 mentions = emptyList(),
                 confidence = 0.8,
                 decay = 0.1,
             ),
             Proposition(
+                contextId = shellContextId,
                 text = "Alice works at TechCorp",
                 mentions = emptyList(),
                 confidence = 0.75,
@@ -618,18 +631,21 @@ internal class DiceShell(
         // Simulate new session propositions
         val sessionProps = listOf(
             Proposition(
+                contextId = shellContextId,
                 text = "Alice is a senior software engineer", // reinforces existing
                 mentions = emptyList(),
                 confidence = 0.9,
                 decay = 0.1,
             ),
             Proposition(
+                contextId = shellContextId,
                 text = "Alice prefers Kotlin", // new high-confidence
                 mentions = emptyList(),
                 confidence = 0.85,
                 decay = 0.2,
             ),
             Proposition(
+                contextId = shellContextId,
                 text = "Alice mentioned something about testing", // low confidence
                 mentions = emptyList(),
                 confidence = 0.4,
@@ -713,6 +729,7 @@ internal class DiceShell(
         val sourceAnalysisContext = SourceAnalysisContext(
             schema = prologDemoSchema,
             entityResolver = entityResolver,
+            contextId = shellContextId,
         )
 
         println("\n=== Prolog Projection Demo ===\n")
@@ -892,6 +909,7 @@ internal class DiceShell(
         val sourceAnalysisContext = SourceAnalysisContext(
             schema = prologDemoSchema,
             entityResolver = entityResolver,
+            contextId = shellContextId,
         )
 
         println("\n=== Oracle Demo: Natural Language Q&A ===\n")

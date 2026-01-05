@@ -1,5 +1,6 @@
 package com.embabel.dice.pipeline
 
+import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.agent.rag.model.NamedEntityData
@@ -15,6 +16,8 @@ import com.embabel.dice.text2graph.builder.Person
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+
+private val testContextId = ContextId("test-context")
 
 /**
  * Tests for [PropositionPipeline] focusing on cross-chunk entity resolution.
@@ -64,7 +67,7 @@ class PropositionPipelineTest {
             )
         }
 
-        override fun toSuggestedEntities(suggestedPropositions: SuggestedPropositions): SuggestedEntities {
+        override fun toSuggestedEntities(suggestedPropositions: SuggestedPropositions, context: SourceAnalysisContext): SuggestedEntities {
             val seen = mutableSetOf<MentionKey>()
             val entities = mutableListOf<SuggestedEntity>()
 
@@ -91,6 +94,7 @@ class PropositionPipelineTest {
         override fun resolvePropositions(
             suggestedPropositions: SuggestedPropositions,
             resolutions: Resolutions<SuggestedEntityResolution>,
+            context: SourceAnalysisContext,
         ): List<Proposition> {
             // Build lookup from entity name to resolved ID
             val nameToId = mutableMapOf<String, String>()
@@ -110,6 +114,7 @@ class PropositionPipelineTest {
                 }
 
                 Proposition(
+                    contextId = context.contextId,
                     text = suggestedProp.text,
                     mentions = resolvedMentions,
                     confidence = suggestedProp.confidence,
@@ -134,6 +139,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -163,6 +169,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -189,6 +196,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -216,6 +224,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -244,6 +253,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -285,6 +295,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -334,6 +345,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = prePopulatedResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -379,6 +391,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = prePopulatedResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -424,6 +437,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -465,6 +479,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = prePopulatedResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -488,6 +503,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(emptyList(), context)
@@ -507,6 +523,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             // Process individual chunks separately (not through process())
@@ -542,6 +559,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -659,6 +677,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -686,6 +705,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -726,6 +746,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = prePopulatedResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -757,6 +778,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(emptyList(), context)
@@ -783,6 +805,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             val result = pipeline.process(chunks, context)
@@ -806,6 +829,7 @@ class PropositionPipelineTest {
             val context = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
             )
 
             val chunkResult = pipeline.processChunk(chunk, context)

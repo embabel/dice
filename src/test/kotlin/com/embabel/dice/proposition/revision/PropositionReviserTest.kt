@@ -1,5 +1,6 @@
 package com.embabel.dice.proposition.revision
 
+import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
@@ -11,6 +12,8 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import java.util.concurrent.ConcurrentHashMap
+
+private val testContextId = ContextId("test-context")
 
 class PropositionReviserTest {
 
@@ -218,6 +221,7 @@ class PropositionReviserTest {
         confidence: Double = 0.8,
         decay: Double = 0.1,
     ) = Proposition(
+        contextId = testContextId,
         text = text,
         mentions = emptyList(),
         confidence = confidence,

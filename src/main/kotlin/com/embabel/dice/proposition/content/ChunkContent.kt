@@ -1,5 +1,6 @@
 package com.embabel.dice.proposition.content
 
+import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.model.Chunk
 import java.time.Instant
 
@@ -11,11 +12,13 @@ import java.time.Instant
  * extraction pipeline to work on both sensor observations and document chunks.
  *
  * @param chunk The source chunk
+ * @param contextId The context ID for propositions extracted from this chunk
  * @param timestamp When the chunk was created/processed (defaults to now if not in metadata)
  * @param documentContext Optional context about the source document
  */
 data class ChunkContent(
     val chunk: Chunk,
+    override val contextId: ContextId,
     override val timestamp: Instant = extractTimestamp(chunk),
     val documentContext: DocumentContext? = null,
 ) : ProposableContent {
@@ -75,10 +78,12 @@ data class DocumentContext(
  * Extension function to convert a Chunk to ProposableContent.
  */
 fun Chunk.toProposableContent(
+    contextId: ContextId,
     timestamp: Instant = Instant.now(),
     documentContext: DocumentContext? = null,
 ): ProposableContent = ChunkContent(
     chunk = this,
+    contextId = contextId,
     timestamp = timestamp,
     documentContext = documentContext,
 )
@@ -87,6 +92,7 @@ fun Chunk.toProposableContent(
  * Extension function to convert a list of Chunks to ProposableContent.
  */
 fun List<Chunk>.toProposableContent(
+    contextId: ContextId,
     timestamp: Instant = Instant.now(),
     documentContext: DocumentContext? = null,
-): List<ProposableContent> = map { it.toProposableContent(timestamp, documentContext) }
+): List<ProposableContent> = map { it.toProposableContent(contextId, timestamp, documentContext) }

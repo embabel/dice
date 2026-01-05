@@ -1,5 +1,6 @@
 package com.embabel.dice.proposition.content
 
+import com.embabel.agent.core.ContextId
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
@@ -56,8 +57,10 @@ interface PropositionExtractor {
     fun toPropositions(
         suggestions: List<SuggestedContentProposition>,
         sourceId: String,
+        contextId: ContextId,
     ): List<Proposition> = suggestions.map { suggestion ->
         Proposition(
+            contextId = contextId,
             text = suggestion.text,
             mentions = suggestion.mentions.map { mention ->
                 EntityMention(

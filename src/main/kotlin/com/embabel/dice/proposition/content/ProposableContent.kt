@@ -1,5 +1,6 @@
 package com.embabel.dice.proposition.content
 
+import com.embabel.agent.core.ContextId
 import java.time.Instant
 
 /**
@@ -28,6 +29,8 @@ interface ProposableContent {
      */
     val sourceId: String
 
+    val contextId: ContextId
+
     /**
      * Convert this content to text context for proposition extraction.
      * Returns empty string if there's nothing meaningful to extract from.
@@ -46,6 +49,7 @@ interface ProposableContent {
  * Useful for testing or wrapping arbitrary text content.
  */
 data class SimpleContent(
+    override val contextId: ContextId,
     override val timestamp: Instant = Instant.now(),
     override val sourceId: String,
     private val context: String,

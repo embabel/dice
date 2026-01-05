@@ -96,15 +96,65 @@ different use cases.
 - **Revision**: Merge identical, reinforce similar, contradict conflicting propositions
 - **Promotion**: High-confidence propositions project to typed backends
 
-### Content Ingestion Pipeline
+### Source Analysis Context
 
-The `ContentIngestionPipeline` provides a unified interface for processing any content that can yield propositions:
+All DICE operations require a `SourceAnalysisContext` that carries configuration for source analysis:
+
+| Property         | Description                                                           |
+|------------------|-----------------------------------------------------------------------|
+| `schema`         | `DataDictionary` defining valid entity and relationship types         |
+| `entityResolver` | Strategy for resolving entity mentions to canonical IDs               |
+| `contextId`      | Identifies the source/purpose of the analysis (session, batch, etc.)  |
+| `knownEntities`  | Optional list of pre-defined entities to assist disambiguation        |
+| `templateModel`  | Optional model data passed to LLM prompt templates                    |
+
+The `ContextId` is a Kotlin value class that tags all propositions extracted during
+a processing run. This enables:
+
+- **Provenance tracking**: Know which session or batch produced each proposition
+- **Scoped queries**: Retrieve propositions from a specific context
+- **Multi-tenant isolation**: Separate knowledge graphs by context
 
 ```kotlin
+// Create context for a processing run
+val context = SourceAnalysisContext(
+    schema = DataDictionary.fromClasses(Person::class.java, Company::class.java),
+    entityResolver = AlwaysCreateEntityResolver,
+    contextId = ContextId("user-session-123"),
+)
+
+// Process chunks with context
+val result = pipeline.process(chunks, context)
+```
+
+> **Java Interop**: Since `ContextId` is a Kotlin value class, Java code should use the
+> strongly-typed builder pattern and access the context ID via `getContextIdValue()`:
+> ```java
+> SourceAnalysisContext context = SourceAnalysisContext
+>     .withContextId("my-context")
+>     .withEntityResolver(AlwaysCreateEntityResolver.INSTANCE)
+>     .withSchema(DataDictionary.fromClasses(Person.class))
+>     .withKnownEntities(knownEntities)  // optional
+>     .withTemplateModel(templateModel); // optional
+> ```
+
+### Content Ingestion Pipeline
+
+The `ContentIngestionPipeline` provides a unified interface for processing any content that can yield propositions.
+Content must implement `ProposableContent`, which requires a `contextId`:
+
+```kotlin
+// Create content with context
+val content = SimpleContent(
+    contextId = ContextId("batch-2025-01-05"),
+    sourceId = "doc-123",
+    context = "Alice works at Acme Corp as a senior engineer."
+)
+
 // Create pipeline
 val pipeline = ContentIngestionPipeline.create(ai, repository, "gum_propose")
 
-// Process any ProposableContent
+// Process content (contextId flows through automatically)
 val result = pipeline.process(content)
 
 // Persist entities and propositions to storage
@@ -203,6 +253,11 @@ The Oracle answers questions using LLM tool calling with Prolog reasoning:
 
 ```
 com.embabel.dice
+├── common/                   # Shared types
+│   ├── SourceAnalysisContext # Context for all DICE operations (schema, resolver, contextId)
+│   ├── EntityResolver        # Entity disambiguation interface
+│   └── KnownEntity           # Pre-defined entity for disambiguation hints
+│
 ├── proposition/              # Core types (source of truth)
 │   ├── Proposition           # Natural language fact with confidence/decay
 │   ├── EntityMention         # Entity reference within proposition

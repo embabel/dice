@@ -1,6 +1,7 @@
 package com.embabel.dice.text2graph
 
 import com.embabel.agent.api.common.Ai
+import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.SourceAnalysisContext
@@ -12,6 +13,7 @@ import io.mockk.mockk
 import org.junit.jupiter.api.Test
 
 val dd = DataDictionary.fromClasses()
+private val testContextId = ContextId("test-context")
 
 class KnowledgeGraphBuilderBuilderTest {
 
@@ -30,6 +32,7 @@ class KnowledgeGraphBuilderBuilderTest {
         val sourceAnalysisContext = SourceAnalysisContext(
             schema = dd,
             entityResolver = AlwaysCreateEntityResolver,
+            contextId = testContextId,
         )
         val projector = InMemoryObjectGraphGraphProjector()
 

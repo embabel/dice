@@ -20,6 +20,7 @@ data class TemplateModel(
     val context: SourceAnalysisContext,
     val chunk: Chunk,
     override val lockToSchema: Boolean,
+    val existingPropositions: List<Proposition>,
 ) : ExtractionConfig
 
 /**
@@ -55,6 +56,7 @@ data class TemplateModel(
  * @param examples Optional list of examples for few-shot prompting.
  * @param lockToSchema If true, only extract propositions with entity types from the schema.
  * If false, prefer schema types but allow important propositions outside the schema.
+ * @param existingPropositionsToShow Number of existing propositions to show in logs.
  */
 data class LlmPropositionExtractor(
     private val llmOptions: LlmOptions,
@@ -62,6 +64,7 @@ data class LlmPropositionExtractor(
     private val template: String = "dice/extract_propositions",
     private val examples: List<ObjectCreationExample<PropositionsResult>> = emptyList(),
     override val lockToSchema: Boolean = true,
+    val existingPropositionsToShow: Int = 10,
 ) : PropositionExtractor, ExtractionConfig {
 
     companion object {
@@ -86,6 +89,14 @@ data class LlmPropositionExtractor(
     }
 
     private val logger = LoggerFactory.getLogger(LlmPropositionExtractor::class.java)
+
+    fun withExistingPropositionsToShow(
+        count: Int
+    ): LlmPropositionExtractor {
+        return this.copy(
+            existingPropositionsToShow = count,
+        )
+    }
 
     fun withExample(example: ObjectCreationExample<PropositionsResult>): LlmPropositionExtractor {
         return this.copy(
@@ -113,11 +124,19 @@ data class LlmPropositionExtractor(
         )
     }
 
+    private fun extractExistingPropositions(): List<Proposition> {
+        // Placeholder for extracting existing propositions if needed
+        // In a real implementation, this would fetch from a database or context
+        return emptyList()
+    }
+
     override fun extract(
         chunk: Chunk,
         context: SourceAnalysisContext,
     ): SuggestedPropositions {
         logger.debug("Extracting propositions from chunk {}", chunk.id)
+
+        val existingPropositions = extractExistingPropositions()
 
         val result = ai
             .withLlm(llmOptions)
@@ -131,6 +150,7 @@ data class LlmPropositionExtractor(
                         context = context,
                         chunk = chunk,
                         lockToSchema = lockToSchema,
+                        existingPropositions = existingPropositions,
                     ),
                 ) + context.templateModel,
             )
@@ -144,7 +164,8 @@ data class LlmPropositionExtractor(
     }
 
     override fun toSuggestedEntities(
-        suggestedPropositions: SuggestedPropositions
+        suggestedPropositions: SuggestedPropositions,
+        context: SourceAnalysisContext,
     ): SuggestedEntities {
         // Collect all unique mentions across all propositions
         val uniqueMentions = mutableMapOf<MentionKey, SuggestedMention>()
@@ -185,6 +206,7 @@ data class LlmPropositionExtractor(
     override fun resolvePropositions(
         suggestedPropositions: SuggestedPropositions,
         resolutions: Resolutions<SuggestedEntityResolution>,
+        context: SourceAnalysisContext,
     ): List<Proposition> {
         // Build a map from mention key to resolved entity ID
         val resolutionMap = buildResolutionMap(resolutions)
@@ -198,7 +220,7 @@ data class LlmPropositionExtractor(
                 mention.toEntityMention(resolvedId)
             }
 
-            suggested.toProposition(listOf(suggestedPropositions.chunkId))
+            suggested.toProposition(chunkIds = listOf(suggestedPropositions.chunkId), contextId = context.contextId)
                 .copy(mentions = resolvedMentions)
         }
     }

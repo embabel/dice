@@ -39,7 +39,8 @@ interface PropositionExtractor {
      * @return SuggestedEntities suitable for EntityResolver.resolve()
      */
     fun toSuggestedEntities(
-        suggestedPropositions: SuggestedPropositions
+        suggestedPropositions: SuggestedPropositions,
+        context: SourceAnalysisContext,
     ): SuggestedEntities
 
     /**
@@ -47,11 +48,13 @@ interface PropositionExtractor {
      *
      * @param suggestedPropositions The original suggested propositions
      * @param resolutions Entity resolution results from EntityResolver
+     * @param context The source analysis context containing contextId
      * @return Propositions with entity IDs resolved where possible
      */
     fun resolvePropositions(
         suggestedPropositions: SuggestedPropositions,
         resolutions: Resolutions<SuggestedEntityResolution>,
+        context: SourceAnalysisContext,
     ): List<Proposition>
 }
 
