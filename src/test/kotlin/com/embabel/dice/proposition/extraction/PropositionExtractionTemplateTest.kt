@@ -8,6 +8,7 @@ import com.embabel.agent.rag.model.Chunk
 import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.common.textio.template.JinjaProperties
 import com.embabel.common.textio.template.JinjavaTemplateRenderer
+import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.common.KnownEntity
 import com.embabel.dice.common.Relation
 import com.embabel.dice.common.SchemaAdherence
@@ -143,9 +144,9 @@ class PropositionExtractionTemplateTest {
         fun `renders additional relations`() {
             val context = createTestContext(
                 relations = listOf(
-                    Relation("likes", "expresses positive preference for", subjectType = "Person"),
-                    Relation("dislikes", "expresses negative preference for", subjectType = "Person"),
-                    Relation.between("is expert in", "has deep knowledge of", "Person", "Topic"),
+                    Relation.proceduralForSubject("likes", "expresses positive preference for", "Person"),
+                    Relation.proceduralForSubject("dislikes", "expresses negative preference for", "Person"),
+                    Relation.semanticBetween("is expert in", "has deep knowledge of", "Person", "Topic"),
                 )
             )
             val model = createTemplateModel(context)
@@ -286,7 +287,7 @@ class PropositionExtractionTemplateTest {
             val context = createTestContext(
                 knownEntities = listOf(KnownEntity.asCurrentUser(user)),
                 relations = listOf(
-                    Relation("likes", "expresses positive preference for", subjectType = "Person"),
+                    Relation.proceduralForSubject("likes", "expresses positive preference for", "Person"),
                 )
             )
             val model = createTemplateModel(context, chunkText = "Rod said he likes Reger")

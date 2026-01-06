@@ -21,6 +21,7 @@ data class SourceAnalysisContext @JvmOverloads constructor(
     val relations: List<Relation> = emptyList(),
     val promptVariables: Map<String, Any> = emptyMap(),
 ) {
+
     companion object {
         /**
          * Start building a SourceAnalysisContext with the given context ID.
@@ -59,6 +60,30 @@ data class SourceAnalysisContext @JvmOverloads constructor(
      */
     fun withRelations(vararg relations: Relation): SourceAnalysisContext =
         copy(relations = relations.toList() + this.relations)
+
+    fun withRelationsFrom(
+        subjectType: String,
+        knowledgeType: KnowledgeType,
+        vararg predicates: String
+    ): SourceAnalysisContext {
+        val newRelations = predicates.map { predicate ->
+            Relation(
+                predicate = predicate,
+                meaning = predicate,
+                knowledgeType = knowledgeType,
+                subjectType = subjectType,
+            )
+        }
+        return copy(relations = newRelations + this.relations)
+    }
+
+    fun withRelationsFrom(
+        subjectType: Class<*>,
+        knowledgeType: KnowledgeType,
+        vararg predicates: String
+    ): SourceAnalysisContext =
+        withRelationsFrom(subjectType.simpleName, knowledgeType, *predicates)
+
 
     /**
      * Returns a copy with the specified template model.

@@ -1,26 +1,19 @@
 package com.embabel.dice.projection.memory
 
+import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.proposition.Projection
 import com.embabel.dice.proposition.Proposition
 import java.time.Instant
 
 /**
- * Memory type is inferred at projection time based on proposition characteristics.
- * Not stored on the proposition itself.
+ * Typealias for backward compatibility.
+ * Use [KnowledgeType] directly for new code.
  */
-enum class MemoryType {
-    /** High confidence, low decay, about properties/relationships. Long-term facts. */
-    SEMANTIC,
-
-    /** Has eventTime, higher decay, about occurrences. What happened when. */
-    EPISODIC,
-
-    /** Text patterns like "when X, do Y" / "prefers X". Behavioral patterns. */
-    PROCEDURAL,
-
-    /** Current session, not yet consolidated. Temporary working context. */
-    WORKING
-}
+@Deprecated(
+    message = "Use KnowledgeType from common package",
+    replaceWith = ReplaceWith("KnowledgeType", "com.embabel.dice.common.KnowledgeType")
+)
+typealias MemoryType = KnowledgeType
 
 /**
  * An event projected from episodic propositions.
@@ -72,17 +65,25 @@ data class BehavioralRule(
 }
 
 /**
- * Strategy interface for classifying propositions into memory types.
+ * Strategy interface for classifying propositions into knowledge types.
  * Implementations can use different heuristics based on domain needs.
  */
-fun interface MemoryTypeClassifier {
+fun interface KnowledgeTypeClassifier {
 
     /**
-     * Classify a proposition into a memory type.
+     * Classify a proposition into a knowledge type.
      * @param proposition The proposition to classify
-     * @return The inferred memory type
+     * @return The inferred knowledge type
      */
-    fun classify(proposition: Proposition): MemoryType
-
+    fun classify(proposition: Proposition): KnowledgeType
 }
+
+/**
+ * Typealias for backward compatibility.
+ */
+@Deprecated(
+    message = "Use KnowledgeTypeClassifier",
+    replaceWith = ReplaceWith("KnowledgeTypeClassifier")
+)
+typealias MemoryTypeClassifier = KnowledgeTypeClassifier
 

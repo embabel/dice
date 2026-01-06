@@ -16,7 +16,7 @@ import com.embabel.dice.projection.graph.LlmGraphProjector
 import com.embabel.dice.projection.memory.DefaultMemoryConsolidator
 import com.embabel.dice.projection.memory.DefaultMemoryRetriever
 import com.embabel.dice.projection.memory.MemoryScope
-import com.embabel.dice.projection.memory.MemoryType
+import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.projection.memory.support.DefaultMemoryProjector
 import com.embabel.dice.projection.memory.support.KeywordMatchingMemoryTypeClassifier
 import com.embabel.dice.projection.prolog.DefaultPrologProjector
@@ -603,7 +603,7 @@ internal class DiceShell(
         kubernetesMemories.forEach { println("  - ${it.text}") }
 
         println("\nRecall semantic memories:")
-        val semanticMemories = retriever.recallByType(MemoryType.SEMANTIC, scope, topK = 5)
+        val semanticMemories = retriever.recallByType(KnowledgeType.SEMANTIC, scope, topK = 5)
         semanticMemories.forEach { println("  - ${it.text}") }
     }
 

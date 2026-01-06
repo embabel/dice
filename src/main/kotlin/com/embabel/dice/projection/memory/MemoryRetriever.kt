@@ -1,6 +1,7 @@
 package com.embabel.dice.projection.memory
 
 import com.embabel.agent.rag.service.EntityIdentifier
+import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.proposition.Proposition
 import java.time.Instant
 
@@ -38,15 +39,15 @@ interface MemoryRetriever {
     ): List<Proposition>
 
     /**
-     * Recall propositions by memory type.
+     * Recall propositions by knowledge type.
      *
-     * @param memoryType The type of memory to retrieve
+     * @param knowledgeType The type of knowledge to retrieve
      * @param scope Memory scope for filtering
      * @param topK Maximum number of results
      * @return Propositions of the specified type
      */
     fun recallByType(
-        memoryType: MemoryType,
+        knowledgeType: KnowledgeType,
         scope: MemoryScope,
         topK: Int = 20,
     ): List<Proposition>

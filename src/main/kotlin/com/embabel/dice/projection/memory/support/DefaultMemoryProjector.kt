@@ -1,6 +1,7 @@
 package com.embabel.dice.projection.memory.support
 
 import com.embabel.agent.rag.service.EntityIdentifier
+import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.projection.memory.*
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
@@ -11,12 +12,12 @@ import java.time.Instant
  *
  * @param propositionRepository The proposition store to query
  * @param confidenceThreshold Minimum confidence for including propositions
- * @param memoryTypeClassifier Strategy for classifying propositions into memory types
+ * @param knowledgeTypeClassifier Strategy for classifying propositions into knowledge types
  */
 data class DefaultMemoryProjector(
     private val propositionRepository: PropositionRepository,
     private val confidenceThreshold: Double = 0.6,
-    private val memoryTypeClassifier: MemoryTypeClassifier = KeywordMatchingMemoryTypeClassifier,
+    private val knowledgeTypeClassifier: KnowledgeTypeClassifier = KeywordMatchingMemoryTypeClassifier,
 ) : MemoryProjector {
 
     companion object {
@@ -30,8 +31,8 @@ data class DefaultMemoryProjector(
     fun withConfidenceThreshold(threshold: Double) =
         copy(confidenceThreshold = threshold)
 
-    fun withMemoryTypeClassifier(classifier: MemoryTypeClassifier) =
-        copy(memoryTypeClassifier = classifier)
+    fun withKnowledgeTypeClassifier(classifier: KnowledgeTypeClassifier) =
+        copy(knowledgeTypeClassifier = classifier)
 
     override fun projectUserPersonaSnapshot(
         userId: String,
@@ -39,7 +40,7 @@ data class DefaultMemoryProjector(
     ): UserPersonaSnapshot {
         val propositions = propositionRepository.findByEntity(EntityIdentifier.forUser(userId))
             .filter { it.confidence >= confidenceThreshold }
-            .filter { memoryTypeClassifier.classify(it) == MemoryType.SEMANTIC }
+            .filter { knowledgeTypeClassifier.classify(it) == KnowledgeType.SEMANTIC }
             .sortedByDescending { it.confidence }
 
         return UserPersonaSnapshot(
@@ -57,7 +58,7 @@ data class DefaultMemoryProjector(
     ): List<Event> {
         val propositions = propositionRepository.findByEntity(EntityIdentifier.Companion.forUser(userId))
             .filter { it.created.isAfter(since) }
-            .filter { memoryTypeClassifier.classify(it) == MemoryType.EPISODIC }
+            .filter { knowledgeTypeClassifier.classify(it) == KnowledgeType.EPISODIC }
             .sortedByDescending { it.created }
             .take(limit)
 
@@ -76,7 +77,7 @@ data class DefaultMemoryProjector(
     ): List<BehavioralRule> {
         val propositions = propositionRepository.findByEntity(EntityIdentifier.Companion.forUser(userId))
             .filter { it.confidence >= confidenceThreshold }
-            .filter { memoryTypeClassifier.classify(it) == MemoryType.PROCEDURAL }
+            .filter { knowledgeTypeClassifier.classify(it) == KnowledgeType.PROCEDURAL }
             .sortedByDescending { it.confidence }
 
         return propositions.map { prop ->

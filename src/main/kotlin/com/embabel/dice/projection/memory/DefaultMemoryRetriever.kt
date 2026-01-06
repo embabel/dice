@@ -2,6 +2,7 @@ package com.embabel.dice.projection.memory
 
 import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.projection.memory.support.KeywordMatchingMemoryTypeClassifier
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
@@ -15,13 +16,13 @@ import kotlin.math.exp
  * @param store The proposition store to query
  * @param recencyWeight Weight for recency in relevance scoring (0.0-1.0)
  * @param confidenceWeight Weight for confidence in relevance scoring (0.0-1.0)
- * @param memoryTypeClassifier Strategy for classifying propositions into memory types
+ * @param knowledgeTypeClassifier Strategy for classifying propositions into knowledge types
  */
 class DefaultMemoryRetriever(
     private val store: PropositionRepository,
     private val recencyWeight: Double = 0.3,
     private val confidenceWeight: Double = 0.3,
-    private val memoryTypeClassifier: MemoryTypeClassifier = KeywordMatchingMemoryTypeClassifier,
+    private val knowledgeTypeClassifier: KnowledgeTypeClassifier = KeywordMatchingMemoryTypeClassifier,
 ) : MemoryRetriever {
 
     override fun recall(
@@ -62,7 +63,7 @@ class DefaultMemoryRetriever(
     }
 
     override fun recallByType(
-        memoryType: MemoryType,
+        knowledgeType: KnowledgeType,
         scope: MemoryScope,
         topK: Int,
     ): List<Proposition> {
@@ -70,7 +71,7 @@ class DefaultMemoryRetriever(
         val userPropositions = store.findByEntity(EntityIdentifier.forUser(scope.userId))
 
         return userPropositions
-            .filter { memoryTypeClassifier.classify(it) == memoryType }
+            .filter { knowledgeTypeClassifier.classify(it) == knowledgeType }
             .sortedByDescending { it.confidence }
             .take(topK)
     }
