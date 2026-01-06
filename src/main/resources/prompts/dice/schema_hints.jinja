@@ -14,6 +14,15 @@ Relationship predicates (from schema): [
 {% endfor %}
 ]
 
+{% if model.context.relations %}
+Additional relation types: [
+{% for rel in model.context.relations %}
+    - "{{ rel.predicate }}" ({{ rel.meaning }}){% if rel.subjectType %} subject: {{ rel.subjectType }}{% endif %}{% if rel.objectType %} object: {{ rel.objectType }}{% endif %}
+
+{% endfor %}
+]
+{% endif %}
+
 Known entities, likely to be linked: [
 {% for entity in model.context.knownEntities %}
     - {{ entity.name }} ({{ entity.labels() }}, id={{ entity.id }}) [{{ entity.role }}]
