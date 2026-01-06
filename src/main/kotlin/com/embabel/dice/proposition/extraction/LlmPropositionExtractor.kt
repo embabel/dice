@@ -188,7 +188,7 @@ data class LlmPropositionExtractor(
                         lockToSchema = lockToSchema,
                         existingPropositions = existingPropositions,
                     ),
-                ) + context.templateModel,
+                ) + context.promptVariables,
             )
 
         logger.debug("Extracted {} propositions from chunk {}", result.propositions.size, chunk.id)

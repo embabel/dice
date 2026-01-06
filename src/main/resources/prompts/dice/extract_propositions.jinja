@@ -11,17 +11,17 @@ Entity types (from schema): [
 
 Known entities, likely to be linked: [
 {% for entity in model.context.knownEntities %}
-    - {{ entity.name }} ({{ entity.type }}, id={{ entity.id }}) - description: {{ entity.description }}
+    - {{ entity.name }} ({{ entity.labels() }}, id={{ entity.id }}) - {{ entity.description }}
 {% endfor %}
 ]
 
 {% if model.existingPropositions %}
-Existing propositions (DO NOT duplicate these):
-{% for prop in model.existingPropositions %}
-- {{ prop.text }}
-{% endfor %}
+    Existing propositions (DO NOT duplicate these):
+    {% for prop in model.existingPropositions %}
+        - {{ prop.text }}
+    {% endfor %}
 {% else %}
-NO propositions have been extracted yet
+    NO propositions have been extracted yet
 {% endif %}
 
 {% if model.lockToSchema %}
