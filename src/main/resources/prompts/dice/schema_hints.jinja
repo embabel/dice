@@ -1,0 +1,37 @@
+Entity types (from schema): [
+{% for domainType in model.context.schema.domainTypes %}
+    - {{ domainType.ownLabel }}: {{ domainType.description }}
+{% endfor %}
+]
+
+Relationship predicates (from schema): [
+{% for domainType in model.context.schema.domainTypes %}
+{% for rel in domainType.relationships %}
+{% if rel.metadata.predicate %}
+    - {{ domainType.ownLabel }} "{{ rel.metadata.predicate }}" {{ rel.type.ownLabel }}
+{% endif %}
+{% endfor %}
+{% endfor %}
+]
+
+Known entities, likely to be linked: [
+{% for entity in model.context.knownEntities %}
+    - {{ entity.name }} ({{ entity.labels() }}, id={{ entity.id }}) [{{ entity.role }}]
+{% endfor %}
+]
+
+IMPORTANT: First-person pronouns ("I", "me", "my", "we", "us", "our") refer to the user entity above.
+Use the user's actual name in propositions, not the pronoun.
+Example: If user is "Alice" and says "I love jazz" → extract "Alice loves jazz" with suggestedId pointing to Alice.
+
+{% if model.schemaAdherence.entities %}
+Only extract propositions involving the above entity types.
+{% else %}
+Prefer propositions with the above entity types but feel free to extract IMPORTANT propositions not limited to them.
+{% endif %}
+
+{% if model.schemaAdherence.predicates %}
+When expressing relationships, use the predicates defined in the schema above.
+{% else %}
+When expressing relationships, prefer the predicates defined in the schema but use natural language if no predicate fits.
+{% endif %}

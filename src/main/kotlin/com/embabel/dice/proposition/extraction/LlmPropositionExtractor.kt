@@ -5,7 +5,6 @@ import com.embabel.agent.api.common.nested.ObjectCreationExample
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.common.*
-import com.embabel.dice.common.SchemaAdherence
 import com.embabel.dice.proposition.*
 import org.slf4j.LoggerFactory
 
@@ -137,20 +136,6 @@ data class LlmPropositionExtractor(
     fun withSchemaAdherence(adherence: SchemaAdherence): LlmPropositionExtractor {
         return this.copy(
             schemaAdherence = adherence,
-        )
-    }
-
-    /**
-     * Set whether to lock entity extraction to the schema.
-     * @deprecated Use [withSchemaAdherence] instead for more granular control.
-     */
-    @Deprecated(
-        message = "Use withSchemaAdherence instead",
-        replaceWith = ReplaceWith("withSchemaAdherence(SchemaAdherence(entities = lock))")
-    )
-    fun withLockToSchema(lock: Boolean): LlmPropositionExtractor {
-        return this.copy(
-            schemaAdherence = schemaAdherence.copy(entities = lock),
         )
     }
 

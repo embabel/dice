@@ -2,14 +2,13 @@ package com.embabel.dice.common
 
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
-import com.embabel.agent.rag.model.NamedEntity
 
 /**
  * Base context for analyzing sources.
  * Individual analyzers may extend this to require additional fields as needed.
  * @param schema the schema to use for analysis
  * @param entityResolver the entity resolver to use for entity disambiguation
- * @param knownEntities optional list of known entities to assist with disambiguation
+ * @param knownEntities optional list of known entities to assist with disambiguation and prompt context
  * @param promptVariables optional additional model data for analysis. Must be passed to any templated
  * LLM prompts used.
  */
@@ -17,7 +16,7 @@ data class SourceAnalysisContext @JvmOverloads constructor(
     val schema: DataDictionary,
     val entityResolver: EntityResolver,
     val contextId: ContextId,
-    val knownEntities: List<NamedEntity> = emptyList(),
+    val knownEntities: List<KnownEntity> = emptyList(),
     val promptVariables: Map<String, Any> = emptyMap(),
 ) {
     companion object {
@@ -50,8 +49,8 @@ data class SourceAnalysisContext @JvmOverloads constructor(
     /**
      * Returns a copy with the specified known entities.
      */
-    fun withKnownEntities(knownEntities: List<NamedEntity>): SourceAnalysisContext =
-        copy(knownEntities = knownEntities)
+    fun withKnownEntities(vararg knownEntities: KnownEntity): SourceAnalysisContext =
+        copy(knownEntities = knownEntities.toList() + this.knownEntities)
 
     /**
      * Returns a copy with the specified template model.

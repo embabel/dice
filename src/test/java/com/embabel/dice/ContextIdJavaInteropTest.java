@@ -34,7 +34,7 @@ class ContextIdJavaInteropTest {
                 .withContextId("test-context")
                 .withEntityResolver(AlwaysCreateEntityResolver.INSTANCE)
                 .withSchema(DataDictionary.fromClasses())
-                .withKnownEntities(java.util.List.of())
+                .withKnownEntities()
                 .withPromptVariables(java.util.Map.of("key", "value"));
 
         assertNotNull(context);
