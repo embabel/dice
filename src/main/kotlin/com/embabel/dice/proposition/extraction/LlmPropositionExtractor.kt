@@ -5,12 +5,19 @@ import com.embabel.agent.api.common.nested.ObjectCreationExample
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.common.*
+import com.embabel.dice.common.SchemaAdherence
 import com.embabel.dice.proposition.*
 import org.slf4j.LoggerFactory
 
 
 interface ExtractionConfig {
+    val schemaAdherence: SchemaAdherence
+
+    /**
+     * Backward compatibility: returns true if entities should be locked to schema.
+     */
     val lockToSchema: Boolean
+        get() = schemaAdherence.entities
 }
 
 /**
@@ -19,7 +26,7 @@ interface ExtractionConfig {
 data class TemplateModel(
     val context: SourceAnalysisContext,
     val chunk: Chunk,
-    override val lockToSchema: Boolean,
+    override val schemaAdherence: SchemaAdherence,
     val existingPropositions: List<Proposition>,
 ) : ExtractionConfig
 
@@ -54,8 +61,7 @@ data class TemplateModel(
  * The default is "dice/extract_propositions". Users can override this
  * or use it as an example for a custom template.
  * @param examples Optional list of examples for few-shot prompting.
- * @param lockToSchema If true, only extract propositions with entity types from the schema.
- * If false, prefer schema types but allow important propositions outside the schema.
+ * @param schemaAdherence Configuration for how strictly to adhere to the schema for entities and predicates.
  * @param existingPropositionsToShow Number of existing propositions to show in the prompt.
  * @param propositionRepository Optional repository to fetch existing propositions from.
  * When provided, existing propositions for the context will be included in the prompt
@@ -66,7 +72,7 @@ data class LlmPropositionExtractor(
     private val ai: Ai,
     private val template: String = "dice/extract_propositions",
     private val examples: List<ObjectCreationExample<PropositionsResult>> = emptyList(),
-    override val lockToSchema: Boolean = true,
+    override val schemaAdherence: SchemaAdherence = SchemaAdherence.DEFAULT,
     val existingPropositionsToShow: Int = 10,
     private val propositionRepository: PropositionRepository? = null,
 ) : PropositionExtractor, ExtractionConfig {
@@ -126,11 +132,25 @@ data class LlmPropositionExtractor(
     }
 
     /**
-     * Set whether to lock extraction to the schema.
+     * Set the schema adherence configuration.
      */
+    fun withSchemaAdherence(adherence: SchemaAdherence): LlmPropositionExtractor {
+        return this.copy(
+            schemaAdherence = adherence,
+        )
+    }
+
+    /**
+     * Set whether to lock entity extraction to the schema.
+     * @deprecated Use [withSchemaAdherence] instead for more granular control.
+     */
+    @Deprecated(
+        message = "Use withSchemaAdherence instead",
+        replaceWith = ReplaceWith("withSchemaAdherence(SchemaAdherence(entities = lock))")
+    )
     fun withLockToSchema(lock: Boolean): LlmPropositionExtractor {
         return this.copy(
-            lockToSchema = lock,
+            schemaAdherence = schemaAdherence.copy(entities = lock),
         )
     }
 
@@ -185,7 +205,7 @@ data class LlmPropositionExtractor(
                     "model" to TemplateModel(
                         context = context,
                         chunk = chunk,
-                        lockToSchema = lockToSchema,
+                        schemaAdherence = schemaAdherence,
                         existingPropositions = existingPropositions,
                     ),
                 ) + context.promptVariables,

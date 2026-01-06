@@ -71,6 +71,12 @@ data class Proposition(
     val contextIdValue: String get() = contextId.value
 
     companion object {
+
+        /**
+         * @Semantic annotation key for the natural language predicate of the proposition.
+         */
+        const val PREDICATE = "predicate"
+
         /**
          * Java-friendly factory method to create a Proposition.
          */
