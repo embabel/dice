@@ -28,6 +28,7 @@ import java.time.Instant
  * @param ai AI service for LLM calls
  * @param topK Number of similar propositions to retrieve for classification
  * @param similarityThreshold Minimum similarity threshold - skip LLM if no candidates above this
+ * @param minSimilarityForReinforce Minimum LLM-reported similarity to accept SIMILAR classification (default 0.7)
  * @param decayK Decay constant for time-based confidence reduction
  */
 data class LlmPropositionReviser(
@@ -35,6 +36,7 @@ data class LlmPropositionReviser(
     private val ai: Ai,
     override val topK: Int = 5,
     override val similarityThreshold: Double = 0.5,
+    private val minSimilarityForReinforce: Double = 0.7,
     private val decayK: Double = 2.0,
 ) : PropositionReviser, SimilarityCutoff {
 
@@ -67,6 +69,14 @@ data class LlmPropositionReviser(
      */
     fun withSimilarityThreshold(threshold: Double): LlmPropositionReviser =
         copy(similarityThreshold = threshold)
+
+    /**
+     * Set the minimum similarity score for SIMILAR classifications to be accepted.
+     * If the LLM classifies as SIMILAR but with a score below this threshold,
+     * the classification is treated as UNRELATED.
+     */
+    fun withMinSimilarityForReinforce(threshold: Double): LlmPropositionReviser =
+        copy(minSimilarityForReinforce = threshold)
 
     /**
      * Set the decay constant for time-based confidence reduction.
@@ -110,8 +120,21 @@ data class LlmPropositionReviser(
         val contradictory = classified.find { it.relation == PropositionRelation.CONTRADICTORY }
         val generalizes = classified.filter { it.relation == PropositionRelation.GENERALIZES }
         val mostSimilar = classified
-            .filter { it.relation == PropositionRelation.SIMILAR }
+            .filter { it.relation == PropositionRelation.SIMILAR && it.similarity >= minSimilarityForReinforce }
             .maxByOrNull { it.similarity }
+
+        // Log rejected SIMILAR classifications for debugging
+        val rejectedSimilar = classified.filter {
+            it.relation == PropositionRelation.SIMILAR && it.similarity < minSimilarityForReinforce
+        }
+        if (rejectedSimilar.isNotEmpty()) {
+            logger.debug(
+                "Rejected {} SIMILAR classifications with low similarity (< {}): {}",
+                rejectedSimilar.size,
+                minSimilarityForReinforce,
+                rejectedSimilar.map { "${it.proposition.id.take(8)}=${it.similarity}" }
+            )
+        }
 
         return when {
             // Handle identical - merge propositions

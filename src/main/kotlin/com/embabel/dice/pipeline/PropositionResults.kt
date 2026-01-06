@@ -2,6 +2,7 @@ package com.embabel.dice.pipeline
 
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
+import com.embabel.common.core.types.HasInfoString
 import com.embabel.dice.common.*
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
@@ -129,7 +130,7 @@ data class ChunkPropositionResult(
     val entityResolutions: Resolutions<SuggestedEntityResolution>,
     override val propositions: List<Proposition>,
     override val revisionResults: List<RevisionResult> = emptyList(),
-) : PersistablePropositionResults {
+) : PersistablePropositionResults, HasInfoString {
 
     override fun newEntities(): List<NamedEntityData> =
         entityResolutions.resolutions
@@ -140,6 +141,58 @@ data class ChunkPropositionResult(
         entityResolutions.resolutions
             .filterIsInstance<ExistingEntity>()
             .map { it.existing }
+
+    override fun infoString(verbose: Boolean?, indent: Int): String {
+        val prefix = "  ".repeat(indent)
+        val stats = propositionExtractionStats
+        val newEntitiesCount = newEntities().size
+        val updatedEntitiesCount = updatedEntities().size
+
+        return buildString {
+            append("ChunkPropositionResult(chunk=$chunkId, ")
+            append("propositions=${propositions.size}, ")
+            append("entities: $newEntitiesCount new, $updatedEntitiesCount updated")
+            if (hasRevision) {
+                append(", revision: ")
+                append("${stats.newCount} new, ")
+                append("${stats.mergedCount} merged, ")
+                append("${stats.reinforcedCount} reinforced, ")
+                append("${stats.contradictedCount} contradicted, ")
+                append("${stats.generalizedCount} generalized")
+            }
+            append(")")
+
+            if (verbose == true) {
+                appendLine()
+                append("${prefix}Propositions:")
+                propositions.forEachIndexed { i, prop ->
+                    appendLine()
+                    val revisionInfo = if (hasRevision && i < revisionResults.size) {
+                        when (val result = revisionResults[i]) {
+                            is RevisionResult.New -> "[NEW]"
+                            is RevisionResult.Merged -> "[MERGED with ${result.original.id.take(8)}]"
+                            is RevisionResult.Reinforced -> "[REINFORCED ${result.original.id.take(8)}]"
+                            is RevisionResult.Contradicted -> "[CONTRADICTED ${result.original.id.take(8)}]"
+                            is RevisionResult.Generalized -> "[GENERALIZED ${result.generalizes.size} props]"
+                        }
+                    } else ""
+                    append("$prefix  • ${prop.text} (conf: ${String.format("%.2f", prop.confidence)}) $revisionInfo")
+                }
+                if (newEntitiesCount > 0 || updatedEntitiesCount > 0) {
+                    appendLine()
+                    append("${prefix}Entities:")
+                    newEntities().forEach { entity ->
+                        appendLine()
+                        append("$prefix  • [NEW] ${entity.name} (${entity.labels().joinToString()})")
+                    }
+                    updatedEntities().forEach { entity ->
+                        appendLine()
+                        append("$prefix  • [UPDATED] ${entity.name} (${entity.labels().joinToString()})")
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**
