@@ -2,7 +2,13 @@ package com.embabel.dice.projection.memory.support
 
 import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.dice.common.KnowledgeType
-import com.embabel.dice.projection.memory.*
+import com.embabel.dice.projection.memory.Event
+import com.embabel.dice.projection.memory.BehavioralRule
+import com.embabel.dice.projection.memory.KnowledgeTypeClassifier
+import com.embabel.dice.projection.memory.MemoryProjector
+import com.embabel.dice.projection.memory.MemoryScope
+import com.embabel.dice.projection.memory.UserPersonaSnapshot
+import com.embabel.dice.projection.memory.WorkingMemory
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import java.time.Instant
@@ -17,7 +23,7 @@ import java.time.Instant
 data class DefaultMemoryProjector(
     private val propositionRepository: PropositionRepository,
     private val confidenceThreshold: Double = 0.6,
-    private val knowledgeTypeClassifier: KnowledgeTypeClassifier = KeywordMatchingMemoryTypeClassifier,
+    private val knowledgeTypeClassifier: KnowledgeTypeClassifier = HeuristicKnowledgeTypeClassifier,
 ) : MemoryProjector {
 
     companion object {

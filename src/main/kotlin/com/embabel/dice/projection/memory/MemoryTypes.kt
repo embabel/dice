@@ -78,12 +78,4 @@ fun interface KnowledgeTypeClassifier {
     fun classify(proposition: Proposition): KnowledgeType
 }
 
-/**
- * Typealias for backward compatibility.
- */
-@Deprecated(
-    message = "Use KnowledgeTypeClassifier",
-    replaceWith = ReplaceWith("KnowledgeTypeClassifier")
-)
-typealias MemoryTypeClassifier = KnowledgeTypeClassifier
 

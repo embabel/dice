@@ -18,7 +18,7 @@ import com.embabel.dice.projection.memory.DefaultMemoryRetriever
 import com.embabel.dice.projection.memory.MemoryScope
 import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.projection.memory.support.DefaultMemoryProjector
-import com.embabel.dice.projection.memory.support.KeywordMatchingMemoryTypeClassifier
+import com.embabel.dice.projection.memory.support.HeuristicKnowledgeTypeClassifier
 import com.embabel.dice.projection.prolog.DefaultPrologProjector
 import com.embabel.dice.projection.prolog.PrologEngine
 import com.embabel.dice.projection.prolog.PrologSchema
@@ -552,7 +552,7 @@ internal class DiceShell(
             ?.resolvedId ?: "alice-unknown"
 
         println("\n=== Memory Type Classification ===")
-        val byType = extractionResult.allPropositions.groupBy { KeywordMatchingMemoryTypeClassifier.classify(it) }
+        val byType = extractionResult.allPropositions.groupBy { HeuristicKnowledgeTypeClassifier.classify(it) }
         for ((type, props) in byType) {
             println("\n$type (${props.size} propositions):")
             props.forEach { println("  - ${it.text}") }

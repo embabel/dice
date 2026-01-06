@@ -3,7 +3,7 @@ package com.embabel.dice.projection.memory
 import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.KnowledgeType
-import com.embabel.dice.projection.memory.support.KeywordMatchingMemoryTypeClassifier
+import com.embabel.dice.projection.memory.support.HeuristicKnowledgeTypeClassifier
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import java.time.Duration
@@ -22,7 +22,7 @@ class DefaultMemoryRetriever(
     private val store: PropositionRepository,
     private val recencyWeight: Double = 0.3,
     private val confidenceWeight: Double = 0.3,
-    private val knowledgeTypeClassifier: KnowledgeTypeClassifier = KeywordMatchingMemoryTypeClassifier,
+    private val knowledgeTypeClassifier: KnowledgeTypeClassifier = HeuristicKnowledgeTypeClassifier,
 ) : MemoryRetriever {
 
     override fun recall(

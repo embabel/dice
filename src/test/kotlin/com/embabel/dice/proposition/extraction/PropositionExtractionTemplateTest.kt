@@ -8,9 +8,9 @@ import com.embabel.agent.rag.model.Chunk
 import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.common.textio.template.JinjaProperties
 import com.embabel.common.textio.template.JinjavaTemplateRenderer
-import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.common.KnownEntity
 import com.embabel.dice.common.Relation
+import com.embabel.dice.common.Relations
 import com.embabel.dice.common.SchemaAdherence
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
@@ -60,7 +60,7 @@ class PropositionExtractionTemplateTest {
 
     private fun createTestContext(
         knownEntities: List<KnownEntity> = emptyList(),
-        relations: List<Relation> = emptyList(),
+        relations: Relations = Relations.empty(),
     ): SourceAnalysisContext {
         val schema = DataDictionary.fromClasses(Person::class.java, Company::class.java)
         return SourceAnalysisContext(
@@ -143,7 +143,7 @@ class PropositionExtractionTemplateTest {
         @Test
         fun `renders additional relations`() {
             val context = createTestContext(
-                relations = listOf(
+                relations = Relations.of(
                     Relation.proceduralForSubject("likes", "expresses positive preference for", "Person"),
                     Relation.proceduralForSubject("dislikes", "expresses negative preference for", "Person"),
                     Relation.semanticBetween("is expert in", "has deep knowledge of", "Person", "Topic"),
@@ -166,7 +166,7 @@ class PropositionExtractionTemplateTest {
 
         @Test
         fun `does not render additional relations section when empty`() {
-            val context = createTestContext(relations = emptyList())
+            val context = createTestContext(relations = Relations.empty())
             val model = createTemplateModel(context)
 
             val result = renderer.renderLoadedTemplate(
@@ -286,7 +286,7 @@ class PropositionExtractionTemplateTest {
             val user = Person("user-1", "Rod", "A classical music fan")
             val context = createTestContext(
                 knownEntities = listOf(KnownEntity.asCurrentUser(user)),
-                relations = listOf(
+                relations = Relations.of(
                     Relation.proceduralForSubject("likes", "expresses positive preference for", "Person"),
                 )
             )

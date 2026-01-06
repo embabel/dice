@@ -9,7 +9,7 @@ import com.embabel.agent.core.DataDictionary
  * @param schema the schema to use for analysis
  * @param entityResolver the entity resolver to use for entity disambiguation
  * @param knownEntities optional list of known entities to assist with disambiguation and prompt context
- * @param relations optional list of additional relation types beyond those defined in the schema
+ * @param relations optional collection of additional relation types beyond those defined in the schema
  * @param promptVariables optional additional model data for analysis. Must be passed to any templated
  * LLM prompts used.
  */
@@ -18,7 +18,7 @@ data class SourceAnalysisContext @JvmOverloads constructor(
     val entityResolver: EntityResolver,
     val contextId: ContextId,
     val knownEntities: List<KnownEntity> = emptyList(),
-    val relations: List<Relation> = emptyList(),
+    val relations: Relations = Relations.empty(),
     val promptVariables: Map<String, Any> = emptyMap(),
 ) {
 
@@ -50,39 +50,22 @@ data class SourceAnalysisContext @JvmOverloads constructor(
     fun getContextIdValue(): String = contextId.value
 
     /**
-     * Returns a copy with the specified known entities.
+     * Returns a copy with the specified known entities added.
      */
     fun withKnownEntities(vararg knownEntities: KnownEntity): SourceAnalysisContext =
         copy(knownEntities = knownEntities.toList() + this.knownEntities)
 
     /**
-     * Returns a copy with the specified relations.
+     * Returns a copy with the specified relations collection.
+     */
+    fun withRelations(relations: Relations): SourceAnalysisContext =
+        copy(relations = this.relations + relations)
+
+    /**
+     * Returns a copy with the specified relations added.
      */
     fun withRelations(vararg relations: Relation): SourceAnalysisContext =
-        copy(relations = relations.toList() + this.relations)
-
-    fun withRelationsFrom(
-        subjectType: String,
-        knowledgeType: KnowledgeType,
-        vararg predicates: String
-    ): SourceAnalysisContext {
-        val newRelations = predicates.map { predicate ->
-            Relation(
-                predicate = predicate,
-                meaning = predicate,
-                knowledgeType = knowledgeType,
-                subjectType = subjectType,
-            )
-        }
-        return copy(relations = newRelations + this.relations)
-    }
-
-    fun withRelationsFrom(
-        subjectType: Class<*>,
-        knowledgeType: KnowledgeType,
-        vararg predicates: String
-    ): SourceAnalysisContext =
-        withRelationsFrom(subjectType.simpleName, knowledgeType, *predicates)
+        copy(relations = this.relations + Relations.of(*relations))
 
 
     /**
