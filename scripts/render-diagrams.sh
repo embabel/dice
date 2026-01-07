@@ -62,27 +62,27 @@ fi
 
 echo "Found $DIAGRAM_COUNT diagram(s)"
 
-# Mermaid config for beautiful rendering
+# Mermaid config for beautiful rendering (Embabel brand colors)
 cat > "$OUTPUT_DIR/mermaid-config.json" << 'EOF'
 {
   "theme": "base",
   "themeVariables": {
-    "primaryColor": "#e3f2fd",
-    "primaryTextColor": "#1a237e",
-    "primaryBorderColor": "#1976d2",
+    "primaryColor": "#e8dcf4",
+    "primaryTextColor": "#1e1e1e",
+    "primaryBorderColor": "#9f77cd",
     "lineColor": "#455a64",
-    "secondaryColor": "#fff3e0",
-    "tertiaryColor": "#e8f5e9",
+    "secondaryColor": "#d4eeff",
+    "tertiaryColor": "#d4f5d4",
     "background": "#ffffff",
-    "mainBkg": "#e3f2fd",
-    "nodeBorder": "#1976d2",
+    "mainBkg": "#e8dcf4",
+    "nodeBorder": "#9f77cd",
     "clusterBkg": "#fafafa",
-    "clusterBorder": "#e0e0e0",
-    "titleColor": "#1a237e",
+    "clusterBorder": "#9f77cd",
+    "titleColor": "#1e1e1e",
     "edgeLabelBackground": "#ffffff",
     "fontFamily": "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
     "fontSize": "14px",
-    "labelTextColor": "#37474f"
+    "labelTextColor": "#1e1e1e"
   },
   "flowchart": {
     "htmlLabels": true,

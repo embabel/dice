@@ -124,10 +124,10 @@ flowchart TB
         Unrel --> Repo
     end
 
-    style Extraction fill:#e3f2fd
-    style Resolution fill:#fff3e0
-    style Revision fill:#fce4ec
-    style Persist fill:#e8f5e9
+    style Extraction fill:#e8dcf4,stroke:#9f77cd,color:#1e1e1e
+    style Resolution fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
+    style Revision fill:#fff3cd,stroke:#e9b306,color:#1e1e1e
+    style Persist fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
 ```
 
 ### Source Analysis Context
@@ -265,9 +265,9 @@ flowchart TB
     P --> MP --> Mem
     P --> CP --> Cus
 
-    style Source fill:#e1f5fe
-    style Projectors fill:#fff3e0
-    style Targets fill:#e8f5e9
+    style Source fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
+    style Projectors fill:#fff3cd,stroke:#e9b306,color:#1e1e1e
+    style Targets fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
 ```
 
 ### Graph Projection
@@ -295,9 +295,9 @@ flowchart LR
     Schema -->|"no match"| Rel
     Rel -->|"match"| Graph
 
-    style Input fill:#e3f2fd
-    style Matching fill:#fff8e1
-    style Output fill:#e8f5e9
+    style Input fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
+    style Matching fill:#fff3cd,stroke:#e9b306,color:#1e1e1e
+    style Output fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
 ```
 
 **Priority order:**
@@ -393,9 +393,9 @@ flowchart LR
     RBC -->|"no match"| HBC
     HBC --> Types
 
-    style Input fill:#e3f2fd
-    style Classifier fill:#fff8e1
-    style Types fill:#f3e5f5
+    style Input fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
+    style Classifier fill:#fff3cd,stroke:#e9b306,color:#1e1e1e
+    style Types fill:#e8dcf4,stroke:#9f77cd,color:#1e1e1e
 ```
 
 **Classification sources:**
