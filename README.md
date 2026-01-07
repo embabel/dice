@@ -15,15 +15,11 @@
 
 Knowledge graph construction and reasoning library with proposition-based architecture and Prolog inference.
 
-```
-    ____  _____ _____ ______
-   / __ \/  _/ ___// ____/
-  / / / // // /   / __/
- / /_/ // // /___/ /___
-/_____/___/\____/_____/
+<p align="center">
+  <img src="images/dice.jpg" alt="DICE - Domain-Integrated Context Engineering" width="400">
+</p>
 
- Domain-Integrated Context Engineering
-```
+<p align="center"><strong>Domain-Integrated Context Engineering</strong></p>
 
 ## What is DICE?
 

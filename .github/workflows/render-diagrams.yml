@@ -9,6 +9,9 @@ on:
       - main
   workflow_dispatch:  # Allow manual trigger
 
+permissions:
+  contents: write
+
 jobs:
   render:
     runs-on: ubuntu-latest
