@@ -96,6 +96,43 @@ different use cases.
 - **Revision**: Merge identical, reinforce similar, contradict conflicting propositions
 - **Promotion**: High-confidence propositions project to typed backends
 
+```mermaid
+flowchart TB
+    subgraph Extraction["1️⃣ Extraction"]
+        Text["📄 Source Text"] --> LLM["🤖 LLM Extractor"]
+        LLM --> Props["Propositions<br/>+ confidence<br/>+ decay"]
+    end
+
+    subgraph Resolution["2️⃣ Entity Resolution"]
+        Props --> ER["Entity Resolver"]
+        ER --> Resolved["Resolved Mentions<br/>→ canonical IDs"]
+    end
+
+    subgraph Revision["3️⃣ Revision"]
+        Resolved --> Similar["Find Similar<br/>(vector search)"]
+        Similar --> Classify["LLM Classify"]
+
+        Classify --> Identical["🔄 IDENTICAL<br/>merge, boost confidence"]
+        Classify --> SimilarR["🔗 SIMILAR<br/>reinforce existing"]
+        Classify --> Contra["⚡ CONTRADICTORY<br/>reduce old confidence"]
+        Classify --> General["📊 GENERALIZES<br/>abstracts existing"]
+        Classify --> Unrel["✨ UNRELATED<br/>add as new"]
+    end
+
+    subgraph Persist["4️⃣ Persistence"]
+        Identical --> Repo[("PropositionRepository")]
+        SimilarR --> Repo
+        Contra --> Repo
+        General --> Repo
+        Unrel --> Repo
+    end
+
+    style Extraction fill:#e3f2fd
+    style Resolution fill:#fff3e0
+    style Revision fill:#fce4ec
+    style Persist fill:#e8f5e9
+```
+
 ### Source Analysis Context
 
 All DICE operations require a `SourceAnalysisContext` that carries configuration for source analysis:
@@ -175,21 +212,115 @@ result.revisionResults.forEach { revisionResult ->
 > entities and propositions to your repositories. This gives you full control over when
 > and whether to commit extracted data.
 
+### Relations and Predicates
+
+The `Relations` class provides a builder-style API for defining relationship predicates with their
+knowledge types. These predicates are used for classification and graph projection:
+
+```kotlin
+val relations = Relations.empty()
+    .withProcedural("likes", "expresses preference for")
+    .withProcedural("prefers", "indicates preference")
+    .withSemantic("works at", "is employed by")
+    .withSemantic("is located in", "geographical location")
+    .withEpisodic("met", "encountered")
+    .withEpisodic("visited", "went to")
+```
+
+Predicates can also be defined on schema properties using `@Semantics` annotations:
+
+```kotlin
+data class Person(
+    val id: String,
+    val name: String,
+    @field:Semantics([With(key = Proposition.PREDICATE, value = "works at")])
+    val employer: Company? = null,
+) : NamedEntity
+```
+
 ### Projector Architecture
 
 Projectors transform propositions into specialized representations. Each projector creates a
 different "view" optimized for specific query patterns:
 
+```mermaid
+flowchart TB
+    subgraph Source["📝 Source of Truth"]
+        P[("Propositions<br/>with confidence & decay")]
+    end
+
+    subgraph Projectors["🔄 Projectors"]
+        GP["GraphProjector<br/>━━━━━━━━━━━━━━━<br/>RelationBasedGraphProjector<br/>LlmGraphProjector"]
+        PP["PrologProjector<br/>━━━━━━━━━━━━━━━<br/>Logical inference"]
+        MP["MemoryProjection<br/>━━━━━━━━━━━━━━━<br/>Agent context"]
+        CP["Custom Projector<br/>━━━━━━━━━━━━━━━<br/>Your representation"]
+    end
+
+    subgraph Targets["🎯 Materialized Views"]
+        Neo[("Neo4j<br/>Graph Traversal")]
+        Pro[("tuProlog<br/>Inference & Rules")]
+        Mem[("Agent Memory<br/>Semantic/Episodic/Procedural")]
+        Cus[("Your Backend")]
+    end
+
+    P --> GP --> Neo
+    P --> PP --> Pro
+    P --> MP --> Mem
+    P --> CP --> Cus
+
+    style Source fill:#e1f5fe
+    style Projectors fill:#fff3e0
+    style Targets fill:#e8f5e9
 ```
-  Propositions (source of truth)
-       │
-       ├──► GraphProjector ──► Neo4j relationships (graph traversal)
-       │
-       ├──► PrologProjector ──► Prolog facts (logical inference)
-       │
-       ├──► MemoryProjection ──► Agent context (LLM injection)
-       │
-       └──► [Your Projector] ──► Custom representation
+
+### Graph Projection
+
+The `RelationBasedGraphProjector` projects propositions to graph relationships by matching
+predicates from the schema and `Relations`:
+
+```mermaid
+flowchart LR
+    subgraph Input
+        Prop["Proposition<br/>'Bob works at Acme'"]
+    end
+
+    subgraph Matching["Predicate Matching"]
+        Schema["1️⃣ Schema<br/>@Semantics predicate"]
+        Rel["2️⃣ Relations<br/>fallback predicates"]
+    end
+
+    subgraph Output
+        Graph["(:Person)-[:employer]->(:Company)"]
+    end
+
+    Prop --> Schema
+    Schema -->|"match: 'works at'"| Graph
+    Schema -->|"no match"| Rel
+    Rel -->|"match"| Graph
+
+    style Input fill:#e3f2fd
+    style Matching fill:#fff8e1
+    style Output fill:#e8f5e9
+```
+
+**Priority order:**
+1. Schema relationships with `@Semantics(predicate="...")` → uses property name as relationship type
+2. `Relations` predicates → derives relationship type via UPPER_SNAKE_CASE
+
+```kotlin
+// Schema-driven: uses property name "employer"
+// "Bob works at Acme" → (bob)-[:employer]->(acme)
+
+// Relations fallback: derives from predicate
+val relations = Relations.empty().withProcedural("likes")
+// "Alice likes jazz" → (alice)-[:LIKES]->(jazz)
+
+val projector = RelationBasedGraphProjector.from(relations)
+val results = projector.projectAll(propositions, schema)
+
+// Persist to graph database
+val persister = NamedEntityDataRepositoryGraphRelationshipPersister(repository)
+val persistResult = persister.persist(results)
 ```
 
 ### Prolog Projection (Experimental)
@@ -237,6 +368,52 @@ can_consult(Person, Expert, Topic) :-
     expert_in(Expert, Topic).
 ```
 
+### Memory Projection
+
+Memory projection classifies propositions into cognitive memory types for agent context:
+
+```mermaid
+flowchart LR
+    subgraph Input
+        P["Proposition"]
+    end
+
+    subgraph Classifier["KnowledgeTypeClassifier"]
+        RBC["RelationBasedKnowledgeTypeClassifier<br/>━━━━━━━━━━━━━━━━━━━━━━━━━<br/>Match predicate → KnowledgeType"]
+        HBC["HeuristicKnowledgeTypeClassifier<br/>━━━━━━━━━━━━━━━━━━━━━━━━━<br/>Fallback: confidence + decay"]
+    end
+
+    subgraph Types["KnowledgeType"]
+        SEM["🧠 SEMANTIC<br/>Factual knowledge<br/><i>'Paris is in France'</i>"]
+        EPI["📅 EPISODIC<br/>Event-based<br/><i>'Met Alice yesterday'</i>"]
+        PRO["⚙️ PROCEDURAL<br/>Preferences/habits<br/><i>'Likes jazz music'</i>"]
+        WRK["💭 WORKING<br/>Session context<br/><i>'Currently discussing X'</i>"]
+    end
+
+    P --> RBC
+    RBC -->|"predicate match"| Types
+    RBC -->|"no match"| HBC
+    HBC --> Types
+
+    style Input fill:#e3f2fd
+    style Classifier fill:#fff8e1
+    style Types fill:#f3e5f5
+```
+
+**Classification sources:**
+- **Relations predicates**: "likes" → PROCEDURAL, "works at" → SEMANTIC, "met" → EPISODIC
+- **Heuristic fallback**: High decay → EPISODIC, High confidence + low decay → SEMANTIC
+
+```kotlin
+val relations = Relations.empty()
+    .withProcedural("likes", "prefers", "enjoys")
+    .withSemantic("works at", "is located in")
+    .withEpisodic("met", "visited", "attended")
+
+val classifier = RelationBasedKnowledgeTypeClassifier.from(relations)
+val knowledgeType = classifier.classify(proposition) // PROCEDURAL, SEMANTIC, etc.
+```
+
 ### Oracle: Natural Language Q&A
 
 The Oracle answers questions using LLM tool calling with Prolog reasoning:
@@ -254,9 +431,12 @@ The Oracle answers questions using LLM tool calling with Prolog reasoning:
 ```
 com.embabel.dice
 ├── common/                   # Shared types
-│   ├── SourceAnalysisContext # Context for all DICE operations (schema, resolver, contextId)
+│   ├── SourceAnalysisContext # Context for all DICE operations
 │   ├── EntityResolver        # Entity disambiguation interface
-│   └── KnownEntity           # Pre-defined entity for disambiguation hints
+│   ├── KnownEntity           # Pre-defined entity for hints
+│   ├── Relation              # Predicate with KnowledgeType
+│   ├── Relations             # Builder for relation collections
+│   └── KnowledgeType         # SEMANTIC, EPISODIC, PROCEDURAL, WORKING
 │
 ├── proposition/              # Core types (source of truth)
 │   ├── Proposition           # Natural language fact with confidence/decay
@@ -264,42 +444,49 @@ com.embabel.dice
 │   ├── Projector<T>          # Generic projection interface
 │   ├── PropositionRepository # Storage interface
 │   ├── content/              # Content ingestion
-│   │   ├── ProposableContent # Interface for any content that yields propositions
-│   │   ├── ChunkContent      # Adapter for document chunks
+│   │   ├── ProposableContent
+│   │   ├── ChunkContent
 │   │   └── ContentIngestionPipeline
 │   ├── revision/             # Proposition revision
 │   │   ├── PropositionReviser
-│   │   └── RevisionResult    # New, Merged, Reinforced, Contradicted
-│   └── extraction/           # Proposition extraction
+│   │   ├── LlmPropositionReviser
+│   │   └── RevisionResult    # New, Merged, Reinforced, Contradicted, Generalized
+│   └── extraction/
 │       └── LlmPropositionExtractor
 │
 ├── projection/               # Materialized views from propositions
 │   ├── graph/                # Knowledge graph projection
-│   │   ├── GraphProjector    # Proposition -> Neo4j relationships
-│   │   ├── LlmGraphProjector # LLM-based relationship classification
-│   │   └── ProjectionPolicy  # Filter propositions before projection
+│   │   ├── GraphProjector    # Interface for graph projection
+│   │   ├── RelationBasedGraphProjector  # Predicate-based (no LLM)
+│   │   ├── LlmGraphProjector # LLM-based classification
+│   │   ├── ProjectionPolicy  # Filter before projection
+│   │   ├── GraphRelationshipPersister   # Persistence interface
+│   │   └── NamedEntityDataRepositoryGraphRelationshipPersister
 │   │
 │   ├── prolog/               # Prolog projection for inference
-│   │   ├── PrologProjector   # Relationship -> Prolog facts
+│   │   ├── PrologProjector
 │   │   ├── PrologEngine      # tuProlog wrapper
-│   │   └── PrologSchema      # Predicate mappings
+│   │   └── PrologSchema
 │   │
 │   └── memory/               # Agent memory projection
-│       ├── MemoryProjection  # User profiles, events, rules
-│       └── MemoryRetriever   # Recall with memory semantics
+│       ├── MemoryProjection
+│       ├── KnowledgeTypeClassifier      # Interface
+│       ├── RelationBasedKnowledgeTypeClassifier
+│       ├── HeuristicKnowledgeTypeClassifier
+│       └── MemoryRetriever
 │
 ├── query/oracle/             # Question answering
-│   ├── Oracle                # Q&A interface
-│   ├── ToolOracle            # LLM tool-calling implementation
-│   └── PrologTools           # @LlmTool annotated Prolog operations
+│   ├── Oracle
+│   ├── ToolOracle
+│   └── PrologTools
 │
 ├── pipeline/                 # Extraction pipeline orchestration
-│   └── PropositionPipeline   # Fluent pipeline with cross-chunk resolution
+│   └── PropositionPipeline
 │
 └── text2graph/               # Knowledge graph building
-    ├── KnowledgeGraphBuilder # Multi-pass graph construction
-    ├── SourceAnalyzer        # Source classification
-    └── EntityResolver        # Entity resolution
+    ├── KnowledgeGraphBuilder
+    ├── SourceAnalyzer
+    └── EntityResolver
 ```
 
 ## Installation

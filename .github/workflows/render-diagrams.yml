@@ -1,0 +1,48 @@
+name: Render Diagrams
+
+on:
+  push:
+    paths:
+      - 'README.md'
+      - 'scripts/render-diagrams.sh'
+    branches:
+      - main
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Mermaid CLI
+        run: npm install -g @mermaid-js/mermaid-cli
+
+      - name: Render diagrams
+        run: |
+          chmod +x scripts/render-diagrams.sh
+          ./scripts/render-diagrams.sh
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if [ -n "$(git status --porcelain docs/diagrams/)" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit rendered diagrams
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add docs/diagrams/
+          git commit -m "docs: render Mermaid diagrams [skip ci]"
+          git push
