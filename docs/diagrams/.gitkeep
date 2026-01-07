@@ -4,3 +4,6 @@
 # Diagrams are also inline in README.md as Mermaid code blocks,
 # which GitHub renders natively. The PNG/SVG files here are for
 # platforms that don't support Mermaid rendering.
+#
+# The .source-hash file tracks the hash of mermaid source blocks
+# to avoid unnecessary re-renders and commits.

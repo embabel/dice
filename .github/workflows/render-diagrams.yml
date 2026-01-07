@@ -47,13 +47,23 @@ jobs:
         env:
           PUPPETEER_CONFIG: /tmp/puppeteer-config.json
 
-      - name: Check for changes
+      - name: Check for meaningful changes
         id: changes
         run: |
-          if [ -n "$(git status --porcelain docs/diagrams/)" ]; then
+          # Compare hash of mermaid source blocks to detect actual content changes
+          CURRENT_HASH=$(grep -A 1000 '```mermaid' README.md | grep -B 1000 '```' | md5sum | cut -d' ' -f1)
+          STORED_HASH=""
+          if [ -f docs/diagrams/.source-hash ]; then
+            STORED_HASH=$(cat docs/diagrams/.source-hash)
+          fi
+
+          if [ "$CURRENT_HASH" != "$STORED_HASH" ]; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "$CURRENT_HASH" > docs/diagrams/.source-hash
           else
             echo "has_changes=false" >> $GITHUB_OUTPUT
+            # Clean up any rendered files since source hasn't changed
+            git checkout -- docs/diagrams/ 2>/dev/null || true
           fi
 
       - name: Commit rendered diagrams
@@ -64,3 +74,5 @@ jobs:
           git add docs/diagrams/
           git commit -m "docs: render Mermaid diagrams [skip ci]"
           git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
