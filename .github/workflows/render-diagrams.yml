@@ -21,13 +21,28 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install Chromium for Puppeteer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser
+
       - name: Install Mermaid CLI
         run: npm install -g @mermaid-js/mermaid-cli
+
+      - name: Create Puppeteer config
+        run: |
+          cat > /tmp/puppeteer-config.json << 'EOF'
+          {
+            "args": ["--no-sandbox", "--disable-setuid-sandbox"]
+          }
+          EOF
 
       - name: Render diagrams
         run: |
           chmod +x scripts/render-diagrams.sh
           ./scripts/render-diagrams.sh
+        env:
+          PUPPETEER_CONFIG: /tmp/puppeteer-config.json
 
       - name: Check for changes
         id: changes

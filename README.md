@@ -1,4 +1,5 @@
 ![Build](https://github.com/embabel/dice/actions/workflows/maven.yml/badge.svg)
+![Incubating](https://img.shields.io/badge/status-incubating-yellow)
 
 ![Kotlin](https://img.shields.io/badge/kotlin-%237F52FF.svg?style=for-the-badge&logo=kotlin&logoColor=white)
 ![Spring](https://img.shields.io/badge/spring-%236DB33F.svg?style=for-the-badge&logo=spring&logoColor=white)
@@ -137,13 +138,13 @@ flowchart TB
 
 All DICE operations require a `SourceAnalysisContext` that carries configuration for source analysis:
 
-| Property         | Description                                                           |
-|------------------|-----------------------------------------------------------------------|
-| `schema`         | `DataDictionary` defining valid entity and relationship types         |
-| `entityResolver` | Strategy for resolving entity mentions to canonical IDs               |
-| `contextId`      | Identifies the source/purpose of the analysis (session, batch, etc.)  |
-| `knownEntities`  | Optional list of pre-defined entities to assist disambiguation        |
-| `templateModel`  | Optional model data passed to LLM prompt templates                    |
+| Property         | Description                                                          |
+|------------------|----------------------------------------------------------------------|
+| `schema`         | `DataDictionary` defining valid entity and relationship types        |
+| `entityResolver` | Strategy for resolving entity mentions to canonical IDs              |
+| `contextId`      | Identifies the source/purpose of the analysis (session, batch, etc.) |
+| `knownEntities`  | Optional list of pre-defined entities to assist disambiguation       |
+| `templateModel`  | Optional model data passed to LLM prompt templates                   |
 
 The `ContextId` is a Kotlin value class that tags all propositions extracted during
 a processing run. This enables:
@@ -304,6 +305,7 @@ flowchart LR
 ```
 
 **Priority order:**
+
 1. Schema relationships with `@Semantics(predicate="...")` → uses property name as relationship type
 2. `Relations` predicates → derives relationship type via UPPER_SNAKE_CASE
 
@@ -401,6 +403,7 @@ flowchart LR
 ```
 
 **Classification sources:**
+
 - **Relations predicates**: "likes" → PROCEDURAL, "works at" → SEMANTIC, "met" → EPISODIC
 - **Heuristic fallback**: High decay → EPISODIC, High confidence + low decay → SEMANTIC
 

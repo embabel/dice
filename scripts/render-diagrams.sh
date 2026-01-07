@@ -95,6 +95,13 @@ cat > "$OUTPUT_DIR/mermaid-config.json" << 'EOF'
 }
 EOF
 
+# Build mmdc options - include puppeteer config if set (for CI environments)
+MMDC_OPTS=""
+if [ -n "$PUPPETEER_CONFIG" ] && [ -f "$PUPPETEER_CONFIG" ]; then
+    MMDC_OPTS="-p $PUPPETEER_CONFIG"
+    echo "Using Puppeteer config: $PUPPETEER_CONFIG"
+fi
+
 # Render each diagram
 for mmd_file in "$OUTPUT_DIR"/*.mmd; do
     base_name=$(basename "$mmd_file" .mmd)
@@ -104,15 +111,15 @@ for mmd_file in "$OUTPUT_DIR"/*.mmd; do
     echo "Rendering $base_name..."
 
     # Render to SVG (vector, smaller file size, best for web)
-    mmdc -i "$mmd_file" -o "$svg_file" -c "$OUTPUT_DIR/mermaid-config.json" -b transparent 2>/dev/null || {
+    mmdc -i "$mmd_file" -o "$svg_file" -c "$OUTPUT_DIR/mermaid-config.json" -b transparent $MMDC_OPTS 2>/dev/null || {
         echo "  Warning: SVG rendering failed, trying with white background..."
-        mmdc -i "$mmd_file" -o "$svg_file" -c "$OUTPUT_DIR/mermaid-config.json" -b white
+        mmdc -i "$mmd_file" -o "$svg_file" -c "$OUTPUT_DIR/mermaid-config.json" -b white $MMDC_OPTS
     }
 
     # Render to PNG (raster, broader compatibility)
-    mmdc -i "$mmd_file" -o "$png_file" -c "$OUTPUT_DIR/mermaid-config.json" -b white -w 1400 -H 800 2>/dev/null || {
+    mmdc -i "$mmd_file" -o "$png_file" -c "$OUTPUT_DIR/mermaid-config.json" -b white -w 1400 -H 800 $MMDC_OPTS 2>/dev/null || {
         echo "  Warning: PNG rendering with size failed, using defaults..."
-        mmdc -i "$mmd_file" -o "$png_file" -c "$OUTPUT_DIR/mermaid-config.json" -b white
+        mmdc -i "$mmd_file" -o "$png_file" -c "$OUTPUT_DIR/mermaid-config.json" -b white $MMDC_OPTS
     }
 
     echo "  Created: $svg_file"
