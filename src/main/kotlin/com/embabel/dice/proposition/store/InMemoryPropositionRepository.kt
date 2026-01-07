@@ -82,6 +82,9 @@ class InMemoryPropositionRepository(
     override fun findByGrounding(chunkId: String): List<Proposition> =
         propositions.values.filter { chunkId in it.grounding }
 
+    override fun findByMinLevel(minLevel: Int): List<Proposition> =
+        propositions.values.filter { it.level >= minLevel }
+
     override fun findByContextId(contextId: ContextId): List<Proposition> =
         propositions.values.filter { it.contextId == contextId }
 

@@ -71,6 +71,15 @@ interface PropositionRepository : CoreSearchOperations {
     fun findByGrounding(chunkId: String): List<Proposition>
 
     /**
+     * Find propositions at or above the specified abstraction level.
+     * Level 0 = raw observations, 1+ = abstractions.
+     *
+     * @param minLevel Minimum abstraction level (inclusive)
+     * @return Propositions with level >= minLevel
+     */
+    fun findByMinLevel(minLevel: Int): List<Proposition>
+
+    /**
      * Find propositions associated with the given context ID.
      * TODO will eventually need more sophisticated querying
      */

@@ -47,6 +47,8 @@ enum class PropositionStatus {
  * @property created When the proposition was first created
  * @property revised When the proposition was last updated
  * @property status Current lifecycle status
+ * @property level Abstraction level: 0 = raw observation, 1+ = derived abstraction
+ * @property sourceIds IDs of propositions this was abstracted from (empty for level 0)
  */
 data class Proposition(
     override val id: String = UUID.randomUUID().toString(),
@@ -60,6 +62,8 @@ data class Proposition(
     val created: Instant = Instant.now(),
     val revised: Instant = Instant.now(),
     val status: PropositionStatus = PropositionStatus.ACTIVE,
+    val level: Int = 0,
+    val sourceIds: List<String> = emptyList(),
     override val metadata: Map<String, Any> = emptyMap(),
     override val uri: String? = null,
 ) : Derivation, ReferencesEntities, Retrievable {
@@ -81,6 +85,7 @@ data class Proposition(
          * Java-friendly factory method to create a Proposition.
          */
         @JvmStatic
+        @JvmOverloads
         fun create(
             id: String,
             contextIdValue: String,
@@ -93,8 +98,10 @@ data class Proposition(
             created: Instant,
             revised: Instant,
             status: PropositionStatus,
-            metadata: Map<String, Any>,
-            uri: String?,
+            level: Int = 0,
+            sourceIds: List<String> = emptyList(),
+            metadata: Map<String, Any> = emptyMap(),
+            uri: String? = null,
         ): Proposition = Proposition(
             id = id,
             contextId = ContextId(contextIdValue),
@@ -107,6 +114,8 @@ data class Proposition(
             created = created,
             revised = revised,
             status = status,
+            level = level,
+            sourceIds = sourceIds,
             metadata = metadata,
             uri = uri,
         )
@@ -115,6 +124,8 @@ data class Proposition(
     init {
         require(confidence in 0.0..1.0) { "Confidence must be between 0.0 and 1.0" }
         require(decay in 0.0..1.0) { "Decay must be between 0.0 and 1.0" }
+        require(level >= 0) { "Level must be non-negative" }
+        require(level == 0 || sourceIds.isNotEmpty()) { "Abstracted propositions (level > 0) must have sourceIds" }
     }
 
     override fun embeddableValue(): String {

@@ -1,0 +1,31 @@
+You are synthesizing higher-level insights from a collection of related propositions.
+
+SOURCE PROPOSITIONS:
+{% for prop in propositions %}
+[{{ loop.index0 }}] "{{ prop.text }}" (confidence: {{ prop.confidence }}, decay: {{ prop.decay }})
+{% endfor %}
+
+Generate {{ targetCount }} abstract proposition(s) that capture the essence of these observations.
+
+Guidelines:
+- Each abstraction should synthesize multiple source propositions
+- Abstractions should be at a HIGHER level than the sources (more general, pattern-based)
+- Preserve accuracy - don't overgeneralize beyond what the sources support
+- Assess confidence based on:
+  - How well the sources support the abstraction
+  - Consistency across sources (conflicting sources = lower confidence)
+  - Coverage (abstraction covering more sources = higher confidence)
+- Calculate decay as average of source decays (time-sensitive sources = time-sensitive abstraction)
+
+Examples:
+- Sources: "Alice likes Python", "Bob likes Python", "Carol likes Python"
+  Abstraction: "The team prefers Python" (high confidence if all team members)
+
+- Sources: "Bob arrives at 7am", "Bob leaves at 4pm", "Bob takes short lunches"
+  Abstraction: "Bob values work-life balance with early hours" (medium confidence - interpretation)
+
+For each abstraction, provide:
+- text: The abstract proposition
+- confidence: 0.0-1.0 based on how well sources support it
+- reasoning: Why this abstraction captures the sources
+- sourceIndices: Which source propositions (by index) support this abstraction
