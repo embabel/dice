@@ -30,10 +30,10 @@ import com.embabel.dice.proposition.Proposition
  * memory.episodic   // events
  * ```
  *
- * @param classifier Strategy for classifying propositions into knowledge types
+ * @param knowledgeTypeClassifier Strategy for classifying propositions into knowledge types
  */
 data class DefaultMemoryProjector(
-    private val classifier: KnowledgeTypeClassifier = HeuristicKnowledgeTypeClassifier,
+    private val knowledgeTypeClassifier: KnowledgeTypeClassifier = HeuristicKnowledgeTypeClassifier,
 ) : MemoryProjector {
 
     companion object {
@@ -43,12 +43,12 @@ data class DefaultMemoryProjector(
 
         /** Create with a specific classifier (Java-friendly factory) */
         @JvmStatic
-        fun create(classifier: KnowledgeTypeClassifier) =
-            DefaultMemoryProjector(classifier)
+        fun withKnowledgeTypeClassifier(knowledgeTypeClassifier: KnowledgeTypeClassifier) =
+            DefaultMemoryProjector(knowledgeTypeClassifier)
     }
 
     override fun project(propositions: List<Proposition>): MemoryProjection {
-        val grouped = propositions.groupBy { classifier.classify(it) }
+        val grouped = propositions.groupBy { knowledgeTypeClassifier.classify(it) }
         return MemoryProjection(
             semantic = grouped[KnowledgeType.SEMANTIC] ?: emptyList(),
             episodic = grouped[KnowledgeType.EPISODIC] ?: emptyList(),
@@ -61,5 +61,5 @@ data class DefaultMemoryProjector(
      * Create a new projector with a different classifier.
      */
     fun withClassifier(classifier: KnowledgeTypeClassifier): DefaultMemoryProjector =
-        copy(classifier = classifier)
+        copy(knowledgeTypeClassifier = classifier)
 }

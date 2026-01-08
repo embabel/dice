@@ -565,7 +565,7 @@ internal class DiceShell(
 
         // Query propositions using the new PropositionQuery API
         println("\n=== Using PropositionQuery ===")
-        val query = PropositionQuery.forEntity(aliceId)
+        val query = (PropositionQuery mentioningEntity aliceId)
             .withMinEffectiveConfidence(0.5)
             .orderedByEffectiveConfidence()
             .withLimit(10)

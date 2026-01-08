@@ -216,15 +216,15 @@ flowchart LR
     style Limit fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
 ```
 
-**Kotlin usage** (direct construction with defaults):
+**Kotlin usage** (infix factory methods + direct construction):
 
 ```kotlin
-// Query by context (the primary scope)
+// Query by context using infix notation (the primary scope)
 val contextProps = repository.query(
-    PropositionQuery(contextId = sessionContext)
+    PropositionQuery forContextId sessionContext
 )
 
-// Query with multiple filters
+// Query with multiple filters using direct construction
 val query = PropositionQuery(
     contextId = sessionContext,
     entityId = "alice-123",
@@ -233,13 +233,18 @@ val query = PropositionQuery(
     limit = 20,
 )
 val results = repository.query(query)
+
+// Infix with entity
+val entityProps = repository.query(
+    PropositionQuery mentioningEntity "alice-123"
+)
 ```
 
 **Java usage** (builder pattern via withers):
 
 ```java
 // Start with factory method, chain withers
-PropositionQuery query = PropositionQuery.forContext(contextId)
+PropositionQuery query = PropositionQuery.againstContext("session-123")
     .withEntityId("alice-123")
     .withMinEffectiveConfidence(0.5)
     .orderedByEffectiveConfidence()
@@ -248,13 +253,16 @@ PropositionQuery query = PropositionQuery.forContext(contextId)
 List<Proposition> results = repository.query(query);
 ```
 
-**Factory methods:**
+**Factory methods** (all are `infix` for Kotlin):
 
 | Method | Description |
 |--------|-------------|
-| `PropositionQuery.create()` | Empty query (matches all) |
-| `PropositionQuery.forContext(contextId)` | Scoped to a context |
-| `PropositionQuery.forEntity(entityId)` | Scoped to an entity |
+| `PropositionQuery.forContextId(contextId)` | Scoped to a ContextId |
+| `PropositionQuery.againstContext(contextIdValue)` | Scoped to a context (Java-friendly, takes String) |
+| `PropositionQuery.mentioningEntity(entityId)` | Propositions mentioning an entity |
+
+> **Note**: There is no `create()` method by design—always start with a scoped query
+> to avoid accidentally fetching all propositions.
 
 **Effective confidence** applies time-based decay to confidence scores, so older propositions
 with high decay rates rank lower than recent ones. This is useful for ranking memories by
@@ -494,7 +502,7 @@ flowchart LR
 ```kotlin
 // 1. Query propositions (caller controls what to fetch)
 val props = repository.query(
-    PropositionQuery.forContext(sessionContext)
+    (PropositionQuery forContextId sessionContext)
         .withEntityId("alice-123")
         .withMinEffectiveConfidence(0.5)
         .orderedByEffectiveConfidence()

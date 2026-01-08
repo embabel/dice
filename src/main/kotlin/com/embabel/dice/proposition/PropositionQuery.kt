@@ -6,6 +6,9 @@ import java.time.Instant
 /**
  * Composable query specification for propositions.
  *
+ * **Important**: Always start with a scoped factory method to avoid accidentally
+ * querying all propositions. Use [againstContext] or [forContextId] as the entry point.
+ *
  * Kotlin usage (direct construction with defaults):
  * ```kotlin
  * val query = PropositionQuery(
@@ -18,8 +21,7 @@ import java.time.Instant
  *
  * Java usage (builder pattern via withers):
  * ```java
- * PropositionQuery query = PropositionQuery.create()
- *     .withContextId(contextId)
+ * PropositionQuery query = PropositionQuery.againstContext("session-123")
  *     .withEntityId("user-123")
  *     .withMinLevel(0)
  *     .withOrderBy(OrderBy.EFFECTIVE_CONFIDENCE_DESC);
@@ -113,32 +115,26 @@ data class PropositionQuery(
     fun withLimit(limit: Int): PropositionQuery = copy(limit = limit)
 
     companion object {
-        /**
-         * Create an empty query (matches all propositions).
-         * Use withers to add filters.
-         */
-        @JvmStatic
-        fun create(): PropositionQuery = PropositionQuery()
 
         /**
          * Create a query scoped to a context.
          */
         @JvmStatic
-        fun forContext(contextId: ContextId): PropositionQuery =
+        infix fun forContextId(contextId: ContextId): PropositionQuery =
             PropositionQuery(contextId = contextId)
 
         /**
          * Create a query scoped to a context (Java-friendly).
          */
         @JvmStatic
-        fun forContextValue(contextIdValue: String): PropositionQuery =
+        infix fun againstContext(contextIdValue: String): PropositionQuery =
             PropositionQuery(contextId = ContextId(contextIdValue))
 
         /**
-         * Create a query scoped to an entity.
+         * Create a query for propositions mentioning a specific entity.
          */
         @JvmStatic
-        fun forEntity(entityId: String): PropositionQuery =
+        infix fun mentioningEntity(entityId: String): PropositionQuery =
             PropositionQuery(entityId = entityId)
     }
 }
