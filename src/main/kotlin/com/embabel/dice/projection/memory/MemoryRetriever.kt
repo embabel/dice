@@ -16,13 +16,13 @@ interface MemoryRetriever {
      * Combines: vector similarity + entity overlap + recency.
      *
      * @param query The search query
-     * @param scope Memory scope for filtering
+     * @param forEntity Entity to scope the retrieval to
      * @param topK Maximum number of results
      * @return Relevant propositions ordered by relevance
      */
     fun recall(
         query: String,
-        scope: MemoryScope,
+        forEntity: EntityIdentifier,
         topK: Int = 10,
     ): List<Proposition>
 
@@ -30,40 +30,37 @@ interface MemoryRetriever {
      * Recall everything known about an entity.
      *
      * @param entityId The entity to retrieve information about
-     * @param scope Memory scope for filtering
      * @return All propositions mentioning this entity
      */
     fun recallAbout(
         entityId: EntityIdentifier,
-        scope: MemoryScope,
     ): List<Proposition>
 
     /**
-     * Recall propositions by knowledge type.
+     * Recall propositions by knowledge type for an entity.
      *
      * @param knowledgeType The type of knowledge to retrieve
-     * @param scope Memory scope for filtering
+     * @param forEntity Entity to scope the retrieval to
      * @param topK Maximum number of results
      * @return Propositions of the specified type
      */
     fun recallByType(
         knowledgeType: KnowledgeType,
-        scope: MemoryScope,
+        forEntity: EntityIdentifier,
         topK: Int = 20,
     ): List<Proposition>
 
     /**
-     * Recall recent propositions.
+     * Recall recent propositions for an entity.
      *
-     * @param scope Memory scope for filtering
+     * @param forEntity Entity to scope the retrieval to
      * @param since Only include propositions after this time
      * @param limit Maximum number of results
      * @return Recent propositions ordered by time (most recent first)
      */
     fun recallRecent(
-        scope: MemoryScope,
+        forEntity: EntityIdentifier,
         since: Instant = Instant.now().minusSeconds(3600),
         limit: Int = 20,
     ): List<Proposition>
 }
-

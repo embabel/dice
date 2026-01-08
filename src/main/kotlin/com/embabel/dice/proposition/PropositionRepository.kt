@@ -177,6 +177,80 @@ interface PropositionRepository : CoreSearchOperations {
      */
     fun count(): Int
 
+    // ========================================================================
+    // Composable query - consolidates filtering, ordering, limiting
+    // ========================================================================
+
+    /**
+     * Query propositions using a composable query specification.
+     *
+     * Default implementation filters in memory. Implementations may override
+     * for more efficient database-level filtering.
+     *
+     * @param query The query specification
+     * @return Matching propositions
+     */
+    fun query(query: PropositionQuery): List<Proposition> {
+        var results = findAll().asSequence()
+
+        // Apply filters
+        query.contextId?.let { ctx ->
+            results = results.filter { it.contextId == ctx }
+        }
+        query.entityId?.let { eid ->
+            results = results.filter { prop ->
+                prop.mentions.any { it.resolvedId == eid }
+            }
+        }
+        query.status?.let { s ->
+            results = results.filter { it.status == s }
+        }
+        query.minLevel?.let { min ->
+            results = results.filter { it.level >= min }
+        }
+        query.maxLevel?.let { max ->
+            results = results.filter { it.level <= max }
+        }
+        query.createdAfter?.let { after ->
+            results = results.filter { it.created >= after }
+        }
+        query.createdBefore?.let { before ->
+            results = results.filter { it.created <= before }
+        }
+        query.revisedAfter?.let { after ->
+            results = results.filter { it.revised >= after }
+        }
+        query.revisedBefore?.let { before ->
+            results = results.filter { it.revised <= before }
+        }
+        query.minEffectiveConfidence?.let { threshold ->
+            val asOf = query.effectiveConfidenceAsOf ?: Instant.now()
+            results = results.filter { it.effectiveConfidenceAt(asOf, query.decayK) >= threshold }
+        }
+
+        // Convert to list for sorting
+        var resultList = results.toList()
+
+        // Apply ordering
+        val asOf = query.effectiveConfidenceAsOf ?: Instant.now()
+        resultList = when (query.orderBy) {
+            PropositionQuery.OrderBy.NONE -> resultList
+            PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC ->
+                resultList.sortedByDescending { it.effectiveConfidenceAt(asOf, query.decayK) }
+            PropositionQuery.OrderBy.CREATED_DESC ->
+                resultList.sortedByDescending { it.created }
+            PropositionQuery.OrderBy.REVISED_DESC ->
+                resultList.sortedByDescending { it.revised }
+        }
+
+        // Apply limit
+        query.limit?.let { limit ->
+            resultList = resultList.take(limit)
+        }
+
+        return resultList
+    }
+
     // VectorSearch implementation - only supports Proposition
     @Suppress("UNCHECKED_CAST")
     override fun <T : Retrievable> vectorSearch(

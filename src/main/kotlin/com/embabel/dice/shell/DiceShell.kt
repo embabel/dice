@@ -13,12 +13,13 @@ import com.embabel.dice.common.resolver.InMemoryEntityResolver
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.projection.graph.LenientProjectionPolicy
 import com.embabel.dice.projection.graph.LlmGraphProjector
+import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.dice.projection.memory.DefaultMemoryConsolidator
 import com.embabel.dice.projection.memory.DefaultMemoryRetriever
-import com.embabel.dice.projection.memory.MemoryScope
 import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.projection.memory.support.DefaultMemoryProjector
 import com.embabel.dice.projection.memory.support.HeuristicKnowledgeTypeClassifier
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.projection.prolog.DefaultPrologProjector
 import com.embabel.dice.projection.prolog.PrologEngine
 import com.embabel.dice.projection.prolog.PrologSchema
@@ -545,11 +546,15 @@ internal class DiceShell(
         val extractionResult = pipeline.process(chunks, sourceAnalysisContext)
         println("Extracted ${extractionResult.totalPropositions} propositions")
 
+        // Persist propositions
+        propositionRepository.saveAll(extractionResult.allPropositions)
+
         // Find Alice's entity ID (assuming she was resolved)
         val aliceId = extractionResult.allPropositions
             .flatMap { it.mentions }
             .find { it.span.equals("Alice", ignoreCase = true) }
             ?.resolvedId ?: "alice-unknown"
+        val aliceEntity = EntityIdentifier.forUser(aliceId)
 
         println("\n=== Memory Type Classification ===")
         val byType = extractionResult.allPropositions.groupBy { HeuristicKnowledgeTypeClassifier.classify(it) }
@@ -558,52 +563,61 @@ internal class DiceShell(
             props.forEach { println("  - ${it.text}") }
         }
 
-        // Create memory projection
-        val memoryProjection = DefaultMemoryProjector(propositionRepository)
+        // Query propositions using the new PropositionQuery API
+        println("\n=== Using PropositionQuery ===")
+        val query = PropositionQuery.forEntity(aliceId)
+            .withMinEffectiveConfidence(0.5)
+            .orderedByEffectiveConfidence()
+            .withLimit(10)
 
-        println("\n=== User Profile (Semantic Memory) ===")
-        val profile = memoryProjection.projectUserPersonaSnapshot(aliceId)
-        println("Facts (${profile.facts.size}):")
-        profile.facts.forEach { println("  - $it") }
-        println("Aggregate confidence: ${String.format("%.2f", profile.confidence)}")
+        val queriedProps = propositionRepository.query(query)
+        println("Queried ${queriedProps.size} propositions for entity $aliceId with effective confidence >= 0.5")
 
-        println("\n=== Recent Events (Episodic Memory) ===")
-        val events = memoryProjection.projectRecentEvents(aliceId)
-        if (events.isEmpty()) {
-            println("  (no episodic memories found)")
+        // Project into memory types using simplified MemoryProjector
+        val projector = DefaultMemoryProjector.DEFAULT
+        val memoryProjection = projector.project(queriedProps)
+
+        println("\n=== Memory Projection ===")
+        println("Total items: ${memoryProjection.size}")
+
+        println("\n--- Semantic Memory (facts) ---")
+        if (memoryProjection.semantic.isEmpty()) {
+            println("  (no semantic memories)")
         } else {
-            events.forEach { println("  - ${it.asContext()}") }
+            memoryProjection.semantic.forEach { println("  - ${it.text}") }
         }
 
-        println("\n=== Behavioral Rules (Procedural Memory) ===")
-        val rules = memoryProjection.projectBehavioralRules(aliceId)
-        if (rules.isEmpty()) {
-            println("  (no procedural rules found)")
+        println("\n--- Episodic Memory (events) ---")
+        if (memoryProjection.episodic.isEmpty()) {
+            println("  (no episodic memories)")
         } else {
-            rules.forEach { println("  - ${it.asContext()}") }
+            memoryProjection.episodic.forEach { println("  - ${it.text}") }
         }
 
-        println("\n=== Working Memory ===")
-        val scope = MemoryScope.global(aliceId)
-        val workingMemory = memoryProjection.projectWorkingMemory(
-            scope = scope,
-            sessionPropositions = extractionResult.allPropositions.take(3),
-            budget = 20,
-        )
-        println("Total items: ${workingMemory.totalItems}")
-        println("\n--- Context for LLM ---")
-        println(workingMemory.contribution())
+        println("\n--- Procedural Memory (preferences/rules) ---")
+        if (memoryProjection.procedural.isEmpty()) {
+            println("  (no procedural memories)")
+        } else {
+            memoryProjection.procedural.forEach { println("  - ${it.text}") }
+        }
+
+        println("\n--- Working Memory (session context) ---")
+        if (memoryProjection.working.isEmpty()) {
+            println("  (no working memories)")
+        } else {
+            memoryProjection.working.forEach { println("  - ${it.text}") }
+        }
 
         // Demonstrate memory retrieval
         println("\n=== Memory Retrieval ===")
         val retriever = DefaultMemoryRetriever(propositionRepository)
 
         println("\nRecall about 'Kubernetes':")
-        val kubernetesMemories = retriever.recall("Kubernetes", scope, topK = 5)
+        val kubernetesMemories = retriever.recall("Kubernetes", aliceEntity, topK = 5)
         kubernetesMemories.forEach { println("  - ${it.text}") }
 
         println("\nRecall semantic memories:")
-        val semanticMemories = retriever.recallByType(KnowledgeType.SEMANTIC, scope, topK = 5)
+        val semanticMemories = retriever.recallByType(KnowledgeType.SEMANTIC, aliceEntity, topK = 5)
         semanticMemories.forEach { println("  - ${it.text}") }
     }
 

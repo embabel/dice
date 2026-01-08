@@ -142,12 +142,25 @@ All DICE operations require a `SourceAnalysisContext` that carries configuration
 | `knownEntities`  | Optional list of pre-defined entities to assist disambiguation       |
 | `templateModel`  | Optional model data passed to LLM prompt templates                   |
 
-The `ContextId` is a Kotlin value class that tags all propositions extracted during
-a processing run. This enables:
+### ContextId: The Starting Point for All Queries
 
-- **Provenance tracking**: Know which session or batch produced each proposition
-- **Scoped queries**: Retrieve propositions from a specific context
-- **Multi-tenant isolation**: Separate knowledge graphs by context
+The `ContextId` is a Kotlin value class that tags all propositions extracted during
+a processing run. **ContextId is the primary scoping mechanism for all proposition queries**
+and should be considered the starting point when retrieving knowledge.
+
+| Scoping Pattern | Description | Example |
+|-----------------|-------------|---------|
+| **User-specific context** | Each user has their own context | `ContextId("user-alice-123")` |
+| **Shared context** | Multiple users share knowledge | `ContextId("team-engineering")` |
+| **Session context** | Per-conversation knowledge | `ContextId("session-abc")` |
+| **Batch context** | Processing run grouping | `ContextId("batch-2025-01-09")` |
+
+**Key design points:**
+
+- One user can have **multiple contexts** (personal, team, project-specific)
+- One context can be **shared between users** (team knowledge, organizational facts)
+- ContextId is independent of entity identity—an entity like "Alice" can appear in many contexts
+- Query by contextId first, then refine with entity, confidence, or temporal filters
 
 ```kotlin
 // Create context for a processing run
@@ -171,6 +184,81 @@ val result = pipeline.process(chunks, context)
 >     .withKnownEntities(knownEntities)  // optional
 >     .withTemplateModel(templateModel); // optional
 > ```
+
+### PropositionQuery: Composable Repository Queries
+
+`PropositionQuery` provides a composable, Java-friendly builder pattern for querying propositions.
+It consolidates filtering, ordering, and limiting into a single specification object.
+
+```mermaid
+flowchart LR
+    subgraph Filters["Filters"]
+        CTX["contextId<br/>(primary scope)"]
+        ENT["entityId<br/>(mentions entity)"]
+        CONF["minEffectiveConfidence<br/>(with decay)"]
+        TIME["createdAfter/Before<br/>revisedAfter/Before"]
+        LVL["minLevel/maxLevel<br/>(abstraction)"]
+        STAT["status<br/>(ACTIVE, etc.)"]
+    end
+
+    subgraph Order["Ordering"]
+        ORD["orderBy<br/>EFFECTIVE_CONFIDENCE_DESC<br/>CREATED_DESC<br/>REVISED_DESC"]
+    end
+
+    subgraph Limit["Limiting"]
+        LIM["limit<br/>(max results)"]
+    end
+
+    Filters --> Order --> Limit --> Results[("Propositions")]
+
+    style Filters fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
+    style Order fill:#fff3cd,stroke:#e9b306,color:#1e1e1e
+    style Limit fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
+```
+
+**Kotlin usage** (direct construction with defaults):
+
+```kotlin
+// Query by context (the primary scope)
+val contextProps = repository.query(
+    PropositionQuery(contextId = sessionContext)
+)
+
+// Query with multiple filters
+val query = PropositionQuery(
+    contextId = sessionContext,
+    entityId = "alice-123",
+    minEffectiveConfidence = 0.5,
+    orderBy = PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC,
+    limit = 20,
+)
+val results = repository.query(query)
+```
+
+**Java usage** (builder pattern via withers):
+
+```java
+// Start with factory method, chain withers
+PropositionQuery query = PropositionQuery.forContext(contextId)
+    .withEntityId("alice-123")
+    .withMinEffectiveConfidence(0.5)
+    .orderedByEffectiveConfidence()
+    .withLimit(20);
+
+List<Proposition> results = repository.query(query);
+```
+
+**Factory methods:**
+
+| Method | Description |
+|--------|-------------|
+| `PropositionQuery.create()` | Empty query (matches all) |
+| `PropositionQuery.forContext(contextId)` | Scoped to a context |
+| `PropositionQuery.forEntity(entityId)` | Scoped to an entity |
+
+**Effective confidence** applies time-based decay to confidence scores, so older propositions
+with high decay rates rank lower than recent ones. This is useful for ranking memories by
+relevance rather than just raw confidence.
 
 ### Content Ingestion Pipeline
 
@@ -368,34 +456,63 @@ can_consult(Person, Expert, Topic) :-
 
 ### Memory Projection
 
-Memory projection classifies propositions into cognitive memory types for agent context:
+Memory projection classifies propositions into cognitive memory types for agent context.
+The design separates **querying** (via `PropositionQuery`) from **classification** (via `MemoryProjector`).
 
 ```mermaid
 flowchart LR
-    subgraph Input
-        P["Proposition"]
+    subgraph Query["1. Query Propositions"]
+        PQ["PropositionQuery<br/>━━━━━━━━━━━━━━━<br/>contextId, entityId,<br/>confidence, temporal"]
+        REPO[("Repository")]
+        PQ --> REPO
     end
 
-    subgraph Classifier["KnowledgeTypeClassifier"]
-        RBC["RelationBasedKnowledgeTypeClassifier<br/>━━━━━━━━━━━━━━━━━━━━━━━━━<br/>Match predicate → KnowledgeType"]
-        HBC["HeuristicKnowledgeTypeClassifier<br/>━━━━━━━━━━━━━━━━━━━━━━━━━<br/>Fallback: confidence + decay"]
+    subgraph Project["2. Project to Memory"]
+        PROJ["MemoryProjector<br/>━━━━━━━━━━━━━━━<br/>Classify by<br/>KnowledgeType"]
     end
 
-    subgraph Types["KnowledgeType"]
-        SEM["🧠 SEMANTIC<br/>Factual knowledge<br/><i>'Paris is in France'</i>"]
-        EPI["📅 EPISODIC<br/>Event-based<br/><i>'Met Alice yesterday'</i>"]
-        PRO["⚙️ PROCEDURAL<br/>Preferences/habits<br/><i>'Likes jazz music'</i>"]
-        WRK["💭 WORKING<br/>Session context<br/><i>'Currently discussing X'</i>"]
+    subgraph Result["3. MemoryProjection"]
+        SEM["🧠 semantic<br/>Facts"]
+        EPI["📅 episodic<br/>Events"]
+        PRO["⚙️ procedural<br/>Preferences"]
+        WRK["💭 working<br/>Session"]
     end
 
-    P --> RBC
-    RBC -->|"predicate match"| Types
-    RBC -->|"no match"| HBC
-    HBC --> Types
+    REPO -->|"List<Proposition>"| PROJ
+    PROJ --> SEM
+    PROJ --> EPI
+    PROJ --> PRO
+    PROJ --> WRK
 
-    style Input fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
-    style Classifier fill:#fff3cd,stroke:#e9b306,color:#1e1e1e
-    style Types fill:#e8dcf4,stroke:#9f77cd,color:#1e1e1e
+    style Query fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
+    style Project fill:#fff3cd,stroke:#e9b306,color:#1e1e1e
+    style Result fill:#e8dcf4,stroke:#9f77cd,color:#1e1e1e
+```
+
+**Complete example:**
+
+```kotlin
+// 1. Query propositions (caller controls what to fetch)
+val props = repository.query(
+    PropositionQuery.forContext(sessionContext)
+        .withEntityId("alice-123")
+        .withMinEffectiveConfidence(0.5)
+        .orderedByEffectiveConfidence()
+        .withLimit(50)
+)
+
+// 2. Project into memory types
+val projector = DefaultMemoryProjector.DEFAULT
+val memory = projector.project(props)
+
+// 3. Use classified propositions
+memory.semantic   // factual knowledge
+memory.episodic   // event-based memories
+memory.procedural // preferences and rules
+memory.working    // session context
+
+// Access by type
+val facts = memory[KnowledgeType.SEMANTIC]
 ```
 
 **Classification sources:**
@@ -410,7 +527,8 @@ val relations = Relations.empty()
     .withEpisodic("met", "visited", "attended")
 
 val classifier = RelationBasedKnowledgeTypeClassifier.from(relations)
-val knowledgeType = classifier.classify(proposition) // PROCEDURAL, SEMANTIC, etc.
+val projector = DefaultMemoryProjector.create(classifier)
+val memory = projector.project(propositions)
 ```
 
 ### Proposition Operations
@@ -526,8 +644,9 @@ com.embabel.dice
 ├── proposition/              # Core types (source of truth)
 │   ├── Proposition           # Natural language fact with confidence/decay
 │   ├── EntityMention         # Entity reference within proposition
+│   ├── PropositionQuery      # Composable query specification
 │   ├── Projector<T>          # Generic projection interface
-│   ├── PropositionRepository # Storage interface
+│   ├── PropositionRepository # Storage interface (with query() method)
 │   ├── content/              # Content ingestion
 │   │   ├── ProposableContent
 │   │   ├── ChunkContent
@@ -554,11 +673,13 @@ com.embabel.dice
 │   │   └── PrologSchema
 │   │
 │   └── memory/               # Agent memory projection
-│       ├── MemoryProjection
-│       ├── KnowledgeTypeClassifier      # Interface
+│       ├── MemoryProjector              # Interface: project(propositions) -> MemoryProjection
+│       ├── MemoryProjection             # Result: semantic, episodic, procedural, working
+│       ├── KnowledgeTypeClassifier      # Interface for classification
 │       ├── RelationBasedKnowledgeTypeClassifier
 │       ├── HeuristicKnowledgeTypeClassifier
-│       └── MemoryRetriever
+│       ├── DefaultMemoryProjector       # Default implementation
+│       └── MemoryRetriever              # Similarity + entity + recency retrieval
 │
 ├── query/oracle/             # Question answering
 │   ├── Oracle

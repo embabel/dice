@@ -11,7 +11,7 @@ import java.time.Instant
 import kotlin.math.exp
 
 /**
- * Default implementation of MemoryRetriever backed by a PropositionStore.
+ * Default implementation of MemoryRetriever backed by a PropositionRepository.
  *
  * @param store The proposition store to query
  * @param recencyWeight Weight for recency in relevance scoring (0.0-1.0)
@@ -27,7 +27,7 @@ class DefaultMemoryRetriever(
 
     override fun recall(
         query: String,
-        scope: MemoryScope,
+        forEntity: EntityIdentifier,
         topK: Int,
     ): List<Proposition> {
         // Get candidates from similarity search
@@ -39,16 +39,16 @@ class DefaultMemoryRetriever(
             )
         )
 
-        // Also get propositions for the user
-        val userPropositions = store.findByEntity(EntityIdentifier.forUser(scope.userId))
+        // Also get propositions for the entity
+        val entityPropositions = store.findByEntity(forEntity)
 
         // Combine and deduplicate
-        val candidates = (similarPropositions + userPropositions)
+        val candidates = (similarPropositions + entityPropositions)
             .distinctBy { it.id }
 
         // Score and rank
         return candidates
-            .map { prop -> prop to scoreRelevance(prop, query, scope) }
+            .map { prop -> prop to scoreRelevance(prop, query) }
             .sortedByDescending { (_, score) -> score }
             .take(topK)
             .map { (prop, _) -> prop }
@@ -56,7 +56,6 @@ class DefaultMemoryRetriever(
 
     override fun recallAbout(
         entityId: EntityIdentifier,
-        scope: MemoryScope,
     ): List<Proposition> {
         return store.findByEntity(entityId)
             .sortedByDescending { it.confidence }
@@ -64,39 +63,38 @@ class DefaultMemoryRetriever(
 
     override fun recallByType(
         knowledgeType: KnowledgeType,
-        scope: MemoryScope,
+        forEntity: EntityIdentifier,
         topK: Int,
     ): List<Proposition> {
-        // Get all propositions for the user and filter by inferred type
-        val userPropositions = store.findByEntity(EntityIdentifier.forUser(scope.userId))
+        // Get all propositions for the entity and filter by inferred type
+        val entityPropositions = store.findByEntity(forEntity)
 
-        return userPropositions
+        return entityPropositions
             .filter { knowledgeTypeClassifier.classify(it) == knowledgeType }
             .sortedByDescending { it.confidence }
             .take(topK)
     }
 
     override fun recallRecent(
-        scope: MemoryScope,
+        forEntity: EntityIdentifier,
         since: Instant,
         limit: Int,
     ): List<Proposition> {
-        val userPropositions = store.findByEntity(EntityIdentifier.forUser(scope.userId))
+        val entityPropositions = store.findByEntity(forEntity)
 
-        return userPropositions
+        return entityPropositions
             .filter { it.created.isAfter(since) }
             .sortedByDescending { it.created }
             .take(limit)
     }
 
     /**
-     * Score relevance of a proposition to a query and scope.
+     * Score relevance of a proposition to a query.
      * Combines similarity, recency, and confidence.
      */
     private fun scoreRelevance(
         proposition: Proposition,
         query: String,
-        scope: MemoryScope,
     ): Double {
         // Text similarity (simple word overlap)
         val queryWords = query.lowercase().split(Regex("\\s+")).toSet()
