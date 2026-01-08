@@ -6,7 +6,6 @@ import com.embabel.agent.rag.service.CoreSearchOperations
 import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.agent.rag.service.TextSearch
 import com.embabel.agent.rag.service.VectorSearch
-import com.embabel.agent.rag.filter.MetadataFilter
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.util.loggerFor
@@ -183,7 +182,6 @@ interface PropositionRepository : CoreSearchOperations {
     override fun <T : Retrievable> vectorSearch(
         request: TextSimilaritySearchRequest,
         clazz: Class<T>,
-        filter: MetadataFilter?,
     ): List<SimilarityResult<T>> {
         if (clazz != Proposition::class.java) {
             loggerFor<PropositionRepository>().warn(
@@ -192,7 +190,6 @@ interface PropositionRepository : CoreSearchOperations {
             )
             return emptyList()
         }
-        // Note: filter is ignored - PropositionRepository doesn't support metadata filtering
         return findSimilarWithScores(request) as List<SimilarityResult<T>>
     }
 
@@ -201,7 +198,6 @@ interface PropositionRepository : CoreSearchOperations {
     override fun <T : Retrievable> textSearch(
         request: TextSimilaritySearchRequest,
         clazz: Class<T>,
-        filter: MetadataFilter?,
     ): List<SimilarityResult<T>> {
         if (clazz != Proposition::class.java) {
             loggerFor<PropositionRepository>().warn(
