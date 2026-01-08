@@ -1,0 +1,40 @@
+You are identifying differences between two groups of propositions.
+
+GROUP A: {{ labelA }}
+{% for prop in groupA %}
+[A{{ loop.index0 }}] "{{ prop.text }}" (confidence: {{ prop.confidence }})
+{% endfor %}
+
+GROUP B: {{ labelB }}
+{% for prop in groupB %}
+[B{{ loop.index0 }}] "{{ prop.text }}" (confidence: {{ prop.confidence }})
+{% endfor %}
+
+Generate {{ targetCount }} contrast proposition(s) that articulate meaningful differences between these groups.
+
+Guidelines:
+- Focus on DIFFERENCES - what distinguishes {{ labelA }} from {{ labelB }}
+- Each contrast should compare related aspects (e.g., both about preferences, both about work style)
+- Be specific: "{{ labelA }} prefers X while {{ labelB }} prefers Y" not just "they are different"
+- Only contrast when there's actual comparable information in both groups
+- Assess confidence based on:
+  - Clarity of the difference (explicit contradiction = high confidence)
+  - Relevance of comparison (comparing apples to apples)
+  - Strength of source propositions
+
+Examples of good contrasts:
+- "Alice prefers morning meetings while Bob prefers afternoon meetings"
+- "Alice and Bob have opposite approaches to documentation - detailed vs minimal"
+- "Unlike Alice who works remotely, Bob prefers working in the office"
+
+Examples of poor contrasts (avoid):
+- "Alice and Bob are different" (too vague)
+- "Alice likes Python" (not a contrast, just about one group)
+- "Alice prefers Python while Bob had lunch at noon" (unrelated aspects)
+
+For each contrast, provide:
+- text: The contrast proposition comparing the two groups
+- confidence: 0.0-1.0 based on how clear and supported the difference is
+- reasoning: Why this is a meaningful difference
+- sourceIndicesA: Which propositions from group A (by index) support this
+- sourceIndicesB: Which propositions from group B (by index) support this

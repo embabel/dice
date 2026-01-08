@@ -1,4 +1,7 @@
 You are synthesizing higher-level insights from a collection of related propositions.
+{% if groupLabel %}
+These propositions are about: {{ groupLabel }}
+{% endif %}
 
 SOURCE PROPOSITIONS:
 {% for prop in propositions %}

@@ -413,6 +413,92 @@ val classifier = RelationBasedKnowledgeTypeClassifier.from(relations)
 val knowledgeType = classifier.classify(proposition) // PROCEDURAL, SEMANTIC, etc.
 ```
 
+### Proposition Operations
+
+Operations transform groups of propositions into new, derived propositions. Unlike projections
+(which convert to different representations), operations produce new propositions at higher
+abstraction levels.
+
+```mermaid
+flowchart LR
+    subgraph Input["Input"]
+        G1["PropositionGroup<br/>'Alice'"]
+        G2["PropositionGroup<br/>'Bob'"]
+    end
+
+    subgraph Operations["Operations"]
+        ABS["🔭 Abstract<br/>━━━━━━━━━━━━<br/>Synthesize insights"]
+        CON["⚖️ Contrast<br/>━━━━━━━━━━━━<br/>Find differences"]
+        CMP["🔗 Compose<br/>━━━━━━━━━━━━<br/>Chain relationships"]
+    end
+
+    subgraph Output["Output"]
+        P["Derived Propositions<br/>level > 0<br/>sourceIds populated"]
+    end
+
+    G1 --> ABS --> P
+    G1 --> CON
+    G2 --> CON --> P
+    G1 --> CMP --> P
+
+    style Input fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
+    style Operations fill:#e8dcf4,stroke:#9f77cd,color:#1e1e1e
+    style Output fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
+```
+
+| Operation | Description | Example |
+|-----------|-------------|---------|
+| **Abstract** | Synthesize higher-level insights from a group | "likes jazz, blues, classical" → "enjoys music" |
+| **Contrast** | Identify differences between groups | Alice vs Bob → "opposite meeting preferences" |
+| **Compose** | Chain transitive relationships (via Prolog) | "A→B, B→C" → "A indirectly relates to C" |
+
+#### Abstraction
+
+Generate higher-level propositions that capture the essence of a group:
+
+```kotlin
+val abstractor = LlmPropositionAbstractor.withLlm(llm).withAi(ai)
+
+// Group propositions with a label
+val bobGroup = PropositionGroup("Bob", repository.findByEntity("bob-123"))
+
+// Generate abstractions
+val abstractions = abstractor.abstract(bobGroup, targetCount = 2)
+// "Bob values thoroughness and clarity in work processes"
+// "Bob prefers structured communication"
+```
+
+#### Contrast
+
+Identify and articulate differences between two groups:
+
+```kotlin
+val contraster = LlmPropositionContraster.withLlm(llm).withAi(ai)
+
+val aliceGroup = PropositionGroup("Alice", aliceProps)
+val bobGroup = PropositionGroup("Bob", bobProps)
+
+val differences = contraster.contrast(aliceGroup, bobGroup, targetCount = 3)
+// "Alice prefers morning meetings while Bob prefers afternoons"
+// "Alice and Bob have different language preferences (Python vs Java)"
+```
+
+#### Proposition Levels
+
+Derived propositions track their abstraction level and provenance:
+
+```kotlin
+data class Proposition(
+    // ... other fields ...
+    val level: Int = 0,              // 0 = raw, 1+ = derived
+    val sourceIds: List<String>,     // IDs of source propositions
+)
+
+// Query by abstraction level
+val rawObservations = repository.findByMinLevel(0)
+val abstractions = repository.findByMinLevel(1)
+```
+
 ### Oracle: Natural Language Q&A
 
 The Oracle answers questions using LLM tool calling with Prolog reasoning:
@@ -478,6 +564,15 @@ com.embabel.dice
 │   ├── Oracle
 │   ├── ToolOracle
 │   └── PrologTools
+│
+├── operations/               # Proposition transformations
+│   ├── PropositionGroup      # Labeled collection of propositions
+│   ├── abstraction/          # Higher-level synthesis
+│   │   ├── PropositionAbstractor
+│   │   └── LlmPropositionAbstractor
+│   └── contrast/             # Difference identification
+│       ├── PropositionContraster
+│       └── LlmPropositionContraster
 │
 ├── pipeline/                 # Extraction pipeline orchestration
 │   └── PropositionPipeline

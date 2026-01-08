@@ -1,5 +1,6 @@
-package com.embabel.dice.proposition.abstraction
+package com.embabel.dice.operations.abstraction
 
+import com.embabel.dice.operations.PropositionGroup
 import com.embabel.dice.proposition.Proposition
 
 /**
@@ -29,15 +30,27 @@ import com.embabel.dice.proposition.Proposition
 interface PropositionAbstractor {
 
     /**
-     * Generate higher-level propositions from a group.
+     * Generate higher-level propositions from a labeled group.
      *
-     * @param propositions Source propositions to abstract (obtained by caller via
-     *                     vector search, entity filter, context filter, etc.)
+     * @param group Labeled group of propositions to abstract
+     * @param targetCount Desired number of abstract propositions to generate
+     * @return Abstracted propositions with level > 0 and sourceIds populated
+     */
+    fun abstract(
+        group: PropositionGroup,
+        targetCount: Int = 3,
+    ): List<Proposition>
+
+    /**
+     * Generate higher-level propositions from a list.
+     * Convenience method that wraps propositions in an unlabeled group.
+     *
+     * @param propositions Source propositions to abstract
      * @param targetCount Desired number of abstract propositions to generate
      * @return Abstracted propositions with level > 0 and sourceIds populated
      */
     fun abstract(
         propositions: List<Proposition>,
         targetCount: Int = 3,
-    ): List<Proposition>
+    ): List<Proposition> = abstract(PropositionGroup("", propositions), targetCount)
 }

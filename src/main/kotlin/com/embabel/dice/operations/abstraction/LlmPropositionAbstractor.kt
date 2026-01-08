@@ -1,9 +1,9 @@
-package com.embabel.dice.proposition.abstraction
+package com.embabel.dice.operations.abstraction
 
 import com.embabel.agent.api.common.Ai
-import com.embabel.agent.core.ContextId
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.common.core.types.ZeroToOne
+import com.embabel.dice.operations.PropositionGroup
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.fasterxml.jackson.annotation.JsonPropertyDescription
@@ -24,7 +24,8 @@ import java.util.*
  *
  * // Get propositions about Bob
  * val bobProps = repository.findByEntity("bob-123")
- * val abstractions = abstractor.abstract(bobProps, targetCount = 2)
+ * val bobGroup = PropositionGroup("Bob", bobProps)
+ * val abstractions = abstractor.abstract(bobGroup, targetCount = 2)
  * ```
  */
 data class LlmPropositionAbstractor(
@@ -50,9 +51,11 @@ data class LlmPropositionAbstractor(
     private val logger = LoggerFactory.getLogger(LlmPropositionAbstractor::class.java)
 
     override fun abstract(
-        propositions: List<Proposition>,
+        group: PropositionGroup,
         targetCount: Int,
     ): List<Proposition> {
+        val propositions = group.propositions
+
         if (propositions.isEmpty()) {
             logger.debug("No propositions to abstract")
             return emptyList()
@@ -80,15 +83,17 @@ data class LlmPropositionAbstractor(
             .fromTemplate(
                 "dice/abstract_propositions",
                 mapOf(
+                    "groupLabel" to group.label,
                     "propositions" to propositionData,
                     "targetCount" to targetCount,
                 )
             )
 
         logger.info(
-            "Generated {} abstraction(s) from {} propositions",
+            "Generated {} abstraction(s) from {} propositions{}",
             response.abstractions.size,
-            propositions.size
+            propositions.size,
+            if (group.label.isNotBlank()) " about '${group.label}'" else ""
         )
 
         // Calculate derived values
