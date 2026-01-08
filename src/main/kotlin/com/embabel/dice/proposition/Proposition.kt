@@ -174,8 +174,21 @@ data class Proposition(
      * @param k Decay rate multiplier (default 2.0 from GUM paper)
      * @return Effective confidence after decay
      */
-    fun effectiveConfidence(k: Double = 2.0): Double {
-        val ageInDays = java.time.Duration.between(revised, Instant.now()).toDays().toDouble()
+    fun effectiveConfidence(k: Double = 2.0): Double =
+        effectiveConfidenceAt(Instant.now(), k)
+
+    /**
+     * Calculate the effective confidence as of a specific point in time.
+     * Useful for historical analysis where you want to know what the
+     * confidence was at a past date, not relative to now.
+     *
+     * @param asOf The point in time to calculate confidence for
+     * @param k Decay rate multiplier (default 2.0 from GUM paper)
+     * @return Effective confidence after decay as of the given time
+     */
+    fun effectiveConfidenceAt(asOf: Instant, k: Double = 2.0): Double {
+        val ageInDays = java.time.Duration.between(revised, asOf).toDays().toDouble()
+            .coerceAtLeast(0.0)  // Don't apply negative decay for future dates
         val gamma = kotlin.math.exp(-decay * k * ageInDays)
         return confidence * gamma
     }

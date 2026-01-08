@@ -6,9 +6,11 @@ import com.embabel.agent.rag.service.CoreSearchOperations
 import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.agent.rag.service.TextSearch
 import com.embabel.agent.rag.service.VectorSearch
+import com.embabel.agent.rag.filter.MetadataFilter
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.util.loggerFor
+import java.time.Instant
 
 /**
  * Storage interface for propositions.
@@ -79,6 +81,75 @@ interface PropositionRepository : CoreSearchOperations {
      */
     fun findByMinLevel(minLevel: Int): List<Proposition>
 
+    // ========================================================================
+    // Temporal queries - default implementations work with any repository
+    // ========================================================================
+
+    /**
+     * Find propositions created within a time range.
+     *
+     * @param start Start of range (inclusive)
+     * @param end End of range (inclusive)
+     * @return Propositions created within the range
+     */
+    fun findByCreatedBetween(start: Instant, end: Instant): List<Proposition> =
+        findAll().filter { it.created in start..end }
+
+    /**
+     * Find propositions revised within a time range.
+     *
+     * @param start Start of range (inclusive)
+     * @param end End of range (inclusive)
+     * @return Propositions revised within the range
+     */
+    fun findByRevisedBetween(start: Instant, end: Instant): List<Proposition> =
+        findAll().filter { it.revised in start..end }
+
+    // ========================================================================
+    // Effective confidence queries - apply decay for ranking
+    // ========================================================================
+
+    /**
+     * Find all propositions ordered by effective confidence (highest first).
+     * Applies time-based decay to confidence scores.
+     *
+     * @param k Decay rate multiplier (default 2.0)
+     * @return Propositions ordered by decayed confidence
+     */
+    fun findAllOrderedByEffectiveConfidence(k: Double = 2.0): List<Proposition> =
+        findAll().sortedByDescending { it.effectiveConfidence(k) }
+
+    /**
+     * Find propositions with effective confidence above a threshold.
+     *
+     * @param threshold Minimum effective confidence (after decay)
+     * @param k Decay rate multiplier (default 2.0)
+     * @return Propositions with effective confidence >= threshold, ordered by confidence
+     */
+    fun findByEffectiveConfidenceAbove(threshold: Double, k: Double = 2.0): List<Proposition> =
+        findAll()
+            .filter { it.effectiveConfidence(k) >= threshold }
+            .sortedByDescending { it.effectiveConfidence(k) }
+
+    /**
+     * Find propositions from a time range, ordered by effective confidence as of a point in time.
+     * Useful for temporal analysis: "What was most confidently true during Q1?"
+     *
+     * @param start Start of creation range
+     * @param end End of creation range
+     * @param asOf Calculate effective confidence as of this time (defaults to end of range)
+     * @param k Decay rate multiplier (default 2.0)
+     * @return Propositions from range, ordered by effective confidence at the given time
+     */
+    fun findByCreatedBetweenOrderedByEffectiveConfidence(
+        start: Instant,
+        end: Instant,
+        asOf: Instant = end,
+        k: Double = 2.0,
+    ): List<Proposition> =
+        findByCreatedBetween(start, end)
+            .sortedByDescending { it.effectiveConfidenceAt(asOf, k) }
+
     /**
      * Find propositions associated with the given context ID.
      * TODO will eventually need more sophisticated querying
@@ -112,6 +183,7 @@ interface PropositionRepository : CoreSearchOperations {
     override fun <T : Retrievable> vectorSearch(
         request: TextSimilaritySearchRequest,
         clazz: Class<T>,
+        filter: MetadataFilter?,
     ): List<SimilarityResult<T>> {
         if (clazz != Proposition::class.java) {
             loggerFor<PropositionRepository>().warn(
@@ -120,6 +192,7 @@ interface PropositionRepository : CoreSearchOperations {
             )
             return emptyList()
         }
+        // Note: filter is ignored - PropositionRepository doesn't support metadata filtering
         return findSimilarWithScores(request) as List<SimilarityResult<T>>
     }
 
@@ -128,6 +201,7 @@ interface PropositionRepository : CoreSearchOperations {
     override fun <T : Retrievable> textSearch(
         request: TextSimilaritySearchRequest,
         clazz: Class<T>,
+        filter: MetadataFilter?,
     ): List<SimilarityResult<T>> {
         if (clazz != Proposition::class.java) {
             loggerFor<PropositionRepository>().warn(
@@ -138,6 +212,7 @@ interface PropositionRepository : CoreSearchOperations {
         }
         // Default implementation falls back to vector search
         // Implementations with full-text indexing can override this
+        // Note: filter is ignored - PropositionRepository doesn't support metadata filtering
         return findSimilarWithScores(request) as List<SimilarityResult<T>>
     }
 
