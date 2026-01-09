@@ -12,7 +12,18 @@ import com.embabel.agent.rag.tools.ResultsListener
 import com.embabel.agent.rag.tools.ToolishRag
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.common.*
+import com.fasterxml.jackson.annotation.JsonPropertyDescription
 import org.slf4j.LoggerFactory
+
+/**
+ * Structured response from the entity resolution LLM.
+ */
+data class EntityResolutionResult(
+    @JsonPropertyDescription("The ID of the matched entity, or null if no match was found")
+    val matchedEntityId: String?,
+    @JsonPropertyDescription("Brief explanation of why this entity was selected or why no match was found")
+    val reason: String,
+)
 
 /**
  * Agentic entity resolver that uses ToolishRag to let an LLM drive the search process.
@@ -109,19 +120,36 @@ class AgenticEntityResolver(
         )
 
         try {
-            // Run the agentic search - the listener collects results as they're found
+            // Run the agentic search with structured output
             val result = ai
                 .withLlm(llmOptions)
                 .withReference(rag)
-                .generateText(buildPrompt(suggested, entityType, sourceText))
+                .createObject(buildPrompt(suggested, entityType, sourceText), EntityResolutionResult::class.java)
 
-            logger.debug("Agentic search result for '{}': {}", suggested.name, result)
+            logger.debug("Agentic search result for '{}': id={}, reason={}",
+                suggested.name, result.matchedEntityId, result.reason)
 
-            // Check if we found a match
-            val bestMatch = findBestMatch(suggested, foundEntities, schema)
-            if (bestMatch != null) {
-                logger.info("Agentic resolver matched '{}' -> '{}'", suggested.name, bestMatch.name)
-                return ExistingEntity(suggested, bestMatch)
+            // Use the LLM's decision
+            if (result.matchedEntityId != null) {
+                val matchedEntity = foundEntities.find { it.id == result.matchedEntityId }
+                if (matchedEntity != null) {
+                    // Verify label compatibility
+                    val suggestedLabels = suggested.labels.map { it.substringAfterLast('.') }.toSet()
+                    val matchedLabels = matchedEntity.labels().map { it.substringAfterLast('.') }.toSet()
+                    if (suggestedLabels.intersect(matchedLabels).isNotEmpty()) {
+                        val entityData = matchedEntity.toNamedEntityData()
+                        logger.info("Agentic resolver matched '{}' -> '{}' ({})",
+                            suggested.name, matchedEntity.name, result.reason)
+                        return ExistingEntity(suggested, entityData)
+                    } else {
+                        logger.warn("LLM selected '{}' but labels don't match: suggested={}, matched={}",
+                            matchedEntity.name, suggestedLabels, matchedLabels)
+                    }
+                } else {
+                    logger.warn("LLM selected entity id '{}' but not found in candidates", result.matchedEntityId)
+                }
+            } else {
+                logger.debug("LLM found no match for '{}': {}", suggested.name, result.reason)
             }
         } catch (e: Exception) {
             logger.warn("Agentic resolution failed for '{}': {}", suggested.name, e.message)
@@ -177,12 +205,27 @@ class AgenticEntityResolver(
             - The exact name
             - Partial name matches
             - Alternate names or spellings
-            - For works, include composer name if known from context
+            - For works, try "composer_name work_name" format
+            - For composers, try their last name
 
-            When you find candidates, evaluate if they match the entity we're looking for.
-            Report the best match or indicate no match was found.
+            IMPORTANT: Only select an entity if it ACTUALLY matches what we're looking for.
+            - For works: The work must be BY the correct composer. "Glazunov's Violin Concerto" must be by Glazunov.
+            - Don't select a work just because it has a similar name if it's by a different composer.
+            - If you can't find the exact entity, return null for matchedEntityId.
+
+            After searching, return the ID of the best matching entity, or null if no good match exists.
         """.trimIndent()
     }
+
+    private fun NamedEntity.toNamedEntityData(): NamedEntityData =
+        if (this is NamedEntityData) this
+        else SimpleNamedEntityData(
+            id = id,
+            name = name,
+            description = description,
+            labels = labels(),
+            properties = emptyMap(),
+        )
 
     private fun getSearchTypesForLabel(label: String, schema: DataDictionary): List<Class<out Retrievable>> {
         // Try to find the JVM type for this label
@@ -196,54 +239,6 @@ class AgenticEntityResolver(
         }
         // Fall back to NamedEntityData
         return listOf(NamedEntityData::class.java)
-    }
-
-    private fun findBestMatch(
-        suggested: SuggestedEntity,
-        candidates: List<NamedEntity>,
-        schema: DataDictionary
-    ): NamedEntityData? {
-        if (candidates.isEmpty()) {
-            logger.debug("No candidates found for '{}'", suggested.name)
-            return null
-        }
-
-        logger.debug("Evaluating {} candidates for '{}'", candidates.size, suggested.name)
-
-        // Filter by label compatibility
-        val suggestedLabels = suggested.labels.map { it.substringAfterLast('.') }.toSet()
-
-        val compatible = candidates.filter { candidate ->
-            val candidateLabels = candidate.labels().map { it.substringAfterLast('.') }.toSet()
-            val hasMatch = suggestedLabels.intersect(candidateLabels).isNotEmpty()
-            logger.debug("Candidate '{}' labels {} compatible with {}: {}",
-                candidate.name, candidateLabels, suggestedLabels, hasMatch)
-            hasMatch
-        }
-
-        if (compatible.isEmpty()) {
-            logger.debug("No label-compatible candidates for '{}'", suggested.name)
-            return null
-        }
-
-        // Prefer exact name match
-        val exactMatch = compatible.find {
-            it.name.equals(suggested.name, ignoreCase = true)
-        }
-        val bestMatch = exactMatch ?: compatible.first()
-
-        // Convert NamedEntity to NamedEntityData
-        return if (bestMatch is NamedEntityData) {
-            bestMatch
-        } else {
-            SimpleNamedEntityData(
-                id = bestMatch.id,
-                name = bestMatch.name,
-                description = bestMatch.description,
-                labels = bestMatch.labels(),
-                properties = emptyMap(),
-            )
-        }
     }
 
     private fun isCreationPermitted(suggested: SuggestedEntity, schema: DataDictionary): Boolean {
