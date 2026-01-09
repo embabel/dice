@@ -3,6 +3,7 @@ package com.embabel.dice.common.resolver.matcher
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.core.DomainType
 import com.embabel.agent.rag.model.NamedEntityData
+import com.embabel.agent.rag.model.RetrievableEntity
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.resolver.MatchResult
 import com.embabel.dice.common.resolver.MatchStrategy
@@ -34,8 +35,10 @@ class LabelCompatibilityStrategy : MatchStrategy {
 
     private fun labelsCompatible(labels1: Set<String>, labels2: Set<String>, schema: DataDictionary): Boolean {
         // Normalize labels to simple names (handles fully qualified like com.example.Person)
-        val simple1 = labels1.map { it.substringAfterLast('.') }.filter { it != "Entity" }.toSet()
-        val simple2 = labels2.map { it.substringAfterLast('.') }.filter { it != "Entity" }.toSet()
+        // Filter out framework labels that shouldn't affect compatibility
+        val frameworkLabels = setOf(RetrievableEntity.ENTITY_LABEL, "Entity", "Reference")
+        val simple1 = labels1.map { it.substringAfterLast('.') }.filter { it !in frameworkLabels }.toSet()
+        val simple2 = labels2.map { it.substringAfterLast('.') }.filter { it !in frameworkLabels }.toSet()
 
         // Direct label match (case-insensitive) - try both original and simple names
         if (labels1.any { l1 -> labels2.any { l2 -> l1.equals(l2, ignoreCase = true) } }) {
@@ -76,7 +79,14 @@ class LabelCompatibilityStrategy : MatchStrategy {
     private fun shareCommonParent(type1: DomainType, type2: DomainType): Boolean {
         val parents1 = getAllParents(type1)
         val parents2 = getAllParents(type2)
-        return parents1.any { p1 -> parents2.any { p2 -> p1.name.equals(p2.name, ignoreCase = true) } }
+        // Filter out generic parents that are too broad for meaningful compatibility
+        val genericParents = setOf(
+            "NamedEntity", "Entity", "RetrievableEntity", "Retrievable",
+            "Object", "Any", "Embeddable", "EntityData", "NamedEntityData"
+        )
+        val meaningful1 = parents1.filter { it.name !in genericParents }
+        val meaningful2 = parents2.filter { it.name !in genericParents }
+        return meaningful1.any { p1 -> meaningful2.any { p2 -> p1.name.equals(p2.name, ignoreCase = true) } }
     }
 
     private fun getAllParents(type: DomainType): Set<DomainType> {

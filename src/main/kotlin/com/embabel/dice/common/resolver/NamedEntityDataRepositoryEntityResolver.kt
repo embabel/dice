@@ -3,9 +3,11 @@ package com.embabel.dice.common.resolver
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
+import com.embabel.common.ai.model.ModelProvider
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.*
+import com.embabel.dice.common.resolver.matcher.LlmCandidateBakeoff
 import org.slf4j.LoggerFactory
 
 /**
@@ -16,6 +18,7 @@ import org.slf4j.LoggerFactory
  * - **Find by ID**: If the suggested entity has an ID, try exact lookup first
  * - **Text Search**: Uses Lucene query syntax for name matching
  * - **Vector Search**: Semantic similarity search using embeddings
+ * - **LLM Bakeoff**: Uses an LLM to select the best match from candidates
  *
  * Match evaluation is delegated to configurable [MatchStrategy] implementations,
  * allowing customization of how search results are evaluated for equivalence.
@@ -24,11 +27,13 @@ import org.slf4j.LoggerFactory
  * @param config Configuration for search behavior and thresholds
  * @param matchStrategies Strategies for evaluating if a search result matches a suggestion.
  *                        Strategies are tried in order; first match wins.
+ * @param llmBakeoff Optional LLM-based candidate selection for improved accuracy
  */
 class NamedEntityDataRepositoryEntityResolver @JvmOverloads constructor(
     private val repository: NamedEntityDataRepository,
     private val config: Config = Config(),
     private val matchStrategies: List<MatchStrategy> = defaultMatchStrategies(),
+    private val llmBakeoff: LlmCandidateBakeoff? = null,
 ) : EntityResolver {
 
     private val logger = LoggerFactory.getLogger(NamedEntityDataRepositoryEntityResolver::class.java)
@@ -138,27 +143,48 @@ class NamedEntityDataRepositoryEntityResolver @JvmOverloads constructor(
             }
         }
 
+        // Collect all candidates from search
+        val allCandidates = mutableListOf<SimilarityResult<NamedEntityData>>()
+
         // Strategy 2: Try text search
         if (config.useTextSearch) {
-            val textMatches = textSearch(suggested)
-            for (result in textMatches) {
-                if (isMatch(suggested, result.match, schema)) {
-                    logger.debug(
-                        "Found text search match for '{}': {} (score: {})",
-                        suggested.name, result.match.name, result.score
-                    )
-                    return ExistingEntity(suggested, result.match)
-                }
-            }
+            allCandidates.addAll(textSearch(suggested))
         }
 
         // Strategy 3: Try vector search
         if (config.useVectorSearch) {
-            val vectorMatches = vectorSearch(suggested)
-            for (result in vectorMatches) {
+            allCandidates.addAll(vectorSearch(suggested))
+        }
+
+        // Deduplicate candidates by ID
+        val uniqueCandidates = allCandidates.distinctBy { it.match.id }
+
+        // Strategy 4: Use LLM bakeoff if available (most accurate)
+        if (llmBakeoff != null && uniqueCandidates.isNotEmpty()) {
+            logger.info(
+                "Invoking LLM bakeoff for '{}' with {} candidates",
+                suggested.name, uniqueCandidates.size
+            )
+            val bestMatch = llmBakeoff.selectBestMatch(suggested, uniqueCandidates)
+            if (bestMatch != null) {
+                logger.info(
+                    "LLM bakeoff selected '{}' for '{}'",
+                    bestMatch.name, suggested.name
+                )
+                return ExistingEntity(suggested, bestMatch)
+            }
+            // LLM said none match - don't fall through to heuristic matching
+            logger.info("LLM bakeoff rejected all {} candidates for '{}'", uniqueCandidates.size, suggested.name)
+        } else {
+            // Fallback: Use heuristic match strategies
+            logger.info(
+                "Using heuristic matching for '{}' ({} candidates, llmBakeoff={})",
+                suggested.name, uniqueCandidates.size, if (llmBakeoff != null) "present" else "null"
+            )
+            for (result in uniqueCandidates) {
                 if (isMatch(suggested, result.match, schema)) {
-                    logger.debug(
-                        "Found vector search match for '{}': {} (score: {})",
+                    logger.info(
+                        "Heuristic matched '{}' -> '{}' (score: {})",
                         suggested.name, result.match.name, result.score
                     )
                     return ExistingEntity(suggested, result.match)
