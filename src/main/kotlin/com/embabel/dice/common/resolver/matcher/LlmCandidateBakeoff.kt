@@ -28,23 +28,25 @@ class LlmCandidateBakeoff(
      *
      * @param suggested The entity we're trying to match
      * @param candidates The search results to evaluate
+     * @param sourceText Optional conversation/source text for additional context
      * @return The best matching candidate, or null if none are suitable
      */
     fun selectBestMatch(
         suggested: SuggestedEntity,
         candidates: List<SimilarityResult<NamedEntityData>>,
+        sourceText: String? = null,
     ): NamedEntityData? {
         if (candidates.isEmpty()) return null
         if (candidates.size == 1) {
             // For single candidate, do a simple yes/no check
-            return if (verifySingleCandidate(suggested, candidates[0].match)) {
+            return if (verifySingleCandidate(suggested, candidates[0].match, sourceText)) {
                 candidates[0].match
             } else {
                 null
             }
         }
 
-        val promptText = buildBakeoffPrompt(suggested, candidates)
+        val promptText = buildBakeoffPrompt(suggested, candidates, sourceText)
 
         return try {
             val llm = modelProvider.getLlm(ByNameModelSelectionCriteria(modelName))
@@ -63,8 +65,12 @@ class LlmCandidateBakeoff(
         }
     }
 
-    private fun verifySingleCandidate(suggested: SuggestedEntity, candidate: NamedEntityData): Boolean {
-        val promptText = buildVerificationPrompt(suggested, candidate)
+    private fun verifySingleCandidate(
+        suggested: SuggestedEntity,
+        candidate: NamedEntityData,
+        sourceText: String? = null
+    ): Boolean {
+        val promptText = buildVerificationPrompt(suggested, candidate, sourceText)
 
         return try {
             val llm = modelProvider.getLlm(ByNameModelSelectionCriteria(modelName))
@@ -82,6 +88,7 @@ class LlmCandidateBakeoff(
     private fun buildBakeoffPrompt(
         suggested: SuggestedEntity,
         candidates: List<SimilarityResult<NamedEntityData>>,
+        sourceText: String? = null,
     ): String {
         val suggestedType = suggested.labels.firstOrNull() ?: "Entity"
 
@@ -99,12 +106,16 @@ class LlmCandidateBakeoff(
             """.trimMargin()
         }.joinToString("\n")
 
+        val conversationContext = if (!sourceText.isNullOrBlank()) {
+            "\n\nCONVERSATION CONTEXT (use this to understand what's being discussed):\n$sourceText"
+        } else ""
+
         return """You are selecting the best database entity match for something mentioned in a conversation.
 
 LOOKING FOR:
 - Name: "${suggested.name}"
 - Expected type: $suggestedType
-- Context: ${suggested.summary.ifBlank { "No additional context" }}
+- Entity context: ${suggested.summary.ifBlank { "No additional context" }}$conversationContext
 
 CANDIDATES FROM DATABASE:
 $candidateDescriptions
@@ -112,27 +123,38 @@ $candidateDescriptions
 TASK: Which candidate (if any) is the SAME entity as what was mentioned?
 
 Rules:
-1. The names must refer to the same thing (e.g., "Brahms" = "Johannes Brahms")
+1. The names must refer to the same thing (e.g., "Brahms" = "Johannes Brahms", "The Ring" = "Der Ring des Nibelungen")
 2. Types must be compatible (if looking for a Composer, a Work is NOT a match)
-3. Coincidental word overlap is NOT a match (e.g., "Wagner" ≠ "Piece about Wagner's operas")
-4. If NONE of the candidates are a true match, say "NONE"
+3. For WORKS: Use conversation context - if discussing a composer, the work should be BY that composer (check description)
+4. Coincidental word overlap is NOT a match (e.g., "Wagner" ≠ "Piece about Wagner")
+5. Common alternate names count as matches (e.g., "Glazunov's violin concerto" = "Violin Concerto in A minor" by Glazunov)
+6. If NONE of the candidates are a true match, say "NONE"
 
 Answer with ONLY the candidate number (1, 2, 3, etc.) or "NONE", followed by a brief reason.
 Example: "2 - Johannes Brahms is the composer commonly known as Brahms"
-Example: "NONE - All candidates are works, not the composer being discussed"
+Example: "3 - This violin concerto is by Glazunov as mentioned in conversation"
+Example: "NONE - None of these works are by the composer discussed in conversation"
 """
     }
 
-    private fun buildVerificationPrompt(suggested: SuggestedEntity, candidate: NamedEntityData): String {
+    private fun buildVerificationPrompt(
+        suggested: SuggestedEntity,
+        candidate: NamedEntityData,
+        sourceText: String? = null
+    ): String {
         val suggestedType = suggested.labels.firstOrNull() ?: "Entity"
         val candidateLabels = candidate.labels().filter {
             it != RetrievableEntity.ENTITY_LABEL && it != "Entity" && it != "Reference"
         }.joinToString(", ")
 
+        val conversationContext = if (!sourceText.isNullOrBlank()) {
+            "\n\nCONVERSATION CONTEXT:\n$sourceText"
+        } else ""
+
         return """Is this database entity the same as what was mentioned in conversation?
 
 MENTIONED: "${suggested.name}" (type: $suggestedType)
-Context: ${suggested.summary.ifBlank { "No additional context" }}
+Context: ${suggested.summary.ifBlank { "No additional context" }}$conversationContext
 
 DATABASE ENTITY:
 - Name: "${candidate.name}"
@@ -140,6 +162,7 @@ DATABASE ENTITY:
 - Description: ${candidate.description.ifBlank { "None" }}
 
 Answer "Yes" or "No" with brief reason. Types must match (Composer ≠ Work).
+For works, verify the composer matches the conversation context.
 """
     }
 

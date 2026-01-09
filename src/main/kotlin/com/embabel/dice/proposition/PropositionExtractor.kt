@@ -36,11 +36,14 @@ interface PropositionExtractor {
      * Deduplicates mentions that refer to the same entity (same span + type).
      *
      * @param suggestedPropositions Propositions from extract()
+     * @param context The source analysis context
+     * @param sourceText Optional source text for context during entity resolution
      * @return SuggestedEntities suitable for EntityResolver.resolve()
      */
     fun toSuggestedEntities(
         suggestedPropositions: SuggestedPropositions,
         context: SourceAnalysisContext,
+        sourceText: String? = null,
     ): SuggestedEntities
 
     /**

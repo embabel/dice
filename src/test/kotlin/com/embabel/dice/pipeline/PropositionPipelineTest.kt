@@ -96,7 +96,8 @@ class PropositionPipelineTest {
 
         override fun toSuggestedEntities(
             suggestedPropositions: SuggestedPropositions,
-            context: SourceAnalysisContext
+            context: SourceAnalysisContext,
+            sourceText: String?
         ): SuggestedEntities {
             val seen = mutableSetOf<MentionKey>()
             val entities = mutableListOf<SuggestedEntity>()
@@ -118,7 +119,7 @@ class PropositionPipelineTest {
                 }
             }
 
-            return SuggestedEntities(suggestedEntities = entities)
+            return SuggestedEntities(suggestedEntities = entities, sourceText = sourceText)
         }
 
         override fun resolvePropositions(

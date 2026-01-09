@@ -207,6 +207,7 @@ data class LlmPropositionExtractor(
     override fun toSuggestedEntities(
         suggestedPropositions: SuggestedPropositions,
         context: SourceAnalysisContext,
+        sourceText: String?,
     ): SuggestedEntities {
         // Collect all unique mentions across all propositions
         val uniqueMentions = mutableMapOf<MentionKey, SuggestedMention>()
@@ -241,6 +242,7 @@ data class LlmPropositionExtractor(
 
         return SuggestedEntities(
             suggestedEntities = suggestedEntities,
+            sourceText = sourceText,
         )
     }
 

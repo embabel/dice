@@ -89,8 +89,9 @@ class NamedEntityDataRepositoryEntityResolver @JvmOverloads constructor(
             suggestedEntities.chunkIds
         )
 
+        val sourceText = suggestedEntities.sourceText
         val resolutions = suggestedEntities.suggestedEntities.map { suggested ->
-            resolveEntity(suggested, schema)
+            resolveEntity(suggested, schema, sourceText)
         }
 
         val existingCount = resolutions.count { it is ExistingEntity }
@@ -129,7 +130,8 @@ class NamedEntityDataRepositoryEntityResolver @JvmOverloads constructor(
 
     private fun resolveEntity(
         suggested: SuggestedEntity,
-        schema: DataDictionary
+        schema: DataDictionary,
+        sourceText: String? = null,
     ): SuggestedEntityResolution {
         // Check if this type allows creation
         val creationPermitted = isCreationPermitted(suggested, schema)
@@ -165,7 +167,7 @@ class NamedEntityDataRepositoryEntityResolver @JvmOverloads constructor(
                 "Invoking LLM bakeoff for '{}' with {} candidates",
                 suggested.name, uniqueCandidates.size
             )
-            val bestMatch = llmBakeoff.selectBestMatch(suggested, uniqueCandidates)
+            val bestMatch = llmBakeoff.selectBestMatch(suggested, uniqueCandidates, sourceText)
             if (bestMatch != null) {
                 logger.info(
                     "LLM bakeoff selected '{}' for '{}'",
@@ -173,14 +175,17 @@ class NamedEntityDataRepositoryEntityResolver @JvmOverloads constructor(
                 )
                 return ExistingEntity(suggested, bestMatch)
             }
-            // LLM said none match - don't fall through to heuristic matching
+            // LLM explicitly rejected all candidates - trust the LLM, don't try relaxed matching
             logger.info("LLM bakeoff rejected all {} candidates for '{}'", uniqueCandidates.size, suggested.name)
+            // If creation not permitted, veto; otherwise create new
+            return if (!creationPermitted) {
+                logger.info("Creation not permitted for '{}' - vetoing", suggested.name)
+                VetoedEntity(suggested)
+            } else {
+                NewEntity(suggested)
+            }
         } else {
-            // Fallback: Use heuristic match strategies
-            logger.info(
-                "Using heuristic matching for '{}' ({} candidates, llmBakeoff={})",
-                suggested.name, uniqueCandidates.size, if (llmBakeoff != null) "present" else "null"
-            )
+            // Fallback: Use heuristic match strategies (no LLM bakeoff configured)
             for (result in uniqueCandidates) {
                 if (isMatch(suggested, result.match, schema)) {
                     logger.info(
@@ -192,8 +197,7 @@ class NamedEntityDataRepositoryEntityResolver @JvmOverloads constructor(
             }
         }
 
-        // No match found with standard thresholds
-        // If creation is not permitted, try harder with relaxed matching
+        // No match found - try relaxed matching only if no LLM bakeoff (LLM already made decision above)
         if (!creationPermitted) {
             val relaxedMatch = tryRelaxedMatching(suggested, schema)
             if (relaxedMatch != null) {

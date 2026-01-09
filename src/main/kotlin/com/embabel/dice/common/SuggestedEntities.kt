@@ -36,9 +36,11 @@ data class SuggestedEntity(
 /**
  * Entities suggested by the LLM based on a single input.
  * These entities may duplicate existing entities in the knowledge graph
+ * @param sourceText optional text of the source (e.g., conversation) for context during resolution
  */
 data class SuggestedEntities(
     val suggestedEntities: List<SuggestedEntity>,
+    val sourceText: String? = null,
 ) : Sourced {
 
     override val chunkIds: Set<String>

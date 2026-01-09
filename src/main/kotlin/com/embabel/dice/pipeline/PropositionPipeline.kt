@@ -90,8 +90,8 @@ class PropositionPipeline private constructor(
         val suggestedPropositions = extractor.extract(chunk, context)
         logger.debug("Extracted {} propositions", suggestedPropositions.propositions.size)
 
-        // Step 2: Convert mentions to suggested entities
-        val suggestedEntities = extractor.toSuggestedEntities(suggestedPropositions, context)
+        // Step 2: Convert mentions to suggested entities (include source text for context)
+        val suggestedEntities = extractor.toSuggestedEntities(suggestedPropositions, context, chunk.text)
         logger.debug("Created {} suggested entities", suggestedEntities.suggestedEntities.size)
 
         // Step 3: Resolve entities using existing resolver
