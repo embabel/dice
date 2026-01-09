@@ -47,7 +47,7 @@ class NamedEntityDataRepositoryGraphRelationshipPersister(
             try {
                 persistRelationship(relationship)
                 persistedCount++
-                logger.debug("Persisted relationship: {}", relationship.infoString(true))
+                logger.info("Persisted relationship: {}", relationship.infoString(true))
             } catch (e: Exception) {
                 failedCount++
                 val errorMsg = "Failed to persist ${relationship.infoString(false)}: ${e.message}"

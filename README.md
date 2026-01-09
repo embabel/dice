@@ -55,32 +55,40 @@ Retrieve, and Revise operations.
 Natural language propositions are the system of record. They accumulate evidence and project to multiple typed views for
 different use cases.
 
-```
-                         +-----------------------+
-                         |     TEXT / CHUNKS     |
-                         +-----------------------+
-                                    |
-                                    v
-                         +-----------------------+
-                         |  PROPOSITION PIPELINE |
-                         |  (LLM Extraction)     |
-                         +-----------------------+
-                                    |
-                                    v
-                         +-----------------------+
-                         |    PROPOSITIONS       |
-                         |  (System of Record)   |
-                         +-----------------------+
-                                    |
-         +-------------+------------+------------+-------------+
-         |             |            |            |             |
-         v             v            v            v             v
-    +--------+    +--------+   +--------+   +--------+   +----------+
-    | VECTOR |    | NEO4J  |   | PROLOG |   | MEMORY |   |  ORACLE  |
-    +--------+    +--------+   +--------+   +--------+   +----------+
-         |             |            |            |             |
-    Semantic      Graph        Inference     Agent        Natural
-    Retrieval     Traversal    & Rules       Context      Language QA
+```mermaid
+flowchart TB
+    subgraph Input["📄 Input"]
+        TEXT["Text / Chunks"]
+    end
+
+    subgraph Pipeline["🔄 Proposition Pipeline"]
+        EXTRACT["LLM Extraction"]
+    end
+
+    subgraph SOR["📚 System of Record"]
+        PROPS[("Propositions<br/>confidence + decay")]
+    end
+
+    subgraph Projections["🎯 Materialized Views"]
+        VEC["🔍 Vector<br/>Semantic Retrieval"]
+        NEO["🕸️ Neo4j<br/>Graph Traversal"]
+        PRO["🧠 Prolog<br/>Inference & Rules"]
+        MEM["💭 Memory<br/>Agent Context"]
+        ORA["💬 Oracle<br/>Natural Language QA"]
+    end
+
+    TEXT --> EXTRACT
+    EXTRACT --> PROPS
+    PROPS --> VEC
+    PROPS --> NEO
+    PROPS --> PRO
+    PROPS --> MEM
+    PROPS --> ORA
+
+    style Input fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
+    style Pipeline fill:#fff3cd,stroke:#e9b306,color:#1e1e1e
+    style SOR fill:#e8dcf4,stroke:#9f77cd,color:#1e1e1e
+    style Projections fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
 ```
 
 ## Key Features
