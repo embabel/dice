@@ -3,6 +3,8 @@ package com.embabel.dice.pipeline
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.agent.rag.model.RetrievableEntity
+import com.embabel.agent.rag.service.RelationshipData
 import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository
 import com.embabel.dice.common.*
@@ -16,6 +18,33 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
 private val testContextId = ContextId("test-context")
+
+/**
+ * Repository that tracks relationship creation calls for testing.
+ */
+class TrackingEntityRepository(
+    schema: DataDictionary
+) : InMemoryNamedEntityDataRepository(schema) {
+
+    data class CreatedRelationship(
+        val source: RetrievableIdentifier,
+        val target: RetrievableIdentifier,
+        val relationship: RelationshipData,
+    )
+
+    val createdRelationships = mutableListOf<CreatedRelationship>()
+
+    override fun createRelationship(
+        a: RetrievableIdentifier,
+        b: RetrievableIdentifier,
+        relationship: RelationshipData
+    ) {
+        createdRelationships.add(CreatedRelationship(a, b, relationship))
+    }
+
+    fun relationshipsOfType(type: String): List<CreatedRelationship> =
+        createdRelationships.filter { it.relationship.name == type }
+}
 
 /**
  * Tests for [PropositionPipeline] focusing on cross-chunk entity resolution.
@@ -825,6 +854,254 @@ class PropositionPipelineTest {
                 assertNotNull(entityRepo.findById(entity.id), "Entity ${entity.name} should be saved")
             }
             assertEquals(1, propositionRepo.count())
+        }
+    }
+
+    /**
+     * Tests for structural relationship creation during persist.
+     */
+    @Nested
+    inner class StructuralRelationshipTests {
+
+        private fun createTrackingRepo(): TrackingEntityRepository =
+            TrackingEntityRepository(schema)
+
+        @Test
+        fun `persist creates HAS_PROPOSITION relationships`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+
+            val chunks = listOf(
+                Chunk(id = "chunk-1", text = "mentions:Alice,Bob", metadata = emptyMap(), parentId = "")
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+            )
+
+            val result = pipeline.process(chunks, context)
+
+            val entityRepo = TrackingEntityRepository(schema)
+            val propositionRepo = InMemoryPropositionRepository()
+
+            result.persist(propositionRepo, entityRepo)
+
+            // Should have 1 HAS_PROPOSITION relationship (chunk-1 -> proposition)
+            val hasPropositionRels = entityRepo.relationshipsOfType(RelationshipTypes.HAS_PROPOSITION)
+            assertEquals(1, hasPropositionRels.size)
+
+            val rel = hasPropositionRels.first()
+            assertEquals("chunk-1", rel.source.id)
+            assertEquals("Chunk", rel.source.type)
+            assertEquals(PersistablePropositions.PROPOSITION_LABEL, rel.target.type)
+        }
+
+        @Test
+        fun `persist creates MENTIONS relationships with roles`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+
+            val chunks = listOf(
+                Chunk(id = "chunk-1", text = "mentions:Alice,Bob", metadata = emptyMap(), parentId = "")
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+            )
+
+            val result = pipeline.process(chunks, context)
+
+            val entityRepo = TrackingEntityRepository(schema)
+            val propositionRepo = InMemoryPropositionRepository()
+
+            result.persist(propositionRepo, entityRepo)
+
+            // Should have 2 MENTIONS relationships (proposition -> Alice, proposition -> Bob)
+            val mentionsRels = entityRepo.relationshipsOfType(RelationshipTypes.MENTIONS)
+            assertEquals(2, mentionsRels.size)
+
+            // Check roles
+            val subjectRel = mentionsRels.find {
+                it.relationship.properties[RelationshipTypes.ROLE_PROPERTY] == MentionRole.SUBJECT.name
+            }
+            val objectRel = mentionsRels.find {
+                it.relationship.properties[RelationshipTypes.ROLE_PROPERTY] == MentionRole.OBJECT.name
+            }
+
+            assertNotNull(subjectRel, "Should have a SUBJECT mention")
+            assertNotNull(objectRel, "Should have an OBJECT mention")
+
+            // Source should be proposition, target should be entity
+            assertEquals(PersistablePropositions.PROPOSITION_LABEL, subjectRel!!.source.type)
+            assertEquals(PersistablePropositions.PROPOSITION_LABEL, objectRel!!.source.type)
+        }
+
+        @Test
+        fun `persist creates HAS_ENTITY relationships`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+
+            val chunks = listOf(
+                Chunk(id = "chunk-1", text = "mentions:Alice,Bob", metadata = emptyMap(), parentId = "")
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+            )
+
+            val result = pipeline.process(chunks, context)
+
+            val entityRepo = TrackingEntityRepository(schema)
+            val propositionRepo = InMemoryPropositionRepository()
+
+            result.persist(propositionRepo, entityRepo)
+
+            // Should have 2 HAS_ENTITY relationships (chunk-1 -> Alice, chunk-1 -> Bob)
+            val hasEntityRels = entityRepo.relationshipsOfType(RetrievableEntity.HAS_ENTITY)
+            assertEquals(2, hasEntityRels.size)
+
+            // All should be from chunk-1
+            assertTrue(hasEntityRels.all { it.source.id == "chunk-1" })
+            assertTrue(hasEntityRels.all { it.source.type == "Chunk" })
+        }
+
+        @Test
+        fun `persist deduplicates HAS_ENTITY relationships across propositions`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+
+            // Same entity mentioned in multiple chunks
+            val chunks = listOf(
+                Chunk(id = "chunk-1", text = "mentions:Alice", metadata = emptyMap(), parentId = ""),
+                Chunk(id = "chunk-2", text = "mentions:Alice", metadata = emptyMap(), parentId = ""),
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+            )
+
+            val result = pipeline.process(chunks, context)
+
+            val entityRepo = TrackingEntityRepository(schema)
+            val propositionRepo = InMemoryPropositionRepository()
+
+            result.persist(propositionRepo, entityRepo)
+
+            // Should have 2 HAS_ENTITY relationships (chunk-1 -> Alice, chunk-2 -> Alice)
+            // But NOT duplicates if the same chunk-entity pair appears multiple times
+            val hasEntityRels = entityRepo.relationshipsOfType(RetrievableEntity.HAS_ENTITY)
+            assertEquals(2, hasEntityRels.size)
+
+            // One from each chunk
+            assertTrue(hasEntityRels.any { it.source.id == "chunk-1" })
+            assertTrue(hasEntityRels.any { it.source.id == "chunk-2" })
+        }
+
+        @Test
+        fun `persist creates all relationship types together`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+
+            val chunks = listOf(
+                Chunk(id = "chunk-1", text = "mentions:Alice,Bob", metadata = emptyMap(), parentId = ""),
+                Chunk(id = "chunk-2", text = "mentions:Charlie", metadata = emptyMap(), parentId = ""),
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+            )
+
+            val result = pipeline.process(chunks, context)
+
+            val entityRepo = TrackingEntityRepository(schema)
+            val propositionRepo = InMemoryPropositionRepository()
+
+            result.persist(propositionRepo, entityRepo)
+
+            // HAS_PROPOSITION: 2 (one per chunk/proposition)
+            assertEquals(2, entityRepo.relationshipsOfType(RelationshipTypes.HAS_PROPOSITION).size)
+
+            // MENTIONS: 3 (Alice as subject, Bob as object from chunk-1, Charlie as subject from chunk-2)
+            assertEquals(3, entityRepo.relationshipsOfType(RelationshipTypes.MENTIONS).size)
+
+            // HAS_ENTITY: 3 (chunk-1 -> Alice, chunk-1 -> Bob, chunk-2 -> Charlie)
+            assertEquals(3, entityRepo.relationshipsOfType(RetrievableEntity.HAS_ENTITY).size)
+        }
+
+        @Test
+        fun `persist with no grounding creates no chunk relationships`() {
+            // Create a result with propositions that have empty grounding
+            val proposition = Proposition(
+                contextId = testContextId,
+                text = "Test proposition",
+                mentions = listOf(
+                    EntityMention(
+                        span = "Alice",
+                        type = "Person",
+                        resolvedId = "alice-id",
+                        role = MentionRole.SUBJECT,
+                    )
+                ),
+                confidence = 0.9,
+                grounding = emptyList(), // No grounding
+            )
+
+            val entityRepo = TrackingEntityRepository(schema)
+            val propositionRepo = InMemoryPropositionRepository()
+
+            // Directly call createStructuralRelationships
+            PersistablePropositions.createStructuralRelationships(
+                listOf(proposition),
+                entityRepo
+            )
+
+            // Should have 0 HAS_PROPOSITION (no grounding)
+            assertEquals(0, entityRepo.relationshipsOfType(RelationshipTypes.HAS_PROPOSITION).size)
+
+            // Should have 0 HAS_ENTITY (no grounding)
+            assertEquals(0, entityRepo.relationshipsOfType(RetrievableEntity.HAS_ENTITY).size)
+
+            // Should still have 1 MENTIONS relationship
+            assertEquals(1, entityRepo.relationshipsOfType(RelationshipTypes.MENTIONS).size)
+        }
+
+        @Test
+        fun `persist with unresolved mentions skips MENTIONS relationship`() {
+            val proposition = Proposition(
+                contextId = testContextId,
+                text = "Test proposition",
+                mentions = listOf(
+                    EntityMention(
+                        span = "Alice",
+                        type = "Person",
+                        resolvedId = null, // Unresolved
+                        role = MentionRole.SUBJECT,
+                    )
+                ),
+                confidence = 0.9,
+                grounding = listOf("chunk-1"),
+            )
+
+            val entityRepo = TrackingEntityRepository(schema)
+
+            PersistablePropositions.createStructuralRelationships(
+                listOf(proposition),
+                entityRepo
+            )
+
+            // Should have 1 HAS_PROPOSITION
+            assertEquals(1, entityRepo.relationshipsOfType(RelationshipTypes.HAS_PROPOSITION).size)
+
+            // Should have 0 MENTIONS (unresolved)
+            assertEquals(0, entityRepo.relationshipsOfType(RelationshipTypes.MENTIONS).size)
+
+            // Should have 0 HAS_ENTITY (unresolved)
+            assertEquals(0, entityRepo.relationshipsOfType(RetrievableEntity.HAS_ENTITY).size)
         }
     }
 }

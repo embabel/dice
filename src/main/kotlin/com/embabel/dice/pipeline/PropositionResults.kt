@@ -1,11 +1,9 @@
 package com.embabel.dice.pipeline
 
 import com.embabel.agent.rag.model.NamedEntityData
-import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.common.core.types.HasInfoString
 import com.embabel.dice.common.*
 import com.embabel.dice.proposition.Proposition
-import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.SuggestedPropositions
 import com.embabel.dice.proposition.revision.RevisionResult
 
@@ -73,55 +71,6 @@ interface PropositionExtractionResult {
 }
 
 /**
- * Result of entity and proposition extraction that can be persisted.
- * Combines [EntityExtractionResult] and [PropositionExtractionResult].
- * Guides callers to know what to persist, within their own transaction scope.
- */
-interface PersistablePropositionResults : EntityExtractionResult, PropositionExtractionResult {
-
-    /**
-     * All propositions extracted (before any revision).
-     */
-    val propositions: List<Proposition>
-
-    fun propositionsToPersist(): List<Proposition> =
-        if (hasRevision) revisedPropositionsToPersist else propositions
-
-    /**
-     * Persist extracted entities and propositions to their respective repositories.
-     * - Only saves entities that are actually referenced by propositions being persisted
-     * - If revision was enabled, saves all revised propositions (new, merged, reinforced, etc.)
-     * - If revision was not enabled, saves all extracted propositions
-     */
-    fun persist(
-        propositionRepository: PropositionRepository,
-        namedEntityDataRepository: NamedEntityDataRepository
-    ) {
-        val propsToSave = propositionsToPersist()
-
-        // Only persist entities that are actually referenced by propositions being saved
-        val referencedEntityIds = propsToSave
-            .flatMap { it.mentions }
-            .mapNotNull { it.resolvedId }
-            .toSet()
-
-        newEntities()
-            .filter { it.id in referencedEntityIds }
-            .forEach { entity ->
-                namedEntityDataRepository.save(entity)
-            }
-        updatedEntities()
-            .filter { it.id in referencedEntityIds }
-            .forEach { entity ->
-                namedEntityDataRepository.update(entity)
-            }
-
-        // Save propositions - use revision results if available, otherwise all propositions
-        propositionRepository.saveAll(propsToSave)
-    }
-}
-
-/**
  * Result of processing a single chunk through the proposition pipeline.
  */
 data class ChunkPropositionResult(
@@ -130,7 +79,7 @@ data class ChunkPropositionResult(
     val entityResolutions: Resolutions<SuggestedEntityResolution>,
     override val propositions: List<Proposition>,
     override val revisionResults: List<RevisionResult> = emptyList(),
-) : PersistablePropositionResults, HasInfoString {
+) : PersistablePropositions, HasInfoString {
 
     override fun newEntities(): List<NamedEntityData> =
         entityResolutions.resolutions
@@ -205,7 +154,7 @@ data class ChunkPropositionResult(
 data class PropositionResults(
     val chunkResults: List<ChunkPropositionResult>,
     val allPropositions: List<Proposition>,
-) : PersistablePropositionResults {
+) : PersistablePropositions {
 
     override val propositions: List<Proposition> get() = allPropositions
 
