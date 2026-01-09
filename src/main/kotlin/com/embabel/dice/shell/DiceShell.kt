@@ -6,25 +6,25 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.ingestion.ContentChunker
 import com.embabel.agent.rag.ingestion.TikaHierarchicalContentReader
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.common.EntityResolver
+import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.projection.graph.LenientProjectionPolicy
 import com.embabel.dice.projection.graph.LlmGraphProjector
-import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.dice.projection.memory.DefaultMemoryConsolidator
 import com.embabel.dice.projection.memory.DefaultMemoryRetriever
-import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.projection.memory.support.DefaultMemoryProjector
 import com.embabel.dice.projection.memory.support.HeuristicKnowledgeTypeClassifier
-import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.projection.prolog.DefaultPrologProjector
 import com.embabel.dice.projection.prolog.PrologEngine
 import com.embabel.dice.projection.prolog.PrologSchema
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionExtractor
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.extraction.LlmPropositionExtractor
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
@@ -554,7 +554,7 @@ internal class DiceShell(
             .flatMap { it.mentions }
             .find { it.span.equals("Alice", ignoreCase = true) }
             ?.resolvedId ?: "alice-unknown"
-        val aliceEntity = EntityIdentifier.forUser(aliceId)
+        val aliceEntity = RetrievableIdentifier.forUser(aliceId)
 
         println("\n=== Memory Type Classification ===")
         val byType = extractionResult.allPropositions.groupBy { HeuristicKnowledgeTypeClassifier.classify(it) }

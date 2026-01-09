@@ -3,7 +3,7 @@ package com.embabel.dice.proposition
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.model.Retrievable
 import com.embabel.agent.rag.service.CoreSearchOperations
-import com.embabel.agent.rag.service.EntityIdentifier
+import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.agent.rag.service.TextSearch
 import com.embabel.agent.rag.service.VectorSearch
 import com.embabel.common.core.types.SimilarityResult
@@ -44,7 +44,7 @@ interface PropositionRepository : CoreSearchOperations {
     /**
      * Find all propositions that mention a specific entity.
      */
-    fun findByEntity(entityIdentifier: EntityIdentifier): List<Proposition>
+    fun findByEntity(entityIdentifier: RetrievableIdentifier): List<Proposition>
 
     /**
      * Find propositions similar to the given text using vector similarity.
@@ -237,8 +237,10 @@ interface PropositionRepository : CoreSearchOperations {
             PropositionQuery.OrderBy.NONE -> resultList
             PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC ->
                 resultList.sortedByDescending { it.effectiveConfidenceAt(asOf, query.decayK) }
+
             PropositionQuery.OrderBy.CREATED_DESC ->
                 resultList.sortedByDescending { it.created }
+
             PropositionQuery.OrderBy.REVISED_DESC ->
                 resultList.sortedByDescending { it.revised }
         }
