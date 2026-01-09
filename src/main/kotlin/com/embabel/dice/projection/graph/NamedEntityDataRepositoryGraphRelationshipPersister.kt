@@ -1,9 +1,9 @@
 package com.embabel.dice.projection.graph
 
 import com.embabel.agent.core.DataDictionary
-import com.embabel.agent.rag.service.EntityIdentifier
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.agent.rag.service.RelationshipData
+import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.dice.proposition.ProjectionResults
 import com.embabel.dice.proposition.Proposition
 import org.slf4j.LoggerFactory
@@ -68,11 +68,11 @@ class NamedEntityDataRepositoryGraphRelationshipPersister(
         val sourceType = sourceEntity?.labels()?.firstOrNull() ?: "Entity"
         val targetType = targetEntity?.labels()?.firstOrNull() ?: "Entity"
 
-        val source = EntityIdentifier(
+        val source = RetrievableIdentifier(
             id = relationship.sourceId,
             type = sourceType,
         )
-        val target = EntityIdentifier(
+        val target = RetrievableIdentifier(
             id = relationship.targetId,
             type = targetType,
         )

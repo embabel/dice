@@ -1,6 +1,6 @@
 package com.embabel.dice.projection.memory
 
-import com.embabel.agent.rag.service.EntityIdentifier
+import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.proposition.Proposition
 import java.time.Instant
@@ -22,7 +22,7 @@ interface MemoryRetriever {
      */
     fun recall(
         query: String,
-        forEntity: EntityIdentifier,
+        forEntity: RetrievableIdentifier,
         topK: Int = 10,
     ): List<Proposition>
 
@@ -33,7 +33,7 @@ interface MemoryRetriever {
      * @return All propositions mentioning this entity
      */
     fun recallAbout(
-        entityId: EntityIdentifier,
+        entityId: RetrievableIdentifier,
     ): List<Proposition>
 
     /**
@@ -46,7 +46,7 @@ interface MemoryRetriever {
      */
     fun recallByType(
         knowledgeType: KnowledgeType,
-        forEntity: EntityIdentifier,
+        forEntity: RetrievableIdentifier,
         topK: Int = 20,
     ): List<Proposition>
 
@@ -59,7 +59,7 @@ interface MemoryRetriever {
      * @return Recent propositions ordered by time (most recent first)
      */
     fun recallRecent(
-        forEntity: EntityIdentifier,
+        forEntity: RetrievableIdentifier,
         since: Instant = Instant.now().minusSeconds(3600),
         limit: Int = 20,
     ): List<Proposition>

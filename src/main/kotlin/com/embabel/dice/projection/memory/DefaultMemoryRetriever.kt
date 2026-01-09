@@ -1,6 +1,6 @@
 package com.embabel.dice.projection.memory
 
-import com.embabel.agent.rag.service.EntityIdentifier
+import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.projection.memory.support.HeuristicKnowledgeTypeClassifier
@@ -27,7 +27,7 @@ class DefaultMemoryRetriever(
 
     override fun recall(
         query: String,
-        forEntity: EntityIdentifier,
+        forEntity: RetrievableIdentifier,
         topK: Int,
     ): List<Proposition> {
         // Get candidates from similarity search
@@ -55,7 +55,7 @@ class DefaultMemoryRetriever(
     }
 
     override fun recallAbout(
-        entityId: EntityIdentifier,
+        entityId: RetrievableIdentifier,
     ): List<Proposition> {
         return store.findByEntity(entityId)
             .sortedByDescending { it.confidence }
@@ -63,7 +63,7 @@ class DefaultMemoryRetriever(
 
     override fun recallByType(
         knowledgeType: KnowledgeType,
-        forEntity: EntityIdentifier,
+        forEntity: RetrievableIdentifier,
         topK: Int,
     ): List<Proposition> {
         // Get all propositions for the entity and filter by inferred type
@@ -76,7 +76,7 @@ class DefaultMemoryRetriever(
     }
 
     override fun recallRecent(
-        forEntity: EntityIdentifier,
+        forEntity: RetrievableIdentifier,
         since: Instant,
         limit: Int,
     ): List<Proposition> {

@@ -1,7 +1,7 @@
 package com.embabel.dice.proposition.revision
 
 import com.embabel.agent.core.ContextId
-import com.embabel.agent.rag.service.EntityIdentifier
+import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.proposition.Proposition
@@ -245,7 +245,7 @@ class TestPropositionRepository : PropositionRepository {
 
     override fun findById(id: String): Proposition? = propositions[id]
 
-    override fun findByEntity(entityIdentifier: EntityIdentifier): List<Proposition> =
+    override fun findByEntity(entityIdentifier: RetrievableIdentifier): List<Proposition> =
         propositions.values.filter { prop ->
             prop.mentions.any { it.resolvedId == entityIdentifier.id }
         }
