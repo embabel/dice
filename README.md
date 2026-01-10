@@ -91,6 +91,64 @@ flowchart TB
     style Projections fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
 ```
 
+## Real-World Example: Impromptu
+
+**[Impromptu](https://github.com/embabel/impromptu)** is a classical music exploration chatbot that uses DICE
+to build a knowledge graph from conversations. It demonstrates production usage of:
+
+- `PropositionPipeline` for extraction
+- `IncrementalAnalyzer` for streaming conversation analysis
+- `AgenticEntityResolver` for LLM-driven entity resolution against a Neo4j graph
+- Spring Boot integration with async processing
+
+### Pipeline Setup (Spring Configuration)
+
+```java
+@Bean
+PropositionPipeline propositionPipeline(
+        PropositionExtractor propositionExtractor,
+        PropositionReviser propositionReviser,
+        PropositionRepository propositionRepository) {
+    return PropositionPipeline
+            .withExtractor(propositionExtractor)
+            .withRevision(propositionReviser, propositionRepository);
+}
+
+@Bean
+LlmPropositionExtractor llmPropositionExtractor(AiBuilder aiBuilder, ...) {
+    return LlmPropositionExtractor
+            .withLlm(llmOptions)
+            .withAi(ai)
+            .withPropositionRepository(propositionRepository)
+            .withSchemaAdherence(SchemaAdherence.DEFAULT)
+            .withTemplate("dice/extract_impromptu_user_propositions");
+}
+```
+
+### Conversation Analysis (Event-Driven)
+
+```java
+@Async
+@Transactional
+@EventListener
+public void onConversationExchange(ConversationAnalysisRequestEvent event) {
+    // Build context with user-specific entity resolver
+    var context = SourceAnalysisContext
+            .withContextId(event.user.currentContext())
+            .withEntityResolver(entityResolverForUser(event.user))
+            .withSchema(dataDictionary)
+            .withRelations(relations)
+            .withKnownEntities(KnownEntity.asCurrentUser(event.user));
+
+    // Wrap conversation and analyze incrementally
+    var source = new ConversationSource(event.conversation);
+    var result = analyzer.analyze(source, context);
+
+    // Persist propositions and resolved entities
+    result.persist(propositionRepository, entityRepository);
+}
+```
+
 ## Key Features
 
 ### Proposition Pipeline
@@ -275,43 +333,6 @@ List<Proposition> results = repository.query(query);
 **Effective confidence** applies time-based decay to confidence scores, so older propositions
 with high decay rates rank lower than recent ones. This is useful for ranking memories by
 relevance rather than just raw confidence.
-
-### Content Ingestion Pipeline
-
-The `ContentIngestionPipeline` provides a unified interface for processing any content that can yield propositions.
-Content must implement `ProposableContent`, which requires a `contextId`:
-
-```kotlin
-// Create content with context
-val content = SimpleContent(
-    contextId = ContextId("batch-2025-01-05"),
-    sourceId = "doc-123",
-    context = "Alice works at Acme Corp as a senior engineer."
-)
-
-// Create pipeline
-val pipeline = ContentIngestionPipeline.create(ai, repository, "gum_propose")
-
-// Process content (contextId flows through automatically)
-val result = pipeline.process(content)
-
-// Persist entities and propositions to storage
-result.persist(propositionRepository, entityRepository)
-
-// Access revision results
-result.revisionResults.forEach { revisionResult ->
-    when (revisionResult) {
-        is RevisionResult.New -> println("New: ${revisionResult.proposition.text}")
-        is RevisionResult.Merged -> println("Merged: ${revisionResult.revised.text}")
-        is RevisionResult.Reinforced -> println("Reinforced: ${revisionResult.revised.text}")
-        is RevisionResult.Contradicted -> println("Contradicted: ${revisionResult.original.text}")
-    }
-}
-```
-
-> **Note**: The pipeline does not persist automatically. You must call `persist()` to save
-> entities and propositions to your repositories. This gives you full control over when
-> and whether to commit extracted data.
 
 ### Relations and Predicates
 
@@ -663,10 +684,6 @@ com.embabel.dice
 │   ├── PropositionQuery      # Composable query specification
 │   ├── Projector<T>          # Generic projection interface
 │   ├── PropositionRepository # Storage interface (with query() method)
-│   ├── content/              # Content ingestion
-│   │   ├── ProposableContent
-│   │   ├── ChunkContent
-│   │   └── ContentIngestionPipeline
 │   ├── revision/             # Proposition revision
 │   │   ├── PropositionReviser
 │   │   ├── LlmPropositionReviser
