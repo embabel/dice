@@ -3,6 +3,7 @@ package com.embabel.dice.shell
 import com.embabel.agent.api.common.AiBuilder
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
+import com.embabel.agent.rag.ingestion.ChunkTransformer
 import com.embabel.agent.rag.ingestion.ContentChunker
 import com.embabel.agent.rag.ingestion.TikaHierarchicalContentReader
 import com.embabel.agent.rag.model.Chunk
@@ -125,10 +126,11 @@ internal class DiceShell(
     fun holmes() {
         val hcr = TikaHierarchicalContentReader()
         val chunker = ContentChunker(
-            ContentChunker.DefaultConfig(
+            ContentChunker.Config(
                 maxChunkSize = 10000,
                 overlapSize = 200,
-            )
+            ),
+            ChunkTransformer.NO_OP,
         )
         val doc = hcr.parseContent(
             FileInputStream("data/dying_detective.txt"),
@@ -323,10 +325,11 @@ internal class DiceShell(
     fun holmesPropositions() {
         val hcr = TikaHierarchicalContentReader()
         val chunker = ContentChunker(
-            ContentChunker.DefaultConfig(
+            ContentChunker.Config(
                 maxChunkSize = 5000,
                 overlapSize = 200,
-            )
+            ),
+            ChunkTransformer.NO_OP,
         )
         val doc = hcr.parseContent(
             FileInputStream("data/dying_detective.txt"),
