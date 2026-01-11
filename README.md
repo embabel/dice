@@ -196,6 +196,267 @@ flowchart TB
     style Persist fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
 ```
 
+### Entity Resolution
+
+Entity resolution is the process of mapping entity mentions in text to canonical entities in a knowledge graph.
+When an LLM extracts "Sherlock Holmes" from one document and "Holmes" from another, entity resolution determines
+whether these refer to the same entity and links them to a single canonical ID.
+
+#### Why Entity Resolution Matters
+
+| Challenge | Without Resolution | With Resolution |
+|-----------|-------------------|-----------------|
+| **Duplicate entities** | "Alice", "Alice Smith", "Ms. Smith" → 3 entities | → 1 canonical entity |
+| **Cross-document linking** | Entities isolated per document | Entities connected across corpus |
+| **System integration** | Cannot link to existing databases | Ties into CRM, HR, product catalogs |
+| **Graph quality** | Fragmented, redundant nodes | Clean, connected knowledge graph |
+
+#### Resolution Outcomes
+
+The `EntityResolver` interface returns one of four resolution types:
+
+```mermaid
+flowchart LR
+    subgraph Input["Suggested Entity"]
+        SE["'Sherlock Holmes'<br/>labels: [Person, Detective]"]
+    end
+
+    subgraph Resolver["Entity Resolver"]
+        R["Match against<br/>existing entities"]
+    end
+
+    subgraph Outcomes["Resolution Outcomes"]
+        NEW["✨ NewEntity<br/>No match found<br/>Create new entity"]
+        EXIST["🔗 ExistingEntity<br/>Match found<br/>Merge labels"]
+        REF["👤 ReferenceOnly<br/>Known entity<br/>Don't update"]
+        VETO["🚫 VetoedEntity<br/>Type not creatable<br/>No match found"]
+    end
+
+    SE --> R
+    R --> NEW
+    R --> EXIST
+    R --> REF
+    R --> VETO
+
+    style Input fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
+    style Resolver fill:#fff3cd,stroke:#e9b306,color:#1e1e1e
+    style Outcomes fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
+```
+
+| Outcome | When | Result |
+|---------|------|--------|
+| **NewEntity** | No matching entity found | Create new entity with generated UUID |
+| **ExistingEntity** | Match found in repository | Merge labels from suggested + existing |
+| **ReferenceOnlyEntity** | Known entity (e.g., current user) | Reference existing, don't modify |
+| **VetoedEntity** | Non-creatable type, no match | Entity rejected, not persisted |
+
+#### Resolution Flow (Sequence Diagram)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as PropositionPipeline
+    participant MR as MultiEntityResolver
+    participant KR as KnownEntityResolver
+    participant PR as PrimaryResolver<br/>(Repository/Agentic)
+    participant IM as InMemoryResolver
+    participant DB as Entity Repository
+
+    P->>MR: resolve(suggestedEntities)
+
+    loop For each suggested entity
+        MR->>KR: resolve(entity)
+
+        alt Entity in knownEntities list
+            KR-->>MR: ReferenceOnlyEntity
+        else Not a known entity
+            KR->>PR: delegate(entity)
+
+            alt Using NamedEntityDataRepositoryEntityResolver
+                PR->>DB: findById(id)
+                alt ID match
+                    DB-->>PR: existing entity
+                    PR-->>KR: ExistingEntity
+                else No ID match
+                    PR->>DB: textSearch(name)
+                    PR->>DB: vectorSearch(name)
+                    alt Candidates found
+                        PR->>PR: LLM bakeoff (optional)
+                        PR-->>KR: ExistingEntity
+                    else No candidates
+                        PR-->>KR: NewEntity
+                    end
+                end
+            else Using AgenticEntityResolver
+                PR->>PR: LLM crafts search queries
+                PR->>DB: ToolishRag search
+                PR->>PR: LLM iterates & selects
+                PR-->>KR: ExistingEntity or NewEntity
+            end
+
+            KR-->>MR: resolution
+        end
+
+        MR->>IM: cache resolution
+        Note over IM: Cross-chunk<br/>deduplication
+    end
+
+    MR-->>P: Resolutions
+```
+
+#### EntityResolver Implementations
+
+DICE provides several `EntityResolver` implementations that can be composed:
+
+| Implementation | Purpose | Use Case |
+|----------------|---------|----------|
+| **InMemoryEntityResolver** | Session-scoped deduplication | Cross-chunk entity recognition |
+| **NamedEntityDataRepositoryEntityResolver** | Search-based resolution | Production with entity repository |
+| **AgenticEntityResolver** | LLM-driven search | Complex matching, alternate names |
+| **MultiEntityResolver** | Chain resolvers with fallback | Combine strategies |
+| **KnownEntityResolver** | Fast-path for pre-defined entities | Current user, system entities |
+| **AlwaysCreateEntityResolver** | Always creates new entities | Testing, baseline comparison |
+
+##### InMemoryEntityResolver
+
+Maintains an in-memory cache of resolved entities within a processing session. Uses configurable
+match strategies to find duplicates:
+
+```kotlin
+val resolver = InMemoryEntityResolver(
+    matchStrategies = listOf(
+        LabelCompatibilityStrategy(schema),
+        ExactNameMatchStrategy(),
+        NormalizedNameMatchStrategy(),  // Removes Mr., Dr., Jr., etc.
+        FuzzyNameMatchStrategy(maxDistanceRatio = 0.2),
+    )
+)
+```
+
+##### NamedEntityDataRepositoryEntityResolver
+
+Production resolver that searches an entity repository using multiple strategies:
+
+```kotlin
+val resolver = NamedEntityDataRepositoryEntityResolver(
+    repository = entityRepository,
+    schema = dataDictionary,
+    useFindById = true,
+    useTextSearch = true,
+    useVectorSearch = true,
+    textSearchThreshold = 0.7,
+    vectorSearchThreshold = 0.8,
+    useFuzzyTextSearch = true,
+    topK = 10,
+    // Optional: LLM selects best match from candidates
+    llmBakeoff = LlmCandidateBakeoff(llm, ai),
+)
+```
+
+##### AgenticEntityResolver
+
+Uses an LLM agent with tool access to iteratively search and select matches:
+
+```kotlin
+val resolver = AgenticEntityResolver(
+    toolishRag = ragService.toToolishRag(),
+    llmOptions = LlmOptions.DEFAULT,
+    ai = ai,
+)
+// LLM can:
+// - Craft sophisticated search queries
+// - Handle alternate names ("Der Ring" = "The Ring Cycle")
+// - Provide reasoning for match decisions
+```
+
+##### MultiEntityResolver (Composition)
+
+Chain multiple resolvers with fallback logic:
+
+```kotlin
+val resolver = MultiEntityResolver(
+    resolvers = listOf(
+        knownEntityResolver,           // Fast path: check known entities first
+        repositoryResolver,            // Primary: search repository
+        InMemoryEntityResolver(...),   // Fallback: session cache
+    )
+)
+// First ExistingEntity wins; otherwise first NewEntity
+```
+
+#### Match Strategies
+
+`InMemoryEntityResolver` uses a chain of match strategies. Each returns `Match`, `NoMatch`, or `Inconclusive`:
+
+```mermaid
+flowchart LR
+    subgraph Chain["Match Strategy Chain"]
+        L["LabelCompatibility<br/>Type hierarchy"]
+        E["ExactName<br/>Case-insensitive"]
+        N["NormalizedName<br/>Remove titles"]
+        P["PartialName<br/>'Holmes' = 'Sherlock Holmes'"]
+        F["FuzzyName<br/>Levenshtein distance"]
+    end
+
+    L -->|Inconclusive| E
+    E -->|Inconclusive| N
+    N -->|Inconclusive| P
+    P -->|Inconclusive| F
+
+    L -->|Match/NoMatch| Result["Final Result"]
+    E -->|Match/NoMatch| Result
+    N -->|Match/NoMatch| Result
+    P -->|Match/NoMatch| Result
+    F -->|Match/NoMatch| Result
+
+    style Chain fill:#fff3cd,stroke:#e9b306,color:#1e1e1e
+```
+
+| Strategy | Description |
+|----------|-------------|
+| **LabelCompatibilityStrategy** | Checks type hierarchy—Person can match Detective |
+| **ExactNameMatchStrategy** | Case-insensitive exact match |
+| **NormalizedNameMatchStrategy** | Removes Mr., Mrs., Dr., Jr., III, etc. |
+| **PartialNameMatchStrategy** | Single name matches multi-part name |
+| **FuzzyNameMatchStrategy** | Levenshtein distance within threshold |
+| **LlmCandidateBakeoff** | LLM selects best from multiple candidates |
+
+#### Pipeline Integration
+
+Entity resolution is integrated into the proposition pipeline via `SourceAnalysisContext`:
+
+```kotlin
+// Configure context with entity resolver
+val context = SourceAnalysisContext
+    .withContextId("session-123")
+    .withEntityResolver(
+        MultiEntityResolver(
+            KnownEntityResolver(
+                knownEntities = listOf(KnownEntity.asCurrentUser(currentUser)),
+                delegate = repositoryResolver,
+            ),
+            InMemoryEntityResolver(matchStrategies),
+        )
+    )
+    .withSchema(dataDictionary)
+    .withKnownEntities(KnownEntity.asCurrentUser(currentUser))
+
+// Process chunks—entities automatically resolved
+val result = pipeline.process(chunks, context)
+
+// Access resolution results
+result.chunkResults.forEach { chunkResult ->
+    chunkResult.entityResolutions.resolutions.forEach { resolution ->
+        when (resolution) {
+            is NewEntity -> println("Created: ${resolution.recommended.name}")
+            is ExistingEntity -> println("Matched: ${resolution.existing.name}")
+            is ReferenceOnlyEntity -> println("Referenced: ${resolution.existing.name}")
+            is VetoedEntity -> println("Rejected: ${resolution.suggested.name}")
+        }
+    }
+}
+```
+
 ### Source Analysis Context
 
 All DICE operations require a `SourceAnalysisContext` that carries configuration for source analysis:
