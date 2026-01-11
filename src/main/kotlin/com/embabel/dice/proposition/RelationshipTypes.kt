@@ -16,7 +16,7 @@ package com.embabel.dice.proposition
  * (Proposition)-[:MENTIONS {role: 'OBJECT'}]->(__Entity__)
  * ```
  *
- * @see com.embabel.agent.rag.model.RetrievableEntity.HAS_ENTITY
+ * @see com.embabel.agent.rag.model.NamedEntityData.HAS_ENTITY
  * @see MentionRole
  */
 object RelationshipTypes {

@@ -1,7 +1,7 @@
 package com.embabel.dice.common.resolver.matcher
 
 import com.embabel.agent.rag.model.NamedEntityData
-import com.embabel.agent.rag.model.RetrievableEntity
+import com.embabel.agent.rag.model.NamedEntityData.Companion.ENTITY_LABEL
 import com.embabel.common.ai.model.ByNameModelSelectionCriteria
 import com.embabel.common.ai.model.ModelProvider
 import com.embabel.common.core.types.SimilarityResult
@@ -95,7 +95,7 @@ class LlmCandidateBakeoff(
         val candidateDescriptions = candidates.mapIndexed { index, result ->
             val c = result.match
             val labels = c.labels().filter {
-                it != RetrievableEntity.ENTITY_LABEL && it != "Entity" && it != "Reference"
+                it != ENTITY_LABEL && it != "Entity" && it != "Reference"
             }.joinToString(", ")
             """
             |CANDIDATE ${index + 1}:
@@ -144,7 +144,7 @@ Example: "NONE - None of these works are by the composer discussed in conversati
     ): String {
         val suggestedType = suggested.labels.firstOrNull() ?: "Entity"
         val candidateLabels = candidate.labels().filter {
-            it != RetrievableEntity.ENTITY_LABEL && it != "Entity" && it != "Reference"
+            it != ENTITY_LABEL && it != "Entity" && it != "Reference"
         }.joinToString(", ")
 
         val conversationContext = if (!sourceText.isNullOrBlank()) {

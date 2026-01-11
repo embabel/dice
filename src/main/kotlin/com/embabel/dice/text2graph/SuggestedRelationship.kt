@@ -1,7 +1,7 @@
 package com.embabel.dice.text2graph
 
 import com.embabel.agent.core.DataDictionary
-import com.embabel.agent.rag.model.EntityData
+import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.common.util.loggerFor
 import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntityResolution
@@ -15,8 +15,8 @@ data class SuggestedRelationship(
 
     fun isValid(
         schema: DataDictionary,
-        sourceEntity: EntityData,
-        targetEntity: EntityData,
+        sourceEntity: NamedEntityData,
+        targetEntity: NamedEntityData,
     ): Boolean {
 //        val valid =
 //            schema.allowedRelationships().any {

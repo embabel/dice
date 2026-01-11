@@ -3,7 +3,7 @@ package com.embabel.dice.pipeline
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
-import com.embabel.agent.rag.model.RetrievableEntity
+import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.service.RelationshipData
 import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository
@@ -961,7 +961,7 @@ class PropositionPipelineTest {
             result.persist(propositionRepo, entityRepo)
 
             // Should have 2 HAS_ENTITY relationships (chunk-1 -> Alice, chunk-1 -> Bob)
-            val hasEntityRels = entityRepo.relationshipsOfType(RetrievableEntity.HAS_ENTITY)
+            val hasEntityRels = entityRepo.relationshipsOfType(NamedEntityData.HAS_ENTITY)
             assertEquals(2, hasEntityRels.size)
 
             // All should be from chunk-1
@@ -994,7 +994,7 @@ class PropositionPipelineTest {
 
             // Should have 2 HAS_ENTITY relationships (chunk-1 -> Alice, chunk-2 -> Alice)
             // But NOT duplicates if the same chunk-entity pair appears multiple times
-            val hasEntityRels = entityRepo.relationshipsOfType(RetrievableEntity.HAS_ENTITY)
+            val hasEntityRels = entityRepo.relationshipsOfType(NamedEntityData.HAS_ENTITY)
             assertEquals(2, hasEntityRels.size)
 
             // One from each chunk
@@ -1031,7 +1031,7 @@ class PropositionPipelineTest {
             assertEquals(3, entityRepo.relationshipsOfType(RelationshipTypes.MENTIONS).size)
 
             // HAS_ENTITY: 3 (chunk-1 -> Alice, chunk-1 -> Bob, chunk-2 -> Charlie)
-            assertEquals(3, entityRepo.relationshipsOfType(RetrievableEntity.HAS_ENTITY).size)
+            assertEquals(3, entityRepo.relationshipsOfType(NamedEntityData.HAS_ENTITY).size)
         }
 
         @Test
@@ -1065,7 +1065,7 @@ class PropositionPipelineTest {
             assertEquals(0, entityRepo.relationshipsOfType(RelationshipTypes.HAS_PROPOSITION).size)
 
             // Should have 0 HAS_ENTITY (no grounding)
-            assertEquals(0, entityRepo.relationshipsOfType(RetrievableEntity.HAS_ENTITY).size)
+            assertEquals(0, entityRepo.relationshipsOfType(NamedEntityData.HAS_ENTITY).size)
 
             // Should still have 1 MENTIONS relationship
             assertEquals(1, entityRepo.relationshipsOfType(RelationshipTypes.MENTIONS).size)
@@ -1102,7 +1102,7 @@ class PropositionPipelineTest {
             assertEquals(0, entityRepo.relationshipsOfType(RelationshipTypes.MENTIONS).size)
 
             // Should have 0 HAS_ENTITY (unresolved)
-            assertEquals(0, entityRepo.relationshipsOfType(RetrievableEntity.HAS_ENTITY).size)
+            assertEquals(0, entityRepo.relationshipsOfType(NamedEntityData.HAS_ENTITY).size)
         }
     }
 }

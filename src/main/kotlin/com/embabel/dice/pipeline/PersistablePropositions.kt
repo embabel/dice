@@ -1,6 +1,6 @@
 package com.embabel.dice.pipeline
 
-import com.embabel.agent.rag.model.RetrievableEntity
+import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.agent.rag.service.RelationshipData
 import com.embabel.agent.rag.service.RetrievableIdentifier
@@ -120,7 +120,7 @@ interface PersistablePropositions : EntityExtractionResult, PropositionExtractio
                             namedEntityDataRepository.createRelationship(
                                 chunk,
                                 entity,
-                                RelationshipData(RetrievableEntity.Companion.HAS_ENTITY)
+                                RelationshipData(NamedEntityData.HAS_ENTITY)
                             )
                         }
                     }

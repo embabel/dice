@@ -3,7 +3,6 @@ package com.embabel.dice.common.resolver.matcher
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.core.DomainType
 import com.embabel.agent.rag.model.NamedEntityData
-import com.embabel.agent.rag.model.RetrievableEntity
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.resolver.MatchResult
 import com.embabel.dice.common.resolver.MatchStrategy
@@ -36,7 +35,7 @@ class LabelCompatibilityStrategy : MatchStrategy {
     private fun labelsCompatible(labels1: Set<String>, labels2: Set<String>, schema: DataDictionary): Boolean {
         // Normalize labels to simple names (handles fully qualified like com.example.Person)
         // Filter out framework labels that shouldn't affect compatibility
-        val frameworkLabels = setOf(RetrievableEntity.ENTITY_LABEL, "Entity", "Reference")
+        val frameworkLabels = setOf(NamedEntityData.ENTITY_LABEL, "Entity", "Reference")
         val simple1 = labels1.map { it.substringAfterLast('.') }.filter { it !in frameworkLabels }.toSet()
         val simple2 = labels2.map { it.substringAfterLast('.') }.filter { it !in frameworkLabels }.toSet()
 
