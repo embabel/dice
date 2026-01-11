@@ -50,13 +50,15 @@ private data class RelationMatch(
  * Does not use LLM - matches proposition text directly against known predicates.
  *
  * **Matching priority:**
- * 1. Schema relationships from [DataDictionary.allowedRelationships] with predicates
+ * 1. Schema relationships from [DataDictionary.allowedRelationships] with explicit predicates
  *    defined via `@Semantics(With(key = Proposition.PREDICATE, value = "..."))`.
  *    Uses the property name as the relationship type.
- * 2. Fallback to [Relations] predicates, deriving relationship type from predicate
+ * 2. Schema relationships with derived predicates from the property name.
+ *    For example, property `employer` derives predicate "has employer".
+ * 3. Fallback to [Relations] predicates, deriving relationship type from predicate
  *    using UPPER_SNAKE_CASE convention.
  *
- * Example with schema:
+ * Example with explicit @Semantics predicate:
  * ```kotlin
  * // Given: Person.employer property annotated with @Semantics predicate="works at"
  * val schema = DataDictionary.fromClasses(Person::class.java, Company::class.java)
@@ -64,6 +66,14 @@ private data class RelationMatch(
  *
  * // "Bob works at Acme" -> (bob)-[:employer]->(acme)
  * // Uses property name "employer" as relationship type
+ * ```
+ *
+ * Example with derived predicate (no annotation needed):
+ * ```kotlin
+ * // Given: Person.employer property with no @Semantics annotation
+ * // Predicate "has employer" is derived automatically
+ *
+ * // "Bob has employer Acme" -> (bob)-[:employer]->(acme)
  * ```
  *
  * Example with Relations fallback:
@@ -109,6 +119,37 @@ class RelationBasedGraphProjector @JvmOverloads constructor(
                 .trim()
                 .uppercase()
                 .replace(Regex("\\s+"), "_")
+
+        /**
+         * Derive a natural language predicate from a relationship or property name.
+         * Used when no explicit [@Semantics] predicate is defined.
+         *
+         * Examples:
+         * - "employer" -> "has employer"
+         * - "HAS_EMPLOYER" -> "has employer"
+         * - "WORKS_AT" -> "works at"
+         * - "directReports" -> "has direct reports"
+         */
+        @JvmStatic
+        fun derivePredicate(relationshipName: String): String {
+            // If already has HAS_ prefix, convert to lowercase with spaces
+            if (relationshipName.startsWith("HAS_")) {
+                return relationshipName
+                    .lowercase()
+                    .replace('_', ' ')
+            }
+            // If UPPER_SNAKE_CASE without HAS_, just convert to lowercase with spaces
+            if (relationshipName.contains('_')) {
+                return relationshipName
+                    .lowercase()
+                    .replace('_', ' ')
+            }
+            // camelCase or simple name: add "has " prefix and convert to spaced lowercase
+            val spaced = relationshipName
+                .replace(Regex("([a-z])([A-Z])")) { "${it.groupValues[1]} ${it.groupValues[2]}" }
+                .lowercase()
+            return "has $spaced"
+        }
     }
 
     /**
@@ -186,12 +227,15 @@ class RelationBasedGraphProjector @JvmOverloads constructor(
 
     /**
      * Find a matching relationship by predicate.
-     * First checks schema relationships, then falls back to Relations.
+     * Priority:
+     * 1. Schema relationships with explicit [@Semantics] predicates
+     * 2. Schema relationships with derived predicates from property name
+     * 3. Relations predicates (fallback)
      */
     private fun findMatchingRelationship(proposition: Proposition, schema: DataDictionary): MatchedRelationship? {
         val text = if (caseSensitive) proposition.text else proposition.text.lowercase()
 
-        // 1. Try schema relationships with predicates
+        // 1. Try schema relationships with explicit predicates first
         for (allowedRel in schema.allowedRelationships()) {
             val predicate = allowedRel.metadata[Proposition.PREDICATE] ?: continue
             val predicateToMatch = if (caseSensitive) predicate else predicate.lowercase()
@@ -200,7 +244,19 @@ class RelationBasedGraphProjector @JvmOverloads constructor(
             }
         }
 
-        // 2. Fall back to Relations predicates
+        // 2. Try schema relationships with derived predicates (from property name)
+        for (allowedRel in schema.allowedRelationships()) {
+            // Skip if already has explicit predicate (handled above)
+            if (allowedRel.metadata.containsKey(Proposition.PREDICATE)) continue
+
+            val derivedPredicate = derivePredicate(allowedRel.name)
+            val predicateToMatch = if (caseSensitive) derivedPredicate else derivedPredicate.lowercase()
+            if (text.contains(predicateToMatch)) {
+                return SchemaMatch(allowedRel, derivedPredicate)
+            }
+        }
+
+        // 3. Fall back to Relations predicates
         for (relation in relations) {
             val predicate = if (caseSensitive) relation.predicate else relation.predicate.lowercase()
             if (text.contains(predicate)) {

@@ -34,6 +34,16 @@ class RelationBasedGraphProjectorTest {
         override val description: String = "",
     ) : NamedEntity
 
+    // Test domain class WITHOUT @Semantics annotation - uses derived predicate
+    @JsonClassDescription("An employee")
+    data class Employee(
+        override val id: String,
+        override val name: String,
+        override val description: String = "",
+        val manager: Employee? = null,  // No @Semantics - derives "has manager"
+        val directReports: List<Employee> = emptyList(),  // Derives "has direct reports"
+    ) : NamedEntity
+
     private fun proposition(
         text: String,
         subjectSpan: String,
@@ -470,6 +480,116 @@ class RelationBasedGraphProjectorTest {
 
             assertTrue(result is ProjectionFailed)
             assertTrue((result as ProjectionFailed).reason.contains("Object type"))
+        }
+    }
+
+    @Nested
+    inner class DerivePredicateTests {
+
+        @Test
+        fun `derives predicate from simple property name`() {
+            assertEquals("has employer", RelationBasedGraphProjector.derivePredicate("employer"))
+        }
+
+        @Test
+        fun `derives predicate from camelCase property name`() {
+            assertEquals("has direct reports", RelationBasedGraphProjector.derivePredicate("directReports"))
+        }
+
+        @Test
+        fun `derives predicate from HAS_UPPER_SNAKE_CASE`() {
+            assertEquals("has employer", RelationBasedGraphProjector.derivePredicate("HAS_EMPLOYER"))
+        }
+
+        @Test
+        fun `derives predicate from UPPER_SNAKE_CASE without HAS prefix`() {
+            assertEquals("works at", RelationBasedGraphProjector.derivePredicate("WORKS_AT"))
+        }
+
+        @Test
+        fun `derives predicate from multi-word HAS prefix`() {
+            assertEquals("has direct reports", RelationBasedGraphProjector.derivePredicate("HAS_DIRECT_REPORTS"))
+        }
+    }
+
+    @Nested
+    inner class DerivedPredicateMatchingTests {
+
+        private val schemaWithoutSemantics = DataDictionary.fromClasses(Employee::class.java)
+
+        @Test
+        fun `matches derived predicate from property name`() {
+            // Employee.manager has no @Semantics, so derives "has manager"
+            val projector = RelationBasedGraphProjector()
+
+            val prop = proposition(
+                text = "Alice has manager Bob",
+                subjectSpan = "Alice", subjectType = "Employee", subjectId = "emp-alice",
+                objectSpan = "Bob", objectType = "Employee", objectId = "emp-bob",
+            )
+
+            val result = projector.project(prop, schemaWithoutSemantics)
+
+            assertTrue(result is ProjectionSuccess)
+            // Uses property name "manager" as relationship type
+            assertEquals("manager", (result as ProjectionSuccess).projected.type)
+        }
+
+        @Test
+        fun `matches derived predicate from camelCase property`() {
+            // Employee.directReports derives "has direct reports"
+            val projector = RelationBasedGraphProjector()
+
+            val prop = proposition(
+                text = "Bob has direct reports including Alice",
+                subjectSpan = "Bob", subjectType = "Employee", subjectId = "emp-bob",
+                objectSpan = "Alice", objectType = "Employee", objectId = "emp-alice",
+            )
+
+            val result = projector.project(prop, schemaWithoutSemantics)
+
+            assertTrue(result is ProjectionSuccess)
+            assertEquals("directReports", (result as ProjectionSuccess).projected.type)
+        }
+
+        @Test
+        fun `explicit semantics takes priority over derived predicate`() {
+            // Person.employer has @Semantics predicate="works at"
+            // Even if "has employer" appears in text, "works at" should match first
+            val schemaWithSemantics = DataDictionary.fromClasses(Person::class.java, Company::class.java)
+            val projector = RelationBasedGraphProjector()
+
+            val prop = proposition(
+                text = "Bob works at Acme",
+                subjectSpan = "Bob", subjectType = "Person", subjectId = "bob-1",
+                objectSpan = "Acme", objectType = "Company", objectId = "company-acme",
+            )
+
+            val result = projector.project(prop, schemaWithSemantics)
+
+            assertTrue(result is ProjectionSuccess)
+            assertEquals("employer", (result as ProjectionSuccess).projected.type)
+        }
+
+        @Test
+        fun `derived predicate falls back to relations when no schema match`() {
+            val relations = Relations.empty()
+                .withProcedural("likes")
+
+            val projector = RelationBasedGraphProjector.from(relations)
+
+            val prop = proposition(
+                text = "Alice likes jazz",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = "alice-1",
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-jazz",
+            )
+
+            // Schema has no relationship that derives to "likes"
+            val result = projector.project(prop, schemaWithoutSemantics)
+
+            assertTrue(result is ProjectionSuccess)
+            // Falls back to relations
+            assertEquals("LIKES", (result as ProjectionSuccess).projected.type)
         }
     }
 }
