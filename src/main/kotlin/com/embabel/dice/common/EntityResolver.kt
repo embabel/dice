@@ -55,6 +55,26 @@ data class ExistingEntity(
 }
 
 /**
+ * A known entity that should be referenced but not updated.
+ * Used for entities managed by external services (e.g., the current user)
+ * that should not be modified during proposition extraction.
+ *
+ * Unlike [ExistingEntity], entities resolved as [ReferenceOnlyEntity] are
+ * not included in [com.embabel.dice.common.EntityExtractionResult.updatedEntities].
+ */
+data class ReferenceOnlyEntity(
+    override val suggested: SuggestedEntity,
+    override val existing: NamedEntityData,
+) : SuggestedEntityResolution {
+
+    override val recommended: NamedEntityData = existing
+
+    override fun infoString(verbose: Boolean?, indent: Int): String {
+        return "ReferenceOnlyEntity(${existing.infoString(verbose)})"
+    }
+}
+
+/**
  * We do not want to progress with this suggested entity.
  */
 data class VetoedEntity(

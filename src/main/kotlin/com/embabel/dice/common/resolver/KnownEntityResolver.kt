@@ -2,6 +2,7 @@ package com.embabel.dice.common.resolver
 
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntity
+import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.model.SimpleNamedEntityData
 import com.embabel.dice.common.*
 import org.slf4j.LoggerFactory
@@ -36,7 +37,8 @@ class KnownEntityResolver(
             val knownMatch = findKnownMatch(suggested, schema)
             if (knownMatch != null) {
                 logger.info("Matched '{}' to known entity '{}'", suggested.name, knownMatch.name)
-                ExistingEntity(suggested, knownMatch.toNamedEntityData())
+                // Use ReferenceOnlyEntity to prevent updating externally-managed entities
+                ReferenceOnlyEntity(suggested, knownMatch.toNamedEntityData())
             } else {
                 null // Will be resolved by delegate
             }
@@ -85,12 +87,14 @@ class KnownEntityResolver(
         return null
     }
 
-    private fun NamedEntity.toNamedEntityData() =
+    @Suppress("USELESS_ELVIS")  // Java interop: name can be null despite Kotlin declaration
+    private fun NamedEntity.toNamedEntityData(): NamedEntityData =
         if (this is com.embabel.agent.rag.model.NamedEntityData) this
         else SimpleNamedEntityData(
             id = id,
-            name = name,
-            description = description,
+            // Fallback to id if name is null (handles corrupted entity data from Java classes)
+            name = name ?: id,
+            description = description ?: "",
             labels = labels(),
             properties = emptyMap(),
         )

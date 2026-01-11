@@ -10,9 +10,11 @@ data class EntityExtractionStats(
     val newCount: Int,
     /** Number of entities matched to existing ones */
     val updatedCount: Int,
+    /** Number of reference-only entities (matched but not updated, e.g., current user) */
+    val referenceOnlyCount: Int = 0,
 ) {
     /** Total number of entities */
-    val total: Int get() = newCount + updatedCount
+    val total: Int get() = newCount + updatedCount + referenceOnlyCount
 }
 
 /**
@@ -34,7 +36,15 @@ interface EntityExtractionResult {
     fun updatedEntities(): List<NamedEntityData>
 
     /**
+     * Entities that were matched to known entities that should not be updated.
+     * These are typically entities managed by external services (e.g., the current user).
+     * They are referenced in propositions but not persisted during extraction.
+     */
+    fun referenceOnlyEntities(): List<NamedEntityData> = emptyList()
+
+    /**
      * All entities that need to be persisted (new + updated).
+     * Does not include reference-only entities.
      */
     fun entitiesToPersist(): List<NamedEntityData> = newEntities() + updatedEntities()
 
@@ -43,5 +53,6 @@ interface EntityExtractionResult {
         get() = EntityExtractionStats(
             newCount = newEntities().size,
             updatedCount = updatedEntities().size,
+            referenceOnlyCount = referenceOnlyEntities().size,
         )
 }

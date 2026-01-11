@@ -29,6 +29,11 @@ object UseNewEntityMergePolicy : EntityMergePolicy {
                         convergenceTarget = it.recommended,
                     )
 
+                    is com.embabel.dice.common.ReferenceOnlyEntity -> EntityMerge(
+                        resolution = it,
+                        convergenceTarget = it.recommended, // Use existing, but won't be updated
+                    )
+
                     is com.embabel.dice.common.VetoedEntity -> EntityMerge(
                         resolution = it,
                         convergenceTarget = null, // Vetoed entities have no target

@@ -91,16 +91,25 @@ data class ChunkPropositionResult(
             .filterIsInstance<ExistingEntity>()
             .map { it.existing }
 
+    override fun referenceOnlyEntities(): List<NamedEntityData> =
+        entityResolutions.resolutions
+            .filterIsInstance<ReferenceOnlyEntity>()
+            .map { it.existing }
+
     override fun infoString(verbose: Boolean?, indent: Int): String {
         val prefix = "  ".repeat(indent)
         val stats = propositionExtractionStats
         val newEntitiesCount = newEntities().size
         val updatedEntitiesCount = updatedEntities().size
+        val referenceOnlyCount = referenceOnlyEntities().size
 
         return buildString {
             append("ChunkPropositionResult(chunk=$chunkId, ")
             append("propositions=${propositions.size}, ")
             append("entities: $newEntitiesCount new, $updatedEntitiesCount updated")
+            if (referenceOnlyCount > 0) {
+                append(", $referenceOnlyCount reference-only")
+            }
             if (hasRevision) {
                 append(", revision: ")
                 append("${stats.newCount} new, ")
@@ -127,7 +136,7 @@ data class ChunkPropositionResult(
                     } else ""
                     append("$prefix  • ${prop.text} (conf: ${String.format("%.2f", prop.confidence)}) $revisionInfo")
                 }
-                if (newEntitiesCount > 0 || updatedEntitiesCount > 0) {
+                if (newEntitiesCount > 0 || updatedEntitiesCount > 0 || referenceOnlyCount > 0) {
                     appendLine()
                     append("${prefix}Entities:")
                     newEntities().forEach { entity ->
@@ -137,6 +146,10 @@ data class ChunkPropositionResult(
                     updatedEntities().forEach { entity ->
                         appendLine()
                         append("$prefix  • [UPDATED] ${entity.name} (${entity.labels().joinToString()})")
+                    }
+                    referenceOnlyEntities().forEach { entity ->
+                        appendLine()
+                        append("$prefix  • [REF-ONLY] ${entity.name} (${entity.labels().joinToString()})")
                     }
                 }
             }
@@ -171,4 +184,7 @@ data class PropositionResults(
 
     override fun updatedEntities(): List<NamedEntityData> =
         chunkResults.flatMap { it.updatedEntities() }.distinctBy { it.id }
+
+    override fun referenceOnlyEntities(): List<NamedEntityData> =
+        chunkResults.flatMap { it.referenceOnlyEntities() }.distinctBy { it.id }
 }
