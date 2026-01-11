@@ -8,7 +8,7 @@ import com.embabel.dice.common.*
 import org.slf4j.LoggerFactory
 
 /**
- * Entity resolver that checks a list of known entities before delegating to another resolver.
+ * Entity resolver decorator that checks a list of known entities before delegating to another resolver.
  *
  * Useful for ensuring that specific entities (like the current user) are always matched
  * correctly without requiring a search.

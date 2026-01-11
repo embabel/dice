@@ -19,9 +19,9 @@ import org.slf4j.LoggerFactory
  * Structured response from the entity resolution LLM.
  */
 data class EntityResolutionResult(
-    @JsonPropertyDescription("The ID of the matched entity, or null if no match was found")
+    @field:JsonPropertyDescription("The ID of the matched entity, or null if no match was found")
     val matchedEntityId: String?,
-    @JsonPropertyDescription("Brief explanation of why this entity was selected or why no match was found")
+    @field:JsonPropertyDescription("Brief explanation of why this entity was selected or why no match was found")
     val reason: String,
 )
 
@@ -40,13 +40,11 @@ data class EntityResolutionResult(
  * @param repository The entity repository providing search operations
  * @param ai The AI instance for running the agentic loop
  * @param llmOptions LLM configuration for the search agent
- * @param dataDictionary Schema for resolving entity types
  */
 class AgenticEntityResolver(
     private val repository: NamedEntityDataRepository,
     private val ai: Ai,
-    private val llmOptions: LlmOptions = LlmOptions(model = "gpt-4.1-mini"),
-    private val dataDictionary: DataDictionary? = null,
+    private val llmOptions: LlmOptions,
 ) : EntityResolver {
 
     private val logger = LoggerFactory.getLogger(AgenticEntityResolver::class.java)
@@ -61,11 +59,10 @@ class AgenticEntityResolver(
             suggestedEntities.chunkIds
         )
 
-        val effectiveSchema = dataDictionary ?: schema
         val sourceText = suggestedEntities.sourceText
 
         val resolutions = suggestedEntities.suggestedEntities.map { suggested ->
-            resolveEntity(suggested, effectiveSchema, sourceText)
+            resolveEntity(suggested, schema, sourceText)
         }
 
         val existingCount = resolutions.count { it is ExistingEntity }
@@ -126,8 +123,10 @@ class AgenticEntityResolver(
                 .withReference(rag)
                 .createObject(buildPrompt(suggested, entityType, sourceText), EntityResolutionResult::class.java)
 
-            logger.debug("Agentic search result for '{}': id={}, reason={}",
-                suggested.name, result.matchedEntityId, result.reason)
+            logger.debug(
+                "Agentic search result for '{}': id={}, reason={}",
+                suggested.name, result.matchedEntityId, result.reason
+            )
 
             // Use the LLM's decision
             if (result.matchedEntityId != null) {
@@ -138,12 +137,16 @@ class AgenticEntityResolver(
                     val matchedLabels = matchedEntity.labels().map { it.substringAfterLast('.') }.toSet()
                     if (suggestedLabels.intersect(matchedLabels).isNotEmpty()) {
                         val entityData = matchedEntity.toNamedEntityData()
-                        logger.info("Agentic resolver matched '{}' -> '{}' ({})",
-                            suggested.name, matchedEntity.name, result.reason)
+                        logger.info(
+                            "Agentic resolver matched '{}' -> '{}' ({})",
+                            suggested.name, matchedEntity.name, result.reason
+                        )
                         return ExistingEntity(suggested, entityData)
                     } else {
-                        logger.warn("LLM selected '{}' but labels don't match: suggested={}, matched={}",
-                            matchedEntity.name, suggestedLabels, matchedLabels)
+                        logger.warn(
+                            "LLM selected '{}' but labels don't match: suggested={}, matched={}",
+                            matchedEntity.name, suggestedLabels, matchedLabels
+                        )
                     }
                 } else {
                     logger.warn("LLM selected entity id '{}' but not found in candidates", result.matchedEntityId)
@@ -157,12 +160,16 @@ class AgenticEntityResolver(
 
         // No match found
         return if (!creationPermitted) {
-            logger.info("No match found for '{}' (had {} candidates) and creation not permitted - vetoing",
-                suggested.name, foundEntities.size)
+            logger.info(
+                "No match found for '{}' (had {} candidates) and creation not permitted - vetoing",
+                suggested.name, foundEntities.size
+            )
             VetoedEntity(suggested)
         } else {
-            logger.debug("No match found for '{}' (had {} candidates), creating new entity",
-                suggested.name, foundEntities.size)
+            logger.debug(
+                "No match found for '{}' (had {} candidates), creating new entity",
+                suggested.name, foundEntities.size
+            )
             NewEntity(suggested)
         }
     }
