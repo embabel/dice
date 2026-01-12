@@ -179,9 +179,11 @@ class HierarchicalEntityResolver(
             }
         }
 
-        // Level 3: High-confidence embedding match
+        // Level 3: High-confidence embedding match (must also pass label compatibility)
         val topCandidate = candidates.first()
-        if (topCandidate.score >= config.embeddingAutoAcceptThreshold) {
+        if (topCandidate.score >= config.embeddingAutoAcceptThreshold &&
+            isLabelCompatible(suggested, topCandidate.match, schema)
+        ) {
             logger.debug(
                 "L3 EMBEDDING: '{}' -> '{}' (score: {} >= {})",
                 suggested.name, topCandidate.match.name,
@@ -201,15 +203,22 @@ class HierarchicalEntityResolver(
             return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0, candidates.size)
         }
 
+        // Filter candidates by label compatibility before LLM calls
+        val compatibleCandidates = filterByLabelCompatibility(suggested, candidates, schema)
+        if (compatibleCandidates.isEmpty()) {
+            logger.debug("No label-compatible candidates for '{}'", suggested.name)
+            return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0, candidates.size)
+        }
+
         // Compress context for LLM calls
         val compressedContext = contextCompressor?.compress(sourceText, suggested.name)
             ?: sourceText
 
         // Level 4: Single candidate - simple LLM verification
-        if (candidates.size == 1) {
+        if (compatibleCandidates.size == 1) {
             val verified = llmBakeoff.selectBestMatch(
                 suggested,
-                candidates,
+                compatibleCandidates,
                 compressedContext,
             )
             if (verified != null) {
@@ -227,23 +236,23 @@ class HierarchicalEntityResolver(
         // Level 5: Multiple candidates - full LLM bakeoff
         val bestMatch = llmBakeoff.selectBestMatch(
             suggested,
-            candidates,
+            compatibleCandidates,
             compressedContext,
         )
         if (bestMatch != null) {
             logger.debug(
                 "L5 LLM_BAKEOFF: '{}' -> '{}' (from {} candidates)",
-                suggested.name, bestMatch.name, candidates.size
+                suggested.name, bestMatch.name, compatibleCandidates.size
             )
             return LevelResult(
                 level = ResolutionLevel.LLM_BAKEOFF,
                 resolution = ExistingEntity(suggested, bestMatch),
                 confidence = 0.8,
-                candidatesConsidered = candidates.size,
+                candidatesConsidered = compatibleCandidates.size,
             )
         }
 
-        return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0, candidates.size)
+        return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0, compatibleCandidates.size)
     }
 
     /**
@@ -334,6 +343,30 @@ class HierarchicalEntityResolver(
             if (term.length >= 4) parts.add("$term~")  // Fuzzy
         }
         return parts.joinToString(" OR ")
+    }
+
+    /**
+     * Check if candidate labels are compatible with suggested entity labels.
+     * Uses the LabelCompatibilityStrategy logic.
+     */
+    private fun isLabelCompatible(
+        suggested: SuggestedEntity,
+        candidate: NamedEntityData,
+        schema: DataDictionary
+    ): Boolean {
+        val strategy = matchStrategies.filterIsInstance<com.embabel.dice.common.resolver.matcher.LabelCompatibilityStrategy>().firstOrNull()
+        return strategy?.evaluate(suggested, candidate, schema) != MatchResult.NoMatch
+    }
+
+    /**
+     * Filter candidates to only those with compatible labels.
+     */
+    private fun filterByLabelCompatibility(
+        suggested: SuggestedEntity,
+        candidates: List<SimilarityResult<NamedEntityData>>,
+        schema: DataDictionary
+    ): List<SimilarityResult<NamedEntityData>> {
+        return candidates.filter { isLabelCompatible(suggested, it.match, schema) }
     }
 
     private fun createNewOrVeto(
