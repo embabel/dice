@@ -310,6 +310,7 @@ DICE provides several `EntityResolver` implementations that can be composed:
 
 | Implementation | Purpose | Use Case |
 |----------------|---------|----------|
+| **HierarchicalEntityResolver** | **Recommended** - Escalating levels with early stopping | Production, optimized performance |
 | **InMemoryEntityResolver** | Session-scoped deduplication | Cross-chunk entity recognition |
 | **NamedEntityDataRepositoryEntityResolver** | Search-based resolution | Production with entity repository |
 | **AgenticEntityResolver** | LLM-driven search | Complex matching, alternate names |
@@ -369,6 +370,74 @@ val resolver = AgenticEntityResolver(
 // - Provide reasoning for match decisions
 ```
 
+##### HierarchicalEntityResolver (Recommended)
+
+**Performance-optimized resolver** that escalates through resolution levels, stopping early when confident.
+This minimizes LLM calls by handling easy cases with fast heuristics:
+
+```mermaid
+flowchart LR
+    subgraph Levels["Resolution Levels"]
+        L1["Level 1<br/>**EXACT_MATCH**<br/>ID/Name lookup"]
+        L2["Level 2<br/>**HEURISTIC_MATCH**<br/>Fuzzy strategies"]
+        L3["Level 3<br/>**EMBEDDING_MATCH**<br/>High-confidence vector"]
+        L4["Level 4<br/>**LLM_VERIFICATION**<br/>Single candidate"]
+        L5["Level 5<br/>**LLM_BAKEOFF**<br/>Multiple candidates"]
+    end
+
+    L1 -->|"No match"| L2
+    L2 -->|"No match"| L3
+    L3 -->|"Below threshold"| L4
+    L4 -->|"Multiple candidates"| L5
+
+    L1 -->|"✓ Match"| Done["Stop & Return"]
+    L2 -->|"✓ Match"| Done
+    L3 -->|"✓ Match"| Done
+    L4 -->|"✓ Match"| Done
+    L5 -->|"Match/None"| Done
+
+    style Levels fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
+    style Done fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
+```
+
+| Level | Strategy | LLM Cost | Latency |
+|-------|----------|----------|---------|
+| L1: EXACT_MATCH | ID lookup, exact name | None | ~1ms |
+| L2: HEURISTIC_MATCH | Normalized/fuzzy matching | None | ~5ms |
+| L3: EMBEDDING_MATCH | Vector similarity ≥0.95 | None | ~50ms |
+| L4: LLM_VERIFICATION | Yes/No single candidate | 1 call | ~500ms |
+| L5: LLM_BAKEOFF | Compare multiple candidates | 1 call | ~800ms |
+
+```kotlin
+val resolver = HierarchicalEntityResolver(
+    repository = entityRepository,
+    matchStrategies = defaultMatchStrategies(),
+    llmBakeoff = LlmCandidateBakeoff(modelProvider, promptMode = PromptMode.COMPACT),
+    contextCompressor = ContextCompressor.default(),  // Reduces token usage
+    config = HierarchicalConfig(
+        embeddingAutoAcceptThreshold = 0.95,  // Auto-accept above this
+        embeddingCandidateThreshold = 0.7,    // Consider as candidate above this
+        heuristicOnly = false,                // Set true to disable LLM
+    ),
+)
+```
+
+**Context Compression** reduces LLM token usage by extracting only relevant snippets:
+
+```kotlin
+// Full context (500 tokens):
+// "Hello! How are you? I've been listening to music. I really love Brahms.
+//  His symphonies are incredible... [300 more tokens]"
+
+// Compressed context (~50 tokens):
+// "...I really love Brahms. His symphonies are incredible, especially..."
+
+// Compressor options:
+val compressor = WindowContextCompressor(windowChars = 100, maxSnippets = 3)
+val compressor = SentenceContextCompressor(maxSentences = 3)
+val compressor = AdaptiveContextCompressor()  // Chooses strategy by length
+```
+
 ##### MultiEntityResolver (Composition)
 
 Chain multiple resolvers with fallback logic:
@@ -419,7 +488,7 @@ flowchart LR
 | **NormalizedNameMatchStrategy** | Removes Mr., Mrs., Dr., Jr., III, etc. |
 | **PartialNameMatchStrategy** | Single name matches multi-part name |
 | **FuzzyNameMatchStrategy** | Levenshtein distance within threshold |
-| **LlmCandidateBakeoff** | LLM selects best from multiple candidates |
+| **LlmCandidateBakeoff** | LLM selects best from multiple candidates (COMPACT: ~100 tokens, FULL: ~400 tokens) |
 
 #### Pipeline Integration
 

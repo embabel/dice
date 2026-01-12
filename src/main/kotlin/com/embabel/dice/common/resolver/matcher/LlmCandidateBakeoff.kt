@@ -10,15 +10,37 @@ import org.slf4j.LoggerFactory
 import org.springframework.ai.chat.prompt.Prompt
 
 /**
+ * Prompt mode for LLM bakeoff - controls verbosity vs token usage.
+ */
+enum class PromptMode {
+    /**
+     * Minimal prompts with compressed candidate info.
+     * ~60-80% fewer tokens, suitable for most cases.
+     */
+    COMPACT,
+
+    /**
+     * Full prompts with detailed descriptions and instructions.
+     * More tokens but potentially more accurate for complex cases.
+     */
+    FULL,
+}
+
+/**
  * Uses a cheap/fast LLM to select the best match from multiple candidates.
  * This is more efficient than evaluating candidates one-by-one, and allows
  * the LLM to compare and contrast options.
  *
- * Returns the index of the best matching candidate, or -1 if none match.
+ * Supports two prompt modes:
+ * - **COMPACT**: Minimal prompts (~100-200 tokens) for fast, cheap resolution
+ * - **FULL**: Detailed prompts (~400-600 tokens) for complex disambiguation
+ *
+ * Returns the best matching candidate, or null if none match.
  */
 class LlmCandidateBakeoff(
     private val modelProvider: ModelProvider,
     private val modelName: String = "gpt-4.1-mini",
+    private val promptMode: PromptMode = PromptMode.COMPACT,
 ) {
 
     private val logger = LoggerFactory.getLogger(LlmCandidateBakeoff::class.java)
@@ -90,6 +112,52 @@ class LlmCandidateBakeoff(
         candidates: List<SimilarityResult<NamedEntityData>>,
         sourceText: String? = null,
     ): String {
+        return when (promptMode) {
+            PromptMode.COMPACT -> buildCompactBakeoffPrompt(suggested, candidates, sourceText)
+            PromptMode.FULL -> buildFullBakeoffPrompt(suggested, candidates, sourceText)
+        }
+    }
+
+    /**
+     * Compact prompt: ~100-200 tokens
+     * Focuses on essential info only.
+     */
+    private fun buildCompactBakeoffPrompt(
+        suggested: SuggestedEntity,
+        candidates: List<SimilarityResult<NamedEntityData>>,
+        sourceText: String? = null,
+    ): String {
+        val suggestedType = suggested.labels.firstOrNull() ?: "Entity"
+
+        // One-line per candidate: "1. Name (Type) [score]"
+        val candidateList = candidates.mapIndexed { index, result ->
+            val c = result.match
+            val label = c.labels().firstOrNull {
+                it != ENTITY_LABEL && it != "Entity" && it != "Reference"
+            } ?: "Entity"
+            "${index + 1}. ${c.name} ($label) [${String.format("%.2f", result.score)}]"
+        }.joinToString("\n")
+
+        val context = if (!sourceText.isNullOrBlank()) {
+            "\nContext: ${sourceText.take(200)}${if (sourceText.length > 200) "..." else ""}"
+        } else ""
+
+        return """Match "${suggested.name}" ($suggestedType) to a candidate or NONE.$context
+
+$candidateList
+
+Reply: number or NONE + brief reason"""
+    }
+
+    /**
+     * Full prompt: ~400-600 tokens
+     * Detailed instructions and candidate info.
+     */
+    private fun buildFullBakeoffPrompt(
+        suggested: SuggestedEntity,
+        candidates: List<SimilarityResult<NamedEntityData>>,
+        sourceText: String? = null,
+    ): String {
         val suggestedType = suggested.labels.firstOrNull() ?: "Entity"
 
         val candidateDescriptions = candidates.mapIndexed { index, result ->
@@ -138,6 +206,41 @@ Example: "NONE - None of these works are by the composer discussed in conversati
     }
 
     private fun buildVerificationPrompt(
+        suggested: SuggestedEntity,
+        candidate: NamedEntityData,
+        sourceText: String? = null
+    ): String {
+        return when (promptMode) {
+            PromptMode.COMPACT -> buildCompactVerificationPrompt(suggested, candidate, sourceText)
+            PromptMode.FULL -> buildFullVerificationPrompt(suggested, candidate, sourceText)
+        }
+    }
+
+    /**
+     * Compact verification: ~50 tokens
+     */
+    private fun buildCompactVerificationPrompt(
+        suggested: SuggestedEntity,
+        candidate: NamedEntityData,
+        sourceText: String? = null
+    ): String {
+        val suggestedType = suggested.labels.firstOrNull() ?: "Entity"
+        val candidateType = candidate.labels().firstOrNull {
+            it != ENTITY_LABEL && it != "Entity" && it != "Reference"
+        } ?: "Entity"
+
+        val context = if (!sourceText.isNullOrBlank()) {
+            " Context: ${sourceText.take(100)}..."
+        } else ""
+
+        return """Is "${suggested.name}" ($suggestedType) = "${candidate.name}" ($candidateType)?$context
+Answer: Yes/No + reason"""
+    }
+
+    /**
+     * Full verification: ~200 tokens
+     */
+    private fun buildFullVerificationPrompt(
         suggested: SuggestedEntity,
         candidate: NamedEntityData,
         sourceText: String? = null

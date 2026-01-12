@@ -34,7 +34,13 @@ Use the user's actual name in propositions, not the pronoun.
 Example: If user is "Alice" and says "I love jazz" → extract "Alice loves jazz" with suggestedId pointing to Alice.
 
 {% if model.schemaAdherence.entities %}
-Only extract propositions involving the above entity types.
+**ENTITY MENTION RULES**:
+- You MAY create propositions about anything (periods, genres, styles, concepts, etc.)
+- But ONLY create entity mentions for the schema types listed above
+- If something is NOT a schema type, include it in the proposition text WITHOUT an entity mention
+
+Example: "Alice loves Romantic music" → proposition text only, NO entity mention for "Romantic music"
+Example: "Alice loves Wagner" → proposition WITH entity mention for "Wagner" (Composer)
 {% else %}
 Prefer propositions with the above entity types but feel free to extract IMPORTANT propositions not limited to them.
 {% endif %}

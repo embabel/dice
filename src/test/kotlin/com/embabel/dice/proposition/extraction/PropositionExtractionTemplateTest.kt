@@ -187,7 +187,8 @@ class PropositionExtractionTemplateTest {
                 mapOf("model" to model)
             )
 
-            assertTrue(result.contains("Only extract propositions involving the above entity types"))
+            assertTrue(result.contains("ENTITY MENTION RULES"))
+            assertTrue(result.contains("ONLY create entity mentions for the schema types"))
         }
 
         @Test
@@ -308,7 +309,7 @@ class PropositionExtractionTemplateTest {
             assertTrue(result.contains("\"likes\""))
 
             // Verify includes guidelines
-            assertTrue(result.contains("Extract one proposition per fact"))
+            assertTrue(result.contains("Single fact per proposition"))
             assertTrue(result.contains("SUBJECT"))
             assertTrue(result.contains("OBJECT"))
 
