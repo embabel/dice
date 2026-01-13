@@ -1067,6 +1067,170 @@ com.embabel.dice
     └── EntityResolver
 ```
 
+## REST API
+
+DICE provides REST endpoints for extracting propositions and managing memory. All endpoints are scoped by `contextId`.
+
+### Extraction Endpoints
+
+#### Extract from Text
+
+```bash
+curl -X POST http://localhost:8080/api/v1/contexts/{contextId}/extract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "I love Brahms and his symphonies are incredible",
+    "sourceId": "conversation-123",
+    "knownEntities": [
+      {"id": "user-1", "name": "Alice", "type": "User", "role": "SUBJECT"}
+    ]
+  }'
+```
+
+Response:
+```json
+{
+  "chunkId": "chunk-abc",
+  "contextId": "user-session-123",
+  "propositions": [
+    {
+      "id": "prop-xyz",
+      "text": "User loves Brahms",
+      "mentions": [{"name": "Brahms", "type": "Composer", "role": "OBJECT"}],
+      "confidence": 0.95,
+      "action": "CREATED"
+    }
+  ],
+  "entities": {"created": ["composer-brahms"], "resolved": [], "failed": []},
+  "revision": {"created": 1, "merged": 0, "reinforced": 0, "contradicted": 0, "generalized": 0}
+}
+```
+
+#### Extract from File
+
+Supports PDF, Word, Markdown, HTML, and other formats via Apache Tika:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/contexts/{contextId}/extract/file \
+  -F "file=@document.pdf" \
+  -F "sourceId=doc-123"
+```
+
+Response:
+```json
+{
+  "sourceId": "doc-123",
+  "contextId": "user-session-123",
+  "filename": "document.pdf",
+  "chunksProcessed": 5,
+  "totalPropositions": 12,
+  "chunks": [
+    {"chunkId": "chunk-1", "propositionCount": 3, "preview": "Introduction to classical music..."}
+  ],
+  "entities": {"created": ["composer-brahms"], "resolved": ["composer-wagner"], "failed": []},
+  "revision": {"created": 10, "merged": 2, "reinforced": 0, "contradicted": 0, "generalized": 0}
+}
+```
+
+### Memory Endpoints
+
+#### List Propositions
+
+```bash
+# Get all propositions for context
+curl http://localhost:8080/api/v1/contexts/{contextId}/memory
+
+# Filter by status and confidence
+curl "http://localhost:8080/api/v1/contexts/{contextId}/memory?status=ACTIVE&minConfidence=0.8&limit=50"
+```
+
+#### Get Proposition by ID
+
+```bash
+curl http://localhost:8080/api/v1/contexts/{contextId}/memory/{propositionId}
+```
+
+#### Create Proposition Directly
+
+```bash
+curl -X POST http://localhost:8080/api/v1/contexts/{contextId}/memory \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "User prefers morning meetings",
+    "mentions": [
+      {"name": "User", "type": "User", "role": "SUBJECT"}
+    ],
+    "confidence": 0.9,
+    "reasoning": "Explicitly stated preference"
+  }'
+```
+
+#### Delete Proposition
+
+```bash
+curl -X DELETE http://localhost:8080/api/v1/contexts/{contextId}/memory/{propositionId}
+```
+
+#### Search by Similarity
+
+```bash
+curl -X POST http://localhost:8080/api/v1/contexts/{contextId}/memory/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "music preferences",
+    "topK": 10,
+    "similarityThreshold": 0.7,
+    "filters": {
+      "status": ["ACTIVE"],
+      "minConfidence": 0.5
+    }
+  }'
+```
+
+#### Get Propositions by Entity
+
+```bash
+curl http://localhost:8080/api/v1/contexts/{contextId}/memory/entity/{entityType}/{entityId}
+
+# Example
+curl http://localhost:8080/api/v1/contexts/user-123/memory/entity/Composer/composer-brahms
+```
+
+### Spring Boot Integration
+
+Controllers auto-configure when required beans are present:
+
+```kotlin
+@Configuration
+class DiceApiConfig {
+
+    @Bean
+    fun propositionRepository(embeddingService: EmbeddingService): PropositionRepository =
+        InMemoryPropositionRepository(embeddingService)
+
+    @Bean
+    fun propositionPipeline(
+        extractor: PropositionExtractor,
+        reviser: PropositionReviser,
+        repository: PropositionRepository,
+    ): PropositionPipeline = PropositionPipeline
+        .withExtractor(extractor)
+        .withRevision(reviser, repository)
+
+    @Bean
+    fun entityResolver(): EntityResolver = AlwaysCreateEntityResolver
+
+    @Bean
+    fun schema(): DataDictionary = DataDictionary.fromClasses(
+        Customer::class.java,
+        Product::class.java,
+    )
+}
+```
+
+- `MemoryController` loads when `PropositionRepository` is available
+- `PropositionPipelineController` loads when `PropositionPipeline` is available (via `@ConditionalOnBean`)
+
 ## Installation
 
 Add to your `pom.xml`:
