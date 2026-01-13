@@ -3,6 +3,7 @@ package com.embabel.dice.pipeline
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
+import com.embabel.dice.common.resolver.KnownEntityResolver
 import com.embabel.dice.common.resolver.MultiEntityResolver
 import com.embabel.dice.proposition.PropositionExtractor
 import com.embabel.dice.proposition.PropositionRepository
@@ -94,8 +95,9 @@ class PropositionPipeline private constructor(
         val suggestedEntities = extractor.toSuggestedEntities(suggestedPropositions, context, chunk.text)
         logger.debug("Created {} suggested entities", suggestedEntities.suggestedEntities.size)
 
-        // Step 3: Resolve entities using existing resolver
-        val resolutions = context.entityResolver.resolve(suggestedEntities, context.schema)
+        // Step 3: Resolve entities using existing resolver (wrapped with known entities)
+        val resolver = KnownEntityResolver.withKnownEntities(context.knownEntities, context.entityResolver)
+        val resolutions = resolver.resolve(suggestedEntities, context.schema)
         logger.debug("Resolved {} entities", resolutions.resolutions.size)
 
         // Step 4: Apply resolutions to create final propositions

@@ -64,6 +64,15 @@ data class PropositionQuery(
     }
 
     // ========================================================================
+    // Java-friendly accessors (ContextId is an inline class, so getter is mangled)
+    // ========================================================================
+
+    /**
+     * Get the context ID value as a String (Java-friendly).
+     */
+    fun getContextIdValue(): String? = contextId?.value
+
+    // ========================================================================
     // Wither methods for Java-friendly builder pattern
     // ========================================================================
 

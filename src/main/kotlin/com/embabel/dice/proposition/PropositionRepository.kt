@@ -62,6 +62,27 @@ interface PropositionRepository : CoreSearchOperations {
     ): List<SimilarityResult<Proposition>>
 
     /**
+     * Find propositions similar to the given text, filtered by a PropositionQuery.
+     * Implementations should optimize this for their backend (e.g., filter in the database).
+     *
+     * Default implementation delegates to the composable query() method after vector search.
+     * Override in implementations to push filtering to the database for better performance.
+     *
+     * @param textSimilaritySearchRequest The similarity search parameters
+     * @param query The query to filter results
+     * @return Similar propositions matching the query, ordered by similarity
+     */
+    fun findSimilarWithScores(
+        textSimilaritySearchRequest: TextSimilaritySearchRequest,
+        query: PropositionQuery,
+    ): List<SimilarityResult<Proposition>> {
+        // Default: get vector results then filter using query criteria
+        val vectorResults = findSimilarWithScores(textSimilaritySearchRequest)
+        val matchingIds = this.query(query).map { it.id }.toSet()
+        return vectorResults.filter { it.match.id in matchingIds }
+    }
+
+    /**
      * Find all propositions with the given status.
      */
     fun findByStatus(status: PropositionStatus): List<Proposition>

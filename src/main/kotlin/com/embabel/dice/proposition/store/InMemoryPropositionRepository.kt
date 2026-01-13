@@ -6,6 +6,7 @@ import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import java.util.concurrent.ConcurrentHashMap
@@ -50,6 +51,34 @@ class InMemoryPropositionRepository(
         val minSimilarity = textSimilaritySearchRequest.similarityThreshold
 
         return propositions.values
+            .mapNotNull { prop ->
+                val propEmbedding = embeddings[prop.id] ?: return@mapNotNull null
+                val similarity = cosineSimilarity(queryEmbedding, propEmbedding)
+                if (similarity >= minSimilarity) SimilarityResult(match = prop, score = similarity) else null
+            }
+            .sortedByDescending { it.score }
+            .take(textSimilaritySearchRequest.topK)
+    }
+
+    override fun findSimilarWithScores(
+        textSimilaritySearchRequest: TextSimilaritySearchRequest,
+        query: PropositionQuery,
+    ): List<SimilarityResult<Proposition>> {
+        if (propositions.isEmpty()) return emptyList()
+
+        val queryEmbedding = embeddingService.embed(textSimilaritySearchRequest.query)
+        val minSimilarity = textSimilaritySearchRequest.similarityThreshold
+
+        // Pre-filter propositions based on query before computing similarities
+        val candidates = propositions.values.filter { prop ->
+            (query.contextId == null || prop.contextId == query.contextId) &&
+                (query.status == null || prop.status == query.status) &&
+                (query.minLevel == null || prop.level >= query.minLevel) &&
+                (query.maxLevel == null || prop.level <= query.maxLevel) &&
+                (query.entityId == null || prop.mentions.any { it.resolvedId == query.entityId })
+        }
+
+        return candidates
             .mapNotNull { prop ->
                 val propEmbedding = embeddings[prop.id] ?: return@mapNotNull null
                 val similarity = cosineSimilarity(queryEmbedding, propEmbedding)

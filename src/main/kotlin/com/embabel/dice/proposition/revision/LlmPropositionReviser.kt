@@ -6,6 +6,7 @@ import com.embabel.common.core.types.SimilarityCutoff
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.util.trim
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import org.slf4j.LoggerFactory
@@ -88,14 +89,18 @@ data class LlmPropositionReviser(
         newProposition: Proposition,
         repository: PropositionRepository,
     ): RevisionResult {
-        // 1. Retrieve similar propositions using vector similarity with threshold
+        // 1. Retrieve similar propositions within the SAME CONTEXT using vector similarity
         val similarWithScores = repository.findSimilarWithScores(
             TextSimilaritySearchRequest(
                 query = newProposition.text,
                 topK = topK,
                 similarityThreshold = similarityThreshold,
-            )
-        ).filter { it.match.status == PropositionStatus.ACTIVE }
+            ),
+            PropositionQuery(
+                contextId = newProposition.contextId,
+                status = PropositionStatus.ACTIVE,
+            ),
+        )
 
         if (similarWithScores.isEmpty()) {
             // No similar propositions above threshold - return as new (skip LLM call)
