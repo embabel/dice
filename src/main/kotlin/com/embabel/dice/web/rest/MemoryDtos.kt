@@ -15,11 +15,17 @@ import java.time.Instant
 
 /**
  * Request to extract propositions from text.
+ * @param text The text to extract propositions from
+ * @param sourceId Optional source identifier for provenance
+ * @param knownEntities Entities to associate with extracted propositions (e.g., the user)
+ * @param schemaName Optional schema name for extraction. Uses default if not specified.
+ * @param options Extraction options
  */
 data class ExtractRequest(
     val text: String,
     val sourceId: String? = null,
     val knownEntities: List<KnownEntityDto> = emptyList(),
+    val schemaName: String? = null,
     val options: ExtractOptions = ExtractOptions(),
 )
 
@@ -41,7 +47,8 @@ data class KnownEntityDto(
     val id: String,
     val name: String,
     val type: String,
-    val role: String = "REFERENCE",
+    val description: String? = null,
+    val role: String = "A referenced entity",
 )
 
 /**

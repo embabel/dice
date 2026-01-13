@@ -1231,6 +1231,164 @@ class DiceApiConfig {
 - `MemoryController` loads when `PropositionRepository` is available
 - `PropositionPipelineController` loads when `PropositionPipeline` is available (via `@ConditionalOnBean`)
 
+### API Key Security
+
+DICE provides API key authentication for the REST endpoints. Enable it via configuration:
+
+#### Quick Start
+
+```yaml
+# application.yml
+dice:
+  security:
+    api-key:
+      enabled: true
+      keys:
+        - sk-your-secret-key-here
+        - sk-another-key-for-different-client
+```
+
+Then include the API key in requests:
+
+```bash
+curl -H "X-API-Key: sk-your-secret-key-here" \
+  http://localhost:8080/api/v1/contexts/user-123/memory
+```
+
+#### Configuration Options
+
+```yaml
+dice:
+  security:
+    api-key:
+      enabled: true                    # Enable API key auth (default: false)
+      keys:                            # List of valid API keys
+        - sk-key-1
+        - sk-key-2
+      header-name: X-API-Key           # Header name (default: X-API-Key)
+      path-patterns:                   # Paths to protect (default: /api/v1/**)
+        - /api/v1/**
+```
+
+#### Custom API Key Authenticator
+
+For production, implement your own `ApiKeyAuthenticator` to validate keys against a database or secrets manager:
+
+```kotlin
+@Component
+class DatabaseApiKeyAuthenticator(
+    private val apiKeyRepository: ApiKeyRepository,
+) : ApiKeyAuthenticator {
+
+    override fun authenticate(apiKey: String): AuthResult {
+        val keyEntity = apiKeyRepository.findByKey(apiKey)
+            ?: return AuthResult.Unauthorized("Invalid API key")
+
+        if (keyEntity.isExpired()) {
+            return AuthResult.Unauthorized("API key expired")
+        }
+
+        return AuthResult.Authorized(
+            principal = keyEntity.clientId,
+            metadata = mapOf("scopes" to keyEntity.scopes),
+        )
+    }
+}
+```
+
+When you provide your own `ApiKeyAuthenticator` bean, it takes precedence over the in-memory implementation.
+
+#### Spring Security Integration
+
+For more control (e.g., combining with other auth methods), integrate with Spring Security directly:
+
+```kotlin
+@Configuration
+@EnableWebSecurity
+class SecurityConfig {
+
+    @Bean
+    fun apiKeyAuthenticator(): ApiKeyAuthenticator =
+        InMemoryApiKeyAuthenticator.withKey("sk-your-secret-key")
+
+    @Bean
+    fun securityFilterChain(
+        http: HttpSecurity,
+        authenticator: ApiKeyAuthenticator,
+    ): SecurityFilterChain {
+        val apiKeyFilter = ApiKeyAuthenticationFilter(
+            authenticator = authenticator,
+            pathPatterns = listOf("/api/v1/**"),
+        )
+
+        return http
+            .csrf { it.disable() }
+            .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
+            .authorizeHttpRequests { auth ->
+                auth.requestMatchers("/api/v1/**").authenticated()
+                auth.requestMatchers("/actuator/health").permitAll()
+                auth.anyRequest().permitAll()
+            }
+            .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter::class.java)
+            .build()
+    }
+}
+```
+
+**Key points:**
+- Disable CSRF for stateless API
+- Use `STATELESS` session management
+- Add the `ApiKeyAuthenticationFilter` before Spring's `UsernamePasswordAuthenticationFilter`
+- Configure path patterns to match your API routes
+
+#### Disabling OAuth/Form Login
+
+If your application has OAuth or form login configured elsewhere, exclude the DICE endpoints:
+
+```kotlin
+@Configuration
+@EnableWebSecurity
+class SecurityConfig {
+
+    @Bean
+    fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
+        return http
+            // API endpoints use API key auth
+            .securityMatcher("/api/v1/**")
+            .csrf { it.disable() }
+            .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
+            .authorizeHttpRequests { it.anyRequest().authenticated() }
+            .addFilterBefore(apiKeyFilter(), UsernamePasswordAuthenticationFilter::class.java)
+            // Disable OAuth for these endpoints
+            .oauth2Login { it.disable() }
+            .formLogin { it.disable() }
+            .build()
+    }
+}
+```
+
+Or use multiple `SecurityFilterChain` beans with different matchers:
+
+```kotlin
+@Bean
+@Order(1)
+fun apiSecurityFilterChain(http: HttpSecurity): SecurityFilterChain {
+    return http
+        .securityMatcher("/api/v1/**")
+        // API key auth config...
+        .build()
+}
+
+@Bean
+@Order(2)
+fun webSecurityFilterChain(http: HttpSecurity): SecurityFilterChain {
+    return http
+        .securityMatcher("/**")
+        // OAuth/form login config for web UI...
+        .build()
+}
+```
+
 ## Installation
 
 Add to your `pom.xml`:

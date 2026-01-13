@@ -1,7 +1,6 @@
 package com.embabel.dice.web.rest
 
 import com.embabel.agent.core.ContextId
-import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.ingestion.ChunkTransformer
 import com.embabel.agent.rag.ingestion.ContentChunker
 import com.embabel.agent.rag.ingestion.HierarchicalContentReader
@@ -13,6 +12,7 @@ import com.embabel.dice.common.ExistingEntity
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.KnownEntity
 import com.embabel.dice.common.NewEntity
+import com.embabel.dice.common.SchemaRegistry
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
@@ -36,7 +36,7 @@ class PropositionPipelineController(
     private val propositionPipeline: PropositionPipeline,
     private val propositionRepository: PropositionRepository,
     private val entityResolver: EntityResolver,
-    private val schema: DataDictionary,
+    private val schemaRegistry: SchemaRegistry,
     private val contentReader: HierarchicalContentReader = TikaHierarchicalContentReader(),
     private val contentChunker: ContentChunker = InMemoryContentChunker(
         config = ContentChunker.Config(),
@@ -61,7 +61,7 @@ class PropositionPipelineController(
             parentId = request.sourceId ?: "api-request",
         )
 
-        val context = buildContext(contextId, request.knownEntities)
+        val context = buildContext(contextId, request.knownEntities, request.schemaName)
         val result = propositionPipeline.processChunk(chunk, context)
 
         // Save propositions
@@ -82,6 +82,7 @@ class PropositionPipelineController(
         @RequestPart("file") file: MultipartFile,
         @RequestPart("sourceId", required = false) sourceId: String?,
         @RequestPart("knownEntities", required = false) knownEntitiesJson: String?,
+        @RequestPart("schemaName", required = false) schemaName: String?,
     ): ResponseEntity<FileExtractResponse> {
         val filename = file.originalFilename ?: "uploaded-file"
         logger.info("Extracting propositions from file '{}' for context: {}", filename, contextId)
@@ -111,7 +112,7 @@ class PropositionPipelineController(
         }
 
         // Process each chunk through the pipeline
-        val context = buildContext(contextId, emptyList())
+        val context = buildContext(contextId, emptyList(), schemaName)
         val chunkResults = chunks.map { chunk ->
             val result = propositionPipeline.processChunk(chunk, context)
 
@@ -183,17 +184,23 @@ class PropositionPipelineController(
         return ResponseEntity.ok(response)
     }
 
-    private fun buildContext(contextId: String, knownEntityDtos: List<KnownEntityDto>): SourceAnalysisContext {
+    private fun buildContext(
+        contextId: String,
+        knownEntityDtos: List<KnownEntityDto>,
+        schemaName: String? = null,
+    ): SourceAnalysisContext {
         val knownEntities = knownEntityDtos.map { dto ->
             val entity = SimpleNamedEntityData(
                 id = dto.id,
                 name = dto.name,
-                description = dto.name,
+                description = dto.description ?: dto.name,
                 labels = setOf(dto.type),
                 properties = emptyMap(),
             )
             KnownEntity(entity = entity, role = dto.role)
         }
+
+        val schema = schemaRegistry.getOrDefault(schemaName)
 
         return SourceAnalysisContext(
             schema = schema,

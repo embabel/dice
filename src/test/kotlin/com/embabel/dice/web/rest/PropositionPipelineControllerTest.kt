@@ -7,14 +7,10 @@ import com.embabel.dice.common.NewEntity
 import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
+import com.embabel.dice.common.support.InMemorySchemaRegistry
 import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
-import com.embabel.dice.proposition.EntityMention
-import com.embabel.dice.proposition.MentionRole
-import com.embabel.dice.proposition.Proposition
-import com.embabel.dice.proposition.SuggestedMention
-import com.embabel.dice.proposition.SuggestedProposition
-import com.embabel.dice.proposition.SuggestedPropositions
+import com.embabel.dice.proposition.*
 import com.fasterxml.jackson.annotation.JsonClassDescription
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
@@ -27,7 +23,8 @@ import org.springframework.http.MediaType
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.*
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 
 /**
@@ -39,7 +36,7 @@ class PropositionPipelineControllerTest {
     private lateinit var propositionRepository: TestPropositionRepository
     private lateinit var propositionPipeline: PropositionPipeline
     private lateinit var entityResolver: EntityResolver
-    private lateinit var schema: DataDictionary
+    private lateinit var schemaRegistry: InMemorySchemaRegistry
     private lateinit var objectMapper: ObjectMapper
 
     @JsonClassDescription("A composer of music")
@@ -53,7 +50,8 @@ class PropositionPipelineControllerTest {
         propositionRepository = TestPropositionRepository()
         propositionPipeline = mockk<PropositionPipeline>()
         entityResolver = AlwaysCreateEntityResolver
-        schema = DataDictionary.fromClasses(Composer::class.java, Work::class.java)
+        val schema = DataDictionary.fromClasses(Composer::class.java, Work::class.java)
+        schemaRegistry = InMemorySchemaRegistry(schema)
 
         objectMapper = ObjectMapper()
             .registerModule(KotlinModule.Builder().build())
@@ -63,7 +61,7 @@ class PropositionPipelineControllerTest {
             propositionPipeline = propositionPipeline,
             propositionRepository = propositionRepository,
             entityResolver = entityResolver,
-            schema = schema,
+            schemaRegistry = schemaRegistry,
         )
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
@@ -105,12 +103,14 @@ class PropositionPipelineControllerTest {
             entityResolutions = Resolutions(
                 chunkIds = setOf("chunk-123"),
                 resolutions = listOf(
-                    NewEntity(SuggestedEntity(
-                        labels = listOf("Composer"),
-                        name = "Brahms",
-                        summary = "A composer",
-                        chunkId = "chunk-123",
-                    ))
+                    NewEntity(
+                        SuggestedEntity(
+                            labels = listOf("Composer"),
+                            name = "Brahms",
+                            summary = "A composer",
+                            chunkId = "chunk-123",
+                        )
+                    )
                 ),
             ),
             propositions = listOf(mockProposition),
