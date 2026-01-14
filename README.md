@@ -1669,9 +1669,8 @@ Add to your `pom.xml`:
 ## Technology Stack
 
 - **tuProlog (2p-kt)**: Pure Kotlin Prolog engine for inference
-- **Spring Boot**: Application framework
-- **Spring Shell**: Interactive CLI (not brought into downstream projects)
-- **OpenAI/Anthropic**: LLM providers for extraction and Q&A
+- **Spring Framework**: Dependency injection and web support (optional)
+- **Embabel Agent**: AI/LLM integration framework
 - **Kotlin**: Primary language
 
 ## References
