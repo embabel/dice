@@ -34,7 +34,7 @@ data class AgenticSearchResult(
  * full control to craft queries, examine results, and iteratively refine searches.
  *
  * ## When to Use
- * Add this as the last searcher in [EscalatingEntityResolver] when:
+ * Add this as the last searcher in [com.embabel.dice.common.resolver.EscalatingEntityResolver] when:
  * - Heuristic matching (exact, normalized, partial, fuzzy, vector) is insufficient
  * - Entities have many alternate names or translations (e.g., musical works, places)
  * - Semantic understanding is required to match entities
@@ -102,6 +102,7 @@ class AgenticCandidateSearcher(
             // Run the agentic search with structured output
             val result = ai
                 .withLlm(llmOptions)
+                .withId("agentic-candidate-searcher")
                 .withReference(rag)
                 .createObject(buildPrompt(suggested, entityType), AgenticSearchResult::class.java)
 

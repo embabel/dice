@@ -6,6 +6,7 @@ import com.embabel.agent.rag.model.NamedEntityData.Companion.ENTITY_LABEL
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.dice.common.SuggestedEntity
+import com.fasterxml.jackson.annotation.JsonPropertyDescription
 import org.slf4j.LoggerFactory
 
 /**
@@ -26,10 +27,30 @@ enum class PromptMode {
 }
 
 /**
+ * Structured response from the bakeoff LLM.
+ */
+data class BakeoffSelection(
+    @field:JsonPropertyDescription("The candidate number (1-based) of the best match, or null if none match")
+    val selectedCandidate: Int?,
+    @field:JsonPropertyDescription("Brief explanation of why this candidate was selected or why no match was found")
+    val reason: String,
+)
+
+/**
+ * Structured response for single candidate verification.
+ */
+data class VerificationResult(
+    @field:JsonPropertyDescription("True if the candidate matches the suggested entity")
+    val isMatch: Boolean,
+    @field:JsonPropertyDescription("Brief explanation of why it matches or doesn't match")
+    val reason: String,
+)
+
+/**
  * Uses an LLM to select the best match from multiple candidates.
  *
  * This is more efficient than evaluating candidates one-by-one, and allows
- * the LLM to compare and contrast options.
+ * the LLM to compare and contrast options. Uses structured output for reliable parsing.
  *
  * Supports two prompt modes:
  * - **COMPACT**: Minimal prompts (~100-200 tokens) for fast, cheap resolution
@@ -67,14 +88,28 @@ class LlmCandidateBakeoff(
         val promptText = buildBakeoffPrompt(suggested, candidates, sourceText)
 
         return try {
-            val response = ai.withLlm(llmOptions).generateText(promptText)
+            val result = ai.withLlm(llmOptions)
+                .withId("candidate-bakeoff-${suggested.id}")
+                .createObject(promptText, BakeoffSelection::class.java)
 
             logger.info(
-                "LLM bakeoff for '{}' ({} candidates): {}",
-                suggested.name, candidates.size, response.take(100)
+                "LLM bakeoff for '{}' ({} candidates): selected={}, reason={}",
+                suggested.name, candidates.size, result.selectedCandidate, result.reason
             )
 
-            parseSelection(response, candidates)
+            if (result.selectedCandidate != null) {
+                val index = result.selectedCandidate - 1  // Convert to 0-based
+                if (index in candidates.indices) {
+                    logger.debug("LLM selected candidate {}: {}", result.selectedCandidate, candidates[index].match.name)
+                    candidates[index].match
+                } else {
+                    logger.warn("LLM selected invalid candidate number: {}", result.selectedCandidate)
+                    null
+                }
+            } else {
+                logger.debug("LLM selected NONE of the candidates: {}", result.reason)
+                null
+            }
         } catch (e: Exception) {
             logger.warn("LLM bakeoff failed for '{}': {}", suggested.name, e.message)
             null
@@ -89,11 +124,15 @@ class LlmCandidateBakeoff(
         val promptText = buildVerificationPrompt(suggested, candidate, sourceText)
 
         return try {
-            val response = ai.withLlm(llmOptions).generateText(promptText)
-            val answer = response.trim().lowercase()
+            val result = ai.withLlm(llmOptions)
+                .withId("candidate-verify-${suggested.id}")
+                .createObject(promptText, VerificationResult::class.java)
 
-            logger.debug("LLM verification for '{}' vs '{}': {}", suggested.name, candidate.name, answer)
-            answer.startsWith("yes")
+            logger.debug(
+                "LLM verification for '{}' vs '{}': match={}, reason={}",
+                suggested.name, candidate.name, result.isMatch, result.reason
+            )
+            result.isMatch
         } catch (e: Exception) {
             logger.warn("LLM verification failed: {}", e.message)
             false
@@ -135,11 +174,11 @@ class LlmCandidateBakeoff(
             "\nContext: ${sourceText.take(200)}${if (sourceText.length > 200) "..." else ""}"
         } else ""
 
-        return """Match "${suggested.name}" ($suggestedType) to a candidate or NONE.$context
+        return """Match "${suggested.name}" ($suggestedType) to a candidate or select none.$context
 
 $candidateList
 
-Reply: number or NONE + brief reason"""
+Select the candidate number (1-${candidates.size}) that matches, or null if none match."""
     }
 
     /**
@@ -189,13 +228,9 @@ Rules:
 3. For WORKS: Use conversation context - if discussing a composer, the work should be BY that composer (check description)
 4. Coincidental word overlap is NOT a match (e.g., "Wagner" ≠ "Piece about Wagner")
 5. Common alternate names count as matches (e.g., "Glazunov's violin concerto" = "Violin Concerto in A minor" by Glazunov)
-6. If NONE of the candidates are a true match, say "NONE"
+6. If NONE of the candidates are a true match, select null
 
-Answer with ONLY the candidate number (1, 2, 3, etc.) or "NONE", followed by a brief reason.
-Example: "2 - Johannes Brahms is the composer commonly known as Brahms"
-Example: "3 - This violin concerto is by Glazunov as mentioned in conversation"
-Example: "NONE - None of these works are by the composer discussed in conversation"
-"""
+Select the candidate number (1-${candidates.size}) that matches, or null if none match."""
     }
 
     private fun buildVerificationPrompt(
@@ -226,8 +261,9 @@ Example: "NONE - None of these works are by the composer discussed in conversati
             " Context: ${sourceText.take(100)}..."
         } else ""
 
-        return """Is "${suggested.name}" ($suggestedType) = "${candidate.name}" ($candidateType)?$context
-Answer: Yes/No + reason"""
+        return """Is "${suggested.name}" ($suggestedType) the same entity as "${candidate.name}" ($candidateType)?$context
+
+Determine if these refer to the same entity."""
     }
 
     /**
@@ -257,33 +293,7 @@ DATABASE ENTITY:
 - Type(s): $candidateLabels
 - Description: ${candidate.description.ifBlank { "None" }}
 
-Answer "Yes" or "No" with brief reason. Types must match (Composer ≠ Work).
-For works, verify the composer matches the conversation context.
-"""
-    }
-
-    private fun parseSelection(
-        answer: String,
-        candidates: List<SimilarityResult<NamedEntityData>>,
-    ): NamedEntityData? {
-        val trimmed = answer.trim().lowercase()
-
-        if (trimmed.startsWith("none")) {
-            logger.debug("LLM selected NONE of the candidates")
-            return null
-        }
-
-        // Try to extract a number from the start of the answer
-        val numberMatch = Regex("^(\\d+)").find(trimmed)
-        if (numberMatch != null) {
-            val index = numberMatch.groupValues[1].toInt() - 1  // Convert to 0-based
-            if (index in candidates.indices) {
-                logger.debug("LLM selected candidate {}: {}", index + 1, candidates[index].match.name)
-                return candidates[index].match
-            }
-        }
-
-        logger.warn("Could not parse LLM selection: {}", answer.take(50))
-        return null
+Determine if these refer to the same entity. Types must match (Composer ≠ Work).
+For works, verify the composer matches the conversation context."""
     }
 }
