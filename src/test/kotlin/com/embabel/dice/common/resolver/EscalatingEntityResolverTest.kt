@@ -20,7 +20,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
-class HierarchicalEntityResolverTest {
+class EscalatingEntityResolverTest {
 
     private lateinit var repository: NamedEntityDataRepository
     private lateinit var schema: DataDictionary
@@ -71,9 +71,9 @@ class HierarchicalEntityResolverTest {
             // Text search returns exact match
             every { repository.textSearch(any()) } returns listOf(SimilarityResult(brahmsEntity, 1.0))
 
-            val resolver = HierarchicalEntityResolver(
+            val resolver = EscalatingEntityResolver(
                 repository = repository,
-                config = HierarchicalConfig(useVectorSearch = false),
+                config = EscalatingEntityResolver.Config(useVectorSearch = false),
             )
 
             val suggested = suggestedEntity("Johannes Brahms")
@@ -97,9 +97,9 @@ class HierarchicalEntityResolverTest {
 
             every { repository.findById("brahms-123") } returns brahmsEntity
 
-            val resolver = HierarchicalEntityResolver(
+            val resolver = EscalatingEntityResolver(
                 repository = repository,
-                config = HierarchicalConfig(useTextSearch = false, useVectorSearch = false),
+                config = EscalatingEntityResolver.Config(useTextSearch = false, useVectorSearch = false),
             )
 
             val result = resolver.resolve(suggestedEntities(suggestedWithId), schema)
@@ -118,14 +118,14 @@ class HierarchicalEntityResolverTest {
             // Search returns candidate that matches via heuristic strategies
             every { repository.textSearch(any()) } returns listOf(SimilarityResult(brahmsEntity, 0.8))
 
-            val resolver = HierarchicalEntityResolver(
+            val resolver = EscalatingEntityResolver(
                 repository = repository,
                 matchStrategies = ChainedEntityMatchingStrategy.of(
                     ExactNameEntityMatchingStrategy(),
                     NormalizedNameEntityMatchingStrategy(),
                     PartialNameEntityMatchingStrategy(),
                 ),
-                config = HierarchicalConfig(useVectorSearch = false),
+                config = EscalatingEntityResolver.Config(useVectorSearch = false),
             )
 
             // "Brahms" should match "Johannes Brahms" via PartialNameMatchStrategy
@@ -146,10 +146,10 @@ class HierarchicalEntityResolverTest {
             every { repository.textSearch(any()) } returns emptyList()
             every { repository.vectorSearch(any()) } returns listOf(SimilarityResult(brahmsEntity, 0.98))
 
-            val resolver = HierarchicalEntityResolver(
+            val resolver = EscalatingEntityResolver(
                 repository = repository,
                 matchStrategies = ChainedEntityMatchingStrategy.of(), // No heuristic match
-                config = HierarchicalConfig(
+                config = EscalatingEntityResolver.Config(
                     useTextSearch = true,
                     useVectorSearch = true,
                     embeddingAutoAcceptThreshold = 0.95,
@@ -169,11 +169,11 @@ class HierarchicalEntityResolverTest {
             every { repository.textSearch(any()) } returns emptyList()
             every { repository.vectorSearch(any()) } returns listOf(SimilarityResult(brahmsEntity, 0.80))
 
-            val resolver = HierarchicalEntityResolver(
+            val resolver = EscalatingEntityResolver(
                 repository = repository,
                 matchStrategies = ChainedEntityMatchingStrategy.of(),
                 llmBakeoff = null, // No LLM fallback
-                config = HierarchicalConfig(
+                config = EscalatingEntityResolver.Config(
                     useTextSearch = true,
                     useVectorSearch = true,
                     embeddingAutoAcceptThreshold = 0.95,
@@ -197,11 +197,11 @@ class HierarchicalEntityResolverTest {
         fun `never calls LLM in heuristic-only mode`() {
             every { repository.textSearch(any()) } returns listOf(SimilarityResult(brahmsEntity, 0.7))
 
-            val resolver = HierarchicalEntityResolver(
+            val resolver = EscalatingEntityResolver(
                 repository = repository,
                 matchStrategies = ChainedEntityMatchingStrategy.of(),
                 llmBakeoff = null,
-                config = HierarchicalConfig(
+                config = EscalatingEntityResolver.Config(
                     useVectorSearch = false,
                     heuristicOnly = true,
                 ),
@@ -224,9 +224,9 @@ class HierarchicalEntityResolverTest {
             every { repository.textSearch(any()) } returns emptyList()
             every { repository.vectorSearch(any()) } returns emptyList()
 
-            val resolver = HierarchicalEntityResolver(
+            val resolver = EscalatingEntityResolver(
                 repository = repository,
-                config = HierarchicalConfig(),
+                config = EscalatingEntityResolver.Config(),
             )
 
             val suggested = suggestedEntity("Completely Unknown Composer")
@@ -252,9 +252,9 @@ class HierarchicalEntityResolverTest {
             every { repository.textSearch(match { it.query.contains("Unknown") }) } returns emptyList()
             every { repository.vectorSearch(any()) } returns emptyList()
 
-            val resolver = HierarchicalEntityResolver(
+            val resolver = EscalatingEntityResolver(
                 repository = repository,
-                config = HierarchicalConfig(useVectorSearch = true),
+                config = EscalatingEntityResolver.Config(useVectorSearch = true),
             )
 
             val entities = suggestedEntities(
@@ -280,10 +280,10 @@ class HierarchicalEntityResolverTest {
             every { repository.textSearch(any()) } returns emptyList()
             every { repository.vectorSearch(any()) } returns emptyList()
 
-            val resolver = HierarchicalEntityResolver(
+            val resolver = EscalatingEntityResolver(
                 repository = repository,
                 contextCompressor = compressor,
-                config = HierarchicalConfig(),
+                config = EscalatingEntityResolver.Config(),
             )
 
             val entities = SuggestedEntities(
@@ -302,7 +302,7 @@ class HierarchicalEntityResolverTest {
 
         @Test
         fun `create factory method works`() {
-            val resolver = HierarchicalEntityResolver.create(repository)
+            val resolver = EscalatingEntityResolver.create(repository)
 
             assertNotNull(resolver)
         }

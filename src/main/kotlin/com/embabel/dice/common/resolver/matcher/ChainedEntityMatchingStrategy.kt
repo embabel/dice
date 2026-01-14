@@ -17,11 +17,14 @@ import com.embabel.dice.common.resolver.MatchResult
  *
  * Java usage:
  * ```java
- * ChainingMatchStrategy strategy = ChainingMatchStrategy.of(
+ * ChainedEntityMatchingStrategy strategy = ChainedEntityMatchingStrategy.of(
  *     new LabelCompatibilityStrategy(),
- *     new ExactNameMatchStrategy()
+ *     new ExactNameEntityMatchingStrategy()
  * );
  * boolean matches = strategy.matches(suggested, candidate, schema);
+ *
+ * // Or use defaults:
+ * ChainedEntityMatchingStrategy defaults = DefaultEntityMatchingStrategies.create();
  * ```
  */
 class ChainedEntityMatchingStrategy(
@@ -61,13 +64,6 @@ class ChainedEntityMatchingStrategy(
         candidate: NamedEntityData,
         schema: DataDictionary,
     ): Boolean = evaluate(suggested, candidate, schema) == MatchResult.Match
-
-    /**
-     * Find a strategy of the specified type within this chain.
-     * Returns null if no strategy of that type is present.
-     */
-    inline fun <reified T : EntityMatchingStrategy> findStrategy(): T? =
-        strategies.filterIsInstance<T>().firstOrNull()
 
     /**
      * Add a strategy to the beginning of this chain, returning a new chain.

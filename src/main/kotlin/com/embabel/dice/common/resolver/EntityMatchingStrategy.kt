@@ -4,11 +4,7 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.resolver.matcher.ChainedEntityMatchingStrategy
-import com.embabel.dice.common.resolver.matcher.ExactNameEntityMatchingStrategy
-import com.embabel.dice.common.resolver.matcher.FuzzyNameEntityMatchingStrategy
-import com.embabel.dice.common.resolver.matcher.LabelCompatibilityStrategy
-import com.embabel.dice.common.resolver.matcher.NormalizedNameEntityMatchingStrategy
-import com.embabel.dice.common.resolver.matcher.PartialNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.DefaultEntityMatchingStrategies
 
 /**
  * Result of a match evaluation.
@@ -53,12 +49,9 @@ interface EntityMatchingStrategy {
 /**
  * Default match strategies that provide reasonable entity matching behavior.
  * Order matters: label compatibility is checked first (can veto), then various name matching strategies.
+ *
+ * @see DefaultEntityMatchingStrategies.create for Java-friendly access
  */
-fun defaultMatchStrategies(): ChainedEntityMatchingStrategy = ChainedEntityMatchingStrategy.of(
-    LabelCompatibilityStrategy(),
-    ExactNameEntityMatchingStrategy(),
-    NormalizedNameEntityMatchingStrategy(),
-    PartialNameEntityMatchingStrategy(),
-    FuzzyNameEntityMatchingStrategy(),
-)
+fun defaultMatchStrategies(): ChainedEntityMatchingStrategy =
+    DefaultEntityMatchingStrategies.create()
 

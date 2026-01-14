@@ -310,7 +310,7 @@ DICE provides several `EntityResolver` implementations that can be composed:
 
 | Implementation | Purpose | Use Case |
 |----------------|---------|----------|
-| **HierarchicalEntityResolver** | **Recommended** - Escalating levels with early stopping | Production, optimized performance |
+| **EscalatingEntityResolver** | **Recommended** - Escalating levels with early stopping | Production, optimized performance |
 | **InMemoryEntityResolver** | Session-scoped deduplication | Cross-chunk entity recognition |
 | **NamedEntityDataRepositoryEntityResolver** | Search-based resolution | Production with entity repository |
 | **AgenticEntityResolver** | LLM-driven search | Complex matching, alternate names |
@@ -370,7 +370,7 @@ val resolver = AgenticEntityResolver(
 // - Provide reasoning for match decisions
 ```
 
-##### HierarchicalEntityResolver (Recommended)
+##### EscalatingEntityResolver (Recommended)
 
 **Performance-optimized resolver** that escalates through resolution levels, stopping early when confident.
 This minimizes LLM calls by handling easy cases with fast heuristics:
@@ -409,12 +409,12 @@ flowchart LR
 | L5: LLM_BAKEOFF | Compare multiple candidates | 1 call | ~800ms |
 
 ```kotlin
-val resolver = HierarchicalEntityResolver(
+val resolver = EscalatingEntityResolver(
     repository = entityRepository,
     matchStrategies = defaultMatchStrategies(),
     llmBakeoff = LlmCandidateBakeoff(modelProvider, promptMode = PromptMode.COMPACT),
     contextCompressor = ContextCompressor.default(),  // Reduces token usage
-    config = HierarchicalConfig(
+    config = EscalatingEntityResolver.Config(
         embeddingAutoAcceptThreshold = 0.95,  // Auto-accept above this
         embeddingCandidateThreshold = 0.7,    // Consider as candidate above this
         heuristicOnly = false,                // Set true to disable LLM

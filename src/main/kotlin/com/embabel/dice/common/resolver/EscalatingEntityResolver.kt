@@ -52,46 +52,6 @@ data class LevelResult(
 )
 
 /**
- * Configuration for hierarchical resolution behavior.
- */
-data class HierarchicalConfig(
-    /**
-     * Minimum embedding similarity to accept without LLM verification.
-     */
-    val embeddingAutoAcceptThreshold: Double = 0.95,
-
-    /**
-     * Minimum embedding similarity to consider as a candidate.
-     */
-    val embeddingCandidateThreshold: Double = 0.7,
-
-    /**
-     * Maximum candidates to retrieve from search.
-     */
-    val topK: Int = 10,
-
-    /**
-     * Whether to use text search in addition to vector search.
-     */
-    val useTextSearch: Boolean = true,
-
-    /**
-     * Whether to use vector search.
-     */
-    val useVectorSearch: Boolean = true,
-
-    /**
-     * Skip LLM entirely - use only heuristic matching.
-     */
-    val heuristicOnly: Boolean = false,
-
-    /**
-     * Confidence threshold to stop escalating and accept result.
-     */
-    val earlyTerminationThreshold: Double = 0.9,
-)
-
-/**
  * Entity resolver that escalates through levels of resolution strategies,
  * stopping as soon as a confident match is found.
  *
@@ -111,15 +71,55 @@ data class HierarchicalConfig(
  * @param contextCompressor Optional compressor for reducing context size in LLM calls
  * @param config Configuration for thresholds and behavior
  */
-class HierarchicalEntityResolver(
+class EscalatingEntityResolver(
     private val repository: NamedEntityDataRepository,
     private val matchStrategies: ChainedEntityMatchingStrategy = defaultMatchStrategies(),
     private val llmBakeoff: LlmCandidateBakeoff? = null,
     private val contextCompressor: ContextCompressor? = null,
-    private val config: HierarchicalConfig = HierarchicalConfig(),
+    private val config: Config = Config(),
 ) : EntityResolver {
 
-    private val logger = LoggerFactory.getLogger(HierarchicalEntityResolver::class.java)
+    /**
+     * Configuration for escalating resolution behavior.
+     */
+    data class Config(
+        /**
+         * Minimum embedding similarity to accept without LLM verification.
+         */
+        val embeddingAutoAcceptThreshold: Double = 0.95,
+
+        /**
+         * Minimum embedding similarity to consider as a candidate.
+         */
+        val embeddingCandidateThreshold: Double = 0.7,
+
+        /**
+         * Maximum candidates to retrieve from search.
+         */
+        val topK: Int = 10,
+
+        /**
+         * Whether to use text search in addition to vector search.
+         */
+        val useTextSearch: Boolean = true,
+
+        /**
+         * Whether to use vector search.
+         */
+        val useVectorSearch: Boolean = true,
+
+        /**
+         * Skip LLM entirely - use only heuristic matching.
+         */
+        val heuristicOnly: Boolean = false,
+
+        /**
+         * Confidence threshold to stop escalating and accept result.
+         */
+        val earlyTerminationThreshold: Double = 0.9,
+    )
+
+    private val logger = LoggerFactory.getLogger(EscalatingEntityResolver::class.java)
 
     override fun resolve(
         suggestedEntities: SuggestedEntities,
@@ -192,10 +192,10 @@ class HierarchicalEntityResolver(
             }
         }
 
-        // Level 3: High-confidence embedding match (must also pass label compatibility)
+        // Level 3: High-confidence embedding match (must also pass compatibility check)
         val topCandidate = candidates.first()
         if (topCandidate.score >= config.embeddingAutoAcceptThreshold &&
-            isLabelCompatible(suggested, topCandidate.match, schema)
+            isCompatible(suggested, topCandidate.match, schema)
         ) {
             logger.debug(
                 "L3 EMBEDDING: '{}' -> '{}' (score: {} >= {})",
@@ -216,10 +216,10 @@ class HierarchicalEntityResolver(
             return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0, candidates.size)
         }
 
-        // Filter candidates by label compatibility before LLM calls
-        val compatibleCandidates = filterByLabelCompatibility(suggested, candidates, schema)
+        // Filter candidates by compatibility before LLM calls
+        val compatibleCandidates = filterCompatible(suggested, candidates, schema)
         if (compatibleCandidates.isEmpty()) {
-            logger.debug("No label-compatible candidates for '{}'", suggested.name)
+            logger.debug("No compatible candidates for '{}'", suggested.name)
             return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0, candidates.size)
         }
 
@@ -359,28 +359,27 @@ class HierarchicalEntityResolver(
     }
 
     /**
-     * Check if candidate labels are compatible with suggested entity labels.
-     * Uses the LabelCompatibilityStrategy logic.
+     * Check if candidate is compatible with the suggested entity.
+     * Runs the strategy chain - if any strategy returns NoMatch, the candidate is incompatible.
+     * Strategies are ordered cheapest first, so label compatibility is checked early.
      */
-    private fun isLabelCompatible(
+    private fun isCompatible(
         suggested: SuggestedEntity,
         candidate: NamedEntityData,
         schema: DataDictionary
     ): Boolean {
-        val strategy =
-            matchStrategies.findStrategy<com.embabel.dice.common.resolver.matcher.LabelCompatibilityStrategy>()
-        return strategy?.evaluate(suggested, candidate, schema) != MatchResult.NoMatch
+        return matchStrategies.evaluate(suggested, candidate, schema) != MatchResult.NoMatch
     }
 
     /**
-     * Filter candidates to only those with compatible labels.
+     * Filter candidates to only those that are compatible (no strategy returns NoMatch).
      */
-    private fun filterByLabelCompatibility(
+    private fun filterCompatible(
         suggested: SuggestedEntity,
         candidates: List<SimilarityResult<NamedEntityData>>,
         schema: DataDictionary
     ): List<SimilarityResult<NamedEntityData>> {
-        return candidates.filter { isLabelCompatible(suggested, it.match, schema) }
+        return candidates.filter { isCompatible(suggested, it.match, schema) }
     }
 
     private fun createNewOrVeto(
@@ -400,14 +399,14 @@ class HierarchicalEntityResolver(
 
     companion object {
         /**
-         * Create a hierarchical resolver with sensible defaults.
+         * Create an escalating resolver with sensible defaults.
          */
         @JvmStatic
         fun create(
             repository: NamedEntityDataRepository,
             llmBakeoff: LlmCandidateBakeoff? = null,
-        ): HierarchicalEntityResolver {
-            return HierarchicalEntityResolver(
+        ): EscalatingEntityResolver {
+            return EscalatingEntityResolver(
                 repository = repository,
                 matchStrategies = defaultMatchStrategies(),
                 llmBakeoff = llmBakeoff,
