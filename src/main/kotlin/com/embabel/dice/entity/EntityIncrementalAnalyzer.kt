@@ -1,4 +1,4 @@
-package com.embabel.dice.incremental.entity
+package com.embabel.dice.entity
 
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.SourceAnalysisContext
@@ -7,8 +7,6 @@ import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.IncrementalSource
 import com.embabel.dice.incremental.IncrementalSourceFormatter
 import com.embabel.dice.incremental.WindowConfig
-import com.embabel.dice.pipeline.ChunkEntityResult
-import com.embabel.dice.pipeline.EntityPipeline
 import org.slf4j.LoggerFactory
 
 /**

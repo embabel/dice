@@ -298,9 +298,12 @@ val source = ConversationSource(conversation)
 // Analyze—returns null if trigger threshold not met
 val result: ChunkEntityResult? = analyzer.analyze(source, context)
 
-// Persist if we got results
+// Persist if we got results (also creates chunk-entity relationships)
 result?.persist(entityRepository)
 ```
+
+The `persist()` method saves entities and creates `(Chunk)-[:HAS_ENTITY]->(Entity)` relationships,
+linking each extracted entity back to its source chunk for provenance tracking.
 
 **Key differences from PropositionIncrementalAnalyzer:**
 
@@ -1299,13 +1302,18 @@ com.embabel.dice
 │       ├── PropositionContraster
 │       └── LlmPropositionContraster
 │
-├── pipeline/                 # Extraction pipeline orchestration
-│   ├── PropositionPipeline   # Full proposition extraction
-│   ├── EntityPipeline        # Entity-only extraction
+├── entity/                   # Entity extraction domain
+│   ├── EntityExtractor       # Entity extraction interface
+│   ├── LlmEntityExtractor    # LLM-based entity extraction
+│   ├── EntityPipeline        # Entity extraction + resolution pipeline
 │   ├── ChunkEntityResult     # Single chunk entity results
-│   └── EntityResults         # Multi-chunk entity results
+│   ├── EntityResults         # Multi-chunk entity results
+│   └── EntityIncrementalAnalyzer  # Streaming entity extraction
 │
-├── incremental/              # Incremental/streaming analysis
+├── pipeline/                 # Proposition pipeline orchestration
+│   └── PropositionPipeline   # Full proposition extraction
+│
+├── incremental/              # Incremental/streaming infrastructure
 │   ├── IncrementalAnalyzer<T,R>       # Interface for incremental analysis
 │   ├── AbstractIncrementalAnalyzer    # Base implementation with windowing
 │   ├── IncrementalSource<T>           # Source abstraction
@@ -1314,16 +1322,12 @@ com.embabel.dice
 │   ├── MessageFormatter               # Formats messages
 │   ├── ChunkHistoryStore              # Tracks processing history
 │   ├── WindowConfig                   # Window and trigger configuration
-│   ├── proposition/                   # Proposition-based incremental
-│   │   └── PropositionIncrementalAnalyzer
-│   └── entity/                        # Entity-only incremental
-│       └── EntityIncrementalAnalyzer
+│   └── proposition/                   # Proposition-based incremental
+│       └── PropositionIncrementalAnalyzer
 │
-├── text2graph/               # Knowledge graph building
+├── text2graph/               # Legacy knowledge graph building
 │   ├── KnowledgeGraphBuilder
 │   ├── SourceAnalyzer
-│   ├── EntityExtractor       # Entity extraction interface
-│   ├── LlmEntityExtractor    # LLM-based entity extraction
 │   └── SourceAnalyzerEntityExtractor  # Adapter wrapping SourceAnalyzer
 ```
 

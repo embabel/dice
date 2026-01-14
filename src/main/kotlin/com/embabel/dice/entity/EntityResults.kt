@@ -1,7 +1,9 @@
-package com.embabel.dice.pipeline
+package com.embabel.dice.entity
 
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
+import com.embabel.agent.rag.service.RelationshipData
+import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.common.core.types.HasInfoString
 import com.embabel.dice.common.*
 
@@ -81,14 +83,42 @@ data class ChunkEntityResult(
     }
 
     /**
-     * Persist entities to the repository.
+     * Persist entities to the repository and create structural relationships.
+     *
+     * Creates `(Chunk)-[:HAS_ENTITY]->(Entity)` relationships linking the source
+     * chunk to each extracted entity.
      *
      * @param entityRepository Repository for entity persistence
      */
     fun persist(entityRepository: NamedEntityDataRepository) {
-        val toPersist = entitiesToPersist()
-        if (toPersist.isNotEmpty()) {
-            entityRepository.saveAll(toPersist)
+        // Save new entities
+        newEntities().forEach { entity ->
+            entityRepository.save(entity)
+        }
+
+        // Update existing entities (merged labels/properties)
+        updatedEntities().forEach { entity ->
+            entityRepository.update(entity)
+        }
+
+        // Create (Chunk)-[:HAS_ENTITY]->(Entity) relationships
+        createChunkEntityRelationships(entityRepository)
+    }
+
+    /**
+     * Create structural relationships linking the chunk to extracted entities.
+     */
+    private fun createChunkEntityRelationships(entityRepository: NamedEntityDataRepository) {
+        val chunk = RetrievableIdentifier.forChunk(chunkId)
+        val entitiesToLink = entitiesToPersist()
+
+        for (entity in entitiesToLink) {
+            val entityRef = RetrievableIdentifier(entity.id, entity.labels().firstOrNull() ?: "Entity")
+            entityRepository.createRelationship(
+                chunk,
+                entityRef,
+                RelationshipData(NamedEntityData.HAS_ENTITY)
+            )
         }
     }
 }
@@ -151,14 +181,54 @@ data class EntityResults(
     }
 
     /**
-     * Persist all entities to the repository.
+     * Persist all entities to the repository and create structural relationships.
+     *
+     * Creates `(Chunk)-[:HAS_ENTITY]->(Entity)` relationships linking each source
+     * chunk to the entities extracted from it.
+     *
+     * Entities are deduplicated across chunks before saving, but relationships
+     * are created for each chunk where an entity was mentioned.
      *
      * @param entityRepository Repository for entity persistence
      */
     fun persist(entityRepository: NamedEntityDataRepository) {
-        val toPersist = entitiesToPersist()
-        if (toPersist.isNotEmpty()) {
-            entityRepository.saveAll(toPersist)
+        // Save new entities (deduplicated across chunks)
+        newEntities().forEach { entity ->
+            entityRepository.save(entity)
+        }
+
+        // Update existing entities (deduplicated across chunks)
+        updatedEntities().forEach { entity ->
+            entityRepository.update(entity)
+        }
+
+        // Create (Chunk)-[:HAS_ENTITY]->(Entity) relationships for each chunk
+        createChunkEntityRelationships(entityRepository)
+    }
+
+    /**
+     * Create structural relationships linking chunks to their extracted entities.
+     * Each chunk gets linked to the entities that were extracted from it.
+     */
+    private fun createChunkEntityRelationships(entityRepository: NamedEntityDataRepository) {
+        // Track chunk-entity pairs to avoid duplicates
+        val chunkEntityPairs = mutableSetOf<Pair<String, String>>()
+
+        for (chunkResult in chunkResults) {
+            val chunk = RetrievableIdentifier.forChunk(chunkResult.chunkId)
+
+            for (entity in chunkResult.entitiesToPersist()) {
+                val pair = chunkResult.chunkId to entity.id
+                if (pair !in chunkEntityPairs) {
+                    chunkEntityPairs.add(pair)
+                    val entityRef = RetrievableIdentifier(entity.id, entity.labels().firstOrNull() ?: "Entity")
+                    entityRepository.createRelationship(
+                        chunk,
+                        entityRef,
+                        RelationshipData(NamedEntityData.HAS_ENTITY)
+                    )
+                }
+            }
         }
     }
 }

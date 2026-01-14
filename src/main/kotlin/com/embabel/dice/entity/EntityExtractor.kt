@@ -1,4 +1,4 @@
-package com.embabel.dice.text2graph
+package com.embabel.dice.entity
 
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.SourceAnalysisContext
@@ -9,14 +9,14 @@ import com.fasterxml.jackson.annotation.JsonPropertyDescription
 /**
  * Extracts entities from text chunks.
  *
- * This is a simpler interface than [SourceAnalyzer] when you only need
+ * This is a simpler interface than [com.embabel.dice.text2graph.SourceAnalyzer] when you only need
  * entity extraction without relationship suggestion.
  *
  * Built-in implementations:
  * - [LlmEntityExtractor]: Uses an LLM to identify entities based on a schema
  *
  * @see LlmEntityExtractor
- * @see SourceAnalyzer
+ * @see com.embabel.dice.text2graph.SourceAnalyzer
  */
 interface EntityExtractor {
 
@@ -66,19 +66,4 @@ internal data class ExtractedEntityInfo(
             properties = properties,
         )
     }
-}
-
-/**
- * Adapter that wraps a [SourceAnalyzer] as an [EntityExtractor].
- *
- * Useful when you have an existing SourceAnalyzer but only need entity extraction.
- */
-class SourceAnalyzerEntityExtractor(
-    private val sourceAnalyzer: SourceAnalyzer,
-) : EntityExtractor {
-
-    override fun suggestEntities(
-        chunk: Chunk,
-        context: SourceAnalysisContext,
-    ): SuggestedEntities = sourceAnalyzer.suggestEntities(chunk, context)
 }

@@ -1,11 +1,10 @@
-package com.embabel.dice.pipeline
+package com.embabel.dice.entity
 
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.resolver.ChainedEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
 import com.embabel.dice.common.resolver.KnownEntityResolver
-import com.embabel.dice.text2graph.EntityExtractor
 import org.slf4j.LoggerFactory
 
 /**

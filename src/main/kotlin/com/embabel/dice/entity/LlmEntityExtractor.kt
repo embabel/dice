@@ -1,4 +1,4 @@
-package com.embabel.dice.text2graph
+package com.embabel.dice.entity
 
 import com.embabel.agent.api.common.Ai
 import com.embabel.agent.rag.model.Chunk
