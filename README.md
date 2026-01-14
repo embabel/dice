@@ -325,11 +325,11 @@ match strategies to find duplicates:
 
 ```kotlin
 val resolver = InMemoryEntityResolver(
-    matchStrategies = listOf(
+    matchStrategies = ChainedEntityMatchingStrategy.of(
         LabelCompatibilityStrategy(schema),
-        ExactNameMatchStrategy(),
-        NormalizedNameMatchStrategy(),  // Removes Mr., Dr., Jr., etc.
-        FuzzyNameMatchStrategy(maxDistanceRatio = 0.2),
+        ExactNameEntityMatchingStrategy(),
+        NormalizedNameEntityMatchingStrategy(),  // Removes Mr., Dr., Jr., etc.
+        FuzzyNameEntityMatchingStrategy(maxDistanceRatio = 0.2),
     )
 )
 ```
@@ -484,10 +484,10 @@ flowchart LR
 | Strategy | Description |
 |----------|-------------|
 | **LabelCompatibilityStrategy** | Checks type hierarchy—Person can match Detective |
-| **ExactNameMatchStrategy** | Case-insensitive exact match |
-| **NormalizedNameMatchStrategy** | Removes Mr., Mrs., Dr., Jr., III, etc. |
-| **PartialNameMatchStrategy** | Single name matches multi-part name |
-| **FuzzyNameMatchStrategy** | Levenshtein distance within threshold |
+| **ExactNameEntityMatchingStrategy** | Case-insensitive exact match |
+| **NormalizedNameEntityMatchingStrategy** | Removes Mr., Mrs., Dr., Jr., III, etc. |
+| **PartialNameEntityMatchingStrategy** | Single name matches multi-part name |
+| **FuzzyNameEntityMatchingStrategy** | Levenshtein distance within threshold |
 | **LlmCandidateBakeoff** | LLM selects best from multiple candidates (COMPACT: ~100 tokens, FULL: ~400 tokens) |
 
 #### Pipeline Integration
@@ -504,7 +504,7 @@ val context = SourceAnalysisContext
                 knownEntities = listOf(KnownEntity.asCurrentUser(currentUser)),
                 delegate = repositoryResolver,
             ),
-            InMemoryEntityResolver(matchStrategies),
+            InMemoryEntityResolver(defaultMatchStrategies()),
         )
     )
     .withSchema(dataDictionary)

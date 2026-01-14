@@ -3,8 +3,8 @@ package com.embabel.dice.common.resolver.matcher
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.common.resolver.EntityMatchingStrategy
 import com.embabel.dice.common.resolver.MatchResult
-import com.embabel.dice.common.resolver.MatchStrategy
 import kotlin.math.min
 
 /**
@@ -15,10 +15,10 @@ import kotlin.math.min
  * @param minLengthForFuzzy Minimum name length to apply fuzzy matching.
  *                          Short names are more prone to false positives.
  */
-class FuzzyNameMatchStrategy(
+class FuzzyNameEntityMatchingStrategy(
     private val maxDistanceRatio: Double = 0.2,
     private val minLengthForFuzzy: Int = 4,
-) : MatchStrategy {
+) : EntityMatchingStrategy {
 
     override fun evaluate(
         suggested: SuggestedEntity,

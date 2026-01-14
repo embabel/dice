@@ -2,15 +2,26 @@ package com.embabel.dice.common.resolver
 
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
-import com.embabel.dice.common.*
-import com.embabel.dice.common.resolver.matcher.*
+import com.embabel.dice.common.EntityResolver
+import com.embabel.dice.common.ExistingEntity
+import com.embabel.dice.common.NewEntity
+import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.SuggestedEntities
+import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.common.SuggestedEntityResolution
+import com.embabel.dice.common.resolver.matcher.ChainedEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.ExactNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.FuzzyNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.LabelCompatibilityStrategy
+import com.embabel.dice.common.resolver.matcher.NormalizedNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.PartialNameEntityMatchingStrategy
 
 /**
  * Entity resolver that remembers entities it's been asked to resolve
  * and tries to reuse them.
  * Useful for deduplicating entities within a single session.
  *
- * Uses configurable [MatchStrategy] implementations for matching, which by default include:
+ * Uses configurable [EntityMatchingStrategy] implementations for matching, which by default include:
  * - Label compatibility checking (including type hierarchy)
  * - Case-insensitive exact matching
  * - Name normalization (removing titles/suffixes)
@@ -23,7 +34,7 @@ import com.embabel.dice.common.resolver.matcher.*
  */
 class InMemoryEntityResolver(
     private val config: Config = Config(),
-    private val matchStrategies: List<MatchStrategy> = defaultStrategies(config),
+    private val matchStrategies: ChainedEntityMatchingStrategy = defaultStrategies(config),
 ) : EntityResolver {
 
     data class Config(
@@ -70,7 +81,7 @@ class InMemoryEntityResolver(
      */
     private fun findMatch(suggested: SuggestedEntity, schema: DataDictionary): NamedEntityData? {
         for ((_, existing) in resolvedEntities) {
-            if (matchStrategies.evaluate(suggested, existing, schema)) {
+            if (matchStrategies.matches(suggested, existing, schema)) {
                 return existing
             }
         }
@@ -93,15 +104,16 @@ class InMemoryEntityResolver(
         /**
          * Create default strategies using the provided config.
          */
-        fun defaultStrategies(config: Config = Config()): List<MatchStrategy> = listOf(
-            LabelCompatibilityStrategy(),
-            ExactNameMatchStrategy(),
-            NormalizedNameMatchStrategy(),
-            PartialNameMatchStrategy(minPartLength = config.minPartLength),
-            FuzzyNameMatchStrategy(
-                maxDistanceRatio = config.maxDistanceRatio,
-                minLengthForFuzzy = config.minLengthForFuzzy,
-            ),
-        )
+        fun defaultStrategies(config: Config = Config()): ChainedEntityMatchingStrategy =
+            ChainedEntityMatchingStrategy.of(
+                LabelCompatibilityStrategy(),
+                ExactNameEntityMatchingStrategy(),
+                NormalizedNameEntityMatchingStrategy(),
+                PartialNameEntityMatchingStrategy(minPartLength = config.minPartLength),
+                FuzzyNameEntityMatchingStrategy(
+                    maxDistanceRatio = config.maxDistanceRatio,
+                    minLengthForFuzzy = config.minLengthForFuzzy,
+                ),
+            )
     }
 }

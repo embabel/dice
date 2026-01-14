@@ -4,8 +4,8 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.core.DomainType
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.common.resolver.EntityMatchingStrategy
 import com.embabel.dice.common.resolver.MatchResult
-import com.embabel.dice.common.resolver.MatchStrategy
 
 /**
  * Checks label compatibility including type hierarchy.
@@ -16,7 +16,7 @@ import com.embabel.dice.common.resolver.MatchStrategy
  * 2. One type is a subtype of the other in the schema hierarchy, OR
  * 3. Both types share a common parent (e.g., Doctor and Detective both extend Person)
  */
-class LabelCompatibilityStrategy : MatchStrategy {
+class LabelCompatibilityStrategy : EntityMatchingStrategy {
 
     override fun evaluate(
         suggested: SuggestedEntity,

@@ -5,7 +5,15 @@ import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
-import com.embabel.dice.common.*
+import com.embabel.dice.common.EntityResolver
+import com.embabel.dice.common.ExistingEntity
+import com.embabel.dice.common.NewEntity
+import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.SuggestedEntities
+import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.common.SuggestedEntityResolution
+import com.embabel.dice.common.VetoedEntity
+import com.embabel.dice.common.resolver.matcher.ChainedEntityMatchingStrategy
 import com.embabel.dice.common.resolver.matcher.LlmCandidateBakeoff
 import org.slf4j.LoggerFactory
 
@@ -19,7 +27,7 @@ import org.slf4j.LoggerFactory
  * - **Vector Search**: Semantic similarity search using embeddings
  * - **LLM Bakeoff**: Uses an LLM to select the best match from candidates
  *
- * Match evaluation is delegated to configurable [MatchStrategy] implementations,
+ * Match evaluation is delegated to configurable [EntityMatchingStrategy] implementations,
  * allowing customization of how search results are evaluated for equivalence.
  *
  * @param repository The search operations backend
@@ -31,7 +39,7 @@ import org.slf4j.LoggerFactory
 class NamedEntityDataRepositoryEntityResolver @JvmOverloads constructor(
     private val repository: NamedEntityDataRepository,
     private val config: Config = Config(),
-    private val matchStrategies: List<MatchStrategy> = defaultMatchStrategies(),
+    private val matchStrategies: ChainedEntityMatchingStrategy = defaultMatchStrategies(),
     private val llmBakeoff: LlmCandidateBakeoff? = null,
 ) : EntityResolver {
 
@@ -409,5 +417,5 @@ class NamedEntityDataRepositoryEntityResolver @JvmOverloads constructor(
         suggested: SuggestedEntity,
         candidate: NamedEntityData,
         schema: DataDictionary
-    ): Boolean = matchStrategies.evaluate(suggested, candidate, schema)
+    ): Boolean = matchStrategies.matches(suggested, candidate, schema)
 }

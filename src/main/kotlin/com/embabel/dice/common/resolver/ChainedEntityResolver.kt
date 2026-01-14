@@ -1,7 +1,12 @@
 package com.embabel.dice.common.resolver
 
 import com.embabel.agent.core.DataDictionary
-import com.embabel.dice.common.*
+import com.embabel.dice.common.EntityResolver
+import com.embabel.dice.common.ExistingEntity
+import com.embabel.dice.common.NewEntity
+import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.SuggestedEntities
+import com.embabel.dice.common.SuggestedEntityResolution
 
 /**
  * Entity resolver that delegates to multiple resolvers in order.
@@ -15,7 +20,7 @@ import com.embabel.dice.common.*
  * - Then checking a database of known entities
  * - Finally falling back to creating new entities
  */
-class MultiEntityResolver(
+class ChainedEntityResolver(
     private val resolvers: List<EntityResolver>,
 ) : EntityResolver {
 

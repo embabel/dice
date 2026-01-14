@@ -3,13 +3,13 @@ package com.embabel.dice.common.resolver.matcher
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.common.resolver.EntityMatchingStrategy
 import com.embabel.dice.common.resolver.MatchResult
-import com.embabel.dice.common.resolver.MatchStrategy
 
 /**
  * Exact case-insensitive name match.
  */
-class ExactNameMatchStrategy : MatchStrategy {
+class ExactNameEntityMatchingStrategy : EntityMatchingStrategy {
 
     override fun evaluate(
         suggested: SuggestedEntity,

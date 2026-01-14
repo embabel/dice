@@ -9,7 +9,13 @@ import com.embabel.dice.common.ExistingEntity
 import com.embabel.dice.common.NewEntity
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
-import com.embabel.dice.common.resolver.matcher.*
+import com.embabel.dice.common.resolver.matcher.ChainedEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.ExactNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.FuzzyNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.LabelCompatibilityStrategy
+import com.embabel.dice.common.resolver.matcher.NormalizedNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.PartialNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.PredicateEntityMatchingStrategy
 import com.embabel.dice.shell.Detective
 import com.embabel.dice.shell.Doctor
 import com.embabel.dice.shell.Place
@@ -685,12 +691,12 @@ class NamedEntityDataRepositoryEntityResolverTest {
     }
 
     @Nested
-    inner class CustomMatchStrategyTests {
+    inner class CustomEntityMatchingStrategyTests {
 
         @Test
         fun `should allow custom match strategies`() {
             // Custom strategy that always matches entities with same first letter
-            val firstLetterStrategy = PredicateMatchStrategy { suggested, candidate, _ ->
+            val firstLetterStrategy = PredicateEntityMatchingStrategy { suggested, candidate, _ ->
                 val firstSuggested = suggested.name.firstOrNull()?.lowercaseChar()
                 val firstCandidate = candidate.name.firstOrNull()?.lowercaseChar()
                 if (firstSuggested == firstCandidate) {
@@ -702,7 +708,7 @@ class NamedEntityDataRepositoryEntityResolverTest {
 
             val customResolver = NamedEntityDataRepositoryEntityResolver(
                 repository,
-                matchStrategies = listOf(LabelCompatibilityStrategy(), firstLetterStrategy)
+                matchStrategies = ChainedEntityMatchingStrategy.of(LabelCompatibilityStrategy(), firstLetterStrategy)
             )
 
             val existingEntity = createNamedEntity("alex-id", "Alexander", setOf("Person"))
@@ -724,7 +730,7 @@ class NamedEntityDataRepositoryEntityResolverTest {
         @Test
         fun `should respect NoMatch from early strategy`() {
             // Strategy that vetoes any entity named "Villain"
-            val vetoVillainStrategy = PredicateMatchStrategy { suggested, _, _ ->
+            val vetoVillainStrategy = PredicateEntityMatchingStrategy { suggested, _, _ ->
                 if (suggested.name.contains("Villain", ignoreCase = true)) {
                     MatchResult.NoMatch
                 } else {
@@ -734,7 +740,7 @@ class NamedEntityDataRepositoryEntityResolverTest {
 
             val customResolver = NamedEntityDataRepositoryEntityResolver(
                 repository,
-                matchStrategies = listOf(vetoVillainStrategy) + defaultMatchStrategies()
+                matchStrategies = ChainedEntityMatchingStrategy.of(vetoVillainStrategy) + defaultMatchStrategies()
             )
 
             val existingEntity = createNamedEntity("villain-id", "Super Villain", setOf("Person"))
@@ -760,13 +766,13 @@ class NamedEntityDataRepositoryEntityResolverTest {
     }
 
     @Nested
-    inner class MatchStrategyUnitTests {
+    inner class EntityMatchingStrategyUnitTests {
 
         private val emptySchema = DataDictionary.fromClasses()
 
         @Test
         fun `ExactNameMatchStrategy should match exact names case-insensitively`() {
-            val strategy = ExactNameMatchStrategy()
+            val strategy = ExactNameEntityMatchingStrategy()
             val suggested = SuggestedEntity(listOf("Person"), "Alice", "test", chunkId = "test")
             val candidate = createNamedEntity("id", "ALICE", setOf("Person"))
 
@@ -775,7 +781,7 @@ class NamedEntityDataRepositoryEntityResolverTest {
 
         @Test
         fun `ExactNameMatchStrategy should return Inconclusive for different names`() {
-            val strategy = ExactNameMatchStrategy()
+            val strategy = ExactNameEntityMatchingStrategy()
             val suggested = SuggestedEntity(listOf("Person"), "Alice", "test", chunkId = "test")
             val candidate = createNamedEntity("id", "Bob", setOf("Person"))
 
@@ -784,7 +790,7 @@ class NamedEntityDataRepositoryEntityResolverTest {
 
         @Test
         fun `NormalizedNameMatchStrategy should match after removing titles`() {
-            val strategy = NormalizedNameMatchStrategy()
+            val strategy = NormalizedNameEntityMatchingStrategy()
             val suggested = SuggestedEntity(listOf("Person"), "Dr. Watson", "test", chunkId = "test")
             val candidate = createNamedEntity("id", "Watson", setOf("Person"))
 
@@ -793,7 +799,7 @@ class NamedEntityDataRepositoryEntityResolverTest {
 
         @Test
         fun `NormalizedNameMatchStrategy should match after removing suffixes`() {
-            val strategy = NormalizedNameMatchStrategy()
+            val strategy = NormalizedNameEntityMatchingStrategy()
             val suggested = SuggestedEntity(listOf("Person"), "John Smith Jr.", "test", chunkId = "test")
             val candidate = createNamedEntity("id", "John Smith", setOf("Person"))
 
@@ -802,7 +808,7 @@ class NamedEntityDataRepositoryEntityResolverTest {
 
         @Test
         fun `PartialNameMatchStrategy should match single word to last name`() {
-            val strategy = PartialNameMatchStrategy()
+            val strategy = PartialNameEntityMatchingStrategy()
             val suggested = SuggestedEntity(listOf("Person"), "Holmes", "test", chunkId = "test")
             val candidate = createNamedEntity("id", "Sherlock Holmes", setOf("Person"))
 
@@ -811,7 +817,7 @@ class NamedEntityDataRepositoryEntityResolverTest {
 
         @Test
         fun `PartialNameMatchStrategy should not match short single words`() {
-            val strategy = PartialNameMatchStrategy(minPartLength = 4)
+            val strategy = PartialNameEntityMatchingStrategy(minPartLength = 4)
             val suggested = SuggestedEntity(listOf("Person"), "Doe", "test", chunkId = "test")
             val candidate = createNamedEntity("id", "John Doe", setOf("Person"))
 
@@ -820,7 +826,7 @@ class NamedEntityDataRepositoryEntityResolverTest {
 
         @Test
         fun `FuzzyNameMatchStrategy should match names within distance threshold`() {
-            val strategy = FuzzyNameMatchStrategy(maxDistanceRatio = 0.2, minLengthForFuzzy = 4)
+            val strategy = FuzzyNameEntityMatchingStrategy(maxDistanceRatio = 0.2, minLengthForFuzzy = 4)
             val suggested = SuggestedEntity(listOf("Person"), "Sherlok", "test", chunkId = "test")
             val candidate = createNamedEntity("id", "Sherlock", setOf("Person"))
 
@@ -830,7 +836,7 @@ class NamedEntityDataRepositoryEntityResolverTest {
 
         @Test
         fun `FuzzyNameMatchStrategy should not match names beyond distance threshold`() {
-            val strategy = FuzzyNameMatchStrategy(maxDistanceRatio = 0.1, minLengthForFuzzy = 4)
+            val strategy = FuzzyNameEntityMatchingStrategy(maxDistanceRatio = 0.1, minLengthForFuzzy = 4)
             val suggested = SuggestedEntity(listOf("Person"), "Sherlok", "test", chunkId = "test")
             val candidate = createNamedEntity("id", "Sherlock", setOf("Person"))
 
@@ -840,7 +846,7 @@ class NamedEntityDataRepositoryEntityResolverTest {
 
         @Test
         fun `FuzzyNameMatchStrategy should skip short names`() {
-            val strategy = FuzzyNameMatchStrategy(minLengthForFuzzy = 5)
+            val strategy = FuzzyNameEntityMatchingStrategy(minLengthForFuzzy = 5)
             val suggested = SuggestedEntity(listOf("Person"), "Bob", "test", chunkId = "test")
             val candidate = createNamedEntity("id", "Rob", setOf("Person"))
 

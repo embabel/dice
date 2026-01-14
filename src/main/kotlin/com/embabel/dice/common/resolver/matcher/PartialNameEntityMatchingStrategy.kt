@@ -3,8 +3,8 @@ package com.embabel.dice.common.resolver.matcher
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.common.resolver.EntityMatchingStrategy
 import com.embabel.dice.common.resolver.MatchResult
-import com.embabel.dice.common.resolver.MatchStrategy
 
 /**
  * Matches partial names (e.g., "Holmes" matches "Sherlock Holmes").
@@ -17,9 +17,9 @@ import com.embabel.dice.common.resolver.MatchStrategy
  * - "Mr. Holmes" matches "Sherlock Holmes" (after normalization)
  * - "Doe" does NOT match "John Doe" (too short with default minPartLength=4)
  */
-class PartialNameMatchStrategy(
+class PartialNameEntityMatchingStrategy(
     private val minPartLength: Int = 4,
-) : MatchStrategy {
+) : EntityMatchingStrategy {
 
     override fun evaluate(
         suggested: SuggestedEntity,
@@ -27,8 +27,8 @@ class PartialNameMatchStrategy(
         schema: DataDictionary,
     ): MatchResult {
         // Normalize names first to handle "Mr. Holmes" -> "Holmes"
-        val normalized1 = NormalizedNameMatchStrategy.normalizeName(suggested.name)
-        val normalized2 = NormalizedNameMatchStrategy.normalizeName(candidate.name)
+        val normalized1 = NormalizedNameEntityMatchingStrategy.normalizeName(suggested.name)
+        val normalized2 = NormalizedNameEntityMatchingStrategy.normalizeName(candidate.name)
 
         val parts1 = normalized1.lowercase().split(Regex("\\s+"))
         val parts2 = normalized2.lowercase().split(Regex("\\s+"))

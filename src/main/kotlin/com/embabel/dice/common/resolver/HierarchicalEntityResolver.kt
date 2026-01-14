@@ -5,7 +5,15 @@ import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
-import com.embabel.dice.common.*
+import com.embabel.dice.common.EntityResolver
+import com.embabel.dice.common.ExistingEntity
+import com.embabel.dice.common.NewEntity
+import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.SuggestedEntities
+import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.common.SuggestedEntityResolution
+import com.embabel.dice.common.VetoedEntity
+import com.embabel.dice.common.resolver.matcher.ChainedEntityMatchingStrategy
 import com.embabel.dice.common.resolver.matcher.LlmCandidateBakeoff
 import org.slf4j.LoggerFactory
 
@@ -16,14 +24,19 @@ import org.slf4j.LoggerFactory
 enum class ResolutionLevel {
     /** Exact name match in repository - no LLM */
     EXACT_MATCH,
+
     /** Heuristic match strategies (normalized, fuzzy) - no LLM */
     HEURISTIC_MATCH,
+
     /** High-confidence embedding similarity - no LLM */
     EMBEDDING_MATCH,
+
     /** Simple yes/no LLM verification */
     LLM_VERIFICATION,
+
     /** Full LLM comparison of multiple candidates */
     LLM_BAKEOFF,
+
     /** No match found at any level */
     NO_MATCH,
 }
@@ -100,7 +113,7 @@ data class HierarchicalConfig(
  */
 class HierarchicalEntityResolver(
     private val repository: NamedEntityDataRepository,
-    private val matchStrategies: List<MatchStrategy> = defaultMatchStrategies(),
+    private val matchStrategies: ChainedEntityMatchingStrategy = defaultMatchStrategies(),
     private val llmBakeoff: LlmCandidateBakeoff? = null,
     private val contextCompressor: ContextCompressor? = null,
     private val config: HierarchicalConfig = HierarchicalConfig(),
@@ -165,7 +178,7 @@ class HierarchicalEntityResolver(
 
         // Level 2: Heuristic matching on candidates
         for (candidate in candidates) {
-            if (matchStrategies.evaluate(suggested, candidate.match, schema)) {
+            if (matchStrategies.matches(suggested, candidate.match, schema)) {
                 logger.debug(
                     "L2 HEURISTIC: '{}' -> '{}' (score: {})",
                     suggested.name, candidate.match.name, candidate.score
@@ -354,7 +367,8 @@ class HierarchicalEntityResolver(
         candidate: NamedEntityData,
         schema: DataDictionary
     ): Boolean {
-        val strategy = matchStrategies.filterIsInstance<com.embabel.dice.common.resolver.matcher.LabelCompatibilityStrategy>().firstOrNull()
+        val strategy =
+            matchStrategies.findStrategy<com.embabel.dice.common.resolver.matcher.LabelCompatibilityStrategy>()
         return strategy?.evaluate(suggested, candidate, schema) != MatchResult.NoMatch
     }
 

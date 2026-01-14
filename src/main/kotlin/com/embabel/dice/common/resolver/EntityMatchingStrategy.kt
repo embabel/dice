@@ -3,7 +3,12 @@ package com.embabel.dice.common.resolver
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.dice.common.SuggestedEntity
-import com.embabel.dice.common.resolver.matcher.*
+import com.embabel.dice.common.resolver.matcher.ChainedEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.ExactNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.FuzzyNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.LabelCompatibilityStrategy
+import com.embabel.dice.common.resolver.matcher.NormalizedNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.PartialNameEntityMatchingStrategy
 
 /**
  * Result of a match evaluation.
@@ -29,7 +34,7 @@ enum class MatchResult {
  * - If a strategy returns [MatchResult.Inconclusive], the next strategy is tried
  * - If all strategies return Inconclusive, the default is no match
  */
-interface MatchStrategy {
+interface EntityMatchingStrategy {
     /**
      * Evaluate whether the candidate matches the suggested entity.
      *
@@ -46,32 +51,14 @@ interface MatchStrategy {
 }
 
 /**
- * Evaluates a list of strategies in order, returning the first definitive result.
- */
-fun List<MatchStrategy>.evaluate(
-    suggested: SuggestedEntity,
-    candidate: NamedEntityData,
-    schema: DataDictionary,
-): Boolean {
-    for (strategy in this) {
-        when (strategy.evaluate(suggested, candidate, schema)) {
-            MatchResult.Match -> return true
-            MatchResult.NoMatch -> return false
-            MatchResult.Inconclusive -> continue
-        }
-    }
-    return false
-}
-
-/**
  * Default match strategies that provide reasonable entity matching behavior.
  * Order matters: label compatibility is checked first (can veto), then various name matching strategies.
  */
-fun defaultMatchStrategies(): List<MatchStrategy> = listOf(
+fun defaultMatchStrategies(): ChainedEntityMatchingStrategy = ChainedEntityMatchingStrategy.of(
     LabelCompatibilityStrategy(),
-    ExactNameMatchStrategy(),
-    NormalizedNameMatchStrategy(),
-    PartialNameMatchStrategy(),
-    FuzzyNameMatchStrategy(),
+    ExactNameEntityMatchingStrategy(),
+    NormalizedNameEntityMatchingStrategy(),
+    PartialNameEntityMatchingStrategy(),
+    FuzzyNameEntityMatchingStrategy(),
 )
 

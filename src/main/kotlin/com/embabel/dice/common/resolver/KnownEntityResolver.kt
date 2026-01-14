@@ -4,7 +4,14 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.model.SimpleNamedEntityData
-import com.embabel.dice.common.*
+import com.embabel.dice.common.EntityResolver
+import com.embabel.dice.common.KnownEntity
+import com.embabel.dice.common.ReferenceOnlyEntity
+import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.SuggestedEntities
+import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.common.SuggestedEntityResolution
+import com.embabel.dice.common.resolver.matcher.ChainedEntityMatchingStrategy
 import org.slf4j.LoggerFactory
 
 /**
@@ -20,7 +27,7 @@ import org.slf4j.LoggerFactory
 class KnownEntityResolver(
     private val knownEntities: List<NamedEntity>,
     private val delegate: EntityResolver,
-    private val matchStrategies: List<MatchStrategy> = defaultMatchStrategies(),
+    private val matchStrategies: ChainedEntityMatchingStrategy = defaultMatchStrategies(),
 ) : EntityResolver {
 
     private val logger = LoggerFactory.getLogger(KnownEntityResolver::class.java)
@@ -80,7 +87,7 @@ class KnownEntityResolver(
     private fun findKnownMatch(suggested: SuggestedEntity, schema: DataDictionary): NamedEntity? {
         for (known in knownEntities) {
             val knownData = known.toNamedEntityData()
-            if (matchStrategies.evaluate(suggested, knownData, schema)) {
+            if (matchStrategies.matches(suggested, knownData, schema)) {
                 return known
             }
         }

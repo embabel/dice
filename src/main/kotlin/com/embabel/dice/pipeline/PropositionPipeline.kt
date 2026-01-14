@@ -2,9 +2,9 @@ package com.embabel.dice.pipeline
 
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.SourceAnalysisContext
+import com.embabel.dice.common.resolver.ChainedEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
 import com.embabel.dice.common.resolver.KnownEntityResolver
-import com.embabel.dice.common.resolver.MultiEntityResolver
 import com.embabel.dice.proposition.PropositionExtractor
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.revision.PropositionReviser
@@ -148,7 +148,7 @@ class PropositionPipeline private constructor(
 
         // Wrap the resolver with InMemoryEntityResolver for cross-chunk entity resolution.
         // Order: user's resolver first (for pre-existing entities), then in-memory (for this run's entities)
-        val crossChunkResolver = MultiEntityResolver(
+        val crossChunkResolver = ChainedEntityResolver(
             listOf(context.entityResolver, InMemoryEntityResolver())
         )
         val crossChunkContext = context.copy(entityResolver = crossChunkResolver)

@@ -4,8 +4,14 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.SimpleNamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.common.core.types.SimilarityResult
-import com.embabel.dice.common.*
-import com.embabel.dice.common.resolver.matcher.*
+import com.embabel.dice.common.ExistingEntity
+import com.embabel.dice.common.NewEntity
+import com.embabel.dice.common.SuggestedEntities
+import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.common.resolver.matcher.ChainedEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.ExactNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.NormalizedNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.matcher.PartialNameEntityMatchingStrategy
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -114,10 +120,10 @@ class HierarchicalEntityResolverTest {
 
             val resolver = HierarchicalEntityResolver(
                 repository = repository,
-                matchStrategies = listOf(
-                    ExactNameMatchStrategy(),
-                    NormalizedNameMatchStrategy(),
-                    PartialNameMatchStrategy(),
+                matchStrategies = ChainedEntityMatchingStrategy.of(
+                    ExactNameEntityMatchingStrategy(),
+                    NormalizedNameEntityMatchingStrategy(),
+                    PartialNameEntityMatchingStrategy(),
                 ),
                 config = HierarchicalConfig(useVectorSearch = false),
             )
@@ -142,7 +148,7 @@ class HierarchicalEntityResolverTest {
 
             val resolver = HierarchicalEntityResolver(
                 repository = repository,
-                matchStrategies = emptyList(), // No heuristic match
+                matchStrategies = ChainedEntityMatchingStrategy.of(), // No heuristic match
                 config = HierarchicalConfig(
                     useTextSearch = true,
                     useVectorSearch = true,
@@ -165,7 +171,7 @@ class HierarchicalEntityResolverTest {
 
             val resolver = HierarchicalEntityResolver(
                 repository = repository,
-                matchStrategies = emptyList(),
+                matchStrategies = ChainedEntityMatchingStrategy.of(),
                 llmBakeoff = null, // No LLM fallback
                 config = HierarchicalConfig(
                     useTextSearch = true,
@@ -193,7 +199,7 @@ class HierarchicalEntityResolverTest {
 
             val resolver = HierarchicalEntityResolver(
                 repository = repository,
-                matchStrategies = emptyList(),
+                matchStrategies = ChainedEntityMatchingStrategy.of(),
                 llmBakeoff = null,
                 config = HierarchicalConfig(
                     useVectorSearch = false,
@@ -237,7 +243,12 @@ class HierarchicalEntityResolverTest {
         @Test
         fun `resolves multiple entities with different strategies`() {
             // Brahms exact match, Unknown no match
-            every { repository.textSearch(match { it.query.contains("Brahms") }) } returns listOf(SimilarityResult(brahmsEntity, 1.0))
+            every { repository.textSearch(match { it.query.contains("Brahms") }) } returns listOf(
+                SimilarityResult(
+                    brahmsEntity,
+                    1.0
+                )
+            )
             every { repository.textSearch(match { it.query.contains("Unknown") }) } returns emptyList()
             every { repository.vectorSearch(any()) } returns emptyList()
 

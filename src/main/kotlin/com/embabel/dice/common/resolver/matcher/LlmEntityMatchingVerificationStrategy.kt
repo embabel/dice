@@ -6,8 +6,8 @@ import com.embabel.agent.rag.model.NamedEntityData.Companion.ENTITY_LABEL
 import com.embabel.common.ai.model.ByNameModelSelectionCriteria
 import com.embabel.common.ai.model.ModelProvider
 import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.common.resolver.EntityMatchingStrategy
 import com.embabel.dice.common.resolver.MatchResult
-import com.embabel.dice.common.resolver.MatchStrategy
 import org.slf4j.LoggerFactory
 import org.springframework.ai.chat.prompt.Prompt
 
@@ -22,12 +22,12 @@ import org.springframework.ai.chat.prompt.Prompt
  *
  * This provides semantic matching that text search and simple heuristics cannot achieve.
  */
-class LlmMatchVerificationStrategy(
+class LlmEntityMatchingVerificationStrategy(
     private val modelProvider: ModelProvider,
     private val modelName: String = "gpt-4.1-mini",
-) : MatchStrategy {
+) : EntityMatchingStrategy {
 
-    private val logger = LoggerFactory.getLogger(LlmMatchVerificationStrategy::class.java)
+    private val logger = LoggerFactory.getLogger(LlmEntityMatchingVerificationStrategy::class.java)
 
     override fun evaluate(
         suggested: SuggestedEntity,

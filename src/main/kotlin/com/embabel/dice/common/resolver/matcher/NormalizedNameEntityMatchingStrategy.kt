@@ -3,8 +3,8 @@ package com.embabel.dice.common.resolver.matcher
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.common.resolver.EntityMatchingStrategy
 import com.embabel.dice.common.resolver.MatchResult
-import com.embabel.dice.common.resolver.MatchStrategy
 
 /**
  * Matches after normalizing names (removing titles, suffixes, extra whitespace).
@@ -14,7 +14,7 @@ import com.embabel.dice.common.resolver.MatchStrategy
  * - "John Smith Jr." matches "John Smith"
  * - "Prof. Einstein" matches "Einstein"
  */
-class NormalizedNameMatchStrategy : MatchStrategy {
+class NormalizedNameEntityMatchingStrategy : EntityMatchingStrategy {
 
     override fun evaluate(
         suggested: SuggestedEntity,
