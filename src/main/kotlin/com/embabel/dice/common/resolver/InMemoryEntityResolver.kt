@@ -9,32 +9,26 @@ import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution
-import com.embabel.dice.common.resolver.matcher.ChainedEntityMatchingStrategy
-import com.embabel.dice.common.resolver.matcher.ExactNameEntityMatchingStrategy
-import com.embabel.dice.common.resolver.matcher.FuzzyNameEntityMatchingStrategy
-import com.embabel.dice.common.resolver.matcher.LabelCompatibilityStrategy
-import com.embabel.dice.common.resolver.matcher.NormalizedNameEntityMatchingStrategy
-import com.embabel.dice.common.resolver.matcher.PartialNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.searcher.FuzzyNameCandidateSearcher
+import com.embabel.dice.common.resolver.searcher.NormalizedNameCandidateSearcher
+import kotlin.math.min
 
 /**
  * Entity resolver that remembers entities it's been asked to resolve
  * and tries to reuse them.
  * Useful for deduplicating entities within a single session.
  *
- * Uses configurable [EntityMatchingStrategy] implementations for matching, which by default include:
- * - Label compatibility checking (including type hierarchy)
+ * Uses name matching including:
+ * - Label compatibility checking
  * - Case-insensitive exact matching
  * - Name normalization (removing titles/suffixes)
  * - Partial name matching (e.g., "Holmes" matches "Sherlock Holmes")
  * - Levenshtein distance for fuzzy matching
  *
- * @param config Configuration for fuzzy matching thresholds (used by default strategies)
- * @param matchStrategies Strategies for evaluating if an entity matches. Strategies are
- *                        tried in order; first definitive result wins.
+ * @param config Configuration for matching thresholds
  */
 class InMemoryEntityResolver(
     private val config: Config = Config(),
-    private val matchStrategies: ChainedEntityMatchingStrategy = defaultStrategies(config),
 ) : EntityResolver {
 
     data class Config(
@@ -81,11 +75,79 @@ class InMemoryEntityResolver(
      */
     private fun findMatch(suggested: SuggestedEntity, schema: DataDictionary): NamedEntityData? {
         for ((_, existing) in resolvedEntities) {
-            if (matchStrategies.matches(suggested, existing, schema)) {
+            if (isMatch(suggested, existing, schema)) {
                 return existing
             }
         }
         return null
+    }
+
+    private fun isMatch(suggested: SuggestedEntity, existing: NamedEntityData, @Suppress("UNUSED_PARAMETER") schema: DataDictionary): Boolean {
+        // Check label compatibility - require at least one matching label
+        val suggestedLabels = suggested.labels.map { it.lowercase() }.toSet()
+        val existingLabels = existing.labels().map { it.lowercase() }.toSet()
+        if (suggestedLabels.intersect(existingLabels).isEmpty()) {
+            return false
+        }
+
+        // Exact name match (case-insensitive)
+        if (suggested.name.equals(existing.name, ignoreCase = true)) {
+            return true
+        }
+
+        // Normalized name match
+        val normalizedSuggested = NormalizedNameCandidateSearcher.normalizeName(suggested.name)
+        val normalizedExisting = NormalizedNameCandidateSearcher.normalizeName(existing.name)
+        if (normalizedSuggested.equals(normalizedExisting, ignoreCase = true)) {
+            return true
+        }
+
+        // Partial name match (single word matching multi-word)
+        if (isPartialMatch(normalizedSuggested, normalizedExisting)) {
+            return true
+        }
+
+        // Fuzzy match (Levenshtein distance)
+        if (isFuzzyMatch(normalizedSuggested, normalizedExisting)) {
+            return true
+        }
+
+        return false
+    }
+
+    private fun isPartialMatch(name1: String, name2: String): Boolean {
+        val parts1 = name1.lowercase().split(Regex("\\s+"))
+        val parts2 = name2.lowercase().split(Regex("\\s+"))
+
+        // Single word matching multi-word name
+        if (parts1.size == 1 && parts2.size > 1) {
+            val singleName = parts1[0]
+            if (singleName.length >= config.minPartLength) {
+                return parts2.any { it.equals(singleName, ignoreCase = true) && it.length >= config.minPartLength }
+            }
+        }
+        if (parts2.size == 1 && parts1.size > 1) {
+            val singleName = parts2[0]
+            if (singleName.length >= config.minPartLength) {
+                return parts1.any { it.equals(singleName, ignoreCase = true) && it.length >= config.minPartLength }
+            }
+        }
+        return false
+    }
+
+    private fun isFuzzyMatch(name1: String, name2: String): Boolean {
+        val lower1 = name1.lowercase()
+        val lower2 = name2.lowercase()
+
+        val minLength = min(lower1.length, lower2.length)
+        if (minLength < config.minLengthForFuzzy) {
+            return false
+        }
+
+        val distance = FuzzyNameCandidateSearcher.levenshteinDistance(lower1, lower2)
+        val maxAllowedDistance = (minLength * config.maxDistanceRatio).toInt()
+
+        return distance <= maxAllowedDistance
     }
 
     /**
@@ -99,21 +161,4 @@ class InMemoryEntityResolver(
      * Get the number of resolved entities in memory.
      */
     fun size(): Int = resolvedEntities.size
-
-    companion object {
-        /**
-         * Create default strategies using the provided config.
-         */
-        fun defaultStrategies(config: Config = Config()): ChainedEntityMatchingStrategy =
-            ChainedEntityMatchingStrategy.of(
-                LabelCompatibilityStrategy(),
-                ExactNameEntityMatchingStrategy(),
-                NormalizedNameEntityMatchingStrategy(),
-                PartialNameEntityMatchingStrategy(minPartLength = config.minPartLength),
-                FuzzyNameEntityMatchingStrategy(
-                    maxDistanceRatio = config.maxDistanceRatio,
-                    minLengthForFuzzy = config.minLengthForFuzzy,
-                ),
-            )
-    }
 }

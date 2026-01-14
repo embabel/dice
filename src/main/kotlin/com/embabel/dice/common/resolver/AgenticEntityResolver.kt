@@ -26,20 +26,43 @@ data class EntityResolutionResult(
 )
 
 /**
- * Agentic entity resolver that uses ToolishRag to let an LLM drive the search process.
+ * Agentic entity resolver that uses [ToolishRag] to let an LLM drive the search process.
  *
- * For each suggested entity, creates a ToolishRag instance configured to search for
- * entities of the matching type, then lets the LLM craft queries, examine results,
- * and select the best match.
+ * Unlike [EscalatingEntityResolver] which uses a chain of heuristic searchers, this resolver
+ * gives the LLM full control to craft queries, examine results, and iteratively refine searches.
+ * For each suggested entity, it creates a [ToolishRag] instance configured to search for
+ * entities of the matching type.
  *
- * This approach is more accurate than heuristic matching because:
- * - The LLM can craft better search queries based on context
- * - The LLM can iteratively refine searches
- * - The LLM understands semantic relationships (e.g., "The Ring" = "Der Ring des Nibelungen")
+ * ## When to Use
+ * - When heuristic matching (exact, normalized, partial, fuzzy, vector) is insufficient
+ * - For complex entity matching requiring semantic understanding
+ * - When entities have many alternate names or translations (e.g., musical works, places)
+ *
+ * ## How It Works
+ * 1. For each suggested entity, configures a [ToolishRag] with text and vector search
+ * 2. The LLM crafts search queries based on the entity name and context
+ * 3. The LLM examines search results and can refine queries iteratively
+ * 4. Returns a structured [EntityResolutionResult] with the matched entity ID or null
+ * 5. Validates label compatibility before accepting the match
+ *
+ * ## Advantages Over Heuristic Matching
+ * - Understands semantic relationships (e.g., "The Ring" = "Der Ring des Nibelungen")
+ * - Can try alternate names, translations, and related terms
+ * - Uses conversation context to disambiguate
+ * - Iteratively refines searches when initial queries fail
+ *
+ * ## Trade-offs
+ * - Slower than heuristic-based [EscalatingEntityResolver]
+ * - Higher cost due to LLM usage per entity
+ * - Best used for high-value entities where accuracy is critical
  *
  * @param repository The entity repository providing search operations
  * @param ai The AI instance for running the agentic loop
  * @param llmOptions LLM configuration for the search agent
+ *
+ * @see EscalatingEntityResolver for heuristic-based resolution
+ * @see ChainedEntityResolver for combining multiple resolvers
+ * @see InMemoryEntityResolver for session-level deduplication
  */
 class AgenticEntityResolver(
     private val repository: NamedEntityDataRepository,

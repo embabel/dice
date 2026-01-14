@@ -7,28 +7,22 @@ import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.resolver.CandidateSearcher
-import com.embabel.dice.common.resolver.MatchResult
 import com.embabel.dice.common.resolver.SearchResult
-import com.embabel.dice.common.resolver.defaultMatchStrategies
-import com.embabel.dice.common.resolver.matcher.ChainedEntityMatchingStrategy
 import org.slf4j.LoggerFactory
 
 /**
  * Searches using vector/embedding similarity.
  *
- * Returns a confident match if the top result exceeds the auto-accept threshold
- * AND passes compatibility checks. Otherwise returns all candidates above
- * the minimum threshold for potential LLM arbitration.
+ * Returns a confident match if exactly 1 result exceeds the auto-accept threshold.
+ * Otherwise returns all candidates above the minimum threshold for potential LLM arbitration.
  *
  * @param repository The repository for vector search
- * @param matchStrategies Strategies for compatibility checking
- * @param autoAcceptThreshold Similarity above this returns confident match
+ * @param autoAcceptThreshold Similarity above this returns confident match (if exactly 1)
  * @param candidateThreshold Minimum similarity to be considered a candidate
  * @param topK Maximum candidates to retrieve
  */
 class VectorCandidateSearcher(
     private val repository: NamedEntityDataRepository,
-    private val matchStrategies: ChainedEntityMatchingStrategy = defaultMatchStrategies(),
     private val autoAcceptThreshold: Double = 0.95,
     private val candidateThreshold: Double = 0.7,
     private val topK: Int = 10,
@@ -54,18 +48,19 @@ class VectorCandidateSearcher(
                 entityFilter = labelFilter,
             )
 
-            for (result in results) {
-                val candidate = result.match
-                candidates.add(candidate)
+            candidates.addAll(results.map { it.match })
 
-                // Check if this is a high-confidence embedding match
-                if (result.score >= autoAcceptThreshold && isCompatible(suggested, candidate, schema)) {
-                    logger.debug(
-                        "EMBEDDING: '{}' -> '{}' (score: {} >= {})",
-                        suggested.name, candidate.name, result.score, autoAcceptThreshold
-                    )
-                    return SearchResult(confident = candidate, candidates = candidates)
-                }
+            // Find results above auto-accept threshold
+            val highConfidenceMatches = results.filter { it.score >= autoAcceptThreshold }
+
+            // Confident only if exactly 1 high-confidence match
+            if (highConfidenceMatches.size == 1) {
+                val match = highConfidenceMatches.first()
+                logger.debug(
+                    "EMBEDDING: '{}' -> '{}' (score: {} >= {})",
+                    suggested.name, match.match.name, match.score, autoAcceptThreshold
+                )
+                return SearchResult(confident = match.match, candidates = candidates)
             }
         } catch (e: Exception) {
             logger.debug("Vector search failed for '{}': {}", suggested.name, e.message)
@@ -74,23 +69,9 @@ class VectorCandidateSearcher(
         return SearchResult.candidates(candidates)
     }
 
-    /**
-     * Check if candidate is compatible with the suggested entity.
-     * Uses the strategy chain - if any strategy returns NoMatch, the candidate is incompatible.
-     */
-    private fun isCompatible(
-        suggested: SuggestedEntity,
-        candidate: NamedEntityData,
-        schema: DataDictionary,
-    ): Boolean {
-        return matchStrategies.evaluate(suggested, candidate, schema) != MatchResult.NoMatch
-    }
-
     companion object {
         @JvmStatic
-        fun create(
-            repository: NamedEntityDataRepository,
-            matchStrategies: ChainedEntityMatchingStrategy = defaultMatchStrategies(),
-        ): VectorCandidateSearcher = VectorCandidateSearcher(repository, matchStrategies)
+        fun create(repository: NamedEntityDataRepository): VectorCandidateSearcher =
+            VectorCandidateSearcher(repository)
     }
 }

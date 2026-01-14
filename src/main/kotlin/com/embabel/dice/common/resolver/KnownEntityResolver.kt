@@ -5,13 +5,12 @@ import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.model.SimpleNamedEntityData
 import com.embabel.dice.common.EntityResolver
-import com.embabel.dice.common.KnownEntity
 import com.embabel.dice.common.ReferenceOnlyEntity
 import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution
-import com.embabel.dice.common.resolver.matcher.ChainedEntityMatchingStrategy
+import com.embabel.dice.common.resolver.searcher.NormalizedNameCandidateSearcher
 import org.slf4j.LoggerFactory
 
 /**
@@ -22,12 +21,10 @@ import org.slf4j.LoggerFactory
  *
  * @param knownEntities Entities to check before searching
  * @param delegate The resolver to delegate to if no known entity matches
- * @param matchStrategies Strategies for matching suggested entities to known entities
  */
 class KnownEntityResolver(
     private val knownEntities: List<NamedEntity>,
     private val delegate: EntityResolver,
-    private val matchStrategies: ChainedEntityMatchingStrategy = defaultMatchStrategies(),
 ) : EntityResolver {
 
     private val logger = LoggerFactory.getLogger(KnownEntityResolver::class.java)
@@ -41,7 +38,7 @@ class KnownEntityResolver(
         }
 
         val resolutions = suggestedEntities.suggestedEntities.map { suggested ->
-            val knownMatch = findKnownMatch(suggested, schema)
+            val knownMatch = findKnownMatch(suggested)
             if (knownMatch != null) {
                 logger.info("Matched '{}' to known entity '{}'", suggested.name, knownMatch.name)
                 // Use ReferenceOnlyEntity to prevent updating externally-managed entities
@@ -84,10 +81,21 @@ class KnownEntityResolver(
         )
     }
 
-    private fun findKnownMatch(suggested: SuggestedEntity, schema: DataDictionary): NamedEntity? {
+    private fun findKnownMatch(suggested: SuggestedEntity): NamedEntity? {
+        val normalizedSuggested = NormalizedNameCandidateSearcher.normalizeName(suggested.name)
+
         for (known in knownEntities) {
-            val knownData = known.toNamedEntityData()
-            if (matchStrategies.matches(suggested, knownData, schema)) {
+            val normalizedKnown = NormalizedNameCandidateSearcher.normalizeName(known.name)
+
+            // Check label compatibility
+            val suggestedLabels = suggested.labels.map { it.lowercase() }.toSet()
+            val knownLabels = known.labels().map { it.lowercase() }.toSet()
+            if (suggestedLabels.intersect(knownLabels).isEmpty()) {
+                continue
+            }
+
+            // Match if normalized names are equal (case-insensitive)
+            if (normalizedSuggested.equals(normalizedKnown, ignoreCase = true)) {
                 return known
             }
         }
@@ -96,11 +104,10 @@ class KnownEntityResolver(
 
     @Suppress("USELESS_ELVIS")  // Java interop: name can be null despite Kotlin declaration
     private fun NamedEntity.toNamedEntityData(): NamedEntityData =
-        if (this is com.embabel.agent.rag.model.NamedEntityData) this
+        if (this is NamedEntityData) this
         else SimpleNamedEntityData(
-            id = id,
-            // Fallback to id if name is null (handles corrupted entity data from Java classes)
-            name = name ?: id,
+            id = id ?: "",
+            name = name ?: "",
             description = description ?: "",
             labels = labels(),
             properties = emptyMap(),
@@ -108,20 +115,22 @@ class KnownEntityResolver(
 
     companion object {
         /**
-         * Create a resolver that includes known entities from a context.
+         * Create a known entity resolver wrapping an existing resolver.
+         *
+         * @param knownEntities Entities to check first
+         * @param delegate The resolver to delegate to if no match found
+         * @return A new KnownEntityResolver
          */
         @JvmStatic
         fun withKnownEntities(
-            knownEntities: List<KnownEntity>,
-            delegate: EntityResolver
+            knownEntities: List<NamedEntity>,
+            delegate: EntityResolver,
         ): EntityResolver {
-            if (knownEntities.isEmpty()) {
-                return delegate
+            return if (knownEntities.isEmpty()) {
+                delegate
+            } else {
+                KnownEntityResolver(knownEntities, delegate)
             }
-            return KnownEntityResolver(
-                knownEntities = knownEntities.map { it.entity },
-                delegate = delegate,
-            )
         }
     }
 }

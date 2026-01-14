@@ -11,7 +11,9 @@ import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.resolver.searcher.ByExactNameCandidateSearcher
 import com.embabel.dice.common.resolver.searcher.ByIdCandidateSearcher
-import com.embabel.dice.common.resolver.searcher.TextCandidateSearcher
+import com.embabel.dice.common.resolver.searcher.FuzzyNameCandidateSearcher
+import com.embabel.dice.common.resolver.searcher.NormalizedNameCandidateSearcher
+import com.embabel.dice.common.resolver.searcher.PartialNameCandidateSearcher
 import com.embabel.dice.common.resolver.searcher.VectorCandidateSearcher
 import io.mockk.every
 import io.mockk.mockk
@@ -125,11 +127,11 @@ class EscalatingEntityResolverTest {
                 searchers = listOf(
                     ByIdCandidateSearcher(repository),
                     ByExactNameCandidateSearcher(repository),
-                    TextCandidateSearcher(repository),
+                    PartialNameCandidateSearcher(repository),
                 ),
             )
 
-            // "Brahms" should match "Johannes Brahms" via PartialNameMatchStrategy
+            // "Brahms" should match "Johannes Brahms" via PartialNameCandidateSearcher
             val suggested = suggestedEntity("Brahms")
             val result = resolver.resolve(suggestedEntities(suggested), schema)
 
@@ -151,7 +153,9 @@ class EscalatingEntityResolverTest {
                 searchers = listOf(
                     ByIdCandidateSearcher(repository),
                     ByExactNameCandidateSearcher(repository),
-                    TextCandidateSearcher(repository),
+                    NormalizedNameCandidateSearcher(repository),
+                    PartialNameCandidateSearcher(repository),
+                    FuzzyNameCandidateSearcher(repository),
                     VectorCandidateSearcher(repository, autoAcceptThreshold = 0.95),
                 ),
             )
@@ -173,7 +177,9 @@ class EscalatingEntityResolverTest {
                 searchers = listOf(
                     ByIdCandidateSearcher(repository),
                     ByExactNameCandidateSearcher(repository),
-                    TextCandidateSearcher(repository),
+                    NormalizedNameCandidateSearcher(repository),
+                    PartialNameCandidateSearcher(repository),
+                    FuzzyNameCandidateSearcher(repository),
                     VectorCandidateSearcher(repository, autoAcceptThreshold = 0.95),
                 ),
                 llmArbiter = null, // No LLM fallback
@@ -200,7 +206,9 @@ class EscalatingEntityResolverTest {
                 searchers = listOf(
                     ByIdCandidateSearcher(repository),
                     ByExactNameCandidateSearcher(repository),
-                    TextCandidateSearcher(repository),
+                    NormalizedNameCandidateSearcher(repository),
+                    PartialNameCandidateSearcher(repository),
+                    FuzzyNameCandidateSearcher(repository),
                 ),
                 llmArbiter = null,
                 config = EscalatingEntityResolver.Config(heuristicOnly = true),
@@ -227,7 +235,9 @@ class EscalatingEntityResolverTest {
                 searchers = listOf(
                     ByIdCandidateSearcher(repository),
                     ByExactNameCandidateSearcher(repository),
-                    TextCandidateSearcher(repository),
+                    NormalizedNameCandidateSearcher(repository),
+                    PartialNameCandidateSearcher(repository),
+                    FuzzyNameCandidateSearcher(repository),
                     VectorCandidateSearcher(repository),
                 ),
             )
@@ -256,7 +266,9 @@ class EscalatingEntityResolverTest {
                 searchers = listOf(
                     ByIdCandidateSearcher(repository),
                     ByExactNameCandidateSearcher(repository),
-                    TextCandidateSearcher(repository),
+                    NormalizedNameCandidateSearcher(repository),
+                    PartialNameCandidateSearcher(repository),
+                    FuzzyNameCandidateSearcher(repository),
                     VectorCandidateSearcher(repository),
                 ),
             )
@@ -288,7 +300,9 @@ class EscalatingEntityResolverTest {
                 searchers = listOf(
                     ByIdCandidateSearcher(repository),
                     ByExactNameCandidateSearcher(repository),
-                    TextCandidateSearcher(repository),
+                    NormalizedNameCandidateSearcher(repository),
+                    PartialNameCandidateSearcher(repository),
+                    FuzzyNameCandidateSearcher(repository),
                     VectorCandidateSearcher(repository),
                 ),
                 contextCompressor = compressor,
