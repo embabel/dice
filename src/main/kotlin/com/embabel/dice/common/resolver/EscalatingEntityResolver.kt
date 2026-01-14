@@ -3,8 +3,6 @@ package com.embabel.dice.common.resolver
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
-import com.embabel.common.core.types.SimilarityResult
-import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.ExistingEntity
 import com.embabel.dice.common.NewEntity
@@ -13,8 +11,8 @@ import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.common.VetoedEntity
-import com.embabel.dice.common.resolver.matcher.ChainedEntityMatchingStrategy
 import com.embabel.dice.common.resolver.matcher.LlmCandidateBakeoff
+import com.embabel.dice.common.resolver.searcher.DefaultCandidateSearchers
 import org.slf4j.LoggerFactory
 
 /**
@@ -52,29 +50,32 @@ data class LevelResult(
 )
 
 /**
- * Entity resolver that escalates through levels of resolution strategies,
+ * Entity resolver that escalates through a chain of [CandidateSearcher]s,
  * stopping as soon as a confident match is found.
  *
- * Resolution levels (in order):
- * 1. **Exact Match**: Direct name lookup - instant, no LLM
- * 2. **Heuristic Match**: Normalized/fuzzy strategies on search results - fast, no LLM
- * 3. **Embedding Match**: High-confidence vector similarity - fast, no LLM
- * 4. **LLM Verification**: Simple yes/no check for single candidate - 1 cheap LLM call
- * 5. **LLM Bakeoff**: Full comparison of multiple candidates - 1 LLM call with more context
+ * Architecture:
+ * - Each [CandidateSearcher] performs its own search and returns candidates
+ * - If a searcher returns a confident match, resolution stops early
+ * - Otherwise, candidates are accumulated for LLM arbitration
+ * - LLM is the final arbiter, receiving all accumulated candidates
  *
- * This approach minimizes LLM calls by handling easy cases with fast heuristics
+ * Default search order (cheapest first):
+ * 1. **Exact Match**: Direct ID/name lookup - instant, no LLM
+ * 2. **Text Search**: Full-text search with heuristic matching - fast, no LLM
+ * 3. **Vector Search**: High-confidence embedding similarity - moderate, no LLM
+ * 4. **LLM Arbitration**: If no confident match, LLM decides from all candidates
+ *
+ * This approach minimizes LLM calls by handling easy cases with fast searchers
  * and only escalating to LLM for genuinely ambiguous resolutions.
  *
- * @param repository The entity repository for search operations
- * @param matchStrategies Heuristic strategies for Level 2 matching
- * @param llmBakeoff Optional LLM bakeoff for Levels 4-5 (if null, stops at Level 3)
+ * @param searchers The candidate searchers, ordered cheapest-first
+ * @param llmArbiter Optional LLM to arbitrate when no confident match found (if null, creates new entity)
  * @param contextCompressor Optional compressor for reducing context size in LLM calls
- * @param config Configuration for thresholds and behavior
+ * @param config Configuration for behavior
  */
 class EscalatingEntityResolver(
-    private val repository: NamedEntityDataRepository,
-    private val matchStrategies: ChainedEntityMatchingStrategy = defaultMatchStrategies(),
-    private val llmBakeoff: LlmCandidateBakeoff? = null,
+    private val searchers: List<CandidateSearcher>,
+    private val llmArbiter: LlmCandidateBakeoff? = null,
     private val contextCompressor: ContextCompressor? = null,
     private val config: Config = Config(),
 ) : EntityResolver {
@@ -84,39 +85,9 @@ class EscalatingEntityResolver(
      */
     data class Config(
         /**
-         * Minimum embedding similarity to accept without LLM verification.
-         */
-        val embeddingAutoAcceptThreshold: Double = 0.95,
-
-        /**
-         * Minimum embedding similarity to consider as a candidate.
-         */
-        val embeddingCandidateThreshold: Double = 0.7,
-
-        /**
-         * Maximum candidates to retrieve from search.
-         */
-        val topK: Int = 10,
-
-        /**
-         * Whether to use text search in addition to vector search.
-         */
-        val useTextSearch: Boolean = true,
-
-        /**
-         * Whether to use vector search.
-         */
-        val useVectorSearch: Boolean = true,
-
-        /**
-         * Skip LLM entirely - use only heuristic matching.
+         * Skip LLM entirely - use only searchers.
          */
         val heuristicOnly: Boolean = false,
-
-        /**
-         * Confidence threshold to stop escalating and accept result.
-         */
-        val earlyTerminationThreshold: Double = 0.9,
     )
 
     private val logger = LoggerFactory.getLogger(EscalatingEntityResolver::class.java)
@@ -126,7 +97,7 @@ class EscalatingEntityResolver(
         schema: DataDictionary
     ): Resolutions<SuggestedEntityResolution> {
         logger.info(
-            "Hierarchical resolution of {} entities from chunks {}",
+            "Escalating resolution of {} entities from chunks {}",
             suggestedEntities.suggestedEntities.size,
             suggestedEntities.chunkIds
         )
@@ -141,7 +112,7 @@ class EscalatingEntityResolver(
         }
 
         logger.info(
-            "Hierarchical resolution complete: {}",
+            "Escalating resolution complete: {}",
             levelCounts.entries.joinToString(", ") { "${it.key}=${it.value}" }
         )
 
@@ -152,234 +123,91 @@ class EscalatingEntityResolver(
     }
 
     /**
-     * Resolve a single entity, escalating through levels until confident.
+     * Resolve a single entity, escalating through searchers until confident.
      */
     private fun resolveWithEscalation(
         suggested: SuggestedEntity,
         schema: DataDictionary,
         sourceText: String?,
     ): LevelResult {
-        // Level 1: Exact match by ID or name
-        tryExactMatch(suggested)?.let { existing ->
-            logger.debug("L1 EXACT: '{}' -> '{}'", suggested.name, existing.name)
-            return LevelResult(
-                level = ResolutionLevel.EXACT_MATCH,
-                resolution = ExistingEntity(suggested, existing),
-                confidence = 1.0,
-            )
+        val allCandidates = mutableListOf<NamedEntityData>()
+
+        // Run each searcher in order
+        for ((index, searcher) in searchers.withIndex()) {
+            val result = searcher.search(suggested, schema)
+            allCandidates.addAll(result.candidates)
+
+            // If we got a confident match, return early
+            if (result.confident != null) {
+                val level = levelForSearcherIndex(index)
+                logger.debug(
+                    "{}: '{}' -> '{}' (searcher: {})",
+                    level, suggested.name, result.confident.name, searcher::class.simpleName
+                )
+                return LevelResult(
+                    level = level,
+                    resolution = ExistingEntity(suggested, result.confident),
+                    confidence = 0.95,
+                    candidatesConsidered = allCandidates.size,
+                )
+            }
         }
 
-        // Gather candidates from search
-        val candidates = gatherCandidates(suggested)
-        if (candidates.isEmpty()) {
+        // No confident match from any searcher
+        if (allCandidates.isEmpty()) {
             logger.debug("No candidates found for '{}'", suggested.name)
             return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0)
         }
 
-        // Level 2: Heuristic matching on candidates
-        for (candidate in candidates) {
-            if (matchStrategies.matches(suggested, candidate.match, schema)) {
-                logger.debug(
-                    "L2 HEURISTIC: '{}' -> '{}' (score: {})",
-                    suggested.name, candidate.match.name, candidate.score
-                )
-                return LevelResult(
-                    level = ResolutionLevel.HEURISTIC_MATCH,
-                    resolution = ExistingEntity(suggested, candidate.match),
-                    confidence = candidate.score,
-                    candidatesConsidered = candidates.size,
-                )
-            }
-        }
-
-        // Level 3: High-confidence embedding match (must also pass compatibility check)
-        val topCandidate = candidates.first()
-        if (topCandidate.score >= config.embeddingAutoAcceptThreshold &&
-            isCompatible(suggested, topCandidate.match, schema)
-        ) {
-            logger.debug(
-                "L3 EMBEDDING: '{}' -> '{}' (score: {} >= {})",
-                suggested.name, topCandidate.match.name,
-                topCandidate.score, config.embeddingAutoAcceptThreshold
-            )
-            return LevelResult(
-                level = ResolutionLevel.EMBEDDING_MATCH,
-                resolution = ExistingEntity(suggested, topCandidate.match),
-                confidence = topCandidate.score,
-                candidatesConsidered = candidates.size,
-            )
-        }
+        // Deduplicate candidates
+        val uniqueCandidates = allCandidates.distinctBy { it.id }
 
         // Stop here if heuristic-only mode or no LLM configured
-        if (config.heuristicOnly || llmBakeoff == null) {
-            logger.debug("No LLM available/enabled for '{}'", suggested.name)
-            return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0, candidates.size)
+        if (config.heuristicOnly || llmArbiter == null) {
+            logger.debug("No LLM available/enabled for '{}' ({} candidates)", suggested.name, uniqueCandidates.size)
+            return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0, uniqueCandidates.size)
         }
 
-        // Filter candidates by compatibility before LLM calls
-        val compatibleCandidates = filterCompatible(suggested, candidates, schema)
-        if (compatibleCandidates.isEmpty()) {
-            logger.debug("No compatible candidates for '{}'", suggested.name)
-            return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0, candidates.size)
-        }
-
-        // Compress context for LLM calls
+        // Compress context for LLM call
         val compressedContext = contextCompressor?.compress(sourceText, suggested.name)
             ?: sourceText
 
-        // Level 4: Single candidate - simple LLM verification
-        if (compatibleCandidates.size == 1) {
-            val verified = llmBakeoff.selectBestMatch(
-                suggested,
-                compatibleCandidates,
-                compressedContext,
-            )
-            if (verified != null) {
-                logger.debug("L4 LLM_VERIFY: '{}' -> '{}'", suggested.name, verified.name)
-                return LevelResult(
-                    level = ResolutionLevel.LLM_VERIFICATION,
-                    resolution = ExistingEntity(suggested, verified),
-                    confidence = 0.85,
-                    candidatesConsidered = 1,
-                )
-            }
-            return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0, 1)
+        // Wrap candidates in SimilarityResult for LLM arbiter
+        val candidateResults = uniqueCandidates.map {
+            com.embabel.common.core.types.SimilarityResult(it, 0.8)
         }
 
-        // Level 5: Multiple candidates - full LLM bakeoff
-        val bestMatch = llmBakeoff.selectBestMatch(
-            suggested,
-            compatibleCandidates,
-            compressedContext,
-        )
+        // LLM arbitration
+        val level = if (uniqueCandidates.size == 1) {
+            ResolutionLevel.LLM_VERIFICATION
+        } else {
+            ResolutionLevel.LLM_BAKEOFF
+        }
+
+        val bestMatch = llmArbiter.selectBestMatch(suggested, candidateResults, compressedContext)
         if (bestMatch != null) {
             logger.debug(
-                "L5 LLM_BAKEOFF: '{}' -> '{}' (from {} candidates)",
-                suggested.name, bestMatch.name, compatibleCandidates.size
+                "{}: '{}' -> '{}' (from {} candidates)",
+                level, suggested.name, bestMatch.name, uniqueCandidates.size
             )
             return LevelResult(
-                level = ResolutionLevel.LLM_BAKEOFF,
+                level = level,
                 resolution = ExistingEntity(suggested, bestMatch),
                 confidence = 0.8,
-                candidatesConsidered = compatibleCandidates.size,
+                candidatesConsidered = uniqueCandidates.size,
             )
         }
 
-        return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0, compatibleCandidates.size)
+        return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0, uniqueCandidates.size)
     }
 
-    /**
-     * Try to find an exact match by ID or normalized name.
-     */
-    private fun tryExactMatch(suggested: SuggestedEntity): NamedEntityData? {
-        // Try by ID first
-        suggested.id?.let { id ->
-            try {
-                repository.findById(id)?.let { return it }
-            } catch (e: Exception) {
-                logger.debug("ID lookup failed for '{}': {}", id, e.message)
-            }
+    private fun levelForSearcherIndex(index: Int): ResolutionLevel {
+        return when (index) {
+            0 -> ResolutionLevel.EXACT_MATCH
+            1 -> ResolutionLevel.HEURISTIC_MATCH
+            2 -> ResolutionLevel.EMBEDDING_MATCH
+            else -> ResolutionLevel.HEURISTIC_MATCH
         }
-
-        // Try exact name match via text search
-        val exactQuery = "\"${suggested.name}\""
-        try {
-            val results = repository.textSearch(
-                TextSimilaritySearchRequest(
-                    query = exactQuery,
-                    similarityThreshold = 0.99,
-                    topK = 1,
-                )
-            )
-            results.firstOrNull()?.let { result ->
-                if (result.match.name.equals(suggested.name, ignoreCase = true)) {
-                    return result.match
-                }
-            }
-        } catch (e: Exception) {
-            logger.debug("Exact name search failed for '{}': {}", suggested.name, e.message)
-        }
-
-        return null
-    }
-
-    /**
-     * Gather candidates from text and/or vector search.
-     */
-    private fun gatherCandidates(suggested: SuggestedEntity): List<SimilarityResult<NamedEntityData>> {
-        val allCandidates = mutableListOf<SimilarityResult<NamedEntityData>>()
-
-        if (config.useTextSearch) {
-            try {
-                val query = buildTextQuery(suggested.name)
-                val results = repository.textSearch(
-                    TextSimilaritySearchRequest(
-                        query = query,
-                        similarityThreshold = 0.5,
-                        topK = config.topK,
-                    )
-                )
-                allCandidates.addAll(results)
-            } catch (e: Exception) {
-                logger.debug("Text search failed for '{}': {}", suggested.name, e.message)
-            }
-        }
-
-        if (config.useVectorSearch) {
-            try {
-                val query = "${suggested.name} ${suggested.summary}"
-                val results = repository.vectorSearch(
-                    TextSimilaritySearchRequest(
-                        query = query,
-                        similarityThreshold = config.embeddingCandidateThreshold,
-                        topK = config.topK,
-                    )
-                )
-                allCandidates.addAll(results)
-            } catch (e: Exception) {
-                logger.debug("Vector search failed for '{}': {}", suggested.name, e.message)
-            }
-        }
-
-        // Deduplicate and sort by score
-        return allCandidates
-            .distinctBy { it.match.id }
-            .sortedByDescending { it.score }
-            .take(config.topK)
-    }
-
-    private fun buildTextQuery(name: String): String {
-        val parts = mutableListOf<String>()
-        parts.add("\"$name\"^2")  // Exact phrase boost
-        name.split(Regex("\\s+")).filter { it.length >= 2 }.forEach { term ->
-            parts.add(term)
-            if (term.length >= 4) parts.add("$term~")  // Fuzzy
-        }
-        return parts.joinToString(" OR ")
-    }
-
-    /**
-     * Check if candidate is compatible with the suggested entity.
-     * Runs the strategy chain - if any strategy returns NoMatch, the candidate is incompatible.
-     * Strategies are ordered cheapest first, so label compatibility is checked early.
-     */
-    private fun isCompatible(
-        suggested: SuggestedEntity,
-        candidate: NamedEntityData,
-        schema: DataDictionary
-    ): Boolean {
-        return matchStrategies.evaluate(suggested, candidate, schema) != MatchResult.NoMatch
-    }
-
-    /**
-     * Filter candidates to only those that are compatible (no strategy returns NoMatch).
-     */
-    private fun filterCompatible(
-        suggested: SuggestedEntity,
-        candidates: List<SimilarityResult<NamedEntityData>>,
-        schema: DataDictionary
-    ): List<SimilarityResult<NamedEntityData>> {
-        return candidates.filter { isCompatible(suggested, it.match, schema) }
     }
 
     private fun createNewOrVeto(
@@ -399,17 +227,37 @@ class EscalatingEntityResolver(
 
     companion object {
         /**
-         * Create an escalating resolver with sensible defaults.
+         * Create an escalating resolver with default searchers.
+         *
+         * @param repository The entity repository for search operations
+         * @param llmArbiter Optional LLM to arbitrate when no confident match found
          */
         @JvmStatic
         fun create(
             repository: NamedEntityDataRepository,
-            llmBakeoff: LlmCandidateBakeoff? = null,
+            llmArbiter: LlmCandidateBakeoff? = null,
         ): EscalatingEntityResolver {
             return EscalatingEntityResolver(
-                repository = repository,
-                matchStrategies = defaultMatchStrategies(),
-                llmBakeoff = llmBakeoff,
+                searchers = DefaultCandidateSearchers.create(repository),
+                llmArbiter = llmArbiter,
+                contextCompressor = ContextCompressor.default(),
+            )
+        }
+
+        /**
+         * Create an escalating resolver without vector search.
+         *
+         * @param repository The entity repository for search operations
+         * @param llmArbiter Optional LLM to arbitrate when no confident match found
+         */
+        @JvmStatic
+        fun withoutVector(
+            repository: NamedEntityDataRepository,
+            llmArbiter: LlmCandidateBakeoff? = null,
+        ): EscalatingEntityResolver {
+            return EscalatingEntityResolver(
+                searchers = DefaultCandidateSearchers.withoutVector(repository),
+                llmArbiter = llmArbiter,
                 contextCompressor = ContextCompressor.default(),
             )
         }

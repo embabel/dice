@@ -1,6 +1,7 @@
 package com.embabel.dice.common.resolver
 
 import com.embabel.agent.core.DataDictionary
+import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.model.SimpleNamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.common.core.types.SimilarityResult
@@ -8,10 +9,10 @@ import com.embabel.dice.common.ExistingEntity
 import com.embabel.dice.common.NewEntity
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
-import com.embabel.dice.common.resolver.matcher.ChainedEntityMatchingStrategy
-import com.embabel.dice.common.resolver.matcher.ExactNameEntityMatchingStrategy
-import com.embabel.dice.common.resolver.matcher.NormalizedNameEntityMatchingStrategy
-import com.embabel.dice.common.resolver.matcher.PartialNameEntityMatchingStrategy
+import com.embabel.dice.common.resolver.searcher.ByExactNameCandidateSearcher
+import com.embabel.dice.common.resolver.searcher.ByIdCandidateSearcher
+import com.embabel.dice.common.resolver.searcher.TextCandidateSearcher
+import com.embabel.dice.common.resolver.searcher.VectorCandidateSearcher
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -69,11 +70,12 @@ class EscalatingEntityResolverTest {
         @Test
         fun `resolves exact name match without LLM`() {
             // Text search returns exact match
-            every { repository.textSearch(any()) } returns listOf(SimilarityResult(brahmsEntity, 1.0))
+            every { repository.textSearch(any(), any(), any()) } returns listOf(SimilarityResult(brahmsEntity, 1.0))
 
             val resolver = EscalatingEntityResolver(
-                repository = repository,
-                config = EscalatingEntityResolver.Config(useVectorSearch = false),
+                searchers = listOf(
+                    ByExactNameCandidateSearcher(repository),
+                ),
             )
 
             val suggested = suggestedEntity("Johannes Brahms")
@@ -98,8 +100,9 @@ class EscalatingEntityResolverTest {
             every { repository.findById("brahms-123") } returns brahmsEntity
 
             val resolver = EscalatingEntityResolver(
-                repository = repository,
-                config = EscalatingEntityResolver.Config(useTextSearch = false, useVectorSearch = false),
+                searchers = listOf(
+                    ByIdCandidateSearcher(repository),
+                ),
             )
 
             val result = resolver.resolve(suggestedEntities(suggestedWithId), schema)
@@ -116,16 +119,14 @@ class EscalatingEntityResolverTest {
         @Test
         fun `resolves partial name match via heuristics`() {
             // Search returns candidate that matches via heuristic strategies
-            every { repository.textSearch(any()) } returns listOf(SimilarityResult(brahmsEntity, 0.8))
+            every { repository.textSearch(any(), any(), any()) } returns listOf(SimilarityResult(brahmsEntity, 0.8))
 
             val resolver = EscalatingEntityResolver(
-                repository = repository,
-                matchStrategies = ChainedEntityMatchingStrategy.of(
-                    ExactNameEntityMatchingStrategy(),
-                    NormalizedNameEntityMatchingStrategy(),
-                    PartialNameEntityMatchingStrategy(),
+                searchers = listOf(
+                    ByIdCandidateSearcher(repository),
+                    ByExactNameCandidateSearcher(repository),
+                    TextCandidateSearcher(repository),
                 ),
-                config = EscalatingEntityResolver.Config(useVectorSearch = false),
             )
 
             // "Brahms" should match "Johannes Brahms" via PartialNameMatchStrategy
@@ -143,16 +144,15 @@ class EscalatingEntityResolverTest {
         @Test
         fun `auto-accepts high confidence embedding match`() {
             // Vector search returns very high score
-            every { repository.textSearch(any()) } returns emptyList()
-            every { repository.vectorSearch(any()) } returns listOf(SimilarityResult(brahmsEntity, 0.98))
+            every { repository.textSearch(any(), any(), any()) } returns emptyList()
+            every { repository.vectorSearch(any(), any(), any()) } returns listOf(SimilarityResult(brahmsEntity, 0.98))
 
             val resolver = EscalatingEntityResolver(
-                repository = repository,
-                matchStrategies = ChainedEntityMatchingStrategy.of(), // No heuristic match
-                config = EscalatingEntityResolver.Config(
-                    useTextSearch = true,
-                    useVectorSearch = true,
-                    embeddingAutoAcceptThreshold = 0.95,
+                searchers = listOf(
+                    ByIdCandidateSearcher(repository),
+                    ByExactNameCandidateSearcher(repository),
+                    TextCandidateSearcher(repository),
+                    VectorCandidateSearcher(repository, autoAcceptThreshold = 0.95),
                 ),
             )
 
@@ -166,19 +166,18 @@ class EscalatingEntityResolverTest {
         @Test
         fun `does not auto-accept below threshold`() {
             // Vector search returns moderate score
-            every { repository.textSearch(any()) } returns emptyList()
-            every { repository.vectorSearch(any()) } returns listOf(SimilarityResult(brahmsEntity, 0.80))
+            every { repository.textSearch(any(), any(), any()) } returns emptyList()
+            every { repository.vectorSearch(any(), any(), any()) } returns listOf(SimilarityResult(brahmsEntity, 0.80))
 
             val resolver = EscalatingEntityResolver(
-                repository = repository,
-                matchStrategies = ChainedEntityMatchingStrategy.of(),
-                llmBakeoff = null, // No LLM fallback
-                config = EscalatingEntityResolver.Config(
-                    useTextSearch = true,
-                    useVectorSearch = true,
-                    embeddingAutoAcceptThreshold = 0.95,
-                    heuristicOnly = true,
+                searchers = listOf(
+                    ByIdCandidateSearcher(repository),
+                    ByExactNameCandidateSearcher(repository),
+                    TextCandidateSearcher(repository),
+                    VectorCandidateSearcher(repository, autoAcceptThreshold = 0.95),
                 ),
+                llmArbiter = null, // No LLM fallback
+                config = EscalatingEntityResolver.Config(heuristicOnly = true),
             )
 
             val suggested = suggestedEntity("Some Composer")
@@ -195,16 +194,16 @@ class EscalatingEntityResolverTest {
 
         @Test
         fun `never calls LLM in heuristic-only mode`() {
-            every { repository.textSearch(any()) } returns listOf(SimilarityResult(brahmsEntity, 0.7))
+            every { repository.textSearch(any(), any(), any()) } returns listOf(SimilarityResult(brahmsEntity, 0.7))
 
             val resolver = EscalatingEntityResolver(
-                repository = repository,
-                matchStrategies = ChainedEntityMatchingStrategy.of(),
-                llmBakeoff = null,
-                config = EscalatingEntityResolver.Config(
-                    useVectorSearch = false,
-                    heuristicOnly = true,
+                searchers = listOf(
+                    ByIdCandidateSearcher(repository),
+                    ByExactNameCandidateSearcher(repository),
+                    TextCandidateSearcher(repository),
                 ),
+                llmArbiter = null,
+                config = EscalatingEntityResolver.Config(heuristicOnly = true),
             )
 
             val suggested = suggestedEntity("Unknown Composer")
@@ -221,12 +220,16 @@ class EscalatingEntityResolverTest {
 
         @Test
         fun `creates new entity when no candidates found`() {
-            every { repository.textSearch(any()) } returns emptyList()
-            every { repository.vectorSearch(any()) } returns emptyList()
+            every { repository.textSearch(any(), any(), any()) } returns emptyList()
+            every { repository.vectorSearch(any(), any(), any()) } returns emptyList()
 
             val resolver = EscalatingEntityResolver(
-                repository = repository,
-                config = EscalatingEntityResolver.Config(),
+                searchers = listOf(
+                    ByIdCandidateSearcher(repository),
+                    ByExactNameCandidateSearcher(repository),
+                    TextCandidateSearcher(repository),
+                    VectorCandidateSearcher(repository),
+                ),
             )
 
             val suggested = suggestedEntity("Completely Unknown Composer")
@@ -243,18 +246,19 @@ class EscalatingEntityResolverTest {
         @Test
         fun `resolves multiple entities with different strategies`() {
             // Brahms exact match, Unknown no match
-            every { repository.textSearch(match { it.query.contains("Brahms") }) } returns listOf(
-                SimilarityResult(
-                    brahmsEntity,
-                    1.0
-                )
+            every { repository.textSearch(match { it.query.contains("Brahms") }, any(), any()) } returns listOf(
+                SimilarityResult(brahmsEntity, 1.0)
             )
-            every { repository.textSearch(match { it.query.contains("Unknown") }) } returns emptyList()
-            every { repository.vectorSearch(any()) } returns emptyList()
+            every { repository.textSearch(match { it.query.contains("Unknown") }, any(), any()) } returns emptyList()
+            every { repository.vectorSearch(any(), any(), any()) } returns emptyList()
 
             val resolver = EscalatingEntityResolver(
-                repository = repository,
-                config = EscalatingEntityResolver.Config(useVectorSearch = true),
+                searchers = listOf(
+                    ByIdCandidateSearcher(repository),
+                    ByExactNameCandidateSearcher(repository),
+                    TextCandidateSearcher(repository),
+                    VectorCandidateSearcher(repository),
+                ),
             )
 
             val entities = suggestedEntities(
@@ -277,13 +281,17 @@ class EscalatingEntityResolverTest {
             val compressor = mockk<ContextCompressor>()
             every { compressor.compress(any(), any()) } returns "Compressed context"
 
-            every { repository.textSearch(any()) } returns emptyList()
-            every { repository.vectorSearch(any()) } returns emptyList()
+            every { repository.textSearch(any(), any(), any()) } returns emptyList()
+            every { repository.vectorSearch(any(), any(), any()) } returns emptyList()
 
             val resolver = EscalatingEntityResolver(
-                repository = repository,
+                searchers = listOf(
+                    ByIdCandidateSearcher(repository),
+                    ByExactNameCandidateSearcher(repository),
+                    TextCandidateSearcher(repository),
+                    VectorCandidateSearcher(repository),
+                ),
                 contextCompressor = compressor,
-                config = EscalatingEntityResolver.Config(),
             )
 
             val entities = SuggestedEntities(
@@ -305,6 +313,31 @@ class EscalatingEntityResolverTest {
             val resolver = EscalatingEntityResolver.create(repository)
 
             assertNotNull(resolver)
+        }
+    }
+
+    @Nested
+    inner class CustomSearchers {
+
+        @Test
+        fun `supports custom searcher chain`() {
+            // Custom searcher that always returns confident match
+            val customSearcher = object : CandidateSearcher {
+                override fun search(suggested: SuggestedEntity, schema: DataDictionary): SearchResult {
+                    return SearchResult.confident(brahmsEntity)
+                }
+            }
+
+            val resolver = EscalatingEntityResolver(
+                searchers = listOf(customSearcher),
+            )
+
+            val suggested = suggestedEntity("Anything")
+            val result = resolver.resolve(suggestedEntities(suggested), schema)
+
+            assertEquals(1, result.resolutions.size)
+            assertTrue(result.resolutions.first() is ExistingEntity)
+            assertEquals("brahms-123", (result.resolutions.first() as ExistingEntity).existing.id)
         }
     }
 }
