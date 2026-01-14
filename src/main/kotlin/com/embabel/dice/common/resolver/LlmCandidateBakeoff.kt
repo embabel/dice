@@ -10,20 +10,83 @@ import com.fasterxml.jackson.annotation.JsonPropertyDescription
 import org.slf4j.LoggerFactory
 
 /**
- * Prompt mode for LLM bakeoff - controls verbosity vs token usage.
+ * Strategy for building prompts used in LLM candidate bakeoff.
+ *
+ * Two built-in strategies are provided in [BakeoffPromptStrategies]:
+ * - [BakeoffPromptStrategies.COMPACT]: Minimal prompts (~100-200 tokens) optimized for speed and cost.
+ *   **Note**: Does not include entity descriptions, which may cause disambiguation issues
+ *   when candidates have similar names but different meanings.
+ * - [BakeoffPromptStrategies.FULL]: Detailed prompts (~400-600 tokens) with descriptions and
+ *   comprehensive matching rules for complex disambiguation.
+ *
+ * You can implement your own strategy for domain-specific prompt customization:
+ * ```kotlin
+ * val myStrategy = object : BakeoffPromptStrategy {
+ *     override fun buildBakeoffPrompt(...) = "..."
+ *     override fun buildVerificationPrompt(...) = "..."
+ * }
+ * val bakeoff = LlmCandidateBakeoff.withLlm(llmOptions).withAi(ai).withPromptStrategy(myStrategy)
+ * ```
  */
-enum class PromptMode {
-    /**
-     * Minimal prompts with compressed candidate info.
-     * ~60-80% fewer tokens, suitable for most cases.
-     */
-    COMPACT,
+interface BakeoffPromptStrategy {
 
     /**
-     * Full prompts with detailed descriptions and instructions.
-     * More tokens but potentially more accurate for complex cases.
+     * Build a prompt for selecting the best match from multiple candidates.
+     *
+     * @param suggested The entity to match
+     * @param candidates The candidate entities from the database
+     * @param sourceText Optional conversation context
+     * @return The prompt text for the LLM
      */
-    FULL,
+    fun buildBakeoffPrompt(
+        suggested: SuggestedEntity,
+        candidates: List<SimilarityResult<NamedEntityData>>,
+        sourceText: String?,
+    ): String
+
+    /**
+     * Build a prompt for verifying a single candidate match.
+     *
+     * @param suggested The entity to match
+     * @param candidate The single candidate to verify
+     * @param sourceText Optional conversation context
+     * @return The prompt text for the LLM
+     */
+    fun buildVerificationPrompt(
+        suggested: SuggestedEntity,
+        candidate: NamedEntityData,
+        sourceText: String?,
+    ): String
+}
+
+/**
+ * Built-in prompt strategies for [LlmCandidateBakeoff].
+ *
+ * Usage:
+ * - Kotlin: `BakeoffPromptStrategies.COMPACT` or `BakeoffPromptStrategies.FULL`
+ * - Java: `BakeoffPromptStrategies.COMPACT` or `BakeoffPromptStrategies.FULL`
+ */
+object BakeoffPromptStrategies {
+
+    /**
+     * Compact prompts optimized for speed and token usage (~100-200 tokens).
+     *
+     * **Warning**: Does not include entity descriptions. This works well when entity
+     * names are distinctive, but may cause incorrect matches when candidates have
+     * similar names with different meanings (e.g., "Symphony No. 5" by different composers).
+     * Use [FULL] if disambiguation accuracy is critical.
+     */
+    @JvmField
+    val COMPACT: BakeoffPromptStrategy = CompactBakeoffPromptStrategy
+
+    /**
+     * Full prompts with detailed descriptions and matching rules (~400-600 tokens).
+     *
+     * Includes entity descriptions and comprehensive instructions for complex
+     * disambiguation. Use this when accuracy is more important than token cost.
+     */
+    @JvmField
+    val FULL: BakeoffPromptStrategy = FullBakeoffPromptStrategy
 }
 
 /**
@@ -52,23 +115,76 @@ data class VerificationResult(
  * This is more efficient than evaluating candidates one-by-one, and allows
  * the LLM to compare and contrast options. Uses structured output for reliable parsing.
  *
- * Supports two prompt modes:
- * - **COMPACT**: Minimal prompts (~100-200 tokens) for fast, cheap resolution
- * - **FULL**: Detailed prompts (~400-600 tokens) for complex disambiguation
+ * Two built-in prompt strategies are available in [BakeoffPromptStrategies]:
+ * - [BakeoffPromptStrategies.COMPACT]: Minimal prompts (~100-200 tokens) for fast, cheap resolution.
+ *   Does not include descriptions - may cause issues with similarly-named entities.
+ * - [BakeoffPromptStrategies.FULL]: Detailed prompts (~400-600 tokens) for complex disambiguation.
+ *
+ * Custom strategies can be implemented for domain-specific prompt requirements.
  *
  * Returns the best matching candidate, or null if none match.
  *
- * @param ai The Embabel AI instance for LLM calls
+ * Example usage (Java-friendly builder):
+ * ```java
+ * var bakeoff = LlmCandidateBakeoff
+ *     .withLlm(llmOptions)
+ *     .withAi(ai)
+ *     .withPromptStrategy(BakeoffPromptStrategies.FULL);
+ * ```
+ *
  * @param llmOptions LLM configuration (model, temperature, etc.)
- * @param promptMode Controls prompt verbosity (default: COMPACT)
+ * @param ai The Embabel AI instance for LLM calls
+ * @param promptStrategy Strategy for building prompts (default: COMPACT)
  */
-class LlmCandidateBakeoff(
-    private val ai: Ai,
+data class LlmCandidateBakeoff(
     private val llmOptions: LlmOptions,
-    private val promptMode: PromptMode = PromptMode.COMPACT,
+    private val ai: Ai,
+    private val promptStrategy: BakeoffPromptStrategy = BakeoffPromptStrategies.COMPACT,
 ) : CandidateBakeoff {
 
-    private val logger = LoggerFactory.getLogger(LlmCandidateBakeoff::class.java)
+    companion object {
+
+        private val logger = LoggerFactory.getLogger(LlmCandidateBakeoff::class.java)
+
+        /**
+         * Start building an LlmCandidateBakeoff with the specified LLM options.
+         *
+         * @param llm LLM configuration (model, temperature, etc.)
+         * @return Builder for fluent configuration
+         */
+        @JvmStatic
+        fun withLlm(llm: LlmOptions): Builder = Builder(llm)
+
+        /**
+         * Step builder for Java-friendly construction.
+         */
+        class Builder(private val llmOptions: LlmOptions) {
+
+            /**
+             * Set the AI instance and create the bakeoff with default COMPACT prompts.
+             *
+             * @param ai The Embabel AI instance for LLM calls
+             * @return LlmCandidateBakeoff ready for use
+             */
+            fun withAi(ai: Ai): LlmCandidateBakeoff =
+                LlmCandidateBakeoff(
+                    llmOptions = llmOptions,
+                    ai = ai,
+                )
+        }
+    }
+
+    /**
+     * Set the prompt strategy.
+     *
+     * Use [BakeoffPromptStrategies.COMPACT] for fast/cheap resolution (no descriptions).
+     * Use [BakeoffPromptStrategies.FULL] for accurate disambiguation (includes descriptions).
+     *
+     * @param strategy The prompt building strategy
+     * @return New instance with the specified strategy
+     */
+    fun withPromptStrategy(strategy: BakeoffPromptStrategy): LlmCandidateBakeoff =
+        copy(promptStrategy = strategy)
 
     override fun selectBestMatch(
         suggested: SuggestedEntity,
@@ -85,7 +201,7 @@ class LlmCandidateBakeoff(
             }
         }
 
-        val promptText = buildBakeoffPrompt(suggested, candidates, sourceText)
+        val promptText = promptStrategy.buildBakeoffPrompt(suggested, candidates, sourceText)
 
         return try {
             val result = ai.withLlm(llmOptions)
@@ -100,7 +216,11 @@ class LlmCandidateBakeoff(
             if (result.selectedCandidate != null) {
                 val index = result.selectedCandidate - 1  // Convert to 0-based
                 if (index in candidates.indices) {
-                    logger.debug("LLM selected candidate {}: {}", result.selectedCandidate, candidates[index].match.name)
+                    logger.debug(
+                        "LLM selected candidate {}: {}",
+                        result.selectedCandidate,
+                        candidates[index].match.name
+                    )
                     candidates[index].match
                 } else {
                     logger.warn("LLM selected invalid candidate number: {}", result.selectedCandidate)
@@ -121,7 +241,7 @@ class LlmCandidateBakeoff(
         candidate: NamedEntityData,
         sourceText: String? = null
     ): Boolean {
-        val promptText = buildVerificationPrompt(suggested, candidate, sourceText)
+        val promptText = promptStrategy.buildVerificationPrompt(suggested, candidate, sourceText)
 
         return try {
             val result = ai.withLlm(llmOptions)
@@ -138,30 +258,28 @@ class LlmCandidateBakeoff(
             false
         }
     }
+}
 
-    private fun buildBakeoffPrompt(
+/**
+ * Compact prompt strategy optimized for speed and token usage (~100-200 tokens).
+ *
+ * **Important**: Does not include entity descriptions in the prompts. This works well
+ * when entity names are distinctive, but may cause incorrect matches when candidates
+ * have similar names with different meanings (e.g., "Symphony No. 5" by different composers).
+ *
+ * If you experience disambiguation issues, switch to [FullBakeoffPromptStrategy] or
+ * create a custom strategy that includes relevant description snippets.
+ */
+internal object CompactBakeoffPromptStrategy : BakeoffPromptStrategy {
+
+    override fun buildBakeoffPrompt(
         suggested: SuggestedEntity,
         candidates: List<SimilarityResult<NamedEntityData>>,
-        sourceText: String? = null,
-    ): String {
-        return when (promptMode) {
-            PromptMode.COMPACT -> buildCompactBakeoffPrompt(suggested, candidates, sourceText)
-            PromptMode.FULL -> buildFullBakeoffPrompt(suggested, candidates, sourceText)
-        }
-    }
-
-    /**
-     * Compact prompt: ~100-200 tokens
-     * Focuses on essential info only.
-     */
-    private fun buildCompactBakeoffPrompt(
-        suggested: SuggestedEntity,
-        candidates: List<SimilarityResult<NamedEntityData>>,
-        sourceText: String? = null,
+        sourceText: String?,
     ): String {
         val suggestedType = suggested.labels.firstOrNull() ?: "Entity"
 
-        // One-line per candidate: "1. Name (Type) [score]"
+        // One-line per candidate: "1. Name (Type) [score]" - no description
         val candidateList = candidates.mapIndexed { index, result ->
             val c = result.match
             val label = c.labels().firstOrNull {
@@ -181,14 +299,39 @@ $candidateList
 Select the candidate number (1-${candidates.size}) that matches, or null if none match."""
     }
 
-    /**
-     * Full prompt: ~400-600 tokens
-     * Detailed instructions and candidate info.
-     */
-    private fun buildFullBakeoffPrompt(
+    override fun buildVerificationPrompt(
+        suggested: SuggestedEntity,
+        candidate: NamedEntityData,
+        sourceText: String?,
+    ): String {
+        val suggestedType = suggested.labels.firstOrNull() ?: "Entity"
+        val candidateType = candidate.labels().firstOrNull {
+            it != ENTITY_LABEL && it != "Entity" && it != "Reference"
+        } ?: "Entity"
+
+        val context = if (!sourceText.isNullOrBlank()) {
+            " Context: ${sourceText.take(100)}..."
+        } else ""
+
+        return """Is "${suggested.name}" ($suggestedType) the same entity as "${candidate.name}" ($candidateType)?$context
+
+Determine if these refer to the same entity."""
+    }
+}
+
+/**
+ * Full prompt strategy with detailed descriptions and matching rules (~400-600 tokens).
+ *
+ * Includes entity descriptions and comprehensive instructions for complex disambiguation.
+ * Use this when accuracy is more important than token cost, or when dealing with
+ * entities that have similar or generic names.
+ */
+internal object FullBakeoffPromptStrategy : BakeoffPromptStrategy {
+
+    override fun buildBakeoffPrompt(
         suggested: SuggestedEntity,
         candidates: List<SimilarityResult<NamedEntityData>>,
-        sourceText: String? = null,
+        sourceText: String?,
     ): String {
         val suggestedType = suggested.labels.firstOrNull() ?: "Entity"
 
@@ -233,46 +376,10 @@ Rules:
 Select the candidate number (1-${candidates.size}) that matches, or null if none match."""
     }
 
-    private fun buildVerificationPrompt(
+    override fun buildVerificationPrompt(
         suggested: SuggestedEntity,
         candidate: NamedEntityData,
-        sourceText: String? = null
-    ): String {
-        return when (promptMode) {
-            PromptMode.COMPACT -> buildCompactVerificationPrompt(suggested, candidate, sourceText)
-            PromptMode.FULL -> buildFullVerificationPrompt(suggested, candidate, sourceText)
-        }
-    }
-
-    /**
-     * Compact verification: ~50 tokens
-     */
-    private fun buildCompactVerificationPrompt(
-        suggested: SuggestedEntity,
-        candidate: NamedEntityData,
-        sourceText: String? = null
-    ): String {
-        val suggestedType = suggested.labels.firstOrNull() ?: "Entity"
-        val candidateType = candidate.labels().firstOrNull {
-            it != ENTITY_LABEL && it != "Entity" && it != "Reference"
-        } ?: "Entity"
-
-        val context = if (!sourceText.isNullOrBlank()) {
-            " Context: ${sourceText.take(100)}..."
-        } else ""
-
-        return """Is "${suggested.name}" ($suggestedType) the same entity as "${candidate.name}" ($candidateType)?$context
-
-Determine if these refer to the same entity."""
-    }
-
-    /**
-     * Full verification: ~200 tokens
-     */
-    private fun buildFullVerificationPrompt(
-        suggested: SuggestedEntity,
-        candidate: NamedEntityData,
-        sourceText: String? = null
+        sourceText: String?,
     ): String {
         val suggestedType = suggested.labels.firstOrNull() ?: "Entity"
         val candidateLabels = candidate.labels().filter {
