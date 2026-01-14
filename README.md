@@ -196,6 +196,148 @@ flowchart TB
     style Persist fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
 ```
 
+### Entity Extraction Pipeline
+
+For use cases that need entity extraction without propositions, DICE provides a lightweight
+`EntityPipeline` and `EntityIncrementalAnalyzer`. This is useful when you want to:
+
+- Extract and resolve entities from conversations without creating propositions
+- Build entity-only knowledge graphs
+- Track entities mentioned in streaming data
+
+```mermaid
+flowchart TB
+    subgraph Input["📄 Input"]
+        TEXT["Text / Chunks"]
+    end
+
+    subgraph Pipeline["🔄 Entity Pipeline"]
+        EXTRACT["LlmEntityExtractor"]
+        RESOLVE["EntityResolver"]
+    end
+
+    subgraph Output["🎯 Output"]
+        ENT[("Resolved Entities<br/>new, existing, reference-only")]
+    end
+
+    TEXT --> EXTRACT
+    EXTRACT --> RESOLVE
+    RESOLVE --> ENT
+
+    style Input fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
+    style Pipeline fill:#fff3cd,stroke:#e9b306,color:#1e1e1e
+    style Output fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
+```
+
+#### EntityExtractor
+
+The `EntityExtractor` interface defines entity extraction from chunks:
+
+```kotlin
+interface EntityExtractor {
+    fun suggestEntities(chunk: Chunk, context: SourceAnalysisContext): SuggestedEntities
+}
+```
+
+Use `LlmEntityExtractor` for LLM-based extraction:
+
+```kotlin
+val extractor = LlmEntityExtractor
+    .withLlm(llmOptions)
+    .withAi(ai)
+
+// Optionally use a custom prompt template
+val customExtractor = extractor.withTemplate("my_entity_prompt")
+
+val entities = extractor.suggestEntities(chunk, context)
+```
+
+#### EntityPipeline
+
+The `EntityPipeline` orchestrates extraction and resolution:
+
+```kotlin
+// Create pipeline
+val pipeline = EntityPipeline.withExtractor(
+    LlmEntityExtractor.withLlm(llmOptions).withAi(ai)
+)
+
+// Process a single chunk
+val result: ChunkEntityResult = pipeline.processChunk(chunk, context)
+
+// Process multiple chunks (with cross-chunk entity resolution)
+val results: EntityResults = pipeline.process(chunks, context)
+
+// Persist extracted entities
+results.persist(entityRepository)
+```
+
+The pipeline does NOT persist anything automatically—the caller controls persistence via the
+`persist()` method or by accessing `entitiesToPersist()`.
+
+#### EntityIncrementalAnalyzer
+
+For streaming/incremental entity extraction (e.g., from conversations), use `EntityIncrementalAnalyzer`:
+
+```kotlin
+val analyzer = EntityIncrementalAnalyzer(
+    pipeline = EntityPipeline.withExtractor(
+        LlmEntityExtractor.withLlm(llmOptions).withAi(ai)
+    ),
+    historyStore = myHistoryStore,
+    formatter = MessageFormatter.INSTANCE,
+    config = WindowConfig(
+        windowSize = 10,
+        triggerThreshold = 3,
+    ),
+)
+
+// Wrap conversation as incremental source
+val source = ConversationSource(conversation)
+
+// Analyze—returns null if trigger threshold not met
+val result: ChunkEntityResult? = analyzer.analyze(source, context)
+
+// Persist if we got results
+result?.persist(entityRepository)
+```
+
+**Key differences from PropositionIncrementalAnalyzer:**
+
+| Aspect | EntityIncrementalAnalyzer | PropositionIncrementalAnalyzer |
+|--------|---------------------------|--------------------------------|
+| Output | `ChunkEntityResult` | `ChunkPropositionResult` |
+| Pipeline | `EntityPipeline` | `PropositionPipeline` |
+| Creates | Entities only | Entities + Propositions |
+| Use case | Entity tracking | Full knowledge extraction |
+
+#### Entity Extraction Results
+
+`ChunkEntityResult` and `EntityResults` implement `EntityExtractionResult`, providing access to:
+
+```kotlin
+// Individual chunk result
+val chunkResult: ChunkEntityResult = pipeline.processChunk(chunk, context)
+
+// Access entities by resolution type
+chunkResult.newEntities()           // Newly created entities
+chunkResult.updatedEntities()       // Matched to existing entities
+chunkResult.referenceOnlyEntities() // Known entities (not modified)
+chunkResult.resolvedEntities()      // All resolved (excludes vetoed)
+
+// Get entities that need persistence
+chunkResult.entitiesToPersist()     // new + updated
+
+// Statistics
+val stats = chunkResult.entityExtractionStats
+println("${stats.newCount} new, ${stats.updatedCount} updated")
+
+// Multi-chunk results (deduplicated)
+val results: EntityResults = pipeline.process(chunks, context)
+results.totalSuggested  // Total suggested across all chunks
+results.totalResolved   // Unique resolved entities
+```
+
 ### Entity Resolution
 
 Entity resolution is the process of mapping entity mentions in text to canonical entities in a knowledge graph.
@@ -1158,12 +1300,31 @@ com.embabel.dice
 │       └── LlmPropositionContraster
 │
 ├── pipeline/                 # Extraction pipeline orchestration
-│   └── PropositionPipeline
+│   ├── PropositionPipeline   # Full proposition extraction
+│   ├── EntityPipeline        # Entity-only extraction
+│   ├── ChunkEntityResult     # Single chunk entity results
+│   └── EntityResults         # Multi-chunk entity results
 │
-└── text2graph/               # Knowledge graph building
-    ├── KnowledgeGraphBuilder
-    ├── SourceAnalyzer
-    └── EntityResolver
+├── incremental/              # Incremental/streaming analysis
+│   ├── IncrementalAnalyzer<T,R>       # Interface for incremental analysis
+│   ├── AbstractIncrementalAnalyzer    # Base implementation with windowing
+│   ├── IncrementalSource<T>           # Source abstraction
+│   ├── IncrementalSourceFormatter<T>  # Formats items to text
+│   ├── ConversationSource             # Conversation as incremental source
+│   ├── MessageFormatter               # Formats messages
+│   ├── ChunkHistoryStore              # Tracks processing history
+│   ├── WindowConfig                   # Window and trigger configuration
+│   ├── proposition/                   # Proposition-based incremental
+│   │   └── PropositionIncrementalAnalyzer
+│   └── entity/                        # Entity-only incremental
+│       └── EntityIncrementalAnalyzer
+│
+├── text2graph/               # Knowledge graph building
+│   ├── KnowledgeGraphBuilder
+│   ├── SourceAnalyzer
+│   ├── EntityExtractor       # Entity extraction interface
+│   ├── LlmEntityExtractor    # LLM-based entity extraction
+│   └── SourceAnalyzerEntityExtractor  # Adapter wrapping SourceAnalyzer
 ```
 
 ## REST API
