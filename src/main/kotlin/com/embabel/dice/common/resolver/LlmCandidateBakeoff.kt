@@ -1,13 +1,12 @@
-package com.embabel.dice.common.resolver.matcher
+package com.embabel.dice.common.resolver
 
+import com.embabel.agent.api.common.Ai
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.model.NamedEntityData.Companion.ENTITY_LABEL
-import com.embabel.common.ai.model.ByNameModelSelectionCriteria
-import com.embabel.common.ai.model.ModelProvider
+import com.embabel.common.ai.model.LlmOptions
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.dice.common.SuggestedEntity
 import org.slf4j.LoggerFactory
-import org.springframework.ai.chat.prompt.Prompt
 
 /**
  * Prompt mode for LLM bakeoff - controls verbosity vs token usage.
@@ -27,7 +26,8 @@ enum class PromptMode {
 }
 
 /**
- * Uses a cheap/fast LLM to select the best match from multiple candidates.
+ * Uses an LLM to select the best match from multiple candidates.
+ *
  * This is more efficient than evaluating candidates one-by-one, and allows
  * the LLM to compare and contrast options.
  *
@@ -36,27 +36,23 @@ enum class PromptMode {
  * - **FULL**: Detailed prompts (~400-600 tokens) for complex disambiguation
  *
  * Returns the best matching candidate, or null if none match.
+ *
+ * @param ai The Embabel AI instance for LLM calls
+ * @param llmOptions LLM configuration (model, temperature, etc.)
+ * @param promptMode Controls prompt verbosity (default: COMPACT)
  */
 class LlmCandidateBakeoff(
-    private val modelProvider: ModelProvider,
-    private val modelName: String = "gpt-4.1-mini",
+    private val ai: Ai,
+    private val llmOptions: LlmOptions,
     private val promptMode: PromptMode = PromptMode.COMPACT,
-) {
+) : CandidateBakeoff {
 
     private val logger = LoggerFactory.getLogger(LlmCandidateBakeoff::class.java)
 
-    /**
-     * Select the best matching candidate from a list.
-     *
-     * @param suggested The entity we're trying to match
-     * @param candidates The search results to evaluate
-     * @param sourceText Optional conversation/source text for additional context
-     * @return The best matching candidate, or null if none are suitable
-     */
-    fun selectBestMatch(
+    override fun selectBestMatch(
         suggested: SuggestedEntity,
         candidates: List<SimilarityResult<NamedEntityData>>,
-        sourceText: String? = null,
+        sourceText: String?,
     ): NamedEntityData? {
         if (candidates.isEmpty()) return null
         if (candidates.size == 1) {
@@ -71,16 +67,14 @@ class LlmCandidateBakeoff(
         val promptText = buildBakeoffPrompt(suggested, candidates, sourceText)
 
         return try {
-            val llm = modelProvider.getLlm(ByNameModelSelectionCriteria(modelName))
-            val response = llm.model.call(Prompt(promptText))
-            val answer = response.result.output.text?.trim() ?: ""
+            val response = ai.withLlm(llmOptions).generateText(promptText)
 
             logger.info(
                 "LLM bakeoff for '{}' ({} candidates): {}",
-                suggested.name, candidates.size, answer.take(100)
+                suggested.name, candidates.size, response.take(100)
             )
 
-            parseSelection(answer, candidates)
+            parseSelection(response, candidates)
         } catch (e: Exception) {
             logger.warn("LLM bakeoff failed for '{}': {}", suggested.name, e.message)
             null
@@ -95,9 +89,8 @@ class LlmCandidateBakeoff(
         val promptText = buildVerificationPrompt(suggested, candidate, sourceText)
 
         return try {
-            val llm = modelProvider.getLlm(ByNameModelSelectionCriteria(modelName))
-            val response = llm.model.call(Prompt(promptText))
-            val answer = response.result.output.text?.trim()?.lowercase() ?: ""
+            val response = ai.withLlm(llmOptions).generateText(promptText)
+            val answer = response.trim().lowercase()
 
             logger.debug("LLM verification for '{}' vs '{}': {}", suggested.name, candidate.name, answer)
             answer.startsWith("yes")

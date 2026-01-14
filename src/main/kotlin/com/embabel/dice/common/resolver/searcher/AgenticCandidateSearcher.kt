@@ -1,4 +1,4 @@
-package com.embabel.dice.common.resolver
+package com.embabel.dice.common.resolver.searcher
 
 import com.embabel.agent.api.common.Ai
 import com.embabel.agent.core.DataDictionary
@@ -11,14 +11,16 @@ import com.embabel.agent.rag.tools.ResultsEvent
 import com.embabel.agent.rag.tools.ResultsListener
 import com.embabel.agent.rag.tools.ToolishRag
 import com.embabel.common.ai.model.LlmOptions
-import com.embabel.dice.common.*
+import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.common.resolver.CandidateSearcher
+import com.embabel.dice.common.resolver.SearchResult
 import com.fasterxml.jackson.annotation.JsonPropertyDescription
 import org.slf4j.LoggerFactory
 
 /**
- * Structured response from the entity resolution LLM.
+ * Structured response from the agentic entity search.
  */
-data class EntityResolutionResult(
+data class AgenticSearchResult(
     @field:JsonPropertyDescription("The ID of the matched entity, or null if no match was found")
     val matchedEntityId: String?,
     @field:JsonPropertyDescription("Brief explanation of why this entity was selected or why no match was found")
@@ -26,93 +28,50 @@ data class EntityResolutionResult(
 )
 
 /**
- * Agentic entity resolver that uses [ToolishRag] to let an LLM drive the search process.
+ * Agentic candidate searcher that uses [ToolishRag] to let an LLM drive the search process.
  *
- * Unlike [EscalatingEntityResolver] which uses a chain of heuristic searchers, this resolver
- * gives the LLM full control to craft queries, examine results, and iteratively refine searches.
- * For each suggested entity, it creates a [ToolishRag] instance configured to search for
- * entities of the matching type.
+ * Unlike heuristic searchers that apply fixed matching rules, this searcher gives the LLM
+ * full control to craft queries, examine results, and iteratively refine searches.
  *
  * ## When to Use
- * - When heuristic matching (exact, normalized, partial, fuzzy, vector) is insufficient
- * - For complex entity matching requiring semantic understanding
- * - When entities have many alternate names or translations (e.g., musical works, places)
+ * Add this as the last searcher in [EscalatingEntityResolver] when:
+ * - Heuristic matching (exact, normalized, partial, fuzzy, vector) is insufficient
+ * - Entities have many alternate names or translations (e.g., musical works, places)
+ * - Semantic understanding is required to match entities
  *
  * ## How It Works
- * 1. For each suggested entity, configures a [ToolishRag] with text and vector search
- * 2. The LLM crafts search queries based on the entity name and context
+ * 1. Configures a [ToolishRag] with text and vector search for the entity type
+ * 2. The LLM crafts search queries based on the entity name and summary
  * 3. The LLM examines search results and can refine queries iteratively
- * 4. Returns a structured [EntityResolutionResult] with the matched entity ID or null
- * 5. Validates label compatibility before accepting the match
- *
- * ## Advantages Over Heuristic Matching
- * - Understands semantic relationships (e.g., "The Ring" = "Der Ring des Nibelungen")
- * - Can try alternate names, translations, and related terms
- * - Uses conversation context to disambiguate
- * - Iteratively refines searches when initial queries fail
+ * 4. Returns [SearchResult.confident] if LLM finds a match, otherwise candidates
  *
  * ## Trade-offs
- * - Slower than heuristic-based [EscalatingEntityResolver]
- * - Higher cost due to LLM usage per entity
- * - Best used for high-value entities where accuracy is critical
+ * - Slower than heuristic searchers (LLM calls per entity)
+ * - Higher cost due to LLM usage
+ * - Should be placed last in the searcher chain after cheaper options
  *
  * @param repository The entity repository providing search operations
  * @param ai The AI instance for running the agentic loop
  * @param llmOptions LLM configuration for the search agent
  *
- * @see EscalatingEntityResolver for heuristic-based resolution
- * @see ChainedEntityResolver for combining multiple resolvers
- * @see InMemoryEntityResolver for session-level deduplication
+ * @see VectorCandidateSearcher for embedding-based search without LLM
+ * @see FuzzyNameCandidateSearcher for heuristic fuzzy matching
  */
-class AgenticEntityResolver(
+class AgenticCandidateSearcher(
     private val repository: NamedEntityDataRepository,
     private val ai: Ai,
     private val llmOptions: LlmOptions,
-) : EntityResolver {
+) : CandidateSearcher {
 
-    private val logger = LoggerFactory.getLogger(AgenticEntityResolver::class.java)
+    private val logger = LoggerFactory.getLogger(AgenticCandidateSearcher::class.java)
 
-    override fun resolve(
-        suggestedEntities: SuggestedEntities,
-        schema: DataDictionary
-    ): Resolutions<SuggestedEntityResolution> {
-        logger.info(
-            "Resolving {} suggested entities agentically from chunks {}",
-            suggestedEntities.suggestedEntities.size,
-            suggestedEntities.chunkIds
-        )
-
-        val sourceText = suggestedEntities.sourceText
-
-        val resolutions = suggestedEntities.suggestedEntities.map { suggested ->
-            resolveEntity(suggested, schema, sourceText)
-        }
-
-        val existingCount = resolutions.count { it is ExistingEntity }
-        val newCount = resolutions.count { it is NewEntity }
-        val vetoedCount = resolutions.count { it is VetoedEntity }
-        logger.info(
-            "Agentic entity resolution complete: {} matched existing, {} new, {} vetoed",
-            existingCount,
-            newCount,
-            vetoedCount
-        )
-
-        return Resolutions(
-            chunkIds = suggestedEntities.chunkIds,
-            resolutions = resolutions,
-        )
-    }
-
-    private fun resolveEntity(
+    override fun search(
         suggested: SuggestedEntity,
         schema: DataDictionary,
-        sourceText: String?
-    ): SuggestedEntityResolution {
+    ): SearchResult {
         val entityType = suggested.labels.firstOrNull() ?: "Entity"
-        val creationPermitted = isCreationPermitted(suggested, schema)
 
-        logger.info("Agentically resolving '{}' (type: {})", suggested.name, entityType)
+        logger.debug("Agentically searching for '{}' (type: {})", suggested.name, entityType)
 
         // Collect results from the agentic search
         val foundEntities = mutableListOf<NamedEntity>()
@@ -130,10 +89,10 @@ class AgenticEntityResolver(
         val searchTypes = getSearchTypesForLabel(entityType, schema)
 
         val rag = ToolishRag(
-            name = "entity-resolver",
+            name = "entity-searcher",
             description = "Search for existing entities in the knowledge base",
             searchOperations = repository,
-            goal = buildGoal(suggested, sourceText),
+            goal = buildGoal(suggested),
             textSearchFor = searchTypes,
             vectorSearchFor = searchTypes,
             listener = listener,
@@ -144,14 +103,14 @@ class AgenticEntityResolver(
             val result = ai
                 .withLlm(llmOptions)
                 .withReference(rag)
-                .createObject(buildPrompt(suggested, entityType, sourceText), EntityResolutionResult::class.java)
+                .createObject(buildPrompt(suggested, entityType), AgenticSearchResult::class.java)
 
             logger.debug(
                 "Agentic search result for '{}': id={}, reason={}",
                 suggested.name, result.matchedEntityId, result.reason
             )
 
-            // Use the LLM's decision
+            // Check if LLM found a confident match
             if (result.matchedEntityId != null) {
                 val matchedEntity = foundEntities.find { it.id == result.matchedEntityId }
                 if (matchedEntity != null) {
@@ -161,10 +120,10 @@ class AgenticEntityResolver(
                     if (suggestedLabels.intersect(matchedLabels).isNotEmpty()) {
                         val entityData = matchedEntity.toNamedEntityData()
                         logger.info(
-                            "Agentic resolver matched '{}' -> '{}' ({})",
+                            "AGENTIC: '{}' -> '{}' ({})",
                             suggested.name, matchedEntity.name, result.reason
                         )
-                        return ExistingEntity(suggested, entityData)
+                        return SearchResult.confident(entityData)
                     } else {
                         logger.warn(
                             "LLM selected '{}' but labels don't match: suggested={}, matched={}",
@@ -178,28 +137,17 @@ class AgenticEntityResolver(
                 logger.debug("LLM found no match for '{}': {}", suggested.name, result.reason)
             }
         } catch (e: Exception) {
-            logger.warn("Agentic resolution failed for '{}': {}", suggested.name, e.message)
+            logger.warn("Agentic search failed for '{}': {}", suggested.name, e.message)
         }
 
-        // No match found
-        return if (!creationPermitted) {
-            logger.info(
-                "No match found for '{}' (had {} candidates) and creation not permitted - vetoing",
-                suggested.name, foundEntities.size
-            )
-            VetoedEntity(suggested)
-        } else {
-            logger.debug(
-                "No match found for '{}' (had {} candidates), creating new entity",
-                suggested.name, foundEntities.size
-            )
-            NewEntity(suggested)
-        }
+        // Return candidates without confident match
+        val candidates = foundEntities.map { it.toNamedEntityData() }
+        return SearchResult.candidates(candidates)
     }
 
-    private fun buildGoal(suggested: SuggestedEntity, sourceText: String?): String {
-        val contextHint = if (!sourceText.isNullOrBlank()) {
-            "\nUse the conversation context to understand what entity is being discussed."
+    private fun buildGoal(suggested: SuggestedEntity): String {
+        val contextHint = if (suggested.summary.isNotBlank()) {
+            "\nContext: ${suggested.summary}"
         } else ""
 
         return """
@@ -213,12 +161,12 @@ class AgenticEntityResolver(
         """.trimIndent()
     }
 
-    private fun buildPrompt(suggested: SuggestedEntity, entityType: String, sourceText: String?): String {
-        val contextSection = if (!sourceText.isNullOrBlank()) {
+    private fun buildPrompt(suggested: SuggestedEntity, entityType: String): String {
+        val contextSection = if (suggested.summary.isNotBlank()) {
             """
 
-            CONVERSATION CONTEXT (use this to understand what's being discussed):
-            $sourceText
+            CONTEXT:
+            ${suggested.summary}
             """.trimIndent()
         } else ""
 
@@ -228,7 +176,6 @@ class AgenticEntityResolver(
             Entity details:
             - Name: ${suggested.name}
             - Type: $entityType
-            - Context: ${suggested.summary.ifBlank { "No additional context" }}
             $contextSection
 
             Search for this entity using text search. Try different queries:
@@ -239,7 +186,7 @@ class AgenticEntityResolver(
             - For composers, try their last name
 
             IMPORTANT: Only select an entity if it ACTUALLY matches what we're looking for.
-            - For works: The work must be BY the correct composer. "Glazunov's Violin Concerto" must be by Glazunov.
+            - For works: The work must be BY the correct composer.
             - Don't select a work just because it has a similar name if it's by a different composer.
             - If you can't find the exact entity, return null for matchedEntityId.
 
@@ -258,7 +205,6 @@ class AgenticEntityResolver(
         )
 
     private fun getSearchTypesForLabel(label: String, schema: DataDictionary): List<Class<out Retrievable>> {
-        // Try to find the JVM type for this label
         val domainType = schema.domainTypeForLabels(setOf(label))
         if (domainType != null) {
             val jvmType = schema.jvmTypes.find { it.ownLabel == label }
@@ -267,17 +213,22 @@ class AgenticEntityResolver(
                 return listOf(jvmType.clazz as Class<out Retrievable>)
             }
         }
-        // Fall back to NamedEntityData
         return listOf(NamedEntityData::class.java)
     }
 
-    private fun isCreationPermitted(suggested: SuggestedEntity, schema: DataDictionary): Boolean {
-        val labels = suggested.labels.map { it.substringAfterLast('.') }.toSet()
-        val domainType = schema.domainTypeForLabels(labels) ?: return true
-        return try {
-            domainType.creationPermitted
-        } catch (e: Exception) {
-            true
-        }
+    companion object {
+        /**
+         * Create an agentic searcher.
+         *
+         * @param repository The entity repository
+         * @param ai The AI instance
+         * @param llmOptions LLM configuration
+         */
+        @JvmStatic
+        fun create(
+            repository: NamedEntityDataRepository,
+            ai: Ai,
+            llmOptions: LlmOptions,
+        ): AgenticCandidateSearcher = AgenticCandidateSearcher(repository, ai, llmOptions)
     }
 }

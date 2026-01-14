@@ -11,7 +11,6 @@ import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.common.VetoedEntity
-import com.embabel.dice.common.resolver.matcher.LlmCandidateBakeoff
 import com.embabel.dice.common.resolver.searcher.DefaultCandidateSearchers
 import org.slf4j.LoggerFactory
 
@@ -57,7 +56,7 @@ data class LevelResult(
  * - Each [CandidateSearcher] performs its own search and returns candidates
  * - If a searcher returns a confident match, resolution stops early
  * - Otherwise, candidates are accumulated for LLM arbitration
- * - LLM is the final arbiter, receiving all accumulated candidates
+ * - LLM is the final candidateBakeoff, receiving all accumulated candidates
  *
  * Default search order (cheapest first):
  * 1. **Exact Match**: Direct ID/name lookup - instant, no LLM
@@ -69,13 +68,13 @@ data class LevelResult(
  * and only escalating to LLM for genuinely ambiguous resolutions.
  *
  * @param searchers The candidate searchers, ordered cheapest-first
- * @param llmArbiter Optional LLM to arbitrate when no confident match found (if null, creates new entity)
- * @param contextCompressor Optional compressor for reducing context size in LLM calls
+ * @param candidateBakeoff Optional candidateBakeoff to select best match when no confident match found (if null, creates new entity)
+ * @param contextCompressor Optional compressor for reducing context size in candidateBakeoff calls
  * @param config Configuration for behavior
  */
 class EscalatingEntityResolver(
     private val searchers: List<CandidateSearcher>,
-    private val llmArbiter: LlmCandidateBakeoff? = null,
+    private val candidateBakeoff: CandidateBakeoff? = null,
     private val contextCompressor: ContextCompressor? = null,
     private val config: Config = Config(),
 ) : EntityResolver {
@@ -163,7 +162,7 @@ class EscalatingEntityResolver(
         val uniqueCandidates = allCandidates.distinctBy { it.id }
 
         // Stop here if heuristic-only mode or no LLM configured
-        if (config.heuristicOnly || llmArbiter == null) {
+        if (config.heuristicOnly || candidateBakeoff == null) {
             logger.debug("No LLM available/enabled for '{}' ({} candidates)", suggested.name, uniqueCandidates.size)
             return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0, uniqueCandidates.size)
         }
@@ -172,7 +171,7 @@ class EscalatingEntityResolver(
         val compressedContext = contextCompressor?.compress(sourceText, suggested.name)
             ?: sourceText
 
-        // Wrap candidates in SimilarityResult for LLM arbiter
+        // Wrap candidates in SimilarityResult for LLM candidateBakeoff
         val candidateResults = uniqueCandidates.map {
             com.embabel.common.core.types.SimilarityResult(it, 0.8)
         }
@@ -184,7 +183,7 @@ class EscalatingEntityResolver(
             ResolutionLevel.LLM_BAKEOFF
         }
 
-        val bestMatch = llmArbiter.selectBestMatch(suggested, candidateResults, compressedContext)
+        val bestMatch = candidateBakeoff.selectBestMatch(suggested, candidateResults, compressedContext)
         if (bestMatch != null) {
             logger.debug(
                 "{}: '{}' -> '{}' (from {} candidates)",
@@ -225,21 +224,32 @@ class EscalatingEntityResolver(
         }
     }
 
+    /**
+     * Return a copy with the specified candidate bakeoff.
+     */
+    fun withCandidateBakeoff(bakeoff: CandidateBakeoff): EscalatingEntityResolver =
+        EscalatingEntityResolver(
+            searchers = searchers,
+            candidateBakeoff = bakeoff,
+            contextCompressor = contextCompressor,
+            config = config,
+        )
+
     companion object {
         /**
          * Create an escalating resolver with default searchers.
          *
          * @param repository The entity repository for search operations
-         * @param llmArbiter Optional LLM to arbitrate when no confident match found
+         * @param candidateBakeoff Optional bakeoff to select best match when no confident match found
          */
         @JvmStatic
         fun create(
             repository: NamedEntityDataRepository,
-            llmArbiter: LlmCandidateBakeoff? = null,
+            candidateBakeoff: CandidateBakeoff? = null,
         ): EscalatingEntityResolver {
             return EscalatingEntityResolver(
                 searchers = DefaultCandidateSearchers.create(repository),
-                llmArbiter = llmArbiter,
+                candidateBakeoff = candidateBakeoff,
                 contextCompressor = ContextCompressor.default(),
             )
         }
@@ -248,16 +258,16 @@ class EscalatingEntityResolver(
          * Create an escalating resolver without vector search.
          *
          * @param repository The entity repository for search operations
-         * @param llmArbiter Optional LLM to arbitrate when no confident match found
+         * @param candidateBakeoff Optional bakeoff to select best match when no confident match found
          */
         @JvmStatic
         fun withoutVector(
             repository: NamedEntityDataRepository,
-            llmArbiter: LlmCandidateBakeoff? = null,
+            candidateBakeoff: CandidateBakeoff? = null,
         ): EscalatingEntityResolver {
             return EscalatingEntityResolver(
                 searchers = DefaultCandidateSearchers.withoutVector(repository),
-                llmArbiter = llmArbiter,
+                candidateBakeoff = candidateBakeoff,
                 contextCompressor = ContextCompressor.default(),
             )
         }

@@ -98,7 +98,7 @@ to build a knowledge graph from conversations. It demonstrates production usage 
 
 - `PropositionPipeline` for extraction
 - `IncrementalAnalyzer` for streaming conversation analysis
-- `AgenticEntityResolver` for LLM-driven entity resolution against a Neo4j graph
+- `EscalatingEntityResolver` with `AgenticCandidateSearcher` for LLM-driven entity resolution
 - Spring Boot integration with async processing
 
 ### Pipeline Setup (Spring Configuration)
@@ -287,7 +287,7 @@ sequenceDiagram
                         PR-->>KR: NewEntity
                     end
                 end
-            else Using AgenticEntityResolver
+            else Using AgenticCandidateSearcher
                 PR->>PR: LLM crafts search queries
                 PR->>DB: ToolishRag search
                 PR->>PR: LLM iterates & selects
@@ -310,64 +310,87 @@ DICE provides several `EntityResolver` implementations that can be composed:
 
 | Implementation | Purpose | Use Case |
 |----------------|---------|----------|
-| **EscalatingEntityResolver** | **Recommended** - Escalating levels with early stopping | Production, optimized performance |
+| **EscalatingEntityResolver** | **Recommended** - Escalating searcher chain with early stopping | Production, optimized performance |
 | **InMemoryEntityResolver** | Session-scoped deduplication | Cross-chunk entity recognition |
-| **NamedEntityDataRepositoryEntityResolver** | Search-based resolution | Production with entity repository |
-| **AgenticEntityResolver** | LLM-driven search | Complex matching, alternate names |
-| **MultiEntityResolver** | Chain resolvers with fallback | Combine strategies |
+| **ChainedEntityResolver** | Chain resolvers with fallback | Combine strategies |
 | **KnownEntityResolver** | Fast-path for pre-defined entities | Current user, system entities |
 | **AlwaysCreateEntityResolver** | Always creates new entities | Testing, baseline comparison |
 
+##### Recommended Resolution Chain
+
+The recommended setup uses `EscalatingEntityResolver` with `InMemoryEntityResolver` for cross-chunk deduplication:
+
+```mermaid
+flowchart TB
+    subgraph Input["Suggested Entity"]
+        SE["name: 'Brahms'<br/>labels: [Composer]"]
+    end
+
+    subgraph InMem["InMemoryEntityResolver"]
+        IM["Session Cache<br/>(cross-chunk dedup)"]
+    end
+
+    subgraph Chain["EscalatingEntityResolver - Cheapest First"]
+        direction TB
+        S1["🔍 ByIdCandidateSearcher<br/><i>instant</i>"]
+        S2["🔍 ByExactNameCandidateSearcher<br/><i>instant</i>"]
+        S3["🔍 NormalizedNameCandidateSearcher<br/><i>fast</i>"]
+        S4["🔍 PartialNameCandidateSearcher<br/><i>fast</i>"]
+        S5["🔍 FuzzyNameCandidateSearcher<br/><i>fast</i>"]
+        S6["🔍 VectorCandidateSearcher<br/><i>moderate</i>"]
+        S7["🤖 AgenticCandidateSearcher<br/><i>expensive (optional)</i>"]
+    end
+
+    subgraph Output["Resolution"]
+        EX["ExistingEntity"]
+        NEW["NewEntity"]
+    end
+
+    SE --> IM
+    IM -->|"Cache hit"| EX
+    IM -->|"Cache miss"| S1
+
+    S1 -->|"No match"| S2
+    S2 -->|"No match"| S3
+    S3 -->|"No match"| S4
+    S4 -->|"No match"| S5
+    S5 -->|"No match"| S6
+    S6 -->|"No match"| S7
+    S7 -->|"No match"| NEW
+
+    S1 -->|"✓ Confident"| EX
+    S2 -->|"✓ Confident"| EX
+    S3 -->|"✓ Confident"| EX
+    S4 -->|"✓ Confident"| EX
+    S5 -->|"✓ Confident"| EX
+    S6 -->|"✓ Confident"| EX
+    S7 -->|"✓ Match"| EX
+
+    style Input fill:#e8f4fc,stroke:#4a90d9,color:#1e1e1e
+    style InMem fill:#fff3cd,stroke:#e9b306,color:#1e1e1e
+    style Chain fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
+    style Output fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
+```
+
+**Key design principles:**
+- **Cheapest first** - ID lookup and exact match before expensive vector/LLM searches
+- **Early stopping** - Returns immediately when a confident match is found
+- **Exactly-one rule** - Searchers only return confident when exactly 1 result matches
+- **Cross-chunk dedup** - `InMemoryEntityResolver` prevents duplicates across chunks
+
 ##### InMemoryEntityResolver
 
-Maintains an in-memory cache of resolved entities within a processing session. Uses configurable
-match strategies to find duplicates:
+Maintains an in-memory cache of resolved entities within a processing session. Uses name matching
+including exact, normalized, partial, and fuzzy matching:
 
 ```kotlin
 val resolver = InMemoryEntityResolver(
-    matchStrategies = ChainedEntityMatchingStrategy.of(
-        LabelCompatibilityStrategy(schema),
-        ExactNameEntityMatchingStrategy(),
-        NormalizedNameEntityMatchingStrategy(),  // Removes Mr., Dr., Jr., etc.
-        FuzzyNameEntityMatchingStrategy(maxDistanceRatio = 0.2),
+    config = InMemoryEntityResolver.Config(
+        maxDistanceRatio = 0.2,      // Levenshtein distance threshold
+        minLengthForFuzzy = 4,       // Minimum length for fuzzy matching
+        minPartLength = 4,           // Minimum part length for partial matching
     )
 )
-```
-
-##### NamedEntityDataRepositoryEntityResolver
-
-Production resolver that searches an entity repository using multiple strategies:
-
-```kotlin
-val resolver = NamedEntityDataRepositoryEntityResolver(
-    repository = entityRepository,
-    schema = dataDictionary,
-    useFindById = true,
-    useTextSearch = true,
-    useVectorSearch = true,
-    textSearchThreshold = 0.7,
-    vectorSearchThreshold = 0.8,
-    useFuzzyTextSearch = true,
-    topK = 10,
-    // Optional: LLM selects best match from candidates
-    llmBakeoff = LlmCandidateBakeoff(llm, ai),
-)
-```
-
-##### AgenticEntityResolver
-
-Uses an LLM agent with tool access to iteratively search and select matches:
-
-```kotlin
-val resolver = AgenticEntityResolver(
-    toolishRag = ragService.toToolishRag(),
-    llmOptions = LlmOptions.DEFAULT,
-    ai = ai,
-)
-// LLM can:
-// - Craft sophisticated search queries
-// - Handle alternate names ("Der Ring" = "The Ring Cycle")
-// - Provide reasoning for match decisions
 ```
 
 ##### CandidateSearcher Interface
@@ -385,13 +408,19 @@ data class SearchResult(
 )
 ```
 
-Built-in searchers:
+Built-in searchers (ordered cheapest-first):
 
-| Searcher | Purpose | Factory |
-|----------|---------|---------|
-| `ExactMatchSearcher` | ID lookup and exact name match | `ExactMatchSearcher.create(repository)` |
-| `TextSearcher` | Full-text search with heuristic matching | `TextSearcher.create(repository)` |
-| `VectorSearcher` | Embedding/vector similarity search | `VectorSearcher.create(repository)` |
+| Searcher | Purpose |
+|----------|---------|
+| `ByIdCandidateSearcher` | ID lookup (instant) |
+| `ByExactNameCandidateSearcher` | Exact name match |
+| `NormalizedNameCandidateSearcher` | Normalized names (removes "Dr.", "Jr.", etc.) |
+| `PartialNameCandidateSearcher` | Partial matching ("Brahms" → "Johannes Brahms") |
+| `FuzzyNameCandidateSearcher` | Levenshtein distance matching |
+| `VectorCandidateSearcher` | Embedding/vector similarity |
+| `AgenticCandidateSearcher` | LLM-driven search (expensive) |
+
+Use `DefaultCandidateSearchers.create(repository)` for the standard chain (without agentic).
 
 Create custom searchers by implementing the interface:
 
@@ -409,27 +438,36 @@ class MyCustomSearcher(private val myDataSource: MyDataSource) : CandidateSearch
 
 **Performance-optimized resolver** that chains `CandidateSearcher`s, stopping early when confident.
 Each searcher performs its own search and returns candidates. If a searcher returns a confident match,
-resolution stops. Otherwise, candidates accumulate for LLM arbitration.
+resolution stops. Otherwise, candidates accumulate for optional LLM arbitration.
 
 ```mermaid
 flowchart LR
     subgraph Searchers["CandidateSearcher Chain"]
-        S1["ExactMatchSearcher<br/>ID/Name lookup"]
-        S2["TextSearcher<br/>Heuristic matching"]
-        S3["VectorSearcher<br/>Embedding similarity"]
+        S1["ByIdCandidateSearcher"]
+        S2["ByExactNameCandidateSearcher"]
+        S3["NormalizedNameCandidateSearcher"]
+        S4["PartialNameCandidateSearcher"]
+        S5["FuzzyNameCandidateSearcher"]
+        S6["VectorCandidateSearcher"]
     end
 
-    subgraph Arbiter["LLM Arbiter"]
-        LLM["LlmCandidateBakeoff<br/>Selects from all candidates"]
+    subgraph Arbiter["Optional CandidateBakeoff"]
+        LLM["CandidateBakeoff<br/>Selects from candidates"]
     end
 
-    S1 -->|"No confident match"| S2
-    S2 -->|"No confident match"| S3
-    S3 -->|"No confident match"| LLM
+    S1 -->|"No match"| S2
+    S2 -->|"No match"| S3
+    S3 -->|"No match"| S4
+    S4 -->|"No match"| S5
+    S5 -->|"No match"| S6
+    S6 -->|"No match"| LLM
 
     S1 -->|"✓ Confident"| Done["Stop & Return"]
     S2 -->|"✓ Confident"| Done
     S3 -->|"✓ Confident"| Done
+    S4 -->|"✓ Confident"| Done
+    S5 -->|"✓ Confident"| Done
+    S6 -->|"✓ Confident"| Done
     LLM -->|"Match/None"| Done
 
     style Searchers fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
@@ -437,34 +475,36 @@ flowchart LR
     style Done fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
 ```
 
-| Searcher | Strategy | LLM Cost | Returns Confident When |
-|----------|----------|----------|------------------------|
-| ExactMatchSearcher | ID lookup, exact name | None | ID match or exact name match |
-| TextSearcher | Full-text + heuristics | None | Heuristic strategy matches |
-| VectorSearcher | Embedding similarity | None | Score ≥ 0.95 + compatible |
-| LLM Arbiter | Compare all candidates | 1 call | LLM selects best match |
+| Searcher | Strategy | Returns Confident When |
+|----------|----------|------------------------|
+| ByIdCandidateSearcher | ID lookup | Exactly 1 ID match |
+| ByExactNameCandidateSearcher | Exact name match | Exactly 1 exact match |
+| NormalizedNameCandidateSearcher | Normalized names | Exactly 1 normalized match |
+| PartialNameCandidateSearcher | Partial names | Exactly 1 partial match |
+| FuzzyNameCandidateSearcher | Levenshtein distance | Exactly 1 fuzzy match |
+| VectorCandidateSearcher | Embedding similarity | Score ≥ 0.95 (exactly 1) |
+| AgenticCandidateSearcher | LLM-driven search | LLM selects match |
 
 ```kotlin
 // Simple: use factory method with defaults
 val resolver = EscalatingEntityResolver.create(
     repository = entityRepository,
-    llmArbiter = LlmCandidateBakeoff(modelProvider, promptMode = PromptMode.COMPACT),
+    candidateBakeoff = LlmCandidateBakeoff(ai, llmOptions, PromptMode.COMPACT),
 )
 
 // Custom: compose your own searcher chain
 val resolver = EscalatingEntityResolver(
-    searchers = listOf(
-        ExactMatchSearcher(entityRepository),
-        TextSearcher(entityRepository, defaultMatchStrategies()),
-        VectorSearcher(entityRepository, autoAcceptThreshold = 0.95),
-    ),
-    llmArbiter = LlmCandidateBakeoff(modelProvider),
+    searchers = DefaultCandidateSearchers.create(entityRepository),
+    candidateBakeoff = LlmCandidateBakeoff(ai, llmOptions),
     contextCompressor = ContextCompressor.default(),
     config = EscalatingEntityResolver.Config(heuristicOnly = false),
 )
 
 // Without vector search
 val resolver = EscalatingEntityResolver.withoutVector(entityRepository)
+
+// Add bakeoff to existing resolver
+val resolverWithBakeoff = resolver.withCandidateBakeoff(LlmCandidateBakeoff(ai, llmOptions))
 ```
 
 **Context Compression** reduces LLM token usage by extracting only relevant snippets:
@@ -528,11 +568,7 @@ flowchart LR
 
 | Strategy | Description |
 |----------|-------------|
-| **LabelCompatibilityStrategy** | Checks type hierarchy—Person can match Detective |
-| **ExactNameEntityMatchingStrategy** | Case-insensitive exact match |
-| **NormalizedNameEntityMatchingStrategy** | Removes Mr., Mrs., Dr., Jr., III, etc. |
-| **PartialNameEntityMatchingStrategy** | Single name matches multi-part name |
-| **FuzzyNameEntityMatchingStrategy** | Levenshtein distance within threshold |
+| **CandidateBakeoff** | Interface for selecting best match from candidates |
 | **LlmCandidateBakeoff** | LLM selects best from multiple candidates (COMPACT: ~100 tokens, FULL: ~400 tokens) |
 
 #### Pipeline Integration
@@ -1055,21 +1091,21 @@ com.embabel.dice
 │   └── resolver/             # Entity resolution implementations
 │       ├── CandidateSearcher        # Interface for candidate search
 │       ├── SearchResult             # Confident match + candidates
-│       ├── EscalatingEntityResolver # Chains searchers with LLM arbiter
-│       ├── EntityMatchingStrategy   # Match evaluation interface
-│       ├── searcher/                # Built-in searchers
-│       │   ├── ExactMatchSearcher   # ID and exact name lookup
-│       │   ├── TextSearcher         # Full-text with heuristics
-│       │   ├── VectorSearcher       # Embedding similarity
-│       │   └── DefaultCandidateSearchers  # Factory for defaults
-│       └── matcher/                 # Match strategies
-│           ├── ChainedEntityMatchingStrategy
-│           ├── LabelCompatibilityStrategy
-│           ├── ExactNameEntityMatchingStrategy
-│           ├── NormalizedNameEntityMatchingStrategy
-│           ├── PartialNameEntityMatchingStrategy
-│           ├── FuzzyNameEntityMatchingStrategy
-│           └── LlmCandidateBakeoff  # LLM arbiter
+│       ├── CandidateBakeoff         # Interface for selecting best match
+│       ├── LlmCandidateBakeoff      # LLM-based candidate selection
+│       ├── EscalatingEntityResolver # Chains searchers with optional bakeoff
+│       ├── InMemoryEntityResolver   # Session-level deduplication
+│       ├── ChainedEntityResolver    # Chains multiple resolvers
+│       ├── KnownEntityResolver      # Fast-path for pre-defined entities
+│       └── searcher/                # Built-in searchers (cheapest-first)
+│           ├── ByIdCandidateSearcher           # ID lookup
+│           ├── ByExactNameCandidateSearcher    # Exact name match
+│           ├── NormalizedNameCandidateSearcher # Normalized names
+│           ├── PartialNameCandidateSearcher    # Partial name match
+│           ├── FuzzyNameCandidateSearcher      # Levenshtein distance
+│           ├── VectorCandidateSearcher         # Embedding similarity
+│           ├── AgenticCandidateSearcher        # LLM-driven search
+│           └── DefaultCandidateSearchers       # Factory for defaults
 │
 ├── proposition/              # Core types (source of truth)
 │   ├── Proposition           # Natural language fact with confidence/decay

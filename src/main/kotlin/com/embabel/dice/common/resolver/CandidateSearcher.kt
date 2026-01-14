@@ -40,9 +40,7 @@ data class SearchResult(
 /**
  * A searcher that finds candidate entities for a suggested entity.
  *
- * Unlike [EntityMatchingStrategy] which compares entities, a CandidateSearcher
- * actively searches for and retrieves candidates from a data source.
- *
+ * A CandidateSearcher actively searches for and retrieves candidates from a data source.
  * Searchers are designed to be chained in an [EscalatingEntityResolver]:
  * - Each searcher does its own search and returns candidates
  * - If a searcher returns a confident match, resolution stops early
@@ -52,8 +50,15 @@ data class SearchResult(
  * 1. Exact ID/name lookup (instant, no LLM)
  * 2. Heuristic/fuzzy search (fast, no LLM)
  * 3. Vector/embedding search (moderate, no LLM)
+ * 4. Agentic search (expensive, uses LLM to drive search)
  *
- * LLM is not a searcher - it's an arbiter that receives accumulated candidates.
+ * @see com.embabel.dice.common.resolver.searcher.ByIdCandidateSearcher
+ * @see com.embabel.dice.common.resolver.searcher.ByExactNameCandidateSearcher
+ * @see com.embabel.dice.common.resolver.searcher.NormalizedNameCandidateSearcher
+ * @see com.embabel.dice.common.resolver.searcher.PartialNameCandidateSearcher
+ * @see com.embabel.dice.common.resolver.searcher.FuzzyNameCandidateSearcher
+ * @see com.embabel.dice.common.resolver.searcher.VectorCandidateSearcher
+ * @see com.embabel.dice.common.resolver.searcher.AgenticCandidateSearcher
  */
 interface CandidateSearcher {
 

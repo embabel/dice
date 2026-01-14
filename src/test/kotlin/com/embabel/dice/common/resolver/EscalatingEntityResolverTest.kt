@@ -182,7 +182,7 @@ class EscalatingEntityResolverTest {
                     FuzzyNameCandidateSearcher(repository),
                     VectorCandidateSearcher(repository, autoAcceptThreshold = 0.95),
                 ),
-                llmArbiter = null, // No LLM fallback
+                candidateBakeoff = null, // No LLM fallback
                 config = EscalatingEntityResolver.Config(heuristicOnly = true),
             )
 
@@ -210,7 +210,7 @@ class EscalatingEntityResolverTest {
                     PartialNameCandidateSearcher(repository),
                     FuzzyNameCandidateSearcher(repository),
                 ),
-                llmArbiter = null,
+                candidateBakeoff = null,
                 config = EscalatingEntityResolver.Config(heuristicOnly = true),
             )
 
