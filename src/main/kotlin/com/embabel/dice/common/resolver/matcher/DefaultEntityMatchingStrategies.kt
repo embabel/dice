@@ -12,12 +12,12 @@ object DefaultEntityMatchingStrategies {
 
     /**
      * Create the default chain of entity matching strategies.
-     * Order matters: label compatibility is checked first (can veto), then various name matching strategies.
+     *
+     * Note: Label compatibility and exact name matching are handled by the searcher chain
+     * (EntityFilter and ByExactNameCandidateSearcher), so are not included here.
      */
     @JvmStatic
     fun create(): ChainedEntityMatchingStrategy = ChainedEntityMatchingStrategy.of(
-        LabelCompatibilityStrategy(),
-        ExactNameEntityMatchingStrategy(),
         NormalizedNameEntityMatchingStrategy(),
         PartialNameEntityMatchingStrategy(),
         FuzzyNameEntityMatchingStrategy(),
