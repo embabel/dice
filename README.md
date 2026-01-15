@@ -787,7 +787,7 @@ and should be considered the starting point when retrieving knowledge.
 ```kotlin
 // Create context for a processing run
 val context = SourceAnalysisContext(
-    schema = DataDictionary.fromClasses(Person::class.java, Company::class.java),
+    schema = DataDictionary.fromClasses("myschema", Person::class.java, Company::class.java),
     entityResolver = AlwaysCreateEntityResolver,
     contextId = ContextId("user-session-123"),
 )
@@ -802,7 +802,7 @@ val result = pipeline.process(chunks, context)
 > SourceAnalysisContext context = SourceAnalysisContext
 >     .withContextId("my-context")
 >     .withEntityResolver(AlwaysCreateEntityResolver.INSTANCE)
->     .withSchema(DataDictionary.fromClasses(Person.class))
+>     .withSchema(DataDictionary.fromClasses("myschema", Person.class))
 >     .withKnownEntities(knownEntities)  // optional
 >     .withTemplateModel(templateModel); // optional
 > ```
@@ -1486,6 +1486,7 @@ class DiceApiConfig {
 
     @Bean
     fun schema(): DataDictionary = DataDictionary.fromClasses(
+        "ecommerce",
         Customer::class.java,
         Product::class.java,
     )

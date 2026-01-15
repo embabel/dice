@@ -37,7 +37,7 @@ class ContextIdJavaInteropTest {
         SourceAnalysisContext context = SourceAnalysisContext
                 .withContextId(contextId)
                 .withEntityResolver(AlwaysCreateEntityResolver.INSTANCE)
-                .withSchema(DataDictionary.fromClasses());
+                .withSchema(DataDictionary.fromClasses("test"));
 
         assertNotNull(context);
         assertEquals(contextId, context.getContextIdValue());
@@ -48,7 +48,7 @@ class ContextIdJavaInteropTest {
         SourceAnalysisContext context = SourceAnalysisContext
                 .withContextId("test-context")
                 .withEntityResolver(AlwaysCreateEntityResolver.INSTANCE)
-                .withSchema(DataDictionary.fromClasses())
+                .withSchema(DataDictionary.fromClasses("test"))
                 .withKnownEntities()
                 .withPromptVariables(java.util.Map.of("key", "value"));
 

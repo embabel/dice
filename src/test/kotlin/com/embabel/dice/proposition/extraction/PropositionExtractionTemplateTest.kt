@@ -77,7 +77,7 @@ class PropositionExtractionTemplateTest {
         knownEntities: List<KnownEntity> = emptyList(),
         relations: Relations = Relations.empty(),
     ): SourceAnalysisContext {
-        val schema = DataDictionary.fromClasses(Person::class.java, Company::class.java)
+        val schema = DataDictionary.fromClasses("test", Person::class.java, Company::class.java)
         return SourceAnalysisContext(
             schema = schema,
             entityResolver = AlwaysCreateEntityResolver,

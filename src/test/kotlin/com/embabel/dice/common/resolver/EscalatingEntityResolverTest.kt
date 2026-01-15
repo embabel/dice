@@ -62,7 +62,7 @@ class EscalatingEntityResolverTest {
     @BeforeEach
     fun setup() {
         repository = mockk(relaxed = true)
-        schema = DataDictionary.fromClasses()
+        schema = DataDictionary.fromClasses("test")
     }
 
     private fun suggestedEntity(

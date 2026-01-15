@@ -22,23 +22,34 @@ import com.embabel.dice.common.SchemaRegistry
  * In-memory implementation of SchemaRegistry.
  * Register schemas at startup and look them up by name at runtime.
  *
+ * Schemas are automatically keyed by their [DataDictionary.name] property.
+ *
  * @param defaultSchema The default schema to use when no name is specified
- * @param namedSchemas Optional map of named schemas
+ * @param additionalSchemas Optional additional schemas to register
  */
 class InMemorySchemaRegistry @JvmOverloads constructor(
     private val defaultSchema: DataDictionary,
-    namedSchemas: Map<String, DataDictionary> = emptyMap(),
+    additionalSchemas: Collection<DataDictionary> = emptyList(),
 ) : SchemaRegistry {
 
-    private val schemas = namedSchemas.toMutableMap()
+    private val schemas = mutableMapOf<String, DataDictionary>()
+
+    init {
+        // Register default schema by its name
+        schemas[defaultSchema.name] = defaultSchema
+        // Register additional schemas
+        additionalSchemas.forEach { register(it) }
+    }
 
     override fun get(name: String): DataDictionary? = schemas[name]
 
     override fun getDefault(): DataDictionary = defaultSchema
 
-    override fun register(name: String, schema: DataDictionary) {
-        schemas[name] = schema
+    override fun register(schema: DataDictionary) {
+        schemas[schema.name] = schema
     }
 
     override fun names(): Set<String> = schemas.keys.toSet()
+
+    override fun all(): Collection<DataDictionary> = schemas.values
 }

@@ -46,14 +46,18 @@ interface SchemaRegistry {
         name?.let { get(it) } ?: getDefault()
 
     /**
-     * Register a schema with a name.
-     * @param name The schema name
+     * Register a schema using its [DataDictionary.name] property.
      * @param schema The schema to register
      */
-    fun register(name: String, schema: DataDictionary)
+    fun register(schema: DataDictionary)
 
     /**
      * List all registered schema names.
      */
     fun names(): Set<String>
+
+    /**
+     * Get all registered schemas.
+     */
+    fun all(): Collection<DataDictionary>
 }

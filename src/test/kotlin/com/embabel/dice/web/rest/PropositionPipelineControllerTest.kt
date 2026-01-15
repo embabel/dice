@@ -65,7 +65,7 @@ class PropositionPipelineControllerTest {
         propositionRepository = TestPropositionRepository()
         propositionPipeline = mockk<PropositionPipeline>()
         entityResolver = AlwaysCreateEntityResolver
-        val schema = DataDictionary.fromClasses(Composer::class.java, Work::class.java)
+        val schema = DataDictionary.fromClasses("test", Composer::class.java, Work::class.java)
         schemaRegistry = InMemorySchemaRegistry(schema)
 
         objectMapper = ObjectMapper()

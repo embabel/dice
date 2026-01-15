@@ -35,7 +35,7 @@ import org.junit.jupiter.api.assertThrows
 
 class ChainedEntityResolverTest {
 
-    private val schema = DataDictionary.fromClasses(Person::class.java, Animal::class.java)
+    private val schema = DataDictionary.fromClasses("test", Person::class.java, Animal::class.java)
 
     // Reuse same schema for Holmes tests - the tests only need Person type
     private val holmesSchema = schema

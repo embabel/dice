@@ -69,7 +69,7 @@ class TrackingEntityRepository(
  */
 class PropositionPipelineTest {
 
-    private val schema = DataDictionary.fromClasses(Person::class.java, Animal::class.java)
+    private val schema = DataDictionary.fromClasses("test", Person::class.java, Animal::class.java)
 
     /**
      * Simple mock extractor that creates propositions with entity mentions based on chunk content.

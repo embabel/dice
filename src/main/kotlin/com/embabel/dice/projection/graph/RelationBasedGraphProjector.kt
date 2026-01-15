@@ -76,7 +76,7 @@ private data class RelationMatch(
  * Example with explicit @Semantics predicate:
  * ```kotlin
  * // Given: Person.employer property annotated with @Semantics predicate="works at"
- * val schema = DataDictionary.fromClasses(Person::class.java, Company::class.java)
+ * val schema = DataDictionary.fromClasses("myschema", Person::class.java, Company::class.java)
  * val projector = RelationBasedGraphProjector.from(Relations.empty())
  *
  * // "Bob works at Acme" -> (bob)-[:employer]->(acme)

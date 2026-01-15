@@ -47,7 +47,7 @@ data class SourceAnalysisContext @JvmOverloads constructor(
          * SourceAnalysisContext context = SourceAnalysisContext
          *     .withContextId("my-context")
          *     .withEntityResolver(AlwaysCreateEntityResolver.INSTANCE)
-         *     .withSchema(DataDictionary.fromClasses(Person.class))
+         *     .withSchema(DataDictionary.fromClasses("myschema", Person.class))
          *     .withKnownEntities(knownEntities)  // optional
          *     .withTemplateModel(templateModel); // optional
          * ```

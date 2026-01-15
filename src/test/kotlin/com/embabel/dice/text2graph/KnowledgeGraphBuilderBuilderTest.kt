@@ -27,7 +27,7 @@ import com.embabel.dice.text2graph.support.LlmSourceAnalyzer
 import io.mockk.mockk
 import org.junit.jupiter.api.Test
 
-val dd = DataDictionary.fromClasses()
+val dd = DataDictionary.fromClasses("test")
 private val testContextId = ContextId("test-context")
 
 class KnowledgeGraphBuilderBuilderTest {

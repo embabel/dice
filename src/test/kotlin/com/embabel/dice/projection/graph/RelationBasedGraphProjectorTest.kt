@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test
 class RelationBasedGraphProjectorTest {
 
     private val contextId = ContextId("test")
-    private val emptySchema = DataDictionary.fromDomainTypes(emptyList())
+    private val emptySchema = DataDictionary.fromDomainTypes("empty", emptyList())
 
     // Test domain classes with @Semantics predicate annotations
     @JsonClassDescription("A person")
@@ -402,7 +402,7 @@ class RelationBasedGraphProjectorTest {
     @Nested
     inner class SchemaMatchingTests {
 
-        private val schemaWithPredicate = DataDictionary.fromClasses(Person::class.java, Company::class.java)
+        private val schemaWithPredicate = DataDictionary.fromClasses("test", Person::class.java, Company::class.java)
 
         @Test
         fun `uses schema relationship predicate and property name`() {
@@ -530,7 +530,7 @@ class RelationBasedGraphProjectorTest {
     @Nested
     inner class DerivedPredicateMatchingTests {
 
-        private val schemaWithoutSemantics = DataDictionary.fromClasses(Employee::class.java)
+        private val schemaWithoutSemantics = DataDictionary.fromClasses("test", Employee::class.java)
 
         @Test
         fun `matches derived predicate from property name`() {
@@ -571,7 +571,7 @@ class RelationBasedGraphProjectorTest {
         fun `explicit semantics takes priority over derived predicate`() {
             // Person.employer has @Semantics predicate="works at"
             // Even if "has employer" appears in text, "works at" should match first
-            val schemaWithSemantics = DataDictionary.fromClasses(Person::class.java, Company::class.java)
+            val schemaWithSemantics = DataDictionary.fromClasses("test", Person::class.java, Company::class.java)
             val projector = RelationBasedGraphProjector()
 
             val prop = proposition(
