@@ -1047,6 +1047,49 @@ can_consult(Person, Expert, Topic) :-
     expert_in(Expert, Topic).
 ```
 
+### Agent Memory
+
+The `Memory` class provides an `LlmReference` that gives agents access to their stored memories (propositions)
+within a context. It exposes three search tools via a `MatryoshkaTool`:
+
+- **searchByTopic**: Vector similarity search for relevant memories
+- **searchRecent**: Temporal ordering to recall recent memories
+- **searchByType**: Find memories by knowledge type (facts, events, preferences)
+
+All tools support optional type filtering:
+- `semantic`: Facts about entities (e.g., "Alice works at Acme")
+- `episodic`: Events that happened (e.g., "Alice met Bob yesterday")
+- `procedural`: Preferences and habits (e.g., "Alice prefers morning meetings")
+- `working`: Current session context
+
+The context is baked in at construction time, ensuring the agent can only access memories within its
+authorized context. The description dynamically reflects how many memories are available.
+
+```kotlin
+// Kotlin
+val memory = Memory.forContext(contextId)
+    .withRepository(propositionRepository)
+    .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
+    .withMinConfidence(0.6)
+
+ai.withReference(memory).respond(...)
+```
+
+```java
+// Java
+LlmReference memory = Memory.forContext("user-session-123")
+    .withRepository(propositionRepository)
+    .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
+    .withMinConfidence(0.6);
+
+ai.withReference(memory).respond(...);
+```
+
+Configuration options:
+- `withProjector(MemoryProjector)`: Projector for memory types (default: `DefaultMemoryProjector.DEFAULT` with heuristic classifier)
+- `withMinConfidence(Double)`: Minimum effective confidence threshold (default 0.5)
+- `withDefaultLimit(Int)`: Maximum results per search (default 10)
+
 ### Memory Projection
 
 Memory projection classifies propositions into cognitive memory types for agent context.
@@ -1226,6 +1269,9 @@ The Oracle answers questions using LLM tool calling with Prolog reasoning:
 
 ```
 com.embabel.dice
+├── agent/                    # Agent integration
+│   └── Memory                # LlmReference for memory search tools
+│
 ├── common/                   # Shared types
 │   ├── SourceAnalysisContext # Context for all DICE operations
 │   ├── EntityResolver        # Entity disambiguation interface

@@ -81,25 +81,3 @@ class RelationBasedKnowledgeTypeClassifier @JvmOverloads constructor(
             RelationBasedKnowledgeTypeClassifier(relations)
     }
 }
-
-/**
- * Heuristic-based classifier using confidence/decay values.
- * Used as fallback when no relation predicate matches.
- */
-object HeuristicKnowledgeTypeClassifier : KnowledgeTypeClassifier {
-
-    override fun classify(proposition: Proposition): KnowledgeType {
-        // High decay suggests episodic (events decay quickly)
-        if (proposition.decay > 0.5) {
-            return KnowledgeType.EPISODIC
-        }
-
-        // High confidence + low decay suggests semantic (stable facts)
-        if (proposition.confidence > 0.7 && proposition.decay < 0.3) {
-            return KnowledgeType.SEMANTIC
-        }
-
-        // Default to working memory for uncertain/transient propositions
-        return KnowledgeType.WORKING
-    }
-}
