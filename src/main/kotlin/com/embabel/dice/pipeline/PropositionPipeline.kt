@@ -17,6 +17,7 @@ package com.embabel.dice.pipeline
 
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.SourceAnalysisContext
+import com.embabel.dice.common.filter.MentionFilter
 import com.embabel.dice.common.resolver.ChainedEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
 import com.embabel.dice.common.resolver.KnownEntityResolver
@@ -51,6 +52,7 @@ class PropositionPipeline private constructor(
     private val extractor: PropositionExtractor,
     private val reviser: PropositionReviser? = null,
     private val propositionRepository: PropositionRepository? = null,
+    private val mentionFilter: MentionFilter? = null,
 ) {
 
     companion object {
@@ -80,7 +82,18 @@ class PropositionPipeline private constructor(
      * @return A new pipeline instance with revision enabled
      */
     fun withRevision(reviser: PropositionReviser, propositionRepository: PropositionRepository): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository)
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter)
+
+    /**
+     * Add a mention filter to validate entity mentions before creating entities.
+     * When enabled, low-quality mentions (vague references, overly long spans, etc.)
+     * are filtered out before entity resolution.
+     *
+     * @param filter The mention filter to use
+     * @return A new pipeline instance with mention filtering enabled
+     */
+    fun withMentionFilter(filter: MentionFilter): PropositionPipeline =
+        PropositionPipeline(extractor, reviser, propositionRepository, filter)
 
     /**
      * Process a single chunk through the pipeline.
@@ -107,7 +120,13 @@ class PropositionPipeline private constructor(
         logger.debug("Extracted {} propositions", suggestedPropositions.propositions.size)
 
         // Step 2: Convert mentions to suggested entities (include source text for context)
-        val suggestedEntities = extractor.toSuggestedEntities(suggestedPropositions, context, chunk.text)
+        val suggestedEntities = extractor.toSuggestedEntities(
+            suggestedPropositions,
+            context,
+            chunk.text,
+            mentionFilter
+        )
+
         logger.debug("Created {} suggested entities", suggestedEntities.suggestedEntities.size)
 
         // Step 3: Resolve entities using existing resolver (wrapped with known entities)

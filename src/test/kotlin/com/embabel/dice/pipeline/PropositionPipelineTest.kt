@@ -25,6 +25,13 @@ import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository
 import com.embabel.dice.common.*
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
+import com.embabel.dice.common.filter.CompositeMentionFilter
+import com.embabel.dice.common.filter.MentionFilter
+import com.embabel.dice.common.filter.SchemaValidatedMentionFilter
+import com.embabel.agent.core.DynamicType
+import com.embabel.agent.core.ValidatedPropertyDefinition
+import com.embabel.dice.common.validation.NoVagueReferences
+import com.embabel.dice.common.validation.LengthConstraint
 import com.embabel.dice.proposition.*
 import com.embabel.dice.text2graph.builder.Animal
 import com.embabel.dice.text2graph.builder.Person
@@ -79,13 +86,17 @@ class PropositionPipelineTest {
 
         override fun extract(chunk: Chunk, context: SourceAnalysisContext): SuggestedPropositions {
             // Parse entities from chunk text: "mentions:Alice,Bob" -> [Alice, Bob]
-            val mentionPattern = Regex("mentions:([\\w,]+)")
-            val match = mentionPattern.find(chunk.text)
-            val entityNames = match?.groupValues?.get(1)?.split(",") ?: emptyList()
+            val text = chunk.text
+            if (!text.startsWith("mentions:")) {
+                return SuggestedPropositions(chunk.id, emptyList())
+            }
+
+            // Split by comma to support multi-word mentions like "this company"
+            val entityNames = text.substringAfter("mentions:").split(",").map { it.trim() }
 
             val mentions = entityNames.mapIndexed { index, name ->
                 SuggestedMention(
-                    span = name.trim(),
+                    span = name,
                     type = "Person",
                     role = if (index == 0) "SUBJECT" else "OBJECT",
                 )
@@ -112,13 +123,20 @@ class PropositionPipelineTest {
         override fun toSuggestedEntities(
             suggestedPropositions: SuggestedPropositions,
             context: SourceAnalysisContext,
-            sourceText: String?
+            sourceText: String?,
+            mentionFilter: MentionFilter?
         ): SuggestedEntities {
             val seen = mutableSetOf<MentionKey>()
             val entities = mutableListOf<SuggestedEntity>()
 
             for (prop in suggestedPropositions.propositions) {
                 for (mention in prop.mentions) {
+
+                    // Apply filter if provided
+                    if (mentionFilter != null && !mentionFilter.isValid(mention, prop.text)) {
+                        continue  // Skip invalid mention
+                    }
+
                     val key = MentionKey.from(mention)
                     if (key !in seen) {
                         seen.add(key)
@@ -1118,6 +1136,134 @@ class PropositionPipelineTest {
 
             // Should have 0 HAS_ENTITY (unresolved)
             assertEquals(0, entityRepo.relationshipsOfType(NamedEntityData.HAS_ENTITY).size)
+        }
+    }
+
+    @Nested
+    inner class MentionFilterTests {
+
+        // Schema with validation rules for testing
+        private val companyTypeWithValidation = DynamicType(
+            name = "Company",
+            ownProperties = listOf(
+                ValidatedPropertyDefinition(
+                    name = "name",
+                    validationRules = listOf(
+                        NoVagueReferences(),
+                        LengthConstraint(maxLength = 15)
+                    )
+                )
+            )
+        )
+
+        private val schemaWithValidation = DataDictionary.fromDomainTypes(
+            name = "TestSchemaWithValidation",
+            domainTypes = listOf(companyTypeWithValidation)
+        )
+
+        @Test
+        fun `pipeline with mention filter filters low-quality mentions`() {
+            val extractor = MockPropositionExtractor()
+            val filter = SchemaValidatedMentionFilter(schemaWithValidation)
+            val pipeline = PropositionPipeline
+                .withExtractor(extractor)
+                .withMentionFilter(filter)
+
+            val chunks = listOf(
+                Chunk(id = "chunk-1", text = "mentions:this company,OpenAI", metadata = emptyMap(), parentId = "")
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+            )
+
+            val result = pipeline.process(chunks, context)
+
+            // Only "OpenAI" should survive filtering (not "this company")
+            val newEntities = result.newEntities()
+            assertEquals(1, newEntities.size, "Should have only 1 entity after filtering")
+            assertEquals("OpenAI", newEntities.first().name)
+        }
+
+        @Test
+        fun `pipeline without filter works as before (backward compatibility)`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline
+                .withExtractor(extractor)
+
+            val chunks = listOf(
+                Chunk(id = "chunk-1", text = "mentions:this company,OpenAI", metadata = emptyMap(), parentId = "")
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+            )
+
+            val result = pipeline.process(chunks, context)
+
+            // Both mentions should create entities (no filtering)
+            val newEntities = result.newEntities()
+            assertEquals(2, newEntities.size, "Should have 2 entities without filter")
+            assertTrue(newEntities.any { it.name == "this company" })
+            assertTrue(newEntities.any { it.name == "OpenAI" })
+        }
+
+        @Test
+        fun `schema filter applies multiple validation rules`() {
+            val extractor = MockPropositionExtractor()
+            val filter = SchemaValidatedMentionFilter(schemaWithValidation)
+            val pipeline = PropositionPipeline
+                .withExtractor(extractor)
+                .withMentionFilter(filter)
+
+            val chunks = listOf(
+                Chunk(
+                    id = "chunk-1",
+                    text = "mentions:this company,OpenAI,VeryLongCompanyNameThatExceedsLimit",
+                    metadata = emptyMap(),
+                    parentId = ""
+                )
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+            )
+
+            val result = pipeline.process(chunks, context)
+
+            // Only "OpenAI" should survive (not "this company" or the long name)
+            val newEntities = result.newEntities()
+            assertEquals(1, newEntities.size, "Should have only 1 entity after schema filtering")
+            assertEquals("OpenAI", newEntities.first().name)
+        }
+
+        @Test
+        fun `filtered mentions don't create entities but proposition is still stored`() {
+            val extractor = MockPropositionExtractor()
+            val filter = SchemaValidatedMentionFilter(schemaWithValidation)
+            val pipeline = PropositionPipeline
+                .withExtractor(extractor)
+                .withMentionFilter(filter)
+
+            val chunks = listOf(
+                Chunk(id = "chunk-1", text = "mentions:this investment", metadata = emptyMap(), parentId = "")
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+            )
+
+            val result = pipeline.process(chunks, context)
+
+            // No entities created (mention was filtered)
+            assertEquals(0, result.newEntities().size)
+
+            // But proposition is still stored
+            assertEquals(1, result.allPropositions.size)
         }
     }
 }
