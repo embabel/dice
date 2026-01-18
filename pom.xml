@@ -7,7 +7,7 @@
         <artifactId>embabel-build-parent</artifactId>
         <version>0.1.10-SNAPSHOT</version>
     </parent>
-    <groupId>com.embabel</groupId>
+    <groupId>com.embabel.dice</groupId>
     <artifactId>dice</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
@@ -177,8 +177,18 @@
 
     <repositories>
         <repository>
+            <id>embabel-releases</id>
+            <url>https://repo.embabel.com/artifactory/libs-release</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+        <repository>
             <id>embabel-snapshots</id>
             <url>https://repo.embabel.com/artifactory/libs-snapshot</url>
+            <releases>
+                <enabled>false</enabled>
+            </releases>
             <snapshots>
                 <enabled>true</enabled>
             </snapshots>
