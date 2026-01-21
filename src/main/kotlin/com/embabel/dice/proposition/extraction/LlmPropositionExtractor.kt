@@ -20,6 +20,7 @@ import com.embabel.agent.api.common.nested.ObjectCreationExample
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.common.*
+import com.embabel.dice.common.filter.MentionFilter
 import com.embabel.dice.proposition.*
 import org.slf4j.LoggerFactory
 
@@ -223,12 +224,24 @@ data class LlmPropositionExtractor(
         suggestedPropositions: SuggestedPropositions,
         context: SourceAnalysisContext,
         sourceText: String?,
+        mentionFilter: MentionFilter?,
     ): SuggestedEntities {
         // Collect all unique mentions across all propositions
         val uniqueMentions = mutableMapOf<MentionKey, SuggestedMention>()
 
         for (proposition in suggestedPropositions.propositions) {
             for (mention in proposition.mentions) {
+
+                // Apply filter if provided
+                if (mentionFilter != null && !mentionFilter.isValid(mention, proposition.text)) {
+                    logger.warn(
+                        "Filtered mention '{}': {}",
+                        mention.span,
+                        mentionFilter.rejectionReason(mention)
+                    )
+                    continue
+                }
+
                 val key = MentionKey.from(mention)
                 // Keep the first occurrence (or one with suggestedId if available)
                 val existing = uniqueMentions[key]

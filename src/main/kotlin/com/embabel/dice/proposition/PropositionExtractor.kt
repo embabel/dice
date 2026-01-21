@@ -20,6 +20,7 @@ import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntityResolution
+import com.embabel.dice.common.filter.MentionFilter
 
 /**
  * Extracts propositions from text chunks.
@@ -53,12 +54,14 @@ interface PropositionExtractor {
      * @param suggestedPropositions Propositions from extract()
      * @param context The source analysis context
      * @param sourceText Optional source text for context during entity resolution
+     * @param mentionFilter Optional filter to validate mentions before creating entities
      * @return SuggestedEntities suitable for EntityResolver.resolve()
      */
     fun toSuggestedEntities(
         suggestedPropositions: SuggestedPropositions,
         context: SourceAnalysisContext,
         sourceText: String? = null,
+        mentionFilter: MentionFilter? = null,
     ): SuggestedEntities
 
     /**

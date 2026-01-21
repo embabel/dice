@@ -196,6 +196,147 @@ flowchart TB
     style Persist fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
 ```
 
+### Mention Filtering
+
+Mention filtering provides quality control for entity mentions extracted by the LLM. It prevents
+low-quality mentions (vague references, overly long spans, duplicates) from polluting your knowledge graph.
+
+#### Type-Safe Validation Rules
+
+DICE provides compile-time checked validation rules that can be composed:
+
+| Rule | Description | Example |
+|------|-------------|---------|
+| `NotBlank` | Rejects empty/whitespace mentions | Filters `"  "` |
+| `NoVagueReferences()` | Rejects demonstratives | Filters `"this company"`, `"that person"` |
+| `LengthConstraint()` | Enforces length limits | `LengthConstraint(maxLength = 150)` |
+| `MinWordCount()` | Requires minimum words | `MinWordCount(2)` for person names |
+| `PatternConstraint()` | Regex validation | Custom patterns |
+| `AllOf()` | All rules must pass | Combine rules with AND |
+| `AnyOf()` | At least one must pass | Combine rules with OR |
+
+#### Schema-Driven Validation with DynamicType
+
+Define validation rules directly in your schema using `ValidatedPropertyDefinition`:
+
+```kotlin
+import com.embabel.agent.core.*
+import com.embabel.dice.common.validation.*
+
+// Define entity types with type-safe validation rules
+val companyType = DynamicType(
+    name = "Company",
+    description = "A business organization",
+    ownProperties = listOf(
+        ValidatedPropertyDefinition(
+            name = "name",
+            validationRules = listOf(
+                NotBlank,
+                NoVagueReferences(),
+                LengthConstraint(maxLength = 150)
+            )
+        )
+    ),
+    parents = emptyList(),
+    creationPermitted = true
+)
+
+val personType = DynamicType(
+    name = "Person",
+    description = "A person",
+    ownProperties = listOf(
+        ValidatedPropertyDefinition(
+            name = "name",
+            validationRules = listOf(
+                NotBlank,
+                MinWordCount(2),  // Require first + last name
+                LengthConstraint(maxLength = 80)
+            )
+        )
+    ),
+    parents = emptyList(),
+    creationPermitted = true
+)
+
+// Create DataDictionary from your types
+val schema = DataDictionary.fromDomainTypes("my-schema", listOf(companyType, personType))
+```
+
+#### Configuring MentionFilter in the Pipeline
+
+Use `SchemaValidatedMentionFilter` to apply schema-driven validation:
+
+```kotlin
+import com.embabel.dice.common.filter.*
+import com.embabel.dice.pipeline.PropositionPipeline
+
+// Create schema-driven filter
+val mentionFilter = SchemaValidatedMentionFilter(schema)
+
+// Configure pipeline with mention filter
+val pipeline = PropositionPipeline
+    .withExtractor(llmExtractor)
+    .withMentionFilter(mentionFilter)
+    .withRevision(reviser, repository)
+
+// Process chunks - mentions are automatically filtered
+val result = pipeline.process(chunks, context)
+```
+
+#### Context-Aware Filters
+
+For filters that need proposition context (not just the mention span), use context-aware filters:
+
+```kotlin
+import com.embabel.dice.common.filter.*
+
+// PropositionDuplicateFilter detects LLM field mapping errors
+// (when the LLM copies the entire proposition as the mention span)
+val mentionFilter = CompositeMentionFilter(listOf(
+    SchemaValidatedMentionFilter(schema),  // Schema-driven validation
+    PropositionDuplicateFilter()           // Catches LLM field mapping errors
+))
+
+// Configure pipeline
+val pipeline = PropositionPipeline
+    .withExtractor(llmExtractor)
+    .withMentionFilter(mentionFilter)
+```
+
+#### Adding Observability with Metrics
+
+Wrap any filter with `ObservableMentionFilter` for Micrometer metrics:
+
+```kotlin
+import io.micrometer.core.instrument.MeterRegistry
+
+val observableFilter = ObservableMentionFilter(
+    delegate = mentionFilter,
+    meterRegistry = meterRegistry,
+    filterName = "company-validation"  // Optional: custom metric tag
+)
+
+// Metrics recorded:
+// - dice.mention.filter.total (counter)
+// - dice.mention.filter.accepted (counter)
+// - dice.mention.filter.rejected (counter, with rejection_reason tag)
+```
+
+#### What Gets Filtered
+
+Given a company schema with `NoVagueReferences()` and `LengthConstraint(maxLength = 150)`:
+
+✅ **Accepted:**
+- `"OpenAI"` - Valid company name
+- `"Microsoft Corporation"` - Valid, descriptive
+- `"Goldman Sachs"` - Valid multi-word name
+
+❌ **Rejected:**
+- `"this company"` - Vague reference
+- `"that investment"` - Vague reference
+- `"A".repeat(200)` - Exceeds length limit
+- `"   "` - Blank (if using `NotBlank`)
+
 ### Entity Extraction Pipeline
 
 For use cases that need entity extraction without propositions, DICE provides a lightweight
