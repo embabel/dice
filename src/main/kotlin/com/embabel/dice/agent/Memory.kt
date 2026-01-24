@@ -26,6 +26,7 @@ import com.embabel.dice.projection.memory.support.DefaultMemoryProjector
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import org.slf4j.LoggerFactory
 
 /**
  * LlmReference providing agent memory search within a context.
@@ -77,20 +78,28 @@ data class Memory @JvmOverloads constructor(
     private val defaultLimit: Int = DEFAULT_LIMIT,
 ) : LlmReference {
 
+    private val logger = LoggerFactory.getLogger(Memory::class.java)
+
     override val name: String = NAME
 
     override val description: String
         get() {
-            val count = repository.query(
+            val memoryCount = repository.query(
                 PropositionQuery.forContextId(contextId)
                     .withMinEffectiveConfidence(minConfidence)
             ).size
-            return when {
-                count == 0 -> "No memories stored yet. Use this to search once memories are available."
-                count == 1 -> "Search 1 stored memory about the user and conversation."
-                else -> "Search $count stored memories about the user and conversation."
+            logger.info(
+                "Found {} memories > {} confidence in context {}", memoryCount, minConfidence,
+                contextId
+            )
+            return when (memoryCount) {
+                0 -> "No memories stored yet. Use this to search once memories are available."
+                1 -> "Search 1 stored memory about the user & context"
+                else -> "Search $memoryCount stored memories about the user & context"
             }
         }
+
+    override fun toolPrefix(): String = ""
 
     /**
      * Set the projector for categorizing memories by knowledge type.
