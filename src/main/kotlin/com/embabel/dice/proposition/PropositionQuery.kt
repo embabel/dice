@@ -16,6 +16,7 @@
 package com.embabel.dice.proposition
 
 import com.embabel.agent.core.ContextId
+import java.time.Duration
 import java.time.Instant
 
 /**
@@ -116,6 +117,30 @@ data class PropositionQuery(
 
     fun withRevisedBetween(start: Instant, end: Instant): PropositionQuery =
         copy(revisedAfter = start, revisedBefore = end)
+
+    /**
+     * Filter to propositions created within the given duration from now.
+     *
+     * Example:
+     * ```kotlin
+     * query.createdSince(Duration.ofHours(1))  // last hour
+     * query.createdSince(Duration.ofDays(7))   // last week
+     * ```
+     *
+     * @param duration How far back to look
+     * @return Query with createdAfter set to now minus duration
+     */
+    fun createdSince(duration: Duration): PropositionQuery =
+        copy(createdAfter = Instant.now().minus(duration))
+
+    /**
+     * Filter to propositions revised within the given duration from now.
+     *
+     * @param duration How far back to look
+     * @return Query with revisedAfter set to now minus duration
+     */
+    fun revisedSince(duration: Duration): PropositionQuery =
+        copy(revisedAfter = Instant.now().minus(duration))
 
     fun withMinEffectiveConfidence(threshold: Double): PropositionQuery =
         copy(minEffectiveConfidence = threshold)

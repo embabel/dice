@@ -19,7 +19,6 @@ import com.embabel.agent.api.tool.MatryoshkaTool
 import com.embabel.agent.core.ContextId
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
-import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.projection.memory.MemoryProjection
 import com.embabel.dice.projection.memory.MemoryProjector
 import com.embabel.dice.proposition.Proposition
@@ -39,7 +38,7 @@ class MemoryTest {
     private lateinit var projector: MemoryProjector
     private val contextId = ContextId("test-context")
 
-    private fun proposition(text: String, confidence: Double = 0.9, decay: Double = 0.1): Proposition {
+    private fun createProposition(text: String, confidence: Double = 0.9, decay: Double = 0.1): Proposition {
         return Proposition(
             contextId = contextId,
             text = text,
@@ -64,7 +63,7 @@ class MemoryTest {
                 .withRepository(repository)
 
             assertNotNull(memory)
-            assertEquals("Memory", memory.name)
+            assertEquals("memory", memory.name)
         }
 
         @Test
@@ -125,6 +124,15 @@ class MemoryTest {
                     .withDefaultLimit(0)
             }
         }
+
+        @Test
+        fun `creates memory with eager query`() {
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
+
+            assertNotNull(memory)
+        }
     }
 
     @Nested
@@ -136,32 +144,70 @@ class MemoryTest {
 
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
-
-            assertTrue(memory.description.contains("No memories stored yet"))
+            assertTrue(memory.description.contains("No memories"), memory.description)
         }
 
         @Test
         fun `description shows singular for one memory`() {
-            every { repository.query(any()) } returns listOf(proposition("test"))
-
+            every { repository.query(any()) } returns listOf(createProposition("test"))
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
-
             assertTrue(memory.description.contains("1 stored memory"))
         }
 
         @Test
         fun `description shows count for multiple memories`() {
             every { repository.query(any()) } returns listOf(
-                proposition("memory 1"),
-                proposition("memory 2"),
-                proposition("memory 3"),
+                createProposition("memory 1"),
+                createProposition("memory 2"),
+                createProposition("memory 3"),
             )
 
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
             assertTrue(memory.description.contains("3 stored memories"))
+        }
+
+        @Test
+        fun `description includes eager memories when configured`() {
+            val eagerMemories = listOf(
+                createProposition("User likes jazz music"),
+                createProposition("User works at Acme Corp"),
+            )
+            every { repository.query(any()) } returns eagerMemories
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(2) }
+
+            val description = memory.description
+            assertTrue(description.contains("Key memories:"), description)
+            assertTrue(description.contains("User likes jazz music"), description)
+            assertTrue(description.contains("User works at Acme Corp"), description)
+        }
+
+        @Test
+        fun `description omits eager section when no memories match`() {
+            every { repository.query(any()) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
+
+            val description = memory.description
+            assertFalse(description.contains("Key memories:"), description)
+        }
+
+        @Test
+        fun `description omits eager section when not configured`() {
+            every { repository.query(any()) } returns listOf(createProposition("test"))
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            val description = memory.description
+            assertFalse(description.contains("Key memories:"), description)
         }
     }
 
@@ -190,12 +236,7 @@ class MemoryTest {
         fun `notes contain usage instructions`() {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
-
             val notes = memory.notes()
-
-            assertTrue(notes.contains("searchByTopic"))
-            assertTrue(notes.contains("searchRecent"))
-            assertTrue(notes.contains("searchByType"))
             assertTrue(notes.contains("semantic"))
             assertTrue(notes.contains("procedural"))
         }
@@ -207,8 +248,8 @@ class MemoryTest {
         @Test
         fun `returns formatted results`() {
             val props = listOf(
-                proposition("User likes jazz music"),
-                proposition("User prefers acoustic instruments"),
+                createProposition("User likes jazz music"),
+                createProposition("User prefers acoustic instruments"),
             )
             every {
                 repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>())
@@ -245,9 +286,9 @@ class MemoryTest {
         @Test
         fun `filters by type when specified`() {
             val props = listOf(
-                proposition("User likes jazz music"),
-                proposition("User met Bob yesterday"),
-                proposition("User prefers morning meetings"),
+                createProposition("User likes jazz music"),
+                createProposition("User met Bob yesterday"),
+                createProposition("User prefers morning meetings"),
             )
             every {
                 repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>())
@@ -301,8 +342,8 @@ class MemoryTest {
         @Test
         fun `returns formatted results`() {
             val props = listOf(
-                proposition("Just learned about Brahms"),
-                proposition("User mentioned they like symphonies"),
+                createProposition("Just learned about Brahms"),
+                createProposition("User mentioned they like symphonies"),
             )
             every { repository.query(any()) } returns props
 
@@ -335,9 +376,9 @@ class MemoryTest {
         @Test
         fun `filters by type when specified`() {
             val props = listOf(
-                proposition("User likes jazz"),
-                proposition("User met Bob"),
-                proposition("User prefers tea"),
+                createProposition("User likes jazz"),
+                createProposition("User met Bob"),
+                createProposition("User prefers tea"),
             )
             every { repository.query(any()) } returns props
 
@@ -384,9 +425,9 @@ class MemoryTest {
         @Test
         fun `returns facts for semantic type`() {
             val props = listOf(
-                proposition("Alice works at Acme", confidence = 0.9, decay = 0.1),
-                proposition("User met Bob", confidence = 0.8, decay = 0.6),
-                proposition("Bob is a developer", confidence = 0.85, decay = 0.1),
+                createProposition("Alice works at Acme", confidence = 0.9, decay = 0.1),
+                createProposition("User met Bob", confidence = 0.8, decay = 0.6),
+                createProposition("Bob is a developer", confidence = 0.85, decay = 0.1),
             )
             every { repository.query(any()) } returns props
 
@@ -412,8 +453,8 @@ class MemoryTest {
         @Test
         fun `returns preferences for procedural type`() {
             val props = listOf(
-                proposition("User prefers morning meetings"),
-                proposition("User likes tea"),
+                createProposition("User prefers morning meetings"),
+                createProposition("User likes tea"),
             )
             every { repository.query(any()) } returns props
 
@@ -458,9 +499,9 @@ class MemoryTest {
 
         @Test
         fun `returns empty message when no matching type`() {
-            every { repository.query(any()) } returns listOf(proposition("Some fact"))
+            every { repository.query(any()) } returns listOf(createProposition("Some fact"))
             every { projector.project(any()) } returns MemoryProjection(
-                semantic = listOf(proposition("Some fact")),
+                semantic = listOf(createProposition("Some fact")),
             )
 
             val memory = Memory.forContext(contextId)

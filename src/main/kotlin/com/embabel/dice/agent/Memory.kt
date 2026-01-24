@@ -27,6 +27,7 @@ import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.slf4j.LoggerFactory
+import java.util.function.UnaryOperator
 
 /**
  * LlmReference providing agent memory search within a context.
@@ -50,6 +51,7 @@ import org.slf4j.LoggerFactory
  *     .withRepository(propositionRepository)
  *     .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
  *     .withMinConfidence(0.6)
+ *     .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
  *
  * ai.withReference(memory).respond(...)
  * ```
@@ -59,7 +61,8 @@ import org.slf4j.LoggerFactory
  * LlmReference memory = Memory.forContext("user-session-123")
  *     .withRepository(propositionRepository)
  *     .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
- *     .withMinConfidence(0.6);
+ *     .withMinConfidence(0.6)
+ *     .withEagerQuery(query -> query.orderedByEffectiveConfidence().withLimit(5));
  *
  * ai.withReference(memory).respond(...);
  * ```
@@ -69,6 +72,12 @@ import org.slf4j.LoggerFactory
  * @param projector Projector for categorizing memories by knowledge type
  * @param minConfidence Minimum confidence threshold for memories
  * @param defaultLimit Default limit for search results
+ * @param topic Description of the memories we can retrieve.
+ * Should complete with the form "memories about <topic>".
+ * @param useWhen Description of when to use the memory tools.
+ * @param eagerQuery Optional query transformer to eagerly load key memories into the description.
+ * When set, the description will include memories fetched using this query, making them
+ * immediately available to the LLM without requiring a tool call.
  */
 data class Memory @JvmOverloads constructor(
     private val contextId: ContextId,
@@ -76,11 +85,21 @@ data class Memory @JvmOverloads constructor(
     private val projector: MemoryProjector = DefaultMemoryProjector.DEFAULT,
     private val minConfidence: Double = DEFAULT_MIN_CONFIDENCE,
     private val defaultLimit: Int = DEFAULT_LIMIT,
+    private val topic: String = "the user & context",
+    private val useWhen: String = "whenever you need to recall information about $topic",
+    private val eagerQuery: UnaryOperator<PropositionQuery>? = null,
 ) : LlmReference {
 
     private val logger = LoggerFactory.getLogger(Memory::class.java)
 
     override val name: String = NAME
+
+    /**
+     * Set the topic description for the memories.
+     */
+    fun withTopic(topic: String): Memory = copy(topic = topic)
+
+    fun withUseWhen(useWhen: String): Memory = copy(useWhen = useWhen)
 
     override val description: String
         get() {
@@ -92,11 +111,29 @@ data class Memory @JvmOverloads constructor(
                 "Found {} memories > {} confidence in context {}", memoryCount, minConfidence,
                 contextId
             )
-            return when (memoryCount) {
-                0 -> "No memories stored yet. Use this to search once memories are available."
-                1 -> "Search 1 stored memory about the user & context"
-                else -> "Search $memoryCount stored memories about the user & context"
+
+            val status = when (memoryCount) {
+                0 -> "No memories yet"
+                1 -> "Search 1 stored memory"
+                else -> "Search $memoryCount stored memories"
             }
+
+            val eagerMemories = eagerQuery?.let { queryFn ->
+                val baseQuery = PropositionQuery.forContextId(contextId)
+                    .withMinEffectiveConfidence(minConfidence)
+                repository.query(queryFn.apply(baseQuery))
+            } ?: emptyList()
+
+            return buildString {
+                appendLine("Memory Tool: $name")
+                appendLine("Use when: $useWhen")
+                append(status)
+                if (eagerMemories.isNotEmpty()) {
+                    appendLine()
+                    appendLine("Key memories:")
+                    eagerMemories.forEach { appendLine("- ${it.text}") }
+                }
+            }.trimEnd()
         }
 
     override fun toolPrefix(): String = ""
@@ -133,13 +170,32 @@ data class Memory @JvmOverloads constructor(
         return copy(defaultLimit = limit)
     }
 
-    override fun notes(): String = """
-Use these tools to access what you know about the user and conversation:
-- searchByTopic: Find memories related to a specific topic (e.g., "music preferences", "work projects")
-- searchRecent: Recall what was recently discussed or learned
-- searchByType: Find all memories of a specific type (facts, events, preferences)
+    /**
+     * Set an eager query to preload key memories into the description.
+     *
+     * When set, the description will include memories fetched using this query,
+     * making them immediately available to the LLM without requiring a tool call.
+     * The query transformer receives a base query with contextId and minConfidence
+     * already applied.
+     *
+     * Example (Kotlin):
+     * ```kotlin
+     * .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
+     * ```
+     *
+     * Example (Java):
+     * ```java
+     * .withEagerQuery(query -> query.orderedByEffectiveConfidence().withLimit(5))
+     * ```
+     *
+     * @param eagerQuery Function to transform the base query
+     * @return New Memory with eager query configured
+     */
+    fun withEagerQuery(eagerQuery: UnaryOperator<PropositionQuery>): Memory =
+        copy(eagerQuery = eagerQuery)
 
-All tools support an optional 'type' filter:
+    override fun notes(): String = """
+$name tools support an optional 'type' filter:
 - semantic: Facts about entities (e.g., "Alice works at Acme")
 - episodic: Events that happened (e.g., "Alice met Bob yesterday")
 - procedural: Preferences and habits (e.g., "Alice prefers morning meetings")
@@ -151,7 +207,7 @@ Use these tools proactively to personalize responses and maintain continuity.
 
     override fun tools(): List<Tool> = listOf(
         MatryoshkaTool.of(
-            name = "memory",
+            name = NAME,
             description = description,
             innerTools = listOf(searchByTopicTool(), searchRecentTool(), searchByTypeTool()),
         )
@@ -160,7 +216,9 @@ Use these tools proactively to personalize responses and maintain continuity.
     private fun searchByTopicTool(): Tool = object : Tool {
         override val definition = Tool.Definition.create(
             name = "searchByTopic",
-            description = "Search memory for information about a topic",
+            description = """
+                |Find memories related to a specific topic (e.g., "music preferences", "work projects")
+            """.trimMargin(),
             inputSchema = Tool.InputSchema.of(
                 Tool.Parameter.string("topic", "The topic to search for", required = true),
                 Tool.Parameter.string(
@@ -218,7 +276,7 @@ Use these tools proactively to personalize responses and maintain continuity.
     private fun searchRecentTool(): Tool = object : Tool {
         override val definition = Tool.Definition.create(
             name = "searchRecent",
-            description = "Recall recent memories from conversation",
+            description = "Recall what was recently discussed or learned in the conversation",
             inputSchema = Tool.InputSchema.of(
                 Tool.Parameter.string(
                     "type",
@@ -269,7 +327,9 @@ Use these tools proactively to personalize responses and maintain continuity.
     private fun searchByTypeTool(): Tool = object : Tool {
         override val definition = Tool.Definition.create(
             name = "searchByType",
-            description = "Find all memories of a specific type (facts, events, preferences)",
+            description = """
+                |Find all memories of a specific type (facts, events, preferences)
+            """.trimMargin(),
             inputSchema = Tool.InputSchema.of(
                 Tool.Parameter.string(
                     "type",
@@ -341,7 +401,7 @@ Use these tools proactively to personalize responses and maintain continuity.
 
     companion object {
 
-        private const val NAME = "Memory"
+        private const val NAME = "memory"
 
         /** Default minimum confidence threshold */
         const val DEFAULT_MIN_CONFIDENCE = 0.5
