@@ -136,6 +136,45 @@ class PropositionExtractionTemplateTest {
         }
 
         @Test
+        fun `relationship predicates section is not empty when schema has annotated relationships`() {
+            val context = createTestContext()
+            val model = createTemplateModel(context)
+
+            val result = renderer.renderLoadedTemplate(
+                "dice/schema_hints",
+                mapOf("model" to model)
+            )
+
+            // Extract the relationship predicates section
+            val predicatesSection = result.substringAfter("Relationship predicates (from schema): [")
+                .substringBefore("]")
+                .trim()
+
+            // The section should contain the "works at" predicate from Person.employer
+            assertFalse(predicatesSection.isEmpty(), "Relationship predicates section should not be empty. Full output:\n$result")
+            assertTrue(predicatesSection.contains("Person"), "Should contain Person as the source type")
+            assertTrue(predicatesSection.contains("works at"), "Should contain 'works at' predicate")
+            assertTrue(predicatesSection.contains("Company"), "Should contain Company as the target type")
+        }
+
+        @Test
+        fun `relationship predicates section format is correct`() {
+            val context = createTestContext()
+            val model = createTemplateModel(context)
+
+            val result = renderer.renderLoadedTemplate(
+                "dice/schema_hints",
+                mapOf("model" to model)
+            )
+
+            // Should have format: Person "works at" Company
+            assertTrue(
+                result.contains(Regex("""Person\s+"works at"\s+Company""")),
+                "Should contain properly formatted relationship predicate. Full output:\n$result"
+            )
+        }
+
+        @Test
         fun `renders known entities with roles`() {
             val user = Person("user-1", "Alice", "A music enthusiast")
             val context = createTestContext(
