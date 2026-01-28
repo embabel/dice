@@ -109,7 +109,7 @@ class NamedEntityDataRepositoryGraphRelationshipPersister(
             properties = properties,
         )
 
-        repository.createRelationship(source, target, relationshipData)
+        repository.mergeRelationship(source, target, relationshipData)
     }
 
     override fun projectAndPersist(
