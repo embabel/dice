@@ -19,6 +19,7 @@ import com.embabel.agent.api.common.LlmReference
 import com.embabel.agent.api.tool.MatryoshkaTool
 import com.embabel.agent.api.tool.Tool
 import com.embabel.agent.core.ContextId
+import com.embabel.agent.spi.support.DelegatingTool
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.projection.memory.MemoryProjector
@@ -88,7 +89,7 @@ data class Memory @JvmOverloads constructor(
     private val topic: String = "the user & context",
     private val useWhen: String = "whenever you need to recall information about $topic",
     private val eagerQuery: UnaryOperator<PropositionQuery>? = null,
-) : LlmReference {
+) : LlmReference, DelegatingTool {
 
     private val logger = LoggerFactory.getLogger(Memory::class.java)
 
@@ -205,13 +206,22 @@ Memory search is scoped to the current context and filtered by confidence.
 Use these tools proactively to personalize responses and maintain continuity.
 """
 
-    override fun tools(): List<Tool> = listOf(
+    // DelegatingTool implementation via lazy MatryoshkaTool
+    override val delegate: Tool by lazy {
         MatryoshkaTool.of(
             name = NAME,
             description = description,
             innerTools = listOf(searchByTopicTool(), searchRecentTool(), searchByTypeTool()),
         )
-    )
+    }
+
+    override fun tools(): List<Tool> = listOf(delegate)
+
+    override val definition: Tool.Definition
+        get() = delegate.definition
+
+    override fun call(input: String): Tool.Result =
+        delegate.call(input)
 
     private fun searchByTopicTool(): Tool = object : Tool {
         override val definition = Tool.Definition.create(

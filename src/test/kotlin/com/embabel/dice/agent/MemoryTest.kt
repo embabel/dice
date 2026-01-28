@@ -16,6 +16,7 @@
 package com.embabel.dice.agent
 
 import com.embabel.agent.api.tool.MatryoshkaTool
+import com.embabel.agent.api.tool.Tool
 import com.embabel.agent.core.ContextId
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
@@ -552,6 +553,91 @@ class MemoryTest {
 
             assertEquals(ContextId("context-1"), orderedQueries[0].contextId)
             assertEquals(ContextId("context-2"), orderedQueries[1].contextId)
+        }
+    }
+
+    @Nested
+    inner class ToolInterfaceTests {
+
+        @Test
+        fun `Memory implements Tool interface`() {
+            every { repository.query(any()) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            assertTrue(memory is Tool)
+        }
+
+        @Test
+        fun `definition has correct name`() {
+            every { repository.query(any()) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            assertEquals("memory", memory.definition.name)
+        }
+
+        @Test
+        fun `definition description matches dynamic description`() {
+            every { repository.query(any()) } returns listOf(
+                createProposition("memory 1"),
+                createProposition("memory 2"),
+            )
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            // Both should contain the memory count
+            assertTrue(memory.definition.description.contains("2 stored memories"))
+            assertTrue(memory.description.contains("2 stored memories"))
+        }
+
+        @Test
+        fun `call delegates to MatryoshkaTool`() {
+            every { repository.query(any()) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            // Call with an inner tool
+            val result = memory.call("""{"tool": "searchRecent", "input": {}}""")
+
+            // Should route to searchRecent and return a result
+            assertTrue(result is Tool.Result.Text)
+            val text = (result as Tool.Result.Text).content
+            assertTrue(text.contains("searchRecent") || text.contains("No recent"))
+        }
+
+        @Test
+        fun `tool instance is cached and reused`() {
+            every { repository.query(any()) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            // Multiple calls should return the same cached tool
+            val tools1 = memory.tools()
+            val tools2 = memory.tools()
+            val definition1 = memory.definition
+            val definition2 = memory.definition
+
+            assertSame(tools1[0], tools2[0])
+            assertSame(definition1, definition2)
+        }
+
+        @Test
+        fun `can use Memory directly as Tool`() {
+            every { repository.query(any()) } returns emptyList()
+
+            val memory: Tool = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            // Should work as a Tool
+            assertNotNull(memory.definition)
+            assertNotNull(memory.definition.name)
+            assertNotNull(memory.definition.description)
         }
     }
 
