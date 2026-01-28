@@ -23,7 +23,7 @@
     </scm>
 
     <properties>
-        <embabel-agent.version>0.3.3-SNAPSHOT</embabel-agent.version>
+        <embabel-agent.version>0.3.4-SNAPSHOT</embabel-agent.version>
         <!--
             tuProlog version is pinned to 1.0.4 due to Kotlin version incompatibility.
             tuProlog 1.1.x series is built with Kotlin 2.2.x, causing binary incompatibility
