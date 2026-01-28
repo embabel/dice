@@ -88,7 +88,7 @@ data class Memory @JvmOverloads constructor(
     private val topic: String = "the user & context",
     private val useWhen: String = "whenever you need to recall information about $topic",
     private val eagerQuery: UnaryOperator<PropositionQuery>? = null,
-) : LlmReference {
+) : LlmReference, Tool {
 
     private val logger = LoggerFactory.getLogger(Memory::class.java)
 
@@ -205,13 +205,22 @@ Memory search is scoped to the current context and filtered by confidence.
 Use these tools proactively to personalize responses and maintain continuity.
 """
 
-    override fun tools(): List<Tool> = listOf(
+    // Tool interface implementation via lazy MatryoshkaTool
+    private val tool: Tool by lazy {
         MatryoshkaTool.of(
             name = NAME,
             description = description,
             innerTools = listOf(searchByTopicTool(), searchRecentTool(), searchByTypeTool()),
         )
-    )
+    }
+
+    override fun tools(): List<Tool> = listOf(tool)
+
+    override val definition: Tool.Definition
+        get() = tool.definition
+
+    override fun call(input: String): Tool.Result =
+        tool.call(input)
 
     private fun searchByTopicTool(): Tool = object : Tool {
         override val definition = Tool.Definition.create(
