@@ -16,10 +16,10 @@
 package com.embabel.dice.agent
 
 import com.embabel.agent.api.common.LlmReference
+import com.embabel.agent.api.tool.DelegatingTool
 import com.embabel.agent.api.tool.MatryoshkaTool
 import com.embabel.agent.api.tool.Tool
 import com.embabel.agent.core.ContextId
-import com.embabel.agent.spi.support.DelegatingTool
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.projection.memory.MemoryProjector
