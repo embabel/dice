@@ -17,8 +17,8 @@ package com.embabel.dice.agent
 
 import com.embabel.agent.api.reference.LlmReference
 import com.embabel.agent.api.tool.DelegatingTool
-import com.embabel.agent.api.tool.MatryoshkaTool
 import com.embabel.agent.api.tool.Tool
+import com.embabel.agent.api.tool.progressive.UnfoldingTool
 import com.embabel.agent.core.ContextId
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.KnowledgeType
@@ -33,7 +33,7 @@ import java.util.function.UnaryOperator
 /**
  * LlmReference providing agent memory search within a context.
  *
- * Provides access to conversation memory through a MatryoshkaTool with three operations:
+ * Provides access to conversation memory through an UnfoldingTool with three operations:
  * - **searchByTopic**: Vector similarity search for relevant memories
  * - **searchRecent**: Temporal ordering to recall recent memories
  * - **searchByType**: Find memories by knowledge type (facts, events, preferences)
@@ -208,7 +208,7 @@ Use these tools proactively to personalize responses and maintain continuity.
 
     // DelegatingTool implementation via lazy MatryoshkaTool
     override val delegate: Tool by lazy {
-        MatryoshkaTool.of(
+        UnfoldingTool.of(
             name = NAME,
             description = description,
             innerTools = listOf(searchByTopicTool(), searchRecentTool(), searchByTypeTool()),

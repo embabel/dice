@@ -15,8 +15,8 @@
  */
 package com.embabel.dice.agent
 
-import com.embabel.agent.api.tool.MatryoshkaTool
 import com.embabel.agent.api.tool.Tool
+import com.embabel.agent.api.tool.progressive.UnfoldingTool
 import com.embabel.agent.core.ContextId
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
@@ -216,21 +216,21 @@ class MemoryTest {
     inner class ToolTests {
 
         @Test
-        fun `returns MatryoshkaTool with inner tools`() {
+        fun `returns UnfoldingTool with inner tools`() {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
             val tools = memory.tools()
 
             assertEquals(1, tools.size)
-            assertTrue(tools[0] is MatryoshkaTool)
+            assertTrue(tools[0] is UnfoldingTool)
 
-            val matryoshka = tools[0] as MatryoshkaTool
-            assertEquals("memory", matryoshka.definition.name)
-            assertEquals(3, matryoshka.innerTools.size)
-            assertTrue(matryoshka.innerTools.any { it.definition.name == "searchByTopic" })
-            assertTrue(matryoshka.innerTools.any { it.definition.name == "searchRecent" })
-            assertTrue(matryoshka.innerTools.any { it.definition.name == "searchByType" })
+            val unfoldingTool = tools[0] as UnfoldingTool
+            assertEquals("memory", unfoldingTool.definition.name)
+            assertEquals(3, unfoldingTool.innerTools.size)
+            assertTrue(unfoldingTool.innerTools.any { it.definition.name == "searchByTopic" })
+            assertTrue(unfoldingTool.innerTools.any { it.definition.name == "searchRecent" })
+            assertTrue(unfoldingTool.innerTools.any { it.definition.name == "searchByType" })
         }
 
         @Test
@@ -595,7 +595,7 @@ class MemoryTest {
         }
 
         @Test
-        fun `call delegates to MatryoshkaTool`() {
+        fun `call delegates to UnfoldingTool`() {
             every { repository.query(any()) } returns emptyList()
 
             val memory = Memory.forContext(contextId)
@@ -642,7 +642,7 @@ class MemoryTest {
     }
 
     private fun findTool(memory: Memory, name: String): com.embabel.agent.api.tool.Tool {
-        val matryoshka = memory.tools()[0] as MatryoshkaTool
-        return matryoshka.innerTools.first { it.definition.name == name }
+        val unfoldingTool = memory.tools()[0] as UnfoldingTool
+        return unfoldingTool.innerTools.first { it.definition.name == name }
     }
 }
