@@ -48,7 +48,7 @@ class MessageFormatter : IncrementalSourceFormatter<Message> {
 
     override fun format(items: List<Message>): String {
         return items.joinToString("\n\n") { message ->
-            val sender = message.sender ?: message.role.name
+            val sender = message.role.displayName
             "$sender: ${message.content}"
         }
     }
