@@ -1190,8 +1190,20 @@ can_consult(Person, Expert, Topic) :-
 
 ### Agent Memory
 
-The `Memory` class provides an `LlmReference` that gives agents access to their stored memories (propositions)
-within a context. It exposes three search tools via a `MatryoshkaTool`:
+The `Memory` class gives agents access to their stored memories (propositions) within a context.
+It implements both `LlmReference` and `DelegatingTool`, providing a **two-tier retrieval strategy**:
+
+1. **Eager (reference)**: Key memories are preloaded into the description via `withEagerQuery`,
+   making them immediately visible to the LLM with no tool call overhead.
+2. **On-demand (tool)**: Three search tools are exposed via an `UnfoldingTool`, letting the LLM
+   search for specific memories when the eager set isn't sufficient.
+
+This means the most important memories are always available (zero latency), while the full memory
+store remains searchable on demand.
+
+#### Search Tools
+
+The `UnfoldingTool` exposes three operations:
 
 - **searchByTopic**: Vector similarity search for relevant memories
 - **searchRecent**: Temporal ordering to recall recent memories
@@ -1203,8 +1215,12 @@ All tools support optional type filtering:
 - `procedural`: Preferences and habits (e.g., "Alice prefers morning meetings")
 - `working`: Current session context
 
+#### Context Isolation
+
 The context is baked in at construction time, ensuring the agent can only access memories within its
 authorized context. The description dynamically reflects how many memories are available.
+
+#### Usage
 
 ```kotlin
 // Kotlin
@@ -1212,6 +1228,8 @@ val memory = Memory.forContext(contextId)
     .withRepository(propositionRepository)
     .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
     .withMinConfidence(0.6)
+    .withTopic("the user's music preferences")
+    .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
 
 ai.withReference(memory).respond(...)
 ```
@@ -1221,15 +1239,23 @@ ai.withReference(memory).respond(...)
 LlmReference memory = Memory.forContext("user-session-123")
     .withRepository(propositionRepository)
     .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
-    .withMinConfidence(0.6);
+    .withMinConfidence(0.6)
+    .withTopic("the user's music preferences")
+    .withEagerQuery(query -> query.orderedByEffectiveConfidence().withLimit(5));
 
 ai.withReference(memory).respond(...);
 ```
 
-Configuration options:
-- `withProjector(MemoryProjector)`: Projector for memory types (default: `DefaultMemoryProjector.DEFAULT` with heuristic classifier)
-- `withMinConfidence(Double)`: Minimum effective confidence threshold (default 0.5)
-- `withDefaultLimit(Int)`: Maximum results per search (default 10)
+#### Configuration Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `withProjector(MemoryProjector)` | Projector for classifying memories by knowledge type | `DefaultMemoryProjector.DEFAULT` (heuristic) |
+| `withMinConfidence(Double)` | Minimum effective confidence threshold (0.0–1.0) | 0.5 |
+| `withDefaultLimit(Int)` | Maximum results per search | 10 |
+| `withTopic(String)` | Describes what these memories are about. Completes the form "memories about _topic_" | `"the user & context"` |
+| `withUseWhen(String)` | Instruction to the LLM for when to use the memory tools | `"whenever you need to recall information about <topic>"` |
+| `withEagerQuery(UnaryOperator<PropositionQuery>)` | Preloads key memories into the description, avoiding a tool call for the most relevant context | none (disabled) |
 
 ### Memory Projection
 

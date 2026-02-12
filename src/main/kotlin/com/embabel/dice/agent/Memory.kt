@@ -206,12 +206,16 @@ Memory search is scoped to the current context and filtered by confidence.
 Use these tools proactively to personalize responses and maintain continuity.
 """
 
-    // DelegatingTool implementation via lazy MatryoshkaTool
+    // DelegatingTool implementation via lazy UnfoldingTool
     override val delegate: Tool by lazy {
         UnfoldingTool.of(
             name = NAME,
             description = description,
-            innerTools = listOf(searchByTopicTool(), searchRecentTool(), searchByTypeTool()),
+            innerTools = listOf(
+                searchByTopicTool(),
+                searchRecentTool(),
+                searchByTypeTool()
+            ),
         )
     }
 
