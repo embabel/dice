@@ -958,6 +958,7 @@ flowchart LR
     subgraph Filters["Filters"]
         CTX["contextId<br/>(primary scope)"]
         ENT["entityId<br/>(mentions entity)"]
+        MENT["anyEntityIds (OR)<br/>allEntityIds (AND)"]
         CONF["minEffectiveConfidence<br/>(with decay)"]
         TIME["createdAfter/Before<br/>revisedAfter/Before"]
         LVL["minLevel/maxLevel<br/>(abstraction)"]
@@ -1016,13 +1017,48 @@ PropositionQuery query = PropositionQuery.againstContext("session-123")
 List<Proposition> results = repository.query(query);
 ```
 
+**Multi-entity queries** — filter by multiple entities with OR or AND semantics:
+
+```kotlin
+// Propositions mentioning Alice OR Bob
+val either = repository.query(
+    PropositionQuery.mentioningAnyEntity("alice", "bob")
+)
+
+// Propositions mentioning both Alice AND Bob
+val both = repository.query(
+    PropositionQuery.mentioningAllEntities("alice", "bob")
+)
+
+// Compose with other filters
+val query = PropositionQuery.forContextId(sessionContext)
+    .withAllEntities("alice", "bob")
+    .withMinEffectiveConfidence(0.5)
+    .orderedByEffectiveConfidence()
+```
+
+```java
+// Java — multi-entity queries
+List<Proposition> either = repository.query(
+    PropositionQuery.mentioningAnyEntity("alice", "bob")
+);
+
+List<Proposition> both = repository.query(
+    PropositionQuery.againstContext("session-123")
+        .withAllEntities("alice", "bob")
+        .orderedByEffectiveConfidence()
+);
+```
+
 **Factory methods** (all are `infix` for Kotlin):
 
 | Method | Description |
 |--------|-------------|
 | `PropositionQuery.forContextId(contextId)` | Scoped to a ContextId |
 | `PropositionQuery.againstContext(contextIdValue)` | Scoped to a context (Java-friendly, takes String) |
-| `PropositionQuery.mentioningEntity(entityId)` | Propositions mentioning an entity |
+| `PropositionQuery.mentioningEntity(entityId)` | Propositions mentioning a single entity |
+| `PropositionQuery.mentioningAnyEntity(vararg entityIds)` | Propositions mentioning any of the entities (OR) |
+| `PropositionQuery.mentioningAllEntities(vararg entityIds)` | Propositions mentioning all of the entities (AND) |
 
 > **Note**: There is no `create()` method by design—always start with a scoped query
 > to avoid accidentally fetching all propositions.
@@ -1207,17 +1243,25 @@ store remains searchable on demand.
 
 #### Search Tools
 
-The `UnfoldingTool` exposes three operations:
+The `UnfoldingTool` exposes four operations:
 
 - **searchByTopic**: Vector similarity search for relevant memories
 - **searchRecent**: Temporal ordering to recall recent memories
 - **searchByType**: Find memories by knowledge type (facts, events, preferences)
+- **drillDown**: Get the detailed source memories behind a summary/abstraction
 
-All tools support optional type filtering:
+All search tools support optional `type` filtering:
 - `semantic`: Facts about entities (e.g., "Alice works at Acme")
 - `episodic`: Events that happened (e.g., "Alice met Bob yesterday")
 - `procedural`: Preferences and habits (e.g., "Alice prefers morning meetings")
 - `working`: Current session context
+
+All search tools also support an optional `level` parameter to filter by abstraction level:
+- `0`: Raw observations only
+- `1+`: Summaries and abstractions only
+
+The `drillDown` tool navigates the abstraction hierarchy — given a summary, it finds the
+source propositions that were used to create it, using `PropositionRepository.findSources()`.
 
 #### Scoping
 
@@ -1233,6 +1277,16 @@ val memory = Memory.forContext(contextId)
     .withRepository(propositionRepository)
     .narrowedBy { it.withEntityId("alice-123") }
 
+// Memories involving both Alice and Bob
+val memory = Memory.forContext(contextId)
+    .withRepository(propositionRepository)
+    .narrowedBy { it.withAllEntities("alice", "bob") }
+
+// Memories about Alice OR Bob, abstractions only
+val memory = Memory.forContext(contextId)
+    .withRepository(propositionRepository)
+    .narrowedBy { it.withAnyEntity("alice", "bob").withMinLevel(1) }
+
 // Only level-0 active propositions
 val memory = Memory.forContext(contextId)
     .withRepository(propositionRepository)
@@ -1244,6 +1298,11 @@ val memory = Memory.forContext(contextId)
 LlmReference memory = Memory.forContext("session-123")
     .withRepository(propositionRepository)
     .narrowedBy(query -> query.withEntityId("alice-123"));
+
+// Java — scoped to multiple entities (AND)
+LlmReference memory = Memory.forContext("session-123")
+    .withRepository(propositionRepository)
+    .narrowedBy(query -> query.withAllEntities("alice", "bob"));
 ```
 
 `narrowedBy` composes with `withEagerQuery` — the eager query receives the already-narrowed base,
@@ -1297,6 +1356,10 @@ val memory = Memory.forContext(contextId)
 | `withUseWhen(String)` | Instruction to the LLM for when to use the memory tools | `"whenever you need to recall information about <topic>"` |
 | `withEagerTopicSearch(Int)` | Preloads memories by vector similarity to the `topic` into the description. Tool calls auto-deduplicate against these | none (disabled) |
 | `withEagerQuery(UnaryOperator<PropositionQuery>)` | Preloads key memories by structured query (e.g., top-N by confidence) into the description | none (disabled) |
+
+All search tools (searchByTopic, searchRecent, searchByType) expose an optional `level` parameter
+to the LLM, allowing it to filter by abstraction level at query time. The `drillDown` tool lets the
+LLM navigate from a summary to its sources. Both `level` and `drillDown` compose with `narrowedBy`.
 
 ### Memory Projection
 
@@ -1493,7 +1556,7 @@ val differences = contraster.contrast(aliceGroup, bobGroup, targetCount = 3)
 // "Alice and Bob have different language preferences (Python vs Java)"
 ```
 
-#### Proposition Levels
+#### Proposition Levels and Source Resolution
 
 Derived propositions track their abstraction level and provenance:
 
@@ -1507,6 +1570,16 @@ data class Proposition(
 // Query by abstraction level
 val rawObservations = repository.findByMinLevel(0)
 val abstractions = repository.findByMinLevel(1)
+```
+
+Navigate the abstraction hierarchy using source resolution:
+
+```kotlin
+// Get the source propositions that an abstraction was derived from
+val sources = repository.findSources(abstraction)
+
+// Find all abstractions that cite a given proposition as a source
+val derivations = repository.findAbstractionsOf(propositionId)
 ```
 
 ### Oracle: Natural Language Q&A
@@ -1559,7 +1632,7 @@ com.embabel.dice
 │   ├── EntityMention         # Entity reference within proposition
 │   ├── PropositionQuery      # Composable query specification
 │   ├── Projector<T>          # Generic projection interface
-│   ├── PropositionRepository # Storage interface (with query() method)
+│   ├── PropositionRepository # Storage interface (query, findSources, findAbstractionsOf)
 │   ├── revision/             # Proposition revision
 │   │   ├── PropositionReviser
 │   │   ├── LlmPropositionReviser

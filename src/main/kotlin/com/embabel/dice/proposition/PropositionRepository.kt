@@ -214,6 +214,30 @@ interface PropositionRepository : CoreSearchOperations {
     fun count(): Int
 
     // ========================================================================
+    // Source resolution - navigate the abstraction hierarchy
+    // ========================================================================
+
+    /**
+     * Find the source propositions that a given proposition was abstracted from.
+     * Resolves the proposition's [Proposition.sourceIds] to actual propositions.
+     *
+     * @param proposition The abstraction whose sources to find
+     * @return Source propositions (partial list if some IDs are missing)
+     */
+    fun findSources(proposition: Proposition): List<Proposition> =
+        proposition.sourceIds.mapNotNull { findById(it) }
+
+    /**
+     * Find propositions that were abstracted from the given proposition.
+     * Searches for propositions that cite the given ID in their [Proposition.sourceIds].
+     *
+     * @param propositionId The ID of the source proposition
+     * @return Propositions that list this ID as a source
+     */
+    fun findAbstractionsOf(propositionId: String): List<Proposition> =
+        findAll().filter { propositionId in it.sourceIds }
+
+    // ========================================================================
     // Composable query - consolidates filtering, ordering, limiting
     // ========================================================================
 
@@ -236,6 +260,18 @@ interface PropositionRepository : CoreSearchOperations {
         query.entityId?.let { eid ->
             results = results.filter { prop ->
                 prop.mentions.any { it.resolvedId == eid }
+            }
+        }
+        query.anyEntityIds?.let { ids ->
+            results = results.filter { prop ->
+                val propEntityIds = prop.mentions.mapNotNull { it.resolvedId }.toSet()
+                propEntityIds.any { it in ids }
+            }
+        }
+        query.allEntityIds?.let { ids ->
+            results = results.filter { prop ->
+                val propEntityIds = prop.mentions.mapNotNull { it.resolvedId }.toSet()
+                ids.all { it in propEntityIds }
             }
         }
         query.status?.let { s ->

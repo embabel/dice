@@ -324,7 +324,8 @@ Use these tools proactively to personalize responses and maintain continuity.
             innerTools = listOf(
                 searchByTopicTool(),
                 searchRecentTool(),
-                searchByTypeTool()
+                searchByTypeTool(),
+                drillDownTool(),
             ),
         )
     }
@@ -352,6 +353,7 @@ Use these tools proactively to personalize responses and maintain continuity.
                     enumValues = KNOWLEDGE_TYPE_VALUES,
                 ),
                 Tool.Parameter.integer("limit", "Maximum number of results", required = false),
+                Tool.Parameter.integer("level", "Abstraction level: 0 for raw details, 1+ for summaries", required = false),
             ),
         )
 
@@ -360,6 +362,10 @@ Use these tools proactively to personalize responses and maintain continuity.
             val topic = params["topic"] as? String ?: return Tool.Result.error("Missing 'topic' parameter")
             val typeFilter = parseKnowledgeType(params["type"] as? String)
             val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
+            val level = (params["level"] as? Number)?.toInt()
+
+            var query = baseQuery()
+            level?.let { query = query.withMinLevel(it).withMaxLevel(it) }
 
             val results = repository.findSimilarWithScores(
                 TextSimilaritySearchRequest(
@@ -367,7 +373,7 @@ Use these tools proactively to personalize responses and maintain continuity.
                     similarityThreshold = 0.0,
                     topK = if (typeFilter != null) limit * 3 else limit, // Fetch more if filtering
                 ),
-                baseQuery()
+                query
             )
 
             val deduped = results.filter { it.match.id !in eagerPropositionIds }
@@ -412,6 +418,7 @@ Use these tools proactively to personalize responses and maintain continuity.
                     enumValues = KNOWLEDGE_TYPE_VALUES,
                 ),
                 Tool.Parameter.integer("limit", "Maximum number of results", required = false),
+                Tool.Parameter.integer("level", "Abstraction level: 0 for raw details, 1+ for summaries", required = false),
             ),
         )
 
@@ -419,9 +426,13 @@ Use these tools proactively to personalize responses and maintain continuity.
             val params = parseInput(input)
             val typeFilter = parseKnowledgeType(params["type"] as? String)
             val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
+            val level = (params["level"] as? Number)?.toInt()
+
+            var query = baseQuery()
+            level?.let { query = query.withMinLevel(it).withMaxLevel(it) }
 
             val results = repository.query(
-                baseQuery()
+                query
                     .orderedByCreated()
                     .withLimit(if (typeFilter != null) limit * 3 else limit)
             )
@@ -464,6 +475,7 @@ Use these tools proactively to personalize responses and maintain continuity.
                     enumValues = KNOWLEDGE_TYPE_VALUES,
                 ),
                 Tool.Parameter.integer("limit", "Maximum number of results", required = false),
+                Tool.Parameter.integer("level", "Abstraction level: 0 for raw details, 1+ for summaries", required = false),
             ),
         )
 
@@ -473,9 +485,13 @@ Use these tools proactively to personalize responses and maintain continuity.
             val typeFilter = parseKnowledgeType(typeStr)
                 ?: return Tool.Result.error("Invalid type '$typeStr'. Use: semantic, episodic, procedural, or working")
             val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
+            val level = (params["level"] as? Number)?.toInt()
+
+            var query = baseQuery()
+            level?.let { query = query.withMinLevel(it).withMaxLevel(it) }
 
             val results = repository.query(
-                baseQuery()
+                query
                     .orderedByEffectiveConfidence()
                     .withLimit(limit * 3) // Fetch more since we're filtering
             )
@@ -497,6 +513,54 @@ Use these tools proactively to personalize responses and maintain continuity.
             val text = buildString {
                 appendLine("$typeLabel (${filtered.size}):")
                 filtered.forEach { prop ->
+                    appendLine("- ${prop.text}")
+                }
+            }.trimEnd()
+
+            return Tool.Result.text(text)
+        }
+    }
+
+    private fun drillDownTool(): Tool = object : Tool {
+        override val definition = Tool.Definition.create(
+            name = "drillDown",
+            description = "Get the detailed source memories behind a summary/abstraction",
+            inputSchema = Tool.InputSchema.of(
+                Tool.Parameter.string("memory", "The text of the summary to drill into", required = true),
+                Tool.Parameter.integer("limit", "Maximum number of results", required = false),
+            ),
+        )
+
+        override fun call(input: String): Tool.Result {
+            val params = parseInput(input)
+            val memoryText = params["memory"] as? String ?: return Tool.Result.error("Missing 'memory' parameter")
+            val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
+
+            // Find the abstraction by similarity search (level >= 1)
+            val abstractionQuery = baseQuery().withMinLevel(1)
+            val matches = repository.findSimilarWithScores(
+                TextSimilaritySearchRequest(
+                    query = memoryText,
+                    similarityThreshold = 0.0,
+                    topK = 1,
+                ),
+                abstractionQuery,
+            )
+
+            if (matches.isEmpty()) {
+                return Tool.Result.text("No matching abstraction found to drill into.")
+            }
+
+            val abstraction = matches.first().match
+            val sources = repository.findSources(abstraction)
+
+            if (sources.isEmpty()) {
+                return Tool.Result.text("This memory has no detailed sources to drill into.")
+            }
+
+            val text = buildString {
+                appendLine("Sources behind '${abstraction.text}':")
+                sources.take(limit).forEach { prop ->
                     appendLine("- ${prop.text}")
                 }
             }.trimEnd()

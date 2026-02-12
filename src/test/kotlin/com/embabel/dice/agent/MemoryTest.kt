@@ -228,10 +228,11 @@ class MemoryTest {
 
             val unfoldingTool = tools[0] as UnfoldingTool
             assertEquals("memory", unfoldingTool.definition.name)
-            assertEquals(3, unfoldingTool.innerTools.size)
+            assertEquals(4, unfoldingTool.innerTools.size)
             assertTrue(unfoldingTool.innerTools.any { it.definition.name == "searchByTopic" })
             assertTrue(unfoldingTool.innerTools.any { it.definition.name == "searchRecent" })
             assertTrue(unfoldingTool.innerTools.any { it.definition.name == "searchByType" })
+            assertTrue(unfoldingTool.innerTools.any { it.definition.name == "drillDown" })
         }
 
         @Test
@@ -788,6 +789,241 @@ class MemoryTest {
             assertNull(querySlot.captured.entityId)
             assertNull(querySlot.captured.minLevel)
             assertNull(querySlot.captured.status)
+        }
+    }
+
+    @Nested
+    inner class LevelParameterTests {
+
+        @Test
+        fun `searchByTopic passes level to query`() {
+            val querySlot = slot<PropositionQuery>()
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), capture(querySlot))
+            } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            val tool = findTool(memory, "searchByTopic")
+            tool.call("""{"topic": "jazz", "level": 1}""")
+
+            assertEquals(1, querySlot.captured.minLevel)
+            assertEquals(1, querySlot.captured.maxLevel)
+        }
+
+        @Test
+        fun `searchByTopic without level leaves levels unset`() {
+            val querySlot = slot<PropositionQuery>()
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), capture(querySlot))
+            } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            val tool = findTool(memory, "searchByTopic")
+            tool.call("""{"topic": "jazz"}""")
+
+            assertNull(querySlot.captured.minLevel)
+            assertNull(querySlot.captured.maxLevel)
+        }
+
+        @Test
+        fun `searchRecent passes level to query`() {
+            val queries = mutableListOf<PropositionQuery>()
+            every { repository.query(capture(queries)) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            val tool = findTool(memory, "searchRecent")
+            tool.call("""{"level": 0}""")
+
+            val recentQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.CREATED_DESC }
+            assertEquals(0, recentQuery.minLevel)
+            assertEquals(0, recentQuery.maxLevel)
+        }
+
+        @Test
+        fun `searchRecent without level leaves levels unset`() {
+            val queries = mutableListOf<PropositionQuery>()
+            every { repository.query(capture(queries)) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            val tool = findTool(memory, "searchRecent")
+            tool.call("{}")
+
+            val recentQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.CREATED_DESC }
+            assertNull(recentQuery.minLevel)
+            assertNull(recentQuery.maxLevel)
+        }
+
+        @Test
+        fun `searchByType passes level to query`() {
+            val queries = mutableListOf<PropositionQuery>()
+            every { repository.query(capture(queries)) } returns emptyList()
+            every { projector.project(any()) } returns MemoryProjection()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .withProjector(projector)
+
+            val tool = findTool(memory, "searchByType")
+            tool.call("""{"type": "semantic", "level": 2}""")
+
+            val typeQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC }
+            assertEquals(2, typeQuery.minLevel)
+            assertEquals(2, typeQuery.maxLevel)
+        }
+
+        @Test
+        fun `level composes with narrowedBy`() {
+            val querySlot = slot<PropositionQuery>()
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), capture(querySlot))
+            } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .narrowedBy { it.withEntityId("alice") }
+
+            val tool = findTool(memory, "searchByTopic")
+            tool.call("""{"topic": "jazz", "level": 1}""")
+
+            assertEquals("alice", querySlot.captured.entityId)
+            assertEquals(1, querySlot.captured.minLevel)
+            assertEquals(1, querySlot.captured.maxLevel)
+        }
+    }
+
+    @Nested
+    inner class DrillDownTests {
+
+        @Test
+        fun `drillDown finds sources of an abstraction`() {
+            val source1 = createProposition("Alice likes jazz")
+            val source2 = createProposition("Alice listens to Coltrane")
+            val abstraction = Proposition(
+                contextId = contextId,
+                text = "Alice is a jazz enthusiast",
+                mentions = emptyList(),
+                confidence = 0.9,
+                level = 1,
+                sourceIds = listOf(source1.id, source2.id),
+            )
+
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>())
+            } returns listOf(SimilarityResult(abstraction, 0.95))
+            every { repository.findSources(abstraction) } returns listOf(source1, source2)
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            val tool = findTool(memory, "drillDown")
+            val result = tool.call("""{"memory": "Alice is a jazz enthusiast"}""")
+            val text = (result as Tool.Result.Text).content
+
+            assertTrue(text.contains("Alice likes jazz"), text)
+            assertTrue(text.contains("Alice listens to Coltrane"), text)
+        }
+
+        @Test
+        fun `drillDown returns empty message when no abstraction found`() {
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>())
+            } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            val tool = findTool(memory, "drillDown")
+            val result = tool.call("""{"memory": "nonexistent summary"}""")
+            val text = (result as Tool.Result.Text).content
+
+            assertTrue(text.contains("No matching abstraction"), text)
+        }
+
+        @Test
+        fun `drillDown returns empty message for proposition with no sources`() {
+            val abstraction = Proposition(
+                contextId = contextId,
+                text = "A summary",
+                mentions = emptyList(),
+                confidence = 0.9,
+                level = 1,
+                sourceIds = listOf("missing-id"),
+            )
+
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>())
+            } returns listOf(SimilarityResult(abstraction, 0.95))
+            every { repository.findSources(abstraction) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            val tool = findTool(memory, "drillDown")
+            val result = tool.call("""{"memory": "A summary"}""")
+            val text = (result as Tool.Result.Text).content
+
+            assertTrue(text.contains("no detailed sources"), text)
+        }
+
+        @Test
+        fun `drillDown searches with minLevel 1`() {
+            val querySlot = slot<PropositionQuery>()
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), capture(querySlot))
+            } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            val tool = findTool(memory, "drillDown")
+            tool.call("""{"memory": "some summary"}""")
+
+            assertEquals(1, querySlot.captured.minLevel)
+        }
+    }
+
+    @Nested
+    inner class NarrowedByMultiEntityTests {
+
+        @Test
+        fun `narrowedBy with anyEntityIds scopes searchByTopic`() {
+            val querySlot = slot<PropositionQuery>()
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), capture(querySlot))
+            } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .narrowedBy { it.withAnyEntity("alice", "bob") }
+
+            val tool = findTool(memory, "searchByTopic")
+            tool.call("""{"topic": "jazz"}""")
+
+            assertEquals(listOf("alice", "bob"), querySlot.captured.anyEntityIds)
+        }
+
+        @Test
+        fun `narrowedBy with allEntityIds scopes searchRecent`() {
+            val queries = mutableListOf<PropositionQuery>()
+            every { repository.query(capture(queries)) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .narrowedBy { it.withAllEntities("alice", "bob") }
+
+            val tool = findTool(memory, "searchRecent")
+            tool.call("{}")
+
+            val recentQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.CREATED_DESC }
+            assertEquals(listOf("alice", "bob"), recentQuery.allEntityIds)
         }
     }
 

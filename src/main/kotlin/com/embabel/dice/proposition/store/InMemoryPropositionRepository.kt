@@ -86,11 +86,14 @@ class InMemoryPropositionRepository(
 
         // Pre-filter propositions based on query before computing similarities
         val candidates = propositions.values.filter { prop ->
+            val propEntityIds by lazy { prop.mentions.mapNotNull { it.resolvedId }.toSet() }
             (query.contextId == null || prop.contextId == query.contextId) &&
                 (query.status == null || prop.status == query.status) &&
                 (query.minLevel == null || prop.level >= query.minLevel) &&
                 (query.maxLevel == null || prop.level <= query.maxLevel) &&
-                (query.entityId == null || prop.mentions.any { it.resolvedId == query.entityId })
+                (query.entityId == null || prop.mentions.any { it.resolvedId == query.entityId }) &&
+                (query.anyEntityIds == null || propEntityIds.any { it in query.anyEntityIds!! }) &&
+                (query.allEntityIds == null || query.allEntityIds!!.all { it in propEntityIds })
         }
 
         return candidates

@@ -47,6 +47,8 @@ data class PropositionQuery(
     // Scope filters
     val contextId: ContextId? = null,
     val entityId: String? = null,
+    val anyEntityIds: List<String>? = null,
+    val allEntityIds: List<String>? = null,
 
     // Status and level filters
     val status: PropositionStatus? = null,
@@ -97,6 +99,14 @@ data class PropositionQuery(
     fun withContextIdValue(contextIdValue: String): PropositionQuery = copy(contextId = ContextId(contextIdValue))
 
     fun withEntityId(entityId: String): PropositionQuery = copy(entityId = entityId)
+
+    fun withAnyEntity(vararg entityIds: String) = copy(anyEntityIds = entityIds.toList())
+
+    fun withAnyEntityIds(entityIds: List<String>) = copy(anyEntityIds = entityIds)
+
+    fun withAllEntities(vararg entityIds: String) = copy(allEntityIds = entityIds.toList())
+
+    fun withAllEntityIds(entityIds: List<String>) = copy(allEntityIds = entityIds)
 
     fun withStatus(status: PropositionStatus): PropositionQuery = copy(status = status)
 
@@ -185,5 +195,19 @@ data class PropositionQuery(
         @JvmStatic
         infix fun mentioningEntity(entityId: String): PropositionQuery =
             PropositionQuery(entityId = entityId)
+
+        /**
+         * Create a query for propositions mentioning all of the given entities (AND).
+         */
+        @JvmStatic
+        fun mentioningAllEntities(vararg entityIds: String): PropositionQuery =
+            PropositionQuery(allEntityIds = entityIds.toList())
+
+        /**
+         * Create a query for propositions mentioning any of the given entities (OR).
+         */
+        @JvmStatic
+        fun mentioningAnyEntity(vararg entityIds: String): PropositionQuery =
+            PropositionQuery(anyEntityIds = entityIds.toList())
     }
 }
