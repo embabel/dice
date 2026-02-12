@@ -89,9 +89,14 @@ import java.util.function.UnaryOperator
  * @param topic Description of the memories we can retrieve.
  * Should complete with the form "memories about <topic>".
  * @param useWhen Description of when to use the memory tools.
+ * @param narrowedBy Optional query transformer that narrows the scope of all queries.
+ * Applied on top of the base query (contextId + minConfidence) before any tool-specific
+ * additions. Use this to restrict Memory to a subset of propositions (e.g., by entity,
+ * level, or temporal range). Cannot widen the base scope, only narrow it.
  * @param eagerQuery Optional query transformer to eagerly load key memories into the description.
  * When set, the description will include memories fetched using this query, making them
  * immediately available to the LLM without requiring a tool call.
+ * Applied on top of the narrowed base query.
  * @param eagerTopicSearch Optional limit for eager topic-based similarity search.
  * When set, uses the [topic] to perform a vector similarity search and preloads matching
  * memories into the description. Can be used alongside or instead of [eagerQuery].
@@ -104,6 +109,7 @@ data class Memory @JvmOverloads constructor(
     private val defaultLimit: Int = DEFAULT_LIMIT,
     private val topic: String = "the user & context",
     private val useWhen: String = "whenever you need to recall information about $topic",
+    private val narrowedBy: UnaryOperator<PropositionQuery>? = null,
     private val eagerQuery: UnaryOperator<PropositionQuery>? = null,
     private val eagerTopicSearch: Int? = null,
 ) : LlmReference, DelegatingTool {
@@ -120,6 +126,42 @@ data class Memory @JvmOverloads constructor(
     fun withUseWhen(useWhen: String): Memory = copy(useWhen = useWhen)
 
     /**
+     * Narrow the scope of all memory queries.
+     *
+     * The transformer receives the base query (contextId + minConfidence already applied)
+     * and should add further constraints. This scope is enforced on every query —
+     * eager loading, searchByTopic, searchRecent, and searchByType — so the LLM
+     * cannot access propositions outside it.
+     *
+     * Can be called multiple times; each call replaces the previous narrowing.
+     *
+     * Example (Kotlin):
+     * ```kotlin
+     * .narrowedBy { it.withEntityId("alice-123") }
+     * ```
+     *
+     * Example (Java):
+     * ```java
+     * .narrowedBy(query -> query.withEntityId("alice-123"))
+     * ```
+     *
+     * @param narrowedBy Function to narrow the base query
+     * @return New Memory with the scope narrowed
+     */
+    fun narrowedBy(narrowedBy: UnaryOperator<PropositionQuery>): Memory =
+        copy(narrowedBy = narrowedBy)
+
+    /**
+     * Build the base query that all operations start from.
+     * Applies contextId, minConfidence, and any narrowing.
+     */
+    private fun baseQuery(): PropositionQuery {
+        val base = PropositionQuery.forContextId(contextId)
+            .withMinEffectiveConfidence(minConfidence)
+        return narrowedBy?.apply(base) ?: base
+    }
+
+    /**
      * IDs of propositions that were eagerly loaded into the description.
      * Used to deduplicate results from subsequent tool calls.
      */
@@ -128,8 +170,7 @@ data class Memory @JvmOverloads constructor(
     }
 
     private fun loadEagerMemories(): List<Proposition> {
-        val baseQuery = PropositionQuery.forContextId(contextId)
-            .withMinEffectiveConfidence(minConfidence)
+        val base = baseQuery()
 
         val topicMemories = eagerTopicSearch?.let { limit ->
             repository.findSimilarWithScores(
@@ -138,12 +179,12 @@ data class Memory @JvmOverloads constructor(
                     similarityThreshold = 0.0,
                     topK = limit,
                 ),
-                baseQuery,
+                base,
             ).map { it.match }
         } ?: emptyList()
 
         val queryMemories = eagerQuery?.let { queryFn ->
-            repository.query(queryFn.apply(baseQuery))
+            repository.query(queryFn.apply(base))
         } ?: emptyList()
 
         // Merge both sources, deduplicating by ID, topic results first
@@ -153,10 +194,7 @@ data class Memory @JvmOverloads constructor(
 
     override val description: String
         get() {
-            val memoryCount = repository.query(
-                PropositionQuery.forContextId(contextId)
-                    .withMinEffectiveConfidence(minConfidence)
-            ).size
+            val memoryCount = repository.query(baseQuery()).size
             logger.info(
                 "Found {} memories > {} confidence in context {}", memoryCount, minConfidence,
                 contextId
@@ -222,8 +260,8 @@ data class Memory @JvmOverloads constructor(
      *
      * When set, the description will include memories fetched using this query,
      * making them immediately available to the LLM without requiring a tool call.
-     * The query transformer receives a base query with contextId and minConfidence
-     * already applied.
+     * The query transformer receives the base query (contextId, minConfidence,
+     * and any [narrowedBy] scope already applied).
      *
      * Can be combined with [withEagerTopicSearch] — both sets of memories will be
      * merged (deduplicated) in the description.
@@ -323,16 +361,13 @@ Use these tools proactively to personalize responses and maintain continuity.
             val typeFilter = parseKnowledgeType(params["type"] as? String)
             val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
 
-            val query = PropositionQuery.forContextId(contextId)
-                .withMinEffectiveConfidence(minConfidence)
-
             val results = repository.findSimilarWithScores(
                 TextSimilaritySearchRequest(
                     query = topic,
                     similarityThreshold = 0.0,
                     topK = if (typeFilter != null) limit * 3 else limit, // Fetch more if filtering
                 ),
-                query
+                baseQuery()
             )
 
             val deduped = results.filter { it.match.id !in eagerPropositionIds }
@@ -386,8 +421,7 @@ Use these tools proactively to personalize responses and maintain continuity.
             val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
 
             val results = repository.query(
-                PropositionQuery.forContextId(contextId)
-                    .withMinEffectiveConfidence(minConfidence)
+                baseQuery()
                     .orderedByCreated()
                     .withLimit(if (typeFilter != null) limit * 3 else limit)
             )
@@ -441,8 +475,7 @@ Use these tools proactively to personalize responses and maintain continuity.
             val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
 
             val results = repository.query(
-                PropositionQuery.forContextId(contextId)
-                    .withMinEffectiveConfidence(minConfidence)
+                baseQuery()
                     .orderedByEffectiveConfidence()
                     .withLimit(limit * 3) // Fetch more since we're filtering
             )

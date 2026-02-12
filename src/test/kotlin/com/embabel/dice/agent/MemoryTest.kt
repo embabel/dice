@@ -25,6 +25,7 @@ import com.embabel.dice.projection.memory.MemoryProjector
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.PropositionStatus
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
@@ -638,6 +639,155 @@ class MemoryTest {
             assertNotNull(memory.definition)
             assertNotNull(memory.definition.name)
             assertNotNull(memory.definition.description)
+        }
+    }
+
+    @Nested
+    inner class NarrowedByTests {
+
+        @Test
+        fun `narrowedBy applies entity filter to searchByTopic`() {
+            val querySlot = slot<PropositionQuery>()
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), capture(querySlot))
+            } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .narrowedBy { it.withEntityId("alice-123") }
+
+            val tool = findTool(memory, "searchByTopic")
+            tool.call("""{"topic": "jazz"}""")
+
+            assertEquals("alice-123", querySlot.captured.entityId)
+            assertEquals(contextId, querySlot.captured.contextId)
+        }
+
+        @Test
+        fun `narrowedBy applies entity filter to searchRecent`() {
+            val queries = mutableListOf<PropositionQuery>()
+            every { repository.query(capture(queries)) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .narrowedBy { it.withEntityId("alice-123") }
+
+            val tool = findTool(memory, "searchRecent")
+            tool.call("{}")
+
+            // Filter to the ordered query from searchRecent (description also queries)
+            val recentQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.CREATED_DESC }
+            assertEquals("alice-123", recentQuery.entityId)
+            assertEquals(contextId, recentQuery.contextId)
+        }
+
+        @Test
+        fun `narrowedBy applies entity filter to searchByType`() {
+            val queries = mutableListOf<PropositionQuery>()
+            every { repository.query(capture(queries)) } returns emptyList()
+            every { projector.project(any()) } returns MemoryProjection()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .withProjector(projector)
+                .narrowedBy { it.withEntityId("alice-123") }
+
+            val tool = findTool(memory, "searchByType")
+            tool.call("""{"type": "semantic"}""")
+
+            val typeQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC }
+            assertEquals("alice-123", typeQuery.entityId)
+            assertEquals(contextId, typeQuery.contextId)
+        }
+
+        @Test
+        fun `narrowedBy applies to description count query`() {
+            val queries = mutableListOf<PropositionQuery>()
+            every { repository.query(capture(queries)) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .narrowedBy { it.withEntityId("alice-123") }
+
+            // Accessing description triggers the count query
+            memory.description
+
+            assertTrue(queries.any { it.entityId == "alice-123" })
+        }
+
+        @Test
+        fun `narrowedBy applies to eager query`() {
+            val queries = mutableListOf<PropositionQuery>()
+            every { repository.query(capture(queries)) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .narrowedBy { it.withEntityId("alice-123") }
+                .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
+
+            // Accessing description triggers eager loading
+            memory.description
+
+            val eagerQuery = queries.first {
+                it.orderBy == PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC && it.limit == 5
+            }
+            assertEquals("alice-123", eagerQuery.entityId)
+        }
+
+        @Test
+        fun `narrowedBy applies to eager topic search`() {
+            val querySlot = slot<PropositionQuery>()
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), capture(querySlot))
+            } returns emptyList()
+            every { repository.query(any()) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .narrowedBy { it.withEntityId("alice-123") }
+                .withTopic("music")
+                .withEagerTopicSearch(3)
+
+            // Accessing description triggers eager topic search
+            memory.description
+
+            assertEquals("alice-123", querySlot.captured.entityId)
+        }
+
+        @Test
+        fun `narrowedBy supports arbitrary query constraints`() {
+            val queries = mutableListOf<PropositionQuery>()
+            every { repository.query(capture(queries)) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .narrowedBy { it.withMinLevel(1).withStatus(PropositionStatus.ACTIVE) }
+
+            val tool = findTool(memory, "searchRecent")
+            tool.call("{}")
+
+            val recentQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.CREATED_DESC }
+            assertEquals(1, recentQuery.minLevel)
+            assertEquals(PropositionStatus.ACTIVE, recentQuery.status)
+        }
+
+        @Test
+        fun `without narrowedBy queries are unscoped beyond context`() {
+            val querySlot = slot<PropositionQuery>()
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), capture(querySlot))
+            } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            val tool = findTool(memory, "searchByTopic")
+            tool.call("""{"topic": "jazz"}""")
+
+            assertEquals(contextId, querySlot.captured.contextId)
+            assertNull(querySlot.captured.entityId)
+            assertNull(querySlot.captured.minLevel)
+            assertNull(querySlot.captured.status)
         }
     }
 

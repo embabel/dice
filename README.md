@@ -1219,10 +1219,35 @@ All tools support optional type filtering:
 - `procedural`: Preferences and habits (e.g., "Alice prefers morning meetings")
 - `working`: Current session context
 
-#### Context Isolation
+#### Scoping
 
 The context is baked in at construction time, ensuring the agent can only access memories within its
 authorized context. The description dynamically reflects how many memories are available.
+
+For finer-grained control, `narrowedBy` applies additional constraints to *every* query — eager loading,
+description count, and all three search tools. The LLM cannot escape these constraints.
+
+```kotlin
+// Only memories mentioning Alice
+val memory = Memory.forContext(contextId)
+    .withRepository(propositionRepository)
+    .narrowedBy { it.withEntityId("alice-123") }
+
+// Only level-0 active propositions
+val memory = Memory.forContext(contextId)
+    .withRepository(propositionRepository)
+    .narrowedBy { it.withMinLevel(0).withMaxLevel(0).withStatus(PropositionStatus.ACTIVE) }
+```
+
+```java
+// Java — scoped to an entity
+LlmReference memory = Memory.forContext("session-123")
+    .withRepository(propositionRepository)
+    .narrowedBy(query -> query.withEntityId("alice-123"));
+```
+
+`narrowedBy` composes with `withEagerQuery` — the eager query receives the already-narrowed base,
+so it can only further restrict (ordering, limits), never widen the scope.
 
 #### Usage
 
@@ -1264,6 +1289,7 @@ val memory = Memory.forContext(contextId)
 
 | Option | Description | Default |
 |--------|-------------|---------|
+| `narrowedBy(UnaryOperator<PropositionQuery>)` | Narrows the scope of all queries (e.g., by entity, level, status). Applied before any tool-specific additions | none (unscoped) |
 | `withProjector(MemoryProjector)` | Projector for classifying memories by knowledge type | `DefaultMemoryProjector.DEFAULT` (heuristic) |
 | `withMinConfidence(Double)` | Minimum effective confidence threshold (0.0–1.0) | 0.5 |
 | `withDefaultLimit(Int)` | Maximum results per search | 10 |
