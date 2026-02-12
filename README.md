@@ -1193,10 +1193,14 @@ can_consult(Person, Expert, Topic) :-
 The `Memory` class gives agents access to their stored memories (propositions) within a context.
 It implements both `LlmReference` and `DelegatingTool`, providing a **two-tier retrieval strategy**:
 
-1. **Eager (reference)**: Key memories are preloaded into the description via `withEagerQuery`,
-   making them immediately visible to the LLM with no tool call overhead.
+1. **Eager (reference)**: Key memories are preloaded into the description, making them
+   immediately visible to the LLM with no tool call overhead. Two eager modes are available:
+   - `withEagerTopicSearch(limit)`: Preloads memories by vector similarity to the `topic`
+   - `withEagerQuery { ... }`: Preloads memories by structured query (e.g., top-N by confidence)
+   - Both can be combined — results are merged and deduplicated.
 2. **On-demand (tool)**: Three search tools are exposed via an `UnfoldingTool`, letting the LLM
-   search for specific memories when the eager set isn't sufficient.
+   search for specific memories when the eager set isn't sufficient. Tool results automatically
+   deduplicate against eagerly loaded memories, so the LLM always receives new information.
 
 This means the most important memories are always available (zero latency), while the full memory
 store remains searchable on demand.
@@ -1223,27 +1227,37 @@ authorized context. The description dynamically reflects how many memories are a
 #### Usage
 
 ```kotlin
-// Kotlin
+// Kotlin — eager topic search (preloads top 5 memories matching the topic)
 val memory = Memory.forContext(contextId)
     .withRepository(propositionRepository)
     .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
     .withMinConfidence(0.6)
-    .withTopic("the user's music preferences")
-    .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
+    .withTopic("classical music preferences")
+    .withEagerTopicSearch(5)
 
 ai.withReference(memory).respond(...)
 ```
 
 ```java
-// Java
+// Java — eager topic search
 LlmReference memory = Memory.forContext("user-session-123")
     .withRepository(propositionRepository)
     .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
     .withMinConfidence(0.6)
-    .withTopic("the user's music preferences")
-    .withEagerQuery(query -> query.orderedByEffectiveConfidence().withLimit(5));
+    .withTopic("classical music preferences")
+    .withEagerTopicSearch(5);
 
 ai.withReference(memory).respond(...);
+```
+
+Both eager modes can be combined to preload by topic relevance *and* by confidence:
+
+```kotlin
+val memory = Memory.forContext(contextId)
+    .withRepository(propositionRepository)
+    .withTopic("classical music preferences")
+    .withEagerTopicSearch(5)
+    .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(3) }
 ```
 
 #### Configuration Options
@@ -1255,7 +1269,8 @@ ai.withReference(memory).respond(...);
 | `withDefaultLimit(Int)` | Maximum results per search | 10 |
 | `withTopic(String)` | Describes what these memories are about. Completes the form "memories about _topic_" | `"the user & context"` |
 | `withUseWhen(String)` | Instruction to the LLM for when to use the memory tools | `"whenever you need to recall information about <topic>"` |
-| `withEagerQuery(UnaryOperator<PropositionQuery>)` | Preloads key memories into the description, avoiding a tool call for the most relevant context | none (disabled) |
+| `withEagerTopicSearch(Int)` | Preloads memories by vector similarity to the `topic` into the description. Tool calls auto-deduplicate against these | none (disabled) |
+| `withEagerQuery(UnaryOperator<PropositionQuery>)` | Preloads key memories by structured query (e.g., top-N by confidence) into the description | none (disabled) |
 
 ### Memory Projection
 

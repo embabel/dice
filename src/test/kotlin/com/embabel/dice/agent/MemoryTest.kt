@@ -183,7 +183,7 @@ class MemoryTest {
                 .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(2) }
 
             val description = memory.description
-            assertTrue(description.contains("Key memories:"), description)
+            assertTrue(description.contains("Key memories about"), description)
             assertTrue(description.contains("User likes jazz music"), description)
             assertTrue(description.contains("User works at Acme Corp"), description)
         }
@@ -197,7 +197,7 @@ class MemoryTest {
                 .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
 
             val description = memory.description
-            assertFalse(description.contains("Key memories:"), description)
+            assertFalse(description.contains("Key memories about"), description)
         }
 
         @Test
@@ -208,7 +208,7 @@ class MemoryTest {
                 .withRepository(repository)
 
             val description = memory.description
-            assertFalse(description.contains("Key memories:"), description)
+            assertFalse(description.contains("Key memories about"), description)
         }
     }
 

@@ -24,6 +24,7 @@ import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.projection.memory.MemoryProjector
 import com.embabel.dice.projection.memory.support.DefaultMemoryProjector
+import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -46,13 +47,24 @@ import java.util.function.UnaryOperator
  *
  * The description dynamically reflects how many memories are available.
  *
+ * Supports a two-tier retrieval strategy:
+ * 1. **Eager (reference)**: Key memories are preloaded into the description, making them
+ *    immediately visible to the LLM with no tool call overhead. Two eager modes are available:
+ *    - [withEagerQuery]: Preload by structured query (e.g., top-N by confidence)
+ *    - [withEagerTopicSearch]: Preload by vector similarity to the [topic]
+ * 2. **On-demand (tool)**: The LLM can call search tools for specific or additional memories.
+ *
+ * When eager memories are loaded, subsequent tool calls automatically deduplicate results
+ * so the LLM always receives new information.
+ *
  * Example usage from Kotlin:
  * ```kotlin
  * val memory = Memory.forContext(contextId)
  *     .withRepository(propositionRepository)
  *     .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
  *     .withMinConfidence(0.6)
- *     .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
+ *     .withTopic("classical music preferences")
+ *     .withEagerTopicSearch(5)
  *
  * ai.withReference(memory).respond(...)
  * ```
@@ -63,7 +75,8 @@ import java.util.function.UnaryOperator
  *     .withRepository(propositionRepository)
  *     .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
  *     .withMinConfidence(0.6)
- *     .withEagerQuery(query -> query.orderedByEffectiveConfidence().withLimit(5));
+ *     .withTopic("classical music preferences")
+ *     .withEagerTopicSearch(5);
  *
  * ai.withReference(memory).respond(...);
  * ```
@@ -79,6 +92,9 @@ import java.util.function.UnaryOperator
  * @param eagerQuery Optional query transformer to eagerly load key memories into the description.
  * When set, the description will include memories fetched using this query, making them
  * immediately available to the LLM without requiring a tool call.
+ * @param eagerTopicSearch Optional limit for eager topic-based similarity search.
+ * When set, uses the [topic] to perform a vector similarity search and preloads matching
+ * memories into the description. Can be used alongside or instead of [eagerQuery].
  */
 data class Memory @JvmOverloads constructor(
     private val contextId: ContextId,
@@ -89,6 +105,7 @@ data class Memory @JvmOverloads constructor(
     private val topic: String = "the user & context",
     private val useWhen: String = "whenever you need to recall information about $topic",
     private val eagerQuery: UnaryOperator<PropositionQuery>? = null,
+    private val eagerTopicSearch: Int? = null,
 ) : LlmReference, DelegatingTool {
 
     private val logger = LoggerFactory.getLogger(Memory::class.java)
@@ -101,6 +118,38 @@ data class Memory @JvmOverloads constructor(
     fun withTopic(topic: String): Memory = copy(topic = topic)
 
     fun withUseWhen(useWhen: String): Memory = copy(useWhen = useWhen)
+
+    /**
+     * IDs of propositions that were eagerly loaded into the description.
+     * Used to deduplicate results from subsequent tool calls.
+     */
+    private val eagerPropositionIds: Set<String> by lazy {
+        loadEagerMemories().map { it.id }.toSet()
+    }
+
+    private fun loadEagerMemories(): List<Proposition> {
+        val baseQuery = PropositionQuery.forContextId(contextId)
+            .withMinEffectiveConfidence(minConfidence)
+
+        val topicMemories = eagerTopicSearch?.let { limit ->
+            repository.findSimilarWithScores(
+                TextSimilaritySearchRequest(
+                    query = topic,
+                    similarityThreshold = 0.0,
+                    topK = limit,
+                ),
+                baseQuery,
+            ).map { it.match }
+        } ?: emptyList()
+
+        val queryMemories = eagerQuery?.let { queryFn ->
+            repository.query(queryFn.apply(baseQuery))
+        } ?: emptyList()
+
+        // Merge both sources, deduplicating by ID, topic results first
+        val seen = mutableSetOf<String>()
+        return (topicMemories + queryMemories).filter { seen.add(it.id) }
+    }
 
     override val description: String
         get() {
@@ -119,11 +168,7 @@ data class Memory @JvmOverloads constructor(
                 else -> "Search $memoryCount stored memories"
             }
 
-            val eagerMemories = eagerQuery?.let { queryFn ->
-                val baseQuery = PropositionQuery.forContextId(contextId)
-                    .withMinEffectiveConfidence(minConfidence)
-                repository.query(queryFn.apply(baseQuery))
-            } ?: emptyList()
+            val eagerMemories = loadEagerMemories()
 
             return buildString {
                 appendLine("Memory Tool: $name")
@@ -131,8 +176,9 @@ data class Memory @JvmOverloads constructor(
                 append(status)
                 if (eagerMemories.isNotEmpty()) {
                     appendLine()
-                    appendLine("Key memories:")
+                    appendLine("Key memories about $topic:")
                     eagerMemories.forEach { appendLine("- ${it.text}") }
+                    appendLine("Use search tools for other topics or to find additional memories.")
                 }
             }.trimEnd()
         }
@@ -179,6 +225,9 @@ data class Memory @JvmOverloads constructor(
      * The query transformer receives a base query with contextId and minConfidence
      * already applied.
      *
+     * Can be combined with [withEagerTopicSearch] — both sets of memories will be
+     * merged (deduplicated) in the description.
+     *
      * Example (Kotlin):
      * ```kotlin
      * .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
@@ -194,6 +243,29 @@ data class Memory @JvmOverloads constructor(
      */
     fun withEagerQuery(eagerQuery: UnaryOperator<PropositionQuery>): Memory =
         copy(eagerQuery = eagerQuery)
+
+    /**
+     * Enable eager topic-based similarity search.
+     *
+     * Uses the [topic] field to perform a vector similarity search and preloads
+     * the top matching memories into the description. This makes the most relevant
+     * memories for the topic immediately visible to the LLM without a tool call.
+     *
+     * Subsequent [searchByTopic][searchByTopicTool] tool calls automatically
+     * deduplicate against these eagerly loaded memories, so the LLM always
+     * receives new information.
+     *
+     * Can be combined with [withEagerQuery] — both sets of memories will be
+     * merged (deduplicated) in the description.
+     *
+     * @param limit Maximum number of memories to preload (default [DEFAULT_LIMIT])
+     * @return New Memory with eager topic search configured
+     */
+    @JvmOverloads
+    fun withEagerTopicSearch(limit: Int = DEFAULT_LIMIT): Memory {
+        require(limit > 0) { "limit must be positive" }
+        return copy(eagerTopicSearch = limit)
+    }
 
     override fun notes(): String = """
 $name tools support an optional 'type' filter:
@@ -263,16 +335,22 @@ Use these tools proactively to personalize responses and maintain continuity.
                 query
             )
 
+            val deduped = results.filter { it.match.id !in eagerPropositionIds }
+
             val filtered = if (typeFilter != null) {
-                val projection = projector.project(results.map { it.match })
+                val projection = projector.project(deduped.map { it.match })
                 projection[typeFilter].take(limit)
             } else {
-                results.take(limit).map { it.match }
+                deduped.take(limit).map { it.match }
             }
 
             if (filtered.isEmpty()) {
                 val typeDesc = typeFilter?.let { " (${it.name.lowercase()})" } ?: ""
-                return Tool.Result.text("No memories found about '$topic'$typeDesc.")
+                return if (eagerPropositionIds.isNotEmpty()) {
+                    Tool.Result.text("No additional memories found about '$topic'$typeDesc beyond those already provided.")
+                } else {
+                    Tool.Result.text("No memories found about '$topic'$typeDesc.")
+                }
             }
 
             val text = buildString {
