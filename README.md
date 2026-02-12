@@ -1349,6 +1349,54 @@ val projector = DefaultMemoryProjector.create(classifier)
 val memory = projector.project(propositions)
 ```
 
+### Memory Maintenance
+
+The `MemoryMaintenanceOrchestrator` provides a single entry point for memory maintenance —
+consolidating, abstracting, retiring, and persisting — suitable for end-of-session or scheduled batch runs.
+
+**Three-phase pipeline:**
+
+1. **Consolidate** — Run `MemoryConsolidator` to promote/reinforce/merge/discard session propositions
+   against existing long-term memories. Persists all changes.
+2. **Abstract** — Run `PropositionAbstractor` on groups of related propositions (grouped by entity)
+   to synthesize higher-level insights. Source propositions are marked `SUPERSEDED`.
+3. **Retire expired** *(optional)* — Delete ACTIVE propositions whose effective confidence has
+   decayed below a configurable threshold.
+
+```kotlin
+// End-of-session: consolidate + abstract + retire
+val orchestrator = MemoryMaintenanceOrchestrator
+    .withRepository(propositionRepository)
+    .withConsolidator(DefaultMemoryConsolidator())
+    .withAbstractor(LlmPropositionAbstractor.withLlm(llm).withAi(ai))
+    .withRetireBelow(0.1)
+
+val result = orchestrator.maintain(contextId, sessionPropositions)
+
+// Scheduled maintenance: just abstract + retire (no session props)
+val result = orchestrator.maintain(contextId)
+```
+
+```java
+// Java
+MaintenanceResult result = MemoryMaintenanceOrchestrator
+    .withRepository(propositionRepository)
+    .withConsolidator(new DefaultMemoryConsolidator())
+    .withAbstractor(LlmPropositionAbstractor.withLlm(llm).withAi(ai))
+    .withRetireBelow(0.1)
+    .maintain(contextId, sessionPropositions);
+```
+
+#### Configuration Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `withAbstractor(PropositionAbstractor)` | Abstractor for synthesizing higher-level insights | none (disabled) |
+| `withAbstractionThreshold(Int)` | Minimum propositions per entity to trigger abstraction | 5 |
+| `withAbstractionTargetCount(Int)` | How many abstractions to generate per group | 3 |
+| `withRetireBelow(Double)` | Effective confidence threshold for retirement | none (disabled) |
+| `withRetireDecayK(Double)` | Decay rate multiplier for retirement calculation | 2.0 |
+
 ### Proposition Operations
 
 Operations transform groups of propositions into new, derived propositions. Unlike projections
