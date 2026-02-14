@@ -21,6 +21,7 @@ import com.embabel.agent.api.tool.Tool
 import com.embabel.agent.api.tool.progressive.UnfoldingTool
 import com.embabel.agent.core.ContextId
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.agent.Memory.Companion.DEFAULT_LIMIT
 import com.embabel.dice.common.KnowledgeType
 import com.embabel.dice.projection.memory.MemoryProjector
 import com.embabel.dice.projection.memory.support.DefaultMemoryProjector
@@ -353,7 +354,11 @@ Use these tools proactively to personalize responses and maintain continuity.
                     enumValues = KNOWLEDGE_TYPE_VALUES,
                 ),
                 Tool.Parameter.integer("limit", "Maximum number of results", required = false),
-                Tool.Parameter.integer("level", "Abstraction level: 0 for raw details, 1+ for summaries", required = false),
+                Tool.Parameter.integer(
+                    "level",
+                    "Abstraction level: 0 for raw details, 1+ for summaries",
+                    required = false
+                ),
             ),
         )
 
@@ -418,7 +423,11 @@ Use these tools proactively to personalize responses and maintain continuity.
                     enumValues = KNOWLEDGE_TYPE_VALUES,
                 ),
                 Tool.Parameter.integer("limit", "Maximum number of results", required = false),
-                Tool.Parameter.integer("level", "Abstraction level: 0 for raw details, 1+ for summaries", required = false),
+                Tool.Parameter.integer(
+                    "level",
+                    "Abstraction level: 0 for raw details, 1+ for summaries",
+                    required = false
+                ),
             ),
         )
 
@@ -475,7 +484,11 @@ Use these tools proactively to personalize responses and maintain continuity.
                     enumValues = KNOWLEDGE_TYPE_VALUES,
                 ),
                 Tool.Parameter.integer("limit", "Maximum number of results", required = false),
-                Tool.Parameter.integer("level", "Abstraction level: 0 for raw details, 1+ for summaries", required = false),
+                Tool.Parameter.integer(
+                    "level",
+                    "Abstraction level: 0 for raw details, 1+ for summaries",
+                    required = false
+                ),
             ),
         )
 
@@ -526,14 +539,14 @@ Use these tools proactively to personalize responses and maintain continuity.
             name = "drillDown",
             description = "Get the detailed source memories behind a summary/abstraction",
             inputSchema = Tool.InputSchema.of(
-                Tool.Parameter.string("memory", "The text of the summary to drill into", required = true),
+                Tool.Parameter.string(NAME, "The text of the summary to drill into", required = true),
                 Tool.Parameter.integer("limit", "Maximum number of results", required = false),
             ),
         )
 
         override fun call(input: String): Tool.Result {
             val params = parseInput(input)
-            val memoryText = params["memory"] as? String ?: return Tool.Result.error("Missing 'memory' parameter")
+            val memoryText = params[NAME] as? String ?: return Tool.Result.error("Missing 'memory' parameter")
             val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
 
             // Find the abstraction by similarity search (level >= 1)
