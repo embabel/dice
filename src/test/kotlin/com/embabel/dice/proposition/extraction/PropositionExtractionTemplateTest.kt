@@ -334,6 +334,47 @@ class PropositionExtractionTemplateTest {
     }
 
     @Nested
+    inner class CanonicalFormTemplateTests {
+
+        @Test
+        fun `renders canonical form include`() {
+            val result = renderer.renderLoadedTemplate("dice/canonical_form", emptyMap())
+
+            assertTrue(result.contains("Canonical Form"))
+            assertTrue(result.contains("simple present tense"))
+            assertTrue(result.contains("most direct verb"))
+            assertTrue(result.contains("Avoid filler words"))
+        }
+    }
+
+    @Nested
+    inner class ClassifyPropositionTemplateTests {
+
+        @Test
+        fun `renders classify proposition prompt`() {
+            val result = renderer.renderLoadedTemplate(
+                "dice/classify_proposition",
+                mapOf(
+                    "newProposition" to mapOf(
+                        "text" to "Alice likes Bach",
+                        "confidence" to 0.9,
+                        "reasoning" to "Stated explicitly",
+                    ),
+                    "candidates" to listOf(
+                        mapOf("id" to "p1", "text" to "Alice enjoys classical music", "confidence" to 0.8),
+                        mapOf("id" to "p2", "text" to "Alice works at Acme", "confidence" to 0.7),
+                    ),
+                )
+            )
+
+            assertTrue(result.contains("Alice likes Bach"))
+            assertTrue(result.contains("Alice enjoys classical music"))
+            assertTrue(result.contains("IDENTICAL"))
+            assertTrue(result.contains("UNRELATED"))
+        }
+    }
+
+    @Nested
     inner class ExtractPropositionsTemplateTests {
 
         @Test
@@ -366,6 +407,10 @@ class PropositionExtractionTemplateTest {
             assertTrue(result.contains("Single fact per proposition"))
             assertTrue(result.contains("SUBJECT"))
             assertTrue(result.contains("OBJECT"))
+
+            // Verify includes canonical form
+            assertTrue(result.contains("Canonical Form"), "Should include canonical_form.jinja")
+            assertTrue(result.contains("simple present tense"))
 
             // Verify includes chunk text
             assertTrue(result.contains("Rod said he likes Reger"))
