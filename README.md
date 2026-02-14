@@ -1227,16 +1227,17 @@ can_consult(Person, Expert, Topic) :-
 ### Agent Memory
 
 The `Memory` class gives agents access to their stored memories (propositions) within a context.
-It implements both `LlmReference` and `DelegatingTool`, providing a **two-tier retrieval strategy**:
+It implements `UnfoldingTool` directly, providing a **two-tier retrieval strategy**:
 
-1. **Eager (reference)**: Key memories are preloaded into the description, making them
+1. **Eager**: Key memories are preloaded into the description, making them
    immediately visible to the LLM with no tool call overhead. Two eager modes are available:
    - `withEagerTopicSearch(limit)`: Preloads memories by vector similarity to the `topic`
    - `withEagerQuery { ... }`: Preloads memories by structured query (e.g., top-N by confidence)
    - Both can be combined — results are merged and deduplicated.
-2. **On-demand (tool)**: Three search tools are exposed via an `UnfoldingTool`, letting the LLM
+2. **On-demand**: Four search tools are exposed via the `UnfoldingTool`, letting the LLM
    search for specific memories when the eager set isn't sufficient. Tool results automatically
    deduplicate against eagerly loaded memories, so the LLM always receives new information.
+   Usage guidance is provided via `childToolUsageNotes`.
 
 This means the most important memories are always available (zero latency), while the full memory
 store remains searchable on demand.
@@ -1295,12 +1296,12 @@ val memory = Memory.forContext(contextId)
 
 ```java
 // Java — scoped to an entity
-LlmReference memory = Memory.forContext("session-123")
+Memory memory = Memory.forContext("session-123")
     .withRepository(propositionRepository)
     .narrowedBy(query -> query.withEntityId("alice-123"));
 
 // Java — scoped to multiple entities (AND)
-LlmReference memory = Memory.forContext("session-123")
+Memory memory = Memory.forContext("session-123")
     .withRepository(propositionRepository)
     .narrowedBy(query -> query.withAllEntities("alice", "bob"));
 ```
@@ -1324,7 +1325,7 @@ ai.withReference(memory).respond(...)
 
 ```java
 // Java — eager topic search
-LlmReference memory = Memory.forContext("user-session-123")
+Memory memory = Memory.forContext("user-session-123")
     .withRepository(propositionRepository)
     .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
     .withMinConfidence(0.6)
@@ -1599,7 +1600,7 @@ The Oracle answers questions using LLM tool calling with Prolog reasoning:
 ```
 com.embabel.dice
 ├── agent/                    # Agent integration
-│   └── Memory                # LlmReference for memory search tools
+│   └── Memory                # UnfoldingTool for memory search
 │
 ├── common/                   # Shared types
 │   ├── SourceAnalysisContext # Context for all DICE operations

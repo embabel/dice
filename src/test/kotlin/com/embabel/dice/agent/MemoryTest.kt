@@ -154,7 +154,7 @@ class MemoryTest {
             every { repository.query(any()) } returns listOf(createProposition("test"))
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
-            assertTrue(memory.description.contains("1 stored memory"))
+            assertTrue(memory.description.contains("1 memory available to search"), memory.description)
         }
 
         @Test
@@ -168,7 +168,7 @@ class MemoryTest {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            assertTrue(memory.description.contains("3 stored memories"))
+            assertTrue(memory.description.contains("3 memories available to search"), memory.description)
         }
 
         @Test
@@ -217,30 +217,28 @@ class MemoryTest {
     inner class ToolTests {
 
         @Test
-        fun `returns UnfoldingTool with inner tools`() {
+        fun `is UnfoldingTool with inner tools`() {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            val tools = memory.tools()
-
-            assertEquals(1, tools.size)
-            assertTrue(tools[0] is UnfoldingTool)
-
-            val unfoldingTool = tools[0] as UnfoldingTool
-            assertEquals("memory", unfoldingTool.definition.name)
-            assertEquals(4, unfoldingTool.innerTools.size)
-            assertTrue(unfoldingTool.innerTools.any { it.definition.name == "searchByTopic" })
-            assertTrue(unfoldingTool.innerTools.any { it.definition.name == "searchRecent" })
-            assertTrue(unfoldingTool.innerTools.any { it.definition.name == "searchByType" })
-            assertTrue(unfoldingTool.innerTools.any { it.definition.name == "drillDown" })
+            assertTrue(memory is UnfoldingTool)
+            assertEquals("memory", memory.definition.name)
+            assertEquals(6, memory.innerTools.size)
+            assertTrue(memory.innerTools.any { it.definition.name == "listAll" })
+            assertTrue(memory.innerTools.any { it.definition.name == "searchByTopic" })
+            assertTrue(memory.innerTools.any { it.definition.name == "searchByKeyword" })
+            assertTrue(memory.innerTools.any { it.definition.name == "searchRecent" })
+            assertTrue(memory.innerTools.any { it.definition.name == "searchByType" })
+            assertTrue(memory.innerTools.any { it.definition.name == "drillDown" })
         }
 
         @Test
-        fun `notes contain usage instructions`() {
+        fun `childToolUsageNotes contain usage instructions`() {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
-            val notes = memory.notes()
-            assertTrue(notes.contains("semantic"))
+            val notes = memory.childToolUsageNotes
+            assertNotNull(notes)
+            assertTrue(notes!!.contains("semantic"))
             assertTrue(notes.contains("procedural"))
         }
     }
@@ -592,8 +590,8 @@ class MemoryTest {
                 .withRepository(repository)
 
             // Both should contain the memory count
-            assertTrue(memory.definition.description.contains("2 stored memories"))
-            assertTrue(memory.description.contains("2 stored memories"))
+            assertTrue(memory.definition.description.contains("2 memories available to search"))
+            assertTrue(memory.description.contains("2 memories available to search"))
         }
 
         @Test
@@ -613,20 +611,19 @@ class MemoryTest {
         }
 
         @Test
-        fun `tool instance is cached and reused`() {
+        fun `definition and innerTools are cached and reused`() {
             every { repository.query(any()) } returns emptyList()
 
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            // Multiple calls should return the same cached tool
-            val tools1 = memory.tools()
-            val tools2 = memory.tools()
             val definition1 = memory.definition
             val definition2 = memory.definition
+            val innerTools1 = memory.innerTools
+            val innerTools2 = memory.innerTools
 
-            assertSame(tools1[0], tools2[0])
             assertSame(definition1, definition2)
+            assertSame(innerTools1, innerTools2)
         }
 
         @Test
@@ -1028,7 +1025,6 @@ class MemoryTest {
     }
 
     private fun findTool(memory: Memory, name: String): com.embabel.agent.api.tool.Tool {
-        val unfoldingTool = memory.tools()[0] as UnfoldingTool
-        return unfoldingTool.innerTools.first { it.definition.name == name }
+        return memory.innerTools.first { it.definition.name == name }
     }
 }
