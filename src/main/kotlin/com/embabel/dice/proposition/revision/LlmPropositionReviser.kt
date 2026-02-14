@@ -26,6 +26,7 @@ import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import org.slf4j.LoggerFactory
 import java.time.Instant
+import java.util.Locale
 
 /**
  * LLM-based implementation of PropositionReviser.
@@ -74,6 +75,19 @@ data class LlmPropositionReviser(
     private val logger = LoggerFactory.getLogger(LlmPropositionReviser::class.java)
 
     /**
+     * Canonicalize proposition text for cheap string comparison.
+     * Strips case, punctuation, and extra whitespace so that
+     * "Claudia Carter has been at Meridian Labs for about 3 years."
+     * matches "Claudia Carter has been at Meridian Labs for about 3 years"
+     * without an LLM call.
+     */
+    private fun canonicalize(text: String): String =
+        text.lowercase(Locale.ROOT)
+            .replace(Regex("[^a-z0-9\\s]"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+    /**
      * Set the number of similar propositions to retrieve for classification.
      */
     fun withTopK(topK: Int): LlmPropositionReviser =
@@ -99,6 +113,24 @@ data class LlmPropositionReviser(
      */
     fun withDecayK(k: Double): LlmPropositionReviser =
         copy(decayK = k)
+
+    /**
+     * Deduplicate a batch of propositions by canonical text before revising.
+     * Propositions with identical canonical form are collapsed — only the first
+     * is revised, duplicates are silently dropped (no LLM call, no persistence).
+     */
+    override fun reviseAll(
+        propositions: List<Proposition>,
+        repository: PropositionRepository,
+    ): List<RevisionResult> {
+        val seen = mutableSetOf<String>()
+        val deduped = propositions.filter { seen.add(canonicalize(it.text)) }
+        val dropped = propositions.size - deduped.size
+        if (dropped > 0) {
+            logger.info("Batch dedup: dropped {} of {} propositions with identical canonical text", dropped, propositions.size)
+        }
+        return deduped.map { revise(it, repository) }
+    }
 
     override fun revise(
         newProposition: Proposition,
@@ -129,13 +161,23 @@ data class LlmPropositionReviser(
             similar.size, similarityThreshold, newProposition.text.take(50)
         )
 
-        // 2. Apply decay to retrieved propositions for ranking
+        // 2. Fast path: check for canonical text match before LLM call
+        val newCanonical = canonicalize(newProposition.text)
+        val canonicalMatch = similar.find { canonicalize(it.text) == newCanonical }
+        if (canonicalMatch != null) {
+            val original = repository.findById(canonicalMatch.id) ?: canonicalMatch
+            val merged = mergePropositions(original, newProposition)
+            logger.debug("Fast-path identical (canonical match): {}", newProposition.text.take(60))
+            return RevisionResult.Merged(original, merged)
+        }
+
+        // 3. Apply decay to retrieved propositions for ranking
         val decayed = similar.map { prop -> prop.withDecayApplied(decayK) }
 
-        // 3. Classify relationships using LLM
+        // 4. Classify relationships using LLM
         val classified = classify(newProposition, decayed)
 
-        // 4. Find the best match
+        // 5. Find the best match
         val identical = classified.find { it.relation == PropositionRelation.IDENTICAL }
         val contradictory = classified.find { it.relation == PropositionRelation.CONTRADICTORY }
         val generalizes = classified.filter { it.relation == PropositionRelation.GENERALIZES }
