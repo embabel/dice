@@ -217,7 +217,12 @@ data class Memory @JvmOverloads constructor(
                     appendLine()
                     appendLine("Key memories about $topic:")
                     eagerMemories.forEach { appendLine("- ${it.text}") }
-                    appendLine("Use search tools for other topics or to find additional memories.")
+                    appendLine(
+                        """
+                            |Use $NAME tool for other topics or to find additional memories.
+                            |If you are asked open ended questions, ALWAYS use the tool to explore.
+                    """.trimMargin()
+                    )
                 }
             }.trimEnd()
         }
