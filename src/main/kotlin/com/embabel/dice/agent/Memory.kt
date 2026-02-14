@@ -215,14 +215,13 @@ data class Memory @JvmOverloads constructor(
                 append(status)
                 if (eagerMemories.isNotEmpty()) {
                     appendLine()
-                    appendLine("Key memories about $topic:")
-                    eagerMemories.forEach { appendLine("- ${it.text}") }
-                    appendLine(
-                        """
-                            |Use $NAME tool for other topics or to find additional memories.
-                            |If you are asked open ended questions, ALWAYS use the tool to explore.
-                    """.trimMargin()
-                    )
+                    appendLine("Key memories:")
+                    eagerMemories.forEachIndexed { index, memory ->
+                        appendLine("${index + 1}. ${memory.text}")
+                    }
+                    if (eagerMemories.size < memoryCount) {
+                        append("[retrievable ${eagerMemories.size + 1}-$memoryCount]")
+                    }
                 }
             }.trimEnd()
         }
