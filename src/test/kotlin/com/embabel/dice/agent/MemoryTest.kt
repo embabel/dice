@@ -16,7 +16,6 @@
 package com.embabel.dice.agent
 
 import com.embabel.agent.api.tool.Tool
-import com.embabel.agent.api.tool.progressive.UnfoldingTool
 import com.embabel.agent.core.ContextId
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
@@ -154,7 +153,7 @@ class MemoryTest {
             every { repository.query(any()) } returns listOf(createProposition("test"))
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
-            assertTrue(memory.description.contains("1 memory available to search"), memory.description)
+            assertTrue(memory.description.contains("1 memory available"), memory.description)
         }
 
         @Test
@@ -168,7 +167,7 @@ class MemoryTest {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            assertTrue(memory.description.contains("3 memories available to search"), memory.description)
+            assertTrue(memory.description.contains("3 memories available"), memory.description)
         }
 
         @Test
@@ -217,29 +216,14 @@ class MemoryTest {
     inner class ToolTests {
 
         @Test
-        fun `is UnfoldingTool with inner tools`() {
+        fun `is a Tool with correct name and parameters`() {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            assertTrue(memory is UnfoldingTool)
+            assertTrue(memory is Tool)
             assertEquals("memory", memory.definition.name)
-            assertEquals(6, memory.innerTools.size)
-            assertTrue(memory.innerTools.any { it.definition.name == "listAll" })
-            assertTrue(memory.innerTools.any { it.definition.name == "searchByTopic" })
-            assertTrue(memory.innerTools.any { it.definition.name == "searchByKeyword" })
-            assertTrue(memory.innerTools.any { it.definition.name == "searchRecent" })
-            assertTrue(memory.innerTools.any { it.definition.name == "searchByType" })
-            assertTrue(memory.innerTools.any { it.definition.name == "drillDown" })
-        }
-
-        @Test
-        fun `childToolUsageNotes contain usage instructions`() {
-            val memory = Memory.forContext(contextId)
-                .withRepository(repository)
-            val notes = memory.childToolUsageNotes
-            assertNotNull(notes)
-            assertTrue(notes!!.contains("semantic"))
-            assertTrue(notes.contains("procedural"))
+            val schema = memory.definition.inputSchema
+            assertNotNull(schema)
         }
     }
 
@@ -259,8 +243,7 @@ class MemoryTest {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            val tool = findTool(memory, "searchByTopic")
-            val result = tool.call("""{"topic": "jazz"}""")
+            val result = memory.call("""{"topic": "jazz"}""")
             val text = (result as com.embabel.agent.api.tool.Tool.Result.Text).content
 
             assertTrue(text.contains("jazz"))
@@ -277,8 +260,7 @@ class MemoryTest {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            val tool = findTool(memory, "searchByTopic")
-            val result = tool.call("""{"topic": "unknown topic"}""")
+            val result = memory.call("""{"topic": "unknown topic"}""")
             val text = (result as com.embabel.agent.api.tool.Tool.Result.Text).content
 
             assertTrue(text.contains("No memories found"))
@@ -304,8 +286,7 @@ class MemoryTest {
                 .withRepository(repository)
                 .withProjector(projector)
 
-            val tool = findTool(memory, "searchByTopic")
-            val result = tool.call("""{"topic": "user", "type": "procedural"}""")
+            val result = memory.call("""{"topic": "user", "type": "procedural"}""")
             val text = (result as com.embabel.agent.api.tool.Tool.Result.Text).content
 
             assertTrue(text.contains("procedural"))
@@ -327,96 +308,12 @@ class MemoryTest {
                 .withRepository(repository)
                 .withMinConfidence(0.7)
 
-            val tool = findTool(memory, "searchByTopic")
-            tool.call("""{"topic": "jazz", "limit": 5}""")
+            memory.call("""{"topic": "jazz", "limit": 5}""")
 
             assertEquals("jazz", requestSlot.captured.query)
             assertEquals(5, requestSlot.captured.topK)
             assertEquals(contextId, querySlot.captured.contextId)
             assertEquals(0.7, querySlot.captured.minEffectiveConfidence)
-        }
-    }
-
-    @Nested
-    inner class SearchRecentTests {
-
-        @Test
-        fun `returns formatted results`() {
-            val props = listOf(
-                createProposition("Just learned about Brahms"),
-                createProposition("User mentioned they like symphonies"),
-            )
-            every { repository.query(any()) } returns props
-
-            val memory = Memory.forContext(contextId)
-                .withRepository(repository)
-
-            val tool = findTool(memory, "searchRecent")
-            val result = tool.call("{}")
-            val text = (result as com.embabel.agent.api.tool.Tool.Result.Text).content
-
-            assertTrue(text.contains("Recent memories"))
-            assertTrue(text.contains("Just learned about Brahms"))
-            assertTrue(text.contains("User mentioned they like symphonies"))
-        }
-
-        @Test
-        fun `returns empty message when no results`() {
-            every { repository.query(any()) } returns emptyList()
-
-            val memory = Memory.forContext(contextId)
-                .withRepository(repository)
-
-            val tool = findTool(memory, "searchRecent")
-            val result = tool.call("{}")
-            val text = (result as com.embabel.agent.api.tool.Tool.Result.Text).content
-
-            assertTrue(text.contains("No recent"))
-        }
-
-        @Test
-        fun `filters by type when specified`() {
-            val props = listOf(
-                createProposition("User likes jazz"),
-                createProposition("User met Bob"),
-                createProposition("User prefers tea"),
-            )
-            every { repository.query(any()) } returns props
-
-            every { projector.project(any()) } returns MemoryProjection(
-                procedural = listOf(props[0], props[2]),
-                episodic = listOf(props[1]),
-            )
-
-            val memory = Memory.forContext(contextId)
-                .withRepository(repository)
-                .withProjector(projector)
-
-            val tool = findTool(memory, "searchRecent")
-            val result = tool.call("""{"type": "episodic"}""")
-            val text = (result as com.embabel.agent.api.tool.Tool.Result.Text).content
-
-            assertTrue(text.contains("episodic"))
-            assertTrue(text.contains("User met Bob"))
-            assertFalse(text.contains("User likes jazz"))
-        }
-
-        @Test
-        fun `passes correct query parameters`() {
-            val querySlot = slot<PropositionQuery>()
-            every { repository.query(capture(querySlot)) } returns emptyList()
-
-            val memory = Memory.forContext(contextId)
-                .withRepository(repository)
-                .withMinConfidence(0.6)
-
-            val tool = findTool(memory, "searchRecent")
-            tool.call("""{"limit": 20}""")
-
-            assertEquals(contextId, querySlot.captured.contextId)
-            assertEquals(0.6, querySlot.captured.minEffectiveConfidence)
-            assertEquals(PropositionQuery.OrderBy.CREATED_DESC, querySlot.captured.orderBy)
-            assertEquals(20, querySlot.captured.limit)
         }
     }
 
@@ -441,8 +338,7 @@ class MemoryTest {
                 .withRepository(repository)
                 .withProjector(projector)
 
-            val tool = findTool(memory, "searchByType")
-            val result = tool.call("""{"type": "semantic"}""")
+            val result = memory.call("""{"type": "semantic"}""")
             val text = (result as com.embabel.agent.api.tool.Tool.Result.Text).content
 
             assertTrue(text.contains("Facts"))
@@ -467,8 +363,7 @@ class MemoryTest {
                 .withRepository(repository)
                 .withProjector(projector)
 
-            val tool = findTool(memory, "searchByType")
-            val result = tool.call("""{"type": "procedural"}""")
+            val result = memory.call("""{"type": "procedural"}""")
             val text = (result as com.embabel.agent.api.tool.Tool.Result.Text).content
 
             assertTrue(text.contains("Preferences"))
@@ -477,23 +372,11 @@ class MemoryTest {
         }
 
         @Test
-        fun `returns error for missing type`() {
-            val memory = Memory.forContext(contextId)
-                .withRepository(repository)
-
-            val tool = findTool(memory, "searchByType")
-            val result = tool.call("{}")
-
-            assertTrue(result is com.embabel.agent.api.tool.Tool.Result.Error)
-        }
-
-        @Test
         fun `returns error for invalid type`() {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            val tool = findTool(memory, "searchByType")
-            val result = tool.call("""{"type": "invalid"}""")
+            val result = memory.call("""{"type": "invalid"}""")
 
             assertTrue(result is com.embabel.agent.api.tool.Tool.Result.Error)
         }
@@ -509,8 +392,7 @@ class MemoryTest {
                 .withRepository(repository)
                 .withProjector(projector)
 
-            val tool = findTool(memory, "searchByType")
-            val result = tool.call("""{"type": "episodic"}""")
+            val result = memory.call("""{"type": "episodic"}""")
             val text = (result as com.embabel.agent.api.tool.Tool.Result.Text).content
 
             assertTrue(text.contains("No episodic memories found"))
@@ -528,8 +410,7 @@ class MemoryTest {
             val memory = Memory.forContext("isolated-context")
                 .withRepository(repository)
 
-            val tool = findTool(memory, "searchRecent")
-            tool.call("{}")
+            memory.call("{}")
 
             assertEquals(ContextId("isolated-context"), querySlot.captured.contextId)
         }
@@ -545,11 +426,11 @@ class MemoryTest {
             val memory2 = Memory.forContext("context-2")
                 .withRepository(repository)
 
-            findTool(memory1, "searchRecent").call("{}")
-            findTool(memory2, "searchRecent").call("{}")
+            memory1.call("{}")
+            memory2.call("{}")
 
-            // Filter to just the ordered queries (from searchRecent) - description also queries
-            val orderedQueries = queries.filter { it.orderBy == PropositionQuery.OrderBy.CREATED_DESC }
+            // Filter to just the ordered queries (from listAll) - description also queries
+            val orderedQueries = queries.filter { it.orderBy == PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC }
 
             assertEquals(ContextId("context-1"), orderedQueries[0].contextId)
             assertEquals(ContextId("context-2"), orderedQueries[1].contextId)
@@ -590,28 +471,25 @@ class MemoryTest {
                 .withRepository(repository)
 
             // Both should contain the memory count
-            assertTrue(memory.definition.description.contains("2 memories available to search"))
-            assertTrue(memory.description.contains("2 memories available to search"))
+            assertTrue(memory.definition.description.contains("2 memories available"))
+            assertTrue(memory.description.contains("2 memories available"))
         }
 
         @Test
-        fun `call delegates to UnfoldingTool`() {
+        fun `call with no params lists all memories`() {
             every { repository.query(any()) } returns emptyList()
 
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            // Call with an inner tool
-            val result = memory.call("""{"tool": "searchRecent", "input": {}}""")
-
-            // Should route to searchRecent and return a result
+            val result = memory.call("{}")
             assertTrue(result is Tool.Result.Text)
             val text = (result as Tool.Result.Text).content
-            assertTrue(text.contains("searchRecent") || text.contains("No recent"))
+            assertTrue(text.contains("No memories stored yet"))
         }
 
         @Test
-        fun `definition and innerTools are cached and reused`() {
+        fun `definition is cached and reused`() {
             every { repository.query(any()) } returns emptyList()
 
             val memory = Memory.forContext(contextId)
@@ -619,11 +497,8 @@ class MemoryTest {
 
             val definition1 = memory.definition
             val definition2 = memory.definition
-            val innerTools1 = memory.innerTools
-            val innerTools2 = memory.innerTools
 
             assertSame(definition1, definition2)
-            assertSame(innerTools1, innerTools2)
         }
 
         @Test
@@ -654,15 +529,14 @@ class MemoryTest {
                 .withRepository(repository)
                 .narrowedBy { it.withEntityId("alice-123") }
 
-            val tool = findTool(memory, "searchByTopic")
-            tool.call("""{"topic": "jazz"}""")
+            memory.call("""{"topic": "jazz"}""")
 
             assertEquals("alice-123", querySlot.captured.entityId)
             assertEquals(contextId, querySlot.captured.contextId)
         }
 
         @Test
-        fun `narrowedBy applies entity filter to searchRecent`() {
+        fun `narrowedBy applies entity filter to listAll`() {
             val queries = mutableListOf<PropositionQuery>()
             every { repository.query(capture(queries)) } returns emptyList()
 
@@ -670,13 +544,12 @@ class MemoryTest {
                 .withRepository(repository)
                 .narrowedBy { it.withEntityId("alice-123") }
 
-            val tool = findTool(memory, "searchRecent")
-            tool.call("{}")
+            memory.call("{}")
 
-            // Filter to the ordered query from searchRecent (description also queries)
-            val recentQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.CREATED_DESC }
-            assertEquals("alice-123", recentQuery.entityId)
-            assertEquals(contextId, recentQuery.contextId)
+            // Filter to the ordered query from listAll (description also queries)
+            val listAllQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC }
+            assertEquals("alice-123", listAllQuery.entityId)
+            assertEquals(contextId, listAllQuery.contextId)
         }
 
         @Test
@@ -690,8 +563,7 @@ class MemoryTest {
                 .withProjector(projector)
                 .narrowedBy { it.withEntityId("alice-123") }
 
-            val tool = findTool(memory, "searchByType")
-            tool.call("""{"type": "semantic"}""")
+            memory.call("""{"type": "semantic"}""")
 
             val typeQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC }
             assertEquals("alice-123", typeQuery.entityId)
@@ -761,12 +633,11 @@ class MemoryTest {
                 .withRepository(repository)
                 .narrowedBy { it.withMinLevel(1).withStatus(PropositionStatus.ACTIVE) }
 
-            val tool = findTool(memory, "searchRecent")
-            tool.call("{}")
+            memory.call("{}")
 
-            val recentQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.CREATED_DESC }
-            assertEquals(1, recentQuery.minLevel)
-            assertEquals(PropositionStatus.ACTIVE, recentQuery.status)
+            val listAllQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC }
+            assertEquals(1, listAllQuery.minLevel)
+            assertEquals(PropositionStatus.ACTIVE, listAllQuery.status)
         }
 
         @Test
@@ -779,8 +650,7 @@ class MemoryTest {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            val tool = findTool(memory, "searchByTopic")
-            tool.call("""{"topic": "jazz"}""")
+            memory.call("""{"topic": "jazz"}""")
 
             assertEquals(contextId, querySlot.captured.contextId)
             assertNull(querySlot.captured.entityId)
@@ -802,8 +672,7 @@ class MemoryTest {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            val tool = findTool(memory, "searchByTopic")
-            tool.call("""{"topic": "jazz", "level": 1}""")
+            memory.call("""{"topic": "jazz", "level": 1}""")
 
             assertEquals(1, querySlot.captured.minLevel)
             assertEquals(1, querySlot.captured.maxLevel)
@@ -819,43 +688,10 @@ class MemoryTest {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            val tool = findTool(memory, "searchByTopic")
-            tool.call("""{"topic": "jazz"}""")
+            memory.call("""{"topic": "jazz"}""")
 
             assertNull(querySlot.captured.minLevel)
             assertNull(querySlot.captured.maxLevel)
-        }
-
-        @Test
-        fun `searchRecent passes level to query`() {
-            val queries = mutableListOf<PropositionQuery>()
-            every { repository.query(capture(queries)) } returns emptyList()
-
-            val memory = Memory.forContext(contextId)
-                .withRepository(repository)
-
-            val tool = findTool(memory, "searchRecent")
-            tool.call("""{"level": 0}""")
-
-            val recentQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.CREATED_DESC }
-            assertEquals(0, recentQuery.minLevel)
-            assertEquals(0, recentQuery.maxLevel)
-        }
-
-        @Test
-        fun `searchRecent without level leaves levels unset`() {
-            val queries = mutableListOf<PropositionQuery>()
-            every { repository.query(capture(queries)) } returns emptyList()
-
-            val memory = Memory.forContext(contextId)
-                .withRepository(repository)
-
-            val tool = findTool(memory, "searchRecent")
-            tool.call("{}")
-
-            val recentQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.CREATED_DESC }
-            assertNull(recentQuery.minLevel)
-            assertNull(recentQuery.maxLevel)
         }
 
         @Test
@@ -868,8 +704,7 @@ class MemoryTest {
                 .withRepository(repository)
                 .withProjector(projector)
 
-            val tool = findTool(memory, "searchByType")
-            tool.call("""{"type": "semantic", "level": 2}""")
+            memory.call("""{"type": "semantic", "level": 2}""")
 
             val typeQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC }
             assertEquals(2, typeQuery.minLevel)
@@ -887,103 +722,11 @@ class MemoryTest {
                 .withRepository(repository)
                 .narrowedBy { it.withEntityId("alice") }
 
-            val tool = findTool(memory, "searchByTopic")
-            tool.call("""{"topic": "jazz", "level": 1}""")
+            memory.call("""{"topic": "jazz", "level": 1}""")
 
             assertEquals("alice", querySlot.captured.entityId)
             assertEquals(1, querySlot.captured.minLevel)
             assertEquals(1, querySlot.captured.maxLevel)
-        }
-    }
-
-    @Nested
-    inner class DrillDownTests {
-
-        @Test
-        fun `drillDown finds sources of an abstraction`() {
-            val source1 = createProposition("Alice likes jazz")
-            val source2 = createProposition("Alice listens to Coltrane")
-            val abstraction = Proposition(
-                contextId = contextId,
-                text = "Alice is a jazz enthusiast",
-                mentions = emptyList(),
-                confidence = 0.9,
-                level = 1,
-                sourceIds = listOf(source1.id, source2.id),
-            )
-
-            every {
-                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>())
-            } returns listOf(SimilarityResult(abstraction, 0.95))
-            every { repository.findSources(abstraction) } returns listOf(source1, source2)
-
-            val memory = Memory.forContext(contextId)
-                .withRepository(repository)
-
-            val tool = findTool(memory, "drillDown")
-            val result = tool.call("""{"memory": "Alice is a jazz enthusiast"}""")
-            val text = (result as Tool.Result.Text).content
-
-            assertTrue(text.contains("Alice likes jazz"), text)
-            assertTrue(text.contains("Alice listens to Coltrane"), text)
-        }
-
-        @Test
-        fun `drillDown returns empty message when no abstraction found`() {
-            every {
-                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>())
-            } returns emptyList()
-
-            val memory = Memory.forContext(contextId)
-                .withRepository(repository)
-
-            val tool = findTool(memory, "drillDown")
-            val result = tool.call("""{"memory": "nonexistent summary"}""")
-            val text = (result as Tool.Result.Text).content
-
-            assertTrue(text.contains("No matching abstraction"), text)
-        }
-
-        @Test
-        fun `drillDown returns empty message for proposition with no sources`() {
-            val abstraction = Proposition(
-                contextId = contextId,
-                text = "A summary",
-                mentions = emptyList(),
-                confidence = 0.9,
-                level = 1,
-                sourceIds = listOf("missing-id"),
-            )
-
-            every {
-                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>())
-            } returns listOf(SimilarityResult(abstraction, 0.95))
-            every { repository.findSources(abstraction) } returns emptyList()
-
-            val memory = Memory.forContext(contextId)
-                .withRepository(repository)
-
-            val tool = findTool(memory, "drillDown")
-            val result = tool.call("""{"memory": "A summary"}""")
-            val text = (result as Tool.Result.Text).content
-
-            assertTrue(text.contains("no detailed sources"), text)
-        }
-
-        @Test
-        fun `drillDown searches with minLevel 1`() {
-            val querySlot = slot<PropositionQuery>()
-            every {
-                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), capture(querySlot))
-            } returns emptyList()
-
-            val memory = Memory.forContext(contextId)
-                .withRepository(repository)
-
-            val tool = findTool(memory, "drillDown")
-            tool.call("""{"memory": "some summary"}""")
-
-            assertEquals(1, querySlot.captured.minLevel)
         }
     }
 
@@ -1001,14 +744,13 @@ class MemoryTest {
                 .withRepository(repository)
                 .narrowedBy { it.withAnyEntity("alice", "bob") }
 
-            val tool = findTool(memory, "searchByTopic")
-            tool.call("""{"topic": "jazz"}""")
+            memory.call("""{"topic": "jazz"}""")
 
             assertEquals(listOf("alice", "bob"), querySlot.captured.anyEntityIds)
         }
 
         @Test
-        fun `narrowedBy with allEntityIds scopes searchRecent`() {
+        fun `narrowedBy with allEntityIds scopes listAll`() {
             val queries = mutableListOf<PropositionQuery>()
             every { repository.query(capture(queries)) } returns emptyList()
 
@@ -1016,15 +758,11 @@ class MemoryTest {
                 .withRepository(repository)
                 .narrowedBy { it.withAllEntities("alice", "bob") }
 
-            val tool = findTool(memory, "searchRecent")
-            tool.call("{}")
+            memory.call("{}")
 
-            val recentQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.CREATED_DESC }
-            assertEquals(listOf("alice", "bob"), recentQuery.allEntityIds)
+            val listAllQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC }
+            assertEquals(listOf("alice", "bob"), listAllQuery.allEntityIds)
         }
     }
 
-    private fun findTool(memory: Memory, name: String): com.embabel.agent.api.tool.Tool {
-        return memory.innerTools.first { it.definition.name == name }
-    }
 }

@@ -16,7 +16,6 @@
 package com.embabel.dice.agent
 
 import com.embabel.agent.api.tool.Tool
-import com.embabel.agent.api.tool.progressive.UnfoldingTool
 import com.embabel.agent.core.ContextId
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.agent.Memory.Companion.DEFAULT_LIMIT
@@ -31,18 +30,13 @@ import org.slf4j.LoggerFactory
 import java.util.function.UnaryOperator
 
 /**
- * UnfoldingTool providing agent memory search within a context.
+ * Tool providing agent memory search within a context.
  *
- * Provides access to conversation memory with six inner tools:
- * - **listAll**: Retrieve all memories ordered by confidence (best for broad queries)
- * - **searchByTopic**: Vector similarity search for relevant memories
- * - **searchByKeyword**: Case-insensitive text matching on memory content
- * - **searchRecent**: Temporal ordering to recall recent memories
- * - **searchByType**: Find memories by knowledge type (facts, events, preferences)
- * - **drillDown**: Get the detailed source memories behind a summary
- *
- * All search operations support optional `type` filtering to narrow results to specific
- * knowledge types: semantic (facts), episodic (events), procedural (preferences), or working (session).
+ * A single tool that the LLM calls with optional parameters to search memories:
+ * - **topic**: Vector similarity search (e.g., `{"topic": "hobbies"}`)
+ * - **keyword**: Case-insensitive text match (e.g., `{"keyword": "guitar"}`)
+ * - **type**: Filter by knowledge type (semantic, episodic, procedural, working)
+ * - No parameters or **listAll**: Returns all memories ordered by confidence
  *
  * The context is baked in at construction time, ensuring the LLM
  * can only access memories within the authorized context.
@@ -54,7 +48,7 @@ import java.util.function.UnaryOperator
  *    immediately visible to the LLM with no tool call overhead. Two eager modes are available:
  *    - [withEagerQuery]: Preload by structured query (e.g., top-N by confidence)
  *    - [withEagerTopicSearch]: Preload by vector similarity to the [topic]
- * 2. **On-demand**: The LLM can call search tools for specific or additional memories.
+ * 2. **On-demand**: The LLM calls this tool with search parameters for specific or additional memories.
  *
  * When eager memories are loaded, subsequent tool calls automatically deduplicate results
  * so the LLM always receives new information.
@@ -110,7 +104,7 @@ data class Memory @JvmOverloads constructor(
     private val narrowedBy: UnaryOperator<PropositionQuery>? = null,
     private val eagerQuery: UnaryOperator<PropositionQuery>? = null,
     private val eagerTopicSearch: Int? = null,
-) : UnfoldingTool {
+) : Tool {
 
     private val logger = LoggerFactory.getLogger(Memory::class.java)
 
@@ -128,7 +122,7 @@ data class Memory @JvmOverloads constructor(
      *
      * The transformer receives the base query (contextId + minConfidence already applied)
      * and should add further constraints. This scope is enforced on every query —
-     * eager loading, searchByTopic, searchRecent, and searchByType — so the LLM
+     * eager loading and all search modes — so the LLM
      * cannot access propositions outside it.
      *
      * Can be called multiple times; each call replaces the previous narrowing.
@@ -157,6 +151,15 @@ data class Memory @JvmOverloads constructor(
         val base = PropositionQuery.forContextId(contextId)
             .withMinEffectiveConfidence(minConfidence)
         return narrowedBy?.apply(base) ?: base
+    }
+
+    /**
+     * Build a query with optional level filtering from call parameters.
+     */
+    private fun queryWithLevel(params: Map<String, Any?>): PropositionQuery {
+        val query = baseQuery()
+        val level = (params["level"] as? Number)?.toInt() ?: return query
+        return query.withMinLevel(level).withMaxLevel(level)
     }
 
     /**
@@ -200,15 +203,14 @@ data class Memory @JvmOverloads constructor(
 
             val status = when (memoryCount) {
                 0 -> "No memories stored yet."
-                1 -> "1 memory available to search."
-                else -> "$memoryCount memories available to search."
+                1 -> "1 memory available."
+                else -> "$memoryCount memories available."
             }
 
             val eagerMemories = loadEagerMemories()
 
             return buildString {
-                appendLine("Memory about $topic ($status)")
-                appendLine("Call this to enable search tools, then call listAll, searchByTopic, or searchByKeyword to retrieve memories.")
+                appendLine("Search memories about $topic. $status")
                 append("Use when: $useWhen")
                 if (eagerMemories.isNotEmpty()) {
                     appendLine()
@@ -289,9 +291,8 @@ data class Memory @JvmOverloads constructor(
      * the top matching memories into the description. This makes the most relevant
      * memories for the topic immediately visible to the LLM without a tool call.
      *
-     * Subsequent [searchByTopic][searchByTopicTool] tool calls automatically
-     * deduplicate against these eagerly loaded memories, so the LLM always
-     * receives new information.
+     * Subsequent tool calls automatically deduplicate against these eagerly loaded
+     * memories, so the LLM always receives new information.
      *
      * Can be combined with [withEagerQuery] — both sets of memories will be
      * merged (deduplicated) in the description.
@@ -309,405 +310,181 @@ data class Memory @JvmOverloads constructor(
         Tool.Definition(
             name = NAME,
             description = description,
-            inputSchema = Tool.InputSchema.empty(),
+            inputSchema = Tool.InputSchema.of(
+                Tool.Parameter.string("topic", "Search memories by topic (semantic similarity)", required = false),
+                Tool.Parameter.string("keyword", "Search memories containing this keyword (exact text match)", required = false),
+                Tool.Parameter.string(
+                    "type",
+                    "Filter by knowledge type",
+                    required = false,
+                    enumValues = KNOWLEDGE_TYPE_VALUES,
+                ),
+                Tool.Parameter.integer("limit", "Maximum number of results", required = false),
+                Tool.Parameter.integer(
+                    "level",
+                    "Abstraction level: 0 for raw details, 1+ for summaries",
+                    required = false
+                ),
+            ),
         )
     }
-
-    override val includeContextTool: Boolean = false
-
-    override val innerTools: List<Tool> by lazy {
-        listOf(
-            listAllTool(),
-            searchByTopicTool(),
-            searchByKeywordTool(),
-            searchRecentTool(),
-            searchByTypeTool(),
-            drillDownTool(),
-        )
-    }
-
-    override val childToolUsageNotes: String = """
-        |After reading this context, you MUST call one of the search tools below to retrieve actual memories.
-        |Choose the right search tool for the question:
-        |- **listAll**: Use for broad questions like "tell me about X" or "what do you know about me". Returns all memories.
-        |- **searchByTopic**: Use for specific topics like "hobbies" or "work". Uses semantic similarity search.
-        |- **searchByKeyword**: Use when looking for a specific word or phrase in memories.
-        |- **searchRecent**: Use to recall what was recently discussed.
-        |- **searchByType**: Use to find facts, events, or preferences specifically.
-        |- **drillDown**: Use to expand a summary into its source details.
-        |
-        |Tools support an optional 'type' filter:
-        |- semantic: Facts about entities (e.g., "Alice works at Acme")
-        |- episodic: Events that happened (e.g., "Alice met Bob yesterday")
-        |- procedural: Preferences and habits (e.g., "Alice prefers morning meetings")
-        |- working: Current session context
-        |
-        |For open-ended questions, use listAll first to get a complete picture.
-    """.trimMargin()
 
     override fun call(input: String): Tool.Result {
-        val toolNames = innerTools.map { it.definition.name }
-        return Tool.Result.text(
-            buildString {
-                appendLine("Memory tools enabled: ${toolNames.joinToString(", ")}")
-                appendLine()
-                appendLine("Now call one of these tools to search memories:")
-                appendLine("- listAll: Get all stored memories (best for broad questions)")
-                appendLine("- searchByTopic: Search by semantic topic (e.g., 'hobbies', 'work')")
-                appendLine("- searchByKeyword: Search for specific words in memories")
-                appendLine("- searchRecent: Get recently added memories")
-                appendLine("- searchByType: Filter by type (semantic/episodic/procedural)")
-                appendLine("- drillDown: Expand a summary into details")
-            }.trimEnd()
-        )
+        val params = parseInput(input)
+        return when {
+            params.containsKey("keyword") -> searchByKeyword(params)
+            params.containsKey("topic") -> searchByTopic(params)
+            params.containsKey("type") -> searchByType(params)
+            else -> listAll(params)
+        }
     }
 
-    private fun listAllTool(): Tool = object : Tool {
-        override val definition = Tool.Definition.create(
-            name = "listAll",
-            description = """
-                |List all stored memories, ordered by confidence.
-                |Use this for broad questions like "tell me about X", "what do you know about me",
-                |or any question where you need a comprehensive overview of all stored information.
-            """.trimMargin(),
-            inputSchema = Tool.InputSchema.of(
-                Tool.Parameter.string(
-                    "type",
-                    "Optional: filter by knowledge type",
-                    required = false,
-                    enumValues = KNOWLEDGE_TYPE_VALUES,
-                ),
-                Tool.Parameter.integer("limit", "Maximum number of results (default: 50)", required = false),
-            ),
+    private fun listAll(params: Map<String, Any?>): Tool.Result {
+        val typeFilter = parseKnowledgeType(params["type"] as? String)
+        val limit = (params["limit"] as? Number)?.toInt() ?: 50
+
+        val results = repository.query(
+            queryWithLevel(params)
+                .orderedByEffectiveConfidence()
+                .withLimit(if (typeFilter != null) limit * 3 else limit)
         )
 
-        override fun call(input: String): Tool.Result {
-            val params = parseInput(input)
-            val typeFilter = parseKnowledgeType(params["type"] as? String)
-            val limit = (params["limit"] as? Number)?.toInt() ?: 50
+        val deduped = results.filter { it.id !in eagerPropositionIds }
 
-            val results = repository.query(
-                baseQuery()
-                    .orderedByEffectiveConfidence()
-                    .withLimit(if (typeFilter != null) limit * 3 else limit)
-            )
+        val filtered = if (typeFilter != null) {
+            val projection = projector.project(deduped)
+            projection[typeFilter].take(limit)
+        } else {
+            deduped.take(limit)
+        }
 
-            val deduped = results.filter { it.id !in eagerPropositionIds }
-
-            val filtered = if (typeFilter != null) {
-                val projection = projector.project(deduped)
-                projection[typeFilter].take(limit)
+        if (filtered.isEmpty()) {
+            val typeDesc = typeFilter?.let { " (${it.name.lowercase()})" } ?: ""
+            return if (eagerPropositionIds.isNotEmpty()) {
+                Tool.Result.text("No additional memories found$typeDesc beyond those already provided.")
             } else {
-                deduped.take(limit)
+                Tool.Result.text("No memories stored yet$typeDesc.")
             }
-
-            if (filtered.isEmpty()) {
-                val typeDesc = typeFilter?.let { " (${it.name.lowercase()})" } ?: ""
-                return if (eagerPropositionIds.isNotEmpty()) {
-                    Tool.Result.text("No additional memories found$typeDesc beyond those already provided.")
-                } else {
-                    Tool.Result.text("No memories stored yet$typeDesc.")
-                }
-            }
-
-            val text = buildString {
-                val typeDesc = typeFilter?.let { " (${it.name.lowercase()})" } ?: ""
-                appendLine("All memories$typeDesc (${filtered.size}):")
-                filtered.forEach { prop ->
-                    appendLine("- ${prop.text}")
-                }
-            }.trimEnd()
-
-            return Tool.Result.text(text)
         }
+
+        val text = buildString {
+            val typeDesc = typeFilter?.let { " (${it.name.lowercase()})" } ?: ""
+            appendLine("All memories$typeDesc (${filtered.size}):")
+            filtered.forEach { prop ->
+                appendLine("- ${prop.text}")
+            }
+        }.trimEnd()
+
+        return Tool.Result.text(text)
     }
 
-    private fun searchByTopicTool(): Tool = object : Tool {
-        override val definition = Tool.Definition.create(
-            name = "searchByTopic",
-            description = """
-                |Find memories related to a specific topic (e.g., "music preferences", "work projects")
-            """.trimMargin(),
-            inputSchema = Tool.InputSchema.of(
-                Tool.Parameter.string("topic", "The topic to search for", required = true),
-                Tool.Parameter.string(
-                    "type",
-                    "Optional: filter by knowledge type",
-                    required = false,
-                    enumValues = KNOWLEDGE_TYPE_VALUES,
-                ),
-                Tool.Parameter.integer("limit", "Maximum number of results", required = false),
-                Tool.Parameter.integer(
-                    "level",
-                    "Abstraction level: 0 for raw details, 1+ for summaries",
-                    required = false
-                ),
+    private fun searchByTopic(params: Map<String, Any?>): Tool.Result {
+        val topic = params["topic"] as? String ?: return Tool.Result.error("Missing 'topic' parameter")
+        val typeFilter = parseKnowledgeType(params["type"] as? String)
+        val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
+
+        val results = repository.findSimilarWithScores(
+            TextSimilaritySearchRequest(
+                query = topic,
+                similarityThreshold = 0.0,
+                topK = if (typeFilter != null) limit * 3 else limit,
             ),
+            queryWithLevel(params)
         )
 
-        override fun call(input: String): Tool.Result {
-            val params = parseInput(input)
-            val topic = params["topic"] as? String ?: return Tool.Result.error("Missing 'topic' parameter")
-            val typeFilter = parseKnowledgeType(params["type"] as? String)
-            val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
-            val level = (params["level"] as? Number)?.toInt()
+        val deduped = results.filter { it.match.id !in eagerPropositionIds }
 
-            var query = baseQuery()
-            level?.let { query = query.withMinLevel(it).withMaxLevel(it) }
+        val filtered = if (typeFilter != null) {
+            val projection = projector.project(deduped.map { it.match })
+            projection[typeFilter].take(limit)
+        } else {
+            deduped.take(limit).map { it.match }
+        }
 
-            val results = repository.findSimilarWithScores(
-                TextSimilaritySearchRequest(
-                    query = topic,
-                    similarityThreshold = 0.0,
-                    topK = if (typeFilter != null) limit * 3 else limit, // Fetch more if filtering
-                ),
-                query
-            )
-
-            val deduped = results.filter { it.match.id !in eagerPropositionIds }
-
-            val filtered = if (typeFilter != null) {
-                val projection = projector.project(deduped.map { it.match })
-                projection[typeFilter].take(limit)
+        if (filtered.isEmpty()) {
+            val typeDesc = typeFilter?.let { " (${it.name.lowercase()})" } ?: ""
+            return if (eagerPropositionIds.isNotEmpty()) {
+                Tool.Result.text("No additional memories found about '$topic'$typeDesc beyond those already provided.")
             } else {
-                deduped.take(limit).map { it.match }
+                Tool.Result.text("No memories found about '$topic'$typeDesc.")
             }
-
-            if (filtered.isEmpty()) {
-                val typeDesc = typeFilter?.let { " (${it.name.lowercase()})" } ?: ""
-                return if (eagerPropositionIds.isNotEmpty()) {
-                    Tool.Result.text("No additional memories found about '$topic'$typeDesc beyond those already provided.")
-                } else {
-                    Tool.Result.text("No memories found about '$topic'$typeDesc.")
-                }
-            }
-
-            val text = buildString {
-                val typeDesc = typeFilter?.let { " (${it.name.lowercase()})" } ?: ""
-                appendLine("Memories about '$topic'$typeDesc:")
-                filtered.forEach { prop ->
-                    appendLine("- ${prop.text}")
-                }
-            }.trimEnd()
-
-            return Tool.Result.text(text)
         }
+
+        val text = buildString {
+            val typeDesc = typeFilter?.let { " (${it.name.lowercase()})" } ?: ""
+            appendLine("Memories about '$topic'$typeDesc:")
+            filtered.forEach { prop ->
+                appendLine("- ${prop.text}")
+            }
+        }.trimEnd()
+
+        return Tool.Result.text(text)
     }
 
-    private fun searchByKeywordTool(): Tool = object : Tool {
-        override val definition = Tool.Definition.create(
-            name = "searchByKeyword",
-            description = """
-                |Search memories containing a specific keyword or phrase (case-insensitive text match).
-                |Use this when you know the exact word to look for (e.g., "guitar", "Java", "Miso").
-            """.trimMargin(),
-            inputSchema = Tool.InputSchema.of(
-                Tool.Parameter.string("keyword", "The keyword or phrase to search for", required = true),
-                Tool.Parameter.integer("limit", "Maximum number of results", required = false),
-            ),
+    private fun searchByKeyword(params: Map<String, Any?>): Tool.Result {
+        val keyword = params["keyword"] as? String
+            ?: return Tool.Result.error("Missing 'keyword' parameter")
+        val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
+
+        val allProps = repository.query(
+            queryWithLevel(params)
+                .orderedByEffectiveConfidence()
+                .withLimit(limit * 5)
         )
 
-        override fun call(input: String): Tool.Result {
-            val params = parseInput(input)
-            val keyword = params["keyword"] as? String
-                ?: return Tool.Result.error("Missing 'keyword' parameter")
-            val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
+        val matches = allProps
+            .filter { it.text.contains(keyword, ignoreCase = true) }
+            .filter { it.id !in eagerPropositionIds }
+            .take(limit)
 
-            val allProps = repository.query(
-                baseQuery()
-                    .orderedByEffectiveConfidence()
-                    .withLimit(limit * 5) // Fetch more since we're filtering in-memory
-            )
-
-            val matches = allProps
-                .filter { it.text.contains(keyword, ignoreCase = true) }
-                .filter { it.id !in eagerPropositionIds }
-                .take(limit)
-
-            if (matches.isEmpty()) {
-                return Tool.Result.text("No memories found containing '$keyword'.")
-            }
-
-            val text = buildString {
-                appendLine("Memories containing '$keyword' (${matches.size}):")
-                matches.forEach { prop ->
-                    appendLine("- ${prop.text}")
-                }
-            }.trimEnd()
-
-            return Tool.Result.text(text)
+        if (matches.isEmpty()) {
+            return Tool.Result.text("No memories found containing '$keyword'.")
         }
+
+        val text = buildString {
+            appendLine("Memories containing '$keyword' (${matches.size}):")
+            matches.forEach { prop ->
+                appendLine("- ${prop.text}")
+            }
+        }.trimEnd()
+
+        return Tool.Result.text(text)
     }
 
-    private fun searchRecentTool(): Tool = object : Tool {
-        override val definition = Tool.Definition.create(
-            name = "searchRecent",
-            description = "Recall what was recently discussed or learned in the conversation",
-            inputSchema = Tool.InputSchema.of(
-                Tool.Parameter.string(
-                    "type",
-                    "Optional: filter by knowledge type",
-                    required = false,
-                    enumValues = KNOWLEDGE_TYPE_VALUES,
-                ),
-                Tool.Parameter.integer("limit", "Maximum number of results", required = false),
-                Tool.Parameter.integer(
-                    "level",
-                    "Abstraction level: 0 for raw details, 1+ for summaries",
-                    required = false
-                ),
-            ),
+    private fun searchByType(params: Map<String, Any?>): Tool.Result {
+        val typeStr = params["type"] as? String ?: return Tool.Result.error("Missing 'type' parameter")
+        val typeFilter = parseKnowledgeType(typeStr)
+            ?: return Tool.Result.error("Invalid type '$typeStr'. Use: semantic, episodic, procedural, or working")
+        val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
+
+        val results = repository.query(
+            queryWithLevel(params)
+                .orderedByEffectiveConfidence()
+                .withLimit(limit * 3)
         )
 
-        override fun call(input: String): Tool.Result {
-            val params = parseInput(input)
-            val typeFilter = parseKnowledgeType(params["type"] as? String)
-            val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
-            val level = (params["level"] as? Number)?.toInt()
+        val projection = projector.project(results)
+        val filtered = projection[typeFilter].take(limit)
 
-            var query = baseQuery()
-            level?.let { query = query.withMinLevel(it).withMaxLevel(it) }
-
-            val results = repository.query(
-                query
-                    .orderedByCreated()
-                    .withLimit(if (typeFilter != null) limit * 3 else limit)
-            )
-
-            val filtered = if (typeFilter != null) {
-                val projection = projector.project(results)
-                projection[typeFilter].take(limit)
-            } else {
-                results.take(limit)
-            }
-
-            if (filtered.isEmpty()) {
-                val typeDesc = typeFilter?.let { " ${it.name.lowercase()}" } ?: ""
-                return Tool.Result.text("No recent$typeDesc memories found.")
-            }
-
-            val text = buildString {
-                val typeDesc = typeFilter?.let { " (${it.name.lowercase()})" } ?: ""
-                appendLine("Recent memories$typeDesc:")
-                filtered.forEach { prop ->
-                    appendLine("- ${prop.text}")
-                }
-            }.trimEnd()
-
-            return Tool.Result.text(text)
+        if (filtered.isEmpty()) {
+            return Tool.Result.text("No ${typeFilter.name.lowercase()} memories found.")
         }
-    }
 
-    private fun searchByTypeTool(): Tool = object : Tool {
-        override val definition = Tool.Definition.create(
-            name = "searchByType",
-            description = """
-                |Find all memories of a specific type (facts, events, preferences)
-            """.trimMargin(),
-            inputSchema = Tool.InputSchema.of(
-                Tool.Parameter.string(
-                    "type",
-                    "Knowledge type: semantic (facts), episodic (events), procedural (preferences), working (session)",
-                    required = true,
-                    enumValues = KNOWLEDGE_TYPE_VALUES,
-                ),
-                Tool.Parameter.integer("limit", "Maximum number of results", required = false),
-                Tool.Parameter.integer(
-                    "level",
-                    "Abstraction level: 0 for raw details, 1+ for summaries",
-                    required = false
-                ),
-            ),
-        )
-
-        override fun call(input: String): Tool.Result {
-            val params = parseInput(input)
-            val typeStr = params["type"] as? String ?: return Tool.Result.error("Missing 'type' parameter")
-            val typeFilter = parseKnowledgeType(typeStr)
-                ?: return Tool.Result.error("Invalid type '$typeStr'. Use: semantic, episodic, procedural, or working")
-            val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
-            val level = (params["level"] as? Number)?.toInt()
-
-            var query = baseQuery()
-            level?.let { query = query.withMinLevel(it).withMaxLevel(it) }
-
-            val results = repository.query(
-                query
-                    .orderedByEffectiveConfidence()
-                    .withLimit(limit * 3) // Fetch more since we're filtering
-            )
-
-            val projection = projector.project(results)
-            val filtered = projection[typeFilter].take(limit)
-
-            if (filtered.isEmpty()) {
-                return Tool.Result.text("No ${typeFilter.name.lowercase()} memories found.")
-            }
-
-            val typeLabel = when (typeFilter) {
-                KnowledgeType.SEMANTIC -> "Facts"
-                KnowledgeType.EPISODIC -> "Events"
-                KnowledgeType.PROCEDURAL -> "Preferences"
-                KnowledgeType.WORKING -> "Session context"
-            }
-
-            val text = buildString {
-                appendLine("$typeLabel (${filtered.size}):")
-                filtered.forEach { prop ->
-                    appendLine("- ${prop.text}")
-                }
-            }.trimEnd()
-
-            return Tool.Result.text(text)
+        val typeLabel = when (typeFilter) {
+            KnowledgeType.SEMANTIC -> "Facts"
+            KnowledgeType.EPISODIC -> "Events"
+            KnowledgeType.PROCEDURAL -> "Preferences"
+            KnowledgeType.WORKING -> "Session context"
         }
-    }
 
-    private fun drillDownTool(): Tool = object : Tool {
-        override val definition = Tool.Definition.create(
-            name = "drillDown",
-            description = "Get the detailed source memories behind a summary/abstraction",
-            inputSchema = Tool.InputSchema.of(
-                Tool.Parameter.string(NAME, "The text of the summary to drill into", required = true),
-                Tool.Parameter.integer("limit", "Maximum number of results", required = false),
-            ),
-        )
-
-        override fun call(input: String): Tool.Result {
-            val params = parseInput(input)
-            val memoryText = params[NAME] as? String ?: return Tool.Result.error("Missing 'memory' parameter")
-            val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
-
-            // Find the abstraction by similarity search (level >= 1)
-            val abstractionQuery = baseQuery().withMinLevel(1)
-            val matches = repository.findSimilarWithScores(
-                TextSimilaritySearchRequest(
-                    query = memoryText,
-                    similarityThreshold = 0.0,
-                    topK = 1,
-                ),
-                abstractionQuery,
-            )
-
-            if (matches.isEmpty()) {
-                return Tool.Result.text("No matching abstraction found to drill into.")
+        val text = buildString {
+            appendLine("$typeLabel (${filtered.size}):")
+            filtered.forEach { prop ->
+                appendLine("- ${prop.text}")
             }
+        }.trimEnd()
 
-            val abstraction = matches.first().match
-            val sources = repository.findSources(abstraction)
-
-            if (sources.isEmpty()) {
-                return Tool.Result.text("This memory has no detailed sources to drill into.")
-            }
-
-            val text = buildString {
-                appendLine("Sources behind '${abstraction.text}':")
-                sources.take(limit).forEach { prop ->
-                    appendLine("- ${prop.text}")
-                }
-            }.trimEnd()
-
-            return Tool.Result.text(text)
-        }
+        return Tool.Result.text(text)
     }
 
     private fun parseKnowledgeType(value: String?): KnowledgeType? {
