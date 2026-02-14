@@ -45,7 +45,8 @@ import java.util.function.UnaryOperator
  *
  * Supports a two-tier retrieval strategy:
  * 1. **Eager**: Key memories are preloaded into the description, making them
- *    immediately visible to the LLM with no tool call overhead. Two eager modes are available:
+ *    immediately visible to the LLM with no tool call overhead. Three eager modes are available:
+ *    - [withEagerSearchAbout]: Preload by vector similarity to arbitrary text (e.g., recent conversation)
  *    - [withEagerQuery]: Preload by structured query (e.g., top-N by confidence)
  *    - [withEagerTopicSearch]: Preload by vector similarity to the [topic]
  * 2. **On-demand**: The LLM calls this tool with search parameters for specific or additional memories.
@@ -53,24 +54,20 @@ import java.util.function.UnaryOperator
  * When eager memories are loaded, subsequent tool calls automatically deduplicate results
  * so the LLM always receives new information.
  *
- * Example usage from Kotlin:
+ * Example: preload memories relevant to the current conversation:
  * ```kotlin
  * val memory = Memory.forContext(contextId)
  *     .withRepository(propositionRepository)
- *     .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
- *     .withMinConfidence(0.6)
- *     .withTopic("classical music preferences")
- *     .withEagerTopicSearch(5)
+ *     .withEagerSearchAbout(recentConversationText, 10)
  * ```
  *
- * Example usage from Java:
- * ```java
- * Memory memory = Memory.forContext("user-session-123")
+ * Example: preload by topic similarity and structured query:
+ * ```kotlin
+ * val memory = Memory.forContext(contextId)
  *     .withRepository(propositionRepository)
- *     .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
- *     .withMinConfidence(0.6)
  *     .withTopic("classical music preferences")
- *     .withEagerTopicSearch(5);
+ *     .withEagerTopicSearch(5)
+ *     .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(3) }
  * ```
  *
  * @param contextId The context to search within
@@ -92,6 +89,11 @@ import java.util.function.UnaryOperator
  * @param eagerTopicSearch Optional limit for eager topic-based similarity search.
  * When set, uses the [topic] to perform a vector similarity search and preloads matching
  * memories into the description. Can be used alongside or instead of [eagerQuery].
+ * @param eagerSearchAbout Optional text to search for similar memories eagerly.
+ * When set, performs a vector similarity search using this text and preloads matching
+ * memories into the description. Ideal for passing recent conversation content so
+ * the LLM sees relevant memories without needing a tool call.
+ * @param eagerSearchAboutLimit Maximum number of memories to preload via [eagerSearchAbout].
  */
 data class Memory @JvmOverloads constructor(
     private val contextId: ContextId,
@@ -104,6 +106,8 @@ data class Memory @JvmOverloads constructor(
     private val narrowedBy: UnaryOperator<PropositionQuery>? = null,
     private val eagerQuery: UnaryOperator<PropositionQuery>? = null,
     private val eagerTopicSearch: Int? = null,
+    private val eagerSearchAbout: String? = null,
+    private val eagerSearchAboutLimit: Int = DEFAULT_LIMIT,
 ) : Tool {
 
     private val logger = LoggerFactory.getLogger(Memory::class.java)
@@ -184,13 +188,24 @@ data class Memory @JvmOverloads constructor(
             ).map { it.match }
         } ?: emptyList()
 
+        val aboutMemories = eagerSearchAbout?.let { query ->
+            repository.findSimilarWithScores(
+                TextSimilaritySearchRequest(
+                    query = query,
+                    similarityThreshold = 0.0,
+                    topK = eagerSearchAboutLimit,
+                ),
+                base,
+            ).map { it.match }
+        } ?: emptyList()
+
         val queryMemories = eagerQuery?.let { queryFn ->
             repository.query(queryFn.apply(base))
         } ?: emptyList()
 
-        // Merge both sources, deduplicating by ID, topic results first
+        // Merge all sources, deduplicating by ID, aboutMemories first (most contextual)
         val seen = mutableSetOf<String>()
-        return (topicMemories + queryMemories).filter { seen.add(it.id) }
+        return (aboutMemories + topicMemories + queryMemories).filter { seen.add(it.id) }
     }
 
     val description: String
@@ -304,6 +319,27 @@ data class Memory @JvmOverloads constructor(
     fun withEagerTopicSearch(limit: Int = DEFAULT_LIMIT): Memory {
         require(limit > 0) { "limit must be positive" }
         return copy(eagerTopicSearch = limit)
+    }
+
+    /**
+     * Eagerly search for memories similar to the given text.
+     *
+     * Performs a vector similarity search using the provided text and preloads
+     * matching memories into the tool description. Use this to inject context-relevant
+     * memories — for example, pass the recent conversation content so the LLM sees
+     * relevant memories without needing to call the tool.
+     *
+     * Can be combined with [withEagerQuery] and [withEagerTopicSearch] — all sources
+     * are merged and deduplicated.
+     *
+     * @param text The text to search for similar memories
+     * @param limit Maximum number of memories to preload (default [DEFAULT_LIMIT])
+     * @return New Memory with eager search configured
+     */
+    @JvmOverloads
+    fun withEagerSearchAbout(text: String, limit: Int = DEFAULT_LIMIT): Memory {
+        require(limit > 0) { "limit must be positive" }
+        return copy(eagerSearchAbout = text, eagerSearchAboutLimit = limit)
     }
 
     override val definition: Tool.Definition by lazy {

@@ -731,6 +731,166 @@ class MemoryTest {
     }
 
     @Nested
+    inner class EagerSearchAboutTests {
+
+        @Test
+        fun `description includes eager search about memories`() {
+            val memories = listOf(
+                createProposition("User plays guitar since age 12"),
+                createProposition("User is in a band called The Resets"),
+            )
+            every { repository.query(any()) } returns memories
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>())
+            } returns memories.map { SimilarityResult(it, 0.9) }
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .withEagerSearchAbout("What music stuff am I into?")
+
+            val description = memory.description
+            assertTrue(description.contains("Key memories:"), description)
+            assertTrue(description.contains("User plays guitar since age 12"), description)
+            assertTrue(description.contains("User is in a band called The Resets"), description)
+        }
+
+        @Test
+        fun `eager search about passes correct query text`() {
+            val requestSlot = slot<TextSimilaritySearchRequest>()
+            every { repository.query(any()) } returns emptyList()
+            every {
+                repository.findSimilarWithScores(capture(requestSlot), any<PropositionQuery>())
+            } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .withEagerSearchAbout("Tell me about my hobbies")
+
+            memory.description
+
+            assertEquals("Tell me about my hobbies", requestSlot.captured.query)
+        }
+
+        @Test
+        fun `eager search about respects limit`() {
+            val requestSlot = slot<TextSimilaritySearchRequest>()
+            every { repository.query(any()) } returns emptyList()
+            every {
+                repository.findSimilarWithScores(capture(requestSlot), any<PropositionQuery>())
+            } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .withEagerSearchAbout("hobbies", 7)
+
+            memory.description
+
+            assertEquals(7, requestSlot.captured.topK)
+        }
+
+        @Test
+        fun `eager search about respects context id`() {
+            val querySlot = slot<PropositionQuery>()
+            every { repository.query(any()) } returns emptyList()
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), capture(querySlot))
+            } returns emptyList()
+
+            val memory = Memory.forContext("my-context")
+                .withRepository(repository)
+                .withEagerSearchAbout("hobbies")
+
+            memory.description
+
+            assertEquals(ContextId("my-context"), querySlot.captured.contextId)
+        }
+
+        @Test
+        fun `eager search about respects narrowedBy`() {
+            val querySlot = slot<PropositionQuery>()
+            every { repository.query(any()) } returns emptyList()
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), capture(querySlot))
+            } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .narrowedBy { it.withEntityId("alice-123") }
+                .withEagerSearchAbout("hobbies")
+
+            memory.description
+
+            assertEquals("alice-123", querySlot.captured.entityId)
+        }
+
+        @Test
+        fun `eager search about deduplicates from subsequent tool calls`() {
+            val eagerProp = createProposition("User plays guitar")
+            val otherProp = createProposition("User likes jazz")
+            every { repository.query(any()) } returns listOf(eagerProp, otherProp)
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>())
+            } returns listOf(SimilarityResult(eagerProp, 0.9))
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .withEagerSearchAbout("music")
+
+            // Trigger eager loading
+            memory.description
+
+            // listAll should exclude the eagerly loaded proposition
+            val result = memory.call("{}")
+            val text = (result as Tool.Result.Text).content
+            assertFalse(text.contains("User plays guitar"), "Eager prop should be deduped: $text")
+            assertTrue(text.contains("User likes jazz"), text)
+        }
+
+        @Test
+        fun `eager search about combines with eager query`() {
+            val aboutProp = createProposition("User plays guitar")
+            val queryProp = createProposition("User works at Acme")
+            every { repository.query(any()) } returns listOf(aboutProp, queryProp)
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>())
+            } returns listOf(SimilarityResult(aboutProp, 0.9))
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .withEagerSearchAbout("music")
+                .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
+
+            val description = memory.description
+            assertTrue(description.contains("User plays guitar"), description)
+            assertTrue(description.contains("User works at Acme"), description)
+        }
+
+        @Test
+        fun `rejects invalid limit`() {
+            assertThrows(IllegalArgumentException::class.java) {
+                Memory.forContext(contextId)
+                    .withRepository(repository)
+                    .withEagerSearchAbout("hobbies", 0)
+            }
+        }
+
+        @Test
+        fun `omits eager section when no memories match`() {
+            every { repository.query(any()) } returns emptyList()
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>())
+            } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .withEagerSearchAbout("nonexistent topic")
+
+            val description = memory.description
+            assertFalse(description.contains("Key memories:"), description)
+        }
+    }
+
+    @Nested
     inner class NarrowedByMultiEntityTests {
 
         @Test

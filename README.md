@@ -1227,42 +1227,40 @@ can_consult(Person, Expert, Topic) :-
 ### Agent Memory
 
 The `Memory` class gives agents access to their stored memories (propositions) within a context.
-It implements `UnfoldingTool` directly, providing a **two-tier retrieval strategy**:
+It implements `Tool` directly — a single tool that the LLM calls with optional parameters
+to search memories. It provides a **two-tier retrieval strategy**:
 
-1. **Eager**: Key memories are preloaded into the description, making them
-   immediately visible to the LLM with no tool call overhead. Two eager modes are available:
+1. **Eager**: Key memories are preloaded into the tool description, making them
+   immediately visible to the LLM with no tool call overhead. Three eager modes are available:
+   - `withEagerSearchAbout(text, limit)`: Preloads memories by vector similarity to arbitrary text (e.g., recent conversation content)
    - `withEagerTopicSearch(limit)`: Preloads memories by vector similarity to the `topic`
    - `withEagerQuery { ... }`: Preloads memories by structured query (e.g., top-N by confidence)
-   - Both can be combined — results are merged and deduplicated.
-2. **On-demand**: Four search tools are exposed via the `UnfoldingTool`, letting the LLM
-   search for specific memories when the eager set isn't sufficient. Tool results automatically
-   deduplicate against eagerly loaded memories, so the LLM always receives new information.
-   Usage guidance is provided via `childToolUsageNotes`.
+   - All modes can be combined — results are merged and deduplicated.
+2. **On-demand**: The LLM calls the tool with search parameters to find specific memories
+   when the eager set isn't sufficient. Tool results automatically deduplicate against
+   eagerly loaded memories, so the LLM always receives new information.
 
 This means the most important memories are always available (zero latency), while the full memory
 store remains searchable on demand.
 
-#### Search Tools
+#### Search Parameters
 
-The `UnfoldingTool` exposes four operations:
+The LLM calls Memory with optional JSON parameters. The routing logic is:
 
-- **searchByTopic**: Vector similarity search for relevant memories
-- **searchRecent**: Temporal ordering to recall recent memories
-- **searchByType**: Find memories by knowledge type (facts, events, preferences)
-- **drillDown**: Get the detailed source memories behind a summary/abstraction
+- **`topic`**: Vector similarity search (e.g., `{"topic": "hobbies"}`)
+- **`keyword`**: Case-insensitive text match (e.g., `{"keyword": "guitar"}`)
+- **`type`**: Filter by knowledge type (e.g., `{"type": "semantic"}`)
+- **No parameters** or `{}`: Returns all memories ordered by confidence
 
-All search tools support optional `type` filtering:
+All search modes support optional `type` filtering:
 - `semantic`: Facts about entities (e.g., "Alice works at Acme")
 - `episodic`: Events that happened (e.g., "Alice met Bob yesterday")
 - `procedural`: Preferences and habits (e.g., "Alice prefers morning meetings")
 - `working`: Current session context
 
-All search tools also support an optional `level` parameter to filter by abstraction level:
+All search modes also support an optional `level` parameter to filter by abstraction level:
 - `0`: Raw observations only
 - `1+`: Summaries and abstractions only
-
-The `drillDown` tool navigates the abstraction hierarchy — given a summary, it finds the
-source propositions that were used to create it, using `PropositionRepository.findSources()`.
 
 #### Scoping
 
@@ -1270,7 +1268,7 @@ The context is baked in at construction time, ensuring the agent can only access
 authorized context. The description dynamically reflects how many memories are available.
 
 For finer-grained control, `narrowedBy` applies additional constraints to *every* query — eager loading,
-description count, and all three search tools. The LLM cannot escape these constraints.
+description count, and all search modes. The LLM cannot escape these constraints.
 
 ```kotlin
 // Only memories mentioning Alice
@@ -1306,41 +1304,56 @@ Memory memory = Memory.forContext("session-123")
     .narrowedBy(query -> query.withAllEntities("alice", "bob"));
 ```
 
-`narrowedBy` composes with `withEagerQuery` — the eager query receives the already-narrowed base,
-so it can only further restrict (ordering, limits), never widen the scope.
+`narrowedBy` composes with all eager modes — the eager searches and queries receive the
+already-narrowed base, so they can only further restrict (ordering, limits), never widen the scope.
 
 #### Usage
+
+```kotlin
+// Kotlin — eager search about recent conversation
+val memory = Memory.forContext(contextId)
+    .withRepository(propositionRepository)
+    .withProjector(memoryProjector)
+    .withEagerSearchAbout(recentConversationText, 10)
+
+ai.withTool(memory).withTools(memory).respond(...)
+```
+
+```java
+// Java — eager search about recent conversation
+var recentContext = new WindowingConversationFormatter(
+        SimpleMessageFormatter.INSTANCE, 5, 0
+).format(conversation);
+
+var memory = Memory.forContext(user.currentContext())
+        .withRepository(propositionRepository)
+        .withProjector(memoryProjector)
+        .withEagerSearchAbout(recentContext, 10);
+
+ai.withTool(memory).withTools(memory).respond(...);
+```
+
+`withEagerSearchAbout` is the recommended eager mode for chat agents — it uses the actual
+conversation content as the search query, so the memories preloaded into the description
+are always relevant to what the user is talking about right now.
+
+For topic-focused agents, use `withEagerTopicSearch`:
 
 ```kotlin
 // Kotlin — eager topic search (preloads top 5 memories matching the topic)
 val memory = Memory.forContext(contextId)
     .withRepository(propositionRepository)
-    .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
-    .withMinConfidence(0.6)
     .withTopic("classical music preferences")
     .withEagerTopicSearch(5)
-
-ai.withReference(memory).respond(...)
 ```
 
-```java
-// Java — eager topic search
-Memory memory = Memory.forContext("user-session-123")
-    .withRepository(propositionRepository)
-    .withProjector(DefaultMemoryProjector.withKnowledgeTypeClassifier(myClassifier))
-    .withMinConfidence(0.6)
-    .withTopic("classical music preferences")
-    .withEagerTopicSearch(5);
-
-ai.withReference(memory).respond(...);
-```
-
-Both eager modes can be combined to preload by topic relevance *and* by confidence:
+All three eager modes can be combined — results are merged and deduplicated:
 
 ```kotlin
 val memory = Memory.forContext(contextId)
     .withRepository(propositionRepository)
     .withTopic("classical music preferences")
+    .withEagerSearchAbout(recentConversationText, 10)
     .withEagerTopicSearch(5)
     .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(3) }
 ```
@@ -1354,13 +1367,13 @@ val memory = Memory.forContext(contextId)
 | `withMinConfidence(Double)` | Minimum effective confidence threshold (0.0–1.0) | 0.5 |
 | `withDefaultLimit(Int)` | Maximum results per search | 10 |
 | `withTopic(String)` | Describes what these memories are about. Completes the form "memories about _topic_" | `"the user & context"` |
-| `withUseWhen(String)` | Instruction to the LLM for when to use the memory tools | `"whenever you need to recall information about <topic>"` |
+| `withUseWhen(String)` | Instruction to the LLM for when to use the memory tool | `"whenever you need to recall information about <topic>"` |
+| `withEagerSearchAbout(String, Int)` | Preloads memories by vector similarity to the given text (e.g., recent conversation). Recommended for chat agents | none (disabled) |
 | `withEagerTopicSearch(Int)` | Preloads memories by vector similarity to the `topic` into the description. Tool calls auto-deduplicate against these | none (disabled) |
 | `withEagerQuery(UnaryOperator<PropositionQuery>)` | Preloads key memories by structured query (e.g., top-N by confidence) into the description | none (disabled) |
 
-All search tools (searchByTopic, searchRecent, searchByType) expose an optional `level` parameter
-to the LLM, allowing it to filter by abstraction level at query time. The `drillDown` tool lets the
-LLM navigate from a summary to its sources. Both `level` and `drillDown` compose with `narrowedBy`.
+All search modes expose optional `level` and `type` parameters to the LLM, allowing it to filter
+by abstraction level and knowledge type at query time. Both compose with `narrowedBy`.
 
 ### Memory Projection
 
@@ -1600,7 +1613,7 @@ The Oracle answers questions using LLM tool calling with Prolog reasoning:
 ```
 com.embabel.dice
 ├── agent/                    # Agent integration
-│   └── Memory                # UnfoldingTool for memory search
+│   └── Memory                # Tool for memory search
 │
 ├── common/                   # Shared types
 │   ├── SourceAnalysisContext # Context for all DICE operations
