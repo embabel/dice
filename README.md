@@ -196,6 +196,133 @@ flowchart TB
     style Persist fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
 ```
 
+### Content Deduplication
+
+DICE provides hash-based deduplication to prevent reprocessing identical content. This operates at
+two levels: one-shot document ingestion and incremental (windowed) analysis.
+
+#### How It Works
+
+```mermaid
+flowchart TB
+    subgraph Input["📄 Input Text"]
+        TEXT["Text content"]
+    end
+
+    subgraph Hash["🔑 Content Hashing"]
+        CH["ContentHasher<br/>(fun interface)"]
+        SHA["Sha256ContentHasher<br/>(default)"]
+    end
+
+    subgraph Check["✅ Dedup Check"]
+        HS["ChunkHistoryStore"]
+        Q{"Already<br/>processed?"}
+    end
+
+    subgraph Process["🔄 Processing"]
+        PIPE["PropositionPipeline"]
+        REC["Record hash +<br/>bookmark"]
+    end
+
+    TEXT --> CH
+    CH --> Q
+    SHA -.->|"implements"| CH
+    Q -->|"Yes"| SKIP["Skip (return null)"]
+    Q -->|"No"| PIPE
+    PIPE --> REC
+    REC --> HS
+
+    style Input fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
+    style Hash fill:#fff3cd,stroke:#e9b306,color:#1e1e1e
+    style Check fill:#e8dcf4,stroke:#9f77cd,color:#1e1e1e
+    style Process fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
+```
+
+#### ContentHasher
+
+The `ContentHasher` fun interface defines the hashing strategy. The default `Sha256ContentHasher`
+produces SHA-256 hex strings, but you can substitute any strategy (e.g., for normalization or
+locality-sensitive hashing):
+
+```kotlin
+// Default — SHA-256
+val hasher: ContentHasher = Sha256ContentHasher
+
+// Custom — e.g., normalize whitespace before hashing
+val normalizingHasher = ContentHasher { text ->
+    Sha256ContentHasher.hash(text.trim().replace("\\s+".toRegex(), " "))
+}
+```
+
+#### One-Shot Ingestion with `processOnce`
+
+For bulk-ingesting documents, notes, or other static text, use `PropositionPipeline.processOnce`.
+It wraps the text in a `Chunk`, checks dedup, processes, and records — all in one call:
+
+```kotlin
+val pipeline = PropositionPipeline.withExtractor(extractor)
+val historyStore = InMemoryChunkHistoryStore()  // or your persistent implementation
+
+// First call: processes and records
+val result = pipeline.processOnce(
+    text = documentText,
+    sourceId = "doc-123",
+    context = context,
+    historyStore = historyStore,
+)
+
+// Second call with same content: returns null (already processed)
+val duplicate = pipeline.processOnce(
+    text = documentText,
+    sourceId = "doc-123",
+    context = context,
+    historyStore = historyStore,
+)
+assert(duplicate == null)
+```
+
+```java
+// Java — processOnce with dedup
+ChunkPropositionResult result = pipeline.processOnce(
+    documentText, "doc-123", context, historyStore);
+
+// Without dedup (no history store)
+ChunkPropositionResult result = pipeline.processOnce(
+    documentText, "doc-123", context);
+```
+
+#### Incremental Analysis Dedup
+
+For growing sources (conversations, message streams), `AbstractIncrementalAnalyzer` applies
+dedup automatically within its windowed processing. Each window's formatted text is hashed
+and checked against the `ChunkHistoryStore` before processing:
+
+```kotlin
+val analyzer = PropositionIncrementalAnalyzer(
+    pipeline = pipeline,
+    historyStore = historyStore,
+    formatter = MessageFormatter.INSTANCE,
+    config = WindowConfig(windowSize = 20, overlapSize = 2, triggerInterval = 4),
+    contentHasher = Sha256ContentHasher,  // pluggable
+)
+
+// Returns null if window content was already processed
+val result = analyzer.analyze(source, context)
+```
+
+#### ChunkHistoryStore
+
+The `ChunkHistoryStore` interface tracks what has been processed:
+
+| Method | Description |
+|--------|-------------|
+| `isProcessed(contentHash)` | Check if content with this hash has been processed |
+| `recordProcessed(record)` | Record a processed chunk (hash, sourceId, indices, timestamp) |
+| `getLastBookmark(sourceId)` | Get the last analysis position for a source |
+
+`InMemoryChunkHistoryStore` is provided for testing. Production implementations should
+persist to a database for cross-session dedup.
+
 ### Mention Filtering
 
 Mention filtering provides quality control for entity mentions extracted by the LLM. It prevents
@@ -1617,6 +1744,8 @@ com.embabel.dice
 │
 ├── common/                   # Shared types
 │   ├── SourceAnalysisContext # Context for all DICE operations
+│   ├── ContentHasher         # fun interface for content hashing (dedup)
+│   ├── Sha256ContentHasher   # Default SHA-256 implementation
 │   ├── EntityResolver        # Entity disambiguation interface
 │   ├── KnownEntity           # Pre-defined entity for hints
 │   ├── Relation              # Predicate with KnowledgeType

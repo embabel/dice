@@ -16,16 +16,21 @@
 package com.embabel.dice.pipeline
 
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.dice.common.ContentHasher
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.filter.MentionFilter
 import com.embabel.dice.common.resolver.ChainedEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
 import com.embabel.dice.common.resolver.KnownEntityResolver
+import com.embabel.dice.common.support.Sha256ContentHasher
+import com.embabel.dice.incremental.ChunkHistoryStore
+import com.embabel.dice.incremental.ProcessedChunkRecord
 import com.embabel.dice.proposition.PropositionExtractor
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.revision.PropositionReviser
 import com.embabel.dice.proposition.revision.RevisionResult
 import org.slf4j.LoggerFactory
+import java.time.Instant
 
 /**
  * Pipeline for extracting propositions from chunks.
@@ -161,6 +166,48 @@ class PropositionPipeline private constructor(
             propositions = propositions,
             revisionResults = revisionResults,
         )
+    }
+
+    /**
+     * Process a text once, with hash-based deduplication.
+     * Ideal for one-shot ingestion of documents, notes, or other static text.
+     *
+     * @param text The text to process
+     * @param sourceId Identifier for the source (used for chunk metadata and bookmark tracking)
+     * @param context Analysis context with schema, entity resolver, etc.
+     * @param historyStore Tracks what's been processed; null to skip dedup
+     * @param contentHasher Strategy for computing content hashes
+     * @return Result with propositions and entities, or null if already processed
+     */
+    @JvmOverloads
+    fun processOnce(
+        text: String,
+        sourceId: String,
+        context: SourceAnalysisContext,
+        historyStore: ChunkHistoryStore? = null,
+        contentHasher: ContentHasher = Sha256ContentHasher,
+    ): ChunkPropositionResult? {
+        if (historyStore != null) {
+            val hash = contentHasher.hash(text)
+            if (historyStore.isProcessed(hash)) {
+                logger.debug("Content already processed (hash: {})", hash.take(8))
+                return null
+            }
+            val chunk = Chunk.Companion.create(text = text, parentId = sourceId)
+            val result = processChunk(chunk, context)
+            historyStore.recordProcessed(
+                ProcessedChunkRecord(
+                    contentHash = hash,
+                    sourceId = sourceId,
+                    startIndex = 0,
+                    endIndex = 1,
+                    processedAt = Instant.now(),
+                )
+            )
+            return result
+        }
+        val chunk = Chunk.Companion.create(text = text, parentId = sourceId)
+        return processChunk(chunk, context)
     }
 
     /**

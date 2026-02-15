@@ -32,6 +32,7 @@ import com.embabel.agent.core.DynamicType
 import com.embabel.agent.core.ValidatedPropertyDefinition
 import com.embabel.dice.common.validation.NoVagueReferences
 import com.embabel.dice.common.validation.LengthConstraint
+import com.embabel.dice.incremental.InMemoryChunkHistoryStore
 import com.embabel.dice.proposition.*
 import com.embabel.dice.text2graph.builder.Animal
 import com.embabel.dice.text2graph.builder.Person
@@ -1136,6 +1137,114 @@ class PropositionPipelineTest {
 
             // Should have 0 HAS_ENTITY (unresolved)
             assertEquals(0, entityRepo.relationshipsOfType(NamedEntityData.HAS_ENTITY).size)
+        }
+    }
+
+    @Nested
+    inner class ProcessOnceTests {
+
+        @Test
+        fun `processes text and returns result`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+            )
+
+            val result = pipeline.processOnce(
+                text = "mentions:Alice,Bob",
+                sourceId = "doc-1",
+                context = context,
+            )
+
+            assertNotNull(result)
+            assertEquals(1, result!!.propositions.size)
+            assertEquals(2, result.newEntities().size)
+        }
+
+        @Test
+        fun `returns null for already processed content`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+            val historyStore = InMemoryChunkHistoryStore()
+
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+            )
+
+            val first = pipeline.processOnce(
+                text = "mentions:Alice",
+                sourceId = "doc-1",
+                context = context,
+                historyStore = historyStore,
+            )
+            assertNotNull(first)
+
+            val second = pipeline.processOnce(
+                text = "mentions:Alice",
+                sourceId = "doc-1",
+                context = context,
+                historyStore = historyStore,
+            )
+            assertNull(second, "Should return null for already processed content")
+        }
+
+        @Test
+        fun `works without history store`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+            )
+
+            // Without history store, same text can be processed multiple times
+            val first = pipeline.processOnce(
+                text = "mentions:Alice",
+                sourceId = "doc-1",
+                context = context,
+            )
+            val second = pipeline.processOnce(
+                text = "mentions:Alice",
+                sourceId = "doc-1",
+                context = context,
+            )
+
+            assertNotNull(first)
+            assertNotNull(second)
+        }
+
+        @Test
+        fun `records processing in history store`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+            val historyStore = InMemoryChunkHistoryStore()
+
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+            )
+
+            pipeline.processOnce(
+                text = "mentions:Alice",
+                sourceId = "doc-1",
+                context = context,
+                historyStore = historyStore,
+            )
+
+            // Verify the bookmark was recorded
+            val bookmark = historyStore.getLastBookmark("doc-1")
+            assertNotNull(bookmark)
+            assertEquals("doc-1", bookmark!!.sourceId)
+            assertEquals(1, bookmark.endIndex)
         }
     }
 

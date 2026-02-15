@@ -16,9 +16,10 @@
 package com.embabel.dice.incremental
 
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.dice.common.ContentHasher
 import com.embabel.dice.common.SourceAnalysisContext
+import com.embabel.dice.common.support.Sha256ContentHasher
 import org.slf4j.LoggerFactory
-import java.security.MessageDigest
 import java.time.Instant
 import kotlin.math.max
 import kotlin.math.min
@@ -41,6 +42,7 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
     protected val historyStore: ChunkHistoryStore,
     protected val formatter: IncrementalSourceFormatter<T>,
     protected val config: WindowConfig = WindowConfig(),
+    protected val contentHasher: ContentHasher = Sha256ContentHasher,
 ) : IncrementalAnalyzer<T, R> {
 
     private val logger = LoggerFactory.getLogger(javaClass)
@@ -123,7 +125,7 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         val text = formatter.format(items)
 
         // Check if already processed (hash dedup)
-        val contentHash = sha256(text)
+        val contentHash = contentHasher.hash(text)
         if (historyStore.isProcessed(contentHash)) {
             logger.debug("Content already processed (hash: {})", contentHash.take(8))
             return null
@@ -159,11 +161,4 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         return result
     }
 
-    companion object {
-        internal fun sha256(text: String): String {
-            val digest = MessageDigest.getInstance("SHA-256")
-            val hash = digest.digest(text.toByteArray(Charsets.UTF_8))
-            return hash.joinToString("") { "%02x".format(it) }
-        }
-    }
 }
