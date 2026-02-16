@@ -326,6 +326,93 @@ class PropositionReviserTest {
     }
 
     @Nested
+    inner class DecayAdjustmentTests {
+
+        private lateinit var repository: TestPropositionRepository
+        private lateinit var reviser: TestPropositionReviser
+
+        @BeforeEach
+        fun setup() {
+            repository = TestPropositionRepository()
+            reviser = TestPropositionReviser()
+        }
+
+        @Test
+        fun `contradicted proposition gets accelerated decay`() {
+            val existing = createProposition("Alice is 30 years old", confidence = 0.8, decay = 0.1)
+            repository.save(existing)
+
+            reviser.nextClassification = listOf(
+                ClassifiedProposition(existing, PropositionRelation.CONTRADICTORY, 0.1, "Different age")
+            )
+
+            val newProp = createProposition("Alice is 35 years old", confidence = 0.9)
+            val result = reviser.revise(newProp, repository)
+
+            assertTrue(result is RevisionResult.Contradicted)
+            val contradicted = result as RevisionResult.Contradicted
+            // Decay should increase by 0.15: 0.1 + 0.15 = 0.25
+            assertEquals(0.25, contradicted.original.decay, 0.001)
+            assertTrue(contradicted.original.decay > existing.decay)
+        }
+
+        @Test
+        fun `contradicted proposition with zero decay gets nonzero decay`() {
+            val existing = createProposition("Alice has 2 cats", confidence = 0.8, decay = 0.0)
+            repository.save(existing)
+
+            reviser.nextClassification = listOf(
+                ClassifiedProposition(existing, PropositionRelation.CONTRADICTORY, 0.1, "Different count")
+            )
+
+            val newProp = createProposition("Alice has 3 cats", confidence = 0.9)
+            val result = reviser.revise(newProp, repository)
+
+            assertTrue(result is RevisionResult.Contradicted)
+            val contradicted = result as RevisionResult.Contradicted
+            assertEquals(0.15, contradicted.original.decay, 0.001)
+        }
+
+        @Test
+        fun `merged proposition gets slowed decay`() {
+            val existing = createProposition("Alice works at Google", confidence = 0.7, decay = 0.2)
+            repository.save(existing)
+
+            reviser.nextClassification = listOf(
+                ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.95, "Same fact")
+            )
+
+            val newProp = createProposition("Alice is employed at Google", confidence = 0.8)
+            val result = reviser.revise(newProp, repository)
+
+            assertTrue(result is RevisionResult.Merged)
+            val merged = result as RevisionResult.Merged
+            // Decay should slow: 0.2 * 0.7 = 0.14
+            assertEquals(0.14, merged.revised.decay, 0.001)
+            assertTrue(merged.revised.decay < existing.decay)
+        }
+
+        @Test
+        fun `reinforced proposition gets slightly slowed decay`() {
+            val existing = createProposition("Alice likes Kotlin", confidence = 0.6, decay = 0.2)
+            repository.save(existing)
+
+            reviser.nextClassification = listOf(
+                ClassifiedProposition(existing, PropositionRelation.SIMILAR, 0.75, "Related")
+            )
+
+            val newProp = createProposition("Alice enjoys programming in Kotlin", confidence = 0.8)
+            val result = reviser.revise(newProp, repository)
+
+            assertTrue(result is RevisionResult.Reinforced)
+            val reinforced = result as RevisionResult.Reinforced
+            // Decay should slow: 0.2 * 0.85 = 0.17
+            assertEquals(0.17, reinforced.revised.decay, 0.001)
+            assertTrue(reinforced.revised.decay < existing.decay)
+        }
+    }
+
+    @Nested
     inner class BatchClassificationTests {
 
         @Test
@@ -577,9 +664,11 @@ class TestPropositionReviser(
             contradictory != null -> {
                 val original = repository.findById(contradictory.proposition.id) ?: contradictory.proposition
                 val reducedConfidence = (original.confidence * 0.3).coerceAtLeast(0.05)
+                val acceleratedDecay = (original.decay + 0.15).coerceAtMost(1.0)
                 val contradicted = original
                     .withConfidence(reducedConfidence)
                     .withStatus(PropositionStatus.CONTRADICTED)
+                    .copy(decay = acceleratedDecay)
                 repository.save(contradicted)
                 repository.save(newProposition)
                 RevisionResult.Contradicted(contradicted, newProposition)
@@ -655,7 +744,9 @@ class TestPropositionReviser(
                         contradictory != null -> {
                             val original = repository.findById(contradictory.proposition.id) ?: contradictory.proposition
                             val reducedConfidence = (original.confidence * 0.3).coerceAtLeast(0.05)
+                            val acceleratedDecay = (original.decay + 0.15).coerceAtMost(1.0)
                             val contradicted = original.withConfidence(reducedConfidence).withStatus(PropositionStatus.CONTRADICTED)
+                                .copy(decay = acceleratedDecay)
                             repository.save(contradicted)
                             repository.save(prop)
                             RevisionResult.Contradicted(contradicted, prop)
@@ -697,22 +788,24 @@ class TestPropositionReviser(
 
     private fun mergePropositions(existing: Proposition, new: Proposition): Proposition {
         val boostedConfidence = (existing.confidence + new.confidence * 0.3).coerceAtMost(0.99)
-        val avgDecay = (existing.decay + new.decay) / 2
+        val slowedDecay = (existing.decay * 0.7).coerceAtLeast(0.0)
         val combinedGrounding = (existing.grounding + new.grounding).distinct()
 
         return existing.copy(
             confidence = boostedConfidence,
-            decay = avgDecay,
+            decay = slowedDecay,
             grounding = combinedGrounding,
         )
     }
 
     private fun reinforceProposition(existing: Proposition, new: Proposition): Proposition {
         val boostedConfidence = (existing.confidence + new.confidence * 0.1).coerceAtMost(0.95)
+        val slowedDecay = (existing.decay * 0.85).coerceAtLeast(0.0)
         val combinedGrounding = (existing.grounding + new.grounding).distinct()
 
         return existing.copy(
             confidence = boostedConfidence,
+            decay = slowedDecay,
             grounding = combinedGrounding,
         )
     }

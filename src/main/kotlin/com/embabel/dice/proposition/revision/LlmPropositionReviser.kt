@@ -385,12 +385,15 @@ data class LlmPropositionReviser(
                 val original = repository.findById(contradictory.proposition.id)
                     ?: contradictory.proposition
                 val reducedConfidence = (original.confidence * 0.3).coerceAtLeast(0.05)
+                // Accelerate decay so contradicted propositions fade faster
+                val acceleratedDecay = (original.decay + 0.15).coerceAtMost(1.0)
                 val contradicted = original
                     .withConfidence(reducedConfidence)
                     .withStatus(PropositionStatus.CONTRADICTED)
+                    .copy(decay = acceleratedDecay)
                 logger.debug(
-                    "Contradicted: {} (conf: {}) vs new: {}",
-                    original.text, reducedConfidence, newProposition.text
+                    "Contradicted: {} (conf: {}, decay: {}) vs new: {}",
+                    original.text, reducedConfidence, acceleratedDecay, newProposition.text
                 )
                 RevisionResult.Contradicted(contradicted, newProposition)
             }
@@ -484,14 +487,14 @@ data class LlmPropositionReviser(
     private fun mergePropositions(existing: Proposition, new: Proposition): Proposition {
         // Boost confidence when we see the same information again
         val boostedConfidence = (existing.confidence + new.confidence * 0.3).coerceAtMost(0.99)
-        // Average the decay rates
-        val avgDecay = (existing.decay + new.decay) / 2
+        // Slow decay — repeated confirmation means the fact is durable
+        val slowedDecay = (existing.decay * 0.7).coerceAtLeast(0.0)
         // Combine grounding
         val combinedGrounding = (existing.grounding + new.grounding).distinct()
 
         return existing.copy(
             confidence = boostedConfidence,
-            decay = avgDecay,
+            decay = slowedDecay,
             grounding = combinedGrounding,
             revised = Instant.now(),
         )
@@ -504,11 +507,14 @@ data class LlmPropositionReviser(
     private fun reinforceProposition(existing: Proposition, new: Proposition): Proposition {
         // Smaller confidence boost for similar (not identical)
         val boostedConfidence = (existing.confidence + new.confidence * 0.1).coerceAtMost(0.95)
+        // Slow decay slightly — corroborating evidence extends shelf life
+        val slowedDecay = (existing.decay * 0.85).coerceAtLeast(0.0)
         // Combine grounding
         val combinedGrounding = (existing.grounding + new.grounding).distinct()
 
         return existing.copy(
             confidence = boostedConfidence,
+            decay = slowedDecay,
             grounding = combinedGrounding,
             revised = Instant.now(),
         )

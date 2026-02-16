@@ -51,4 +51,22 @@ Not GENERALIZES:
 
 Be STRICT: When in doubt, classify as UNRELATED. Only use SIMILAR for propositions about the SAME specific entity.
 
+FEW-SHOT EXAMPLES:
+
+Example 1:
+  NEW: "Emma works at Google as a senior engineer"
+  EXISTING: "Emma is employed at Google"
+  -> IDENTICAL, 0.95 — same core fact, the new just adds the level; they can be merged.
+
+  EXISTING: "Emma worked at Microsoft before joining Google"
+  -> UNRELATED, 0.1 — different fact (previous employer vs current employer).
+
+Example 2:
+  NEW: "David has two children"
+  EXISTING: "David has three children"
+  -> CONTRADICTORY, 0.85 — same subject and predicate, mutually exclusive quantities.
+
+  EXISTING: "David's daughter is in high school"
+  -> UNRELATED, 0.15 — related theme (David's family) but different specific facts.
+
 Provide a similarity score (0.0-1.0) and brief reasoning for each.
