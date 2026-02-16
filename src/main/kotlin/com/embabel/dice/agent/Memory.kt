@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.agent
 
+import com.embabel.agent.api.reference.LlmReference
 import com.embabel.agent.api.tool.Tool
 import com.embabel.agent.core.ContextId
 import com.embabel.common.core.types.TextSimilaritySearchRequest
@@ -43,8 +44,12 @@ import java.util.function.UnaryOperator
  *
  * The description dynamically reflects how many memories are available.
  *
+ * Implements [LlmReference] so that key memories are surfaced directly in the LLM system prompt
+ * (via [contribution]) rather than buried in tool metadata. This ensures the LLM can reason
+ * about known facts without needing a tool call.
+ *
  * Supports a two-tier retrieval strategy:
- * 1. **Eager**: Key memories are preloaded into the description, making them
+ * 1. **Eager**: Key memories are preloaded into the system prompt via [contribution], making them
  *    immediately visible to the LLM with no tool call overhead. Three eager modes are available:
  *    - [withEagerSearchAbout]: Preload by vector similarity to arbitrary text (e.g., recent conversation)
  *    - [withEagerQuery]: Preload by structured query (e.g., top-N by confidence)
@@ -108,11 +113,14 @@ data class Memory @JvmOverloads constructor(
     private val eagerTopicSearch: Int? = null,
     private val eagerSearchAbout: String? = null,
     private val eagerSearchAboutLimit: Int = DEFAULT_LIMIT,
-) : Tool {
+) : Tool, LlmReference {
 
     private val logger = LoggerFactory.getLogger(Memory::class.java)
 
-    val name: String = NAME
+    override val name: String = NAME
+
+    override val description: String
+        get() = "Memories about $topic"
 
     /**
      * Set the topic description for the memories.
@@ -208,36 +216,50 @@ data class Memory @JvmOverloads constructor(
         return (aboutMemories + topicMemories + queryMemories).filter { seen.add(it.id) }
     }
 
-    val description: String
+    // -- LlmReference implementation --
+
+    override fun notes(): String = "Use when: $useWhen"
+
+    override fun tools(): List<Tool> = listOf(this)
+
+    override fun contribution(): String {
+        val memoryCount = repository.query(baseQuery()).size
+        val eagerMemories = loadEagerMemories()
+
+        return buildString {
+            appendLine("Reference: $name")
+            appendLine("Description: $description. $memoryCount memories available.")
+            if (eagerMemories.isNotEmpty()) {
+                appendLine()
+                appendLine("Key memories about $topic:")
+                eagerMemories.forEachIndexed { index, memory ->
+                    appendLine("${index + 1}. ${memory.text}")
+                }
+                if (eagerMemories.size < memoryCount) {
+                    appendLine("[${memoryCount - eagerMemories.size} more retrievable via the $NAME tool]")
+                }
+            }
+            appendLine()
+            append("Notes: ${notes()}")
+        }.trimEnd()
+    }
+
+    /**
+     * Tool description — lean, without key memories (those are in [contribution]).
+     */
+    private val toolDescription: String
         get() {
             val memoryCount = repository.query(baseQuery()).size
             logger.info(
                 "Found {} memories > {} confidence in context {}", memoryCount, minConfidence,
                 contextId
             )
-
             val status = when (memoryCount) {
                 0 -> "No memories stored yet."
                 1 -> "1 memory available."
                 else -> "$memoryCount memories available."
             }
-
-            val eagerMemories = loadEagerMemories()
-
-            return buildString {
-                appendLine("Search memories about $topic. $status")
-                append("Use when: $useWhen")
-                if (eagerMemories.isNotEmpty()) {
-                    appendLine()
-                    appendLine("Key memories:")
-                    eagerMemories.forEachIndexed { index, memory ->
-                        appendLine("${index + 1}. ${memory.text}")
-                    }
-                    if (eagerMemories.size < memoryCount) {
-                        append("[retrievable ${eagerMemories.size + 1}-$memoryCount]")
-                    }
-                }
-            }.trimEnd()
+            return "Search memories about $topic. $status Use when: $useWhen"
         }
 
     /**
@@ -345,7 +367,7 @@ data class Memory @JvmOverloads constructor(
     override val definition: Tool.Definition by lazy {
         Tool.Definition(
             name = NAME,
-            description = description,
+            description = toolDescription,
             inputSchema = Tool.InputSchema.of(
                 Tool.Parameter.string("topic", "Search memories by topic (semantic similarity)", required = false),
                 Tool.Parameter.string("keyword", "Search memories containing this keyword (exact text match)", required = false),

@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.agent
 
+import com.embabel.agent.api.reference.LlmReference
 import com.embabel.agent.api.tool.Tool
 import com.embabel.agent.core.ContextId
 import com.embabel.common.core.types.SimilarityResult
@@ -137,27 +138,29 @@ class MemoryTest {
     }
 
     @Nested
-    inner class DynamicDescriptionTests {
+    inner class ContributionTests {
 
         @Test
-        fun `description shows zero memories when empty`() {
+        fun `contribution shows zero memories when empty`() {
             every { repository.query(any()) } returns emptyList()
 
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
-            assertTrue(memory.description.contains("No memories"), memory.description)
+            val contribution = memory.contribution()
+            assertTrue(contribution.contains("0 memories available"), contribution)
         }
 
         @Test
-        fun `description shows singular for one memory`() {
+        fun `contribution shows singular for one memory`() {
             every { repository.query(any()) } returns listOf(createProposition("test"))
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
-            assertTrue(memory.description.contains("1 memory available"), memory.description)
+            val contribution = memory.contribution()
+            assertTrue(contribution.contains("1 memories available"), contribution)
         }
 
         @Test
-        fun `description shows count for multiple memories`() {
+        fun `contribution shows count for multiple memories`() {
             every { repository.query(any()) } returns listOf(
                 createProposition("memory 1"),
                 createProposition("memory 2"),
@@ -167,11 +170,12 @@ class MemoryTest {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            assertTrue(memory.description.contains("3 memories available"), memory.description)
+            val contribution = memory.contribution()
+            assertTrue(contribution.contains("3 memories available"), contribution)
         }
 
         @Test
-        fun `description includes eager memories when configured`() {
+        fun `contribution includes eager memories when configured`() {
             val eagerMemories = listOf(
                 createProposition("User likes jazz music"),
                 createProposition("User works at Acme Corp"),
@@ -182,33 +186,42 @@ class MemoryTest {
                 .withRepository(repository)
                 .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(2) }
 
-            val description = memory.description
-            assertTrue(description.contains("Key memories:"), description)
-            assertTrue(description.contains("1. User likes jazz music"), description)
-            assertTrue(description.contains("2. User works at Acme Corp"), description)
+            val contribution = memory.contribution()
+            assertTrue(contribution.contains("Key memories"), contribution)
+            assertTrue(contribution.contains("1. User likes jazz music"), contribution)
+            assertTrue(contribution.contains("2. User works at Acme Corp"), contribution)
         }
 
         @Test
-        fun `description omits eager section when no memories match`() {
+        fun `contribution omits eager section when no memories match`() {
             every { repository.query(any()) } returns emptyList()
 
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
                 .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
 
-            val description = memory.description
-            assertFalse(description.contains("Key memories:"), description)
+            val contribution = memory.contribution()
+            assertFalse(contribution.contains("Key memories"), contribution)
         }
 
         @Test
-        fun `description omits eager section when not configured`() {
+        fun `contribution omits eager section when not configured`() {
             every { repository.query(any()) } returns listOf(createProposition("test"))
 
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            val description = memory.description
-            assertFalse(description.contains("Key memories:"), description)
+            val contribution = memory.contribution()
+            assertFalse(contribution.contains("Key memories"), contribution)
+        }
+
+        @Test
+        fun `description returns brief summary`() {
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .withTopic("music preferences")
+
+            assertEquals("Memories about music preferences", memory.description)
         }
     }
 
@@ -461,7 +474,7 @@ class MemoryTest {
         }
 
         @Test
-        fun `definition description matches dynamic description`() {
+        fun `definition description contains memory count`() {
             every { repository.query(any()) } returns listOf(
                 createProposition("memory 1"),
                 createProposition("memory 2"),
@@ -470,9 +483,7 @@ class MemoryTest {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
 
-            // Both should contain the memory count
             assertTrue(memory.definition.description.contains("2 memories available"))
-            assertTrue(memory.description.contains("2 memories available"))
         }
 
         @Test
@@ -571,7 +582,7 @@ class MemoryTest {
         }
 
         @Test
-        fun `narrowedBy applies to description count query`() {
+        fun `narrowedBy applies to contribution count query`() {
             val queries = mutableListOf<PropositionQuery>()
             every { repository.query(capture(queries)) } returns emptyList()
 
@@ -579,8 +590,8 @@ class MemoryTest {
                 .withRepository(repository)
                 .narrowedBy { it.withEntityId("alice-123") }
 
-            // Accessing description triggers the count query
-            memory.description
+            // Accessing contribution triggers the count query
+            memory.contribution()
 
             assertTrue(queries.any { it.entityId == "alice-123" })
         }
@@ -595,8 +606,8 @@ class MemoryTest {
                 .narrowedBy { it.withEntityId("alice-123") }
                 .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
 
-            // Accessing description triggers eager loading
-            memory.description
+            // Accessing contribution triggers eager loading
+            memory.contribution()
 
             val eagerQuery = queries.first {
                 it.orderBy == PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC && it.limit == 5
@@ -618,8 +629,8 @@ class MemoryTest {
                 .withTopic("music")
                 .withEagerTopicSearch(3)
 
-            // Accessing description triggers eager topic search
-            memory.description
+            // Accessing contribution triggers eager topic search
+            memory.contribution()
 
             assertEquals("alice-123", querySlot.captured.entityId)
         }
@@ -734,7 +745,7 @@ class MemoryTest {
     inner class EagerSearchAboutTests {
 
         @Test
-        fun `description includes eager search about memories`() {
+        fun `contribution includes eager search about memories`() {
             val memories = listOf(
                 createProposition("User plays guitar since age 12"),
                 createProposition("User is in a band called The Resets"),
@@ -748,10 +759,10 @@ class MemoryTest {
                 .withRepository(repository)
                 .withEagerSearchAbout("What music stuff am I into?")
 
-            val description = memory.description
-            assertTrue(description.contains("Key memories:"), description)
-            assertTrue(description.contains("User plays guitar since age 12"), description)
-            assertTrue(description.contains("User is in a band called The Resets"), description)
+            val contribution = memory.contribution()
+            assertTrue(contribution.contains("Key memories"), contribution)
+            assertTrue(contribution.contains("User plays guitar since age 12"), contribution)
+            assertTrue(contribution.contains("User is in a band called The Resets"), contribution)
         }
 
         @Test
@@ -766,7 +777,7 @@ class MemoryTest {
                 .withRepository(repository)
                 .withEagerSearchAbout("Tell me about my hobbies")
 
-            memory.description
+            memory.contribution()
 
             assertEquals("Tell me about my hobbies", requestSlot.captured.query)
         }
@@ -783,7 +794,7 @@ class MemoryTest {
                 .withRepository(repository)
                 .withEagerSearchAbout("hobbies", 7)
 
-            memory.description
+            memory.contribution()
 
             assertEquals(7, requestSlot.captured.topK)
         }
@@ -800,7 +811,7 @@ class MemoryTest {
                 .withRepository(repository)
                 .withEagerSearchAbout("hobbies")
 
-            memory.description
+            memory.contribution()
 
             assertEquals(ContextId("my-context"), querySlot.captured.contextId)
         }
@@ -818,7 +829,7 @@ class MemoryTest {
                 .narrowedBy { it.withEntityId("alice-123") }
                 .withEagerSearchAbout("hobbies")
 
-            memory.description
+            memory.contribution()
 
             assertEquals("alice-123", querySlot.captured.entityId)
         }
@@ -836,8 +847,8 @@ class MemoryTest {
                 .withRepository(repository)
                 .withEagerSearchAbout("music")
 
-            // Trigger eager loading
-            memory.description
+            // Trigger eager loading via contribution
+            memory.contribution()
 
             // listAll should exclude the eagerly loaded proposition
             val result = memory.call("{}")
@@ -860,9 +871,9 @@ class MemoryTest {
                 .withEagerSearchAbout("music")
                 .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
 
-            val description = memory.description
-            assertTrue(description.contains("User plays guitar"), description)
-            assertTrue(description.contains("User works at Acme"), description)
+            val contribution = memory.contribution()
+            assertTrue(contribution.contains("User plays guitar"), contribution)
+            assertTrue(contribution.contains("User works at Acme"), contribution)
         }
 
         @Test
@@ -885,8 +896,53 @@ class MemoryTest {
                 .withRepository(repository)
                 .withEagerSearchAbout("nonexistent topic")
 
-            val description = memory.description
-            assertFalse(description.contains("Key memories:"), description)
+            val contribution = memory.contribution()
+            assertFalse(contribution.contains("Key memories"), contribution)
+        }
+    }
+
+    @Nested
+    inner class LlmReferenceTests {
+
+        @Test
+        fun `Memory implements LlmReference`() {
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            assertTrue(memory is LlmReference)
+        }
+
+        @Test
+        fun `tools returns this memory as a tool`() {
+            every { repository.query(any()) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            val tools = memory.tools()
+            assertEquals(1, tools.size)
+            assertSame(memory, tools[0])
+        }
+
+        @Test
+        fun `notes contains use when guidance`() {
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+                .withUseWhen("asking about preferences")
+
+            assertTrue(memory.notes().contains("asking about preferences"))
+        }
+
+        @Test
+        fun `contribution includes reference name and description`() {
+            every { repository.query(any()) } returns emptyList()
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(repository)
+
+            val contribution = memory.contribution()
+            assertTrue(contribution.contains("Reference: memory"), contribution)
+            assertTrue(contribution.contains("Description:"), contribution)
         }
     }
 

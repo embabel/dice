@@ -1354,11 +1354,23 @@ can_consult(Person, Expert, Topic) :-
 ### Agent Memory
 
 The `Memory` class gives agents access to their stored memories (propositions) within a context.
-It implements `Tool` directly — a single tool that the LLM calls with optional parameters
-to search memories. It provides a **two-tier retrieval strategy**:
+It implements `LlmReference` — surfacing key memories directly in the LLM system prompt
+and exposing a search tool for additional retrieval.
 
-1. **Eager**: Key memories are preloaded into the tool description, making them
-   immediately visible to the LLM with no tool call overhead. Three eager modes are available:
+#### Why LlmReference, not just Tool?
+
+Key memories need to be in the system prompt, not buried in tool metadata. When memories are
+only in a tool description, LLMs treat them as instructions for *when to call the tool* — they
+don't reason about the facts contained within. By implementing `LlmReference`:
+- **`contribution()`** injects key memories into the system prompt as first-class facts
+  the LLM can reason about directly
+- **`tools()`** exposes the memory search tool for on-demand retrieval of additional memories
+- The LLM sees key memories immediately and can call the tool for more when needed
+
+This is a **two-tier retrieval strategy**:
+
+1. **Eager** (via `contribution()`): Key memories are preloaded into the system prompt, making them
+   immediately visible to the LLM as authoritative facts. Three eager modes are available:
    - `withEagerSearchAbout(text, limit)`: Preloads memories by vector similarity to arbitrary text (e.g., recent conversation content)
    - `withEagerTopicSearch(limit)`: Preloads memories by vector similarity to the `topic`
    - `withEagerQuery { ... }`: Preloads memories by structured query (e.g., top-N by confidence)
@@ -1367,8 +1379,8 @@ to search memories. It provides a **two-tier retrieval strategy**:
    when the eager set isn't sufficient. Tool results automatically deduplicate against
    eagerly loaded memories, so the LLM always receives new information.
 
-This means the most important memories are always available (zero latency), while the full memory
-store remains searchable on demand.
+This means the most important memories are always available (zero latency, in the prompt), while
+the full memory store remains searchable on demand.
 
 #### Search Parameters
 
@@ -1443,7 +1455,9 @@ val memory = Memory.forContext(contextId)
     .withProjector(memoryProjector)
     .withEagerSearchAbout(recentConversationText, 10)
 
-ai.withTool(memory).withTools(memory).respond(...)
+// Use as a reference — key memories go into the system prompt,
+// the search tool is automatically added
+ai.withReferences(memory).respond(...)
 ```
 
 ```java
@@ -1457,7 +1471,9 @@ var memory = Memory.forContext(user.currentContext())
         .withProjector(memoryProjector)
         .withEagerSearchAbout(recentContext, 10);
 
-ai.withTool(memory).withTools(memory).respond(...);
+// Use as a reference — contribution() adds key memories to the prompt,
+// tools() provides the search tool
+ai.withReferences(memory).respond(...);
 ```
 
 `withEagerSearchAbout` is the recommended eager mode for chat agents — it uses the actual
@@ -1496,11 +1512,30 @@ val memory = Memory.forContext(contextId)
 | `withTopic(String)` | Describes what these memories are about. Completes the form "memories about _topic_" | `"the user & context"` |
 | `withUseWhen(String)` | Instruction to the LLM for when to use the memory tool | `"whenever you need to recall information about <topic>"` |
 | `withEagerSearchAbout(String, Int)` | Preloads memories by vector similarity to the given text (e.g., recent conversation). Recommended for chat agents | none (disabled) |
-| `withEagerTopicSearch(Int)` | Preloads memories by vector similarity to the `topic` into the description. Tool calls auto-deduplicate against these | none (disabled) |
-| `withEagerQuery(UnaryOperator<PropositionQuery>)` | Preloads key memories by structured query (e.g., top-N by confidence) into the description | none (disabled) |
+| `withEagerTopicSearch(Int)` | Preloads memories by vector similarity to the `topic` into the system prompt. Tool calls auto-deduplicate against these | none (disabled) |
+| `withEagerQuery(UnaryOperator<PropositionQuery>)` | Preloads key memories by structured query (e.g., top-N by confidence) into the system prompt | none (disabled) |
 
 All search modes expose optional `level` and `type` parameters to the LLM, allowing it to filter
 by abstraction level and knowledge type at query time. Both compose with `narrowedBy`.
+
+#### Prompt Template
+
+DICE ships a reusable Jinja template at `prompts/dice/thorough_memory.jinja` that instructs the
+LLM how to use Memory correctly — prioritizing key memories from the system prompt, searching
+thoroughly, and never fabricating information.
+
+Include it in your persona or system prompt:
+
+```jinja
+{% include "dice/thorough_memory" %}
+```
+
+The template covers:
+- Using key memories (already in the prompt) before calling the tool
+- Preferring semantic (`topic`) search over keyword search
+- Never fabricating or guessing — saying "I don't know" when no information is found
+- Searching thoroughly with multiple queries for broad questions
+- Not embellishing beyond what memory returned
 
 ### Memory Projection
 
