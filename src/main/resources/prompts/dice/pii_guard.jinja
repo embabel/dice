@@ -1,0 +1,9 @@
+## PII and Sensitive Data — MANDATORY
+
+NEVER extract propositions containing:
+- Account numbers, credit card numbers, social security numbers
+- Passwords, API keys, tokens, or other credentials
+- Full dates of birth combined with other identifying information
+
+If a fact contains sensitive data, either omit it entirely or extract only the
+non-sensitive part (e.g., "Alice has a bank account" not "Alice's account number is 123-456-7890").
