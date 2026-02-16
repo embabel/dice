@@ -89,6 +89,6 @@ data class MentionKey(
 ) {
     companion object {
         fun from(mention: SuggestedMention): MentionKey =
-            MentionKey(span = mention.span.lowercase().trim(), type = mention.type)
+            MentionKey(span = mention.span.lowercase().trim(), type = mention.type.lowercase().trim())
     }
 }

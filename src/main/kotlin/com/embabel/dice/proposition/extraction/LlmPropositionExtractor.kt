@@ -88,7 +88,7 @@ data class LlmPropositionExtractor(
     private val template: String = "dice/extract_propositions",
     private val examples: List<ObjectCreationExample<PropositionsResult>> = emptyList(),
     override val schemaAdherence: SchemaAdherence = SchemaAdherence.DEFAULT,
-    val existingPropositionsToShow: Int = 10,
+    val existingPropositionsToShow: Int = 100,
     private val propositionRepository: PropositionRepository? = null,
 ) : PropositionExtractor, ExtractionConfig {
 

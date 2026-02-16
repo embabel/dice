@@ -100,16 +100,19 @@ data class ChunkPropositionResult(
         entityResolutions.resolutions
             .filterIsInstance<NewEntity>()
             .map { it.suggested.suggestedEntity }
+            .distinctBy { it.id }
 
     override fun updatedEntities(): List<NamedEntityData> =
         entityResolutions.resolutions
             .filterIsInstance<ExistingEntity>()
             .map { it.existing }
+            .distinctBy { it.id }
 
     override fun referenceOnlyEntities(): List<NamedEntityData> =
         entityResolutions.resolutions
             .filterIsInstance<ReferenceOnlyEntity>()
             .map { it.existing }
+            .distinctBy { it.id }
 
     override fun infoString(verbose: Boolean?, indent: Int): String {
         val prefix = "  ".repeat(indent)

@@ -413,6 +413,91 @@ class PropositionReviserTest {
     }
 
     @Nested
+    inner class CanonicalTextDedupTests {
+
+        private lateinit var repository: TestPropositionRepository
+
+        @BeforeEach
+        fun setup() {
+            // Score below similarity threshold (0.5) so vector search returns empty
+            repository = TestPropositionRepository(defaultScore = 0.3)
+        }
+
+        @Test
+        fun `exact duplicate is merged even when vector search returns empty`() {
+            val existing = createProposition("Alice is a software engineer", confidence = 0.7)
+            repository.save(existing)
+
+            val reviser = LlmPropositionReviser(
+                llmOptions = io.mockk.mockk(),
+                ai = io.mockk.mockk(),
+            )
+
+            val newProp = createProposition("Alice is a software engineer", confidence = 0.8)
+            val result = reviser.retrieveAndFastPath(newProp, repository)
+
+            assertTrue(result is RevisionResult.Merged, "Expected Merged but got ${result::class.simpleName}")
+            val merged = result as RevisionResult.Merged
+            assertEquals(existing.id, merged.original.id)
+            assertTrue(merged.revised.confidence > existing.confidence)
+        }
+
+        @Test
+        fun `canonical match ignores punctuation and case`() {
+            val existing = createProposition("Alice is a software engineer.", confidence = 0.7)
+            repository.save(existing)
+
+            val reviser = LlmPropositionReviser(
+                llmOptions = io.mockk.mockk(),
+                ai = io.mockk.mockk(),
+            )
+
+            val newProp = createProposition("Alice is a Software Engineer", confidence = 0.8)
+            val result = reviser.retrieveAndFastPath(newProp, repository)
+
+            assertTrue(result is RevisionResult.Merged, "Expected Merged but got ${result::class.simpleName}")
+        }
+
+        @Test
+        fun `different text is not merged when vector search is empty`() {
+            val existing = createProposition("Alice is a software engineer", confidence = 0.7)
+            repository.save(existing)
+
+            val reviser = LlmPropositionReviser(
+                llmOptions = io.mockk.mockk(),
+                ai = io.mockk.mockk(),
+            )
+
+            val newProp = createProposition("Bob is a designer", confidence = 0.8)
+            val result = reviser.retrieveAndFastPath(newProp, repository)
+
+            assertTrue(result is RevisionResult.New, "Expected New but got ${result::class.simpleName}")
+        }
+
+        @Test
+        fun `canonical match only checks same context`() {
+            val existing = createProposition("Alice is a software engineer", confidence = 0.7)
+            repository.save(existing)
+
+            val reviser = LlmPropositionReviser(
+                llmOptions = io.mockk.mockk(),
+                ai = io.mockk.mockk(),
+            )
+
+            // Different context
+            val newProp = Proposition(
+                contextId = com.embabel.agent.core.ContextId("other-context"),
+                text = "Alice is a software engineer",
+                mentions = emptyList(),
+                confidence = 0.8,
+            )
+            val result = reviser.retrieveAndFastPath(newProp, repository)
+
+            assertTrue(result is RevisionResult.New, "Expected New for different context but got ${result::class.simpleName}")
+        }
+    }
+
+    @Nested
     inner class BatchClassificationTests {
 
         @Test

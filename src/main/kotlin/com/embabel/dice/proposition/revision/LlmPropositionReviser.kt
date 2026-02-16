@@ -193,6 +193,25 @@ data class LlmPropositionReviser(
         newProposition: Proposition,
         repository: PropositionRepository,
     ): Any {
+        // Fast path 1: exact canonical text match — runs before vector search
+        // because it's cheaper (no embedding call) and catches duplicates that
+        // vector indexes miss due to eventual consistency / index lag.
+        val newCanonical = canonicalize(newProposition.text)
+        val contextProps = repository.query(
+            PropositionQuery(
+                contextId = newProposition.contextId,
+                status = PropositionStatus.ACTIVE,
+            )
+        )
+        val canonicalMatch = contextProps.find { canonicalize(it.text) == newCanonical }
+        if (canonicalMatch != null) {
+            val original = repository.findById(canonicalMatch.id) ?: canonicalMatch
+            val merged = mergePropositions(original, newProposition)
+            logger.debug("Canonical text match: {}", newProposition.text.take(60))
+            return RevisionResult.Merged(original, merged)
+        }
+
+        // Fast path 2: vector similarity search
         val similarWithScores = repository.findSimilarWithScores(
             TextSimilaritySearchRequest(
                 query = newProposition.text,
@@ -206,7 +225,7 @@ data class LlmPropositionReviser(
         )
 
         if (similarWithScores.isEmpty()) {
-            logger.debug("New proposition (no similar above {}): {}", similarityThreshold, newProposition.text)
+            logger.debug("New proposition (no canonical or embedding match): {}", newProposition.text)
             return RevisionResult.New(newProposition)
         }
 
@@ -215,17 +234,7 @@ data class LlmPropositionReviser(
             similarWithScores.size, similarityThreshold, newProposition.text.take(50)
         )
 
-        // Fast path: canonical text match
-        val newCanonical = canonicalize(newProposition.text)
-        val canonicalMatch = similarWithScores.find { canonicalize(it.match.text) == newCanonical }
-        if (canonicalMatch != null) {
-            val original = repository.findById(canonicalMatch.match.id) ?: canonicalMatch.match
-            val merged = mergePropositions(original, newProposition)
-            logger.debug("Fast-path identical (canonical match): {}", newProposition.text.take(60))
-            return RevisionResult.Merged(original, merged)
-        }
-
-        // Fast path: auto-merge at high embedding similarity
+        // Fast path 3: auto-merge at high embedding similarity
         val topCandidate = similarWithScores.first()
         if (topCandidate.score >= autoMergeThreshold) {
             val original = repository.findById(topCandidate.match.id) ?: topCandidate.match
