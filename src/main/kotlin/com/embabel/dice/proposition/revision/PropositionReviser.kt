@@ -156,3 +156,18 @@ data class ClassificationItem(
     @param:JsonPropertyDescription("Brief reasoning for this classification")
     val reasoning: String,
 )
+
+/**
+ * Response structure for batch classification of multiple propositions at once.
+ */
+data class BatchClassificationResponse(
+    @param:JsonPropertyDescription("Classification results for each new proposition")
+    val propositions: List<PropositionClassifications> = emptyList(),
+)
+
+data class PropositionClassifications(
+    @param:JsonPropertyDescription("Zero-based index of the new proposition in the batch")
+    val propositionIndex: Int,
+    @param:JsonPropertyDescription("Classifications of each candidate for this proposition")
+    val classifications: List<ClassificationItem> = emptyList(),
+)

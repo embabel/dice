@@ -29,6 +29,15 @@ import java.time.Instant
 import java.util.Locale
 
 /**
+ * Proposition needing LLM classification — produced by [retrieveAndFastPath]
+ * when neither canonical match nor auto-merge can resolve it.
+ */
+internal data class PendingClassification(
+    val newProposition: Proposition,
+    val candidates: List<Proposition>,
+)
+
+/**
  * LLM-based implementation of PropositionReviser.
  * Uses structured output to classify and revise propositions.
  *
@@ -37,8 +46,8 @@ import java.util.Locale
  * val reviser = LlmPropositionReviser
  *     .withLlm(llmOptions)
  *     .withAi(ai)
- *     .withRetrievalTopK(10)
- *     .withMinSimilarity(0.6)
+ *     .withAutoMergeThreshold(0.95)
+ *     .withClassifyBatchSize(15)
  * ```
  *
  * @param llmOptions LLM configuration
@@ -47,6 +56,8 @@ import java.util.Locale
  * @param similarityThreshold Minimum similarity threshold - skip LLM if no candidates above this
  * @param minSimilarityForReinforce Minimum LLM-reported similarity to accept SIMILAR classification (default 0.7)
  * @param decayK Decay constant for time-based confidence reduction
+ * @param autoMergeThreshold Embedding similarity at or above which propositions are auto-merged without LLM. Set to 1.1 to disable.
+ * @param classifyBatchSize Maximum number of propositions to classify in a single LLM call
  */
 data class LlmPropositionReviser(
     private val llmOptions: LlmOptions,
@@ -55,6 +66,8 @@ data class LlmPropositionReviser(
     override val similarityThreshold: Double = 0.5,
     private val minSimilarityForReinforce: Double = 0.7,
     private val decayK: Double = 2.0,
+    private val autoMergeThreshold: Double = 0.95,
+    private val classifyBatchSize: Int = 15,
 ) : PropositionReviser, SimilarityCutoff {
 
     companion object {
@@ -115,28 +128,71 @@ data class LlmPropositionReviser(
         copy(decayK = k)
 
     /**
-     * Deduplicate a batch of propositions by canonical text before revising.
-     * Propositions with identical canonical form are collapsed — only the first
-     * is revised, duplicates are silently dropped (no LLM call, no persistence).
+     * Set the auto-merge threshold. Embedding similarity at or above this
+     * value causes automatic merging without an LLM call. Set to 1.1 to disable.
+     */
+    fun withAutoMergeThreshold(threshold: Double): LlmPropositionReviser =
+        copy(autoMergeThreshold = threshold)
+
+    /**
+     * Set the batch size for LLM classification calls.
+     */
+    fun withClassifyBatchSize(size: Int): LlmPropositionReviser =
+        copy(classifyBatchSize = size)
+
+    /**
+     * Deduplicate a batch of propositions by canonical text, then use fast-path
+     * (canonical match + auto-merge) where possible and batch the rest into
+     * as few LLM calls as possible.
      */
     override fun reviseAll(
         propositions: List<Proposition>,
         repository: PropositionRepository,
     ): List<RevisionResult> {
+        // 1. Canonical text dedup within the batch
         val seen = mutableSetOf<String>()
         val deduped = propositions.filter { seen.add(canonicalize(it.text)) }
         val dropped = propositions.size - deduped.size
         if (dropped > 0) {
             logger.info("Batch dedup: dropped {} of {} propositions with identical canonical text", dropped, propositions.size)
         }
-        return deduped.map { revise(it, repository) }
+
+        // 2. For each proposition: embedding search + fast paths
+        val results = mutableListOf<Pair<Int, RevisionResult>>()
+        val pending = mutableListOf<Pair<Int, PendingClassification>>()
+
+        for ((index, prop) in deduped.withIndex()) {
+            when (val outcome = retrieveAndFastPath(prop, repository)) {
+                is RevisionResult -> results.add(index to outcome)
+                is PendingClassification -> pending.add(index to outcome)
+            }
+        }
+
+        // 3. Batch classify remaining propositions
+        if (pending.isNotEmpty()) {
+            logger.info(
+                "Batch classify: {} of {} propositions need LLM (batch size {})",
+                pending.size, deduped.size, classifyBatchSize
+            )
+            val pendingItems = pending.map { it.second }
+            val batchResults = classifyBatch(pendingItems, repository)
+            for ((i, result) in batchResults.withIndex()) {
+                results.add(pending[i].first to result)
+            }
+        }
+
+        // Return in original order
+        return results.sortedBy { it.first }.map { it.second }
     }
 
-    override fun revise(
+    /**
+     * Retrieve candidates and attempt fast-path resolution.
+     * Returns a [RevisionResult] if resolved, or a [PendingClassification] if LLM is needed.
+     */
+    internal fun retrieveAndFastPath(
         newProposition: Proposition,
         repository: PropositionRepository,
-    ): RevisionResult {
-        // 1. Retrieve similar propositions within the SAME CONTEXT using vector similarity
+    ): Any {
         val similarWithScores = repository.findSimilarWithScores(
             TextSimilaritySearchRequest(
                 query = newProposition.text,
@@ -150,34 +206,152 @@ data class LlmPropositionReviser(
         )
 
         if (similarWithScores.isEmpty()) {
-            // No similar propositions above threshold - return as new (skip LLM call)
             logger.debug("New proposition (no similar above {}): {}", similarityThreshold, newProposition.text)
             return RevisionResult.New(newProposition)
         }
 
-        val similar = similarWithScores.map { it.match }
         logger.debug(
             "Found {} candidates above {} similarity for: {}",
-            similar.size, similarityThreshold, newProposition.text.take(50)
+            similarWithScores.size, similarityThreshold, newProposition.text.take(50)
         )
 
-        // 2. Fast path: check for canonical text match before LLM call
+        // Fast path: canonical text match
         val newCanonical = canonicalize(newProposition.text)
-        val canonicalMatch = similar.find { canonicalize(it.text) == newCanonical }
+        val canonicalMatch = similarWithScores.find { canonicalize(it.match.text) == newCanonical }
         if (canonicalMatch != null) {
-            val original = repository.findById(canonicalMatch.id) ?: canonicalMatch
+            val original = repository.findById(canonicalMatch.match.id) ?: canonicalMatch.match
             val merged = mergePropositions(original, newProposition)
             logger.debug("Fast-path identical (canonical match): {}", newProposition.text.take(60))
             return RevisionResult.Merged(original, merged)
         }
 
-        // 3. Apply decay to retrieved propositions for ranking
-        val decayed = similar.map { prop -> prop.withDecayApplied(decayK) }
+        // Fast path: auto-merge at high embedding similarity
+        val topCandidate = similarWithScores.first()
+        if (topCandidate.score >= autoMergeThreshold) {
+            val original = repository.findById(topCandidate.match.id) ?: topCandidate.match
+            val merged = mergePropositions(original, newProposition)
+            logger.debug(
+                "Auto-merge (embedding score {} >= {}): {}",
+                topCandidate.score, autoMergeThreshold, newProposition.text.take(60)
+            )
+            return RevisionResult.Merged(original, merged)
+        }
 
-        // 4. Classify relationships using LLM
-        val classified = classify(newProposition, decayed)
+        // Need LLM classification — apply decay for ranking
+        val decayed = similarWithScores.map { it.match.withDecayApplied(decayK) }
+        return PendingClassification(newProposition, decayed)
+    }
 
-        // 5. Find the best match
+    /**
+     * Classify a batch of pending propositions using as few LLM calls as possible.
+     * Groups items into chunks of [classifyBatchSize] and makes one LLM call per chunk.
+     */
+    internal fun classifyBatch(
+        items: List<PendingClassification>,
+        repository: PropositionRepository,
+    ): List<RevisionResult> {
+        if (items.isEmpty()) return emptyList()
+
+        // Single item — use the existing single-proposition classify path
+        if (items.size == 1) {
+            val item = items.first()
+            val classified = classify(item.newProposition, item.candidates)
+            return listOf(classifiedToResult(item.newProposition, classified, repository))
+        }
+
+        val allResults = mutableListOf<RevisionResult>()
+
+        for (chunk in items.chunked(classifyBatchSize)) {
+            // Build template data for the batch
+            val itemsData = chunk.map { item ->
+                mapOf(
+                    "newProposition" to mapOf(
+                        "text" to item.newProposition.text,
+                        "confidence" to item.newProposition.confidence,
+                        "reasoning" to (item.newProposition.reasoning ?: "N/A"),
+                    ),
+                    "candidates" to item.candidates.map { p ->
+                        mapOf(
+                            "id" to p.id,
+                            "text" to p.text,
+                            "confidence" to p.effectiveConfidence(),
+                        )
+                    },
+                )
+            }
+
+            val response = ai
+                .withLlm(llmOptions)
+                .withId("classify-propositions-batch")
+                .creating(BatchClassificationResponse::class.java)
+                .fromTemplate(
+                    "dice/classify_propositions_batch",
+                    mapOf("items" to itemsData)
+                )
+
+            logger.info(
+                "Batch classified {} propositions in one LLM call",
+                chunk.size,
+            )
+
+            // Map batch response back to RevisionResults
+            for ((chunkIndex, item) in chunk.withIndex()) {
+                val propClassifications = response.propositions
+                    .find { it.propositionIndex == chunkIndex }
+
+                if (propClassifications == null) {
+                    logger.warn(
+                        "No classification returned for batch index {}, treating as new: {}",
+                        chunkIndex, item.newProposition.text.take(60)
+                    )
+                    allResults.add(RevisionResult.New(item.newProposition))
+                    continue
+                }
+
+                val classified = propClassifications.classifications.mapNotNull { classification ->
+                    val candidate = item.candidates.find { it.id == classification.propositionId }
+                        ?: return@mapNotNull null
+                    ClassifiedProposition(
+                        proposition = candidate,
+                        relation = parseRelation(classification.relation),
+                        similarity = classification.similarity.coerceIn(0.0, 1.0),
+                        reasoning = classification.reasoning,
+                    )
+                }
+
+                allResults.add(classifiedToResult(item.newProposition, classified, repository))
+            }
+        }
+
+        return allResults
+    }
+
+    /**
+     * Single-proposition revise — uses [retrieveAndFastPath] then falls back to
+     * single-proposition LLM classify for backward compatibility.
+     */
+    override fun revise(
+        newProposition: Proposition,
+        repository: PropositionRepository,
+    ): RevisionResult {
+        return when (val outcome = retrieveAndFastPath(newProposition, repository)) {
+            is RevisionResult -> outcome
+            is PendingClassification -> {
+                val classified = classify(outcome.newProposition, outcome.candidates)
+                classifiedToResult(outcome.newProposition, classified, repository)
+            }
+            else -> RevisionResult.New(newProposition)
+        }
+    }
+
+    /**
+     * Convert classified propositions into a RevisionResult.
+     */
+    private fun classifiedToResult(
+        newProposition: Proposition,
+        classified: List<ClassifiedProposition>,
+        repository: PropositionRepository,
+    ): RevisionResult {
         val identical = classified.find { it.relation == PropositionRelation.IDENTICAL }
         val contradictory = classified.find { it.relation == PropositionRelation.CONTRADICTORY }
         val generalizes = classified.filter { it.relation == PropositionRelation.GENERALIZES }
@@ -199,7 +373,6 @@ data class LlmPropositionReviser(
         }
 
         return when {
-            // Handle identical - merge propositions
             identical != null -> {
                 val original = repository.findById(identical.proposition.id)
                     ?: identical.proposition
@@ -208,7 +381,6 @@ data class LlmPropositionReviser(
                 RevisionResult.Merged(original, merged)
             }
 
-            // Handle contradiction - reduce old confidence
             contradictory != null -> {
                 val original = repository.findById(contradictory.proposition.id)
                     ?: contradictory.proposition
@@ -223,7 +395,6 @@ data class LlmPropositionReviser(
                 RevisionResult.Contradicted(contradicted, newProposition)
             }
 
-            // Handle generalizes - it's a higher-level abstraction
             generalizes.isNotEmpty() -> {
                 val generalizedProps = generalizes.map { it.proposition }
                 logger.debug(
@@ -233,7 +404,6 @@ data class LlmPropositionReviser(
                 RevisionResult.Generalized(newProposition, generalizedProps)
             }
 
-            // Handle similar - reinforce/revise
             mostSimilar != null -> {
                 val original = repository.findById(mostSimilar.proposition.id)
                     ?: mostSimilar.proposition
@@ -242,7 +412,6 @@ data class LlmPropositionReviser(
                 RevisionResult.Reinforced(original, revised)
             }
 
-            // No significant match - return as new
             else -> {
                 logger.debug("New proposition (unrelated): {}", newProposition.text)
                 RevisionResult.New(newProposition)
@@ -292,18 +461,21 @@ data class LlmPropositionReviser(
                 ?: return@mapNotNull null
             ClassifiedProposition(
                 proposition = candidate,
-                relation = when (classification.relation.uppercase()) {
-                    "IDENTICAL" -> PropositionRelation.IDENTICAL
-                    "SIMILAR" -> PropositionRelation.SIMILAR
-                    "CONTRADICTORY" -> PropositionRelation.CONTRADICTORY
-                    "GENERALIZES" -> PropositionRelation.GENERALIZES
-                    else -> PropositionRelation.UNRELATED
-                },
+                relation = parseRelation(classification.relation),
                 similarity = classification.similarity.coerceIn(0.0, 1.0),
                 reasoning = classification.reasoning,
             )
         }
     }
+
+    private fun parseRelation(relation: String): PropositionRelation =
+        when (relation.uppercase()) {
+            "IDENTICAL" -> PropositionRelation.IDENTICAL
+            "SIMILAR" -> PropositionRelation.SIMILAR
+            "CONTRADICTORY" -> PropositionRelation.CONTRADICTORY
+            "GENERALIZES" -> PropositionRelation.GENERALIZES
+            else -> PropositionRelation.UNRELATED
+        }
 
     /**
      * Merge two propositions that express identical information.

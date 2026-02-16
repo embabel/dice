@@ -1,23 +1,26 @@
-You are classifying the relationship between a NEW proposition and EXISTING propositions.
+You are classifying relationships between NEW propositions and EXISTING propositions.
 
-NEW PROPOSITION:
-Text: "{{ newProposition.text }}"
-Confidence: {{ newProposition.confidence }}
-Reasoning: {{ newProposition.reasoning | default('N/A') }}
+{% for item in items %}
+NEW PROPOSITION [{{ loop.index0 }}]:
+Text: "{{ item.newProposition.text }}"
+Confidence: {{ item.newProposition.confidence }}
+Reasoning: {{ item.newProposition.reasoning | default('N/A') }}
 
-EXISTING PROPOSITIONS:
-{% for prop in candidates %}
-[{{ loop.index0 }}] ID: {{ prop.id }}
-    Text: "{{ prop.text }}"
-    Confidence: {{ prop.confidence }}
+CANDIDATES for [{{ loop.index0 }}]:
+{% for prop in item.candidates %}
+  [{{ loop.index0 }}.{{ loop.index0 }}] ID: {{ prop.id }}
+      Text: "{{ prop.text }}"
+      Confidence: {{ prop.confidence }}
 {% endfor %}
 
-For each existing proposition, classify its relationship to the NEW proposition:
+{% endfor %}
+
+For EACH new proposition, classify EACH of its candidates:
 
 - IDENTICAL: They express the EXACT same fact, just worded differently (can be merged)
 - SIMILAR: They express the same core fact about the same specific entity/topic (not just thematically related)
-  Examples of SIMILAR: "Alice likes Bach" ↔ "Alice enjoys Bach's music" (same person, same composer)
-  Examples of NOT SIMILAR: "Alice likes Bach" ↔ "Alice likes Mozart" (different composers = UNRELATED)
+  Examples of SIMILAR: "Alice likes Bach" <-> "Alice enjoys Bach's music" (same person, same composer)
+  Examples of NOT SIMILAR: "Alice likes Bach" <-> "Alice likes Mozart" (different composers = UNRELATED)
 - CONTRADICTORY: They express directly conflicting information about the same fact
 - UNRELATED: They are about different specific topics, entities, or facts (even if thematically related)
   Note: Liking different composers are UNRELATED facts, not SIMILAR
@@ -51,4 +54,4 @@ Not GENERALIZES:
 
 Be STRICT: When in doubt, classify as UNRELATED. Only use SIMILAR for propositions about the SAME specific entity.
 
-Provide a similarity score (0.0-1.0) and brief reasoning for each.
+Provide a similarity score (0.0-1.0) and brief reasoning for each classification.

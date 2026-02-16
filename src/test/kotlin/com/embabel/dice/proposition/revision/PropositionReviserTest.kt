@@ -231,6 +231,212 @@ class PropositionReviserTest {
         }
     }
 
+    @Nested
+    inner class AutoMergeTests {
+
+        private lateinit var repository: TestPropositionRepository
+        private lateinit var reviser: TestPropositionReviser
+
+        @BeforeEach
+        fun setup() {
+            repository = TestPropositionRepository(defaultScore = 0.97)
+            reviser = TestPropositionReviser(autoMergeThreshold = 0.95)
+        }
+
+        @Test
+        fun `high embedding score triggers auto-merge without classification`() {
+            val existing = createProposition("Alice is a software engineer", confidence = 0.7)
+            repository.save(existing)
+
+            val newProp = createProposition("Alice works as a software engineer", confidence = 0.8)
+            val result = reviser.revise(newProp, repository)
+
+            assertTrue(result is RevisionResult.Merged, "Expected Merged but got ${result::class.simpleName}")
+            val merged = result as RevisionResult.Merged
+            assertEquals(existing.id, merged.original.id)
+            assertTrue(merged.revised.confidence > existing.confidence)
+            // Should NOT have used the LLM classify path
+            assertEquals(0, reviser.classifyCallCount, "Auto-merge should skip LLM classification")
+        }
+
+        @Test
+        fun `score below threshold falls through to classification`() {
+            // Use a lower score that won't trigger auto-merge
+            repository = TestPropositionRepository(defaultScore = 0.90)
+            reviser = TestPropositionReviser(autoMergeThreshold = 0.95)
+
+            val existing = createProposition("Alice is a software engineer", confidence = 0.7)
+            repository.save(existing)
+
+            // Set up classification response since auto-merge won't fire
+            reviser.nextClassification = listOf(
+                ClassifiedProposition(existing, PropositionRelation.SIMILAR, 0.7, "Related")
+            )
+
+            val newProp = createProposition("Alice works as a developer", confidence = 0.8)
+            val result = reviser.revise(newProp, repository)
+
+            // Should have fallen through to classification
+            assertTrue(result is RevisionResult.Reinforced)
+            assertEquals(1, reviser.classifyCallCount, "Should have used LLM classification")
+        }
+
+        @Test
+        fun `auto-merge disabled with threshold above 1`() {
+            repository = TestPropositionRepository(defaultScore = 0.99)
+            reviser = TestPropositionReviser(autoMergeThreshold = 1.1)
+
+            val existing = createProposition("Alice is a software engineer", confidence = 0.7)
+            repository.save(existing)
+
+            reviser.nextClassification = listOf(
+                ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.99, "Same")
+            )
+
+            val newProp = createProposition("Alice works as a software engineer", confidence = 0.8)
+            val result = reviser.revise(newProp, repository)
+
+            // Even with score 0.99, should NOT auto-merge because threshold is 1.1
+            assertEquals(1, reviser.classifyCallCount, "Should have used LLM classification when auto-merge disabled")
+            assertTrue(result is RevisionResult.Merged)
+        }
+
+        @Test
+        fun `reviseAll auto-merges high-score propositions in batch`() {
+            // High score: auto-merge kicks in
+            repository = TestPropositionRepository(defaultScore = 0.97)
+            reviser = TestPropositionReviser(autoMergeThreshold = 0.95)
+
+            val existing1 = createProposition("Alice is a software engineer", confidence = 0.7)
+            val existing2 = createProposition("Bob is a designer", confidence = 0.6)
+            repository.save(existing1)
+            repository.save(existing2)
+
+            val props = listOf(
+                createProposition("Alice works as a software engineer", confidence = 0.8),
+                createProposition("Bob works as a designer", confidence = 0.8),
+            )
+
+            val results = reviser.reviseAll(props, repository)
+
+            assertEquals(2, results.size)
+            assertTrue(results.all { it is RevisionResult.Merged }, "All should be auto-merged")
+            assertEquals(0, reviser.classifyCallCount, "Auto-merge should skip all LLM calls")
+        }
+    }
+
+    @Nested
+    inner class BatchClassificationTests {
+
+        @Test
+        fun `batch response data classes are properly structured`() {
+            val item = ClassificationItem(
+                propositionId = "test-id",
+                relation = "IDENTICAL",
+                similarity = 0.95,
+                reasoning = "Same fact"
+            )
+            val propClassifications = PropositionClassifications(
+                propositionIndex = 0,
+                classifications = listOf(item),
+            )
+            val response = BatchClassificationResponse(
+                propositions = listOf(propClassifications),
+            )
+
+            assertEquals(1, response.propositions.size)
+            assertEquals(0, response.propositions[0].propositionIndex)
+            assertEquals(1, response.propositions[0].classifications.size)
+            assertEquals("test-id", response.propositions[0].classifications[0].propositionId)
+        }
+
+        @Test
+        fun `batch reviseAll maps results back in order`() {
+            val repository = TestPropositionRepository(defaultScore = 0.7)
+            val reviser = TestPropositionReviser(autoMergeThreshold = 1.1) // disable auto-merge
+
+            // Add some existing propositions
+            val existing1 = createProposition("Alice is an engineer", confidence = 0.7)
+            val existing2 = createProposition("Bob is a designer", confidence = 0.6)
+            repository.save(existing1)
+            repository.save(existing2)
+
+            // Configure batch classification results
+            reviser.batchClassifications = mapOf(
+                0 to listOf(
+                    ClassifiedProposition(existing1, PropositionRelation.IDENTICAL, 0.95, "Same")
+                ),
+                1 to listOf(
+                    ClassifiedProposition(existing2, PropositionRelation.SIMILAR, 0.75, "Related")
+                ),
+            )
+
+            val newProps = listOf(
+                createProposition("Alice works as an engineer", confidence = 0.8),
+                createProposition("Bob works in design", confidence = 0.8),
+            )
+
+            val results = reviser.reviseAll(newProps, repository)
+
+            assertEquals(2, results.size)
+            assertTrue(results[0] is RevisionResult.Merged, "First should be merged (IDENTICAL)")
+            assertTrue(results[1] is RevisionResult.Reinforced, "Second should be reinforced (SIMILAR)")
+        }
+
+        @Test
+        fun `batch with no candidates returns new`() {
+            val repository = TestPropositionRepository(defaultScore = 0.7)
+            val reviser = TestPropositionReviser(autoMergeThreshold = 1.1)
+
+            // No existing propositions -> all new
+            val props = listOf(
+                createProposition("Alice is an engineer"),
+                createProposition("Bob is a designer"),
+                createProposition("Charlie is a manager"),
+            )
+
+            val results = reviser.reviseAll(props, repository)
+
+            assertEquals(3, results.size)
+            assertTrue(results.all { it is RevisionResult.New })
+        }
+
+        @Test
+        fun `mixed batch with new and classification results`() {
+            // First prop has no candidates (nothing in repo), second has candidates for classification
+            val repository = TestPropositionRepository(defaultScore = 0.7)
+            val reviser = TestPropositionReviser(autoMergeThreshold = 1.1) // disable auto-merge
+
+            val existing = createProposition("Bob is a designer", confidence = 0.6)
+            repository.save(existing)
+
+            // First new prop: after save, repo is searched but since we add props sequentially
+            // the reviseAll will find "Bob is a designer" for both queries.
+            // Use batch classifications: index 0 = first prop, index 1 = second prop
+            reviser.batchClassifications = mapOf(
+                0 to listOf(
+                    ClassifiedProposition(existing, PropositionRelation.UNRELATED, 0.2, "Different topic")
+                ),
+                1 to listOf(
+                    ClassifiedProposition(existing, PropositionRelation.SIMILAR, 0.75, "Related")
+                ),
+            )
+
+            val newProps = listOf(
+                createProposition("Alice is an engineer", confidence = 0.8),
+                createProposition("Bob works in design", confidence = 0.8),
+            )
+
+            val results = reviser.reviseAll(newProps, repository)
+
+            assertEquals(2, results.size)
+            // First: classified as UNRELATED → treated as new
+            assertTrue(results[0] is RevisionResult.New, "First should be new (UNRELATED)")
+            // Second: classified as SIMILAR → reinforced
+            assertTrue(results[1] is RevisionResult.Reinforced, "Second should be reinforced (SIMILAR)")
+        }
+    }
+
     private fun createProposition(
         text: String,
         confidence: Double = 0.8,
@@ -246,9 +452,15 @@ class PropositionReviserTest {
 
 /**
  * Simple test implementation of PropositionRepository that doesn't require embeddings.
+ * @param defaultScore Default similarity score returned for all propositions
  */
-class TestPropositionRepository : PropositionRepository {
+class TestPropositionRepository(
+    private val defaultScore: Double = 0.8,
+) : PropositionRepository {
     private val propositions = ConcurrentHashMap<String, Proposition>()
+
+    /** Per-proposition-text score overrides (matched against stored proposition text) */
+    val scoreOverrides = mutableMapOf<String, Double>()
 
     override fun save(proposition: Proposition): Proposition {
         propositions[proposition.id] = proposition
@@ -272,7 +484,9 @@ class TestPropositionRepository : PropositionRepository {
         request: TextSimilaritySearchRequest,
     ): List<SimilarityResult<Proposition>> =
         propositions.values
-            .map { SimilarityResult(match = it, score = 0.8) }
+            .map { SimilarityResult(match = it, score = scoreOverrides[it.text] ?: defaultScore) }
+            .filter { it.score >= request.similarityThreshold }
+            .sortedByDescending { it.score }
             .take(request.topK)
 
     override fun findByStatus(status: PropositionStatus): List<Proposition> =
@@ -297,10 +511,18 @@ class TestPropositionRepository : PropositionRepository {
 }
 
 /**
- * Test implementation of PropositionReviser with configurable classification behavior.
+ * Test implementation of PropositionReviser with configurable classification behavior,
+ * auto-merge support, and batch classification tracking.
  */
-class TestPropositionReviser : PropositionReviser {
+class TestPropositionReviser(
+    private val autoMergeThreshold: Double = 1.1,
+) : PropositionReviser {
     var nextClassification: List<ClassifiedProposition> = emptyList()
+    var classifyCallCount: Int = 0
+
+    /** Per-batch-index classification results for batch tests */
+    var batchClassifications: Map<Int, List<ClassifiedProposition>> = emptyMap()
+    private var batchIndex: Int = 0
 
     override fun revise(
         newProposition: Proposition,
@@ -320,10 +542,21 @@ class TestPropositionReviser : PropositionReviser {
             return RevisionResult.New(newProposition)
         }
 
+        // Auto-merge fast path
+        val topCandidate = similar.first()
+        if (topCandidate.score >= autoMergeThreshold) {
+            val original = repository.findById(topCandidate.match.id) ?: topCandidate.match
+            val merged = mergePropositions(original, newProposition)
+            repository.save(merged)
+            return RevisionResult.Merged(original, merged)
+        }
+
         // Use configured classification or default to empty
         val classified = if (nextClassification.isNotEmpty()) {
+            classifyCallCount++
             nextClassification.also { nextClassification = emptyList() }
         } else {
+            classifyCallCount++
             classify(newProposition, similar.map { it.match })
         }
 
@@ -364,6 +597,87 @@ class TestPropositionReviser : PropositionReviser {
                 RevisionResult.New(newProposition)
             }
         }
+    }
+
+    override fun reviseAll(
+        propositions: List<Proposition>,
+        repository: PropositionRepository,
+    ): List<RevisionResult> {
+        // If batch classifications are configured, use the batch flow
+        if (batchClassifications.isNotEmpty()) {
+            batchIndex = 0
+            val results = mutableListOf<RevisionResult>()
+            for (prop in propositions) {
+                val similar = repository.findSimilarWithScores(
+                    TextSimilaritySearchRequest(
+                        query = prop.text,
+                        topK = 5,
+                        similarityThreshold = 0.5,
+                    )
+                ).filter { it.match.status == PropositionStatus.ACTIVE }
+
+                if (similar.isEmpty()) {
+                    repository.save(prop)
+                    results.add(RevisionResult.New(prop))
+                    batchIndex++
+                    continue
+                }
+
+                // Auto-merge fast path
+                val topCandidate = similar.first()
+                if (topCandidate.score >= autoMergeThreshold) {
+                    val original = repository.findById(topCandidate.match.id) ?: topCandidate.match
+                    val merged = mergePropositions(original, prop)
+                    repository.save(merged)
+                    results.add(RevisionResult.Merged(original, merged))
+                    batchIndex++
+                    continue
+                }
+
+                // Use batch classification for this index
+                val classified = batchClassifications[batchIndex] ?: emptyList()
+                batchIndex++
+
+                val identical = classified.find { it.relation == PropositionRelation.IDENTICAL }
+                val contradictory = classified.find { it.relation == PropositionRelation.CONTRADICTORY }
+                val mostSimilar = classified
+                    .filter { it.relation == PropositionRelation.SIMILAR }
+                    .maxByOrNull { it.similarity }
+
+                results.add(
+                    when {
+                        identical != null -> {
+                            val original = repository.findById(identical.proposition.id) ?: identical.proposition
+                            val merged = mergePropositions(original, prop)
+                            repository.save(merged)
+                            RevisionResult.Merged(original, merged)
+                        }
+                        contradictory != null -> {
+                            val original = repository.findById(contradictory.proposition.id) ?: contradictory.proposition
+                            val reducedConfidence = (original.confidence * 0.3).coerceAtLeast(0.05)
+                            val contradicted = original.withConfidence(reducedConfidence).withStatus(PropositionStatus.CONTRADICTED)
+                            repository.save(contradicted)
+                            repository.save(prop)
+                            RevisionResult.Contradicted(contradicted, prop)
+                        }
+                        mostSimilar != null -> {
+                            val original = repository.findById(mostSimilar.proposition.id) ?: mostSimilar.proposition
+                            val revised = reinforceProposition(original, prop)
+                            repository.save(revised)
+                            RevisionResult.Reinforced(original, revised)
+                        }
+                        else -> {
+                            repository.save(prop)
+                            RevisionResult.New(prop)
+                        }
+                    }
+                )
+            }
+            return results
+        }
+
+        // Default: delegate to per-proposition revise
+        return propositions.map { revise(it, repository) }
     }
 
     override fun classify(
