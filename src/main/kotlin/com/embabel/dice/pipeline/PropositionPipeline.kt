@@ -193,7 +193,7 @@ class PropositionPipeline private constructor(
                 logger.debug("Content already processed (hash: {})", hash.take(8))
                 return null
             }
-            val chunk = Chunk.Companion.create(text = text, parentId = sourceId)
+            val chunk = Chunk.create(text = text, parentId = sourceId)
             val result = processChunk(chunk, context)
             historyStore.recordProcessed(
                 ProcessedChunkRecord(
@@ -206,7 +206,7 @@ class PropositionPipeline private constructor(
             )
             return result
         }
-        val chunk = Chunk.Companion.create(text = text, parentId = sourceId)
+        val chunk = Chunk.create(text = text, parentId = sourceId)
         return processChunk(chunk, context)
     }
 

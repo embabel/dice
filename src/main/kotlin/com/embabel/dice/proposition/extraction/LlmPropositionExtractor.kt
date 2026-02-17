@@ -16,12 +16,24 @@
 package com.embabel.dice.proposition.extraction
 
 import com.embabel.agent.api.common.Ai
-import com.embabel.agent.api.common.nested.ObjectCreationExample
+import com.embabel.agent.api.common.CreationExample
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.common.ai.model.LlmOptions
-import com.embabel.dice.common.*
+import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.SchemaAdherence
+import com.embabel.dice.common.SourceAnalysisContext
+import com.embabel.dice.common.SuggestedEntities
+import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.common.filter.MentionFilter
-import com.embabel.dice.proposition.*
+import com.embabel.dice.proposition.MentionKey
+import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionExtractor
+import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.SuggestedMention
+import com.embabel.dice.proposition.SuggestedProposition
+import com.embabel.dice.proposition.SuggestedPropositions
 import org.slf4j.LoggerFactory
 
 
@@ -106,7 +118,7 @@ data class LlmPropositionExtractor(
     private val llmOptions: LlmOptions,
     private val ai: Ai,
     private val template: String = "dice/extract_propositions",
-    private val examples: List<ObjectCreationExample<PropositionsResult>> = emptyList(),
+    private val examples: List<CreationExample<PropositionsResult>> = emptyList(),
     override val schemaAdherence: SchemaAdherence = SchemaAdherence.DEFAULT,
     val existingPropositionsToShow: Int = 100,
     private val propositionRepository: PropositionRepository? = null,
@@ -147,14 +159,14 @@ data class LlmPropositionExtractor(
         )
     }
 
-    fun withExample(example: ObjectCreationExample<PropositionsResult>): LlmPropositionExtractor {
+    fun withExample(example: CreationExample<PropositionsResult>): LlmPropositionExtractor {
         return this.copy(
             examples = this.examples + example,
         )
     }
 
     fun withExamples(
-        examples: List<ObjectCreationExample<PropositionsResult>>
+        examples: List<CreationExample<PropositionsResult>>
     ): LlmPropositionExtractor {
         return this.copy(
             examples = this.examples + examples,

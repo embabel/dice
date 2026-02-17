@@ -23,7 +23,7 @@
     </scm>
 
     <properties>
-        <embabel-agent.version>0.3.4-SNAPSHOT</embabel-agent.version>
+        <embabel-agent.version>0.3.5-SNAPSHOT</embabel-agent.version>
         <!--
             tuProlog version is pinned to 1.0.4 due to Kotlin version incompatibility.
             tuProlog 1.1.x series is built with Kotlin 2.2.x, causing binary incompatibility
@@ -47,20 +47,28 @@
 
     <dependencies>
 
-        <!-- Embabel Agent Core -->
+        <!--
+            Embabel Agent Core — provided scope so DICE doesn't pull in a
+            potentially older version. The consuming application supplies
+            the actual version at runtime. The embabel-agent.version property
+            declares the minimum version DICE compiles against.
+        -->
         <dependency>
             <groupId>com.embabel.agent</groupId>
             <artifactId>embabel-agent-api</artifactId>
+            <scope>provided</scope>
         </dependency>
 
         <dependency>
             <groupId>com.embabel.agent</groupId>
             <artifactId>embabel-agent-rag-core</artifactId>
+            <scope>provided</scope>
         </dependency>
 
         <dependency>
             <groupId>com.embabel.agent</groupId>
             <artifactId>embabel-agent-rag-tika</artifactId>
+            <scope>provided</scope>
             <optional>true</optional>
         </dependency>
 
