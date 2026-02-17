@@ -48,6 +48,7 @@ internal data class PendingClassification(
  *     .withAi(ai)
  *     .withAutoMergeThreshold(0.95)
  *     .withClassifyBatchSize(15)
+ *     .withClassifyLlm(cheaperLlmOptions)  // optional: cheaper model for classification
  * ```
  *
  * @param llmOptions LLM configuration
@@ -58,6 +59,12 @@ internal data class PendingClassification(
  * @param decayK Decay constant for time-based confidence reduction
  * @param autoMergeThreshold Embedding similarity at or above which propositions are auto-merged without LLM. Set to 1.1 to disable.
  * @param classifyBatchSize Maximum number of propositions to classify in a single LLM call
+ * @param entityOverlapFilter When true, candidates that share no entity mentions with the new proposition are
+ *   filtered out before LLM classification. This eliminates UNRELATED candidates cheaply via set intersection
+ *   instead of an LLM call. Propositions with no entity mentions bypass this filter.
+ * @param classifyLlmOptions Optional separate LLM configuration for classification calls. When null (default),
+ *   uses the main [llmOptions]. Classification is a structured categorization task that can often use a
+ *   smaller/cheaper model than extraction without loss of quality.
  */
 data class LlmPropositionReviser(
     private val llmOptions: LlmOptions,
@@ -68,6 +75,8 @@ data class LlmPropositionReviser(
     private val decayK: Double = 2.0,
     private val autoMergeThreshold: Double = 0.95,
     private val classifyBatchSize: Int = 15,
+    private val entityOverlapFilter: Boolean = true,
+    private val classifyLlmOptions: LlmOptions? = null,
 ) : PropositionReviser, SimilarityCutoff {
 
     companion object {
@@ -86,6 +95,9 @@ data class LlmPropositionReviser(
     }
 
     private val logger = LoggerFactory.getLogger(LlmPropositionReviser::class.java)
+
+    /** LLM options used for classification calls — falls back to [llmOptions] when [classifyLlmOptions] is null. */
+    private val effectiveClassifyLlm: LlmOptions get() = classifyLlmOptions ?: llmOptions
 
     /**
      * Canonicalize proposition text for cheap string comparison.
@@ -139,6 +151,30 @@ data class LlmPropositionReviser(
      */
     fun withClassifyBatchSize(size: Int): LlmPropositionReviser =
         copy(classifyBatchSize = size)
+
+    /**
+     * Enable or disable the entity-overlap pre-filter.
+     * When enabled, candidates that share no entity mentions with the new proposition
+     * are filtered out before LLM classification, saving LLM calls.
+     */
+    fun withEntityOverlapFilter(enabled: Boolean): LlmPropositionReviser =
+        copy(entityOverlapFilter = enabled)
+
+    /**
+     * Set a separate LLM for classification calls. Classification is a structured
+     * categorization task (pick from 5 labels) that can use a cheaper/faster model
+     * than extraction without loss of quality.
+     *
+     * Example:
+     * ```kotlin
+     * val reviser = LlmPropositionReviser
+     *     .withLlm(LlmOptions("gpt-4o"))        // extraction model
+     *     .withAi(ai)
+     *     .withClassifyLlm(LlmOptions("gpt-4o-mini"))  // cheaper for classification
+     * ```
+     */
+    fun withClassifyLlm(llm: LlmOptions): LlmPropositionReviser =
+        copy(classifyLlmOptions = llm)
 
     /**
      * Deduplicate a batch of propositions by canonical text, then use fast-path
@@ -246,9 +282,31 @@ data class LlmPropositionReviser(
             return RevisionResult.Merged(original, merged)
         }
 
-        // Need LLM classification — apply decay for ranking
+        // Apply decay for ranking
         val decayed = similarWithScores.map { it.match.withDecayApplied(decayK) }
-        return PendingClassification(newProposition, decayed)
+
+        // Entity-overlap pre-filter: skip LLM for candidates that share no entities
+        // with the new proposition. Only applied when the new proposition has mentions
+        // (otherwise we can't determine overlap and must fall through to LLM).
+        val candidates = if (entityOverlapFilter && newProposition.mentions.isNotEmpty()) {
+            val filtered = decayed.filter { hasEntityOverlap(newProposition, it) }
+            val eliminated = decayed.size - filtered.size
+            if (eliminated > 0) {
+                logger.debug(
+                    "Entity-overlap filter eliminated {} of {} candidates for: {}",
+                    eliminated, decayed.size, newProposition.text.take(60)
+                )
+            }
+            if (filtered.isEmpty()) {
+                logger.debug("All candidates eliminated by entity-overlap filter, treating as new: {}", newProposition.text.take(60))
+                return RevisionResult.New(newProposition)
+            }
+            filtered
+        } else {
+            decayed
+        }
+
+        return PendingClassification(newProposition, candidates)
     }
 
     /**
@@ -290,7 +348,7 @@ data class LlmPropositionReviser(
             }
 
             val response = ai
-                .withLlm(llmOptions)
+                .withLlm(effectiveClassifyLlm)
                 .withId("classify-propositions-batch")
                 .creating(BatchClassificationResponse::class.java)
                 .fromTemplate(
@@ -447,7 +505,7 @@ data class LlmPropositionReviser(
         }
 
         val response = ai
-            .withLlm(llmOptions)
+            .withLlm(effectiveClassifyLlm)
             .withId("classify-proposition")
             .creating(ClassificationResponse::class.java)
             .fromTemplate(
@@ -478,6 +536,25 @@ data class LlmPropositionReviser(
                 reasoning = classification.reasoning,
             )
         }
+    }
+
+    /**
+     * Check whether two propositions share at least one entity mention,
+     * using resolved IDs when available and falling back to case-insensitive span comparison.
+     * Returns true if either proposition has no mentions (can't determine overlap).
+     */
+    internal fun hasEntityOverlap(a: Proposition, b: Proposition): Boolean {
+        if (a.mentions.isEmpty() || b.mentions.isEmpty()) return true
+        for (mentionA in a.mentions) {
+            for (mentionB in b.mentions) {
+                if (mentionA.resolvedId != null && mentionB.resolvedId != null) {
+                    if (mentionA.resolvedId == mentionB.resolvedId) return true
+                } else if (mentionA.span.equals(mentionB.span, ignoreCase = true)) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     private fun parseRelation(relation: String): PropositionRelation =

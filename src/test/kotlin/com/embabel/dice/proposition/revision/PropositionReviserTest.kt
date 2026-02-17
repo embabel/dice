@@ -19,6 +19,8 @@ import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.proposition.EntityMention
+import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
@@ -481,6 +483,195 @@ class PropositionReviserTest {
     }
 
     @Nested
+    inner class EntityOverlapFilterTests {
+
+        @Test
+        fun `hasEntityOverlap returns true when resolved IDs match`() {
+            val reviser = LlmPropositionReviser(
+                llmOptions = io.mockk.mockk(),
+                ai = io.mockk.mockk(),
+            )
+            val a = createProposition(
+                "Alice works at Google",
+                mentions = listOf(
+                    EntityMention("Alice", "Person", resolvedId = "entity-1", role = MentionRole.SUBJECT),
+                    EntityMention("Google", "Company", resolvedId = "entity-2", role = MentionRole.OBJECT),
+                ),
+            )
+            val b = createProposition(
+                "Alice lives in NYC",
+                mentions = listOf(
+                    EntityMention("Alice", "Person", resolvedId = "entity-1", role = MentionRole.SUBJECT),
+                    EntityMention("NYC", "City", resolvedId = "entity-3", role = MentionRole.OBJECT),
+                ),
+            )
+            assertTrue(reviser.hasEntityOverlap(a, b))
+        }
+
+        @Test
+        fun `hasEntityOverlap returns false when no entities overlap`() {
+            val reviser = LlmPropositionReviser(
+                llmOptions = io.mockk.mockk(),
+                ai = io.mockk.mockk(),
+            )
+            val a = createProposition(
+                "Alice works at Google",
+                mentions = listOf(
+                    EntityMention("Alice", "Person", resolvedId = "entity-1", role = MentionRole.SUBJECT),
+                ),
+            )
+            val b = createProposition(
+                "Bob likes hiking",
+                mentions = listOf(
+                    EntityMention("Bob", "Person", resolvedId = "entity-99", role = MentionRole.SUBJECT),
+                ),
+            )
+            assertFalse(reviser.hasEntityOverlap(a, b))
+        }
+
+        @Test
+        fun `hasEntityOverlap falls back to span match when no resolved IDs`() {
+            val reviser = LlmPropositionReviser(
+                llmOptions = io.mockk.mockk(),
+                ai = io.mockk.mockk(),
+            )
+            val a = createProposition(
+                "Alice works at Google",
+                mentions = listOf(EntityMention("Alice", "Person")),
+            )
+            val b = createProposition(
+                "Alice likes hiking",
+                mentions = listOf(EntityMention("alice", "Person")), // lowercase
+            )
+            assertTrue(reviser.hasEntityOverlap(a, b))
+        }
+
+        @Test
+        fun `hasEntityOverlap returns true when either has no mentions`() {
+            val reviser = LlmPropositionReviser(
+                llmOptions = io.mockk.mockk(),
+                ai = io.mockk.mockk(),
+            )
+            val withMentions = createProposition(
+                "Alice works at Google",
+                mentions = listOf(EntityMention("Alice", "Person", resolvedId = "entity-1")),
+            )
+            val withoutMentions = createProposition("Something happened")
+            assertTrue(reviser.hasEntityOverlap(withMentions, withoutMentions))
+            assertTrue(reviser.hasEntityOverlap(withoutMentions, withMentions))
+        }
+
+        @Test
+        fun `retrieveAndFastPath filters out candidates with no entity overlap`() {
+            val repository = TestPropositionRepository(defaultScore = 0.8)
+            val reviser = LlmPropositionReviser(
+                llmOptions = io.mockk.mockk(),
+                ai = io.mockk.mockk(),
+                autoMergeThreshold = 1.1, // disable auto-merge
+            )
+
+            // Existing proposition about Bob
+            val existing = createProposition(
+                "Bob is a designer",
+                mentions = listOf(EntityMention("Bob", "Person", resolvedId = "bob-1", role = MentionRole.SUBJECT)),
+            )
+            repository.save(existing)
+
+            // New proposition about Alice — no entity overlap with Bob
+            val newProp = createProposition(
+                "Alice is an engineer",
+                mentions = listOf(EntityMention("Alice", "Person", resolvedId = "alice-1", role = MentionRole.SUBJECT)),
+            )
+
+            val result = reviser.retrieveAndFastPath(newProp, repository)
+
+            // Should be New because entity-overlap filter eliminated the only candidate
+            assertTrue(result is RevisionResult.New, "Expected New but got ${result::class.simpleName}")
+        }
+
+        @Test
+        fun `retrieveAndFastPath keeps candidates with entity overlap`() {
+            val repository = TestPropositionRepository(defaultScore = 0.8)
+            val reviser = LlmPropositionReviser(
+                llmOptions = io.mockk.mockk(),
+                ai = io.mockk.mockk(),
+                autoMergeThreshold = 1.1, // disable auto-merge
+            )
+
+            // Existing proposition about Alice
+            val existing = createProposition(
+                "Alice is a designer",
+                mentions = listOf(EntityMention("Alice", "Person", resolvedId = "alice-1", role = MentionRole.SUBJECT)),
+            )
+            repository.save(existing)
+
+            // New proposition also about Alice — entity overlap exists
+            val newProp = createProposition(
+                "Alice is an engineer",
+                mentions = listOf(EntityMention("Alice", "Person", resolvedId = "alice-1", role = MentionRole.SUBJECT)),
+            )
+
+            val result = reviser.retrieveAndFastPath(newProp, repository)
+
+            // Should be PendingClassification because entity overlap keeps the candidate
+            assertTrue(result is PendingClassification, "Expected PendingClassification but got ${result::class.simpleName}")
+            assertEquals(1, (result as PendingClassification).candidates.size)
+        }
+
+        @Test
+        fun `retrieveAndFastPath skips filter when new proposition has no mentions`() {
+            val repository = TestPropositionRepository(defaultScore = 0.8)
+            val reviser = LlmPropositionReviser(
+                llmOptions = io.mockk.mockk(),
+                ai = io.mockk.mockk(),
+                autoMergeThreshold = 1.1, // disable auto-merge
+            )
+
+            val existing = createProposition(
+                "Bob is a designer",
+                mentions = listOf(EntityMention("Bob", "Person", resolvedId = "bob-1")),
+            )
+            repository.save(existing)
+
+            // New proposition with no mentions — filter should be bypassed
+            val newProp = createProposition("Something about design")
+
+            val result = reviser.retrieveAndFastPath(newProp, repository)
+
+            // Should be PendingClassification (filter bypassed, candidate kept)
+            assertTrue(result is PendingClassification, "Expected PendingClassification but got ${result::class.simpleName}")
+        }
+
+        @Test
+        fun `entity overlap filter can be disabled`() {
+            val repository = TestPropositionRepository(defaultScore = 0.8)
+            val reviser = LlmPropositionReviser(
+                llmOptions = io.mockk.mockk(),
+                ai = io.mockk.mockk(),
+                autoMergeThreshold = 1.1, // disable auto-merge
+                entityOverlapFilter = false,
+            )
+
+            // Different entities — would be filtered if enabled
+            val existing = createProposition(
+                "Bob is a designer",
+                mentions = listOf(EntityMention("Bob", "Person", resolvedId = "bob-1")),
+            )
+            repository.save(existing)
+
+            val newProp = createProposition(
+                "Alice is an engineer",
+                mentions = listOf(EntityMention("Alice", "Person", resolvedId = "alice-1")),
+            )
+
+            val result = reviser.retrieveAndFastPath(newProp, repository)
+
+            // Filter disabled — should pass through to PendingClassification
+            assertTrue(result is PendingClassification, "Expected PendingClassification but got ${result::class.simpleName}")
+        }
+    }
+
+    @Nested
     inner class CanonicalTextDedupTests {
 
         private lateinit var repository: TestPropositionRepository
@@ -681,10 +872,11 @@ class PropositionReviserTest {
         text: String,
         confidence: Double = 0.8,
         decay: Double = 0.1,
+        mentions: List<EntityMention> = emptyList(),
     ) = Proposition(
         contextId = testContextId,
         text = text,
-        mentions = emptyList(),
+        mentions = mentions,
         confidence = confidence,
         decay = decay,
     )
