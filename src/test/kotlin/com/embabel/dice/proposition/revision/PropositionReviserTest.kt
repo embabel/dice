@@ -413,6 +413,74 @@ class PropositionReviserTest {
     }
 
     @Nested
+    inner class ReinforceCountTests {
+
+        private lateinit var repository: TestPropositionRepository
+        private lateinit var reviser: TestPropositionReviser
+
+        @BeforeEach
+        fun setup() {
+            repository = TestPropositionRepository()
+            reviser = TestPropositionReviser()
+        }
+
+        @Test
+        fun `new proposition has zero reinforceCount`() {
+            val prop = createProposition("Alice likes music")
+            assertEquals(0, prop.reinforceCount)
+        }
+
+        @Test
+        fun `merged proposition increments reinforceCount`() {
+            val existing = createProposition("Alice works at Google", confidence = 0.7)
+            repository.save(existing)
+
+            reviser.nextClassification = listOf(
+                ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.95, "Same fact")
+            )
+
+            val newProp = createProposition("Alice is employed at Google", confidence = 0.8)
+            val result = reviser.revise(newProp, repository)
+
+            assertTrue(result is RevisionResult.Merged)
+            assertEquals(1, (result as RevisionResult.Merged).revised.reinforceCount)
+        }
+
+        @Test
+        fun `reinforced proposition increments reinforceCount`() {
+            val existing = createProposition("Alice likes Kotlin", confidence = 0.6)
+            repository.save(existing)
+
+            reviser.nextClassification = listOf(
+                ClassifiedProposition(existing, PropositionRelation.SIMILAR, 0.75, "Related")
+            )
+
+            val newProp = createProposition("Alice enjoys programming in Kotlin", confidence = 0.8)
+            val result = reviser.revise(newProp, repository)
+
+            assertTrue(result is RevisionResult.Reinforced)
+            assertEquals(1, (result as RevisionResult.Reinforced).revised.reinforceCount)
+        }
+
+        @Test
+        fun `reinforceCount accumulates across multiple merges`() {
+            val existing = createProposition("Alice works at Google", confidence = 0.7)
+                .copy(reinforceCount = 3)
+            repository.save(existing)
+
+            reviser.nextClassification = listOf(
+                ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.95, "Same fact")
+            )
+
+            val newProp = createProposition("Alice is employed at Google", confidence = 0.8)
+            val result = reviser.revise(newProp, repository)
+
+            assertTrue(result is RevisionResult.Merged)
+            assertEquals(4, (result as RevisionResult.Merged).revised.reinforceCount)
+        }
+    }
+
+    @Nested
     inner class CanonicalTextDedupTests {
 
         private lateinit var repository: TestPropositionRepository
@@ -880,6 +948,7 @@ class TestPropositionReviser(
             confidence = boostedConfidence,
             decay = slowedDecay,
             grounding = combinedGrounding,
+            reinforceCount = existing.reinforceCount + 1,
         )
     }
 
@@ -892,6 +961,7 @@ class TestPropositionReviser(
             confidence = boostedConfidence,
             decay = slowedDecay,
             grounding = combinedGrounding,
+            reinforceCount = existing.reinforceCount + 1,
         )
     }
 }

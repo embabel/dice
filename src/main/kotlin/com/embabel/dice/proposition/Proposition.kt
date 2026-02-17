@@ -64,6 +64,8 @@ enum class PropositionStatus {
  * @property status Current lifecycle status
  * @property level Abstraction level: 0 = raw observation, 1+ = derived abstraction
  * @property sourceIds IDs of propositions this was abstracted from (empty for level 0)
+ * @property reinforceCount How many times this proposition has been merged or reinforced.
+ *   Provides a frequency/importance signal complementary to confidence and decay.
  */
 data class Proposition(
     override val id: String = UUID.randomUUID().toString(),
@@ -79,6 +81,7 @@ data class Proposition(
     val status: PropositionStatus = PropositionStatus.ACTIVE,
     val level: Int = 0,
     val sourceIds: List<String> = emptyList(),
+    val reinforceCount: Int = 0,
     override val metadata: Map<String, Any> = emptyMap(),
     override val uri: String? = null,
 ) : Derivation, ReferencesEntities, Retrievable {
@@ -115,6 +118,7 @@ data class Proposition(
             status: PropositionStatus,
             level: Int = 0,
             sourceIds: List<String> = emptyList(),
+            reinforceCount: Int = 0,
             metadata: Map<String, Any> = emptyMap(),
             uri: String? = null,
         ): Proposition = Proposition(
@@ -131,6 +135,7 @@ data class Proposition(
             status = status,
             level = level,
             sourceIds = sourceIds,
+            reinforceCount = reinforceCount,
             metadata = metadata,
             uri = uri,
         )
@@ -141,6 +146,7 @@ data class Proposition(
         require(decay in 0.0..1.0) { "Decay must be between 0.0 and 1.0" }
         require(level >= 0) { "Level must be non-negative" }
         require(level == 0 || sourceIds.isNotEmpty()) { "Abstracted propositions (level > 0) must have sourceIds" }
+        require(reinforceCount >= 0) { "reinforceCount must be non-negative" }
     }
 
     override fun embeddableValue(): String {

@@ -1,22 +1,6 @@
-# DICE Gap Analysis: Competitive Intelligence & Implementation Specs
+# DICE Gap Analysis: Implementation Specs
 
-Based on deep analysis of Zep/Graphiti, Mem0, and LangChain/LangMem memory systems.
-
-## Current State
-
-### What DICE Already Does Well
-
-| Capability | DICE Implementation | Competitors |
-|---|---|---|
-| Batch classification | N propositions in 1 LLM call via `classifyBatch()` | Zep: sequential per-edge. Mem0: sequential per-fact. LangMem: sequential tool calls. |
-| Auto-merge fast path | Embedding score >= 0.95 skips LLM entirely | Zep: text-identical fast path only (no similarity threshold). Others: none. |
-| Outcome-dependent decay | Contradicted +0.15, merged *0.7, reinforced *0.85 | Zep: binary temporal invalidation. Mem0: hard delete. LangMem: none. |
-| Canonical text dedup | Cheap string match before vector search | Zep: similar for identical edge text but only after vector search. |
-| 5-way classification | IDENTICAL/SIMILAR/CONTRADICTORY/UNRELATED/GENERALIZES with edge-case guidance + few-shot | Mem0: only ADD/UPDATE/DELETE/NONE. LangMem: insert/update/delete tool calls. |
-| JVM native | Only JVM-based memory system | All competitors are Python (Zep also Go). |
-| Confidence + decay model | Per-proposition confidence with exponential time decay from GUM paper | Zep: no decay. Mem0: no confidence model. LangMem: asks for p(x) in prompts but no decay math. |
-
----
+Companion to [competitive-positioning.md](competitive-positioning.md).
 
 ## Gaps
 
@@ -338,34 +322,6 @@ return existing.copy(
 
 ---
 
-## Competitive Positioning Summary
-
-### vs Zep/Graphiti
-
-**Their moat**: Bi-temporal fact model, custom ontology via Pydantic, 5 reranking strategies, community subgraph summaries, Neo4j-backed graph traversal.
-
-**Their weakness**: Sequential-only ingestion ("episodes must be added sequentially and awaited"), Python/Go only, heavy infrastructure (Neo4j required), no batch classification.
-
-**Attack angle**: DICE is embeddable — no Neo4j dependency. Batch pipeline is faster for high-throughput ingestion. Position as "memory for JVM agents" vs their "memory infrastructure platform." GAP-4 Phase B (bi-temporal) closes their biggest technical advantage.
-
-### vs Mem0
-
-**Their moat**: Graph memory with Neo4j/Memgraph/Neptune/Kuzu, vision support, procedural memory for agent traces, mentions counting.
-
-**Their weakness**: Coarse 4-operation model (ADD/UPDATE/DELETE/NONE) — no SIMILAR/GENERALIZES distinction. Sequential per-fact processing. Graph memory is a separate bolted-on pipeline.
-
-**Attack angle**: DICE's 5-way classification preserves nuance that Mem0's 4-op model loses. Unified revision pipeline vs their split vector+graph paths. GAP-6 (ID hallucination prevention) adopts their best defensive technique. GAP-7 (reinforceCount) matches their mentions signal.
-
-### vs LangChain/LangMem
-
-**Their moat**: Excellent extraction prompts (confidence-qualified, surprise-prioritized, SNR-maximizing), prompt optimization via gradient analogy, debounced background reflection, dilated windows retrieval.
-
-**Their weakness**: Graph memory is literally commented-out code. No structured dedup pipeline — relies on LLM tool calls for consolidation. Tightly coupled to LangGraph ecosystem.
-
-**Attack angle**: LangMem has great prompts but weak infrastructure. DICE's explicit classification taxonomy + fast paths + batch processing is more reliable at scale. GAPs 1-3 adopt their best prompt ideas and combine them with our superior pipeline mechanics.
-
----
-
 ## Implementation Priority
 
 | Priority | Gap | Effort | Impact | Dependencies | Status |
@@ -375,19 +331,20 @@ return existing.copy(
 | 3 | GAP-5: Role-aware extraction | ~15 min | Medium — prevents misattribution | None | **DONE** |
 | 4 | GAP-6: ID hallucination prevention | ~1 hr | Medium — prevents silent classification drops | None | |
 | 5 | GAP-2: Surprise-prioritized retention | ~30 min | Medium — more durable novel facts | None | |
-| 6 | GAP-7: Mentions/frequency counter | ~1 hr | Medium — frequency signal for ranking | None | |
+| 6 | GAP-7: Mentions/frequency counter | ~1 hr | Medium — frequency signal for ranking | None | **DONE** |
 | 7 | GAP-4A: Temporal anchoring (prompt) | ~1 hr | Medium — resolves relative dates | None | |
 | 8 | GAP-4B: Bi-temporal model | ~1 week | High — temporal queries, closes Zep gap | GAP-4A | |
 
 ### Done
 
-- **GAP-1** (confidence qualification): Added hedging-language detection guidance with examples to `extract_propositions.jinja`
-- **GAP-3** (SNR): Added rule 5 "Dense and specific: Maximize signal-to-noise ratio" to extraction rules
+- **GAP-1** (confidence qualification): Added hedging-language detection guidance with examples to `extraction_guidance.jinja`
+- **GAP-3** (SNR): Added rule 5 "Dense and specific: Maximize signal-to-noise ratio" to extraction rules in `extraction_guidance.jinja`
 - **GAP-5** (role-aware extraction): Added `ExtractionPerspective` enum (`ALL`/`USER`/`AGENT`) to `LlmPropositionExtractor`, wired through `TemplateModel` to prompt rule 6 "Speaker attribution". Configurable via `withPerspective()` builder method. Default `ALL` is backward compatible.
+- **GAP-7** (reinforceCount): Added `reinforceCount: Int` to `Proposition`, incremented on merge and reinforce. Queryable via `PropositionQuery.withMinReinforceCount()` and `orderedByReinforceCount()`.
 
 ### Remaining
 
 GAP-6 is code + prompt changes, independent of others.
-GAP-2 and GAP-7 are code changes, independent of each other.
+GAP-2 is a code change, independent of others.
 GAP-4A is code + prompt, depends on nothing.
 GAP-4B is a larger architectural change that should be specced separately.

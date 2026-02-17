@@ -505,6 +505,7 @@ data class LlmPropositionReviser(
             confidence = boostedConfidence,
             decay = slowedDecay,
             grounding = combinedGrounding,
+            reinforceCount = existing.reinforceCount + 1,
             revised = Instant.now(),
         )
     }
@@ -525,6 +526,7 @@ data class LlmPropositionReviser(
             confidence = boostedConfidence,
             decay = slowedDecay,
             grounding = combinedGrounding,
+            reinforceCount = existing.reinforceCount + 1,
             revised = Instant.now(),
         )
     }

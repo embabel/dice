@@ -7,56 +7,9 @@ Each proposition should be a simple, self-contained English sentence expressing 
 
 {% include "dice/existing_propositions.jinja" %}
 
-## Extraction Rules
+{% include "dice/extraction_guidance.jinja" %}
 
-1. **Single fact per proposition**: One subject, one object maximum
-2. **Schema-bound entities**: Prefer entity types from the schema above
-3. **No inference beyond evidence**: Only extract what the text explicitly supports
-4. **No overlap**: Each fact should be distinct
-5. **Dense and specific**: Maximize signal-to-noise ratio. Avoid filler words, vague qualifiers, or restating context already captured in entity mentions. Prefer "Alice is a senior ML engineer at Google" over "Alice works at a company called Google where she is in a senior position doing machine learning engineering"
 6. **Speaker attribution**: {{ model.perspective.description }}
-
-{% include "dice/canonical_form.jinja" %}
-
-If a sentence implies multiple relationships, create multiple propositions.
-Example: "Alice introduced Bob to Charlie" → two propositions:
-1. "Alice introduced Bob" (Alice=SUBJECT, Bob=OBJECT)
-2. "Alice introduced Charlie" (Alice=SUBJECT, Charlie=OBJECT)
-
-## Entity Mentions - BE SPECIFIC
-
-Entity mentions should be **specific, identifiable things** that could be looked up in a database.
-
-✓ GOOD entity mentions (specific):
-- "Alice Smith" - a specific person
-- "Acme Corporation" - a specific company
-- "Machine Learning" - a specific field/topic
-
-✗ BAD entity mentions (too vague or generic):
-- "recent projects" - vague, which projects? Just use this phrase in the proposition text
-- "some colleagues" - vague, not specific entities
-- "his expertise" - a quality, not an entity
-- "the methodology" - abstract concept without specifics
-
-**Rule of thumb**: If you can't point to ONE specific thing in a reference database, don't make it an entity mention. Include vague terms in the proposition text itself, not as entity mentions.
-
-Example - text says "Alice loves her recent projects":
-✓ GOOD: Proposition "Alice loves her recent projects" with entity mention "Alice" (Person) only
-✗ BAD: Creating an entity mention for "recent projects"
-
-Example - text says "Bob works at Google and Microsoft":
-✓ GOOD: Two propositions with entity mentions "Google" (Company) and "Microsoft" (Company)
-
-## Confidence & Decay
-
-- **High confidence**: Explicit statements ("Alice is a software engineer")
-- **Lower confidence**: Implied information (asking questions about a topic)
-- **Low decay**: Stable facts (name, expertise, role)
-- **High decay**: Transient states (current location, mood, current project)
-
-When the text uses hedging language ("I think", "maybe", "probably", "not sure"), reflect this in confidence and explain in `reasoning`. Quote supporting evidence in `reasoning` when the fact is non-obvious.
-- "I think Alice might work at Google" -> confidence: 0.4, reasoning: "Hedged — 'I think ... might' indicates uncertainty"
-- "Alice is a senior engineer at Google" -> confidence: 0.95, reasoning: "Explicit factual statement"
 
 <text>
     {{ model.chunk.text }}

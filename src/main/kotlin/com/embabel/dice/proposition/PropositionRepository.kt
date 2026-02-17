@@ -299,6 +299,9 @@ interface PropositionRepository : CoreSearchOperations {
             val asOf = query.effectiveConfidenceAsOf ?: Instant.now()
             results = results.filter { it.effectiveConfidenceAt(asOf, query.decayK) >= threshold }
         }
+        query.minReinforceCount?.let { min ->
+            results = results.filter { it.reinforceCount >= min }
+        }
 
         // Convert to list for sorting
         var resultList = results.toList()
@@ -315,6 +318,9 @@ interface PropositionRepository : CoreSearchOperations {
 
             PropositionQuery.OrderBy.REVISED_DESC ->
                 resultList.sortedByDescending { it.revised }
+
+            PropositionQuery.OrderBy.REINFORCE_COUNT_DESC ->
+                resultList.sortedByDescending { it.reinforceCount }
         }
 
         // Apply limit

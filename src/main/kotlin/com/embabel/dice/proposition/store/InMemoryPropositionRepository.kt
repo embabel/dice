@@ -93,7 +93,8 @@ class InMemoryPropositionRepository(
                 (query.maxLevel == null || prop.level <= query.maxLevel) &&
                 (query.entityId == null || prop.mentions.any { it.resolvedId == query.entityId }) &&
                 (query.anyEntityIds == null || propEntityIds.any { it in query.anyEntityIds!! }) &&
-                (query.allEntityIds == null || query.allEntityIds!!.all { it in propEntityIds })
+                (query.allEntityIds == null || query.allEntityIds!!.all { it in propEntityIds }) &&
+                (query.minReinforceCount == null || prop.reinforceCount >= query.minReinforceCount)
         }
 
         return candidates
