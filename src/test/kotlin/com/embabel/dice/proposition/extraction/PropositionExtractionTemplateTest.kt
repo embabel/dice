@@ -415,5 +415,76 @@ class PropositionExtractionTemplateTest {
             // Verify includes chunk text
             assertTrue(result.contains("Rod said he likes Reger"))
         }
+
+        @Test
+        fun `renders SNR instruction`() {
+            val context = createTestContext()
+            val model = createTemplateModel(context)
+
+            val result = renderer.renderLoadedTemplate(
+                "dice/extract_propositions",
+                mapOf("model" to model)
+            )
+
+            assertTrue(result.contains("signal-to-noise ratio"))
+        }
+
+        @Test
+        fun `renders confidence qualification guidance`() {
+            val context = createTestContext()
+            val model = createTemplateModel(context)
+
+            val result = renderer.renderLoadedTemplate(
+                "dice/extract_propositions",
+                mapOf("model" to model)
+            )
+
+            assertTrue(result.contains("hedging language"))
+            assertTrue(result.contains("Explicit factual statement"))
+        }
+
+        @Test
+        fun `renders default ALL perspective`() {
+            val context = createTestContext()
+            val model = createTemplateModel(context)
+
+            val result = renderer.renderLoadedTemplate(
+                "dice/extract_propositions",
+                mapOf("model" to model)
+            )
+
+            assertTrue(result.contains("Speaker attribution"))
+            assertTrue(result.contains(ExtractionPerspective.ALL.description))
+        }
+
+        @Test
+        fun `renders USER perspective`() {
+            val context = createTestContext()
+            val model = createTemplateModel(context).copy(
+                perspective = ExtractionPerspective.USER,
+            )
+
+            val result = renderer.renderLoadedTemplate(
+                "dice/extract_propositions",
+                mapOf("model" to model)
+            )
+
+            assertTrue(result.contains("SOLELY from the user"))
+        }
+
+        @Test
+        fun `renders AGENT perspective`() {
+            val context = createTestContext()
+            val model = createTemplateModel(context).copy(
+                perspective = ExtractionPerspective.AGENT,
+            )
+
+            val result = renderer.renderLoadedTemplate(
+                "dice/extract_propositions",
+                mapOf("model" to model)
+            )
+
+            assertTrue(result.contains("assistant's own knowledge"))
+        }
     }
 }

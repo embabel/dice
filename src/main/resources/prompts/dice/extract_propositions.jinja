@@ -13,6 +13,8 @@ Each proposition should be a simple, self-contained English sentence expressing 
 2. **Schema-bound entities**: Prefer entity types from the schema above
 3. **No inference beyond evidence**: Only extract what the text explicitly supports
 4. **No overlap**: Each fact should be distinct
+5. **Dense and specific**: Maximize signal-to-noise ratio. Avoid filler words, vague qualifiers, or restating context already captured in entity mentions. Prefer "Alice is a senior ML engineer at Google" over "Alice works at a company called Google where she is in a senior position doing machine learning engineering"
+6. **Speaker attribution**: {{ model.perspective.description }}
 
 {% include "dice/canonical_form.jinja" %}
 
@@ -51,6 +53,10 @@ Example - text says "Bob works at Google and Microsoft":
 - **Lower confidence**: Implied information (asking questions about a topic)
 - **Low decay**: Stable facts (name, expertise, role)
 - **High decay**: Transient states (current location, mood, current project)
+
+When the text uses hedging language ("I think", "maybe", "probably", "not sure"), reflect this in confidence and explain in `reasoning`. Quote supporting evidence in `reasoning` when the fact is non-obvious.
+- "I think Alice might work at Google" -> confidence: 0.4, reasoning: "Hedged — 'I think ... might' indicates uncertainty"
+- "Alice is a senior engineer at Google" -> confidence: 0.95, reasoning: "Explicit factual statement"
 
 <text>
     {{ model.chunk.text }}

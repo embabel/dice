@@ -25,6 +25,24 @@ import com.embabel.dice.proposition.*
 import org.slf4j.LoggerFactory
 
 
+/**
+ * Controls whose perspective propositions are extracted from in conversational text.
+ *
+ * When the input contains dialogue between a user and an assistant, this determines
+ * which speaker's facts are prioritized.
+ */
+enum class ExtractionPerspective(val description: String) {
+
+    /** Extract facts from all speakers (default, backward compatible) */
+    ALL("Extract facts stated by any speaker in the text."),
+
+    /** Extract facts stated by or about the user; ignore assistant self-descriptions */
+    USER("Extract facts SOLELY from the user's messages. Do NOT extract facts that originate only from assistant or system messages. Always attribute facts to the user using their name as an entity mention."),
+
+    /** Extract facts stated by or about the assistant — what it decided, expressed, or revealed about itself */
+    AGENT("Extract facts about the assistant's own knowledge, decisions, and expressed opinions. Focus on what the assistant said, decided, or revealed about itself. Do NOT extract facts about the user unless the assistant is referencing them."),
+}
+
 interface ExtractionConfig {
     val schemaAdherence: SchemaAdherence
 
@@ -43,6 +61,7 @@ data class TemplateModel(
     val chunk: Chunk,
     override val schemaAdherence: SchemaAdherence,
     val existingPropositions: List<Proposition>,
+    val perspective: ExtractionPerspective = ExtractionPerspective.ALL,
 ) : ExtractionConfig
 
 /**
@@ -81,6 +100,7 @@ data class TemplateModel(
  * @param propositionRepository Optional repository to fetch existing propositions from.
  * When provided, existing propositions for the context will be included in the prompt
  * to help the LLM avoid duplicates and maintain consistency.
+ * @param perspective Controls whose perspective propositions are extracted from. See [ExtractionPerspective].
  */
 data class LlmPropositionExtractor(
     private val llmOptions: LlmOptions,
@@ -90,6 +110,7 @@ data class LlmPropositionExtractor(
     override val schemaAdherence: SchemaAdherence = SchemaAdherence.DEFAULT,
     val existingPropositionsToShow: Int = 100,
     private val propositionRepository: PropositionRepository? = null,
+    val perspective: ExtractionPerspective = ExtractionPerspective.ALL,
 ) : PropositionExtractor, ExtractionConfig {
 
     companion object {
@@ -165,6 +186,16 @@ data class LlmPropositionExtractor(
         )
     }
 
+    /**
+     * Set the extraction perspective. Controls whose facts are extracted
+     * from conversational text. See [ExtractionPerspective].
+     */
+    fun withPerspective(perspective: ExtractionPerspective): LlmPropositionExtractor {
+        return this.copy(
+            perspective = perspective,
+        )
+    }
+
     private fun extractExistingPropositions(context: SourceAnalysisContext): List<Proposition> {
         if (propositionRepository == null) {
             return emptyList()
@@ -208,6 +239,7 @@ data class LlmPropositionExtractor(
                         chunk = chunk,
                         schemaAdherence = schemaAdherence,
                         existingPropositions = existingPropositions,
+                        perspective = perspective,
                     ),
                 ) + context.promptVariables,
             )
