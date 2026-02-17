@@ -19,6 +19,8 @@ import com.embabel.agent.api.common.Ai
 import com.embabel.agent.core.AllowedRelationship
 import com.embabel.agent.core.DataDictionary
 import com.embabel.common.ai.model.LlmOptions
+import com.embabel.dice.common.Relation
+import com.embabel.dice.common.Relations
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.ProjectionFailed
 import com.embabel.dice.proposition.ProjectionResult
@@ -30,14 +32,17 @@ import org.slf4j.LoggerFactory
 
 /**
  * LLM-based graph projector.
- * Uses an LLM to classify propositions into relationship types.
+ * Uses an LLM to classify propositions into relationship types
+ * from both the [DataDictionary] schema and [Relations] predicates.
  *
  * @param ai AI service for LLM calls
+ * @param relations Relation predicates to include as candidate relationship types
  * @param policy Policy to filter propositions before projection
  * @param llmOptions LLM configuration
  */
-class LlmGraphProjector(
+class LlmGraphProjector @JvmOverloads constructor(
     private val ai: Ai,
+    private val relations: Relations = Relations.empty(),
     private val policy: ProjectionPolicy = DefaultProjectionPolicy(),
     private val llmOptions: LlmOptions = LlmOptions(),
 ) : GraphProjector {
@@ -61,16 +66,29 @@ class LlmGraphProjector(
             mentionTypes.contains(rel.from.name) || mentionTypes.contains(rel.to.name)
         }
 
-        if (allowedRelationships.isEmpty()) {
-            logger.debug("No allowed relationships for mention types: {}", mentionTypes)
+        // Filter Relations by mention types (match subject and/or object type constraints)
+        val matchingRelations = relations.filter { relation ->
+            val subjectMatches = relation.subjectType == null || mentionTypes.contains(relation.subjectType)
+            val objectMatches = relation.objectType == null || mentionTypes.contains(relation.objectType)
+            subjectMatches && objectMatches
+        }
+
+        if (allowedRelationships.isEmpty() && matchingRelations.isEmpty()) {
+            logger.debug("No allowed relationships or relations for mention types: {}", mentionTypes)
             return ProjectionFailed(
                 proposition,
                 "No allowed relationships between entity types: $mentionTypes"
             )
         }
 
+        // Build the set of valid relationship type names for validation
+        val validRelationshipTypes = buildSet {
+            allowedRelationships.forEach { add(it.name) }
+            matchingRelations.forEach { add(RelationBasedGraphProjector.toRelationshipType(it.predicate)) }
+        }
+
         // Ask LLM to classify
-        val classification = classifyRelationship(proposition, allowedRelationships)
+        val classification = classifyRelationship(proposition, allowedRelationships, matchingRelations)
 
         if (!classification.hasRelationship) {
             logger.debug("LLM determined no relationship: {}", classification.reasoning)
@@ -95,14 +113,13 @@ class LlmGraphProjector(
             )
         }
 
-        // Validate the relationship type exists in schema
+        // Validate the relationship type exists in schema or relations
         val relationshipType = classification.relationshipType
-        val matchingRel = allowedRelationships.find { it.name == relationshipType }
-        if (matchingRel == null && relationshipType != null) {
-            logger.warn("LLM suggested non-existent relationship type: {}", relationshipType)
+        if (relationshipType != null && relationshipType !in validRelationshipTypes) {
+            logger.warn("LLM suggested unknown relationship type: {}", relationshipType)
             return ProjectionFailed(
                 proposition,
-                "Relationship type '$relationshipType' not in schema"
+                "Relationship type '$relationshipType' not in schema or relations"
             )
         }
 
@@ -124,6 +141,7 @@ class LlmGraphProjector(
     private fun classifyRelationship(
         proposition: Proposition,
         allowedRelationships: List<AllowedRelationship>,
+        matchingRelations: List<Relation>,
     ): RelationshipClassification {
         return ai
             .withLlm(llmOptions)
@@ -134,6 +152,15 @@ class LlmGraphProjector(
                 mapOf(
                     "proposition" to proposition,
                     "allowedRelationships" to allowedRelationships,
+                    "relations" to matchingRelations.map { relation ->
+                        mapOf(
+                            "type" to RelationBasedGraphProjector.toRelationshipType(relation.predicate),
+                            "predicate" to relation.predicate,
+                            "meaning" to relation.meaning,
+                            "subjectType" to (relation.subjectType ?: "Any"),
+                            "objectType" to (relation.objectType ?: "Any"),
+                        )
+                    },
                 )
             )
     }
@@ -155,9 +182,9 @@ class LlmGraphProjector(
  * LLM output for relationship classification.
  */
 internal data class RelationshipClassification(
-    @param:JsonPropertyDescription("Whether this proposition implies a relationship")
+    @param:JsonPropertyDescription("Whether this proposition implies a relationship between two entities")
     val hasRelationship: Boolean,
-    @param:JsonPropertyDescription("The relationship type from schema, or null")
+    @param:JsonPropertyDescription("The relationship type name (e.g. 'OWNS', 'LISTENS_TO', 'employer'), or null if no relationship")
     val relationshipType: String?,
     @param:JsonPropertyDescription("The entity span that is the relationship source")
     val fromMentionSpan: String?,

@@ -8,26 +8,33 @@ With the following entity mentions:
 - {{ mention.span }} ({{ mention.type }}, role={{ mention.role }})
 {% endfor %}
 
-And these allowed relationships from the schema:
+{% if allowedRelationships is defined and allowedRelationships | length > 0 %}
+Schema relationships:
 {% for rel in allowedRelationships %}
-- (:{{ rel.from.name }})-[:{{ rel.name }}]->(:{{ rel.to.name }}): {{ rel.description }}
+- {{ rel.name }}: (:{{ rel.from.name }})-[:{{ rel.name }}]->(:{{ rel.to.name }}){% if rel.description %} — {{ rel.description }}{% endif %}
+
 {% endfor %}
+{% endif %}
+{% if relations is defined and relations | length > 0 %}
+Relation predicates:
+{% for rel in relations %}
+- {{ rel.type }}: (:{{ rel.subjectType }})-[:{{ rel.type }}]->(:{{ rel.objectType }}) — "{{ rel.predicate }}"{% if rel.meaning != rel.predicate %} ({{ rel.meaning }}){% endif %}
+
+{% endfor %}
+{% endif %}
 
 Determine what relationship type this proposition implies, if any.
 
 Consider:
 1. The subject mention (role=SUBJECT) typically maps to the relationship source
 2. The object mention (role=OBJECT) typically maps to the relationship target
-3. The relationship type must match the entity types (from/to) in the schema
-4. Some propositions may not imply a relationship (just state facts about a single entity)
+3. Choose the relationship type that BEST captures the semantic meaning of the proposition
+4. Use the exact relationship type name shown above (e.g. OWNS, LISTENS_TO, employer)
+5. Some propositions may not imply a relationship — just state facts about a single entity
 
-Provide your response as JSON:
-{
-  "hasRelationship": true/false,
-  "relationshipType": "RELATIONSHIP_NAME" or null,
-  "fromMentionSpan": "entity span for source" or null,
-  "toMentionSpan": "entity span for target" or null,
-  "reasoning": "brief explanation"
-}
-
-If no valid relationship can be inferred, set hasRelationship to false.
+Return your answer as JSON with these fields:
+- hasRelationship: true if a relationship is implied, false otherwise
+- relationshipType: the exact relationship type name, or null
+- fromMentionSpan: entity span for the source, or null
+- toMentionSpan: entity span for the target, or null
+- reasoning: brief explanation
