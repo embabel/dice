@@ -47,7 +47,7 @@ Based on deep analysis of Zep/Graphiti, Mem0, LangChain/LangMem, Google Vertex A
 | Dedup pipeline | Canonical + auto-merge + batch LLM | Sequential per-fact, top-5 candidates | **DICE** |
 | Frequency signal | `reinforceCount` on propositions, queryable | `mentions` counter on graph nodes/edges | Tie |
 | Confidence model | Decay + outcome adjustment + qualification at extraction | None — no confidence scores | **DICE** |
-| ID safety | UUIDs sent to LLM (GAP-6 open) | Integer re-indexing prevents hallucination | **Mem0** |
+| ID safety | Integer re-indexing prevents hallucination | Integer re-indexing prevents hallucination | Tie |
 | Role-aware extraction | `ExtractionPerspective` enum (ALL/USER/AGENT) | Separate user vs agent prompts with penalty framing | Tie |
 | Graph memory | No graph DB | Neo4j/Memgraph/Neptune/Kuzu | **Mem0** |
 | Audit trail | Grounding chain + reinforceCount | Full SQLite history (old/new/event/actor) | **Mem0** |
@@ -131,7 +131,7 @@ Based on deep analysis of Zep/Graphiti, Mem0, LangChain/LangMem, Google Vertex A
 
 | Gap | Blocks us against | Impact |
 |---|---|---|
-| ID hallucination prevention (GAP-6) | Mem0 | Silent failure mode in classification pipeline |
+| ~~ID hallucination prevention (GAP-6)~~ | ~~Mem0~~ | ~~DONE — integer re-indexing~~ |
 | Surprise-prioritized retention (GAP-2) | LangMem | Novel facts don't get durable treatment |
 | Temporal anchoring (GAP-4A) | Zep | Relative dates stored as literal text |
 | Bi-temporal model (GAP-4B) | Zep | No point-in-time queries or temporal contradiction resolution |

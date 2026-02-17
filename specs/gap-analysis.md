@@ -329,7 +329,7 @@ return existing.copy(
 | 1 | GAP-3: SNR instruction | ~15 min | High — improves extraction quality | None | **DONE** |
 | 2 | GAP-1: Confidence qualification | ~30 min | High — better calibrated confidence | None | **DONE** |
 | 3 | GAP-5: Role-aware extraction | ~15 min | Medium — prevents misattribution | None | **DONE** |
-| 4 | GAP-6: ID hallucination prevention | ~1 hr | Medium — prevents silent classification drops | None | |
+| 4 | GAP-6: ID hallucination prevention | ~1 hr | Medium — prevents silent classification drops | None | **DONE** |
 | 5 | GAP-2: Surprise-prioritized retention | ~30 min | Medium — more durable novel facts | None | |
 | 6 | GAP-7: Mentions/frequency counter | ~1 hr | Medium — frequency signal for ranking | None | **DONE** |
 | 7 | GAP-4A: Temporal anchoring (prompt) | ~1 hr | Medium — resolves relative dates | None | |
@@ -342,9 +342,10 @@ return existing.copy(
 - **GAP-5** (role-aware extraction): Added `ExtractionPerspective` enum (`ALL`/`USER`/`AGENT`) to `LlmPropositionExtractor`, wired through `TemplateModel` to prompt rule 6 "Speaker attribution". Configurable via `withPerspective()` builder method. Default `ALL` is backward compatible.
 - **GAP-7** (reinforceCount): Added `reinforceCount: Int` to `Proposition`, incremented on merge and reinforce. Queryable via `PropositionQuery.withMinReinforceCount()` and `orderedByReinforceCount()`.
 
+- **GAP-6** (ID hallucination prevention): Classification prompts now use integer indices instead of UUIDs. Code maps indices back to real candidates via positional lookup. Also fixed broken `[outer.inner]` index rendering in batch template.
+
 ### Remaining
 
-GAP-6 is code + prompt changes, independent of others.
 GAP-2 is a code change, independent of others.
 GAP-4A is code + prompt, depends on nothing.
 GAP-4B is a larger architectural change that should be specced separately.

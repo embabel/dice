@@ -7,7 +7,7 @@ Reasoning: {{ newProposition.reasoning | default('N/A') }}
 
 EXISTING PROPOSITIONS:
 {% for prop in candidates %}
-[{{ loop.index0 }}] ID: {{ prop.id }}
+ID: {{ prop.id }}
     Text: "{{ prop.text }}"
     Confidence: {{ prop.confidence }}
 {% endfor %}

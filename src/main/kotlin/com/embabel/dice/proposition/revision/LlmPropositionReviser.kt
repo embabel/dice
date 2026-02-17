@@ -329,7 +329,7 @@ data class LlmPropositionReviser(
         val allResults = mutableListOf<RevisionResult>()
 
         for (chunk in items.chunked(classifyBatchSize)) {
-            // Build template data for the batch
+            // Build template data for the batch — use integer indices instead of UUIDs
             val itemsData = chunk.map { item ->
                 mapOf(
                     "newProposition" to mapOf(
@@ -337,9 +337,9 @@ data class LlmPropositionReviser(
                         "confidence" to item.newProposition.confidence,
                         "reasoning" to (item.newProposition.reasoning ?: "N/A"),
                     ),
-                    "candidates" to item.candidates.map { p ->
+                    "candidates" to item.candidates.mapIndexed { idx, p ->
                         mapOf(
-                            "id" to p.id,
+                            "id" to idx.toString(),
                             "text" to p.text,
                             "confidence" to p.effectiveConfidence(),
                         )
@@ -375,9 +375,15 @@ data class LlmPropositionReviser(
                     continue
                 }
 
+                // Map integer indices back to actual candidates
                 val classified = propClassifications.classifications.mapNotNull { classification ->
-                    val candidate = item.candidates.find { it.id == classification.propositionId }
-                        ?: return@mapNotNull null
+                    val idx = classification.propositionId.toIntOrNull()
+                    val candidate = if (idx != null && idx in item.candidates.indices) {
+                        item.candidates[idx]
+                    } else {
+                        logger.warn("Invalid candidate index '{}' in batch classification response", classification.propositionId)
+                        return@mapNotNull null
+                    }
                     ClassifiedProposition(
                         proposition = candidate,
                         relation = parseRelation(classification.relation),
@@ -495,10 +501,11 @@ data class LlmPropositionReviser(
     ): List<ClassifiedProposition> {
         if (candidates.isEmpty()) return emptyList()
 
-        // Build candidate data for template
-        val candidateData = candidates.map { p ->
+        // Use integer indices instead of UUIDs to prevent LLM hallucination of IDs.
+        // UUIDs are 36 chars that the LLM can corrupt; integer indices are 1-2 chars.
+        val candidateData = candidates.mapIndexed { idx, p ->
             mapOf(
-                "id" to p.id,
+                "id" to idx.toString(),
                 "text" to p.text,
                 "confidence" to p.effectiveConfidence(),
             )
@@ -526,9 +533,15 @@ data class LlmPropositionReviser(
             response.classifications.joinToString { "${it.propositionId}=${it.relation}" }
         )
 
+        // Map integer indices back to actual candidates
         return response.classifications.mapNotNull { classification ->
-            val candidate = candidates.find { it.id == classification.propositionId }
-                ?: return@mapNotNull null
+            val idx = classification.propositionId.toIntOrNull()
+            val candidate = if (idx != null && idx in candidates.indices) {
+                candidates[idx]
+            } else {
+                logger.warn("Invalid candidate index '{}' in classification response, skipping", classification.propositionId)
+                return@mapNotNull null
+            }
             ClassifiedProposition(
                 proposition = candidate,
                 relation = parseRelation(classification.relation),

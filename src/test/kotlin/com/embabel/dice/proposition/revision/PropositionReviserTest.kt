@@ -762,7 +762,7 @@ class PropositionReviserTest {
         @Test
         fun `batch response data classes are properly structured`() {
             val item = ClassificationItem(
-                propositionId = "test-id",
+                propositionId = "0",  // integer index, not UUID
                 relation = "IDENTICAL",
                 similarity = 0.95,
                 reasoning = "Same fact"
@@ -778,7 +778,7 @@ class PropositionReviserTest {
             assertEquals(1, response.propositions.size)
             assertEquals(0, response.propositions[0].propositionIndex)
             assertEquals(1, response.propositions[0].classifications.size)
-            assertEquals("test-id", response.propositions[0].classifications[0].propositionId)
+            assertEquals("0", response.propositions[0].classifications[0].propositionId)
         }
 
         @Test

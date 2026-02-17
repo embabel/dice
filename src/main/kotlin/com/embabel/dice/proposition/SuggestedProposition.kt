@@ -74,8 +74,8 @@ data class SuggestedMention(
 data class SuggestedProposition(
     @param:JsonPropertyDescription("The factual statement in natural language (e.g., 'Jim is an expert in GOAP')")
     val text: String,
-    @param:JsonPropertyDescription("Entities mentioned in this statement. Don't include you're not sure of.")
-    val mentions: List<SuggestedMention>,
+    @param:JsonPropertyDescription("Entities mentioned in this statement. Don't include if you're not sure of any.")
+    val mentions: List<SuggestedMention> = emptyList(),
     @param:JsonPropertyDescription("Certainty of this fact (0.0-1.0)")
     val confidence: ZeroToOne,
     @param:JsonPropertyDescription("How quickly this becomes stale (0.0=permanent, 1.0=very temporary)")
