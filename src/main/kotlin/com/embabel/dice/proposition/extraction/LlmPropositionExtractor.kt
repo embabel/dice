@@ -338,9 +338,10 @@ data class LlmPropositionExtractor(
             val suggested = resolution.suggested
 
             // The suggested entity's name and labels give us the mention key
+            // Must lowercase to match MentionKey.from() which lowercases mention.type
             val key = MentionKey(
                 span = suggested.name.lowercase().trim(),
-                type = suggested.labels.firstOrNull() ?: continue,
+                type = suggested.labels.firstOrNull()?.lowercase()?.trim() ?: continue,
             )
             map[key] = recommended.id
         }
