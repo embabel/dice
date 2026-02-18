@@ -149,8 +149,14 @@
     <build>
         <plugins>
             <plugin>
+                <!-- Ensure that default interface methods are available for Java -->
                 <groupId>org.jetbrains.kotlin</groupId>
                 <artifactId>kotlin-maven-plugin</artifactId>
+                <configuration>
+                    <args>
+                        <arg>-Xjvm-default=all</arg>
+                    </args>
+                </configuration>
                 <executions>
                     <execution>
                         <id>compile</id>

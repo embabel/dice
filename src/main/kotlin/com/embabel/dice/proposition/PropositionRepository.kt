@@ -17,12 +17,14 @@ package com.embabel.dice.proposition
 
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.model.Retrievable
+import com.embabel.agent.rag.service.Cluster
 import com.embabel.agent.rag.service.CoreSearchOperations
 import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.agent.rag.service.TextSearch
 import com.embabel.agent.rag.service.VectorSearch
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.common.core.types.ZeroToOne
 import com.embabel.common.util.loggerFor
 import java.time.Instant
 
@@ -236,6 +238,46 @@ interface PropositionRepository : CoreSearchOperations {
      */
     fun findAbstractionsOf(propositionId: String): List<Proposition> =
         findAll().filter { propositionId in it.sourceIds }
+
+    // ========================================================================
+    // Clustering - discover natural groupings of similar propositions
+    // ========================================================================
+
+    /**
+     * Find clusters of similar propositions.
+     *
+     * Each cluster has an anchor proposition and a list of similar propositions
+     * above the similarity threshold. Clusters are deduplicated so that each
+     * pair appears only once (the proposition with the lower ID is the anchor).
+     *
+     * @param similarityThreshold Minimum cosine similarity to include in a cluster
+     * @param topK Maximum number of similar items per cluster
+     * @param query Optional query to pre-filter which propositions participate
+     * @return Clusters ordered by size (largest first), excluding empty clusters
+     */
+    fun findClusters(
+        similarityThreshold: ZeroToOne = 0.7,
+        topK: Int = 10,
+        query: PropositionQuery = PropositionQuery(),
+    ): List<Cluster<Proposition>> {
+        val candidates = query(query)
+        val candidateIds = candidates.map { it.id }.toSet()
+
+        return candidates.mapNotNull { anchor ->
+            val similar = findSimilarWithScores(
+                TextSimilaritySearchRequest(
+                    query = anchor.text,
+                    similarityThreshold = similarityThreshold,
+                    topK = topK + 1, // +1 because the anchor itself may appear
+                ),
+            )
+                .filter { it.match.id != anchor.id && it.match.id in candidateIds }
+                .filter { anchor.id < it.match.id }
+                .take(topK)
+
+            if (similar.isNotEmpty()) Cluster(anchor = anchor, similar = similar) else null
+        }.sortedByDescending { it.similar.size }
+    }
 
     // ========================================================================
     // Composable query - consolidates filtering, ordering, limiting

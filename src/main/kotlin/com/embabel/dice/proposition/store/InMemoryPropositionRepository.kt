@@ -16,10 +16,12 @@
 package com.embabel.dice.proposition.store
 
 import com.embabel.agent.core.ContextId
+import com.embabel.agent.rag.service.Cluster
 import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
@@ -105,6 +107,31 @@ class InMemoryPropositionRepository(
             }
             .sortedByDescending { it.score }
             .take(textSimilaritySearchRequest.topK)
+    }
+
+    override fun findClusters(
+        similarityThreshold: ZeroToOne,
+        topK: Int,
+        query: PropositionQuery,
+    ): List<Cluster<Proposition>> {
+        val candidates = query(query)
+        val candidateIds = candidates.map { it.id }.toSet()
+
+        return candidates.mapNotNull { anchor ->
+            val anchorEmbedding = embeddings[anchor.id] ?: return@mapNotNull null
+
+            val similar = candidates
+                .filter { it.id != anchor.id && anchor.id < it.id }
+                .mapNotNull { other ->
+                    val otherEmbedding = embeddings[other.id] ?: return@mapNotNull null
+                    val score = cosineSimilarity(anchorEmbedding, otherEmbedding)
+                    if (score >= similarityThreshold) SimilarityResult(match = other, score = score) else null
+                }
+                .sortedByDescending { it.score }
+                .take(topK)
+
+            if (similar.isNotEmpty()) Cluster(anchor = anchor, similar = similar) else null
+        }.sortedByDescending { it.similar.size }
     }
 
     private fun cosineSimilarity(a: FloatArray, b: FloatArray): Double {
