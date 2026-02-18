@@ -105,7 +105,7 @@ data class ChunkPropositionResult(
     override fun updatedEntities(): List<NamedEntityData> =
         entityResolutions.resolutions
             .filterIsInstance<ExistingEntity>()
-            .map { it.existing }
+            .map { it.recommended }
             .distinctBy { it.id }
 
     override fun referenceOnlyEntities(): List<NamedEntityData> =

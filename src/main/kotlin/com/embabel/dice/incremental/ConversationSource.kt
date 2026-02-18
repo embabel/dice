@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.incremental
 
+import com.embabel.chat.BaseMessage
 import com.embabel.chat.Conversation
 import com.embabel.chat.Message
 import kotlin.math.max
@@ -48,7 +49,8 @@ class MessageFormatter : IncrementalSourceFormatter<Message> {
 
     override fun format(items: List<Message>): String {
         return items.joinToString("\n\n") { message ->
-            val sender = message.role.displayName
+            val name = (message as? BaseMessage)?.name
+            val sender = if (name != null) "$name (${message.role.displayName})" else message.role.displayName
             "$sender: ${message.content}"
         }
     }
