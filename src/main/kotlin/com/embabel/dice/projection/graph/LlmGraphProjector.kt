@@ -35,19 +35,98 @@ import org.slf4j.LoggerFactory
  * Uses an LLM to classify propositions into relationship types
  * from both the [DataDictionary] schema and [Relations] predicates.
  *
+ * ## Builder Usage (Java)
+ *
+ * ```java
+ * LlmGraphProjector projector = LlmGraphProjector
+ *     .withLlm(llmOptions)
+ *     .withAi(ai)
+ *     .withRelations(relations)
+ *     .withLenientPolicy();
+ * ```
+ *
+ * ## Direct Construction (Kotlin)
+ *
+ * ```kotlin
+ * val projector = LlmGraphProjector(
+ *     ai = ai,
+ *     relations = relations,
+ *     policy = LenientProjectionPolicy(),
+ *     llmOptions = llmOptions,
+ * )
+ * ```
+ *
  * @param ai AI service for LLM calls
  * @param relations Relation predicates to include as candidate relationship types
  * @param policy Policy to filter propositions before projection
  * @param llmOptions LLM configuration
  */
-class LlmGraphProjector @JvmOverloads constructor(
+data class LlmGraphProjector(
     private val ai: Ai,
     private val relations: Relations = Relations.empty(),
     private val policy: ProjectionPolicy = DefaultProjectionPolicy(),
     private val llmOptions: LlmOptions = LlmOptions(),
 ) : GraphProjector {
 
-    private val logger = LoggerFactory.getLogger(LlmGraphProjector::class.java)
+    companion object {
+
+        private val logger = LoggerFactory.getLogger(LlmGraphProjector::class.java)
+
+        @JvmStatic
+        fun withLlm(llm: LlmOptions): Builder = Builder(llm)
+
+        class Builder(
+            private val llmOptions: LlmOptions,
+        ) {
+            fun withAi(ai: Ai): LlmGraphProjector =
+                LlmGraphProjector(
+                    ai = ai,
+                    llmOptions = llmOptions,
+                )
+        }
+    }
+
+    /**
+     * Set the relation predicates.
+     */
+    fun withRelations(relations: Relations): LlmGraphProjector =
+        copy(relations = relations)
+
+    /**
+     * Set the projection policy.
+     */
+    fun withPolicy(policy: ProjectionPolicy): LlmGraphProjector =
+        copy(policy = policy)
+
+    /**
+     * Use a [LenientProjectionPolicy] with default confidence threshold.
+     */
+    fun withLenientPolicy(): LlmGraphProjector =
+        copy(policy = LenientProjectionPolicy())
+
+    /**
+     * Use a [LenientProjectionPolicy] with the given confidence threshold.
+     */
+    fun withLenientPolicy(confidenceThreshold: Double): LlmGraphProjector =
+        copy(policy = LenientProjectionPolicy(confidenceThreshold))
+
+    /**
+     * Use a [DefaultProjectionPolicy] with default confidence threshold.
+     */
+    fun withDefaultPolicy(): LlmGraphProjector =
+        copy(policy = DefaultProjectionPolicy())
+
+    /**
+     * Use a [DefaultProjectionPolicy] with the given confidence threshold.
+     */
+    fun withDefaultPolicy(confidenceThreshold: Double): LlmGraphProjector =
+        copy(policy = DefaultProjectionPolicy(confidenceThreshold))
+
+    /**
+     * Override LLM options after construction.
+     */
+    fun withLlmOptions(llmOptions: LlmOptions): LlmGraphProjector =
+        copy(llmOptions = llmOptions)
 
     override fun project(
         proposition: Proposition,

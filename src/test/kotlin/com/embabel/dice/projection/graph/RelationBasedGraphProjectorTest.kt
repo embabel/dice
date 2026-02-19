@@ -373,6 +373,84 @@ class RelationBasedGraphProjectorTest {
     }
 
     @Nested
+    inner class PolicyConvenienceTests {
+
+        @Test
+        fun `withLenientPolicy uses LenientProjectionPolicy`() {
+            val relations = Relations.empty().withProcedural("likes")
+
+            val projector = RelationBasedGraphProjector.from(relations)
+                .withLenientPolicy()
+
+            val prop = proposition(
+                text = "Alice likes jazz",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = "alice-1",
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-jazz",
+                confidence = 0.75, // Below default (0.85) but above lenient (0.7)
+            )
+
+            val result = projector.project(prop, emptySchema)
+            assertTrue(result is ProjectionSuccess)
+        }
+
+        @Test
+        fun `withLenientPolicy with custom threshold`() {
+            val relations = Relations.empty().withProcedural("likes")
+
+            val projector = RelationBasedGraphProjector.from(relations)
+                .withLenientPolicy(0.9)
+
+            val prop = proposition(
+                text = "Alice likes jazz",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = "alice-1",
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-jazz",
+                confidence = 0.85,
+            )
+
+            val result = projector.project(prop, emptySchema)
+            assertTrue(result is ProjectionSkipped)
+        }
+
+        @Test
+        fun `withDefaultPolicy uses DefaultProjectionPolicy`() {
+            val relations = Relations.empty().withProcedural("likes")
+
+            // Start with lenient, then switch to default
+            val projector = RelationBasedGraphProjector.from(relations)
+                .withLenientPolicy()
+                .withDefaultPolicy()
+
+            val prop = proposition(
+                text = "Alice likes jazz",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = "alice-1",
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-jazz",
+                confidence = 0.75, // Below default threshold (0.85)
+            )
+
+            val result = projector.project(prop, emptySchema)
+            assertTrue(result is ProjectionSkipped)
+        }
+
+        @Test
+        fun `withDefaultPolicy with custom threshold`() {
+            val relations = Relations.empty().withProcedural("likes")
+
+            val projector = RelationBasedGraphProjector.from(relations)
+                .withDefaultPolicy(0.5)
+
+            val prop = proposition(
+                text = "Alice likes jazz",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = "alice-1",
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-jazz",
+                confidence = 0.6,
+            )
+
+            val result = projector.project(prop, emptySchema)
+            assertTrue(result is ProjectionSuccess)
+        }
+    }
+
+    @Nested
     inner class BuilderTests {
 
         @Test

@@ -97,6 +97,176 @@ class LlmGraphProjectorTest {
     }
 
     @Nested
+    inner class BuilderTests {
+
+        @Test
+        fun `builder creates projector with default policy and empty relations`() {
+            val llmOptions = LlmOptions()
+            val ai = mockAi(RelationshipClassification(
+                hasRelationship = false, relationshipType = null,
+                fromMentionSpan = null, toMentionSpan = null, reasoning = null,
+            ))
+
+            val projector = LlmGraphProjector.withLlm(llmOptions).withAi(ai)
+
+            // Default policy skips low confidence
+            val prop = proposition(
+                text = "Alice likes jazz",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = "alice-1",
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-1",
+                confidence = 0.5,
+            )
+            val result = projector.project(prop, emptySchema)
+            assertTrue(result is ProjectionSkipped)
+        }
+
+        @Test
+        fun `builder with withRelations and withLenientPolicy`() {
+            val relations = Relations.empty()
+                .withSemanticBetween("UrbotUser", "Pet", "owns", "user owns a pet")
+
+            val ai = mockAi(RelationshipClassification(
+                hasRelationship = true,
+                relationshipType = "OWNS",
+                fromMentionSpan = "Cassie",
+                toMentionSpan = "Artemis",
+                reasoning = "Cassie owns Artemis",
+            ))
+
+            val projector = LlmGraphProjector
+                .withLlm(LlmOptions())
+                .withAi(ai)
+                .withRelations(relations)
+                .withLenientPolicy()
+
+            val prop = proposition(
+                text = "Cassie adopted Artemis as a kitten six years ago",
+                subjectSpan = "Cassie", subjectType = "UrbotUser", subjectId = "user-1",
+                objectSpan = "Artemis", objectType = "Pet", objectId = "pet-1",
+            )
+
+            val result = projector.project(prop, emptySchema)
+            assertTrue(result is ProjectionSuccess)
+            assertEquals("OWNS", (result as ProjectionSuccess).projected.type)
+        }
+
+        @Test
+        fun `withDefaultPolicy uses DefaultProjectionPolicy`() {
+            val relations = Relations.empty().withSemantic("likes")
+            val ai = mockAi(RelationshipClassification(
+                hasRelationship = true, relationshipType = "LIKES",
+                fromMentionSpan = "Alice", toMentionSpan = "jazz", reasoning = "test",
+            ))
+
+            val projector = LlmGraphProjector
+                .withLlm(LlmOptions())
+                .withAi(ai)
+                .withRelations(relations)
+                .withDefaultPolicy()
+
+            // Default policy requires confidence >= 0.85
+            val lowConfProp = proposition(
+                text = "Alice likes jazz",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = "alice-1",
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-1",
+                confidence = 0.5,
+            )
+            assertTrue(projector.project(lowConfProp, emptySchema) is ProjectionSkipped)
+
+            // High confidence passes
+            val highConfProp = proposition(
+                text = "Alice likes jazz",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = "alice-1",
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-1",
+                confidence = 0.9,
+            )
+            assertTrue(projector.project(highConfProp, emptySchema) is ProjectionSuccess)
+        }
+
+        @Test
+        fun `withDefaultPolicy with custom threshold`() {
+            val relations = Relations.empty().withSemantic("likes")
+            val ai = mockAi(RelationshipClassification(
+                hasRelationship = true, relationshipType = "LIKES",
+                fromMentionSpan = "Alice", toMentionSpan = "jazz", reasoning = "test",
+            ))
+
+            val projector = LlmGraphProjector
+                .withLlm(LlmOptions())
+                .withAi(ai)
+                .withRelations(relations)
+                .withDefaultPolicy(0.5)
+
+            val prop = proposition(
+                text = "Alice likes jazz",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = "alice-1",
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-1",
+                confidence = 0.6,
+            )
+            assertTrue(projector.project(prop, emptySchema) is ProjectionSuccess)
+        }
+
+        @Test
+        fun `withLenientPolicy with custom threshold`() {
+            val relations = Relations.empty().withSemantic("likes")
+            val ai = mockAi(RelationshipClassification(
+                hasRelationship = true, relationshipType = "LIKES",
+                fromMentionSpan = "Alice", toMentionSpan = "jazz", reasoning = "test",
+            ))
+
+            val projector = LlmGraphProjector
+                .withLlm(LlmOptions())
+                .withAi(ai)
+                .withRelations(relations)
+                .withLenientPolicy(0.9)
+
+            // Below custom threshold
+            val prop = proposition(
+                text = "Alice likes jazz",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = "alice-1",
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-1",
+                confidence = 0.85,
+            )
+            assertTrue(projector.project(prop, emptySchema) is ProjectionSkipped)
+        }
+
+        @Test
+        fun `withLlmOptions overrides LLM configuration`() {
+            val llmSlot = slot<LlmOptions>()
+            val ai = mockk<Ai>()
+            val mockPromptRunner = mockk<PromptRunner>()
+            val mockCreating = mockk<PromptRunner.Creating<RelationshipClassification>>()
+
+            every { ai.withLlm(capture(llmSlot)) } returns mockPromptRunner
+            every { mockPromptRunner.withId(any()) } returns mockPromptRunner
+            every { mockPromptRunner.creating(RelationshipClassification::class.java) } returns mockCreating
+            every { mockCreating.fromTemplate(any(), any()) } returns RelationshipClassification(
+                hasRelationship = true, relationshipType = "LIKES",
+                fromMentionSpan = "Alice", toMentionSpan = "jazz", reasoning = "test",
+            )
+
+            val originalLlm = LlmOptions()
+            val overrideLlm = LlmOptions(temperature = 0.5)
+
+            val projector = LlmGraphProjector
+                .withLlm(originalLlm)
+                .withAi(ai)
+                .withRelations(Relations.empty().withSemantic("likes"))
+                .withLenientPolicy()
+                .withLlmOptions(overrideLlm)
+
+            val prop = proposition(
+                text = "Alice likes jazz",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = "alice-1",
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-1",
+            )
+            projector.project(prop, emptySchema)
+
+            assertEquals(0.5, llmSlot.captured.temperature)
+        }
+    }
+
+    @Nested
     inner class RelationsIntegrationTests {
 
         @Test

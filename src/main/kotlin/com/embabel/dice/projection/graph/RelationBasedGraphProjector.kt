@@ -180,6 +180,30 @@ class RelationBasedGraphProjector @JvmOverloads constructor(
         RelationBasedGraphProjector(relations, policy, caseSensitive)
 
     /**
+     * Use a [LenientProjectionPolicy] with default confidence threshold.
+     */
+    fun withLenientPolicy(): RelationBasedGraphProjector =
+        RelationBasedGraphProjector(relations, LenientProjectionPolicy(), caseSensitive)
+
+    /**
+     * Use a [LenientProjectionPolicy] with the given confidence threshold.
+     */
+    fun withLenientPolicy(confidenceThreshold: Double): RelationBasedGraphProjector =
+        RelationBasedGraphProjector(relations, LenientProjectionPolicy(confidenceThreshold), caseSensitive)
+
+    /**
+     * Use a [DefaultProjectionPolicy] with default confidence threshold.
+     */
+    fun withDefaultPolicy(): RelationBasedGraphProjector =
+        RelationBasedGraphProjector(relations, DefaultProjectionPolicy(), caseSensitive)
+
+    /**
+     * Use a [DefaultProjectionPolicy] with the given confidence threshold.
+     */
+    fun withDefaultPolicy(confidenceThreshold: Double): RelationBasedGraphProjector =
+        RelationBasedGraphProjector(relations, DefaultProjectionPolicy(confidenceThreshold), caseSensitive)
+
+    /**
      * Set case sensitivity for predicate matching.
      */
     fun withCaseSensitive(caseSensitive: Boolean): RelationBasedGraphProjector =

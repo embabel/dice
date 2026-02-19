@@ -1277,8 +1277,18 @@ flowchart TB
 
 ### Graph Projection
 
-The `RelationBasedGraphProjector` projects propositions to graph relationships by matching
-predicates from the schema and `Relations`:
+Two graph projectors are available:
+
+| Projector | Strategy | Use Case |
+|-----------|----------|----------|
+| **RelationBasedGraphProjector** | Matches proposition text against known predicates | Fast, deterministic, no LLM cost |
+| **LlmGraphProjector** | LLM classifies propositions into relationship types | Handles ambiguous or novel predicates |
+
+Both use a consistent builder pattern with convenience methods for common configurations.
+
+#### RelationBasedGraphProjector
+
+Projects propositions to graph relationships by matching predicates from the schema and `Relations`:
 
 ```mermaid
 flowchart LR
@@ -1319,11 +1329,72 @@ val relations = Relations.empty().withProcedural("likes")
 // "Alice likes jazz" → (alice)-[:LIKES]->(jazz)
 
 val projector = RelationBasedGraphProjector.from(relations)
+    .withLenientPolicy()
 val results = projector.projectAll(propositions, schema)
+```
 
-// Persist to graph database
-val persister = NamedEntityDataRepositoryGraphRelationshipPersister(repository)
-val persistResult = persister.persist(results)
+#### LlmGraphProjector
+
+Uses an LLM to classify propositions into relationship types. Useful when predicates are
+ambiguous or when you want the LLM to infer relationships not explicitly stated:
+
+```kotlin
+// Kotlin
+val projector = LlmGraphProjector(
+    ai = ai,
+    relations = relations,
+    policy = LenientProjectionPolicy(),
+    llmOptions = llmOptions,
+)
+```
+
+```java
+// Java — builder pattern
+var projector = LlmGraphProjector
+    .withLlm(projectionLlm)
+    .withAi(ai)
+    .withRelations(relations)
+    .withLenientPolicy();
+```
+
+**Wither methods** (both projectors):
+
+| Method | Description |
+|--------|-------------|
+| `withPolicy(policy)` | Set any `ProjectionPolicy` |
+| `withLenientPolicy()` | `LenientProjectionPolicy` with default threshold (0.7) |
+| `withLenientPolicy(threshold)` | `LenientProjectionPolicy` with custom threshold |
+| `withDefaultPolicy()` | `DefaultProjectionPolicy` with default threshold (0.85) |
+| `withDefaultPolicy(threshold)` | `DefaultProjectionPolicy` with custom threshold |
+
+`LlmGraphProjector` also has `withRelations(relations)` and `withLlmOptions(llmOptions)`.
+
+#### GraphProjectionService
+
+`GraphProjectionService` bundles a `GraphProjector`, `GraphRelationshipPersister`, and
+`DataDictionary` into a single facade for the common project-and-persist workflow:
+
+```kotlin
+// Kotlin
+val service = GraphProjectionService(graphProjector, persister, schema)
+val (projectionResults, persistenceResult) = service.projectAndPersist(propositions)
+```
+
+```java
+// Java
+var service = GraphProjectionService.create(graphProjector, persister, dataDictionary);
+var result = service.projectAndPersist(propositions);
+```
+
+```java
+// Spring configuration
+@Bean
+GraphProjectionService graphProjectionService(
+        GraphProjector graphProjector,
+        GraphRelationshipPersister persister,
+        DataDictionary dataDictionary) {
+    return GraphProjectionService.create(graphProjector, persister, dataDictionary);
+}
 ```
 
 ### Prolog Projection (Experimental)
@@ -1850,8 +1921,9 @@ com.embabel.dice
 │   ├── graph/                # Knowledge graph projection
 │   │   ├── GraphProjector    # Interface for graph projection
 │   │   ├── RelationBasedGraphProjector  # Predicate-based (no LLM)
-│   │   ├── LlmGraphProjector # LLM-based classification
+│   │   ├── LlmGraphProjector # LLM-based classification (data class + builder)
 │   │   ├── ProjectionPolicy  # Filter before projection
+│   │   ├── GraphProjectionService       # Facade: project + persist in one call
 │   │   ├── GraphRelationshipPersister   # Persistence interface
 │   │   └── NamedEntityDataRepositoryGraphRelationshipPersister
 │   │
