@@ -66,7 +66,7 @@ flowchart TB
     end
 
     subgraph SOR["📚 System of Record"]
-        PROPS[("Propositions<br/>confidence + decay")]
+        PROPS[("Propositions<br/>confidence + importance + decay")]
     end
 
     subgraph Projections["🎯 Materialized Views"]
@@ -153,7 +153,7 @@ public void onConversationExchange(ConversationAnalysisRequestEvent event) {
 
 ### Proposition Pipeline
 
-- **Extraction**: LLM extracts typed propositions from text with confidence and decay scores
+- **Extraction**: LLM extracts typed propositions from text with confidence, importance, and decay scores
 - **Entity Resolution**: Mentions resolve to canonical entity IDs
 - **Evidence Accumulation**: Multiple observations reinforce or contradict propositions
 - **Revision**: Merge identical, reinforce similar, contradict conflicting propositions
@@ -163,7 +163,7 @@ public void onConversationExchange(ConversationAnalysisRequestEvent event) {
 flowchart TB
     subgraph Extraction["1️⃣ Extraction"]
         Text["📄 Source Text"] --> LLM["🤖 LLM Extractor"]
-        LLM --> Props["Propositions<br/>+ confidence<br/>+ decay"]
+        LLM --> Props["Propositions<br/>+ confidence<br/>+ importance<br/>+ decay"]
     end
 
     subgraph Resolution["2️⃣ Entity Resolution"]
@@ -1087,13 +1087,14 @@ flowchart LR
         ENT["entityId<br/>(mentions entity)"]
         MENT["anyEntityIds (OR)<br/>allEntityIds (AND)"]
         CONF["minEffectiveConfidence<br/>(with decay)"]
+        IMP["minImportance<br/>(how much it matters)"]
         TIME["createdAfter/Before<br/>revisedAfter/Before"]
         LVL["minLevel/maxLevel<br/>(abstraction)"]
         STAT["status<br/>(ACTIVE, etc.)"]
     end
 
     subgraph Order["Ordering"]
-        ORD["orderBy<br/>EFFECTIVE_CONFIDENCE_DESC<br/>CREATED_DESC<br/>REVISED_DESC"]
+        ORD["orderBy<br/>EFFECTIVE_CONFIDENCE_DESC<br/>IMPORTANCE_DESC<br/>CREATED_DESC<br/>REVISED_DESC"]
     end
 
     subgraph Limit["Limiting"]
@@ -1125,6 +1126,13 @@ val query = PropositionQuery(
 )
 val results = repository.query(query)
 
+// Filter by importance — surface critical facts regardless of confidence
+val criticalFacts = repository.query(
+    PropositionQuery.forContextId(sessionContext)
+        .withMinImportance(0.8)
+        .orderedByImportance()
+)
+
 // Infix with entity
 val entityProps = repository.query(
     PropositionQuery mentioningEntity "alice-123"
@@ -1142,6 +1150,13 @@ PropositionQuery query = PropositionQuery.againstContext("session-123")
     .withLimit(20);
 
 List<Proposition> results = repository.query(query);
+
+// Filter by importance — surface critical facts regardless of confidence
+List<Proposition> critical = repository.query(
+    PropositionQuery.againstContext("session-123")
+        .withMinImportance(0.8)
+        .orderedByImportance()
+);
 ```
 
 **Multi-entity queries** — filter by multiple entities with OR or AND semantics:
@@ -1194,6 +1209,11 @@ List<Proposition> both = repository.query(
 with high decay rates rank lower than recent ones. This is useful for ranking memories by
 relevance rather than just raw confidence.
 
+**Importance** (0.0–1.0) measures how much a fact matters, independent of certainty. A fact can
+be uncertain yet critical ("Mary might be about to have surgery" — moderate confidence, high importance),
+or certain yet trivial ("Alice mentioned the weather is nice" — high confidence, low importance).
+Use `minImportance` to surface critical facts and `IMPORTANCE_DESC` to prioritise them in results.
+
 ### Relations and Predicates
 
 The `Relations` class provides a builder-style API for defining relationship predicates with their
@@ -1228,7 +1248,7 @@ different "view" optimized for specific query patterns:
 ```mermaid
 flowchart TB
     subgraph Source["📝 Source of Truth"]
-        P[("Propositions<br/>with confidence & decay")]
+        P[("Propositions<br/>with confidence, importance & decay")]
     end
 
     subgraph Projectors["🔄 Projectors"]
@@ -1424,6 +1444,11 @@ val memory = Memory.forContext(contextId)
 val memory = Memory.forContext(contextId)
     .withRepository(propositionRepository)
     .narrowedBy { it.withAnyEntity("alice", "bob").withMinLevel(1) }
+
+// Only high-importance memories
+val memory = Memory.forContext(contextId)
+    .withRepository(propositionRepository)
+    .narrowedBy { it.withMinImportance(0.7) }
 
 // Only level-0 active propositions
 val memory = Memory.forContext(contextId)
@@ -1739,6 +1764,9 @@ Derived propositions track their abstraction level and provenance:
 ```kotlin
 data class Proposition(
     // ... other fields ...
+    val confidence: ZeroToOne,       // How certain (0.0-1.0)
+    val importance: ZeroToOne = 0.5, // How much it matters (0.0-1.0)
+    val decay: ZeroToOne = 0.0,      // How quickly it becomes stale (0.0-1.0)
     val level: Int = 0,              // 0 = raw, 1+ = derived
     val sourceIds: List<String>,     // IDs of source propositions
 )
@@ -1806,7 +1834,7 @@ com.embabel.dice
 │           └── DefaultCandidateSearchers       # Factory for defaults
 │
 ├── proposition/              # Core types (source of truth)
-│   ├── Proposition           # Natural language fact with confidence/decay
+│   ├── Proposition           # Natural language fact with confidence/importance/decay
 │   ├── EntityMention         # Entity reference within proposition
 │   ├── PropositionQuery      # Composable query specification
 │   ├── Projector<T>          # Generic projection interface
