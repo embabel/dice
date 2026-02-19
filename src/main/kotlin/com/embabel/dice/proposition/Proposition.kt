@@ -57,6 +57,7 @@ enum class PropositionStatus {
  * @property mentions Entity references within the text (typically 1-2, with SUBJECT/OBJECT roles)
  * @property confidence LLM-generated certainty (0.0-1.0)
  * @property decay Staleness rate (0.0-1.0). High decay = information becomes stale quickly
+ * @property importance How much this fact matters (0.0-1.0). Orthogonal to confidence.
  * @property reasoning LLM explanation for why this was extracted
  * @property grounding Chunk IDs that support this proposition
  * @property created When the proposition was first created
@@ -74,6 +75,7 @@ data class Proposition(
     override val mentions: List<EntityMention>,
     override val confidence: ZeroToOne,
     override val decay: ZeroToOne = 0.0,
+    override val importance: ZeroToOne = 0.5,
     val reasoning: String? = null,
     override val grounding: List<String> = emptyList(),
     val created: Instant = Instant.now(),
@@ -111,6 +113,7 @@ data class Proposition(
             mentions: List<EntityMention>,
             confidence: Double,
             decay: Double,
+            importance: Double = 0.5,
             reasoning: String?,
             grounding: List<String>,
             created: Instant,
@@ -128,6 +131,7 @@ data class Proposition(
             mentions = mentions,
             confidence = confidence,
             decay = decay,
+            importance = importance,
             reasoning = reasoning,
             grounding = grounding,
             created = created,
@@ -144,6 +148,7 @@ data class Proposition(
     init {
         require(confidence in 0.0..1.0) { "Confidence must be between 0.0 and 1.0" }
         require(decay in 0.0..1.0) { "Decay must be between 0.0 and 1.0" }
+        require(importance in 0.0..1.0) { "Importance must be between 0.0 and 1.0" }
         require(level >= 0) { "Level must be non-negative" }
         require(level == 0 || sourceIds.isNotEmpty()) { "Abstracted propositions (level > 0) must have sourceIds" }
         require(reinforceCount >= 0) { "reinforceCount must be non-negative" }
@@ -156,7 +161,7 @@ data class Proposition(
     override fun infoString(verbose: Boolean?, indent: Int): String {
         val mentionStr = mentions.joinToString(", ") { it.infoString(verbose) }
         return if (verbose == true) {
-            "Proposition(text=\"$text\", mentions=[$mentionStr], conf=$confidence, status=$status)"
+            "Proposition(text=\"$text\", mentions=[$mentionStr], conf=$confidence, importance=$importance, status=$status)"
         } else {
             "Proposition(\"$text\" [$mentionStr])"
         }

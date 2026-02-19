@@ -69,6 +69,7 @@ data class SuggestedMention(
  * @property mentions Entities referenced in the statement
  * @property confidence LLM's certainty (0.0-1.0)
  * @property decay How quickly this information becomes stale (0.0-1.0)
+ * @property importance How much this fact matters to remember (0.0-1.0)
  * @property reasoning LLM's explanation for extracting this
  */
 data class SuggestedProposition(
@@ -80,6 +81,8 @@ data class SuggestedProposition(
     val confidence: ZeroToOne,
     @param:JsonPropertyDescription("How quickly this becomes stale (0.0=permanent, 1.0=very temporary)")
     val decay: ZeroToOne = 0.0,
+    @param:JsonPropertyDescription("How much this fact matters to remember (0.0=trivial, 1.0=critical). Independent of confidence.")
+    val importance: ZeroToOne = 0.5,
     @param:JsonPropertyDescription("Explanation for why this was extracted")
     val reasoning: String = "",
 ) {
@@ -94,6 +97,7 @@ data class SuggestedProposition(
             mentions = mentions.map { it.toEntityMention() },
             confidence = confidence.coerceIn(0.0, 1.0),
             decay = decay.coerceIn(0.0, 1.0),
+            importance = importance.coerceIn(0.0, 1.0),
             reasoning = reasoning.ifBlank { null },
             grounding = chunkIds,
         )

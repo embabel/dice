@@ -5,7 +5,7 @@ These propositions are about: {{ groupLabel }}
 
 SOURCE PROPOSITIONS:
 {% for prop in propositions %}
-[{{ loop.index0 }}] "{{ prop.text }}" (confidence: {{ prop.confidence }}, decay: {{ prop.decay }})
+[{{ loop.index0 }}] "{{ prop.text }}" (confidence: {{ prop.confidence }}, importance: {{ prop.importance }}, decay: {{ prop.decay }})
 {% endfor %}
 
 Generate {{ targetCount }} abstract proposition(s) that capture the essence of these observations.
@@ -19,6 +19,7 @@ Guidelines:
   - Consistency across sources (conflicting sources = lower confidence)
   - Coverage (abstraction covering more sources = higher confidence)
 - Calculate decay as average of source decays (time-sensitive sources = time-sensitive abstraction)
+- Calculate importance as the maximum of source importances (important sources produce important abstractions)
 
 Examples:
 - Sources: "Alice likes Python", "Bob likes Python", "Carol likes Python"

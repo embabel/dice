@@ -101,16 +101,40 @@ class PropositionQueryTest {
     }
 
     @Nested
+    inner class ImportanceSupport {
+
+        @Test
+        fun `minImportance is null by default`() {
+            val query = PropositionQuery()
+            assertNull(query.minImportance)
+        }
+
+        @Test
+        fun `withMinImportance sets threshold`() {
+            val query = PropositionQuery().withMinImportance(0.8)
+            assertEquals(0.8, query.minImportance)
+        }
+
+        @Test
+        fun `orderedByImportance sets IMPORTANCE_DESC`() {
+            val query = PropositionQuery().orderedByImportance()
+            assertEquals(PropositionQuery.OrderBy.IMPORTANCE_DESC, query.orderBy)
+        }
+    }
+
+    @Nested
     inner class QueryFiltering {
 
         private fun createProposition(
             text: String,
             entityIds: List<String>,
+            importance: Double = 0.5,
         ): Proposition = Proposition(
             contextId = testContextId,
             text = text,
             mentions = entityIds.map { EntityMention(span = it, type = "Person", resolvedId = it) },
             confidence = 0.9,
+            importance = importance,
         )
 
         private fun queryFilter(
@@ -198,6 +222,34 @@ class PropositionQueryTest {
             // Only "Alice and Bob met" matches both: mentions alice (entityId) AND mentions bob (anyEntityIds)
             assertEquals(1, results.size)
             assertTrue(results[0].text.contains("Alice and Bob"))
+        }
+
+        @Test
+        fun `minImportance filters propositions below threshold`() {
+            val props = listOf(
+                createProposition("Weather is nice", listOf("alice"), importance = 0.2),
+                createProposition("Alice is a senior engineer", listOf("alice"), importance = 0.5),
+                createProposition("Mary is about to have surgery", listOf("mary"), importance = 1.0),
+            )
+
+            val results = queryFilter(props, PropositionQuery(minImportance = 0.5))
+            assertEquals(2, results.size)
+            assertTrue(results.none { it.text.contains("Weather") })
+        }
+
+        @Test
+        fun `IMPORTANCE_DESC orders by importance descending`() {
+            val props = listOf(
+                createProposition("Low importance", listOf("a"), importance = 0.2),
+                createProposition("High importance", listOf("b"), importance = 0.9),
+                createProposition("Medium importance", listOf("c"), importance = 0.5),
+            )
+
+            val results = queryFilter(props, PropositionQuery(orderBy = PropositionQuery.OrderBy.IMPORTANCE_DESC))
+            assertEquals(3, results.size)
+            assertEquals("High importance", results[0].text)
+            assertEquals("Medium importance", results[1].text)
+            assertEquals("Low importance", results[2].text)
         }
     }
 }

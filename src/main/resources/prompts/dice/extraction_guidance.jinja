@@ -37,12 +37,18 @@ Example - text says "Alice loves her recent projects":
 Example - text says "Bob works at Google and Microsoft":
 ✓ GOOD: Two propositions with entity mentions "Google" (Company) and "Microsoft" (Company)
 
-## Confidence & Decay
+## Confidence, Importance & Decay
 
 - **High confidence**: Explicit statements ("Alice is a software engineer")
 - **Lower confidence**: Implied information (asking questions about a topic)
 - **Low decay**: Stable facts (name, expertise, role)
 - **High decay**: Transient states (current location, mood, current project)
+- **Importance**: How much this fact matters to remember (independent of certainty)
+- **High importance**: Health events, life changes, deadlines, strong preferences, safety-critical info
+- **Medium importance**: Professional details, ongoing projects, relationships
+- **Low importance**: Casual observations, small talk, routine activities
+- Example: "Mary is about to have surgery" → importance: 1.0, even if confidence is moderate
+- Example: "Alice mentioned the weather is nice" → importance: 0.2
 
 When the text uses hedging language ("I think", "maybe", "probably", "not sure"), reflect this in confidence and explain in `reasoning`. Quote supporting evidence in `reasoning` when the fact is non-obvious.
 - "I think Alice might work at Google" -> confidence: 0.4, reasoning: "Hedged — 'I think ... might' indicates uncertainty"

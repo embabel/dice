@@ -63,6 +63,42 @@ class PropositionTest {
         }
 
         @Test
+        fun `importance defaults to 0_5`() {
+            val prop = Proposition(
+                contextId = testContextId,
+                text = "Test",
+                mentions = emptyList(),
+                confidence = 0.9,
+            )
+
+            assertEquals(0.5, prop.importance)
+        }
+
+        @Test
+        fun `proposition with valid importance is created`() {
+            val prop = Proposition(
+                contextId = testContextId,
+                text = "Mary is about to have surgery",
+                mentions = emptyList(),
+                confidence = 0.7,
+                importance = 1.0,
+            )
+
+            assertEquals(1.0, prop.importance)
+        }
+
+        @Test
+        fun `proposition with invalid importance throws`() {
+            assertThrows<IllegalArgumentException> {
+                Proposition(contextId = testContextId, text = "Test", mentions = emptyList(), confidence = 0.5, importance = 1.5)
+            }
+
+            assertThrows<IllegalArgumentException> {
+                Proposition(contextId = testContextId, text = "Test", mentions = emptyList(), confidence = 0.5, importance = -0.1)
+            }
+        }
+
+        @Test
         fun `proposition with invalid decay throws`() {
             assertThrows<IllegalArgumentException> {
                 Proposition(contextId = testContextId, text = "Test", mentions = emptyList(), confidence = 0.5, decay = 1.5)
@@ -339,6 +375,21 @@ class PropositionTest {
 
             assertTrue(info.contains("conf=0.9"))
             assertTrue(info.contains("PROMOTED"))
+        }
+
+        @Test
+        fun `verbose infoString includes importance`() {
+            val prop = Proposition(
+                contextId = testContextId,
+                text = "Mary is about to have surgery",
+                mentions = emptyList(),
+                confidence = 0.7,
+                importance = 0.95,
+            )
+
+            val info = prop.infoString(verbose = true)
+
+            assertTrue(info.contains("importance=0.95"))
         }
     }
 }

@@ -66,6 +66,9 @@ data class PropositionQuery(
     val effectiveConfidenceAsOf: Instant? = null,
     val decayK: Double = 2.0,
 
+    // Importance filter
+    val minImportance: Double? = null,
+
     // Reinforcement filter
     val minReinforceCount: Int? = null,
 
@@ -83,6 +86,7 @@ data class PropositionQuery(
         CREATED_DESC,
         REVISED_DESC,
         REINFORCE_COUNT_DESC,
+        IMPORTANCE_DESC,
     }
 
     // ========================================================================
@@ -164,6 +168,8 @@ data class PropositionQuery(
 
     fun withDecayK(k: Double): PropositionQuery = copy(decayK = k)
 
+    fun withMinImportance(threshold: Double): PropositionQuery = copy(minImportance = threshold)
+
     fun withMinReinforceCount(count: Int): PropositionQuery = copy(minReinforceCount = count)
 
     fun withOrderBy(orderBy: OrderBy): PropositionQuery = copy(orderBy = orderBy)
@@ -179,6 +185,9 @@ data class PropositionQuery(
 
     fun orderedByReinforceCount(): PropositionQuery =
         copy(orderBy = OrderBy.REINFORCE_COUNT_DESC)
+
+    fun orderedByImportance(): PropositionQuery =
+        copy(orderBy = OrderBy.IMPORTANCE_DESC)
 
     fun withLimit(limit: Int): PropositionQuery = copy(limit = limit)
 

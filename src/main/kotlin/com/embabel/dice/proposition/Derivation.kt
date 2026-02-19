@@ -22,6 +22,7 @@ import com.embabel.common.core.types.ZeroToOne
  *
  * A Derivation captures the epistemic properties of derived knowledge:
  * - **Confidence**: How certain we are (0.0 = uncertain, 1.0 = certain)
+ * - **Importance**: How much this fact matters (0.0 = trivial, 1.0 = critical)
  * - **Decay**: How quickly it becomes stale (0.0 = eternal, 1.0 = ephemeral)
  * - **Grounding**: What sources support this derivation
  *
@@ -36,6 +37,10 @@ import com.embabel.common.core.types.ZeroToOne
  *     if (d.confidence > 0.8 && d.decay < 0.3) {
  *         // High confidence, low decay - reliable long-term knowledge
  *         storeInLongTermMemory(d)
+ *     }
+ *     if (d.importance > 0.8) {
+ *         // High importance - prioritise regardless of confidence
+ *         flagForAttention(d)
  *     }
  *     // Trace back to sources
  *     d.grounding.forEach { sourceId ->
@@ -54,6 +59,19 @@ interface Derivation {
      * - 0.0: No confidence (effectively unknown)
      */
     val confidence: ZeroToOne
+
+    /**
+     * Importance of this derivation (0.0 to 1.0).
+     *
+     * Orthogonal to confidence: a fact can be uncertain yet critical,
+     * or certain yet trivial. Importance measures how much this fact
+     * matters to remember.
+     *
+     * - 1.0: Critical (health events, safety-critical info, deadlines)
+     * - 0.5: Moderate (professional details, ongoing projects)
+     * - 0.0: Trivial (casual observations, small talk)
+     */
+    val importance: ZeroToOne get() = 0.5
 
     /**
      * Decay rate for this derivation (0.0 to 1.0).
