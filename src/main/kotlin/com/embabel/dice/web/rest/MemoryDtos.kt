@@ -176,6 +176,7 @@ data class PropositionDto(
     val grounding: List<String>,
     val created: Instant,
     val revised: Instant,
+    val lastAccessed: Instant,
     val status: PropositionStatus,
     val action: String? = null,
 ) {
@@ -191,6 +192,7 @@ data class PropositionDto(
             grounding = proposition.grounding,
             created = proposition.created,
             revised = proposition.revised,
+            lastAccessed = proposition.lastAccessed,
             status = proposition.status,
             action = action,
         )

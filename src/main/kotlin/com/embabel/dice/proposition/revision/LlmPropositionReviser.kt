@@ -463,7 +463,7 @@ data class LlmPropositionReviser(
                 val contradicted = original
                     .withConfidence(reducedConfidence)
                     .withStatus(PropositionStatus.CONTRADICTED)
-                    .copy(decay = acceleratedDecay)
+                    .copy(decay = acceleratedDecay, lastAccessed = Instant.now())
                 logger.debug(
                     "Contradicted: {} (conf: {}, decay: {}) vs new: {}",
                     original.text, reducedConfidence, acceleratedDecay, newProposition.text
@@ -597,6 +597,7 @@ data class LlmPropositionReviser(
             grounding = combinedGrounding,
             reinforceCount = existing.reinforceCount + 1,
             revised = Instant.now(),
+            lastAccessed = Instant.now(),
         )
     }
 
@@ -618,6 +619,7 @@ data class LlmPropositionReviser(
             grounding = combinedGrounding,
             reinforceCount = existing.reinforceCount + 1,
             revised = Instant.now(),
+            lastAccessed = Instant.now(),
         )
     }
 }

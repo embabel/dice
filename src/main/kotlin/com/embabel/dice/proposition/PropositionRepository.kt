@@ -337,6 +337,12 @@ interface PropositionRepository : CoreSearchOperations {
         query.revisedBefore?.let { before ->
             results = results.filter { it.revised <= before }
         }
+        query.accessedAfter?.let { after ->
+            results = results.filter { it.lastAccessed >= after }
+        }
+        query.accessedBefore?.let { before ->
+            results = results.filter { it.lastAccessed <= before }
+        }
         query.minEffectiveConfidence?.let { threshold ->
             val asOf = query.effectiveConfidenceAsOf ?: Instant.now()
             results = results.filter { it.effectiveConfidenceAt(asOf, query.decayK) >= threshold }
@@ -363,6 +369,9 @@ interface PropositionRepository : CoreSearchOperations {
 
             PropositionQuery.OrderBy.REVISED_DESC ->
                 resultList.sortedByDescending { it.revised }
+
+            PropositionQuery.OrderBy.LAST_ACCESSED_DESC ->
+                resultList.sortedByDescending { it.lastAccessed }
 
             PropositionQuery.OrderBy.REINFORCE_COUNT_DESC ->
                 resultList.sortedByDescending { it.reinforceCount }

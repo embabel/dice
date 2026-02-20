@@ -60,6 +60,8 @@ data class PropositionQuery(
     val createdBefore: Instant? = null,
     val revisedAfter: Instant? = null,
     val revisedBefore: Instant? = null,
+    val accessedAfter: Instant? = null,
+    val accessedBefore: Instant? = null,
 
     // Confidence filters (with decay)
     val minEffectiveConfidence: Double? = null,
@@ -85,6 +87,7 @@ data class PropositionQuery(
         EFFECTIVE_CONFIDENCE_DESC,
         CREATED_DESC,
         REVISED_DESC,
+        LAST_ACCESSED_DESC,
         REINFORCE_COUNT_DESC,
         IMPORTANCE_DESC,
     }
@@ -136,6 +139,22 @@ data class PropositionQuery(
     fun withRevisedBetween(start: Instant, end: Instant): PropositionQuery =
         copy(revisedAfter = start, revisedBefore = end)
 
+    fun withAccessedAfter(accessedAfter: Instant): PropositionQuery = copy(accessedAfter = accessedAfter)
+
+    fun withAccessedBefore(accessedBefore: Instant): PropositionQuery = copy(accessedBefore = accessedBefore)
+
+    fun withAccessedBetween(start: Instant, end: Instant): PropositionQuery =
+        copy(accessedAfter = start, accessedBefore = end)
+
+    /**
+     * Filter to propositions accessed within the given duration from now.
+     *
+     * @param duration How far back to look
+     * @return Query with accessedAfter set to now minus duration
+     */
+    fun accessedSince(duration: Duration): PropositionQuery =
+        copy(accessedAfter = Instant.now().minus(duration))
+
     /**
      * Filter to propositions created within the given duration from now.
      *
@@ -182,6 +201,9 @@ data class PropositionQuery(
 
     fun orderedByRevised(): PropositionQuery =
         copy(orderBy = OrderBy.REVISED_DESC)
+
+    fun orderedByLastAccessed(): PropositionQuery =
+        copy(orderBy = OrderBy.LAST_ACCESSED_DESC)
 
     fun orderedByReinforceCount(): PropositionQuery =
         copy(orderBy = OrderBy.REINFORCE_COUNT_DESC)
