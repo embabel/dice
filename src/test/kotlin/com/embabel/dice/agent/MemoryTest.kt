@@ -757,7 +757,7 @@ class MemoryTest {
 
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
-                .withEagerSearchAbout("What music stuff am I into?")
+                .withEagerSearchAbout("What music stuff am I into?", 10)
 
             val contribution = memory.contribution()
             assertTrue(contribution.contains("Key memories"), contribution)
@@ -775,7 +775,7 @@ class MemoryTest {
 
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
-                .withEagerSearchAbout("Tell me about my hobbies")
+                .withEagerSearchAbout("Tell me about my hobbies", 10)
 
             memory.contribution()
 
@@ -809,7 +809,7 @@ class MemoryTest {
 
             val memory = Memory.forContext("my-context")
                 .withRepository(repository)
-                .withEagerSearchAbout("hobbies")
+                .withEagerSearchAbout("hobbies", 10)
 
             memory.contribution()
 
@@ -827,7 +827,7 @@ class MemoryTest {
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
                 .narrowedBy { it.withEntityId("alice-123") }
-                .withEagerSearchAbout("hobbies")
+                .withEagerSearchAbout("hobbies", 10)
 
             memory.contribution()
 
@@ -845,7 +845,7 @@ class MemoryTest {
 
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
-                .withEagerSearchAbout("music")
+                .withEagerSearchAbout("music", 10)
 
             // Trigger eager loading via contribution
             memory.contribution()
@@ -868,7 +868,7 @@ class MemoryTest {
 
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
-                .withEagerSearchAbout("music")
+                .withEagerSearchAbout("music", 10)
                 .withEagerQuery { it.orderedByEffectiveConfidence().withLimit(5) }
 
             val contribution = memory.contribution()
@@ -894,7 +894,7 @@ class MemoryTest {
 
             val memory = Memory.forContext(contextId)
                 .withRepository(repository)
-                .withEagerSearchAbout("nonexistent topic")
+                .withEagerSearchAbout("nonexistent topic", 10)
 
             val contribution = memory.contribution()
             assertFalse(contribution.contains("Key memories"), contribution)

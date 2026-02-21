@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.agent
 
+import com.embabel.agent.api.reference.EagerSearch
 import com.embabel.agent.api.reference.LlmReference
 import com.embabel.agent.api.tool.Tool
 import com.embabel.agent.core.ContextId
@@ -51,7 +52,7 @@ import java.util.function.UnaryOperator
  * Supports a two-tier retrieval strategy:
  * 1. **Eager**: Key memories are preloaded into the system prompt via [contribution], making them
  *    immediately visible to the LLM with no tool call overhead. Three eager modes are available:
- *    - [withEagerSearchAbout]: Preload by vector similarity to arbitrary text (e.g., recent conversation)
+ *    - [withEagerSearchAbout]: Preload by vector similarity search request (e.g., recent conversation)
  *    - [withEagerQuery]: Preload by structured query (e.g., top-N by confidence)
  *    - [withEagerTopicSearch]: Preload by vector similarity to the [topic]
  * 2. **On-demand**: The LLM calls this tool with search parameters for specific or additional memories.
@@ -94,11 +95,10 @@ import java.util.function.UnaryOperator
  * @param eagerTopicSearch Optional limit for eager topic-based similarity search.
  * When set, uses the [topic] to perform a vector similarity search and preloads matching
  * memories into the description. Can be used alongside or instead of [eagerQuery].
- * @param eagerSearchAbout Optional text to search for similar memories eagerly.
- * When set, performs a vector similarity search using this text and preloads matching
+ * @param eagerTextSearch Optional similarity search request to eagerly preload memories.
+ * When set, performs a vector similarity search using this request and preloads matching
  * memories into the description. Ideal for passing recent conversation content so
  * the LLM sees relevant memories without needing a tool call.
- * @param eagerSearchAboutLimit Maximum number of memories to preload via [eagerSearchAbout].
  */
 data class Memory @JvmOverloads constructor(
     private val contextId: ContextId,
@@ -111,9 +111,8 @@ data class Memory @JvmOverloads constructor(
     private val narrowedBy: UnaryOperator<PropositionQuery>? = null,
     private val eagerQuery: UnaryOperator<PropositionQuery>? = null,
     private val eagerTopicSearch: Int? = null,
-    private val eagerSearchAbout: String? = null,
-    private val eagerSearchAboutLimit: Int = DEFAULT_LIMIT,
-) : Tool, LlmReference {
+    private val eagerTextSearch: TextSimilaritySearchRequest? = null,
+) : Tool, EagerSearch<Memory> {
 
     private val logger = LoggerFactory.getLogger(Memory::class.java)
 
@@ -196,13 +195,9 @@ data class Memory @JvmOverloads constructor(
             ).map { it.match }
         } ?: emptyList()
 
-        val aboutMemories = eagerSearchAbout?.let { query ->
+        val aboutMemories = eagerTextSearch?.let { request ->
             repository.findSimilarWithScores(
-                TextSimilaritySearchRequest(
-                    query = query,
-                    similarityThreshold = 0.0,
-                    topK = eagerSearchAboutLimit,
-                ),
+                request,
                 base,
             ).map { it.match }
         } ?: emptyList()
@@ -343,25 +338,9 @@ data class Memory @JvmOverloads constructor(
         return copy(eagerTopicSearch = limit)
     }
 
-    /**
-     * Eagerly search for memories similar to the given text.
-     *
-     * Performs a vector similarity search using the provided text and preloads
-     * matching memories into the tool description. Use this to inject context-relevant
-     * memories — for example, pass the recent conversation content so the LLM sees
-     * relevant memories without needing to call the tool.
-     *
-     * Can be combined with [withEagerQuery] and [withEagerTopicSearch] — all sources
-     * are merged and deduplicated.
-     *
-     * @param text The text to search for similar memories
-     * @param limit Maximum number of memories to preload (default [DEFAULT_LIMIT])
-     * @return New Memory with eager search configured
-     */
-    @JvmOverloads
-    fun withEagerSearchAbout(text: String, limit: Int = DEFAULT_LIMIT): Memory {
-        require(limit > 0) { "limit must be positive" }
-        return copy(eagerSearchAbout = text, eagerSearchAboutLimit = limit)
+    override fun withEagerSearchAbout(request: TextSimilaritySearchRequest): Memory {
+        require(request.topK > 0) { "topK must be positive" }
+        return copy(eagerTextSearch = request)
     }
 
     override val definition: Tool.Definition by lazy {
@@ -370,7 +349,11 @@ data class Memory @JvmOverloads constructor(
             description = toolDescription,
             inputSchema = Tool.InputSchema.of(
                 Tool.Parameter.string("topic", "Search memories by topic (semantic similarity)", required = false),
-                Tool.Parameter.string("keyword", "Search memories containing this keyword (exact text match)", required = false),
+                Tool.Parameter.string(
+                    "keyword",
+                    "Search memories containing this keyword (exact text match)",
+                    required = false
+                ),
                 Tool.Parameter.string(
                     "type",
                     "Filter by knowledge type",
