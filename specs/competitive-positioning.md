@@ -1,6 +1,6 @@
 # DICE Competitive Positioning
 
-Based on deep analysis of Zep/Graphiti, Mem0, LangChain/LangMem, Google Vertex AI Memory Bank, and AWS Bedrock AgentCore Memory.
+Based on deep analysis of Zep/Graphiti, Mem0, LangChain/LangMem, Google Vertex AI Memory Bank, AWS Bedrock AgentCore Memory, and Microsoft Foundry Agent Service.
 
 ## DICE Strengths
 
@@ -14,11 +14,11 @@ Based on deep analysis of Zep/Graphiti, Mem0, LangChain/LangMem, Google Vertex A
 | JVM native | Only JVM-based memory system | All competitors are Python (Zep also Go). |
 | Confidence + decay model | Per-proposition confidence with exponential time decay from GUM paper | Zep: no decay. Mem0: no confidence model. LangMem: asks for p(x) in prompts but no decay math. |
 | Extraction quality | SNR-maximizing, confidence-qualified with hedging detection, role-aware (USER/AGENT/ALL), schema-bound | Comparable to LangMem prompts; better than Zep/Mem0. |
-| Reinforcement frequency | `reinforceCount` tracks merge/reinforce frequency, queryable via `PropositionQuery` | Mem0: `mentions` counter on graph nodes. Zep/LangMem: none. Google/AWS: none. |
-| Entity resolution | Fuzzy name, vector, exact name, partial name, agentic candidate searchers; LLM disambiguation | Zep: Neo4j entity nodes. Mem0: graph nodes. Google/AWS: none — flat fact strings. |
+| Reinforcement frequency | `reinforceCount` tracks merge/reinforce frequency, queryable via `PropositionQuery` | Mem0: `mentions` counter on graph nodes. Zep/LangMem: none. Google/AWS/Microsoft: none. |
+| Entity resolution | Fuzzy name, vector, exact name, partial name, agentic candidate searchers; LLM disambiguation | Zep: Neo4j entity nodes. Mem0: graph nodes. Google/AWS/Microsoft: none — flat fact strings. |
 | Abstraction hierarchy | Multi-level propositions (level 0 = raw, level 1+ = synthesized) with source tracking | None of the competitors support multi-level abstraction. |
-| Contradiction retention | Both propositions retained with reduced confidence | Zep: temporal invalidation. Mem0/Google/AWS: hard delete. LangMem: none. |
-| Portability | Embeddable JVM library, no cloud dependency | Google: GCP only. AWS: AWS only. Zep: Neo4j required. Mem0: self-hosted or cloud. LangMem: Python/LangGraph. |
+| Contradiction retention | Both propositions retained with reduced confidence | Zep: temporal invalidation. Mem0/Google/AWS/Microsoft: hard delete. LangMem: none. |
+| Portability | Embeddable JVM library, no cloud dependency | Google: GCP only. AWS: AWS only. Microsoft: Azure only. Zep: Neo4j required. Mem0: self-hosted or cloud. LangMem: Python/LangGraph. |
 
 ## vs Zep/Graphiti
 
@@ -127,6 +127,30 @@ Based on deep analysis of Zep/Graphiti, Mem0, LangChain/LangMem, Google Vertex A
 
 **Attack angle**: AgentCore Memory is a reasonable managed service for simple preference/fact storage in chatbots. But for systems that need structured knowledge with entity resolution, confidence-weighted decaying memory, provenance tracking, deterministic deduplication, and multi-strategy retrieval, DICE's proposition model is fundamentally more expressive. Both Google and AWS validate that agent memory is a critical capability — DICE provides it without vendor lock-in and with far richer knowledge representation.
 
+## vs Microsoft Foundry Agent Service
+
+| Dimension | DICE | Microsoft Foundry | Edge |
+|---|---|---|---|
+| Data model | Rich `Proposition` with entity mentions, confidence, decay, grounding, reinforceCount | Flat memory "items" — no structured sub-components | **DICE** |
+| Memory types | Unified proposition model with `KnowledgeType` classifier (SEMANTIC/EPISODIC/PROCEDURAL/WORKING) | Two types only: user profile (static preferences) and chat summary (distilled conversation) | **DICE** |
+| Confidence/decay | Exponential decay + outcome-dependent adjustment | None — memories are binary (exist or removed) | **DICE** |
+| Entity resolution | Multi-strategy resolution with LLM disambiguation | None — no entity model | **DICE** |
+| Classification nuance | 5-way (IDENTICAL/SIMILAR/CONTRADICTORY/UNRELATED/GENERALIZES) | Opaque LLM-based consolidation, no user-visible classification taxonomy | **DICE** |
+| Contradiction handling | Both retained with reduced confidence | "Conflicting facts are resolved" — old value discarded | **DICE** |
+| Abstraction | Multi-level hierarchy with source tracking | None — all memories at same level | **DICE** |
+| Graph projection | Entity mentions map to Neo4j relationships, Prolog facts | None | **DICE** |
+| Dedup transparency | Configurable thresholds + deterministic fast paths + LLM classification | Opaque LLM-based consolidation, "behavior can vary by memory type and may change during preview" | **DICE** |
+| Retrieval | Vector similarity + canonical match + entity-based + composable PropositionQuery | Memory search (details opaque), scope-based filtering | **DICE** |
+| Managed service | No — self-hosted | Fully managed Azure service, zero infrastructure | **Microsoft** |
+| Integration model | JVM/Spring native, embeddable library | Memory search tool auto-attached to prompt agents, or low-level Memory Store APIs | **Microsoft** |
+| Scale limits | Application-determined | 100 scopes/store, 10K memories/scope, 1K req/min | **DICE** |
+
+**Their moat**: Fully managed Azure service with zero infrastructure overhead, two-method access (agent tool for simple use, APIs for advanced), integration with Azure AI Content Safety for prompt injection detection, built-in scope-based multi-tenancy.
+
+**Their weakness**: Simplest memory model of any competitor — only two memory types (user profile + chat summary), no entity resolution, no confidence or decay, no abstraction hierarchy, no reinforcement counting, opaque consolidation logic that "may change during preview," hard 10K memory limit per scope, Azure vendor lock-in.
+
+**Attack angle**: Foundry's memory is the thinnest of the managed offerings — even simpler than Google Memory Bank or AWS AgentCore. It's adequate for remembering user preferences across chatbot sessions, but lacks the structured knowledge representation needed for serious agent memory. DICE's proposition model, entity resolution, confidence decay, and composable queries operate in a fundamentally different capability tier. Microsoft validates the market need but their implementation is a minimal viable feature, not a memory system.
+
 ## Key Remaining Gaps
 
 | Gap | Blocks us against | Impact |
@@ -143,4 +167,5 @@ Based on deep analysis of Zep/Graphiti, Mem0, LangChain/LangMem, Google Vertex A
 - **Mem0's graph memory**: DICE already has entity mentions + Neo4j projection via the graph projector. Adding a separate graph memory pipeline would duplicate effort.
 - **Google's multimodal extraction**: Interesting for image/video-heavy use cases but orthogonal to memory quality. Can be added later if needed — the proposition model is format-agnostic.
 - **AWS's episodic reflection**: Cross-episode insight generation is valuable but DICE's abstraction pipeline already synthesizes higher-level insights from proposition groups. Different mechanism, similar outcome.
-- **Managed service hosting**: Both Google and AWS validate that agent memory is a product category. DICE's value is in the richness of its knowledge model, not in being a managed service. The embeddable library model is a strength, not a gap.
+- **Microsoft's user profile/chat summary model**: The simplest memory system of any competitor — just two flat memory types. Even less capable than Google or AWS.
+- **Managed service hosting**: Google, AWS, and Microsoft all validate that agent memory is a product category. DICE's value is in the richness of its knowledge model, not in being a managed service. The embeddable library model is a strength, not a gap.
