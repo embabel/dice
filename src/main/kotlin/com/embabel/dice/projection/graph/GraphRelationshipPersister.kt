@@ -35,6 +35,27 @@ data class RelationshipPersistenceResult(
 }
 
 /**
+ * Input for batch relationship description synthesis.
+ *
+ * @property sourceId Resolved ID of the source entity
+ * @property sourceName Display name of the source entity
+ * @property targetId Resolved ID of the target entity
+ * @property targetName Display name of the target entity
+ * @property relationshipType The relationship type (e.g. "KNOWS")
+ * @property propositions Propositions mentioning both entities
+ * @property existingDescription Current description on the edge, if any
+ */
+data class EntityPairWithPropositions(
+    val sourceId: String,
+    val sourceName: String,
+    val targetId: String,
+    val targetName: String,
+    val relationshipType: String,
+    val propositions: List<Proposition>,
+    val existingDescription: String?,
+)
+
+/**
  * Persists [ProjectedRelationship] instances to a graph store.
  */
 interface GraphRelationshipPersister {
@@ -75,4 +96,17 @@ interface GraphRelationshipPersister {
         graphProjector: GraphProjector,
         schema: com.embabel.agent.core.DataDictionary,
     ): Pair<ProjectionResults<ProjectedRelationship>, RelationshipPersistenceResult>
+
+    /**
+     * Synthesize descriptions for entity-pair relationships and update the edges.
+     * Default implementation is a no-op for implementations that don't support synthesis.
+     *
+     * @param entityPairs Entity pairs with their propositions
+     * @param synthesizer The synthesizer to use
+     * @return Statistics about the persistence operation
+     */
+    fun synthesizeAndUpdateDescriptions(
+        entityPairs: List<EntityPairWithPropositions>,
+        synthesizer: RelationshipDescriptionSynthesizer,
+    ): RelationshipPersistenceResult = RelationshipPersistenceResult(0, 0)
 }

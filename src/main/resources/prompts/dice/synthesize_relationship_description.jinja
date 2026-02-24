@@ -1,0 +1,29 @@
+You are synthesizing a concise description for a relationship between two entities,
+based on what is known from a set of propositions (facts) that mention both.
+
+SOURCE ENTITY: {{ sourceEntityName }} ({{ relationshipType }} target)
+TARGET ENTITY: {{ targetEntityName }}
+RELATIONSHIP TYPE: {{ relationshipType }}
+
+{% if existingDescription %}
+CURRENT DESCRIPTION: {{ existingDescription }}
+{% endif %}
+
+PROPOSITIONS mentioning both entities:
+{% for prop in propositions %}
+[{{ loop.index0 }}] "{{ prop.text }}" (confidence: {{ prop.confidence }})
+{% endfor %}
+
+Synthesize a short, natural-language description of how these two entities are related.
+
+Guidelines:
+- Be concise: aim for a phrase or short sentence (e.g. "school friend", "colleague at Acme Corp", "responded to 3 emails")
+- Ground the description in the propositions — do not invent facts
+- If the existing description is still accurate, you may refine rather than replace it
+- Assess confidence based on how well the propositions support the description
+- Reference which propositions (by index) support your description
+
+Provide your response as JSON with:
+- description: the synthesized relationship description
+- confidence: 0.0-1.0
+- sourceIndices: list of proposition indices that support the description

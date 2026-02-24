@@ -121,4 +121,52 @@ class NamedEntityDataRepositoryGraphRelationshipPersister(
         val persistenceResult = persist(projectionResults)
         return Pair(projectionResults, persistenceResult)
     }
+
+    override fun synthesizeAndUpdateDescriptions(
+        entityPairs: List<EntityPairWithPropositions>,
+        synthesizer: RelationshipDescriptionSynthesizer,
+    ): RelationshipPersistenceResult {
+        var persistedCount = 0
+        var failedCount = 0
+        val errors = mutableListOf<String>()
+
+        for (pair in entityPairs) {
+            try {
+                val result = synthesizer.synthesize(
+                    SynthesisRequest(
+                        sourceEntityId = pair.sourceId,
+                        sourceEntityName = pair.sourceName,
+                        targetEntityId = pair.targetId,
+                        targetEntityName = pair.targetName,
+                        relationshipType = pair.relationshipType,
+                        propositions = pair.propositions,
+                        existingDescription = pair.existingDescription,
+                    )
+                )
+                if (result.description.isBlank()) {
+                    logger.debug("Synthesis returned blank description for {} -> {}", pair.sourceName, pair.targetName)
+                    continue
+                }
+
+                val relationship = ProjectedRelationship(
+                    sourceId = pair.sourceId,
+                    targetId = pair.targetId,
+                    type = pair.relationshipType,
+                    confidence = result.confidence,
+                    description = result.description,
+                    sourcePropositionIds = result.sourcePropositionIds,
+                )
+                persistRelationship(relationship)
+                persistedCount++
+            } catch (e: Exception) {
+                failedCount++
+                val errorMsg = "Failed to synthesize description for ${pair.sourceName} -> ${pair.targetName}: ${e.message}"
+                errors.add(errorMsg)
+                logger.warn(errorMsg, e)
+            }
+        }
+
+        logger.info("Synthesized and updated {}/{} relationship descriptions", persistedCount, entityPairs.size)
+        return RelationshipPersistenceResult(persistedCount, failedCount, errors)
+    }
 }
