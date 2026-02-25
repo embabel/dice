@@ -105,7 +105,7 @@ interface PersistablePropositions : EntityExtractionResult, PropositionExtractio
                 // (Chunk)-[:HAS_PROPOSITION]->(Proposition) for each grounding chunk
                 for (chunkId in proposition.grounding) {
                     val chunk = RetrievableIdentifier.Companion.forChunk(chunkId)
-                    namedEntityDataRepository.createRelationship(
+                    namedEntityDataRepository.mergeRelationship(
                         chunk,
                         propositionId,
                         RelationshipData(RelationshipTypes.HAS_PROPOSITION)
@@ -117,7 +117,7 @@ interface PersistablePropositions : EntityExtractionResult, PropositionExtractio
                     val entityId = mention.resolvedId ?: continue
                     val entity = RetrievableIdentifier(entityId, mention.type)
 
-                    namedEntityDataRepository.createRelationship(
+                    namedEntityDataRepository.mergeRelationship(
                         propositionId,
                         entity,
                         RelationshipData(
@@ -132,7 +132,7 @@ interface PersistablePropositions : EntityExtractionResult, PropositionExtractio
                         if (pair !in chunkEntityPairs) {
                             chunkEntityPairs.add(pair)
                             val chunk = RetrievableIdentifier.Companion.forChunk(chunkId)
-                            namedEntityDataRepository.createRelationship(
+                            namedEntityDataRepository.mergeRelationship(
                                 chunk,
                                 entity,
                                 RelationshipData(NamedEntityData.HAS_ENTITY)
