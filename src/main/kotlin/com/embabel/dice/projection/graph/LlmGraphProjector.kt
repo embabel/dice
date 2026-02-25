@@ -192,13 +192,14 @@ data class LlmGraphProjector(
             )
         }
 
-        // Validate the relationship type exists in schema or relations
-        val relationshipType = classification.relationshipType
-        if (relationshipType != null && relationshipType !in validRelationshipTypes) {
-            logger.warn("LLM suggested unknown relationship type: {}", relationshipType)
+        // Validate the relationship type exists in schema or relations (case-insensitive)
+        val rawRelationshipType = classification.relationshipType
+        val normalizedType = rawRelationshipType?.trim()?.uppercase()?.replace(Regex("\\s+"), "_")
+        if (normalizedType != null && normalizedType !in validRelationshipTypes) {
+            logger.warn("LLM suggested unknown relationship type: {} (normalized: {})", rawRelationshipType, normalizedType)
             return ProjectionFailed(
                 proposition,
-                "Relationship type '$relationshipType' not in schema or relations"
+                "Relationship type '$rawRelationshipType' not in schema or relations"
             )
         }
 
@@ -206,7 +207,7 @@ data class LlmGraphProjector(
         val relationship = ProjectedRelationship(
             sourceId = fromMention.resolvedId!!,
             targetId = toMention.resolvedId!!,
-            type = relationshipType ?: "RELATED_TO",
+            type = normalizedType ?: "RELATED_TO",
             confidence = proposition.confidence,
             decay = proposition.decay,
             description = proposition.text,
