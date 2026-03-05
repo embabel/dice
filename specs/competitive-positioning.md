@@ -1,6 +1,6 @@
 # DICE Competitive Positioning
 
-Based on deep analysis of Zep/Graphiti, Mem0, LangChain/LangMem, Google Vertex AI Memory Bank, AWS Bedrock AgentCore Memory, and Microsoft Foundry Agent Service.
+Based on deep analysis of Zep/Graphiti, Mem0, LangChain/LangMem, Google Vertex AI Memory Bank, AWS Bedrock AgentCore Memory, Microsoft Foundry Agent Service, and Neo4j Agent Memory.
 
 ## DICE Strengths
 
@@ -151,6 +151,30 @@ Based on deep analysis of Zep/Graphiti, Mem0, LangChain/LangMem, Google Vertex A
 
 **Attack angle**: Foundry's memory is the thinnest of the managed offerings — even simpler than Google Memory Bank or AWS AgentCore. It's adequate for remembering user preferences across chatbot sessions, but lacks the structured knowledge representation needed for serious agent memory. DICE's proposition model, entity resolution, confidence decay, and composable queries operate in a fundamentally different capability tier. Microsoft validates the market need but their implementation is a minimal viable feature, not a memory system.
 
+## vs Neo4j Agent Memory
+
+| Dimension | DICE | Neo4j Agent Memory | Edge |
+|---|---|---|---|
+| Classification nuance | 5-way with edge cases + few-shot | No explicit classification taxonomy — entity resolution handles dedup | **DICE** |
+| Batch processing | N propositions in 1 LLM call | Sequential extraction through cascade stages | **DICE** |
+| Confidence/decay | Exponential decay + outcome-dependent adjustment + reinforceCount | No decay model — entities are binary (exist or merged) | **DICE** |
+| Contradiction handling | Both retained with reduced confidence | Entities merged or left distinct — no contradiction retention | **DICE** |
+| Abstraction hierarchy | Multi-level propositions with source tracking | Flat — all entities/facts at same level | **DICE** |
+| Extraction pipeline | Single LLM call, SNR-maximizing | spaCy → GLiNER → LLM cascade with 5 merge strategies | **Neo4j** |
+| Graph structure | Propositions + entity mentions, Neo4j as projection | Full native Neo4j knowledge graph with POLE+O ontology | **Neo4j** |
+| Temporal model | System timestamps only | Facts with valid_from/valid_until + geospatial queries | **Neo4j** |
+| Reasoning traces | Not applicable | Trace → Step → ToolCall hierarchy with aggregated tool stats | **Neo4j** |
+| Retrieval | Vector similarity + canonical match + entity-based + composable query | Hybrid vector + graph traversal (up to 3 hops) | **Neo4j** |
+| Framework integrations | JVM/Spring native | 9 frameworks (LangChain, LlamaIndex, CrewAI, etc.) + MCP server | **Neo4j** |
+| Infrastructure weight | Embeddable JVM library, no external deps | Requires Neo4j 5.11+ plus spaCy/GLiNER models | **DICE** |
+| Observability | Application-managed | OpenTelemetry + Opik built-in | **Neo4j** |
+
+**Their moat**: Native Neo4j graph with multi-hop traversal and POLE+O ontology, multi-stage extraction cascade (spaCy → GLiNER → LLM) for cost/quality tradeoffs, reasoning memory with tool call statistics, 9 framework adapters + MCP server, geospatial and temporal fact queries, entity enrichment via Wikipedia/Diffbot.
+
+**Their weakness**: Neo4j 5.11+ hard dependency (significant infrastructure commitment). No classification taxonomy — entities merge or stay distinct with no SIMILAR/CONTRADICTORY/GENERALIZES nuance. No confidence decay — everything equally weighted forever. No abstraction hierarchy. No batch classification. No contradiction retention. Python only. Experimental Labs project with no SLAs.
+
+**Attack angle**: Neo4j Agent Memory is the most architecturally sophisticated competitor — both systems take knowledge representation seriously. But the competition is proposition-centric (DICE) vs entity-centric (Neo4j). DICE manages the **lifecycle** of knowledge claims — how they evolve, conflict, reinforce, and decay. Neo4j builds a **static graph** of entities and relationships. DICE's 5-way classification, confidence decay, and abstraction hierarchy address the harder problem of knowledge evolution. And DICE is embeddable with no infrastructure requirements — it already projects to Neo4j when graph structure is needed, without requiring it.
+
 ## Key Remaining Gaps
 
 | Gap | Blocks us against | Impact |
@@ -168,4 +192,7 @@ Based on deep analysis of Zep/Graphiti, Mem0, LangChain/LangMem, Google Vertex A
 - **Google's multimodal extraction**: Interesting for image/video-heavy use cases but orthogonal to memory quality. Can be added later if needed — the proposition model is format-agnostic.
 - **AWS's episodic reflection**: Cross-episode insight generation is valuable but DICE's abstraction pipeline already synthesizes higher-level insights from proposition groups. Different mechanism, similar outcome.
 - **Microsoft's user profile/chat summary model**: The simplest memory system of any competitor — just two flat memory types. Even less capable than Google or AWS.
-- **Managed service hosting**: Google, AWS, and Microsoft all validate that agent memory is a product category. DICE's value is in the richness of its knowledge model, not in being a managed service. The embeddable library model is a strength, not a gap.
+- **Neo4j Agent Memory's POLE+O ontology**: Domain-specific entity subtypes (Person → Suspect/Witness/Victim) are useful for law enforcement/intelligence domains but add complexity for general-purpose memory. DICE's proposition model is domain-agnostic by design.
+- **Neo4j Agent Memory's reasoning traces**: Capturing tool call statistics and decision workflows is interesting but orthogonal to memory quality. Could be added as a projection type if needed.
+- **Neo4j Agent Memory's multi-stage extraction cascade**: Their spaCy → GLiNER → LLM pipeline is cost-effective but adds operational complexity (model downloads, dependency management). DICE's single LLM call is simpler; the cost savings don't justify the complexity for proposition extraction.
+- **Managed service hosting**: Google, AWS, Microsoft, and Neo4j all validate that agent memory is a product category. DICE's value is in the richness of its knowledge model, not in being a managed service. The embeddable library model is a strength, not a gap.
