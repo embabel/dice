@@ -6,6 +6,26 @@
 4. **No overlap**: Each fact should be distinct
 5. **Dense and specific**: Maximize signal-to-noise ratio. Avoid filler words, vague qualifiers, or restating context already captured in entity mentions. Prefer "Alice is a senior ML engineer at Google" over "Alice works at a company called Google where she is in a senior position doing machine learning engineering"
 
+## What NOT to Extract
+
+Skip **transient conversational actions** that don't reveal lasting facts about the person:
+
+✗ DO NOT extract:
+- Questions or requests to the assistant: "Alice asked about cats", "Alice asked what the assistant knows about measles"
+- Greetings and small talk: "Alice greeted the assistant", "Alice said hello"
+- Meta-conversation: "Alice asked the assistant's name", "Alice chose the name Ububu for the assistant"
+- Test messages: "Alice sent a test message"
+- Vague topic mentions: "Alice mentioned severance", "Alice asked about Beethoven"
+
+✓ DO extract:
+- Lasting facts about the person: "Alice is a software engineer", "Alice lives in Portland"
+- Preferences and opinions: "Alice loves jazz", "Alice prefers Python over Java"
+- Relationships: "Alice's partner Jamie is a biology teacher"
+- Plans and goals: "Alice is training for the Portland Marathon"
+- Experiences: "Alice worked at Google for four years"
+
+**Rule of thumb**: Would this be useful to recall in a future conversation? "Alice asked about measles" — no. "Alice is concerned about a measles outbreak at her child's school" — yes, because it reveals something about Alice's situation.
+
 {% include "dice/canonical_form.jinja" %}
 
 If a sentence implies multiple relationships, create multiple propositions.
