@@ -1020,6 +1020,186 @@ result.chunkResults.forEach { chunkResult ->
 }
 ```
 
+### Entity Resolution Service
+
+The `EntityResolutionService` exposes entity resolution as a **standalone typed service** — resolving entities,
+creating new ones, and establishing relationships in the graph, independent of the proposition or entity extraction
+pipelines. Use it when you have structured entity data (not raw text) to assert directly into the knowledge graph.
+
+```mermaid
+flowchart TB
+    subgraph Input["Typed Input"]
+        EA["EntityAssertionRequest<br/>entities + relationships"]
+    end
+
+    subgraph Resolution["Entity Resolution"]
+        ER["EntityResolver<br/>(full escalation chain)"]
+    end
+
+    subgraph Persistence["Persistence"]
+        NEW["NewEntity → save()"]
+        UPD["ExistingEntity → update()"]
+        REL["Relationships → mergeRelationship()"]
+        SKIP["ReferenceOnly / Vetoed → skip"]
+    end
+
+    subgraph Output["Typed Output"]
+        RES["EntityAssertionResult<br/>resolutions + relationships"]
+    end
+
+    EA --> ER
+    ER --> NEW
+    ER --> UPD
+    ER --> REL
+    ER --> SKIP
+    NEW --> RES
+    UPD --> RES
+    REL --> RES
+    SKIP --> RES
+
+    style Input fill:#d4eeff,stroke:#63c0f5,color:#1e1e1e
+    style Resolution fill:#fff3cd,stroke:#e9b306,color:#1e1e1e
+    style Persistence fill:#e8dcf4,stroke:#9f77cd,color:#1e1e1e
+    style Output fill:#d4f5d4,stroke:#3fd73c,color:#1e1e1e
+```
+
+#### When to Use
+
+| Scenario | Tool |
+|----------|------|
+| Raw text → entities + propositions | `PropositionPipeline` |
+| Raw text → entities only | `EntityPipeline` |
+| Structured data → entities + relationships | **`EntityResolutionService`** |
+
+#### Usage
+
+```kotlin
+// Create the service
+val service = EntityResolutionService(
+    entityResolver = escalatingEntityResolver,
+    repository = entityRepository,
+    schema = dataDictionary,
+)
+
+// Assert entities and relationships
+val result = service.resolve(EntityAssertionRequest(
+    entities = listOf(
+        EntityAssertion(
+            name = "Alice Smith",
+            labels = listOf("Person", "Engineer"),
+            description = "Senior backend engineer",
+            properties = mapOf("department" to "Platform"),
+        ),
+        EntityAssertion(
+            name = "Acme Corp",
+            labels = listOf("Company"),
+            description = "Technology company",
+        ),
+    ),
+    relationships = listOf(
+        RelationshipAssertion(
+            source = "Alice Smith",
+            target = "Acme Corp",
+            type = "WORKS_AT",
+            description = "Full-time employee since 2020",
+            properties = mapOf("since" to 2020),
+        ),
+    ),
+))
+
+// Inspect results
+result.resolutions.forEach { res ->
+    println("${res.name}: ${res.resolution} → ${res.entityId}")
+}
+result.relationships.forEach { rel ->
+    println("${rel.source} -[${rel.type}]-> ${rel.target} (persisted=${rel.persisted})")
+}
+```
+
+```java
+// Java usage
+var result = service.resolve(new EntityAssertionRequest(
+    List.of(
+        new EntityAssertion("Alice Smith", List.of("Person", "Engineer"),
+            "Senior backend engineer", Map.of("department", "Platform")),
+        new EntityAssertion("Acme Corp", List.of("Company"),
+            "Technology company", Map.of())
+    ),
+    List.of(
+        new RelationshipAssertion("Alice Smith", "Acme Corp", "WORKS_AT",
+            "Full-time employee since 2020", Map.of("since", 2020))
+    )
+));
+```
+
+#### Resolution Outcomes
+
+Each entity in the request receives one of four outcomes:
+
+| Outcome | Action | Description |
+|---------|--------|-------------|
+| `NEW` | `repository.save()` | No existing match; new entity created |
+| `EXISTING` | `repository.update()` | Matched existing entity; labels/properties merged |
+| `REFERENCE_ONLY` | No persistence | Known entity referenced but not modified |
+| `VETOED` | No persistence | Data dictionary does not permit creation for this type |
+
+Relationships are persisted via `mergeRelationship()` (idempotent MERGE). A relationship
+is skipped (`persisted=false`) if either its source or target entity was vetoed.
+
+#### LLM Tools
+
+`EntityResolutionTools` exposes entity resolution as `@LlmTool` methods that an LLM agent can invoke directly:
+
+| Tool | Description |
+|------|-------------|
+| `assert_entities` | Assert entities only (resolve + persist) |
+| `assert_entities_and_relationships` | Assert entities and create relationships between them |
+
+```kotlin
+// Create tools from an EntityResolutionService
+val tools: List<Tool> = EntityResolutionTools.asTools(entityResolutionService)
+
+// Add to an agent's tool set alongside other tools
+val allTools = prologTools + tools
+```
+
+The LLM calls `assert_entities` with a JSON array of entities:
+
+```json
+{
+  "entities": [
+    {"name": "Alice Smith", "labels": ["Person", "Engineer"], "description": "Senior backend engineer"},
+    {"name": "Acme Corp", "labels": ["Company"]}
+  ]
+}
+```
+
+Or `assert_entities_and_relationships` to also create relationships:
+
+```json
+{
+  "entities": [
+    {"name": "Alice Smith", "labels": ["Person"]},
+    {"name": "Acme Corp", "labels": ["Company"]}
+  ],
+  "relationships": [
+    {"source": "Alice Smith", "target": "Acme Corp", "type": "WORKS_AT"}
+  ]
+}
+```
+
+#### Spring Configuration
+
+```java
+@Bean
+EntityResolutionService entityResolutionService(
+        EntityResolver entityResolver,
+        NamedEntityDataRepository entityRepository,
+        DataDictionary dataDictionary) {
+    return new EntityResolutionService(entityResolver, entityRepository, dataDictionary);
+}
+```
+
 ### Source Analysis Context
 
 All DICE operations require a `SourceAnalysisContext` that carries configuration for source analysis:
