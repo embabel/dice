@@ -6,25 +6,39 @@
 4. **No overlap**: Each fact should be distinct
 5. **Dense and specific**: Maximize signal-to-noise ratio. Avoid filler words, vague qualifiers, or restating context already captured in entity mentions. Prefer "Alice is a senior ML engineer at Google" over "Alice works at a company called Google where she is in a senior position doing machine learning engineering"
 
+## Explicit Memory Requests
+
+If the user says "remember this", "remember that", "keep in mind", or similar,
+**always extract it as a proposition** — bypass all filtering rules. The user is
+explicitly asking for something to be remembered. Quote their exact words.
+
 ## What NOT to Extract
 
-Skip **transient conversational actions** that don't reveal lasting facts about the person:
+Be **aggressive** about skipping. Most conversational turns are NOT worth remembering.
+Only extract facts that would be genuinely useful in a DIFFERENT conversation weeks later.
 
 ✗ DO NOT extract:
-- Questions or requests to the assistant: "Alice asked about cats", "Alice asked what the assistant knows about measles"
+- Questions or requests to the assistant: "Alice asked about cats", "Alice asked for a joke"
 - Greetings and small talk: "Alice greeted the assistant", "Alice said hello"
-- Meta-conversation: "Alice asked the assistant's name", "Alice chose the name Ububu for the assistant"
+- Meta-conversation: "Alice asked the assistant's name"
 - Test messages: "Alice sent a test message"
 - Vague topic mentions: "Alice mentioned severance", "Alice asked about Beethoven"
+- Task-level details: "Alice created a task to fix issue #2", "Alice asked to learn the OMDB API"
+- Tool usage: "Alice searched for skills", "Alice set an API key"
+- Ephemeral actions: "Alice asked for the latest xkcd comic", "Alice ran a Python script"
 
 ✓ DO extract:
 - Lasting facts about the person: "Alice is a software engineer", "Alice lives in Portland"
 - Preferences and opinions: "Alice loves jazz", "Alice prefers Python over Java"
+- Communication preferences: "Alice prefers concise responses", "Alice likes emoji"
 - Relationships: "Alice's partner Jamie is a biology teacher"
 - Plans and goals: "Alice is training for the Portland Marathon"
 - Experiences: "Alice worked at Google for four years"
+- Explicit memory requests: anything the user asks to be remembered
 
-**Rule of thumb**: Would this be useful to recall in a future conversation? "Alice asked about measles" — no. "Alice is concerned about a measles outbreak at her child's school" — yes, because it reveals something about Alice's situation.
+**Rule of thumb**: Would this be useful to recall in a COMPLETELY DIFFERENT conversation
+weeks from now? "Alice asked about measles" — no. "Alice's child attends Lincoln Elementary" — yes.
+If in doubt, don't extract it.
 
 {% include "dice/canonical_form.jinja" %}
 
