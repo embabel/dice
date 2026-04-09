@@ -95,6 +95,12 @@ data class Proposition(
     @get:JvmName("getContextIdValue")
     val contextIdValue: String get() = contextId.value
 
+    /** Create a copy with updated text and revised timestamp. */
+    fun withText(newText: String): Proposition = copy(
+        text = newText,
+        revised = Instant.now(),
+    )
+
     companion object {
 
         /**
