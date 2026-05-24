@@ -87,13 +87,42 @@ class NormalizedNameCandidateSearcher(
     }
 
     companion object {
+        /**
+         * Strip surface variations a single human's name accumulates
+         * across email/calendar systems, so two displays of the same
+         * person collapse to the same canonical key.
+         *
+         * Order matters — handle the "Lastname, Firstname" reversal
+         * FIRST so the rest of the rules see a normal "Firstname
+         * Lastname" string.
+         *
+         * Examples:
+         *  - "Dr. Watson"        → "Watson"           (title)
+         *  - "John Smith Jr."    → "John Smith"       (suffix)
+         *  - "Lynda M Coker"     → "Lynda Coker"      (middle initial)
+         *  - "Lynda M. Coker"    → "Lynda Coker"      (middle initial + dot)
+         *  - "Coker, Lynda"      → "Lynda Coker"      (reversed)
+         *  - "Coker, Lynda M."   → "Lynda Coker"      (reversed + initial)
+         */
         fun normalizeName(name: String): String {
-            return name
-                .trim()
+            var s = name.trim()
+            // Handle "Last, First [Middle]" reversal — single comma,
+            // common shape in directory exports. Take everything after
+            // the comma + everything before, with a space.
+            val commaMatch = Regex("^([^,]+),\\s*(.+)$").matchEntire(s)
+            if (commaMatch != null) {
+                s = "${commaMatch.groupValues[2]} ${commaMatch.groupValues[1]}".trim()
+            }
+            return s
                 // Remove common titles
                 .replace(Regex("^(Mr\\.?|Mrs\\.?|Ms\\.?|Dr\\.?|Prof\\.?)\\s+", RegexOption.IGNORE_CASE), "")
                 // Remove common suffixes
                 .replace(Regex("\\s+(Jr\\.?|Sr\\.?|II|III|IV)$", RegexOption.IGNORE_CASE), "")
+                // Strip middle initials: " M " or " M. " between
+                // two longer name tokens. Single capital letter (with
+                // optional trailing dot) surrounded by whitespace and
+                // flanked by tokens of length ≥ 2 on both sides.
+                .replace(Regex("(?<=\\b\\w{2,})\\s+[A-Z]\\.?\\s+(?=\\w{2,}\\b)"), " ")
                 // Normalize whitespace
                 .replace(Regex("\\s+"), " ")
                 .trim()
