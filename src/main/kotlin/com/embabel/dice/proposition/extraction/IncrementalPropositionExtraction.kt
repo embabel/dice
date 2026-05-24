@@ -67,6 +67,19 @@ open class IncrementalPropositionExtraction(
     properties: PropositionExtractionProperties,
     private val contextIdProvider: Function<NamedEntity, String> = Function { it.id },
     private val promptVariablesProvider: Function<NamedEntity, Map<String, Any>> = Function { emptyMap() },
+    /**
+     * Per-extraction known entities the LLM should be aware of beyond
+     * the current user. Called with (user, sourceId) so consumers can
+     * surface chunk-specific candidates — email senders for a thread,
+     * closed-vocabulary catalogs (Hobby, ServiceCategory) the
+     * extractor should recognise, or recently-resolved entities.
+     *
+     * Without this the LLM only sees the current user as a known
+     * entity and tends to emit propositions with a single SUBJECT
+     * mention — which the [GraphProjectionService] cannot materialise
+     * into edges because there is no OBJECT mention to link to.
+     */
+    private val extraKnownEntitiesProvider: (NamedEntity, String) -> List<NamedEntity> = { _, _ -> emptyList() },
 ) {
     private val analyzer: IncrementalAnalyzer<Message, ChunkPropositionResult> =
         PropositionIncrementalAnalyzer(
@@ -134,7 +147,7 @@ open class IncrementalPropositionExtraction(
      * Extract propositions from raw text and persist them.
      */
     open fun rememberText(text: String, sourceId: String, user: NamedEntity) {
-        val context = buildContext(user)
+        val context = buildContext(user, sourceId)
         val result = propositionPipeline.processOnce(text, sourceId, context)
 
         if (result != null && result.propositions.isNotEmpty()) {
@@ -179,7 +192,7 @@ open class IncrementalPropositionExtraction(
                 return
             }
 
-            val context = buildContext(event.user)
+            val context = buildContext(event.user, source.id)
             logger.info(
                 "Context relations count: {}, injected relations count: {}",
                 context.relations.size(), relations.size(),
@@ -205,18 +218,26 @@ open class IncrementalPropositionExtraction(
         }
     }
 
-    private fun buildContext(user: NamedEntity): SourceAnalysisContext {
+    private fun buildContext(user: NamedEntity, sourceId: String = ""): SourceAnalysisContext {
+        val currentUser = KnownEntity.asCurrentUser(user)
+        val extras = try {
+            extraKnownEntitiesProvider(user, sourceId)
+                .filter { it.id != user.id }
+                .map { KnownEntity.of(it).withRole("Candidate entity for this source") }
+        } catch (e: Exception) {
+            logger.warn("[buildContext] extraKnownEntitiesProvider threw for {}: {}", sourceId, e.message)
+            emptyList()
+        }
+        val allKnown = listOf(currentUser) + extras
+
         var ctx = SourceAnalysisContext
             .withContextId(contextIdProvider.apply(user))
             .withEntityResolver(
-                KnownEntityResolver.withKnownEntities(
-                    listOf(KnownEntity.asCurrentUser(user)),
-                    entityResolver,
-                ),
+                KnownEntityResolver.withKnownEntities(allKnown, entityResolver),
             )
             .withSchema(dataDictionary)
             .withRelations(relations)
-            .withKnownEntities(KnownEntity.asCurrentUser(user))
+            .withKnownEntities(*allKnown.toTypedArray())
 
         val extra = promptVariablesProvider.apply(user)
         if (extra.isNotEmpty()) {

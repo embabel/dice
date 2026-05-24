@@ -20,6 +20,7 @@ import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.model.SimpleNamedEntityData
 import com.embabel.dice.common.EntityResolver
+import com.embabel.dice.common.ExistingEntity
 import com.embabel.dice.common.ReferenceOnlyEntity
 import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntities
@@ -56,8 +57,20 @@ class KnownEntityResolver(
             val knownMatch = findKnownMatch(suggested)
             if (knownMatch != null) {
                 logger.info("Matched '{}' to known entity '{}'", suggested.name, knownMatch.name)
-                // Use ReferenceOnlyEntity to prevent updating externally-managed entities
-                ReferenceOnlyEntity(suggested, knownMatch.toNamedEntityData())
+                // ReferenceOnlyEntity for externally-managed entities
+                // whose labels already cover the suggestion — no need
+                // to update. ExistingEntity (which merges labels) when
+                // the suggestion would *widen* the type set — e.g.
+                // Airbnb already resolved as `Saas`, suggestion comes
+                // back as `Trip` — we want the existing row to gain
+                // the `Trip` label rather than fork into a duplicate.
+                val suggestedLabels = suggested.labels.map { it.lowercase() }.toSet()
+                val knownLabels = knownMatch.labels().map { it.lowercase() }.toSet()
+                if (suggestedLabels.minus(knownLabels).isEmpty()) {
+                    ReferenceOnlyEntity(suggested, knownMatch.toNamedEntityData())
+                } else {
+                    ExistingEntity(suggested, knownMatch.toNamedEntityData())
+                }
             } else {
                 null // Will be resolved by delegate
             }
@@ -98,23 +111,30 @@ class KnownEntityResolver(
 
     private fun findKnownMatch(suggested: SuggestedEntity): NamedEntity? {
         val normalizedSuggested = NormalizedNameCandidateSearcher.normalizeName(suggested.name)
+        val suggestedLabels = suggested.labels.map { it.lowercase() }.toSet()
 
-        for (known in knownEntities) {
+        // Collect all known entities with a name match. Real-world
+        // single concepts often carry multiple types (Airbnb is both a
+        // SaaS and a Trip vendor; Apple is both a SaaS and a Biller),
+        // so we cannot reject a name match just because the suggested
+        // type and the known type don't yet intersect — we want to
+        // *widen* the known entity, not create a duplicate row keyed
+        // by the same name.
+        val nameMatches = knownEntities.filter { known ->
             val normalizedKnown = NormalizedNameCandidateSearcher.normalizeName(known.name)
-
-            // Check label compatibility
-            val suggestedLabels = suggested.labels.map { it.lowercase() }.toSet()
-            val knownLabels = known.labels().map { it.lowercase() }.toSet()
-            if (suggestedLabels.intersect(knownLabels).isEmpty()) {
-                continue
-            }
-
-            // Match if normalized names are equal (case-insensitive)
-            if (normalizedSuggested.equals(normalizedKnown, ignoreCase = true)) {
-                return known
-            }
+            normalizedSuggested.equals(normalizedKnown, ignoreCase = true)
         }
-        return null
+        if (nameMatches.isEmpty()) return null
+
+        // Tiebreak when multiple known entities share a normalised
+        // name (e.g. "Apple" the company vs "Apple" the fruit): prefer
+        // a label-overlapping match so we don't silently merge
+        // distinct concepts. If no overlap exists at all, take the
+        // first name match — the persister can widen its labels.
+        val labelOverlap = nameMatches.firstOrNull { known ->
+            known.labels().map { it.lowercase() }.toSet().intersect(suggestedLabels).isNotEmpty()
+        }
+        return labelOverlap ?: nameMatches.first()
     }
 
     @Suppress("USELESS_ELVIS")  // Java interop: name can be null despite Kotlin declaration
