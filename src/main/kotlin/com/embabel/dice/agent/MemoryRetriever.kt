@@ -36,9 +36,11 @@ import org.slf4j.LoggerFactory
  * Results are unioned and each line is tagged with the probe(s) that
  * found it (`[vector]` / `[keyword]` / `[related]`). When a
  * [ProvenanceResolver] is wired, every line also carries its source and
- * the entity ids it mentions. No fusion scoring: vector hits keep
- * similarity order, then keyword hits by term overlap, then related
- * hits by confidence.
+ * the entity ids it mentions. Tiers are merged with **Reciprocal Rank
+ * Fusion** — a proposition's final score sums `1/(RRF_K + rank)` over
+ * every tier that found it, so a hit corroborated by several probes
+ * outranks a single probe's high-but-lone hit. Ties keep tier order
+ * (vector, then keyword, then related).
  *
  * @param eagerIds propositions already surfaced eagerly in the system
  *   prompt — removed from results so the LLM only sees new information.
@@ -55,20 +57,24 @@ internal class MemoryRetriever(
     fun search(query: String, base: PropositionQuery, limit: Int): Tool.Result {
         val ordered = LinkedHashMap<String, ProbeHit>()
 
-        // Tier 1+2 — direct probes. Vector first (similarity order),
-        // then keyword by term overlap. A proposition found by both is
-        // tagged with both probes.
-        vectorProbe(query, base, limit).forEach { tagHit(ordered, it, "vector") }
-        keywordProbe(query, base, limit).forEach { tagHit(ordered, it, "keyword") }
+        // Tier 1+2 — direct probes. Vector (similarity order) and
+        // keyword (term overlap); a proposition found by both is tagged
+        // with both and accumulates RRF score from each.
+        fuse(ordered, vectorProbe(query, base, limit), "vector")
+        fuse(ordered, keywordProbe(query, base, limit), "keyword")
 
         // Tier 3 — when the direct probes are thin, widen to other
         // propositions about the same entities the hits mention.
         if (ordered.values.count { it.prop.id !in eagerIds } < limit) {
-            expandByEntities(ordered.values, base, limit).forEach { tagHit(ordered, it, "related") }
+            fuse(ordered, expandByEntities(ordered.values, base, limit), "related")
         }
 
+        // Reciprocal Rank Fusion across the tiers: consensus hits (found
+        // by more than one probe) outrank a single probe's high-but-lone
+        // hit. Stable sort, so equal scores keep tier insertion order.
         val hits = ordered.values
             .filter { it.prop.id !in eagerIds }
+            .sortedByDescending { it.rrf }
             .take(limit)
         return if (hits.isEmpty()) noMatch(query, base) else renderHits(query, hits)
     }
@@ -94,9 +100,20 @@ internal class MemoryRetriever(
         return Tool.Result.text(text)
     }
 
-    /** Add (or merge) a proposition into the result map under a probe tag. */
-    private fun tagHit(into: LinkedHashMap<String, ProbeHit>, prop: Proposition, tag: String) {
-        into.getOrPut(prop.id) { ProbeHit(prop, mutableSetOf()) }.sources += tag
+    /**
+     * Fold one probe's ranked result into the union: dedupe by
+     * proposition id, record the probe tag, and accumulate its
+     * Reciprocal Rank Fusion contribution `1/(RRF_K + rank)` (rank is
+     * the 1-based position in this probe's list). Summing across probes
+     * rewards consensus without needing the probes' scores to share a
+     * scale.
+     */
+    private fun fuse(into: LinkedHashMap<String, ProbeHit>, ranked: List<Proposition>, tag: String) {
+        ranked.forEachIndexed { i, prop ->
+            val hit = into.getOrPut(prop.id) { ProbeHit(prop, mutableSetOf()) }
+            hit.sources += tag
+            hit.rrf += 1.0 / (RRF_K + i + 1)
+        }
     }
 
     /** Tier 1 — vector similarity probe. */
@@ -242,9 +259,20 @@ internal class MemoryRetriever(
         )
     }
 
-    private data class ProbeHit(val prop: Proposition, val sources: MutableSet<String>)
+    private data class ProbeHit(
+        val prop: Proposition,
+        val sources: MutableSet<String>,
+        var rrf: Double = 0.0,
+    )
 
     private companion object {
+        /**
+         * Reciprocal Rank Fusion damping constant. The standard value
+         * (60) flattens the curve so deep-but-corroborated hits still
+         * matter; raising it weights consensus over absolute rank.
+         */
+        const val RRF_K = 60
+
         /** Min token length for the keyword (term-overlap) probe. */
         const val MIN_TOKEN_LEN = 3
 

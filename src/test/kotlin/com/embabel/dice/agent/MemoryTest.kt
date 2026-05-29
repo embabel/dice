@@ -446,6 +446,48 @@ class MemoryTest {
             val text = (result as Tool.Result.Text).content
             assertTrue(text.contains("— source: Contractor agreement email"), text)
         }
+
+        @Test
+        fun `RRF floats a consensus hit above a higher-ranked single-probe hit`() {
+            val a = createProposition("Alpha unrelated fact")   // vector rank 1 only
+            val b = createProposition("Beta canva fact")        // vector rank 2 + keyword rank 1
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>())
+            } returns listOf(SimilarityResult(a, 0.9), SimilarityResult(b, 0.8))
+            // Keyword candidate scan returns both; only `b` contains the token "canva".
+            every { repository.query(any()) } returns listOf(a, b)
+
+            val memory = Memory.forContext(contextId).withRepository(repository)
+
+            val result = memory.call("""{"query": "canva"}""")
+            val text = (result as Tool.Result.Text).content
+            // `b` (vector rank 2 + keyword rank 1) fuses to a higher RRF score
+            // than `a` (vector rank 1 only), so it is rendered first.
+            assertTrue(
+                text.indexOf("Beta canva fact") < text.indexOf("Alpha unrelated fact"),
+                text,
+            )
+            assertTrue(text.contains("[keyword,vector] Beta canva fact"), text)
+        }
+
+        @Test
+        fun `RRF ties keep tier order - vector before keyword`() {
+            val a = createProposition("alpha")  // found only by vector, rank 1
+            val b = createProposition("beta")   // found only by keyword, rank 1
+            every {
+                repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>())
+            } returns listOf(SimilarityResult(a, 0.9))
+            every { repository.query(any()) } returns listOf(a, b)  // token "beta" matches only `b`
+
+            val memory = Memory.forContext(contextId).withRepository(repository)
+
+            val result = memory.call("""{"query": "beta"}""")
+            val text = (result as Tool.Result.Text).content
+            // Equal RRF (both rank 1 in their single tier); stable sort keeps the
+            // vector tier — fused first — ahead of the keyword tier. Assert on the
+            // tagged bullet lines (the bare query word "beta" also appears in the header).
+            assertTrue(text.indexOf("[vector] alpha") < text.indexOf("[keyword] beta"), text)
+        }
     }
 
     @Nested
