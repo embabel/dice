@@ -272,9 +272,11 @@ data class Memory @JvmOverloads constructor(
                 1 -> "1 memory available."
                 else -> "$memoryCount memories available."
             }
-            return "Search memories about $topic via hybrid semantic + keyword retrieval. " +
-                "$status Use when: $useWhen. If a query comes back empty or unconvincing, " +
-                "retry with different wording or a broader query before concluding nothing is known."
+            return """
+                Search memories about $topic via hybrid semantic + keyword retrieval. $status
+                Use when: $useWhen. If a query comes back empty or unconvincing, retry with
+                different wording or a broader query before concluding nothing is known.
+            """.trimIndent()
         }
 
     /**
@@ -370,11 +372,13 @@ data class Memory @JvmOverloads constructor(
             inputSchema = Tool.InputSchema.of(
                 Tool.Parameter.string(
                     "query",
-                    "What to recall, in natural language (e.g. \"where does the user live\", " +
-                        "\"the user's hobbies\", \"Stripe\"). Runs a hybrid semantic + keyword " +
-                        "search over stored memories. If the first query returns nothing useful, " +
-                        "try again with different wording or a broader query before giving up. " +
-                        "Omit to list all memories by confidence.",
+                    """
+                        What to recall, in natural language (e.g. "where does the user live",
+                        "the user's hobbies", "Stripe"). Runs a hybrid semantic + keyword search
+                        over stored memories. If the first query returns nothing useful, try again
+                        with different wording or a broader query before giving up. Omit to list
+                        all memories by confidence.
+                    """.trimIndent(),
                     required = false,
                 ),
                 Tool.Parameter.integer("limit", "Maximum number of results", required = false),
@@ -390,191 +394,12 @@ data class Memory @JvmOverloads constructor(
         val query = (params["query"] as? String ?: params["topic"] as? String)
             ?.trim()?.takeIf { it.isNotBlank() }
         val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
-        return if (query == null) listAll(limit.coerceAtLeast(defaultLimit)) else hybridSearch(query, limit)
-    }
-
-    /**
-     * Hybrid retrieval over the scoped propositions, in three tiers:
-     *  1. **vector** similarity — semantic; carries question-shaped queries;
-     *  2. **keyword** by term overlap — lexical; catches exact names / rare terms;
-     *  3. **related** entity expansion — when 1+2 come back thin, pull more
-     *     propositions about the SAME entities the direct hits mention.
-     * Results are unioned and each line is tagged with the probe(s)
-     * that found it (`[vector]` / `[keyword]` / `[related]`). When a
-     * [ProvenanceResolver] is wired, every line also carries its source.
-     *
-     * No fusion scoring: vector hits keep similarity order, then
-     * keyword hits by term overlap, then related hits by confidence.
-     * Eager-loaded propositions (already in the system prompt) are
-     * removed so the LLM only sees new information.
-     */
-    private fun hybridSearch(query: String, limit: Int): Tool.Result {
-        val base = baseQuery()
-
-        val vectorHits = try {
-            repository.findSimilarWithScores(
-                TextSimilaritySearchRequest(query = query, similarityThreshold = 0.0, topK = limit),
-                base,
-            ).map { it.match }
-        } catch (t: Throwable) {
-            logger.warn("vector probe failed for '{}': {}", query, t.message)
-            emptyList()
+        val retriever = MemoryRetriever(repository, provenanceResolver, topic, eagerPropositionIds)
+        return if (query == null) {
+            retriever.listAll(baseQuery(), limit.coerceAtLeast(defaultLimit))
+        } else {
+            retriever.search(query, baseQuery(), limit)
         }
-
-        // Keyword probe by TERM OVERLAP, not whole-string substring: a
-        // phrase query ("evidence I'm interested in Canva") never
-        // substring-matches a proposition, but its salient term
-        // ("Canva") will. Score candidates by how many distinct query
-        // tokens they contain, keep the best. No stopword list —
-        // overlap-count ranking naturally floats the propositions that
-        // share the rare, meaningful tokens.
-        val tokens = tokenize(query)
-        val keywordHits = if (tokens.isEmpty()) emptyList() else
-            repository.query(base.orderedByEffectiveConfidence().withLimit(limit * 10))
-                .map { p -> p to tokens.count { t -> p.text.contains(t, ignoreCase = true) } }
-                .filter { it.second > 0 }
-                .sortedByDescending { it.second }
-                .map { it.first }
-                .take(limit)
-
-        // Union, vector order first (similarity), then keyword hits
-        // (term overlap). A proposition found by both carries both tags.
-        val ordered = LinkedHashMap<String, ProbeHit>()
-        vectorHits.forEach { p -> ordered.getOrPut(p.id) { ProbeHit(p, mutableSetOf()) }.sources += "vector" }
-        keywordHits.forEach { p -> ordered.getOrPut(p.id) { ProbeHit(p, mutableSetOf()) }.sources += "keyword" }
-
-        // Entity expansion — IF the direct probes came back thin, widen
-        // to other propositions about the SAME entities the hits
-        // mention. This is the "similar results around the retrieved
-        // nodes" tier: neighbourhood recall done purely through the
-        // proposition store (no external graph needed).
-        val directCount = ordered.values.count { it.prop.id !in eagerPropositionIds }
-        if (directCount < limit) {
-            val seedEntityIds = ordered.values
-                .flatMap { hit -> hit.prop.mentions.mapNotNull { it.resolvedId } }
-                .filter { it.isNotBlank() }
-                .distinct()
-                .take(MAX_EXPANSION_SEEDS)
-            if (seedEntityIds.isNotEmpty()) {
-                val related = try {
-                    repository.query(
-                        base.withAnyEntityIds(seedEntityIds)
-                            .orderedByEffectiveConfidence()
-                            .withLimit(limit * 3)
-                    )
-                } catch (t: Throwable) {
-                    logger.warn("entity expansion failed: {}", t.message)
-                    emptyList()
-                }
-                related.forEach { p -> ordered.getOrPut(p.id) { ProbeHit(p, mutableSetOf()) }.sources += "related" }
-            }
-        }
-
-        val hits = ordered.values
-            .filter { it.prop.id !in eagerPropositionIds }
-            .take(limit)
-
-        if (hits.isEmpty()) {
-            val total = repository.query(base).size
-            val tail = if (total > 0) " — $total memories are stored about $topic." else "."
-            return Tool.Result.text(
-                "No memories matched '$query'. Try rephrasing or a broader query$tail"
-            )
-        }
-
-        val provenance = resolveProvenance(hits.map { it.prop.id })
-        val text = buildString {
-            appendLine("Memories about '$query' (${hits.size}):")
-            hits.forEach { hit ->
-                appendMemoryLine("- [${hit.sources.sorted().joinToString(",")}] ", hit.prop, provenance)
-            }
-        }.trimEnd()
-        return Tool.Result.text(text)
-    }
-
-    /**
-     * Split a query into lexical tokens for the keyword probe:
-     * lower-cased, de-duplicated runs of Unicode letters/digits of
-     * length >= [MIN_TOKEN_LEN]. No stopword list (language-agnostic);
-     * overlap-count ranking in [hybridSearch] handles common words.
-     */
-    private fun tokenize(query: String): List<String> =
-        query.lowercase()
-            .split(Regex("[^\\p{L}\\p{N}]+"))
-            .filter { it.length >= MIN_TOKEN_LEN }
-            .distinct()
-
-    private data class ProbeHit(val prop: Proposition, val sources: MutableSet<String>)
-
-    /**
-     * Resolve provenance for a result set in one batch. Returns an
-     * empty map when no resolver is wired or the lookup fails — memory
-     * still returns its propositions, just without source annotations.
-     */
-    private fun resolveProvenance(ids: List<String>): Map<String, List<String>> {
-        val resolver = provenanceResolver ?: return emptyMap()
-        if (ids.isEmpty()) return emptyMap()
-        return try {
-            resolver.resolveSources(ids)
-        } catch (t: Throwable) {
-            logger.warn("provenance resolution failed: {}", t.message)
-            emptyMap()
-        }
-    }
-
-    /**
-     * Append one proposition line. Two compact suffixes are added when
-     * available:
-     *  - `— source: …` — provenance (where the fact came from), so the
-     *    LLM can cite it;
-     *  - `— entities: name (id); …` — the resolved entities this
-     *    proposition mentions, so the LLM has durable handles to drill
-     *    into (via find_entity / a Cypher anchor) without re-searching.
-     * Both are capped and truncated so a busy proposition can't blow up
-     * the result.
-     */
-    private fun StringBuilder.appendMemoryLine(
-        prefix: String,
-        prop: Proposition,
-        provenance: Map<String, List<String>>,
-    ) {
-        val sources = provenance[prop.id].orEmpty()
-            .filter { it.isNotBlank() }
-            .distinct()
-            .take(MAX_SOURCES_PER_PROP)
-            .joinToString("; ") { it.trim().take(MAX_SOURCE_CHARS) }
-        val entities = prop.mentions
-            .filter { !it.resolvedId.isNullOrBlank() }
-            .distinctBy { it.resolvedId }
-            .take(MAX_ENTITIES_PER_PROP)
-            .joinToString("; ") { "${it.span.trim().take(MAX_ENTITY_CHARS)} (${it.resolvedId})" }
-        appendLine(
-            buildString {
-                append(prefix); append(prop.text)
-                if (sources.isNotBlank()) append(" — source: $sources")
-                if (entities.isNotBlank()) append(" — entities: $entities")
-            }
-        )
-    }
-
-    private fun listAll(limit: Int): Tool.Result {
-        val results = repository.query(baseQuery().orderedByEffectiveConfidence().withLimit(limit))
-            .filter { it.id !in eagerPropositionIds }
-            .take(limit)
-
-        if (results.isEmpty()) {
-            return Tool.Result.text(
-                if (eagerPropositionIds.isNotEmpty()) "No additional memories beyond those already provided."
-                else "No memories stored yet."
-            )
-        }
-
-        val provenance = resolveProvenance(results.map { it.id })
-        val text = buildString {
-            appendLine("All memories (${results.size}):")
-            results.forEach { prop -> appendMemoryLine("- ", prop, provenance) }
-        }.trimEnd()
-        return Tool.Result.text(text)
     }
 
     private fun parseInput(input: String): Map<String, Any?> {
@@ -596,20 +421,6 @@ data class Memory @JvmOverloads constructor(
 
         /** Default result limit */
         const val DEFAULT_LIMIT = 10
-
-        /** Min token length for the keyword (term-overlap) probe. */
-        private const val MIN_TOKEN_LEN = 3
-
-        /** Max seed entities used for the entity-expansion tier. */
-        private const val MAX_EXPANSION_SEEDS = 4
-
-        /** Per-proposition provenance display caps. */
-        private const val MAX_SOURCES_PER_PROP = 2
-        private const val MAX_SOURCE_CHARS = 80
-
-        /** Per-proposition entity-handle display caps. */
-        private const val MAX_ENTITIES_PER_PROP = 4
-        private const val MAX_ENTITY_CHARS = 40
 
         private val objectMapper = jacksonObjectMapper()
 

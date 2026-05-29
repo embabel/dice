@@ -1658,20 +1658,35 @@ the full memory store remains searchable on demand.
 The tool surface is deliberately minimal: one freeform `query` plus an optional `limit`.
 
 - **`query`**: A natural-language description of what to recall (e.g. `{"query": "the user's hobbies"}`,
-  `{"query": "where does the user live"}`, `{"query": "Stripe"}`). Memory runs a **hybrid** retrieval —
-  a vector-similarity probe AND a keyword (case-insensitive substring) probe over the same scoped
-  propositions — then unions the hits, tagging each line with the probe(s) that found it
-  (`[vector]`, `[keyword]`, `[vector,keyword]`). Vector carries question-shaped queries; keyword adds
-  precision for exact terms, names, and phrases.
+  `{"query": "where does the user live"}`, `{"query": "Stripe"}`). Memory runs a **hybrid** retrieval in
+  three tiers over the same scoped propositions, unions the hits, and tags each line with the probe(s)
+  that found it (`[vector]` / `[keyword]` / `[related]`):
+  1. **vector** — similarity search; carries question-shaped queries.
+  2. **keyword** — by **term overlap**, not whole-string substring: the query is tokenised (Unicode
+     letters/digits, length ≥ 3, no stopword list) and candidates are scored by how many distinct
+     query tokens they contain. A phrase query never substring-matches a proposition, but its salient
+     token (a name, a rare term) does.
+  3. **related** — entity expansion: *when the first two tiers come back thin*, Memory widens to other
+     propositions that mention the **same entities** the direct hits do (via `PropositionQuery`'s entity
+     filter — no external graph needed). This is "similar results around the retrieved nodes".
 - **`limit`**: Maximum results (optional).
 - **No parameters** or `{}`: Returns all memories ordered by confidence.
+
+**Every returned line carries two compact annotations when available:**
+- `— source: …` — provenance, supplied by an optional [`ProvenanceResolver`](src/main/kotlin/com/embabel/dice/agent/ProvenanceResolver.kt)
+  wired via `withProvenance(...)`. Propositions are extracted from sources (emails, meetings, docs); the
+  resolver turns a proposition's lineage into a readable descriptor (subject / title / name) so the LLM
+  can cite where a fact came from straight from a recall — no separate citation tool. This is **not** a
+  retrieval hook (it doesn't change what's returned, and it's not a tool parameter); it only annotates.
+- `— entities: name (id); …` — the resolved entities the proposition mentions, giving the LLM durable
+  handles to drill into (via a name lookup or a Cypher anchor) without re-searching.
 
 There is no predicate / subject / object / type parameter surface — the agent asks in natural
 language and, if the first query is unconvincing, simply asks again with different wording. The
 empty-result message nudges it to do exactly that.
 
 Fusion scoring (RRF) and graph-distance reranking are intentionally **not** implemented yet:
-vector hits keep their similarity order, keyword-only hits follow by confidence.
+vector hits keep similarity order, then keyword hits by term overlap, then related hits by confidence.
 
 #### Scoping
 
