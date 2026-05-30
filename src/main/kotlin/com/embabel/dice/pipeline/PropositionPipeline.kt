@@ -186,6 +186,7 @@ class PropositionPipeline private constructor(
         context: SourceAnalysisContext,
         historyStore: ChunkHistoryStore? = null,
         contentHasher: ContentHasher = Sha256ContentHasher,
+        additionalGrounding: List<String> = emptyList(),
     ): ChunkPropositionResult? {
         if (historyStore != null) {
             val hash = contentHasher.hash(text)
@@ -212,13 +213,13 @@ class PropositionPipeline private constructor(
                     processedAt = Instant.now(),
                 )
             )
-            return result
+            return result.withAdditionalGrounding(additionalGrounding)
         }
         // Same id-as-sourceId convention as the history-store branch:
         // proposition.grounding carries the caller's stable sourceId so
         // GroundingWiringService can resolve it to a source entity.
         val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
-        return processChunk(chunk, context)
+        return processChunk(chunk, context).withAdditionalGrounding(additionalGrounding)
     }
 
     /**
@@ -281,3 +282,38 @@ class PropositionPipeline private constructor(
         return result
     }
 }
+
+/**
+ * Merge [ids] into the `grounding` of every proposition this result will
+ * persist — both the plain extracted list and, when revision ran, the
+ * revised propositions actually saved (`revisedPropositionsToPersist`).
+ *
+ * Used by [PropositionPipeline.processOnce]'s `additionalGrounding` to let a
+ * caller ground an answer in the source records it came from, on top of the
+ * primary `sourceId`. Grounding ids that resolve to a stored entity become
+ * `(:Proposition)-[:GROUNDED_IN]->(:entity)` edges in the downstream grounding
+ * pass — the same mechanism the primary `sourceId` already uses. No-op for an
+ * empty list (the back-compat default).
+ */
+internal fun ChunkPropositionResult.withAdditionalGrounding(ids: List<String>): ChunkPropositionResult =
+    if (ids.isEmpty()) this
+    else copy(
+        propositions = propositions.map { it.withGrounding(ids) },
+        revisionResults = revisionResults.map { it.withAdditionalGrounding(ids) },
+    )
+
+/**
+ * Add grounding to the proposition(s) a [RevisionResult] persists. Only the
+ * proposition sourced from THIS text is enriched — a `Contradicted`'s
+ * pre-existing `original` (whose confidence is merely reduced) keeps its own
+ * provenance.
+ */
+internal fun RevisionResult.withAdditionalGrounding(ids: List<String>): RevisionResult =
+    if (ids.isEmpty()) this
+    else when (this) {
+        is RevisionResult.New -> copy(proposition = proposition.withGrounding(ids))
+        is RevisionResult.Merged -> copy(revised = revised.withGrounding(ids))
+        is RevisionResult.Reinforced -> copy(revised = revised.withGrounding(ids))
+        is RevisionResult.Contradicted -> copy(new = new.withGrounding(ids))
+        is RevisionResult.Generalized -> copy(proposition = proposition.withGrounding(ids))
+    }

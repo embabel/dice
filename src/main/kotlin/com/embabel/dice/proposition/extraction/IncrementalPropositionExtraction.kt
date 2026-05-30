@@ -155,10 +155,25 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
 
     /**
      * Extract propositions from raw text and persist them.
+     *
+     * @param additionalGrounding extra source-record ids to ground the
+     *   resulting propositions in, on top of [sourceId]. Ids that resolve to a
+     *   stored entity become `(:Proposition)-[:GROUNDED_IN]->(:entity)` edges —
+     *   e.g. a chat-recovery answer synthesised from `email:<threadId>` and a
+     *   connected-service record can attribute back to both. Empty (default)
+     *   preserves prior behaviour.
      */
-    open fun rememberText(text: String, sourceId: String, user: NamedEntity) {
+    @JvmOverloads
+    open fun rememberText(
+        text: String,
+        sourceId: String,
+        user: NamedEntity,
+        additionalGrounding: List<String> = emptyList(),
+    ) {
         val context = buildContext(user, sourceId)
-        val result = propositionPipeline.processOnce(text, sourceId, context)
+        val result = propositionPipeline.processOnce(
+            text, sourceId, context, additionalGrounding = additionalGrounding,
+        )
 
         if (result != null && result.propositions.isNotEmpty()) {
             logger.info(result.infoString(true, 1))
