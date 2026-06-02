@@ -18,14 +18,13 @@ package com.embabel.dice.temporal
 import java.time.Instant
 
 /**
- * Bitemporal-style metadata describing when a fact was observed and when it is
- * (or was) valid in the world.
+ * Bitemporal metadata describing when a fact was observed and when it is, or
+ * was, valid in the world.
  *
- * This prepares DICE for Zep/Graphiti-class temporal correctness: a reviewer can
- * distinguish *current truth* from *historical truth*, and propositions can record
- * that they supersede or contradict earlier ones.
+ * Distinguishes current truth from historical truth, and allows a proposition to
+ * record that it supersedes or contradicts earlier propositions.
  *
- * - **Observed time** ([observedAt]): when DICE learned the fact.
+ * - **Observed time** ([observedAt]): when DICE recorded the fact.
  * - **Valid time** ([validFrom] / [validTo]): the window during which the fact
  *   holds in the world. A null [validTo] means "still valid / open-ended".
  * - **Invalidation** ([invalidatedAt]): when the fact was explicitly invalidated,

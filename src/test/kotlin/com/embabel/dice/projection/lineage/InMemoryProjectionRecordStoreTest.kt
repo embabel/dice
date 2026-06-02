@@ -42,9 +42,9 @@ class InMemoryProjectionRecordStoreTest {
 
     @Test
     fun `record and findByProposition`() {
-        store.record(record("p1", "neo4j", "run-1", ProjectionLifecycle.PROJECTED))
+        store.record(record("p1", "graph", "run-1", ProjectionLifecycle.PROJECTED))
         store.record(record("p1", "prolog", "run-1", ProjectionLifecycle.PROJECTED))
-        store.record(record("p2", "neo4j", "run-1", ProjectionLifecycle.SKIPPED))
+        store.record(record("p2", "graph", "run-1", ProjectionLifecycle.SKIPPED))
 
         val p1 = store.findByProposition("p1")
         assertEquals(2, p1.size)
@@ -53,19 +53,19 @@ class InMemoryProjectionRecordStoreTest {
     }
 
     @Test
-    fun `findByTarget`() {
-        store.record(record("p1", "neo4j", "run-1", ProjectionLifecycle.PROJECTED))
-        store.record(record("p2", "neo4j", "run-1", ProjectionLifecycle.ADOPTED))
+    fun findByTarget() {
+        store.record(record("p1", "graph", "run-1", ProjectionLifecycle.PROJECTED))
+        store.record(record("p2", "graph", "run-1", ProjectionLifecycle.ADOPTED))
         store.record(record("p3", "prolog", "run-1", ProjectionLifecycle.PROJECTED))
 
-        assertEquals(2, store.findByTarget("neo4j").size)
+        assertEquals(2, store.findByTarget("graph").size)
         assertEquals(1, store.findByTarget("prolog").size)
     }
 
     @Test
-    fun `findByRun`() {
-        store.record(record("p1", "neo4j", "run-1", ProjectionLifecycle.PROJECTED))
-        store.record(record("p2", "neo4j", "run-2", ProjectionLifecycle.PROJECTED))
+    fun findByRun() {
+        store.record(record("p1", "graph", "run-1", ProjectionLifecycle.PROJECTED))
+        store.record(record("p2", "graph", "run-2", ProjectionLifecycle.PROJECTED))
 
         assertEquals(1, store.findByRun("run-1").size)
         assertEquals(1, store.findByRun("run-2").size)
@@ -74,8 +74,8 @@ class InMemoryProjectionRecordStoreTest {
 
     @Test
     fun `findStale returns only stale`() {
-        store.record(record("p1", "neo4j", "run-1", ProjectionLifecycle.PROJECTED))
-        store.record(record("p2", "neo4j", "run-1", ProjectionLifecycle.STALE))
+        store.record(record("p1", "graph", "run-1", ProjectionLifecycle.PROJECTED))
+        store.record(record("p2", "graph", "run-1", ProjectionLifecycle.STALE))
         store.record(record("p3", "prolog", "run-1", ProjectionLifecycle.FAILED))
         store.record(record("p4", "report", "run-1", ProjectionLifecycle.STALE))
 
@@ -87,8 +87,8 @@ class InMemoryProjectionRecordStoreTest {
 
     @Test
     fun `all returns insertion order`() {
-        store.record(record("p1", "neo4j", "run-1", ProjectionLifecycle.PROJECTED))
-        store.record(record("p2", "neo4j", "run-1", ProjectionLifecycle.PROJECTED))
+        store.record(record("p1", "graph", "run-1", ProjectionLifecycle.PROJECTED))
+        store.record(record("p2", "graph", "run-1", ProjectionLifecycle.PROJECTED))
 
         val all = store.all()
         assertEquals(2, all.size)

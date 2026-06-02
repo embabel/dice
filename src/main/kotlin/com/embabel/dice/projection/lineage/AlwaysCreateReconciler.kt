@@ -18,11 +18,13 @@ package com.embabel.dice.projection.lineage
 import com.embabel.dice.proposition.Proposition
 
 /**
- * Trivial [Reconciler] that always creates a new artifact.
+ * [Reconciler] that always returns [ReconciliationDecision.CreateNew], the
+ * projection counterpart of
+ * [com.embabel.dice.common.resolver.AlwaysCreateEntityResolver].
  *
- * Mirrors `com.embabel.dice.common.resolver.AlwaysCreateEntityResolver`.
- * Useful as a default/stub; not appropriate for production where node
- * duplication against an existing domain graph is a concern.
+ * Useful as a default implementation and in tests. It performs no matching
+ * against existing artifacts, so it is not suitable where duplication within a
+ * target store must be avoided.
  */
 object AlwaysCreateReconciler : Reconciler {
 

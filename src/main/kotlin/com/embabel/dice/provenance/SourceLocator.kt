@@ -21,14 +21,13 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo
 /**
  * A reference to where source material lives.
  *
- * DICE holds the *reference* to source material, never the bytes themselves.
- * A [SourceLocator] is the library-appropriate provenance primitive: it tells a
- * consumer how to find (or re-fetch) the original material that grounds a
- * proposition, without DICE taking on storage, credentials, or connector
- * responsibilities.
+ * A [SourceLocator] holds a reference to source material rather than the material
+ * itself. It tells a consumer how to locate or re-fetch the original material
+ * that grounds a proposition, without assuming responsibility for storage,
+ * credentials, or connector access.
  *
- * Implementations form a discriminated union so consumers can pattern-match on
- * the kind of reference (URI, file path, content hash, or connector reference).
+ * Implementations form a discriminated union, allowing consumers to match on the
+ * kind of reference: URI, file path, content hash, or connector reference.
  *
  * @property display Optional human-readable label for UIs and reports
  *   (e.g. "Meeting notes 2026-05-21"). Never used for identity.
@@ -52,9 +51,9 @@ sealed interface SourceLocator {
      * A stable, comparable key identifying this locator.
      *
      * Keys are prefixed by locator kind so that distinct kinds never collide
-     * (e.g. `uri:...`, `file:...`, `content:...`, `connector:...`). Use this for
-     * deduplication, indexing, and equality of references rather than relying on
-     * the [display] label.
+     * (`uri:...`, `file:...`, `content:...`, `connector:...`). Use this for
+     * deduplication, indexing, and reference equality rather than the [display]
+     * label.
      *
      * @return a stable key string for this locator
      */
@@ -113,8 +112,8 @@ data class FileLocator @JvmOverloads constructor(
 /**
  * A locator that identifies source material by its content hash.
  *
- * This is the most portable locator because it is independent of location: any
- * store holding matching bytes satisfies the reference.
+ * Because it identifies material by content rather than location, any store
+ * holding matching bytes satisfies the reference.
  *
  * @property contentHash The hash of the source content (e.g. a SHA-256 hex string)
  * @property display Optional human-readable label

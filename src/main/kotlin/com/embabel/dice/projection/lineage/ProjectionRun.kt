@@ -18,18 +18,16 @@ package com.embabel.dice.projection.lineage
 import java.time.Instant
 
 /**
- * A record of a projection run — a single batch of projection work against a target.
+ * A single batch of projection work against a target.
  *
- * Inspired by consolidation/audit-run records: a run groups many
- * [ProjectionRecord]s under a shared [runId] so projection, collector, and
- * reconciliation jobs have generic run history.
- *
- * Computed counts are intentionally out of scope; this is a plain record.
+ * A run groups its [ProjectionRecord]s under a shared [runId], giving projection
+ * and reconciliation jobs a common run history. This is a plain record; aggregate
+ * counts are out of scope.
  *
  * @property runId Unique identifier for this run (matches [ProjectionRecord.runId])
  * @property startedAt When the run started
  * @property finishedAt When the run finished, or null if still running
- * @property target The projection target this run wrote to (e.g. "neo4j")
+ * @property target The projection target this run wrote to (e.g. "graph")
  */
 data class ProjectionRun @JvmOverloads constructor(
     val runId: String,

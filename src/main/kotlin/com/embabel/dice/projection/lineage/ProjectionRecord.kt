@@ -18,15 +18,15 @@ package com.embabel.dice.projection.lineage
 import java.time.Instant
 
 /**
- * A record of one proposition being projected to one target.
+ * A record of a single proposition projected to a single target.
  *
- * Collectively these records form a generic inverse index — "which propositions
- * projected where" — so a reviewer can trace a graph node, Prolog fact, or report
- * line back to the propositions that produced it, and can tell whether an
- * artifact was created, adopted/aligned, skipped, failed, or has gone stale.
+ * Collectively these records form an inverse index of which propositions
+ * projected to which targets, allowing a projected artifact to be traced back to
+ * the propositions that produced it and its current [ProjectionLifecycle] to be
+ * inspected.
  *
  * @property propositionId ID of the proposition that was projected
- * @property target The projection target (e.g. "neo4j", "prolog", "report")
+ * @property target The projection target (e.g. "graph", "prolog", "report")
  * @property targetRef Optional reference to the produced/adopted artifact in the target
  *   (e.g. a node ID), or null when none applies
  * @property lifecycle Lifecycle state of this projection

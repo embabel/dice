@@ -70,10 +70,10 @@ enum class PropositionStatus {
  * @property reinforceCount How many times this proposition has been merged or reinforced.
  *   Provides a frequency/importance signal complementary to confidence and decay.
  * @property temporal Optional bitemporal metadata (observed/valid time, supersession,
- *   contradiction). Null when temporal correctness is not tracked for this proposition.
- * @property groundingEntries Rich grounding entries linking this proposition to source
- *   material via [com.embabel.dice.provenance.SourceLocator]. Complements the legacy
- *   chunk-id-only [grounding] list.
+ *   contradiction). Null when temporal information is not tracked for this proposition.
+ * @property groundingEntries Grounding entries linking this proposition to source
+ *   material via [com.embabel.dice.provenance.SourceLocator]. Carries more detail
+ *   than the chunk-id-only [grounding] list.
  */
 data class Proposition(
     override val id: String = UUID.randomUUID().toString(),
@@ -222,7 +222,7 @@ data class Proposition(
         copy(temporal = temporal, revised = Instant.now())
 
     /**
-     * Create a copy with additional rich grounding entries.
+     * Create a copy with the given grounding entries appended (de-duplicated).
      */
     fun withGroundingEntries(entries: List<GroundingEntry>): Proposition =
         copy(groundingEntries = (groundingEntries + entries).distinct(), revised = Instant.now())

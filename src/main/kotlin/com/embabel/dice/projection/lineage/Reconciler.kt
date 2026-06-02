@@ -18,15 +18,14 @@ package com.embabel.dice.projection.lineage
 import com.embabel.dice.proposition.Proposition
 
 /**
- * SPI for reconciling a proposition's projection against existing artifacts in
- * a target backend — deciding whether to create new, adopt, or align.
+ * Strategy for reconciling a proposition's projection against artifacts that
+ * already exist in a target backend, deciding whether to create a new artifact,
+ * adopt an existing one, or align with it.
  *
- * Implementations encode backend-specific matching strategy (exact key, fuzzy
- * name, vector similarity, etc.), but the contract itself is backend-agnostic:
- * given a proposition and a target name, return a [ReconciliationDecision].
- *
- * Mirrors the existing entity-resolution SPI pattern (see
- * `com.embabel.dice.common.EntityResolver`), but for projection targets rather
+ * Implementations encode the backend-specific matching strategy (for example
+ * exact key, fuzzy name, or vector similarity); the contract itself is
+ * backend-agnostic. This mirrors the entity-resolution contract defined by
+ * [com.embabel.dice.common.EntityResolver], applied to projection targets rather
  * than entity mentions.
  */
 interface Reconciler {
@@ -35,7 +34,7 @@ interface Reconciler {
      * Decide how [proposition] should be projected to [target].
      *
      * @param proposition The proposition being projected
-     * @param target The projection target (e.g. "neo4j")
+     * @param target The projection target (e.g. "graph")
      * @return whether to create new, adopt, or align with an existing artifact
      */
     fun reconcile(proposition: Proposition, target: String): ReconciliationDecision

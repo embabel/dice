@@ -125,7 +125,7 @@ class PropositionProvenanceTest {
         assertEquals(listOf(entry), promoted.groundingEntries)
         assertEquals(PropositionStatus.PROMOTED, promoted.status)
 
-        // Legacy chunk-id grounding still independent and intact.
+        // Chunk-id grounding list is independent of groundingEntries and unaffected.
         assertTrue(promoted.grounding.isEmpty())
     }
 

@@ -18,8 +18,8 @@ package com.embabel.dice.projection.lineage
 /**
  * Lifecycle state of a single proposition-to-target projection.
  *
- * These states let consumers keep graph/Prolog/memory/report views aligned with
- * proposition truth and answer "what projected where, and is it still valid?".
+ * Allows consumers to keep projected views aligned with the current state of a
+ * proposition and to determine whether a given projection is still valid.
  */
 enum class ProjectionLifecycle {
 

@@ -19,11 +19,12 @@ import org.slf4j.LoggerFactory
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Thread-safe in-memory implementation of [ProjectionRecordStore].
+ * Thread-safe in-memory [ProjectionRecordStore].
  *
- * Intended as a default/stub for demos and tests. Records are append-only and
- * returned in insertion order. Backed by a [CopyOnWriteArrayList] so reads never
- * block writes.
+ * Records are append-only and returned in insertion order. Backed by a
+ * [CopyOnWriteArrayList], so reads never block writes. Intended as a default
+ * implementation for tests and lightweight usage; production deployments should
+ * supply a persistent store.
  */
 class InMemoryProjectionRecordStore : ProjectionRecordStore {
 

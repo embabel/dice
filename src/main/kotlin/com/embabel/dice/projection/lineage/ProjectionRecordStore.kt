@@ -16,11 +16,12 @@
 package com.embabel.dice.projection.lineage
 
 /**
- * Store of [ProjectionRecord]s — the inverse index of "what projected where".
+ * Store of [ProjectionRecord]s: an inverse index of which propositions projected
+ * to which targets.
  *
- * Implementations may be in-memory, graph-backed, or relational. The default
- * query methods are expressed in terms of [all] so that simple implementations
- * only need to supply [record] and [all].
+ * The query methods are defined in terms of [all], so an implementation need only
+ * provide [record] and [all]. Backing stores may be in-memory, graph-backed, or
+ * relational.
  */
 interface ProjectionRecordStore {
 
@@ -43,7 +44,7 @@ interface ProjectionRecordStore {
     /**
      * Find all records for a given target.
      *
-     * @param target The projection target (e.g. "neo4j")
+     * @param target The projection target (e.g. "graph")
      * @return records whose [ProjectionRecord.target] matches
      */
     fun findByTarget(target: String): List<ProjectionRecord> =

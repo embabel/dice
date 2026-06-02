@@ -16,24 +16,23 @@
 package com.embabel.dice.provenance
 
 /**
- * A rich grounding entry linking a proposition back to its source material.
+ * Links a proposition to the source material that grounds it.
  *
- * This is the richer replacement for bare chunk-id grounding (the legacy
- * `grounding: List<String>` of chunk IDs). A [GroundingEntry] carries a
- * [SourceLocator] (where the material lives), plus optional locating details
- * within that source: the originating chunk, an offset range, and a content
- * hash captured at extraction time.
+ * Each entry carries a [SourceLocator] identifying where the material lives,
+ * together with optional detail locating the content within that source: the
+ * originating chunk, a character offset range, and a content hash. This carries
+ * more detail than a bare list of chunk IDs.
  *
- * All locating detail beyond the [locator] is optional, so coarse grounding
- * ("this came from that document") and precise grounding ("characters 120-180
- * of chunk 4") share the same shape.
+ * All detail beyond the [locator] is optional, so coarse grounding (the source
+ * document) and precise grounding (a character range within a chunk) share a
+ * single representation.
  *
  * @property locator Reference to where the source material lives
  * @property chunkId Optional ID of the chunk this grounding came from
  * @property startOffset Optional inclusive start character offset within the source/chunk
  * @property endOffset Optional exclusive end character offset within the source/chunk
- * @property contentHash Optional hash of the grounding content captured at extraction time,
- *   useful for detecting source drift
+ * @property contentHash Optional hash of the grounded content. Comparing it against the
+ *   source later can reveal that the source has since changed.
  */
 data class GroundingEntry @JvmOverloads constructor(
     val locator: SourceLocator,

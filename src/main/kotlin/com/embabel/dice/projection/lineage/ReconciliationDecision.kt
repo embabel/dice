@@ -16,14 +16,14 @@
 package com.embabel.dice.projection.lineage
 
 /**
- * Decision about how a proposition should be projected relative to existing
- * artifacts in a target backend — i.e. how to reconcile the projection with
- * what is already there.
+ * How a proposition should be projected relative to artifacts that already exist
+ * in a target backend: create a new artifact, adopt an existing one, or align
+ * with it.
  *
- * This is the backend-agnostic seam for "project onto an existing domain node
- * vs create new vs align", letting DICE avoid duplicating nodes in a domain
- * graph it does not own. (Conceptually the get-or-create/MERGE choice a target
- * store like Neo4j makes, surfaced as an explicit SPI result.)
+ * Returned by a [Reconciler] so that projection logic can avoid duplicating
+ * artifacts in a target store that DICE does not own. The reconciliation choice
+ * is expressed as an explicit result rather than being hidden inside
+ * backend-specific code.
  */
 sealed interface ReconciliationDecision {
 
