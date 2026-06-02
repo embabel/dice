@@ -23,9 +23,16 @@ import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
+import com.embabel.agent.rag.model.NamedEntityData
+import com.embabel.agent.rag.service.NamedEntityDataRepository
+import com.embabel.agent.rag.service.RetrievableIdentifier
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.any
+import org.mockito.kotlin.check
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.verify
 
 /**
  * Tests for the additive `GROUNDED_IN` wiring that turns proposition
@@ -189,6 +196,38 @@ class GroundingWiringServiceTest {
         assertEquals(5, report.attempted)
         assertEquals(4, report.written, "4 of 5 attempted grounding ids resolve (doc-1×2, doc-2×2)")
         assertEquals(1, report.skipped, "'not-a-thing' is the only unresolved id")
+    }
+
+    @Test
+    fun `wire writes the edge to the resolved node's real id, not the grounding string`() {
+        // The core of issue #297: a stripped grounding id ("email:<hash>")
+        // must wire to the namespaced node ("email:<user>:<hash>"), and the
+        // edge endpoint must be that REAL id — never the grounding string,
+        // which would MERGE-create a phantom bare {id} node.
+        val realNode: NamedEntityData = SimpleNamedEntityData(
+            id = "email:rod_johnson_assistant:hash9",
+            name = "Email",
+            description = "",
+            labels = setOf("EmailSignal", "__Entity__"),
+            properties = emptyMap(),
+        )
+        val resolver = object : GroundingResolver {
+            override fun resolveAll(groundingId: String) =
+                if (groundingId == "email:hash9") listOf(realNode) else emptyList()
+
+            override fun resolve(groundingId: String) = resolveAll(groundingId).singleOrNull()
+        }
+        val repo = mock<NamedEntityDataRepository>()
+        val service = GroundingWiringService(repo, resolver)
+
+        val report = service.wire(listOf(proposition("prop-1", grounding = listOf("email:hash9"))))
+
+        assertEquals(1, report.written)
+        verify(repo).mergeRelationship(
+            a = any(),
+            b = check { assertEquals("email:rod_johnson_assistant:hash9", it.id) },
+            relationship = any(),
+        )
     }
 
     @Test

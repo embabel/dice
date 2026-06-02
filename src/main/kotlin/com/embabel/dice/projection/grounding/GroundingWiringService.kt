@@ -56,6 +56,7 @@ import org.slf4j.LoggerFactory
  */
 class GroundingWiringService(
     private val entityRepository: NamedEntityDataRepository,
+    private val resolver: GroundingResolver = DefaultGroundingResolver(entityRepository),
 ) {
 
     private val logger = LoggerFactory.getLogger(javaClass)
@@ -75,34 +76,36 @@ class GroundingWiringService(
             if (p.grounding.isEmpty()) continue
             for (groundingId in p.grounding.distinct()) {
                 attempted++
-                val target = try {
-                    entityRepository.findById(groundingId)
-                } catch (e: Exception) {
-                    logger.debug("[grounding] findById({}) threw: {}", groundingId, e.message)
-                    null
-                }
-                if (target == null) {
+                // Shared resolution: exact id, else namespace-suffix match.
+                // A grounding id may legitimately back several source nodes.
+                val targets = resolver.resolveAll(groundingId)
+                if (targets.isEmpty()) {
                     // Legacy chunk hashes, free-text source fingerprints,
                     // ids the extractor invented locally — fine to skip.
                     skipped++
                     continue
                 }
-                try {
-                    entityRepository.mergeRelationship(
-                        a = RetrievableIdentifier(id = p.id, type = PROPOSITION_TYPE),
-                        b = RetrievableIdentifier(id = groundingId, type = target.labels().firstOrNull() ?: PROPOSITION_TYPE),
-                        relationship = RelationshipData(
-                            name = GROUNDED_IN_REL,
-                            properties = emptyMap(),
-                        ),
-                    )
-                    written++
-                } catch (e: Exception) {
-                    failed++
-                    logger.warn(
-                        "[grounding] GROUNDED_IN write failed for proposition={} → {}: {}",
-                        p.id, groundingId, e.message,
-                    )
+                for (target in targets) {
+                    try {
+                        entityRepository.mergeRelationship(
+                            // Endpoint id is the RESOLVED node's real id — never the
+                            // grounding string — so a stripped id can't MERGE-create a
+                            // phantom bare {id} node.
+                            a = RetrievableIdentifier(id = p.id, type = PROPOSITION_TYPE),
+                            b = RetrievableIdentifier(id = target.id, type = target.labels().firstOrNull() ?: PROPOSITION_TYPE),
+                            relationship = RelationshipData(
+                                name = GROUNDED_IN_REL,
+                                properties = emptyMap(),
+                            ),
+                        )
+                        written++
+                    } catch (e: Exception) {
+                        failed++
+                        logger.warn(
+                            "[grounding] GROUNDED_IN write failed for proposition={} → {}: {}",
+                            p.id, target.id, e.message,
+                        )
+                    }
                 }
             }
         }
