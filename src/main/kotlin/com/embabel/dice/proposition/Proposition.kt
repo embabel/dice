@@ -18,7 +18,7 @@ package com.embabel.dice.proposition
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.model.Retrievable
 import com.embabel.common.core.types.ZeroToOne
-import com.embabel.dice.provenance.GroundingEntry
+import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.temporal.TemporalMetadata
 import java.time.Instant
 import java.util.*
@@ -71,9 +71,10 @@ enum class PropositionStatus {
  *   Provides a frequency/importance signal complementary to confidence and decay.
  * @property temporal Optional bitemporal metadata (observed/valid time, supersession,
  *   contradiction). Null when temporal information is not tracked for this proposition.
- * @property groundingEntries Grounding entries linking this proposition to source
- *   material via [com.embabel.dice.provenance.SourceLocator]. Carries more detail
- *   than the chunk-id-only [grounding] list.
+ * @property provenanceEntries Rich source-material provenance for this proposition
+ *   (locator, originating chunk, character offsets, content hash) via
+ *   [com.embabel.dice.provenance.SourceLocator]. Independent of the [grounding]
+ *   field's chunk/entity ids.
  */
 data class Proposition(
     override val id: String = UUID.randomUUID().toString(),
@@ -95,7 +96,7 @@ data class Proposition(
     override val metadata: Map<String, Any> = emptyMap(),
     override val uri: String? = null,
     val temporal: TemporalMetadata? = null,
-    val groundingEntries: List<GroundingEntry> = emptyList(),
+    val provenanceEntries: List<ProvenanceEntry> = emptyList(),
 ) : Derivation, ReferencesEntities, Retrievable {
 
     /**
@@ -142,7 +143,7 @@ data class Proposition(
             metadata: Map<String, Any> = emptyMap(),
             uri: String? = null,
             temporal: TemporalMetadata? = null,
-            groundingEntries: List<GroundingEntry> = emptyList(),
+            provenanceEntries: List<ProvenanceEntry> = emptyList(),
         ): Proposition = Proposition(
             id = id,
             contextId = ContextId(contextIdValue),
@@ -163,7 +164,7 @@ data class Proposition(
             metadata = metadata,
             uri = uri,
             temporal = temporal,
-            groundingEntries = groundingEntries,
+            provenanceEntries = provenanceEntries,
         )
     }
 
@@ -222,10 +223,10 @@ data class Proposition(
         copy(temporal = temporal, revised = Instant.now())
 
     /**
-     * Create a copy with the given grounding entries appended (de-duplicated).
+     * Create a copy with the given provenance entries appended (de-duplicated).
      */
-    fun withGroundingEntries(entries: List<GroundingEntry>): Proposition =
-        copy(groundingEntries = (groundingEntries + entries).distinct(), revised = Instant.now())
+    fun withProvenanceEntries(entries: List<ProvenanceEntry>): Proposition =
+        copy(provenanceEntries = (provenanceEntries + entries).distinct(), revised = Instant.now())
 
     /**
      * Calculate the effective confidence after applying time-based decay.
