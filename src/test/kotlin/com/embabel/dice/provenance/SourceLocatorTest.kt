@@ -60,12 +60,12 @@ class SourceLocatorTest {
     }
 
     @Test
-    fun `GroundingEntry rejects negative and inverted offsets`() {
+    fun `ProvenanceEntry rejects negative and inverted offsets`() {
         val loc = UriLocator("https://example.com/doc")
-        assertThrows(IllegalArgumentException::class.java) { GroundingEntry(loc, startOffset = -1) }
-        assertThrows(IllegalArgumentException::class.java) { GroundingEntry(loc, endOffset = -1) }
+        assertThrows(IllegalArgumentException::class.java) { ProvenanceEntry(loc, startOffset = -1) }
+        assertThrows(IllegalArgumentException::class.java) { ProvenanceEntry(loc, endOffset = -1) }
         assertThrows(IllegalArgumentException::class.java) {
-            GroundingEntry(loc, startOffset = 10, endOffset = 5)
+            ProvenanceEntry(loc, startOffset = 10, endOffset = 5)
         }
     }
 
@@ -88,15 +88,15 @@ class SourceLocatorTest {
     }
 
     @Test
-    fun `GroundingEntry round-trips through Jackson with polymorphic locator`() {
-        val entry = GroundingEntry(
+    fun `ProvenanceEntry round-trips through Jackson with polymorphic locator`() {
+        val entry = ProvenanceEntry(
             locator = ConnectorRef("notion", "page-1", display = "Spec"),
             chunkId = "c1",
             startOffset = 5,
             endOffset = 25,
             contentHash = "deadbeef",
         )
-        val back = mapper.readValue<GroundingEntry>(mapper.writeValueAsString(entry))
+        val back = mapper.readValue<ProvenanceEntry>(mapper.writeValueAsString(entry))
         assertEquals(entry, back)
     }
 }

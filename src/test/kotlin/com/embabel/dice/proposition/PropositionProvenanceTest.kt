@@ -17,7 +17,7 @@ package com.embabel.dice.proposition
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.provenance.ContentAddressedLocator
-import com.embabel.dice.provenance.GroundingEntry
+import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.temporal.TemporalMetadata
 import org.junit.jupiter.api.Assertions.*
@@ -32,7 +32,7 @@ class PropositionProvenanceTest {
     fun `new fields default to null and empty`() {
         val prop = Proposition(contextId = ctx, text = "Alice knows Bob", mentions = emptyList(), confidence = 0.9)
         assertNull(prop.temporal)
-        assertTrue(prop.groundingEntries.isEmpty())
+        assertTrue(prop.provenanceEntries.isEmpty())
     }
 
     @Test
@@ -52,30 +52,30 @@ class PropositionProvenanceTest {
     }
 
     @Test
-    fun `withGroundingEntries appends and dedups`() {
-        val e1 = GroundingEntry(locator = UriLocator("https://example.com/doc"), chunkId = "c1")
-        val e2 = GroundingEntry(locator = ContentAddressedLocator("abc123"), startOffset = 0, endOffset = 10)
+    fun `withProvenanceEntries appends and dedups`() {
+        val e1 = ProvenanceEntry(locator = UriLocator("https://example.com/doc"), chunkId = "c1")
+        val e2 = ProvenanceEntry(locator = ContentAddressedLocator("abc123"), startOffset = 0, endOffset = 10)
 
         val original = Proposition(
             contextId = ctx,
             text = "Test",
             mentions = emptyList(),
             confidence = 0.7,
-            groundingEntries = listOf(e1),
+            provenanceEntries = listOf(e1),
         )
 
-        val updated = original.withGroundingEntries(listOf(e1, e2))
+        val updated = original.withProvenanceEntries(listOf(e1, e2))
 
-        assertEquals(1, original.groundingEntries.size)
-        assertEquals(2, updated.groundingEntries.size)
-        assertTrue(updated.groundingEntries.containsAll(listOf(e1, e2)))
+        assertEquals(1, original.provenanceEntries.size)
+        assertEquals(2, updated.provenanceEntries.size)
+        assertTrue(updated.provenanceEntries.containsAll(listOf(e1, e2)))
     }
 
     @Test
     fun `grounding dedup ignores display label per SourceLocator identity contract`() {
         // Same underlying source, different presentation-only display labels.
-        val labeled = GroundingEntry(locator = UriLocator("https://example.com/doc", display = "Doc A"))
-        val relabeled = GroundingEntry(locator = UriLocator("https://example.com/doc", display = "Doc B"))
+        val labeled = ProvenanceEntry(locator = UriLocator("https://example.com/doc", display = "Doc A"))
+        val relabeled = ProvenanceEntry(locator = UriLocator("https://example.com/doc", display = "Doc B"))
 
         // Locators (and so grounding entries) are equal: identity is key(), not display.
         assertEquals(labeled.locator, relabeled.locator)
@@ -86,12 +86,12 @@ class PropositionProvenanceTest {
             text = "Test",
             mentions = emptyList(),
             confidence = 0.7,
-            groundingEntries = listOf(labeled),
+            provenanceEntries = listOf(labeled),
         )
 
         // Re-adding the same source with a different label must NOT create a duplicate.
-        val updated = prop.withGroundingEntries(listOf(relabeled))
-        assertEquals(1, updated.groundingEntries.size)
+        val updated = prop.withProvenanceEntries(listOf(relabeled))
+        assertEquals(1, updated.provenanceEntries.size)
     }
 
     @Test
@@ -102,7 +102,7 @@ class PropositionProvenanceTest {
             validTo = Instant.parse("2026-06-01T00:00:00Z"),
             supersedes = listOf("old-prop"),
         )
-        val entry = GroundingEntry(
+        val entry = ProvenanceEntry(
             locator = UriLocator("https://example.com/doc", display = "Doc"),
             chunkId = "c1",
             startOffset = 5,
@@ -116,16 +116,16 @@ class PropositionProvenanceTest {
             mentions = emptyList(),
             confidence = 0.9,
             temporal = tm,
-            groundingEntries = listOf(entry),
+            provenanceEntries = listOf(entry),
         )
 
         // Existing mutation helper still works and keeps provenance.
         val promoted = prop.withStatus(PropositionStatus.PROMOTED)
         assertEquals(tm, promoted.temporal)
-        assertEquals(listOf(entry), promoted.groundingEntries)
+        assertEquals(listOf(entry), promoted.provenanceEntries)
         assertEquals(PropositionStatus.PROMOTED, promoted.status)
 
-        // Chunk-id grounding list is independent of groundingEntries and unaffected.
+        // Chunk-id grounding list is independent of provenanceEntries and unaffected.
         assertTrue(promoted.grounding.isEmpty())
     }
 
@@ -133,7 +133,7 @@ class PropositionProvenanceTest {
     fun `factory wires temporal and grounding entries`() {
         val now = Instant.now()
         val tm = TemporalMetadata(observedAt = now, validFrom = now)
-        val entry = GroundingEntry(locator = ContentAddressedLocator("hash"))
+        val entry = ProvenanceEntry(locator = ContentAddressedLocator("hash"))
 
         val prop = Proposition.create(
             id = "p1",
@@ -148,10 +148,10 @@ class PropositionProvenanceTest {
             revised = now,
             status = PropositionStatus.ACTIVE,
             temporal = tm,
-            groundingEntries = listOf(entry),
+            provenanceEntries = listOf(entry),
         )
 
         assertEquals(tm, prop.temporal)
-        assertEquals(listOf(entry), prop.groundingEntries)
+        assertEquals(listOf(entry), prop.provenanceEntries)
     }
 }
