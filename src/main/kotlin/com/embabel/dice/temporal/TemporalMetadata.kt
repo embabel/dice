@@ -18,28 +18,32 @@ package com.embabel.dice.temporal
 import java.time.Instant
 
 /**
- * Bitemporal metadata describing when a fact was observed and when it is, or
- * was, valid in the world.
+ * Optional temporal metadata for a fact. Every field is optional — attach only
+ * what is known; a fact for which nothing temporal is tracked has no
+ * [TemporalMetadata] at all.
  *
- * Distinguishes current truth from historical truth, and allows a proposition to
- * record that it supersedes or contradicts earlier propositions.
- *
- * - **Observed time** ([observedAt]): when DICE recorded the fact.
+ * - **Observed / source time** ([observedAt]): when the underlying source
+ *   material was authored — e.g. the date of the email this fact came from.
+ *   Distinct from `Proposition.created` (when DICE ingested it): a fact recorded
+ *   today from a 45-day-old email has `created = today` and `observedAt = 45
+ *   days ago`. (See embabel/dice#26.)
  * - **Valid time** ([validFrom] / [validTo]): the window during which the fact
- *   holds in the world. A null [validTo] means "still valid / open-ended".
- * - **Invalidation** ([invalidatedAt]): when the fact was explicitly invalidated,
- *   independent of its valid window (e.g. it was retracted).
+ *   holds in the world. A **non-null [validFrom] is what marks a fact as *dated*** —
+ *   a known validity window, which does not decay — as opposed to merely
+ *   decaying. A null [validTo] means "still valid / open-ended".
+ * - **Invalidation** ([invalidatedAt]): when the fact was explicitly retracted,
+ *   independent of its valid window.
  *
- * @property observedAt When this fact was observed/recorded by DICE
- * @property validFrom When this fact began to be true in the world
+ * @property observedAt Source / effective date of the fact, or null if unknown
+ * @property validFrom When this fact began to be true in the world, or null if unknown / not a dated fact
  * @property validTo When this fact stopped being true in the world, or null if open-ended
  * @property invalidatedAt When this fact was explicitly invalidated, or null if not invalidated
  * @property supersedes IDs of propositions this fact supersedes (replaces with newer truth)
  * @property contradicts IDs of propositions this fact contradicts
  */
 data class TemporalMetadata @JvmOverloads constructor(
-    val observedAt: Instant,
-    val validFrom: Instant,
+    val observedAt: Instant? = null,
+    val validFrom: Instant? = null,
     val validTo: Instant? = null,
     val invalidatedAt: Instant? = null,
     val supersedes: List<String> = emptyList(),
@@ -47,7 +51,7 @@ data class TemporalMetadata @JvmOverloads constructor(
 ) {
 
     init {
-        require(validTo == null || !validTo.isBefore(validFrom)) {
+        require(validFrom == null || validTo == null || !validTo.isBefore(validFrom)) {
             "validTo must be null or >= validFrom"
         }
     }
@@ -64,7 +68,7 @@ data class TemporalMetadata @JvmOverloads constructor(
      */
     fun isCurrentAsOf(at: Instant): Boolean {
         if (invalidatedAt != null && !invalidatedAt.isAfter(at)) return false
-        if (at.isBefore(validFrom)) return false
+        if (validFrom != null && at.isBefore(validFrom)) return false
         if (validTo != null && !at.isBefore(validTo)) return false
         return true
     }

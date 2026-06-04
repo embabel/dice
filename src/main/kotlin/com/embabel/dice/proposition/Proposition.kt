@@ -248,10 +248,28 @@ data class Proposition(
      * @return Effective confidence after decay as of the given time
      */
     fun effectiveConfidenceAt(asOf: Instant, k: Double = 2.0): Double {
-        val ageInDays = java.time.Duration.between(revised, asOf).toDays().toDouble()
+        val t = temporal
+        // Explicit retraction zeroes the fact out in any mode.
+        if (t?.invalidatedAt != null && !t.invalidatedAt.isAfter(asOf)) return 0.0
+
+        // DATED — a known valid window ([TemporalMetadata.validFrom] set). Crisply
+        // in- or out-of-window; a CLOSED window is permanently true about itself and
+        // never decays, an OPEN-ENDED one ("since X, still?") keeps decaying.
+        val validFrom = t?.validFrom
+        if (validFrom != null) {
+            if (!t.isCurrentAsOf(asOf)) return 0.0
+            if (t.validTo != null) return confidence
+            return confidence * decayFactor(from = validFrom, to = asOf, k = k)
+        }
+
+        // DECAYING — no valid window: confidence fades from the last revision.
+        return confidence * decayFactor(from = revised, to = asOf, k = k)
+    }
+
+    private fun decayFactor(from: Instant, to: Instant, k: Double): Double {
+        val ageInDays = java.time.Duration.between(from, to).toDays().toDouble()
             .coerceAtLeast(0.0)  // Don't apply negative decay for future dates
-        val gamma = kotlin.math.exp(-decay * k * ageInDays)
-        return confidence * gamma
+        return kotlin.math.exp(-decay * k * ageInDays)
     }
 
     /**
