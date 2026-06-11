@@ -37,7 +37,7 @@ class PropositionTemporalScoringTest {
 
     @Test
     fun `no temporal block decays from revised`() {
-        val p = prop().copy(revised = t("2026-01-01T00:00:00Z"))
+        val p = prop().copy(contentRevised = t("2026-01-01T00:00:00Z"))
         assertEquals(0.8, p.effectiveConfidenceAt(t("2026-01-01T00:00:00Z")), 1e-9)
         assertTrue(p.effectiveConfidenceAt(t("2026-12-01T00:00:00Z")) < 0.8)
     }
@@ -45,7 +45,7 @@ class PropositionTemporalScoringTest {
     @Test
     fun `source-date-only fact (observedAt, no validFrom) is NOT dated and still decays`() {
         // The embabel/dice#26 case: we know when it was said, not a valid window.
-        val p = prop().copy(revised = t("2026-06-03T00:00:00Z"))
+        val p = prop().copy(contentRevised = t("2026-06-03T00:00:00Z"))
             .withTemporal(TemporalMetadata(observedAt = t("2026-04-20T00:00:00Z")))
         // validFrom is null → decaying, anchored on revised, exactly like no temporal block.
         assertEquals(0.8, p.effectiveConfidenceAt(t("2026-06-03T00:00:00Z")), 1e-9)

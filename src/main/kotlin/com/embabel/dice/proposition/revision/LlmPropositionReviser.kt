@@ -596,7 +596,7 @@ data class LlmPropositionReviser(
             decay = slowedDecay,
             grounding = combinedGrounding,
             reinforceCount = existing.reinforceCount + 1,
-            revised = Instant.now(),
+            contentRevised = Instant.now(),
             lastAccessed = Instant.now(),
         )
     }
@@ -618,7 +618,7 @@ data class LlmPropositionReviser(
             decay = slowedDecay,
             grounding = combinedGrounding,
             reinforceCount = existing.reinforceCount + 1,
-            revised = Instant.now(),
+            contentRevised = Instant.now(),
             lastAccessed = Instant.now(),
         )
     }

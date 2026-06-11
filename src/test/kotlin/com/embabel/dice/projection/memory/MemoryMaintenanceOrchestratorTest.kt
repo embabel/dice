@@ -55,7 +55,7 @@ class MemoryMaintenanceOrchestratorTest {
             decay = decay,
             status = status,
             created = created,
-            revised = revised,
+            contentRevised = revised,
         )
     }
 

@@ -20,6 +20,9 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.temporal.TemporalMetadata
+import java.time.Duration
 import java.time.Instant
 
 class PropositionTest {
@@ -339,6 +342,210 @@ class PropositionTest {
 
             assertEquals(3, updated.grounding.size)
             assertTrue(updated.grounding.containsAll(listOf("chunk-1", "chunk-2", "chunk-3")))
+        }
+    }
+
+    @Nested
+    inner class LifecycleStateTests {
+
+        private val oldInstant = Instant.now().minus(Duration.ofDays(30))
+
+        private fun agedProp(
+            confidence: Double = 0.9,
+            decay: Double = 0.5,
+            status: PropositionStatus = PropositionStatus.ACTIVE,
+        ) = Proposition(
+            contextId = testContextId,
+            text = "Aged proposition",
+            mentions = emptyList(),
+            confidence = confidence,
+            decay = decay,
+            status = status,
+            contentRevised = oldInstant,
+            metadataRevised = oldInstant,
+        )
+
+        // --- STALE + pinned ---
+
+        @Test
+        fun `STALE status is assignable via withStatus`() {
+            val stale = agedProp().withStatus(PropositionStatus.STALE)
+            assertEquals(PropositionStatus.STALE, stale.status)
+        }
+
+        @Test
+        fun `fresh proposition is not pinned by default`() {
+            val prop = Proposition(contextId = testContextId, text = "T", mentions = emptyList(), confidence = 0.9)
+            assertFalse(prop.pinned)
+        }
+
+        @Test
+        fun `withPinned sets pinned flag`() {
+            val prop = agedProp()
+            assertTrue(prop.withPinned(true).pinned)
+            assertFalse(prop.withPinned(true).withPinned(false).pinned)
+        }
+
+        // --- deprecated revised alias ---
+
+        @Test
+        @Suppress("DEPRECATION")
+        fun `deprecated revised alias equals contentRevised`() {
+            val prop = agedProp()
+            assertEquals(prop.contentRevised, prop.revised)
+        }
+
+        // --- content withers reset contentRevised, preserve metadataRevised ---
+
+        @Test
+        fun `withText resets contentRevised and preserves metadataRevised`() {
+            val prop = agedProp()
+            val updated = prop.withText("new text")
+            assertTrue(updated.contentRevised.isAfter(prop.contentRevised))
+            assertEquals(prop.metadataRevised, updated.metadataRevised)
+        }
+
+        @Test
+        fun `withResolvedMentions resets contentRevised and preserves metadataRevised`() {
+            val prop = agedProp()
+            val updated = prop.withResolvedMentions(emptyList())
+            assertTrue(updated.contentRevised.isAfter(prop.contentRevised))
+            assertEquals(prop.metadataRevised, updated.metadataRevised)
+        }
+
+        @Test
+        fun `withConfidence resets contentRevised and preserves metadataRevised`() {
+            val prop = agedProp()
+            val updated = prop.withConfidence(0.4)
+            assertTrue(updated.contentRevised.isAfter(prop.contentRevised))
+            assertEquals(prop.metadataRevised, updated.metadataRevised)
+        }
+
+        // --- metadata withers advance metadataRevised, preserve contentRevised (decay clock) ---
+
+        @Test
+        fun `withStatus advances metadataRevised and preserves contentRevised`() {
+            val prop = agedProp()
+            val updated = prop.withStatus(PropositionStatus.STALE)
+            assertEquals(prop.contentRevised, updated.contentRevised)
+            assertTrue(updated.metadataRevised.isAfter(prop.metadataRevised))
+        }
+
+        @Test
+        fun `withGrounding advances metadataRevised and preserves contentRevised`() {
+            val prop = agedProp()
+            val updated = prop.withGrounding(listOf("chunk-x"))
+            assertEquals(prop.contentRevised, updated.contentRevised)
+            assertTrue(updated.metadataRevised.isAfter(prop.metadataRevised))
+        }
+
+        // --- explicit withTemporal + withProvenanceEntries decay preservation ---
+
+        @Test
+        fun `withTemporal preserves contentRevised and advances metadataRevised`() {
+            val prop = agedProp()
+            val temporal = TemporalMetadata(observedAt = Instant.now(), validFrom = Instant.now())
+            val updated = prop.withTemporal(temporal)
+            assertEquals(prop.contentRevised, updated.contentRevised)
+            assertTrue(updated.metadataRevised.isAfter(prop.metadataRevised))
+        }
+
+        @Test
+        fun `withProvenanceEntries preserves contentRevised and advances metadataRevised`() {
+            val prop = agedProp()
+            val entry = ProvenanceEntry(
+                locator = com.embabel.dice.provenance.UriLocator("https://example.com/doc"),
+                chunkId = "c1",
+            )
+            val updated = prop.withProvenanceEntries(listOf(entry))
+            assertEquals(prop.contentRevised, updated.contentRevised)
+            assertTrue(updated.metadataRevised.isAfter(prop.metadataRevised))
+        }
+
+        // --- lastTouched tracks any update (metadata touches stay queryable) ---
+
+        @Test
+        fun `lastTouched advances on a metadata-only touch while contentRevised is preserved`() {
+            val prop = agedProp()
+            val touched = prop.withStatus(PropositionStatus.STALE)
+            // Decay anchor unchanged, but the proposition WAS just touched.
+            assertEquals(prop.contentRevised, touched.contentRevised)
+            assertTrue(touched.metadataRevised.isAfter(prop.metadataRevised))
+            assertEquals(touched.metadataRevised, touched.lastTouched)
+            assertTrue(touched.lastTouched.isAfter(prop.lastTouched))
+        }
+
+        @Test
+        fun `lastTouched is the later of contentRevised and metadataRevised`() {
+            val prop = agedProp()
+            assertEquals(maxOf(prop.contentRevised, prop.metadataRevised), prop.lastTouched)
+            // A content touch advances both the decay anchor and lastTouched.
+            val contentTouched = prop.withText("revised text")
+            assertEquals(contentTouched.contentRevised, contentTouched.lastTouched)
+            assertTrue(contentTouched.lastTouched.isAfter(prop.lastTouched))
+        }
+
+        // --- decay anchors on contentRevised, not metadataRevised ---
+
+        @Test
+        fun `effectiveConfidenceAt anchors age on contentRevised`() {
+            val prop = agedProp(confidence = 0.9, decay = 0.5)
+            val before = prop.effectiveConfidenceAt(Instant.now())
+            // A metadata wither (status change) must NOT regain confidence:
+            // contentRevised (decay clock) is preserved.
+            val afterMeta = prop.withStatus(PropositionStatus.STALE).effectiveConfidenceAt(Instant.now())
+            assertEquals(before, afterMeta, 1e-9)
+            // The aged proposition has decayed substantially below its raw confidence.
+            assertTrue(before < 0.9)
+        }
+
+        // --- create() seeds both timestamps from legacy revised ---
+
+        @Test
+        fun `create with only legacy revised seeds both content and metadata timestamps`() {
+            val ts = Instant.now().minus(Duration.ofDays(5))
+            val prop = Proposition.create(
+                id = "p1",
+                contextIdValue = "ctx",
+                text = "T",
+                mentions = emptyList(),
+                confidence = 0.8,
+                decay = 0.1,
+                reasoning = null,
+                grounding = emptyList(),
+                created = ts,
+                revised = ts,
+                status = PropositionStatus.ACTIVE,
+            )
+            assertEquals(ts, prop.contentRevised)
+            assertEquals(ts, prop.metadataRevised)
+            assertFalse(prop.pinned)
+        }
+
+        @Test
+        fun `create honors explicit content and metadata overrides`() {
+            val created = Instant.now().minus(Duration.ofDays(10))
+            val content = Instant.now().minus(Duration.ofDays(3))
+            val metadata = Instant.now().minus(Duration.ofDays(1))
+            val prop = Proposition.create(
+                id = "p2",
+                contextIdValue = "ctx",
+                text = "T",
+                mentions = emptyList(),
+                confidence = 0.8,
+                decay = 0.1,
+                reasoning = null,
+                grounding = emptyList(),
+                created = created,
+                revised = created,
+                status = PropositionStatus.ACTIVE,
+                contentRevised = content,
+                metadataRevised = metadata,
+                pinned = true,
+            )
+            assertEquals(content, prop.contentRevised)
+            assertEquals(metadata, prop.metadataRevised)
+            assertTrue(prop.pinned)
         }
     }
 

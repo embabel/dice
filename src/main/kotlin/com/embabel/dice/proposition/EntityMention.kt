@@ -35,7 +35,12 @@ enum class MentionRole {
  * A reference to an entity within a proposition.
  *
  * @property span The text as it appears in the proposition (e.g., "Jim")
- * @property type The entity type label from schema (e.g., "Person", "Technology")
+ * @property type The entity type label from schema (e.g., "Person", "Technology").
+ *   For graph projection, this must match the relation's expected subject/object
+ *   type — which is derived from the Kotlin class `simpleName` (or a Neo4j
+ *   `ownLabel`) — for an edge to be produced. Matching is tolerant of case and of
+ *   label-ish hints, but a genuine mismatch yields a failure whose reason names
+ *   both the actual and expected type rather than silently producing no edge.
  * @property resolvedId Entity ID if resolved, null if unresolved
  * @property role The role this entity plays in the proposition
  * @property hints Additional context for future resolution (e.g., aliases, titles)
