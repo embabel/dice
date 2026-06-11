@@ -51,7 +51,7 @@ data class PropositionQuery(
     val allEntityIds: List<String>? = null,
 
     // Status and level filters
-    val status: PropositionStatus? = null,
+    val statuses: Set<PropositionStatus>? = null,
     val minLevel: Int? = null,
     val maxLevel: Int? = null,
 
@@ -73,6 +73,9 @@ data class PropositionQuery(
 
     // Reinforcement filter
     val minReinforceCount: Int? = null,
+
+    // Trust filter (reads the cached trust score from proposition metadata)
+    val minTrustScore: Double? = null,
 
     // Ordering and limits
     val orderBy: OrderBy = OrderBy.NONE,
@@ -119,7 +122,11 @@ data class PropositionQuery(
 
     fun withAllEntityIds(entityIds: List<String>) = copy(allEntityIds = entityIds)
 
-    fun withStatus(status: PropositionStatus): PropositionQuery = copy(status = status)
+    fun withStatus(status: PropositionStatus): PropositionQuery = withStatuses(setOf(status))
+
+    fun withStatuses(statuses: Set<PropositionStatus>): PropositionQuery = copy(statuses = statuses)
+
+    fun withStatuses(vararg statuses: PropositionStatus): PropositionQuery = copy(statuses = statuses.toSet())
 
     fun withMinLevel(minLevel: Int): PropositionQuery = copy(minLevel = minLevel)
 
@@ -190,6 +197,8 @@ data class PropositionQuery(
     fun withMinImportance(threshold: Double): PropositionQuery = copy(minImportance = threshold)
 
     fun withMinReinforceCount(count: Int): PropositionQuery = copy(minReinforceCount = count)
+
+    fun withMinTrustScore(threshold: Double): PropositionQuery = copy(minTrustScore = threshold)
 
     fun withOrderBy(orderBy: OrderBy): PropositionQuery = copy(orderBy = orderBy)
 

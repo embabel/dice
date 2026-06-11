@@ -16,6 +16,7 @@
 package com.embabel.dice.proposition
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.common.DiceMetadataKeys
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -119,6 +120,119 @@ class PropositionQueryTest {
         fun `orderedByImportance sets IMPORTANCE_DESC`() {
             val query = PropositionQuery().orderedByImportance()
             assertEquals(PropositionQuery.OrderBy.IMPORTANCE_DESC, query.orderBy)
+        }
+    }
+
+    @Nested
+    inner class TrustScoreSupport {
+
+        @Test
+        fun `minTrustScore is null by default`() {
+            val query = PropositionQuery()
+            assertNull(query.minTrustScore)
+        }
+
+        @Test
+        fun `withMinTrustScore sets threshold`() {
+            val query = PropositionQuery.forContextId(testContextId).withMinTrustScore(0.5)
+            assertEquals(0.5, query.minTrustScore)
+        }
+
+        @Test
+        fun `withMinTrustScore preserves existing fields`() {
+            val query = PropositionQuery(contextId = testContextId, entityId = "carol")
+                .withMinTrustScore(0.7)
+            assertEquals(testContextId, query.contextId)
+            assertEquals("carol", query.entityId)
+            assertEquals(0.7, query.minTrustScore)
+        }
+    }
+
+    @Nested
+    inner class TrustScoreFiltering {
+
+        private fun proposition(
+            text: String,
+            trustValue: Any? = null,
+        ): Proposition {
+            val base = Proposition(
+                contextId = testContextId,
+                text = text,
+                mentions = emptyList(),
+                confidence = 0.9,
+            )
+            return if (trustValue == null) base
+            else base.withMetadataValue(DiceMetadataKeys.TRUST_SCORE, trustValue)
+        }
+
+        private fun queryFilter(
+            propositions: List<Proposition>,
+            query: PropositionQuery,
+        ): List<Proposition> {
+            val repo = object : PropositionRepository {
+                override fun save(proposition: Proposition) = proposition
+                override fun findById(id: String) = propositions.find { it.id == id }
+                override fun findByEntity(entityIdentifier: com.embabel.agent.rag.service.RetrievableIdentifier) = emptyList<Proposition>()
+                override fun findSimilarWithScores(textSimilaritySearchRequest: com.embabel.common.core.types.TextSimilaritySearchRequest) = emptyList<com.embabel.common.core.types.SimilarityResult<Proposition>>()
+                override fun findByStatus(status: PropositionStatus) = emptyList<Proposition>()
+                override fun findByGrounding(chunkId: String) = emptyList<Proposition>()
+                override fun findByMinLevel(minLevel: Int) = emptyList<Proposition>()
+                override fun findAll() = propositions
+                override fun delete(id: String) = false
+                override fun count() = propositions.size
+                override val luceneSyntaxNotes = ""
+            }
+            return repo.query(query)
+        }
+
+        @Test
+        fun `minTrustScore keeps high-trust drops low-trust and keeps unscored`() {
+            val props = listOf(
+                proposition("high trust", trustValue = 0.8),
+                proposition("low trust", trustValue = 0.2),
+                proposition("unscored fact"),
+            )
+
+            val results = queryFilter(
+                props,
+                PropositionQuery.forContextId(testContextId).withMinTrustScore(0.5),
+            )
+
+            val texts = results.map { it.text }.toSet()
+            assertEquals(setOf("high trust", "unscored fact"), texts)
+        }
+
+        @Test
+        fun `minTrustScore coerces a non-Double numeric metadata value`() {
+            val props = listOf(
+                proposition("int-scored fact", trustValue = 1),
+                proposition("low trust", trustValue = 0.2),
+            )
+
+            val results = queryFilter(
+                props,
+                PropositionQuery.forContextId(testContextId).withMinTrustScore(0.5),
+            )
+
+            assertEquals(1, results.size)
+            assertEquals("int-scored fact", results[0].text)
+        }
+
+        @Test
+        fun `minTrustScore fails open for a non-finite cached score`() {
+            val props = listOf(
+                proposition("nan-scored fact", trustValue = Double.NaN),
+                proposition("low trust", trustValue = 0.2),
+            )
+
+            val results = queryFilter(
+                props,
+                PropositionQuery.forContextId(testContextId).withMinTrustScore(0.5),
+            )
+
+            // NaN has trap-door comparison semantics; treat it as no usable score and
+            // let it pass, consistent with the advisory fail-open trust stance.
+            assertEquals(setOf("nan-scored fact"), results.map { it.text }.toSet())
         }
     }
 
@@ -250,6 +364,92 @@ class PropositionQueryTest {
             assertEquals("High importance", results[0].text)
             assertEquals("Medium importance", results[1].text)
             assertEquals("Low importance", results[2].text)
+        }
+    }
+
+    @Nested
+    inner class StatusSetFiltering {
+
+        private fun proposition(
+            text: String,
+            status: PropositionStatus,
+        ): Proposition = Proposition(
+            contextId = testContextId,
+            text = text,
+            mentions = emptyList(),
+            confidence = 0.9,
+        ).withStatus(status)
+
+        private fun queryFilter(
+            propositions: List<Proposition>,
+            query: PropositionQuery,
+        ): List<Proposition> {
+            val repo = object : PropositionRepository {
+                override fun save(proposition: Proposition) = proposition
+                override fun findById(id: String) = propositions.find { it.id == id }
+                override fun findByEntity(entityIdentifier: com.embabel.agent.rag.service.RetrievableIdentifier) = emptyList<Proposition>()
+                override fun findSimilarWithScores(textSimilaritySearchRequest: com.embabel.common.core.types.TextSimilaritySearchRequest) = emptyList<com.embabel.common.core.types.SimilarityResult<Proposition>>()
+                override fun findByStatus(status: PropositionStatus) = emptyList<Proposition>()
+                override fun findByGrounding(chunkId: String) = emptyList<Proposition>()
+                override fun findByMinLevel(minLevel: Int) = emptyList<Proposition>()
+                override fun findAll() = propositions
+                override fun delete(id: String) = false
+                override fun count() = propositions.size
+                override val luceneSyntaxNotes = ""
+            }
+            return repo.query(query)
+        }
+
+        private fun mixedFixture(): List<Proposition> = listOf(
+            proposition("active fact", PropositionStatus.ACTIVE),
+            proposition("promoted fact", PropositionStatus.PROMOTED),
+            proposition("stale fact", PropositionStatus.STALE),
+            proposition("superseded fact", PropositionStatus.SUPERSEDED),
+        )
+
+        @Test
+        fun `withStatus bridges to a singleton statuses set`() {
+            val query = PropositionQuery().withStatus(PropositionStatus.ACTIVE)
+            assertEquals(setOf(PropositionStatus.ACTIVE), query.statuses)
+        }
+
+        @Test
+        fun `withStatuses vararg builds the set`() {
+            val query = PropositionQuery().withStatuses(PropositionStatus.ACTIVE, PropositionStatus.PROMOTED)
+            assertEquals(setOf(PropositionStatus.ACTIVE, PropositionStatus.PROMOTED), query.statuses)
+        }
+
+        @Test
+        fun `multi-status filter matches any status in the set and excludes others`() {
+            val results = queryFilter(
+                mixedFixture(),
+                PropositionQuery().withStatuses(setOf(PropositionStatus.ACTIVE, PropositionStatus.PROMOTED)),
+            )
+            assertEquals(2, results.size)
+            assertEquals(setOf("active fact", "promoted fact"), results.map { it.text }.toSet())
+        }
+
+        @Test
+        fun `null statuses applies no status filter`() {
+            val results = queryFilter(mixedFixture(), PropositionQuery())
+            assertNull(PropositionQuery().statuses)
+            assertEquals(4, results.size)
+        }
+
+        @Test
+        fun `empty statuses applies no status filter`() {
+            val results = queryFilter(mixedFixture(), PropositionQuery().withStatuses(emptySet()))
+            assertEquals(4, results.size)
+        }
+
+        @Test
+        fun `STALE-only query returns only stale propositions`() {
+            val results = queryFilter(
+                mixedFixture(),
+                PropositionQuery().withStatuses(setOf(PropositionStatus.STALE)),
+            )
+            assertEquals(1, results.size)
+            assertEquals("stale fact", results[0].text)
         }
     }
 }

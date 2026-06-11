@@ -308,7 +308,9 @@ open class DrivinePropositionRepository(
     context(builder: WhereBuilder<PropositionViewQueryDsl>)
     private fun applyFilters(query: PropositionQuery, includeEffectiveConfidence: Boolean) {
         query.contextId?.let { proposition.contextId eq it.value }
-        query.status?.let { proposition.status eq it.name }
+        query.statuses?.takeIf { it.isNotEmpty() }?.let { statuses ->
+            proposition.status inList statuses.map { it.name }
+        }
         query.minLevel?.let { proposition.level gte it }
         query.maxLevel?.let { proposition.level lte it }
         query.createdAfter?.let { proposition.created gte it }

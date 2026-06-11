@@ -26,15 +26,23 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.matchesFilters
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * In-memory implementation of PropositionRepository with vector similarity search.
+ * In-memory implementation of PropositionRepository with optional vector similarity search.
  * Thread-safe using ConcurrentHashMap, but not intended for production use.
- * Embeddings are computed and cached for cosine similarity search.
+ *
+ * The embedding service is optional. When one is supplied, embeddings are computed and cached
+ * for cosine similarity search and clustering. When it is absent (the default), the vector
+ * similarity and clustering paths degrade gracefully to empty results, while plain storage and
+ * lookups (save, findById, findAll, findByContextIdValue, etc.) keep working. This lets consumers
+ * that only need store-and-retrieve construct the repository without supplying an embedder.
+ *
+ * @param embeddingService optional embedder; when null, vector paths return empty results.
  */
 class InMemoryPropositionRepository(
-    private val embeddingService: EmbeddingService,
+    private val embeddingService: EmbeddingService? = null,
 ) : PropositionRepository {
 
     private val propositions = ConcurrentHashMap<String, Proposition>()
@@ -45,7 +53,7 @@ class InMemoryPropositionRepository(
 
     override fun save(proposition: Proposition): Proposition {
         propositions[proposition.id] = proposition
-        embeddings[proposition.id] = embeddingService.embed(proposition.text)
+        embeddingService?.let { embeddings[proposition.id] = it.embed(proposition.text) }
         return proposition
     }
 
@@ -64,7 +72,8 @@ class InMemoryPropositionRepository(
     ): List<SimilarityResult<Proposition>> {
         if (propositions.isEmpty()) return emptyList()
 
-        val queryEmbedding = embeddingService.embed(textSimilaritySearchRequest.query)
+        val embedder = embeddingService ?: return emptyList()
+        val queryEmbedding = embedder.embed(textSimilaritySearchRequest.query)
         val minSimilarity = textSimilaritySearchRequest.similarityThreshold
 
         return propositions.values
@@ -83,21 +92,14 @@ class InMemoryPropositionRepository(
     ): List<SimilarityResult<Proposition>> {
         if (propositions.isEmpty()) return emptyList()
 
-        val queryEmbedding = embeddingService.embed(textSimilaritySearchRequest.query)
+        val embedder = embeddingService ?: return emptyList()
+        val queryEmbedding = embedder.embed(textSimilaritySearchRequest.query)
         val minSimilarity = textSimilaritySearchRequest.similarityThreshold
 
-        // Pre-filter propositions based on query before computing similarities
-        val candidates = propositions.values.filter { prop ->
-            val propEntityIds by lazy { prop.mentions.mapNotNull { it.resolvedId }.toSet() }
-            (query.contextId == null || prop.contextId == query.contextId) &&
-                (query.status == null || prop.status == query.status) &&
-                (query.minLevel == null || prop.level >= query.minLevel) &&
-                (query.maxLevel == null || prop.level <= query.maxLevel) &&
-                (query.entityId == null || prop.mentions.any { it.resolvedId == query.entityId }) &&
-                (query.anyEntityIds == null || propEntityIds.any { it in query.anyEntityIds!! }) &&
-                (query.allEntityIds == null || query.allEntityIds!!.all { it in propEntityIds }) &&
-                (query.minReinforceCount == null || prop.reinforceCount >= query.minReinforceCount)
-        }
+        // Pre-filter propositions before computing similarities. Delegates to the same shared
+        // predicate as query() so the vector pre-filter honours every filter the composable query
+        // does (temporal windows, effective-confidence, importance, trust) — not just a subset.
+        val candidates = propositions.values.filter { query.matchesFilters(it) }
 
         return candidates
             .mapNotNull { prop ->

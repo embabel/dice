@@ -236,7 +236,7 @@ data class LlmPropositionReviser(
         val contextProps = repository.query(
             PropositionQuery(
                 contextId = newProposition.contextId,
-                status = PropositionStatus.ACTIVE,
+                statuses = setOf(PropositionStatus.ACTIVE),
             )
         )
         val canonicalMatch = contextProps.find { canonicalize(it.text) == newCanonical }
@@ -256,7 +256,7 @@ data class LlmPropositionReviser(
             ),
             PropositionQuery(
                 contextId = newProposition.contextId,
-                status = PropositionStatus.ACTIVE,
+                statuses = setOf(PropositionStatus.ACTIVE),
             ),
         )
 

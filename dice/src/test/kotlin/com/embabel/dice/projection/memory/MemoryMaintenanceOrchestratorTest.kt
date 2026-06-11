@@ -398,7 +398,7 @@ class MemoryMaintenanceOrchestratorTest {
             verify { repository.query(capture(queries)) }
             val abstractionQuery = queries.find { it.maxLevel == 0 }
             assertNotNull(abstractionQuery)
-            assertEquals(PropositionStatus.ACTIVE, abstractionQuery!!.status)
+            assertEquals(setOf(PropositionStatus.ACTIVE), abstractionQuery!!.statuses)
         }
     }
 

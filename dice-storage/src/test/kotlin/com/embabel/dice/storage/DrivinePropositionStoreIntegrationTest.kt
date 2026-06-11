@@ -169,7 +169,7 @@ class DrivinePropositionStoreIntegrationTest {
         repository.save(prop("c", entityId = "e1", status = PropositionStatus.SUPERSEDED))
 
         val activeMentioningE1 = repository.query(
-            PropositionQuery(entityId = "e1", status = PropositionStatus.ACTIVE),
+            PropositionQuery(entityId = "e1", statuses = setOf(PropositionStatus.ACTIVE)),
         )
         assertEquals(listOf("a"), activeMentioningE1.map { it.text })
     }

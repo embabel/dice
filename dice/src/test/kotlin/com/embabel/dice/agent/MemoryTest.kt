@@ -708,7 +708,7 @@ class MemoryTest {
 
             val listAllQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC }
             assertEquals(1, listAllQuery.minLevel)
-            assertEquals(PropositionStatus.ACTIVE, listAllQuery.status)
+            assertEquals(setOf(PropositionStatus.ACTIVE), listAllQuery.statuses)
         }
 
         @Test
@@ -726,7 +726,8 @@ class MemoryTest {
             assertEquals(contextId, querySlot.captured.contextId)
             assertNull(querySlot.captured.entityId)
             assertNull(querySlot.captured.minLevel)
-            assertNull(querySlot.captured.status)
+            // baseQuery now scopes retrieval to {ACTIVE} so STALE never reaches LLM context.
+            assertEquals(setOf(PropositionStatus.ACTIVE), querySlot.captured.statuses)
         }
     }
 
