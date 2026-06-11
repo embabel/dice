@@ -577,6 +577,136 @@ class RelationBasedGraphProjectorTest {
     }
 
     @Nested
+    inner class StructuredReasonTests {
+
+        @Test
+        fun `unresolved mention yields inspectable failure with UnresolvedMention reason`() {
+            val relations = Relations.empty().withProcedural("likes")
+
+            // AlwaysProjectPolicy lets the proposition reach the resolve-id check
+            val projector = RelationBasedGraphProjector.from(relations)
+                .withPolicy(AlwaysProjectPolicy)
+
+            val prop = proposition(
+                text = "Alice likes jazz",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = null, // unresolved
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-jazz",
+            )
+
+            val result = projector.project(prop, emptySchema)
+
+            assertTrue(result is ProjectionFailed)
+            val structured = (result as ProjectionFailed).structuredReason
+            assertTrue(structured is ProjectionFailureReason.UnresolvedMention)
+            assertEquals(MentionRole.SUBJECT, (structured as ProjectionFailureReason.UnresolvedMention).role)
+            assertEquals(1, ProjectionResults(listOf(result)).failureCount)
+        }
+
+        @Test
+        fun `type mismatch yields TypeMismatch reason naming actual and expected`() {
+            val relations = Relations.empty()
+                .withProceduralForSubject("Person", "likes", "preference")
+
+            val projector = RelationBasedGraphProjector.from(relations)
+
+            // Mention type differs from the relation's expected subject type
+            val prop = proposition(
+                text = "Acme likes jazz",
+                subjectSpan = "Acme", subjectType = "Organization", subjectId = "org-acme",
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-jazz",
+            )
+
+            val result = projector.project(prop, emptySchema)
+
+            // Either an edge is produced or the failure names both sides
+            if (result is ProjectionFailed) {
+                val structured = result.structuredReason
+                assertTrue(structured is ProjectionFailureReason.TypeMismatch)
+                structured as ProjectionFailureReason.TypeMismatch
+                assertEquals("Organization", structured.actual)
+                assertEquals("Person", structured.expected)
+            } else {
+                assertTrue(result is ProjectionSuccess)
+            }
+        }
+
+        @Test
+        fun `arbitrary free-form hint matching expected type does not project a wrong-typed edge`() {
+            val relations = Relations.empty()
+                .withProceduralForSubject("Person", "likes", "preference")
+
+            val projector = RelationBasedGraphProjector.from(relations)
+
+            // Subject's real type is Organization, but a free-form hint value
+            // coincidentally equals the expected "Person". This must NOT pass.
+            val prop = Proposition(
+                contextId = contextId,
+                text = "Acme likes jazz",
+                mentions = listOf(
+                    EntityMention(
+                        span = "Acme",
+                        type = "Organization",
+                        resolvedId = "org-acme",
+                        role = MentionRole.SUBJECT,
+                        hints = mapOf("title" to "Person"),
+                    ),
+                    EntityMention(
+                        span = "jazz",
+                        type = "MusicGenre",
+                        resolvedId = "genre-jazz",
+                        role = MentionRole.OBJECT,
+                    ),
+                ),
+                confidence = 0.9,
+            )
+
+            val result = projector.project(prop, emptySchema)
+
+            assertTrue(result is ProjectionFailed)
+            val structured = (result as ProjectionFailed).structuredReason
+            assertTrue(structured is ProjectionFailureReason.TypeMismatch)
+            structured as ProjectionFailureReason.TypeMismatch
+            assertEquals("Organization", structured.actual)
+            assertEquals("Person", structured.expected)
+        }
+
+        @Test
+        fun `aggregated results expose structured failure reason and summary`() {
+            val prop = proposition(
+                text = "Alice likes jazz",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = "alice-1",
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-jazz",
+            )
+            val failed = ProjectionFailed<ProjectedRelationship>(
+                proposition = prop,
+                reason = "Could not resolve entity IDs",
+                structuredReason = ProjectionFailureReason.UnresolvedMention(
+                    role = MentionRole.SUBJECT,
+                    span = "Alice",
+                ),
+            )
+            val results = ProjectionResults(listOf(failed))
+
+            assertEquals(1, results.failureCount)
+            val summary = results.summary()
+            assertTrue(summary.contains("1 failed"))
+            assertTrue(summary.contains("subject"))
+            assertTrue(summary.contains("Alice"))
+        }
+
+        @Test
+        fun `positional construction without structured reason still compiles and defaults to null`() {
+            val prop = proposition(
+                text = "Alice likes jazz",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = "alice-1",
+                objectSpan = "jazz", objectType = "MusicGenre", objectId = "genre-jazz",
+            )
+            val failed = ProjectionFailed<ProjectedRelationship>(prop, "some string")
+            assertNull(failed.structuredReason)
+        }
+    }
+
+    @Nested
     inner class DerivePredicateTests {
 
         @Test

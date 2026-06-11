@@ -19,39 +19,36 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.common.core.types.HasInfoString
 
 /**
- * Marker interface for types that are projected from propositions.
- * Extends [Derivation] to inherit confidence, decay, and grounding.
- * Provides traceability back to source propositions.
+ * Marker interface for types derived from propositions (graph relationships, Prolog facts, etc.).
+ * Carries confidence, decay, and grounding inherited from [Derivation], plus a link back to the
+ * source propositions.
  */
 interface Projection : Derivation {
     /**
-     * IDs of the propositions that this projection derives from.
-     * This is the grounding for projected items.
+     * IDs of the propositions this projection was derived from.
      */
     val sourcePropositionIds: List<String>
 
     /**
-     * Grounding defaults to source proposition IDs.
-     * Projections trace back to the propositions they were derived from.
+     * Grounding traces back to the source propositions by default.
      */
     override val grounding: List<String>
         get() = sourcePropositionIds
 }
 
 /**
- * Generic projector that transforms propositions into typed projections.
- * Implementations project to specific backends (Graph, Prolog, Vector, Memory).
+ * Transforms propositions into a typed target representation (graph, Prolog, memory context, etc.).
  *
- * @param T The type of projection result (e.g., ProjectedRelationship, PrologFact)
+ * @param T The projection type produced by this projector
  */
 interface Projector<T : Projection> {
 
     /**
-     * Project a single proposition to a target representation.
+     * Project a single proposition.
      *
      * @param proposition The proposition to project
      * @param schema The data dictionary defining domain types and relationships
-     * @return The projection result (success, skipped, or failure)
+     * @return Success, skipped, or failure — never throws
      */
     fun project(
         proposition: Proposition,
@@ -59,11 +56,11 @@ interface Projector<T : Projection> {
     ): ProjectionResult<T>
 
     /**
-     * Project multiple propositions.
+     * Project a batch of propositions.
      *
      * @param propositions The propositions to project
      * @param schema The data dictionary defining domain types and relationships
-     * @return Aggregated projection results
+     * @return Aggregated results for the whole batch
      */
     fun projectAll(
         propositions: List<Proposition>,
@@ -75,9 +72,70 @@ interface Projector<T : Projection> {
 }
 
 /**
- * Result of attempting to project a proposition.
+ * Why a proposition could not be projected (or was skipped). Use [describe] for a
+ * human-readable summary, or branch on the concrete subtype to react programmatically
+ * without parsing text.
+ */
+sealed interface ProjectionFailureReason {
+
+    /**
+     * A concise human-readable rendering of this failure reason.
+     */
+    fun describe(): String
+
+    /**
+     * No predicate in the schema or relations matched the proposition.
+     *
+     * @property detail The proposition text or predicate detail that failed to match
+     */
+    data class NoMatchingPredicate(val detail: String) : ProjectionFailureReason {
+        override fun describe(): String = "no matching predicate: $detail"
+    }
+
+    /**
+     * A mention's declared type did not match the relation's expected type.
+     *
+     * @property role The role of the mismatched mention (subject or object)
+     * @property actual The type declared on the mention
+     * @property expected The type expected by the matched relation
+     */
+    data class TypeMismatch(
+        val role: MentionRole,
+        val actual: String,
+        val expected: String,
+    ) : ProjectionFailureReason {
+        override fun describe(): String =
+            "${role.name.lowercase()} type '$actual' does not match expected '$expected'"
+    }
+
+    /**
+     * A subject or object mention could not be resolved to an entity id.
+     *
+     * @property role The role of the unresolved mention
+     * @property span The text span of the unresolved mention, if known
+     */
+    data class UnresolvedMention(
+        val role: MentionRole,
+        val span: String? = null,
+    ) : ProjectionFailureReason {
+        override fun describe(): String =
+            "unresolved ${role.name.lowercase()} mention${span?.let { " '$it'" } ?: ""}"
+    }
+
+    /**
+     * The proposition was rejected by the projection policy.
+     *
+     * @property detail Why the policy rejected the proposition
+     */
+    data class PolicyRejected(val detail: String) : ProjectionFailureReason {
+        override fun describe(): String = "policy rejected: $detail"
+    }
+}
+
+/**
+ * The outcome of attempting to project a single proposition.
  *
- * @param T The type of successful projection
+ * @param T The type produced on success
  */
 sealed interface ProjectionResult<out T : Projection> : HasInfoString {
     val proposition: Proposition
@@ -100,6 +158,7 @@ data class ProjectionSuccess<T : Projection>(
 data class ProjectionSkipped<T : Projection>(
     override val proposition: Proposition,
     val reason: String,
+    val structuredReason: ProjectionFailureReason? = null,
 ) : ProjectionResult<T> {
     override fun infoString(verbose: Boolean?, indent: Int): String =
         "Skipped(${proposition.text.take(40)}...: $reason)"
@@ -111,6 +170,7 @@ data class ProjectionSkipped<T : Projection>(
 data class ProjectionFailed<T : Projection>(
     override val proposition: Proposition,
     val reason: String,
+    val structuredReason: ProjectionFailureReason? = null,
 ) : ProjectionResult<T> {
     override fun infoString(verbose: Boolean?, indent: Int): String =
         "Failed(${proposition.text.take(40)}...: $reason)"
@@ -138,4 +198,25 @@ data class ProjectionResults<T : Projection>(
     val skipCount: Int get() = skipped.size
     val failureCount: Int get() = failures.size
     val totalCount: Int get() = results.size
+
+    /**
+     * Render a human-readable summary of these results: how many propositions
+     * were projected, skipped, and failed, followed by a grouped breakdown of
+     * the reasons (using the structured reason where present, falling back to
+     * the string reason otherwise).
+     */
+    fun summary(): String {
+        val header = "projected $successCount of $totalCount, $skipCount skipped, $failureCount failed"
+        val reasons = (skipped.map { "skipped: ${it.structuredReason?.describe() ?: it.reason}" } +
+            failures.map { "failed: ${it.structuredReason?.describe() ?: it.reason}" })
+        if (reasons.isEmpty()) {
+            return header
+        }
+        val breakdown = reasons
+            .groupingBy { it }
+            .eachCount()
+            .entries
+            .joinToString("; ") { (reason, count) -> "$reason (x$count)" }
+        return "$header. Reasons: $breakdown"
+    }
 }

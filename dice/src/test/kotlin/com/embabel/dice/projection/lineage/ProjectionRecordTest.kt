@@ -26,12 +26,12 @@ class ProjectionRecordTest {
     fun `construction with defaults`() {
         val record = ProjectionRecord(
             propositionId = "p1",
-            target = "graph",
+            target = "neo4j",
             lifecycle = ProjectionLifecycle.PROJECTED,
             runId = "run-1",
         )
         assertEquals("p1", record.propositionId)
-        assertEquals("graph", record.target)
+        assertEquals("neo4j", record.target)
         assertNull(record.targetRef)
         assertNull(record.reason)
         assertNotNull(record.at)
@@ -58,13 +58,13 @@ class ProjectionRecordTest {
     @Test
     fun `blank required fields rejected`() {
         assertThrows<IllegalArgumentException> {
-            ProjectionRecord(propositionId = "", target = "graph", lifecycle = ProjectionLifecycle.PROJECTED, runId = "r")
+            ProjectionRecord(propositionId = "", target = "neo4j", lifecycle = ProjectionLifecycle.PROJECTED, runId = "r")
         }
         assertThrows<IllegalArgumentException> {
             ProjectionRecord(propositionId = "p", target = " ", lifecycle = ProjectionLifecycle.PROJECTED, runId = "r")
         }
         assertThrows<IllegalArgumentException> {
-            ProjectionRecord(propositionId = "p", target = "graph", lifecycle = ProjectionLifecycle.PROJECTED, runId = "")
+            ProjectionRecord(propositionId = "p", target = "neo4j", lifecycle = ProjectionLifecycle.PROJECTED, runId = "")
         }
     }
 }

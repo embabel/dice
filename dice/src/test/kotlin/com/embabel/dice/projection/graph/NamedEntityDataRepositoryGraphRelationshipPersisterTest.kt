@@ -20,6 +20,8 @@ import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.agent.rag.service.RelationshipData
 import com.embabel.agent.rag.service.RetrievableIdentifier
+import com.embabel.dice.common.AuthorityTier
+import com.embabel.dice.common.FixedAuthorityResolver
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
@@ -66,6 +68,7 @@ class NamedEntityDataRepositoryGraphRelationshipPersisterTest {
         every { targetEntity.labels() } returns setOf("Contact")
         every { repo.findById("user-rod") } returns sourceEntity
         every { repo.findById("contact-tom") } returns targetEntity
+        every { repo.save(any()) } answers { firstArg() }
         every { repo.mergeRelationship(any(), any(), any()) } just Runs
 
         return repo
@@ -223,6 +226,44 @@ class NamedEntityDataRepositoryGraphRelationshipPersisterTest {
         }
 
         @Test
+        fun `authority from source propositions survives description synthesis re-persist`() {
+            val repo = mockRepository()
+            val captured = slot<RelationshipData>()
+            every { repo.mergeRelationship(any(), any(), capture(captured)) } just Runs
+
+            // Fix the resolver so it always returns PRIMARY regardless of provenance structure.
+            val persister = NamedEntityDataRepositoryGraphRelationshipPersister(
+                repo,
+                FixedAuthorityResolver(AuthorityTier.PRIMARY),
+            )
+
+            val synthesizer = mockk<RelationshipDescriptionSynthesizer>()
+            every { synthesizer.synthesize(any()) } returns SynthesisResult(
+                description = "school friend",
+                confidence = 0.9,
+                sourcePropositionIds = listOf("prop-1"),
+            )
+
+            val entityPairs = listOf(
+                EntityPairWithPropositions(
+                    sourceId = "user-rod",
+                    sourceName = "Rod",
+                    targetId = "contact-tom",
+                    targetName = "Tom",
+                    relationshipType = "KNOWS",
+                    propositions = listOf(proposition()),
+                    existingDescription = null,
+                )
+            )
+
+            persister.synthesizeAndUpdateDescriptions(entityPairs, synthesizer)
+
+            // The edge re-persist must carry the resolved authority, not null.
+            assertEquals("PRIMARY", captured.captured.properties["authority"],
+                "authority must survive the description-synthesis re-persist cycle")
+        }
+
+        @Test
         fun `passes existing description to synthesizer`() {
             val repo = mockRepository()
             val persister = NamedEntityDataRepositoryGraphRelationshipPersister(repo)
@@ -301,6 +342,37 @@ class NamedEntityDataRepositoryGraphRelationshipPersisterTest {
 
             assertEquals("Entity", sourceSlot.captured.type)
             assertEquals("Entity", targetSlot.captured.type)
+        }
+
+        @Test
+        fun `persists resolved entity node with its full label set`() {
+            val repo = mockk<NamedEntityDataRepository>()
+            val sourceEntity = mockk<NamedEntityData>()
+            val targetEntity = mockk<NamedEntityData>()
+
+            every { sourceEntity.labels() } returns setOf("Person", "User")
+            every { targetEntity.labels() } returns setOf("Contact")
+            every { repo.findById("user-rod") } returns sourceEntity
+            every { repo.findById("contact-tom") } returns targetEntity
+            val savedSlot = mutableListOf<NamedEntityData>()
+            every { repo.save(capture(savedSlot)) } answers { firstArg() }
+            every { repo.mergeRelationship(any(), any(), any()) } just Runs
+
+            val persister = NamedEntityDataRepositoryGraphRelationshipPersister(repo)
+
+            persister.persistRelationship(
+                ProjectedRelationship(
+                    sourceId = "user-rod",
+                    targetId = "contact-tom",
+                    type = "KNOWS",
+                    confidence = 0.85,
+                    sourcePropositionIds = listOf("prop-1"),
+                )
+            )
+
+            // The source node is persisted carrying both of its labels.
+            assertTrue(savedSlot.any { it.labels() == setOf("Person", "User") })
+            verify { repo.mergeRelationship(any(), any(), any()) }
         }
     }
 }

@@ -16,40 +16,118 @@
 package com.embabel.dice.projection.graph
 
 import com.embabel.agent.core.DataDictionary
+import com.embabel.dice.projection.lineage.ReconciliationDecision
+import com.embabel.dice.projection.lineage.Reconciler
+import com.embabel.dice.projection.lineage.AlwaysCreateReconciler
+import com.embabel.dice.projection.lineage.ProjectionLifecycle
+import com.embabel.dice.projection.lineage.ProjectionRecord
+import com.embabel.dice.projection.lineage.ProjectionRecordStore
+import com.embabel.dice.proposition.ProjectionFailed
 import com.embabel.dice.proposition.ProjectionResults
+import com.embabel.dice.proposition.ProjectionSkipped
+import com.embabel.dice.proposition.ProjectionSuccess
 import com.embabel.dice.proposition.Proposition
+import java.util.UUID
 
 /**
- * Facade that bundles a [GraphProjector], [GraphRelationshipPersister], and [DataDictionary]
- * to simplify the common project-and-persist workflow.
+ * Bundles a [GraphProjector], [GraphRelationshipPersister], and [DataDictionary] together
+ * so you can project propositions to graph relationships and persist them in one call.
  *
- * @param graphProjector The projector to use for converting propositions to relationships
- * @param persister The persister to use for storing projected relationships
- * @param schema The data dictionary for relationship validation
+ * @param graphProjector converts propositions to relationships
+ * @param persister writes those relationships to the graph
+ * @param schema data dictionary used for relationship validation
+ * @param recordStore optional lineage store; when supplied, one [ProjectionRecord] is
+ *   written per result (PROJECTED / ADOPTED / SKIPPED / FAILED). Nothing is recorded
+ *   when null.
+ * @param reconciler decides per successful projection whether to create a new artifact
+ *   (PROJECTED) or align with an existing one (ADOPTED). Defaults to [AlwaysCreateReconciler].
+ *   Only consulted when a [recordStore] is present. Node-level de-duplication on the
+ *   graph side is a planned follow-up.
  */
 class GraphProjectionService(
     private val graphProjector: GraphProjector,
     private val persister: GraphRelationshipPersister,
     private val schema: DataDictionary,
+    private val recordStore: ProjectionRecordStore? = null,
+    private val reconciler: Reconciler = AlwaysCreateReconciler,
 ) {
 
     companion object {
         @JvmStatic
+        @JvmOverloads
         fun create(
             graphProjector: GraphProjector,
             persister: GraphRelationshipPersister,
             schema: DataDictionary,
-        ): GraphProjectionService = GraphProjectionService(graphProjector, persister, schema)
+            recordStore: ProjectionRecordStore? = null,
+            reconciler: Reconciler = AlwaysCreateReconciler,
+        ): GraphProjectionService =
+            GraphProjectionService(graphProjector, persister, schema, recordStore, reconciler)
     }
 
     /**
-     * Project propositions to relationships and persist them in one operation.
+     * Projects the given propositions to graph relationships and persists them.
+     * When a [recordStore] is configured, one [ProjectionRecord] is emitted per result,
+     * all sharing a single run ID for the batch.
      *
-     * @param propositions The propositions to project and persist
-     * @return Pair of projection results and persistence results
+     * @param propositions propositions to project and persist
+     * @return projection results paired with persistence results
      */
     fun projectAndPersist(
         propositions: List<Proposition>,
-    ): Pair<ProjectionResults<ProjectedRelationship>, RelationshipPersistenceResult> =
-        persister.projectAndPersist(propositions, graphProjector, schema)
+    ): Pair<ProjectionResults<ProjectedRelationship>, RelationshipPersistenceResult> {
+        val pair = persister.projectAndPersist(propositions, graphProjector, schema)
+        val store = recordStore
+        if (store != null) {
+            val runId = UUID.randomUUID().toString()
+            pair.first.results.forEach { result ->
+                val (lifecycle, targetRef, reason) = when (result) {
+                    is ProjectionSuccess -> when (
+                        val decision = reconciler.reconcile(result.proposition, "neo4j")
+                    ) {
+                        is ReconciliationDecision.CreateNew -> Triple(
+                            ProjectionLifecycle.PROJECTED,
+                            (result.projected as? ProjectedRelationship)?.sourceId,
+                            null,
+                        )
+
+                        is ReconciliationDecision.Adopt -> Triple(
+                            ProjectionLifecycle.ADOPTED,
+                            decision.targetRef,
+                            "adopted existing artifact",
+                        )
+
+                        is ReconciliationDecision.Align -> Triple(
+                            ProjectionLifecycle.ADOPTED,
+                            decision.targetRef,
+                            "aligned with existing artifact (node merge deferred)",
+                        )
+                    }
+
+                    is ProjectionSkipped -> Triple(
+                        ProjectionLifecycle.SKIPPED,
+                        null,
+                        result.structuredReason?.describe() ?: result.reason,
+                    )
+
+                    is ProjectionFailed -> Triple(
+                        ProjectionLifecycle.FAILED,
+                        null,
+                        result.structuredReason?.describe() ?: result.reason,
+                    )
+                }
+                store.record(
+                    ProjectionRecord.of(
+                        propositionId = result.proposition.id,
+                        target = "neo4j",
+                        lifecycle = lifecycle,
+                        runId = runId,
+                        targetRef = targetRef,
+                        reason = reason,
+                    ),
+                )
+            }
+        }
+        return pair
+    }
 }

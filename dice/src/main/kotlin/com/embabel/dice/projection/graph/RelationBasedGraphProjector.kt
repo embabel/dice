@@ -17,13 +17,15 @@ package com.embabel.dice.projection.graph
 
 import com.embabel.agent.core.AllowedRelationship
 import com.embabel.agent.core.DataDictionary
+import com.embabel.dice.common.AuthorityResolver
 import com.embabel.dice.common.Relation
 import com.embabel.dice.common.Relations
+import com.embabel.dice.common.StructuralAuthorityResolver
 import com.embabel.dice.proposition.*
 import org.slf4j.LoggerFactory
 
 /**
- * Result of matching a proposition against known predicates.
+ * Holds the result of matching a proposition's text against a known predicate.
  */
 private sealed interface MatchedRelationship {
     val predicate: String
@@ -33,8 +35,8 @@ private sealed interface MatchedRelationship {
 }
 
 /**
- * Match from DataDictionary schema relationship.
- * Uses the property name as the relationship type.
+ * A match sourced from a [DataDictionary] schema relationship.
+ * Uses the property name as the graph relationship type.
  */
 private data class SchemaMatch(
     val allowedRelationship: AllowedRelationship,
@@ -46,8 +48,8 @@ private data class SchemaMatch(
 }
 
 /**
- * Match from Relations predicate.
- * Derives relationship type from predicate using UPPER_SNAKE_CASE.
+ * A match sourced from a [Relations] predicate.
+ * Derives the graph relationship type by uppercasing the predicate to UPPER_SNAKE_CASE.
  */
 private data class RelationMatch(
     val relation: Relation,
@@ -110,6 +112,7 @@ class RelationBasedGraphProjector @JvmOverloads constructor(
     private val relations: Relations = Relations.empty(),
     private val policy: ProjectionPolicy = DefaultProjectionPolicy(),
     private val caseSensitive: Boolean = false,
+    private val authorityResolver: AuthorityResolver = StructuralAuthorityResolver(),
 ) : GraphProjector {
 
     private val logger = LoggerFactory.getLogger(RelationBasedGraphProjector::class.java)
@@ -171,43 +174,49 @@ class RelationBasedGraphProjector @JvmOverloads constructor(
      * Add more relations to this projector.
      */
     fun withRelations(additional: Relations): RelationBasedGraphProjector =
-        RelationBasedGraphProjector(relations + additional, policy, caseSensitive)
+        RelationBasedGraphProjector(relations + additional, policy, caseSensitive, authorityResolver)
 
     /**
      * Set the projection policy.
      */
     fun withPolicy(policy: ProjectionPolicy): RelationBasedGraphProjector =
-        RelationBasedGraphProjector(relations, policy, caseSensitive)
+        RelationBasedGraphProjector(relations, policy, caseSensitive, authorityResolver)
 
     /**
      * Use a [LenientProjectionPolicy] with default confidence threshold.
      */
     fun withLenientPolicy(): RelationBasedGraphProjector =
-        RelationBasedGraphProjector(relations, LenientProjectionPolicy(), caseSensitive)
+        RelationBasedGraphProjector(relations, LenientProjectionPolicy(), caseSensitive, authorityResolver)
 
     /**
      * Use a [LenientProjectionPolicy] with the given confidence threshold.
      */
     fun withLenientPolicy(confidenceThreshold: Double): RelationBasedGraphProjector =
-        RelationBasedGraphProjector(relations, LenientProjectionPolicy(confidenceThreshold), caseSensitive)
+        RelationBasedGraphProjector(relations, LenientProjectionPolicy(confidenceThreshold), caseSensitive, authorityResolver)
 
     /**
      * Use a [DefaultProjectionPolicy] with default confidence threshold.
      */
     fun withDefaultPolicy(): RelationBasedGraphProjector =
-        RelationBasedGraphProjector(relations, DefaultProjectionPolicy(), caseSensitive)
+        RelationBasedGraphProjector(relations, DefaultProjectionPolicy(), caseSensitive, authorityResolver)
 
     /**
      * Use a [DefaultProjectionPolicy] with the given confidence threshold.
      */
     fun withDefaultPolicy(confidenceThreshold: Double): RelationBasedGraphProjector =
-        RelationBasedGraphProjector(relations, DefaultProjectionPolicy(confidenceThreshold), caseSensitive)
+        RelationBasedGraphProjector(relations, DefaultProjectionPolicy(confidenceThreshold), caseSensitive, authorityResolver)
 
     /**
      * Set case sensitivity for predicate matching.
      */
     fun withCaseSensitive(caseSensitive: Boolean): RelationBasedGraphProjector =
-        RelationBasedGraphProjector(relations, policy, caseSensitive)
+        RelationBasedGraphProjector(relations, policy, caseSensitive, authorityResolver)
+
+    /**
+     * Set the resolver that stamps each projected edge with its source authority.
+     */
+    fun withAuthorityResolver(authorityResolver: AuthorityResolver): RelationBasedGraphProjector =
+        RelationBasedGraphProjector(relations, policy, caseSensitive, authorityResolver)
 
     override fun project(
         proposition: Proposition,
@@ -215,23 +224,28 @@ class RelationBasedGraphProjector @JvmOverloads constructor(
     ): ProjectionResult<ProjectedRelationship> {
         // Check policy first
         if (!policy.shouldProject(proposition)) {
-            val reason = buildPolicyRejectionReason(proposition)
+            val reason = proposition.policyRejectionReason()
             logger.debug("Proposition skipped by policy: {}", reason)
-            return ProjectionSkipped(proposition, reason)
+            return ProjectionSkipped(
+                proposition,
+                reason,
+                ProjectionFailureReason.PolicyRejected(reason),
+            )
         }
 
         // Find the first matching relationship (schema first, then Relations fallback)
         val matched = findMatchingRelationship(proposition, schema)
             ?: return ProjectionFailed(
                 proposition,
-                "No matching predicate found in schema or relations: ${proposition.text}"
+                "No matching predicate found in schema or relations: ${proposition.text}",
+                ProjectionFailureReason.NoMatchingPredicate(proposition.text),
             )
 
         // Validate entity types
         val typeValidation = validateEntityTypes(proposition, matched)
         if (typeValidation != null) {
-            logger.debug("Type validation failed: {}", typeValidation)
-            return ProjectionFailed(proposition, typeValidation)
+            logger.debug("Type validation failed: {}", typeValidation.reason.describe())
+            return ProjectionFailed(proposition, typeValidation.message, typeValidation.reason)
         }
 
         // Extract subject and object mentions
@@ -241,9 +255,12 @@ class RelationBasedGraphProjector @JvmOverloads constructor(
         if (subjectMention?.resolvedId == null || objectMention?.resolvedId == null) {
             logger.debug("Missing resolved entity IDs: subject={}, object={}",
                 subjectMention?.resolvedId, objectMention?.resolvedId)
+            val unresolvedRole = if (subjectMention?.resolvedId == null) MentionRole.SUBJECT else MentionRole.OBJECT
+            val unresolvedSpan = if (subjectMention?.resolvedId == null) subjectMention?.span else objectMention?.span
             return ProjectionFailed(
                 proposition,
-                "Could not resolve entity IDs: subject=${subjectMention?.span}, object=${objectMention?.span}"
+                "Could not resolve entity IDs: subject=${subjectMention?.span}, object=${objectMention?.span}",
+                ProjectionFailureReason.UnresolvedMention(unresolvedRole, unresolvedSpan),
             )
         }
 
@@ -256,6 +273,7 @@ class RelationBasedGraphProjector @JvmOverloads constructor(
             decay = proposition.decay,
             description = proposition.text,
             sourcePropositionIds = listOf(proposition.id),
+            authority = authorityResolver.resolve(proposition),
         )
 
         val source = if (matched is SchemaMatch) "schema" else "relations"
@@ -307,39 +325,62 @@ class RelationBasedGraphProjector @JvmOverloads constructor(
     }
 
     /**
-     * Validate that entity types match relationship constraints.
-     * Returns null if valid, or error message if invalid.
+     * Bundles the human-readable message and the structured reason for a type-validation failure.
      */
-    private fun validateEntityTypes(proposition: Proposition, matched: MatchedRelationship): String? {
+    private data class TypeValidationFailure(
+        val message: String,
+        val reason: ProjectionFailureReason,
+    )
+
+    /**
+     * Checks that the subject and object mention types satisfy the relationship's type constraints.
+     * Returns null when they do, or a [TypeValidationFailure] naming the mismatch when they don't.
+     */
+    private fun validateEntityTypes(proposition: Proposition, matched: MatchedRelationship): TypeValidationFailure? {
         val subjectMention = proposition.mentions.find { it.role == MentionRole.SUBJECT }
         val objectMention = proposition.mentions.find { it.role == MentionRole.OBJECT }
 
         // Check subject type constraint
         if (matched.fromType != null && subjectMention != null) {
-            if (subjectMention.type != matched.fromType) {
-                return "Subject type '${subjectMention.type}' does not match expected '${matched.fromType}'"
+            if (!typeMatches(subjectMention, matched.fromType!!)) {
+                return TypeValidationFailure(
+                    "Subject type '${subjectMention.type}' does not match expected '${matched.fromType}'",
+                    ProjectionFailureReason.TypeMismatch(MentionRole.SUBJECT, subjectMention.type, matched.fromType!!),
+                )
             }
         }
 
         // Check object type constraint
         if (matched.toType != null && objectMention != null) {
-            if (objectMention.type != matched.toType) {
-                return "Object type '${objectMention.type}' does not match expected '${matched.toType}'"
+            if (!typeMatches(objectMention, matched.toType!!)) {
+                return TypeValidationFailure(
+                    "Object type '${objectMention.type}' does not match expected '${matched.toType}'",
+                    ProjectionFailureReason.TypeMismatch(MentionRole.OBJECT, objectMention.type, matched.toType!!),
+                )
             }
         }
 
         return null
     }
 
-    private fun buildPolicyRejectionReason(proposition: Proposition): String {
-        val reasons = mutableListOf<String>()
-        if (proposition.confidence < 0.85) {
-            reasons.add("low confidence (${proposition.confidence})")
+    /**
+     * Returns true when the mention's declared type matches the expected type.
+     *
+     * Accepts a match when the type is equal (case-insensitive), or when the mention
+     * explicitly declares the expected label via a `labels` or `types` hint. Free-form
+     * hint values (aliases, titles, etc.) are intentionally ignored — matching them
+     * could let an unrelated type through and produce a wrong-typed edge.
+     */
+    private fun typeMatches(mention: EntityMention, expected: String): Boolean {
+        if (mention.type.equals(expected, ignoreCase = true)) {
+            return true
         }
-        if (!proposition.isFullyResolved()) {
-            val unresolved = proposition.mentions.filter { it.resolvedId == null }.map { it.span }
-            reasons.add("unresolved entities: $unresolved")
+        val labelHint = mention.hints["labels"] ?: mention.hints["types"] ?: return false
+        return when (labelHint) {
+            is String -> labelHint.equals(expected, ignoreCase = true)
+            is Collection<*> -> labelHint.any { it is String && it.equals(expected, ignoreCase = true) }
+            else -> false
         }
-        return reasons.joinToString(", ").ifEmpty { "policy criteria not met" }
     }
+
 }
