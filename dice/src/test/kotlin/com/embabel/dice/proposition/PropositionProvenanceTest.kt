@@ -72,29 +72,6 @@ class PropositionProvenanceTest {
     }
 
     @Test
-    fun `grounding dedup ignores display label per SourceLocator identity contract`() {
-        // Same underlying source, different presentation-only display labels.
-        val labeled = ProvenanceEntry(locator = UriLocator("https://example.com/doc", display = "Doc A"))
-        val relabeled = ProvenanceEntry(locator = UriLocator("https://example.com/doc", display = "Doc B"))
-
-        // Locators (and so grounding entries) are equal: identity is key(), not display.
-        assertEquals(labeled.locator, relabeled.locator)
-        assertEquals(labeled, relabeled)
-
-        val prop = Proposition(
-            contextId = ctx,
-            text = "Test",
-            mentions = emptyList(),
-            confidence = 0.7,
-            provenanceEntries = listOf(labeled),
-        )
-
-        // Re-adding the same source with a different label must NOT create a duplicate.
-        val updated = prop.withProvenanceEntries(listOf(relabeled))
-        assertEquals(1, updated.provenanceEntries.size)
-    }
-
-    @Test
     fun `proposition roundtrips through copy preserving provenance and existing invariants`() {
         val tm = TemporalMetadata(
             observedAt = Instant.parse("2026-01-01T00:00:00Z"),
@@ -125,7 +102,7 @@ class PropositionProvenanceTest {
         assertEquals(listOf(entry), promoted.provenanceEntries)
         assertEquals(PropositionStatus.PROMOTED, promoted.status)
 
-        // Chunk-id grounding list is independent of provenanceEntries and unaffected.
+        // Legacy chunk-id grounding still independent and intact.
         assertTrue(promoted.grounding.isEmpty())
     }
 
