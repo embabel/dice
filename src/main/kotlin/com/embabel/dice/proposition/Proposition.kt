@@ -15,11 +15,13 @@
  */
 package com.embabel.dice.proposition
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.model.Retrievable
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.temporal.TemporalMetadata
+import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
 import java.util.*
 
@@ -38,7 +40,23 @@ enum class PropositionStatus {
     CONTRADICTED,
 
     /** Successfully projected to typed graph (Neo4j/Prolog) */
-    PROMOTED
+    PROMOTED,
+
+    /**
+     * Effective confidence has decayed below the staleness threshold.
+     *
+     * STALE propositions are excluded from standard retrieval but are preserved
+     * for inspection and potential revival; staleness does NOT imply contradicting
+     * evidence (use [CONTRADICTED] for that). Re-reinforcement can lift a STALE
+     * proposition back to [ACTIVE].
+     *
+     * Migration note: this constant is newly introduced. Any future exhaustive
+     * `when (status)` over [PropositionStatus] must add a `STALE` branch. The
+     * library currently has no exhaustive `when` over this enum, so the addition
+     * is source-compatible today.
+     */
+    @ApiStatus.Experimental
+    STALE
 }
 
 /**
@@ -63,19 +81,24 @@ enum class PropositionStatus {
  * @property reasoning LLM explanation for why this was extracted
  * @property grounding Chunk IDs that support this proposition
  * @property created When the proposition was first created
- * @property revised When the proposition was last updated
+ * @property contentRevised When the proposition's content last changed (text, mentions,
+ *   confidence). This is the decay anchor: [effectiveConfidence] measures age from here.
+ * @property metadataRevised When the proposition's administrative metadata last changed
+ *   (status, grounding, temporal, pinned). Does NOT reset the decay clock.
+ * @property pinned When true, the proposition is exempt from decay-driven sweeps
+ *   (a sweep-protected tier). Defaults to false.
  * @property status Current lifecycle status
  * @property level Abstraction level: 0 = raw observation, 1+ = derived abstraction
  * @property sourceIds IDs of propositions this was abstracted from (empty for level 0)
  * @property reinforceCount How many times this proposition has been merged or reinforced.
  *   Provides a frequency/importance signal complementary to confidence and decay.
  * @property temporal Optional bitemporal metadata (observed/valid time, supersession,
- *   contradiction). Null when temporal information is not tracked for this proposition.
- * @property provenanceEntries Rich source-material provenance for this proposition
- *   (locator, originating chunk, character offsets, content hash) via
- *   [com.embabel.dice.provenance.SourceLocator]. Independent of the [grounding]
- *   field's chunk/entity ids.
+ *   contradiction). Null when temporal correctness is not tracked for this proposition.
+ * @property provenanceEntries Rich grounding entries linking this proposition to source
+ *   material via [com.embabel.dice.provenance.SourceLocator]. Complements the legacy
+ *   chunk-id-only [grounding] list.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class Proposition(
     override val id: String = UUID.randomUUID().toString(),
     val contextId: ContextId,
@@ -87,7 +110,9 @@ data class Proposition(
     val reasoning: String? = null,
     override val grounding: List<String> = emptyList(),
     val created: Instant = Instant.now(),
-    val revised: Instant = Instant.now(),
+    val contentRevised: Instant = Instant.now(),
+    val metadataRevised: Instant = Instant.now(),
+    val pinned: Boolean = false,
     val lastAccessed: Instant = Instant.now(),
     val status: PropositionStatus = PropositionStatus.ACTIVE,
     val level: Int = 0,
@@ -105,10 +130,32 @@ data class Proposition(
     @get:JvmName("getContextIdValue")
     val contextIdValue: String get() = contextId.value
 
-    /** Create a copy with updated text and revised timestamp. */
+    /**
+     * Legacy alias for the last-updated timestamp. Retained for backward
+     * compatibility (existing readers and JSON serialization) as a read-only
+     * computed property equal to [contentRevised]. Because it is a body-level
+     * getter, it is excluded from `copy()`/`equals`/`hashCode`.
+     */
+    @Deprecated(
+        "Use contentRevised (decay anchor) or metadataRevised (admin touch)",
+        ReplaceWith("contentRevised"),
+    )
+    val revised: Instant get() = contentRevised
+
+    /**
+     * The most recent update of any kind — the later of [contentRevised] and
+     * [metadataRevised]. Use this for "last touched / recently updated" recency
+     * queries and ordering, where an administrative touch (status change, pin,
+     * re-grounding) must still count as activity. Distinct from [contentRevised],
+     * which is the decay anchor and deliberately ignores administrative touches.
+     * Body-level getter: excluded from `copy()`/`equals`/`hashCode`.
+     */
+    val lastTouched: Instant get() = maxOf(contentRevised, metadataRevised)
+
+    /** Create a copy with updated text. Resets the decay clock (content anchor). */
     fun withText(newText: String): Proposition = copy(
         text = newText,
-        revised = Instant.now(),
+        contentRevised = Instant.now(),
     )
 
     companion object {
@@ -144,6 +191,9 @@ data class Proposition(
             uri: String? = null,
             temporal: TemporalMetadata? = null,
             provenanceEntries: List<ProvenanceEntry> = emptyList(),
+            contentRevised: Instant = revised,
+            metadataRevised: Instant = revised,
+            pinned: Boolean = false,
         ): Proposition = Proposition(
             id = id,
             contextId = ContextId(contextIdValue),
@@ -155,7 +205,9 @@ data class Proposition(
             reasoning = reasoning,
             grounding = grounding,
             created = created,
-            revised = revised,
+            contentRevised = contentRevised,
+            metadataRevised = metadataRevised,
+            pinned = pinned,
             lastAccessed = lastAccessed,
             status = status,
             level = level,
@@ -194,39 +246,57 @@ data class Proposition(
      * Create a copy with updated mentions.
      */
     fun withResolvedMentions(resolvedMentions: List<EntityMention>): Proposition =
-        copy(mentions = resolvedMentions, revised = Instant.now())
+        copy(mentions = resolvedMentions, contentRevised = Instant.now())
 
     /**
-     * Create a copy with updated status.
+     * Create a copy with updated status. Administrative change: touches only
+     * metadataRevised and preserves the decay clock (contentRevised).
      */
     fun withStatus(newStatus: PropositionStatus): Proposition =
-        copy(status = newStatus, revised = Instant.now())
+        copy(status = newStatus, metadataRevised = Instant.now())
+
+    /**
+     * Create a copy with the pin flag set. Administrative change: touches only
+     * metadataRevised and preserves the decay clock (contentRevised).
+     */
+    fun withPinned(pinned: Boolean): Proposition =
+        copy(pinned = pinned, metadataRevised = Instant.now())
 
     /**
      * Create a copy with adjusted confidence.
      */
     fun withConfidence(newConfidence: Double): Proposition {
         require(newConfidence in 0.0..1.0) { "Confidence must be between 0.0 and 1.0" }
-        return copy(confidence = newConfidence, revised = Instant.now())
+        return copy(confidence = newConfidence, contentRevised = Instant.now())
     }
 
     /**
      * Create a copy with additional grounding.
      */
     fun withGrounding(chunkIds: List<String>): Proposition =
-        copy(grounding = (grounding + chunkIds).distinct(), revised = Instant.now())
+        copy(grounding = (grounding + chunkIds).distinct(), metadataRevised = Instant.now())
 
     /**
      * Create a copy with the given temporal metadata.
      */
     fun withTemporal(temporal: TemporalMetadata): Proposition =
-        copy(temporal = temporal, revised = Instant.now())
+        copy(temporal = temporal, metadataRevised = Instant.now())
 
     /**
-     * Create a copy with the given provenance entries appended (de-duplicated).
+     * Create a copy with additional rich grounding entries.
      */
     fun withProvenanceEntries(entries: List<ProvenanceEntry>): Proposition =
-        copy(provenanceEntries = (provenanceEntries + entries).distinct(), revised = Instant.now())
+        copy(provenanceEntries = (provenanceEntries + entries).distinct(), metadataRevised = Instant.now())
+
+    /**
+     * Create a copy with an additional (or replaced) metadata entry.
+     *
+     * Administrative change: touches only [metadataRevised] and deliberately
+     * preserves the decay clock ([contentRevised]). Use this to cache derived
+     * annotations (e.g. a trust score) without re-anchoring decay.
+     */
+    fun withMetadataValue(key: String, value: Any): Proposition =
+        copy(metadata = metadata + (key to value), metadataRevised = Instant.now())
 
     /**
      * Calculate the effective confidence after applying time-based decay.
@@ -252,9 +322,9 @@ data class Proposition(
         // Explicit retraction zeroes the fact out in any mode.
         if (t?.invalidatedAt != null && !t.invalidatedAt.isAfter(asOf)) return 0.0
 
-        // DATED — a known valid window ([TemporalMetadata.validFrom] set). Crisply
-        // in- or out-of-window; a CLOSED window is permanently true about itself and
-        // never decays, an OPEN-ENDED one ("since X, still?") keeps decaying.
+        // DATED — a known valid window ([TemporalMetadata.validFrom] set). Crisply in-
+        // or out-of-window: a CLOSED window is permanently true about itself and never
+        // decays; an OPEN-ENDED one ("since X, still?") keeps decaying from validFrom.
         val validFrom = t?.validFrom
         if (validFrom != null) {
             if (!t.isCurrentAsOf(asOf)) return 0.0
@@ -262,8 +332,9 @@ data class Proposition(
             return confidence * decayFactor(from = validFrom, to = asOf, k = k)
         }
 
-        // DECAYING — no valid window: confidence fades from the last revision.
-        return confidence * decayFactor(from = revised, to = asOf, k = k)
+        // DECAYING — no valid window: confidence fades from the last content revision
+        // (the decay anchor).
+        return confidence * decayFactor(from = contentRevised, to = asOf, k = k)
     }
 
     private fun decayFactor(from: Instant, to: Instant, k: Double): Double {

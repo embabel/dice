@@ -188,7 +188,7 @@ class DefaultMemoryConsolidator(
         return existing.copy(
             confidence = newConfidence,
             grounding = newGrounding,
-            revised = Instant.now(),
+            contentRevised = Instant.now(),
         )
     }
 
@@ -206,7 +206,7 @@ class DefaultMemoryConsolidator(
             confidence = avgConfidence,
             grounding = allGrounding,
             created = Instant.now(),
-            revised = Instant.now(),
+            contentRevised = Instant.now(),
         )
     }
 }
