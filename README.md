@@ -2345,6 +2345,50 @@ class DiceApiConfig {
 - `MemoryController` loads when `PropositionRepository` is available
 - `PropositionPipelineController` loads when `PropositionPipeline` is available (via `@ConditionalOnBean`)
 
+### Graph-Backed Storage (`dice-storage`)
+
+`InMemoryPropositionRepository` is for tests and demos. For persistence, the **`dice-storage`** module
+provides a graph-backed (Neo4j via [Drivine](https://github.com/drivine/drivine4j))
+`PropositionRepository` — a drop-in for the in-memory one — together with a graph `ChunkHistoryStore`
+and a `DecayManager`.
+
+Add the autoconfigure dependency and flip one property — no manual wiring:
+
+```xml
+<dependency>
+    <groupId>com.embabel.dice</groupId>
+    <artifactId>dice-storage-autoconfigure</artifactId>
+    <version>${dice.version}</version>
+</dependency>
+```
+
+```yaml
+embabel:
+  dice:
+    store:
+      type: graph          # 'graph' (Neo4j/Drivine) or 'in-memory' (default)
+```
+
+With `type: graph`, the autoconfiguration registers `DrivinePropositionRepository` (and the
+chunk-history store + a scheduled decay sweep) and provisions the Neo4j schema (vector + range
+indexes, uniqueness constraints). Any `PropositionRepository` bean you define yourself still wins
+(`@ConditionalOnMissingBean`), so call sites are unchanged.
+
+Everything is pushed into the database rather than scanned in memory:
+
+| Concern | How |
+|---------|-----|
+| **Propositions + mentions** | `:Proposition` / `:Mention` nodes; every `PropositionQuery` filter, ordering, and limit (incl. entity filters) pushes into Cypher |
+| **Vector search** | Neo4j vector index over the proposition embedding (`findSimilar*`, entity-filtered vector, clustering in one statement) |
+| **Metadata** | flat `metadata.<key>` node properties (queryable, not an opaque blob) |
+| **Provenance** | `(:Proposition)-[:DERIVED_FROM]->(:Source)` with **shared, deduplicated** source nodes — reverse-traversable ("which propositions came from this source?") |
+| **Decay** | `effectiveConfidence` materialised per node (seeded on save, refreshed by a scheduled sweep) so confidence ranking/filtering pushes into the DB; `DecayManager` applies lifecycle transitions (ACTIVE→STALE) |
+| **Chunk history** | `:ProcessedChunk` nodes for incremental-analysis dedup |
+
+> Requires a Drivine-supported graph database (Neo4j, FalkorDB, or Memgraph). See
+> `dice-storage/HANDOFF.md` for architecture and `dice-storage/INTEGRATE-INTO-ASSISTANT.md` for a
+> migration walkthrough.
+
 ### API Key Security
 
 DICE provides API key authentication for the REST endpoints. Enable it via configuration:

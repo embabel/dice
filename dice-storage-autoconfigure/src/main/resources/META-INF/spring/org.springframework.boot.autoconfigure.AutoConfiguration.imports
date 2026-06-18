@@ -1,0 +1,2 @@
+com.embabel.dice.storage.autoconfigure.DiceStorageAutoConfiguration
+com.embabel.dice.storage.autoconfigure.DiceDecaySchedulingConfiguration

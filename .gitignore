@@ -6,6 +6,11 @@ embabel-agent-api/src/main/resources/mcp/**
 */*/target/**
 */*/*/target/**
 
+# Gradle outputs (the KSP codegen subproject under dice-storage/codegen-gradle).
+# The wrapper (gradlew, gradle/wrapper/, *.gradle.kts) is intentionally tracked.
+**/.gradle/
+**/build/
+
 .idea/workspace.xml
 
 **/*.log

@@ -1,0 +1,19 @@
+spring:
+  main:
+    allow-bean-definition-overriding: true
+
+# Drivine datasource for tests. @EnableDrivineTestConfig overrides host/port with the testcontainer.
+database:
+  datasources:
+    neo:
+      host: localhost
+      port: 7687
+      username: neo4j
+      password: test
+      type: NEO4J
+      database-name: neo4j
+
+logging:
+  level:
+    org.drivine: INFO
+    com.embabel.dice.storage: DEBUG
