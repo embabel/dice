@@ -1241,10 +1241,55 @@ class PropositionPipelineTest {
             )
 
             // Verify the bookmark was recorded
-            val bookmark = historyStore.getLastBookmark("doc-1")
+            val bookmark = historyStore.getLastBookmark(testContextId, "doc-1")
             assertNotNull(bookmark)
             assertEquals("doc-1", bookmark!!.sourceId)
             assertEquals(1, bookmark.endIndex)
+        }
+
+        @Test
+        fun `deduplication does not leak across contexts`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+            val historyStore = InMemoryChunkHistoryStore()
+
+            val contextA = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = ContextId("context-a"),
+            )
+            val contextB = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = ContextId("context-b"),
+            )
+
+            assertNotNull(
+                pipeline.processOnce(
+                    text = "mentions:Alice",
+                    sourceId = "doc-1",
+                    context = contextA,
+                    historyStore = historyStore,
+                )
+            )
+            assertNull(
+                pipeline.processOnce(
+                    text = "mentions:Alice",
+                    sourceId = "doc-1",
+                    context = contextA,
+                    historyStore = historyStore,
+                ),
+                "Same context should dedupe",
+            )
+            assertNotNull(
+                pipeline.processOnce(
+                    text = "mentions:Alice",
+                    sourceId = "doc-1",
+                    context = contextB,
+                    historyStore = historyStore,
+                ),
+                "Different context should not dedupe",
+            )
         }
     }
 

@@ -76,7 +76,7 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         source: IncrementalSource<T>,
         context: SourceAnalysisContext,
     ): R? {
-        val lastBookmark = historyStore.getLastBookmark(source.id)
+        val lastBookmark = historyStore.getLastBookmark(context.contextId, source.id)
         val lastIndex = lastBookmark?.endIndex ?: 0
 
         // Check if enough new content to trigger analysis
@@ -100,7 +100,7 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
             return null
         }
 
-        val lastBookmark = historyStore.getLastBookmark(source.id)
+        val lastBookmark = historyStore.getLastBookmark(context.contextId, source.id)
         val lastIndex = lastBookmark?.endIndex ?: 0
 
         return processWindow(source, context, lastIndex)
@@ -126,7 +126,7 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
 
         // Check if already processed (hash dedup)
         val contentHash = contentHasher.hash(text)
-        if (historyStore.isProcessed(contentHash)) {
+        if (historyStore.isProcessed(context.contextId, contentHash)) {
             logger.debug("Content already processed (hash: {})", contentHash.take(8))
             return null
         }
@@ -148,6 +148,7 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         // Record processing
         historyStore.recordProcessed(
             ProcessedChunkRecord(
+                contextId = context.contextId,
                 contentHash = contentHash,
                 sourceId = source.id,
                 startIndex = startIndex,

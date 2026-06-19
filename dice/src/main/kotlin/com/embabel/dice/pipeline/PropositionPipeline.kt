@@ -190,7 +190,7 @@ class PropositionPipeline private constructor(
     ): ChunkPropositionResult? {
         if (historyStore != null) {
             val hash = contentHasher.hash(text)
-            if (historyStore.isProcessed(hash)) {
+            if (historyStore.isProcessed(context.contextId, hash)) {
                 logger.debug("Content already processed (hash: {})", hash.take(8))
                 return null
             }
@@ -206,6 +206,7 @@ class PropositionPipeline private constructor(
             val result = processChunk(chunk, context)
             historyStore.recordProcessed(
                 ProcessedChunkRecord(
+                    contextId = context.contextId,
                     contentHash = hash,
                     sourceId = sourceId,
                     startIndex = 0,
