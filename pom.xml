@@ -70,6 +70,16 @@
                 <artifactId>dice-storage</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.embabel.dice</groupId>
+                <artifactId>dice-ingestion</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.embabel.dice</groupId>
+                <artifactId>dice-report</artifactId>
+                <version>${project.version}</version>
+            </dependency>
 
             <!-- Drivine Spring Boot starter -->
             <dependency>
