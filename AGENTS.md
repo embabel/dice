@@ -12,6 +12,8 @@ DICE (Domain-Integrated Context Engineering) is a proposition-first knowledge su
 | `dice-report` | Output projectors over propositions: rationale (why a fact is believed, with evidence), structured report, and surprising-link discovery |
 | `dice-ingestion` | Ingestion SPI (artifacts → chunks) with a content-hash dedup ledger so the same source isn't extracted twice |
 | `dice-integration-tests` | Test-only: the cross-feature end-to-end canonical-flow harness |
+| `dice-metamodel` | Metamodel versioning, diffing between versions, and quarantining propositions whose types drift from the schema |
+| `dice-bundle` | Self-contained export/import of knowledge bundles (propositions, provenance, decay status) for snapshot and transfer |
 
 ## Build & test
 
