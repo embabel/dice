@@ -278,4 +278,37 @@ class DriftQuarantinePolicyTest {
             )
         }
     }
+
+    @Nested
+    inner class PropositionsWithNoMentions {
+
+        @Test
+        fun `proposition with no mentions is conforming even when entity types are removed`() {
+            // The removed type cannot match an empty mention set, so no quarantine.
+            val old = schemaWith("Person", "RemovedType")
+            val new = schemaWith("Person")
+            val diff = differ.diff(old, new)
+
+            val noMentionProp = proposition("A fact with no entity mentions")
+            val result = policy.evaluate(diff, listOf(noMentionProp))
+
+            assertEquals(1, result.conforming.size)
+            assertEquals(0, result.quarantined.size)
+            assertEquals(PropositionStatus.ACTIVE, result.conforming.single().proposition.status)
+        }
+
+        @Test
+        fun `proposition with no mentions is conforming when diff is empty`() {
+            val old = schemaWith("Person", "Company")
+            val new = schemaWith("Person", "Company")
+            val diff = differ.diff(old, new)
+
+            val noMentionProp = proposition("A fact with no entity mentions")
+            val result = policy.evaluate(diff, listOf(noMentionProp))
+
+            assertEquals(1, result.total)
+            assertEquals(1, result.conforming.size)
+            assertEquals(0, result.quarantined.size)
+        }
+    }
 }

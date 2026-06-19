@@ -16,12 +16,14 @@
 package com.embabel.dice.bundle
 
 import com.embabel.agent.core.ContextId
+import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.dice.bundle.support.JacksonKnowledgeBundleExporter
 import com.embabel.dice.bundle.support.JacksonKnowledgeBundleImporter
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.UriLocator
@@ -443,5 +445,109 @@ class KnowledgeBundleRoundTripTest {
         val outcome = importer.importFromString(json, store)
         assertInstanceOf(BundleImportOutcome.Success::class.java, outcome)
         assertEquals(1, (outcome as BundleImportOutcome.Success).result.imported)
+    }
+
+    // -------------------------------------------------------------------------
+    // Store save failure → rejection path
+    // -------------------------------------------------------------------------
+
+    /**
+     * A minimal PropositionStore stub whose save() always throws. Used to exercise the
+     * rejection path in importParsedBundle without pulling in Mockito.
+     */
+    private inner class FailingPropositionStore : PropositionStore {
+        override fun save(proposition: Proposition): Proposition =
+            throw RuntimeException("simulated save failure")
+
+        override fun findById(id: String): Proposition? = null
+        override fun findByEntity(entityIdentifier: RetrievableIdentifier): List<Proposition> = emptyList()
+        override fun findByStatus(status: PropositionStatus): List<Proposition> = emptyList()
+        override fun findByGrounding(chunkId: String): List<Proposition> = emptyList()
+        override fun findByMinLevel(minLevel: Int): List<Proposition> = emptyList()
+        override fun findAll(): List<Proposition> = emptyList()
+        override fun delete(id: String): Boolean = false
+        override fun count(): Int = 0
+    }
+
+    @Test
+    fun `store save failure counts proposition as rejected with a note`() {
+        val props = listOf(proposition("First fact", 0.8), proposition("Second fact", 0.7))
+        val bundle = KnowledgeBundle.from(contextId, props)
+        val json = exporter.exportToString(bundle)
+
+        val outcome = importer.importFromString(json, FailingPropositionStore())
+
+        assertInstanceOf(BundleImportOutcome.Success::class.java, outcome)
+        val success = outcome as BundleImportOutcome.Success
+        assertEquals(0, success.result.imported)
+        assertEquals(2, success.result.rejected)
+        assertEquals(0, success.result.skipped)
+        assertEquals(2, success.result.total)
+        assertEquals(2, success.result.notes.size)
+        assertTrue(
+            success.result.notes.any { it.reason.contains("save failed") },
+            "Expected a note mentioning 'save failed': ${success.result.notes}",
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // SKIP_EXISTING note content
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `SKIP_EXISTING note carries the proposition ID and policy name`() {
+        val original = proposition("Existing proposition", 0.9)
+        val store = InMemoryPropositionRepository()
+        store.save(original)
+
+        val bundle = KnowledgeBundle.from(contextId, listOf(original))
+        val json = exporter.exportToString(bundle)
+        val outcome = importer.importFromString(json, store, ImportConflictPolicy.SKIP_EXISTING)
+
+        assertInstanceOf(BundleImportOutcome.Success::class.java, outcome)
+        val success = outcome as BundleImportOutcome.Success
+        assertEquals(1, success.result.notes.size)
+        val note = success.result.notes.single()
+        assertEquals(original.id, note.propositionId)
+        assertTrue(
+            note.reason.contains("SKIP_EXISTING"),
+            "Note reason should name the policy: ${note.reason}",
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // UnknownFormatVersion toString
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `UnknownFormatVersion toString includes found and supported versions`() {
+        val outcome = BundleImportOutcome.UnknownFormatVersion(
+            foundVersion = "99.0",
+            supportedVersions = setOf("1.0"),
+        )
+        val str = outcome.toString()
+        assertTrue(str.contains("99.0"), "Expected found version in toString: $str")
+        assertTrue(str.contains("1.0"), "Expected supported version in toString: $str")
+    }
+
+    // -------------------------------------------------------------------------
+    // Empty bundle import counts (IN-04)
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `empty bundle round-trip yields imported 0 and total 0`() {
+        val bundle = KnowledgeBundle.from(contextId, emptyList())
+        val json = exporter.exportToString(bundle)
+        val store = InMemoryPropositionRepository()
+
+        val outcome = importer.importFromString(json, store)
+
+        assertInstanceOf(BundleImportOutcome.Success::class.java, outcome)
+        val success = outcome as BundleImportOutcome.Success
+        assertEquals(0, success.result.imported)
+        assertEquals(0, success.result.skipped)
+        assertEquals(0, success.result.rejected)
+        assertEquals(0, success.result.total)
+        assertEquals(0, store.count())
     }
 }
