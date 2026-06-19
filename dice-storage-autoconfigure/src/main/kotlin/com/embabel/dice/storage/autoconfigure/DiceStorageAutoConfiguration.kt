@@ -19,13 +19,19 @@ import com.embabel.agent.api.common.Ai
 import com.embabel.dice.spi.DecayStatusPolicy
 import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore
+import com.embabel.dice.projection.lineage.CollectorRecordStore
+import com.embabel.dice.projection.lineage.InMemoryCollectorRecordStore
+import com.embabel.dice.projection.lineage.InMemoryProjectionRecordStore
+import com.embabel.dice.projection.lineage.ProjectionRecordStore
 import com.embabel.dice.proposition.DecayManager
 import com.embabel.dice.proposition.DecaySweepConfig
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.store.InMemoryDecayManager
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.storage.DrivineChunkHistoryStore
+import com.embabel.dice.storage.DrivineCollectorRecordStore
 import com.embabel.dice.storage.DrivinePropositionRepository
+import com.embabel.dice.storage.DrivineProjectionRecordStore
 import com.embabel.dice.storage.GraphDecayManager
 import org.drivine.manager.GraphObjectManager
 import org.drivine.manager.PersistenceManager
@@ -47,7 +53,8 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.transaction.PlatformTransactionManager
 
 /**
- * Auto-configures the Dice proposition store.
+ * Auto-configures the Dice proposition store and its lineage record stores (projection records and
+ * the collector audit trail).
  *
  * `embabel.dice.store.type=graph` selects the Drivine/Neo4j backend; anything else (default) uses the
  * in-memory backend. Every bean is `@ConditionalOnMissingBean`, so an application's own bean always
@@ -104,6 +111,32 @@ open class DiceStorageAutoConfiguration {
     ): DecayManager = GraphDecayManager(repository, persistenceManager)
 
     @Bean
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnMissingBean(ProjectionRecordStore::class)
+    open fun drivineProjectionRecordStore(
+        persistenceManager: PersistenceManager,
+    ): ProjectionRecordStore = DrivineProjectionRecordStore(persistenceManager)
+
+    @Bean
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnMissingBean(CollectorRecordStore::class)
+    open fun drivineCollectorRecordStore(
+        persistenceManager: PersistenceManager,
+    ): CollectorRecordStore = DrivineCollectorRecordStore(persistenceManager)
+
+    @Bean
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    open fun lineageRecordSchema(): SchemaCatalog = SchemaCatalog.of(
+        // Natural keys back the MERGE upserts: a replayed record updates in place, not duplicates.
+        UniquenessConstraintSpec(label = "ProjectionRecord", properties = listOf("propositionId", "runId", "target")),
+        UniquenessConstraintSpec(label = "CollectorRecord", properties = listOf("propositionId", "runId")),
+        UniquenessConstraintSpec(label = "CollectorRun", property = "runId"),
+        RangeIndexSpec("ProjectionRecord", "propositionId"),
+        RangeIndexSpec("ProjectionRecord", "lifecycle"),
+        RangeIndexSpec("CollectorRecord", "propositionId"),
+    )
+
+    @Bean
     @ConditionalOnBean(Ai::class)
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
     open fun propositionConstraintSchema(): SchemaCatalog = SchemaCatalog.of(
@@ -157,6 +190,14 @@ open class DiceStorageAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(ChunkHistoryStore::class)
     open fun inMemoryChunkHistoryStore(): ChunkHistoryStore = InMemoryChunkHistoryStore()
+
+    @Bean
+    @ConditionalOnMissingBean(ProjectionRecordStore::class)
+    open fun inMemoryProjectionRecordStore(): ProjectionRecordStore = InMemoryProjectionRecordStore()
+
+    @Bean
+    @ConditionalOnMissingBean(CollectorRecordStore::class)
+    open fun inMemoryCollectorRecordStore(): CollectorRecordStore = InMemoryCollectorRecordStore()
 
     @Bean
     @ConditionalOnBean(PropositionRepository::class)

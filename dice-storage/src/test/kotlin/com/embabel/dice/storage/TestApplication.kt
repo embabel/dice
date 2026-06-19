@@ -97,6 +97,23 @@ open class TestApplication {
     ): DrivineChunkHistoryStore = DrivineChunkHistoryStore(graphObjectManager, persistenceManager)
 
     @Bean
+    open fun lineageSchema(): SchemaCatalog = SchemaCatalog.of(
+        UniquenessConstraintSpec(label = "ProjectionRecord", properties = listOf("propositionId", "runId", "target")),
+        UniquenessConstraintSpec(label = "CollectorRecord", properties = listOf("propositionId", "runId")),
+        UniquenessConstraintSpec(label = "CollectorRun", property = "runId"),
+    )
+
+    @Bean
+    open fun projectionRecordStore(
+        persistenceManager: PersistenceManager,
+    ): DrivineProjectionRecordStore = DrivineProjectionRecordStore(persistenceManager)
+
+    @Bean
+    open fun collectorRecordStore(
+        persistenceManager: PersistenceManager,
+    ): DrivineCollectorRecordStore = DrivineCollectorRecordStore(persistenceManager)
+
+    @Bean
     open fun decayManager(
         repository: DrivinePropositionRepository,
         persistenceManager: PersistenceManager,
