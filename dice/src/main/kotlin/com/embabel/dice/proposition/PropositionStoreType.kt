@@ -18,14 +18,14 @@ package com.embabel.dice.proposition
 /**
  * Which backend provides a [PropositionRepository], for selecting/flipping implementations.
  *
- * Mirrors the chat-store `ConversationStoreType` convention. [STORED] is a persistent backend
- * (currently the Drivine graph store); if a non-graph persistent backend (e.g. SQL) is added later,
- * a finer storage-type axis can sit beneath [STORED].
+ * Mirrors the chat-store `ConversationStoreType` convention. [STORED] is any durable backend — the
+ * Drivine graph store and the JSON file store both report it; if the graph-vs-file (or SQL) distinction
+ * ever needs to drive a decision, a finer storage-type axis can sit beneath [STORED].
  */
 enum class PropositionStoreType {
     /** Ephemeral, in-process. */
     IN_MEMORY,
 
-    /** Persistent (graph-backed today). */
+    /** Durable across restarts (a graph store or a file today). */
     STORED,
 }

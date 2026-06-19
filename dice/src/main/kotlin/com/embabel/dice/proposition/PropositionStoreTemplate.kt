@@ -70,6 +70,12 @@ class PropositionStoreTemplate(private val store: PropositionStore) {
      */
     val supportsVector: Boolean get() = (store as? VectorSearchCapable)?.supportsVector ?: false
 
-    /** Whether the wrapped store honestly backs abstraction-hierarchy traversal. */
+    /**
+     * Whether the wrapped store honestly backs abstraction-hierarchy traversal. A plain structural
+     * check, unlike [supportsVector]: graph traversal has no optional collaborator that can be absent
+     * at wiring time, so implementing [GraphTraversalCapable] is the whole story. If a graph store ever
+     * gains a dependency it can be wired without (as vector has its embedder), give it the same
+     * behavioural `supportsGraph` hook the vector path uses.
+     */
     val supportsGraph: Boolean get() = store is GraphTraversalCapable
 }

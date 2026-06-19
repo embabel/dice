@@ -45,15 +45,22 @@ internal fun Proposition.passesMinTrust(threshold: Double?): Boolean {
  * means that filter is disabled. Ordering and limiting are not part of this predicate.
  *
  * @param prop the proposition to test
+ * @param asOf the instant at which effective confidence is evaluated; pass one value for the whole
+ *   query so filtering and ordering agree. Defaults to the query's `effectiveConfidenceAsOf`, or now.
  * @return `true` if the proposition satisfies every active filter
  */
-internal fun PropositionQuery.matchesFilters(prop: Proposition): Boolean {
+internal fun PropositionQuery.matchesFilters(
+    prop: Proposition,
+    asOf: Instant = effectiveConfidenceAsOf ?: Instant.now(),
+): Boolean {
     if (contextId != null && prop.contextId != contextId) return false
     if (entityId != null && prop.mentions.none { it.resolvedId == entityId }) return false
-    if (anyEntityIds != null || allEntityIds != null) {
+    val any = anyEntityIds
+    val all = allEntityIds
+    if (any != null || all != null) {
         val propEntityIds = prop.mentions.mapNotNull { it.resolvedId }.toSet()
-        if (anyEntityIds != null && propEntityIds.none { it in anyEntityIds!! }) return false
-        if (allEntityIds != null && !allEntityIds!!.all { it in propEntityIds }) return false
+        if (any != null && propEntityIds.none { it in any }) return false
+        if (all != null && !all.all { it in propEntityIds }) return false
     }
     statuses?.let { if (it.isNotEmpty() && prop.status !in it) return false }
     if (minLevel != null && prop.level < minLevel) return false
@@ -65,7 +72,6 @@ internal fun PropositionQuery.matchesFilters(prop: Proposition): Boolean {
     if (accessedAfter != null && prop.lastAccessed < accessedAfter) return false
     if (accessedBefore != null && prop.lastAccessed > accessedBefore) return false
     minEffectiveConfidence?.let { threshold ->
-        val asOf = effectiveConfidenceAsOf ?: Instant.now()
         if (prop.effectiveConfidenceAt(asOf, decayK) < threshold) return false
     }
     if (minImportance != null && prop.importance < minImportance) return false
@@ -176,10 +182,11 @@ interface PropositionStore {
     fun query(query: PropositionQuery): List<Proposition> {
         // Delegates filtering to the shared per-proposition predicate so this query
         // and the vector-search pre-filter always agree. Ordering and limiting follow.
-        var resultList = findAll().filter { query.matchesFilters(it) }
+        // One evaluation instant for the whole query, so filtering and ordering agree.
+        val asOf = query.effectiveConfidenceAsOf ?: Instant.now()
+        var resultList = findAll().filter { query.matchesFilters(it, asOf) }
 
         // Apply ordering
-        val asOf = query.effectiveConfidenceAsOf ?: Instant.now()
         resultList = when (query.orderBy) {
             PropositionQuery.OrderBy.NONE -> resultList
             PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC ->

@@ -541,7 +541,9 @@ data class LlmPropositionReviser(
                     "Generalized: {} generalizes {} existing propositions",
                     newProposition.text, generalizedProps.size
                 )
-                RevisionResult.Generalized(newProposition, generalizedProps)
+                // The abstraction is newly stored, like New/Merged/Reinforced — score it too, so a
+                // trust-ranked retrieval can actually select it. (Generalization is not a conflict.)
+                RevisionResult.Generalized(scoreAndCache(newProposition), generalizedProps)
             }
 
             mostSimilar != null -> {

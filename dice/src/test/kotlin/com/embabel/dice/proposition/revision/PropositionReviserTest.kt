@@ -902,7 +902,7 @@ class PropositionReviserTest {
         }
 
         @Test
-        fun `wired scorer caches trust score on new merged and reinforced but not contradicted`() {
+        fun `wired scorer caches trust score on new merged reinforced and generalized but not contradicted`() {
             val repository = TestPropositionRepository(defaultScore = 0.3)
             val existing = createProposition("Alice is a software engineer", confidence = 0.7)
             repository.save(existing)
@@ -936,6 +936,15 @@ class PropositionReviserTest {
             )
             assertTrue(reinforcedResult is RevisionResult.Reinforced)
             assertEquals(0.8, (reinforcedResult as RevisionResult.Reinforced).revised.trustScore())
+
+            // Generalized via classified path — the new abstraction is retained, so it is scored too
+            val generalizedResult = reviser.classifiedToResult(
+                createProposition("Engineers write software", confidence = 0.8),
+                listOf(ClassifiedProposition(existing, PropositionRelation.GENERALIZES, 0.6, "Abstraction")),
+                repository,
+            )
+            assertTrue(generalizedResult is RevisionResult.Generalized)
+            assertEquals(0.8, (generalizedResult as RevisionResult.Generalized).proposition.trustScore())
 
             // Contradicted via classified path — must NOT carry a trust score
             val contradictedResult = reviser.classifiedToResult(

@@ -23,6 +23,7 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.PropositionStoreType
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import java.nio.file.Files
@@ -47,6 +48,12 @@ import java.util.concurrent.ConcurrentHashMap
  * (and recomputed on load) so cosine similarity search works after a reload. When absent (the
  * default), vector similarity degrades gracefully to empty results, while plain storage and
  * lookups keep working.
+ *
+ * Writes are serialized under a single lock, but reads are not — they iterate the live maps. Because
+ * a save records the proposition just before its embedding, a read that interleaves mid-save can see
+ * the proposition without its vector yet and drop it from that one similarity result; it reappears on
+ * the next read. That eventual consistency is fine for a single-process reference store, but it is not
+ * the snapshot isolation a transactional backend would give you.
  *
  * The store [Path] is treated as trusted caller-supplied input; guarding it against path
  * traversal or untrusted locations is the consumer's responsibility. The JSON is deserialized
@@ -87,6 +94,9 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
 
     override val luceneSyntaxNotes: String
         get() = "no lucene support"
+
+    /** Durable across restarts (the file on [path]), so callers branching on persistence see the truth. */
+    override val storeType: PropositionStoreType get() = PropositionStoreType.STORED
 
     /** Vector search only works when an embedder was supplied; otherwise the type claims it but can't. */
     override val supportsVector: Boolean get() = embeddingService != null

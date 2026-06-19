@@ -27,6 +27,7 @@ import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.matchesFilters
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -102,7 +103,9 @@ class InMemoryPropositionRepository(
         // Pre-filter propositions before computing similarities. Delegates to the same shared
         // predicate as query() so the vector pre-filter honours every filter the composable query
         // does (temporal windows, effective-confidence, importance, trust) — not just a subset.
-        val candidates = propositions.values.filter { query.matchesFilters(it) }
+        // One evaluation instant for the whole pre-filter, so every candidate is judged against the same now.
+        val asOf = query.effectiveConfidenceAsOf ?: Instant.now()
+        val candidates = propositions.values.filter { query.matchesFilters(it, asOf) }
 
         return candidates
             .mapNotNull { prop ->
