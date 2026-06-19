@@ -91,4 +91,23 @@
         </repository>
     </repositories>
 
+    <build>
+        <plugins>
+            <plugin>
+                <!--
+                    Pin the Docker Engine API version the Testcontainers docker-java client uses;
+                    its default is below the engine minimum and disables container-backed tests.
+                    Honoured only as a JVM system property, and tests fork, so it must be set here.
+                -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <api.version>1.41</api.version>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
 </project>
