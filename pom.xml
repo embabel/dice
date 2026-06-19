@@ -37,7 +37,7 @@
             to Kotlin 2.2.21+.
         -->
         <tuprolog.version>1.0.4</tuprolog.version>
-        <drivine.version>0.0.57</drivine.version>
+        <drivine.version>0.0.58</drivine.version>
     </properties>
 
     <dependencyManagement>

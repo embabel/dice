@@ -323,25 +323,18 @@ open class DrivinePropositionRepository(
         query.minImportance?.let { proposition.importance gte it }
         query.minReinforceCount?.let { proposition.reinforceCount gte it }
         if (includeEffectiveConfidence) query.minEffectiveConfidence?.let { proposition.effectiveConfidence gte it }
+        query.minTrustScore?.let { threshold ->
+            // Fail-open, matching the in-memory backend's passesMinTrust: an unscored proposition (no
+            // cached trust property) passes the gate, so the predicate is "missing OR >= threshold".
+            // Trust rides the @PropertyBag, stored flat as `metadata.<key>`, so it pushes into the DB.
+            anyOf {
+                proposition.metadata.key(DiceMetadataKeys.TRUST_SCORE).isNull()
+                proposition.metadata.key(DiceMetadataKeys.TRUST_SCORE) gte threshold
+            }
+        }
         query.entityId?.let { id -> mentions.any { resolvedId eq id } }
         query.anyEntityIds?.let { ids -> mentions.any { resolvedId inList ids } }
         query.allEntityIds?.forEach { id -> mentions.any { resolvedId eq id } }
-        // Trust gate, fail-open to match the in-memory backend's passesMinTrust: an unscored proposition
-        // (no cached trust property) passes, so the predicate is "score present and >= threshold, OR score
-        // missing". Trust rides the @PropertyBag, stored flat as `metadata.<key>`, so it pushes into the DB.
-        //
-        // The branch order and the position of this block both matter, because the query builder reserves
-        // a parameter slot for the IS-NULL branch in the generated Cypher but binds no value for it:
-        //  - the `>=` comparison comes first so its bound value lands on the parameter index the builder
-        //    emits for it; and
-        //  - this gate is the last filter, so the null-check's empty slot can't shift the parameter index
-        //    of any predicate that follows it (e.g. an entity filter combined with minTrustScore).
-        query.minTrustScore?.let { threshold ->
-            anyOf {
-                proposition.metadata.key(DiceMetadataKeys.TRUST_SCORE) gte threshold
-                proposition.metadata.key(DiceMetadataKeys.TRUST_SCORE).isNull()
-            }
-        }
     }
 
     context(builder: OrderBuilder<PropositionViewQueryDsl>)
