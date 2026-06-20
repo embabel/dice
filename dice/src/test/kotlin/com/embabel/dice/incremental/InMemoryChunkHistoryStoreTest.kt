@@ -35,8 +35,8 @@ class InMemoryChunkHistoryStoreTest {
         val hash = "abc123"
 
         store.recordProcessed(record(contextId = tenantA, sourceId = "doc-1", hash = hash, endIndex = 5))
-        assertTrue(store.isProcessed(tenantA, hash))
-        assertFalse(store.isProcessed(tenantB, hash))
+        assertTrue(store.isProcessed(HashKey(tenantA, hash)))
+        assertFalse(store.isProcessed(HashKey(tenantB, hash)))
     }
 
     @Test
@@ -46,8 +46,8 @@ class InMemoryChunkHistoryStoreTest {
         store.recordProcessed(record(contextId = tenantA, sourceId = "thread-1", hash = "h1", endIndex = 3))
         store.recordProcessed(record(contextId = tenantB, sourceId = "thread-1", hash = "h2", endIndex = 9))
 
-        assertEquals(3, store.getLastBookmark(tenantA, "thread-1")?.endIndex)
-        assertEquals(9, store.getLastBookmark(tenantB, "thread-1")?.endIndex)
+        assertEquals(3, store.getLastBookmark(BookmarkKey(tenantA, "thread-1"))?.endIndex)
+        assertEquals(9, store.getLastBookmark(BookmarkKey(tenantB, "thread-1"))?.endIndex)
     }
 
     @Test
@@ -58,10 +58,10 @@ class InMemoryChunkHistoryStoreTest {
 
         store.clearByContext(tenantA)
 
-        assertNull(store.getLastBookmark(tenantA, "doc-1"))
-        assertFalse(store.isProcessed(tenantA, "h1"))
-        assertEquals(4, store.getLastBookmark(tenantB, "doc-1")?.endIndex)
-        assertTrue(store.isProcessed(tenantB, "h2"))
+        assertNull(store.getLastBookmark(BookmarkKey(tenantA, "doc-1")))
+        assertFalse(store.isProcessed(HashKey(tenantA, "h1")))
+        assertEquals(4, store.getLastBookmark(BookmarkKey(tenantB, "doc-1"))?.endIndex)
+        assertTrue(store.isProcessed(HashKey(tenantB, "h2")))
     }
 
     @Test
@@ -72,10 +72,10 @@ class InMemoryChunkHistoryStoreTest {
 
         store.clearAll()
 
-        assertNull(store.getLastBookmark(tenantA, "doc-1"))
-        assertNull(store.getLastBookmark(tenantB, "doc-2"))
-        assertFalse(store.isProcessed(tenantA, "h1"))
-        assertFalse(store.isProcessed(tenantB, "h2"))
+        assertNull(store.getLastBookmark(BookmarkKey(tenantA, "doc-1")))
+        assertNull(store.getLastBookmark(BookmarkKey(tenantB, "doc-2")))
+        assertFalse(store.isProcessed(HashKey(tenantA, "h1")))
+        assertFalse(store.isProcessed(HashKey(tenantB, "h2")))
     }
 
     @Test
@@ -84,11 +84,11 @@ class InMemoryChunkHistoryStoreTest {
         val hash = "same-content"
 
         store.recordProcessed(record(contextId = tenantA, sourceId = "doc-1", hash = hash, endIndex = 1))
-        assertTrue(store.isProcessed(tenantA, hash))
+        assertTrue(store.isProcessed(HashKey(tenantA, hash)))
 
         store.clearByContext(tenantA)
 
-        assertFalse(store.isProcessed(tenantA, hash))
+        assertFalse(store.isProcessed(HashKey(tenantA, hash)))
     }
 
     private fun record(
@@ -97,9 +97,8 @@ class InMemoryChunkHistoryStoreTest {
         hash: String,
         endIndex: Int,
     ) = ProcessedChunkRecord(
-        contextId = contextId,
-        contentHash = hash,
-        sourceId = sourceId,
+        bookmarkKey = BookmarkKey(contextId, sourceId),
+        hashKey = HashKey(contextId, hash),
         startIndex = 0,
         endIndex = endIndex,
         processedAt = now,

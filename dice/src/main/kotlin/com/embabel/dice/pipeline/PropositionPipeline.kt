@@ -23,7 +23,9 @@ import com.embabel.dice.common.resolver.ChainedEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
 import com.embabel.dice.common.resolver.KnownEntityResolver
 import com.embabel.dice.common.support.Sha256ContentHasher
+import com.embabel.dice.incremental.BookmarkKey
 import com.embabel.dice.incremental.ChunkHistoryStore
+import com.embabel.dice.incremental.HashKey
 import com.embabel.dice.incremental.ProcessedChunkRecord
 import com.embabel.dice.proposition.PropositionExtractor
 import com.embabel.dice.proposition.PropositionRepository
@@ -190,7 +192,7 @@ class PropositionPipeline private constructor(
     ): ChunkPropositionResult? {
         if (historyStore != null) {
             val hash = contentHasher.hash(text)
-            if (historyStore.isProcessed(context.contextId, hash)) {
+            if (historyStore.isProcessed(HashKey(context.contextId, hash))) {
                 logger.debug("Content already processed (hash: {})", hash.take(8))
                 return null
             }
@@ -206,9 +208,8 @@ class PropositionPipeline private constructor(
             val result = processChunk(chunk, context)
             historyStore.recordProcessed(
                 ProcessedChunkRecord(
-                    contextId = context.contextId,
-                    contentHash = hash,
-                    sourceId = sourceId,
+                    bookmarkKey = BookmarkKey(context.contextId, sourceId),
+                    hashKey = HashKey(context.contextId, hash),
                     startIndex = 0,
                     endIndex = 1,
                     processedAt = Instant.now(),

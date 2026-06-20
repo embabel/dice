@@ -22,13 +22,16 @@ import org.drivine.annotation.Unique
 
 /**
  * Tracks chunks already processed during incremental analysis, so re-runs skip unchanged content.
- * Keyed by content hash (also the node id).
+ * Keyed by context-scoped content hash (also the node id).
  */
 @NodeFragment(labels = ["ProcessedChunk"])
 data class ProcessedChunkNode(
     @NodeId
     @Unique
     val id: String,
+
+    @RangeIndex
+    val contextId: String,
 
     val contentHash: String,
 

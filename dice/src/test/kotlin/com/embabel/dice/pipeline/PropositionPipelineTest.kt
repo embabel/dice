@@ -32,6 +32,7 @@ import com.embabel.agent.core.DynamicType
 import com.embabel.agent.core.ValidatedPropertyDefinition
 import com.embabel.dice.common.validation.NoVagueReferences
 import com.embabel.dice.common.validation.LengthConstraint
+import com.embabel.dice.incremental.BookmarkKey
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore
 import com.embabel.dice.proposition.*
 import com.embabel.dice.text2graph.builder.Animal
@@ -1241,7 +1242,7 @@ class PropositionPipelineTest {
             )
 
             // Verify the bookmark was recorded
-            val bookmark = historyStore.getLastBookmark(testContextId, "doc-1")
+            val bookmark = historyStore.getLastBookmark(BookmarkKey(testContextId, "doc-1"))
             assertNotNull(bookmark)
             assertEquals("doc-1", bookmark!!.sourceId)
             assertEquals(1, bookmark.endIndex)

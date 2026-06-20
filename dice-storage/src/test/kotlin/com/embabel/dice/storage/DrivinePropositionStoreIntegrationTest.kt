@@ -18,6 +18,8 @@ package com.embabel.dice.storage
 import com.embabel.agent.core.ContextId
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.incremental.BookmarkKey
+import com.embabel.dice.incremental.HashKey
 import com.embabel.dice.incremental.ProcessedChunkRecord
 import com.embabel.dice.proposition.DecaySweepConfig
 import com.embabel.dice.proposition.EntityMention
@@ -30,6 +32,7 @@ import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.temporal.TemporalMetadata
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -214,11 +217,28 @@ class DrivinePropositionStoreIntegrationTest {
 
     @Test
     fun `chunk history records, dedups, and bookmarks`() {
-        assertTrue(!chunkHistoryStore.isProcessed("hash-1"))
-        chunkHistoryStore.recordProcessed(ProcessedChunkRecord("hash-1", "src-1", 0, 100, Instant.now()))
-        chunkHistoryStore.recordProcessed(ProcessedChunkRecord("hash-2", "src-1", 100, 250, Instant.now().plusSeconds(1)))
-        assertTrue(chunkHistoryStore.isProcessed("hash-1"))
-        assertEquals(250, chunkHistoryStore.getLastBookmark("src-1")?.endIndex)
+        val contextId = ContextId("chunk-ctx")
+        assertFalse(chunkHistoryStore.isProcessed(HashKey(contextId, "hash-1")))
+        chunkHistoryStore.recordProcessed(
+            ProcessedChunkRecord(
+                bookmarkKey = BookmarkKey(contextId, "src-1"),
+                hashKey = HashKey(contextId, "hash-1"),
+                startIndex = 0,
+                endIndex = 100,
+                processedAt = Instant.now(),
+            ),
+        )
+        chunkHistoryStore.recordProcessed(
+            ProcessedChunkRecord(
+                bookmarkKey = BookmarkKey(contextId, "src-1"),
+                hashKey = HashKey(contextId, "hash-2"),
+                startIndex = 100,
+                endIndex = 250,
+                processedAt = Instant.now().plusSeconds(1),
+            ),
+        )
+        assertTrue(chunkHistoryStore.isProcessed(HashKey(contextId, "hash-1")))
+        assertEquals(250, chunkHistoryStore.getLastBookmark(BookmarkKey(contextId, "src-1"))?.endIndex)
     }
 
     @Test

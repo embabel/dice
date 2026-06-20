@@ -16,7 +16,7 @@
 package com.embabel.dice.incremental
 
 import com.embabel.agent.core.ContextId
-import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Tracks the history of processed chunks for incremental analysis.
@@ -36,12 +36,12 @@ interface ChunkHistoryStore {
      * window starts and whether enough new items exist to trigger processing.
      * Returns null if the source has never been processed in that context.
      */
-    fun getLastBookmark(contextId: ContextId, sourceId: String): AnalysisBookmark?
+    fun getLastBookmark(key: BookmarkKey): AnalysisBookmark?
 
     /**
      * Check if content with the given hash has already been processed in a context.
      */
-    fun isProcessed(contextId: ContextId, contentHash: String): Boolean
+    fun isProcessed(key: HashKey): Boolean
 
     /**
      * Record that a chunk has been processed.
@@ -60,83 +60,21 @@ interface ChunkHistoryStore {
 }
 
 /**
- * Resume marker for incremental source analysis within a [ContextId].
- *
- * When [AbstractIncrementalAnalyzer] processes a growing source (conversation,
- * message stream, log tail), it cannot re-read from the beginning each time.
- * After each successful window it records an [AnalysisBookmark] so the next
- * invocation knows how far analysis has progressed for that `(contextId, sourceId)`.
- *
- * [endIndex] is the exclusive upper bound of items already incorporated into a
- * processed window. The analyzer uses it to:
- * - compute how many new items have arrived since the last run ([WindowConfig.triggerInterval])
- * - start the next window with optional overlap ([WindowConfig.overlapSize]) for LLM context
- *
- * Bookmarks complement content-hash deduplication ([ChunkHistoryStore.isProcessed]):
- * the hash prevents re-processing identical *text*, while the bookmark prevents
- * re-scanning from index zero when new items append to the same source.
- *
- * Cleared by [ChunkHistoryStore.clearByContext] when a session or tenant ends.
- *
- * @property sourceId Identifier of the incremental source (e.g. conversation id)
- * @property endIndex Exclusive index of the last analyzed item in the source sequence
- * @property processedAt When this bookmark was last updated
- */
-data class AnalysisBookmark(
-    val sourceId: String,
-    val endIndex: Int,
-    val processedAt: Instant,
-)
-
-/**
- * Record of a processed chunk.
- */
-data class ProcessedChunkRecord(
-    val contextId: ContextId,
-    val contentHash: String,
-    val sourceId: String,
-    val startIndex: Int,
-    val endIndex: Int,
-    val processedAt: Instant,
-)
-
-/**
- * Configuration for windowed processing.
- */
-data class WindowConfig(
-    /**
-     * Maximum number of items to process in one window.
-     */
-    val windowSize: Int = 20,
-
-    /**
-     * Number of items to overlap between windows for context.
-     */
-    val overlapSize: Int = 2,
-
-    /**
-     * Minimum number of new items required before triggering analysis.
-     */
-    val triggerInterval: Int = 4,
-)
-
-/**
- * Simple in-memory implementation for testing.
+ * Thread-safe in-memory implementation for testing.
+ * Not intended for production use.
  */
 class InMemoryChunkHistoryStore : ChunkHistoryStore {
 
-    private val bookmarks = mutableMapOf<BookmarkKey, AnalysisBookmark>()
-    private val processedHashes = mutableSetOf<HashKey>()
+    private val bookmarks = ConcurrentHashMap<BookmarkKey, AnalysisBookmark>()
+    private val processedHashes = ConcurrentHashMap.newKeySet<HashKey>()
 
-    override fun getLastBookmark(contextId: ContextId, sourceId: String): AnalysisBookmark? =
-        bookmarks[BookmarkKey(contextId, sourceId)]
+    override fun getLastBookmark(key: BookmarkKey): AnalysisBookmark? = bookmarks[key]
 
-    override fun isProcessed(contextId: ContextId, contentHash: String): Boolean =
-        HashKey(contextId, contentHash) in processedHashes
+    override fun isProcessed(key: HashKey): Boolean = key in processedHashes
 
     override fun recordProcessed(record: ProcessedChunkRecord) {
-        processedHashes.add(HashKey(record.contextId, record.contentHash))
-        bookmarks[BookmarkKey(record.contextId, record.sourceId)] = AnalysisBookmark(
+        processedHashes.add(record.hashKey)
+        bookmarks[record.bookmarkKey] = AnalysisBookmark(
             sourceId = record.sourceId,
             endIndex = record.endIndex,
             processedAt = record.processedAt,
@@ -152,8 +90,4 @@ class InMemoryChunkHistoryStore : ChunkHistoryStore {
         bookmarks.clear()
         processedHashes.clear()
     }
-
-    private data class BookmarkKey(val contextId: ContextId, val sourceId: String)
-
-    private data class HashKey(val contextId: ContextId, val contentHash: String)
 }

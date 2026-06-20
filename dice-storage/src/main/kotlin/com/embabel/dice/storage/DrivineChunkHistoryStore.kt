@@ -15,8 +15,11 @@
  */
 package com.embabel.dice.storage
 
+import com.embabel.agent.core.ContextId
 import com.embabel.dice.incremental.AnalysisBookmark
+import com.embabel.dice.incremental.BookmarkKey
 import com.embabel.dice.incremental.ChunkHistoryStore
+import com.embabel.dice.incremental.HashKey
 import com.embabel.dice.incremental.ProcessedChunkRecord
 import com.embabel.dice.storage.model.ProcessedChunkNode
 import org.drivine.manager.*
@@ -34,16 +37,17 @@ open class DrivineChunkHistoryStore(
     private val persistenceManager: PersistenceManager,
 ) : ChunkHistoryStore {
 
-    /** The node id is the content hash, so existence is a direct load-by-id. */
+    /** Node id is scoped by context so the same content hash can exist in different contexts. */
     @Transactional(readOnly = true)
-    override fun isProcessed(contentHash: String): Boolean =
-        graphObjectManager.load<ProcessedChunkNode>(contentHash) != null
+    override fun isProcessed(key: HashKey): Boolean =
+        graphObjectManager.load<ProcessedChunkNode>(storageId(key)) != null
 
     @Transactional
     override fun recordProcessed(record: ProcessedChunkRecord) {
         graphObjectManager.save(
             ProcessedChunkNode(
-                id = record.contentHash,
+                id = storageId(record.hashKey),
+                contextId = record.contextId.value,
                 contentHash = record.contentHash,
                 sourceId = record.sourceId,
                 startIndex = record.startIndex,
@@ -60,17 +64,28 @@ open class DrivineChunkHistoryStore(
      * the node itself is then loaded via the high-level API (correct temporal deserialization).
      */
     @Transactional(readOnly = true)
-    override fun getLastBookmark(sourceId: String): AnalysisBookmark? {
+    override fun getLastBookmark(key: BookmarkKey): AnalysisBookmark? {
         val latestId = persistenceManager.maybeGetOne(
             QuerySpecification
                 .withStatement(
-                    "MATCH (c:ProcessedChunk {sourceId: \$sourceId}) " +
+                    "MATCH (c:ProcessedChunk {contextId: \$contextId, sourceId: \$sourceId}) " +
                         "RETURN c.id AS id ORDER BY c.processedAt DESC LIMIT 1"
                 )
-                .bind(mapOf("sourceId" to sourceId))
+                .bind(mapOf("contextId" to key.contextId.value, "sourceId" to key.sourceId))
                 .transform(String::class.java)
         ) ?: return null
         val node = graphObjectManager.load<ProcessedChunkNode>(latestId) ?: return null
         return AnalysisBookmark(sourceId = node.sourceId, endIndex = node.endIndex, processedAt = node.processedAt)
     }
+
+    @Transactional
+    override fun clearByContext(contextId: ContextId) {
+        persistenceManager.execute(
+            QuerySpecification
+                .withStatement("MATCH (c:ProcessedChunk {contextId: \$contextId}) DETACH DELETE c")
+                .bind(mapOf("contextId" to contextId.value))
+        )
+    }
+
+    private fun storageId(key: HashKey): String = "${key.contextId.value}|${key.contentHash}"
 }
