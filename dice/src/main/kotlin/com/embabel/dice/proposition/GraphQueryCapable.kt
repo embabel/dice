@@ -15,7 +15,7 @@
  */
 package com.embabel.dice.proposition
 
-import com.embabel.dice.common.AuthorityTier
+import com.embabel.dice.spi.AuthorityTier
 import com.embabel.dice.query.graph.GraphNeighborhood
 import com.embabel.dice.query.graph.GraphPath
 import com.embabel.dice.query.graph.PropositionLineage

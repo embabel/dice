@@ -17,10 +17,10 @@ package com.embabel.dice.projection.graph
 
 import com.embabel.agent.core.AllowedRelationship
 import com.embabel.agent.core.DataDictionary
-import com.embabel.dice.common.AuthorityResolver
+import com.embabel.dice.spi.AuthorityResolver
 import com.embabel.dice.common.Relation
 import com.embabel.dice.common.Relations
-import com.embabel.dice.common.StructuralAuthorityResolver
+import com.embabel.dice.spi.StructuralAuthorityResolver
 import com.embabel.dice.proposition.*
 import org.slf4j.LoggerFactory
 

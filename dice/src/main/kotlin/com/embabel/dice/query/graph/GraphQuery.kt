@@ -16,9 +16,9 @@
 package com.embabel.dice.query.graph
 
 import com.embabel.agent.core.ContextId
-import com.embabel.dice.common.AuthorityResolver
-import com.embabel.dice.common.AuthorityTier
-import com.embabel.dice.common.StructuralAuthorityResolver
+import com.embabel.dice.spi.AuthorityResolver
+import com.embabel.dice.spi.AuthorityTier
+import com.embabel.dice.spi.StructuralAuthorityResolver
 import com.embabel.dice.proposition.GraphQueryCapable
 import com.embabel.dice.proposition.GraphTraversalCapable
 import com.embabel.dice.proposition.Proposition

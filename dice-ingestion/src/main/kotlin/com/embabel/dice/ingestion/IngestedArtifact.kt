@@ -15,7 +15,7 @@
  */
 package com.embabel.dice.ingestion
 
-import com.embabel.dice.common.AuthorityTier
+import com.embabel.dice.spi.AuthorityTier
 import com.embabel.dice.provenance.SourceLocator
 import java.time.Instant
 

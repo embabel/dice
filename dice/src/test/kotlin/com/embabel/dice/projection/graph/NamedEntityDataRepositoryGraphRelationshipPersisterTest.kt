@@ -20,8 +20,8 @@ import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.agent.rag.service.RelationshipData
 import com.embabel.agent.rag.service.RetrievableIdentifier
-import com.embabel.dice.common.AuthorityTier
-import com.embabel.dice.common.FixedAuthorityResolver
+import com.embabel.dice.spi.AuthorityTier
+import com.embabel.dice.spi.FixedAuthorityResolver
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition

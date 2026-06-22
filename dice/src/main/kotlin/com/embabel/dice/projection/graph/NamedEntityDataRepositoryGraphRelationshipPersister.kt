@@ -19,8 +19,8 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.agent.rag.service.RelationshipData
 import com.embabel.agent.rag.service.RetrievableIdentifier
-import com.embabel.dice.common.AuthorityResolver
-import com.embabel.dice.common.StructuralAuthorityResolver
+import com.embabel.dice.spi.AuthorityResolver
+import com.embabel.dice.spi.StructuralAuthorityResolver
 import com.embabel.dice.proposition.ProjectionResults
 import com.embabel.dice.proposition.Proposition
 import org.slf4j.LoggerFactory

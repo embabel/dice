@@ -16,7 +16,7 @@
 package com.embabel.dice.query.graph
 
 import com.embabel.agent.core.ContextId
-import com.embabel.dice.common.AuthorityTier
+import com.embabel.dice.spi.AuthorityTier
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.GraphQueryCapable
 import com.embabel.dice.proposition.MentionRole

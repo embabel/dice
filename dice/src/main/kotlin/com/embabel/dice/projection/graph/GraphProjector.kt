@@ -17,7 +17,7 @@ package com.embabel.dice.projection.graph
 
 import com.embabel.agent.core.DataDictionary
 import com.embabel.common.core.types.HasInfoString
-import com.embabel.dice.common.AuthorityTier
+import com.embabel.dice.spi.AuthorityTier
 import com.embabel.dice.proposition.*
 import com.embabel.dice.text2graph.RelationshipInstance
 
