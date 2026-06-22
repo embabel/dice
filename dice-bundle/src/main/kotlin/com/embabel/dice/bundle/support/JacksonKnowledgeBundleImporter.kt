@@ -39,7 +39,7 @@ import java.io.Reader
  *
  * Bundles larger than [maxBundleBytes] are rejected before deserialization to guard
  * against resource exhaustion from untrusted input. The default cap is 50 MB. This
- * guard applies to [importFromString] (checked by string length). The [importFromStream]
+ * guard applies to [importFromString] (checked by UTF-8 byte length). The [importFromStream]
  * and [importFromReader] overrides use Jackson's native streaming path without
  * buffering into a String; callers passing untrusted streams should apply their own
  * length limit at the transport layer or use [importFromString] with a pre-validated string.
@@ -75,7 +75,9 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
         store: PropositionStore,
         conflictPolicy: ImportConflictPolicy,
     ): BundleImportOutcome {
-        val byteLength = serialised.length
+        // Measure the actual UTF-8 byte size, not String.length (which counts UTF-16 code units and
+        // would under-count multi-byte characters, letting an over-limit bundle slip past the guard).
+        val byteLength = serialised.toByteArray(Charsets.UTF_8).size
         if (byteLength > maxBundleBytes) {
             logger.warn(
                 "Rejecting bundle: serialized size {} bytes exceeds limit of {} bytes",

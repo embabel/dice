@@ -348,6 +348,20 @@ class KnowledgeBundleRoundTripTest {
         assertEquals(0, store.count())
     }
 
+    @Test
+    fun `bundle within the char count but over the byte limit is rejected`() {
+        // Five 3-byte UTF-8 characters: 5 chars (under a 10-char count) but 15 bytes (over the 10-byte cap).
+        // A char-length guard would wrongly admit this; the byte-length guard must reject it.
+        val tinyImporter = JacksonKnowledgeBundleImporter(maxBundleBytes = 10)
+        val store = InMemoryPropositionRepository()
+        val outcome = tinyImporter.importFromString("界界界界界", store)
+
+        assertInstanceOf(BundleImportOutcome.ParseFailure::class.java, outcome)
+        val failure = outcome as BundleImportOutcome.ParseFailure
+        assertTrue(failure.reason.contains("exceeds maximum"), "Expected byte-count size rejection: ${failure.reason}")
+        assertEquals(0, store.count())
+    }
+
     // -------------------------------------------------------------------------
     // Stream and reader import (WR-02)
     // -------------------------------------------------------------------------
