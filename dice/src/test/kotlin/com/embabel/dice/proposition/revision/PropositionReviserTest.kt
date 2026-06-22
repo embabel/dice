@@ -24,6 +24,9 @@ import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.UriLocator
+import com.embabel.dice.provenance.mergeProvenanceEntries
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
@@ -411,6 +414,59 @@ class PropositionReviserTest {
             // Decay should slow: 0.2 * 0.85 = 0.17
             assertEquals(0.17, reinforced.revised.decay, 0.001)
             assertTrue(reinforced.revised.decay < existing.decay)
+        }
+    }
+
+    @Nested
+    inner class ProvenanceAccumulationTests {
+
+        private lateinit var repository: TestPropositionRepository
+        private lateinit var reviser: TestPropositionReviser
+
+        @BeforeEach
+        fun setup() {
+            repository = TestPropositionRepository()
+            reviser = TestPropositionReviser()
+        }
+
+        @Test
+        fun `merged proposition accumulates provenance entries`() {
+            val first = ProvenanceEntry(locator = UriLocator("https://example.com/a"), chunkId = "c1")
+            val second = ProvenanceEntry(locator = UriLocator("https://example.com/b"), chunkId = "c2")
+            val existing = createProposition("Alice works at Google").copy(provenanceEntries = listOf(first))
+            repository.save(existing)
+
+            reviser.nextClassification = listOf(
+                ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.95, "Same fact"),
+            )
+
+            val newProp = createProposition("Alice is employed at Google").copy(provenanceEntries = listOf(second))
+            val result = reviser.revise(newProp, repository)
+
+            assertTrue(result is RevisionResult.Merged)
+            val merged = (result as RevisionResult.Merged).revised
+            assertEquals(2, merged.provenanceEntries.size)
+            assertTrue(merged.provenanceEntries.containsAll(listOf(first, second)))
+        }
+
+        @Test
+        fun `reinforced proposition accumulates provenance entries`() {
+            val first = ProvenanceEntry(locator = UriLocator("https://example.com/a"), chunkId = "c1")
+            val second = ProvenanceEntry(locator = UriLocator("https://example.com/b"), chunkId = "c2")
+            val existing = createProposition("Alice likes Kotlin").copy(provenanceEntries = listOf(first))
+            repository.save(existing)
+
+            reviser.nextClassification = listOf(
+                ClassifiedProposition(existing, PropositionRelation.SIMILAR, 0.75, "Related"),
+            )
+
+            val newProp = createProposition("Alice enjoys Kotlin").copy(provenanceEntries = listOf(second))
+            val result = reviser.revise(newProp, repository)
+
+            assertTrue(result is RevisionResult.Reinforced)
+            val reinforced = (result as RevisionResult.Reinforced).revised
+            assertEquals(2, reinforced.provenanceEntries.size)
+            assertTrue(reinforced.provenanceEntries.containsAll(listOf(first, second)))
         }
     }
 
@@ -1140,6 +1196,7 @@ class TestPropositionReviser(
             confidence = boostedConfidence,
             decay = slowedDecay,
             grounding = combinedGrounding,
+            provenanceEntries = mergeProvenanceEntries(existing.provenanceEntries, new.provenanceEntries),
             reinforceCount = existing.reinforceCount + 1,
         )
     }
@@ -1153,6 +1210,7 @@ class TestPropositionReviser(
             confidence = boostedConfidence,
             decay = slowedDecay,
             grounding = combinedGrounding,
+            provenanceEntries = mergeProvenanceEntries(existing.provenanceEntries, new.provenanceEntries),
             reinforceCount = existing.reinforceCount + 1,
         )
     }

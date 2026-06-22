@@ -21,6 +21,7 @@ import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.common.filter.MentionFilter
+import com.embabel.dice.provenance.ProvenanceEntry
 
 /**
  * Extracts propositions from text chunks.
@@ -70,12 +71,14 @@ interface PropositionExtractor {
      * @param suggestedPropositions The original suggested propositions
      * @param resolutions Entity resolution results from EntityResolver
      * @param context The source analysis context containing contextId
+     * @param provenanceEntries Rich grounding for the chunk (from [com.embabel.dice.provenance.ChunkProvenanceFactory])
      * @return Propositions with entity IDs resolved where possible
      */
     fun resolvePropositions(
         suggestedPropositions: SuggestedPropositions,
         resolutions: Resolutions<SuggestedEntityResolution>,
         context: SourceAnalysisContext,
+        provenanceEntries: List<ProvenanceEntry> = emptyList(),
     ): List<Proposition>
 }
 

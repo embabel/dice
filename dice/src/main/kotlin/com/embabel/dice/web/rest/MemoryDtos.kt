@@ -21,6 +21,7 @@ import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.revision.RevisionResult
+import com.embabel.dice.provenance.ProvenanceEntry
 import com.fasterxml.jackson.annotation.JsonInclude
 import java.time.Instant
 
@@ -174,6 +175,7 @@ data class PropositionDto(
     val decay: Double,
     val reasoning: String?,
     val grounding: List<String>,
+    val provenanceEntries: List<ProvenanceEntry> = emptyList(),
     val created: Instant,
     val revised: Instant,
     val lastAccessed: Instant,
@@ -190,6 +192,7 @@ data class PropositionDto(
             decay = proposition.decay,
             reasoning = proposition.reasoning,
             grounding = proposition.grounding,
+            provenanceEntries = proposition.provenanceEntries,
             created = proposition.created,
             revised = proposition.revised,
             lastAccessed = proposition.lastAccessed,

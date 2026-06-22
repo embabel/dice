@@ -35,6 +35,10 @@ import com.embabel.dice.common.validation.LengthConstraint
 import com.embabel.dice.incremental.BookmarkKey
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore
 import com.embabel.dice.proposition.*
+import com.embabel.dice.provenance.ConnectorRef
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.UriLocator
+import com.embabel.dice.common.support.Sha256ContentHasher
 import com.embabel.dice.text2graph.builder.Animal
 import com.embabel.dice.text2graph.builder.Person
 import org.junit.jupiter.api.Assertions.*
@@ -161,6 +165,7 @@ class PropositionPipelineTest {
             suggestedPropositions: SuggestedPropositions,
             resolutions: Resolutions<SuggestedEntityResolution>,
             context: SourceAnalysisContext,
+            provenanceEntries: List<ProvenanceEntry>,
         ): List<Proposition> {
             // Build lookup from entity name to resolved ID
             val nameToId = mutableMapOf<String, String>()
@@ -185,6 +190,7 @@ class PropositionPipelineTest {
                     mentions = resolvedMentions,
                     confidence = suggestedProp.confidence,
                     grounding = listOf(suggestedPropositions.chunkId),
+                    provenanceEntries = provenanceEntries,
                 )
             }
         }
@@ -1291,6 +1297,58 @@ class PropositionPipelineTest {
                 ),
                 "Different context should not dedupe",
             )
+        }
+    }
+
+    @Nested
+    inner class ProvenanceWiringTests {
+
+        @Test
+        fun `processChunk populates provenanceEntries from chunk id`() {
+            val pipeline = PropositionPipeline.withExtractor(MockPropositionExtractor())
+            val chunk = Chunk(
+                id = "email:thread-42",
+                text = "mentions:Alice",
+                metadata = emptyMap(),
+                parentId = "",
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+            )
+
+            val result = pipeline.processChunk(chunk, context)
+            val proposition = result.propositions.single()
+
+            assertEquals(listOf("email:thread-42"), proposition.grounding)
+            assertEquals(1, proposition.provenanceEntries.size)
+            val entry = proposition.provenanceEntries.single()
+            assertEquals("email:thread-42", entry.chunkId)
+            assertEquals(ConnectorRef("email", "thread-42"), entry.locator)
+            assertEquals(Sha256ContentHasher.hash(chunk.text), entry.contentHash)
+        }
+
+        @Test
+        fun `processOnce uses provided content hash for provenance`() {
+            val pipeline = PropositionPipeline.withExtractor(MockPropositionExtractor())
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+                defaultSourceLocator = UriLocator("https://example.com/doc"),
+            )
+
+            val result = pipeline.processOnce(
+                text = "mentions:Alice",
+                sourceId = "doc-1",
+                context = context,
+            )!!
+
+            val entry = result.propositions.single().provenanceEntries.single()
+            assertEquals(UriLocator("https://example.com/doc"), entry.locator)
+            assertEquals("doc-1", entry.chunkId)
+            assertEquals(Sha256ContentHasher.hash("mentions:Alice"), entry.contentHash)
         }
     }
 

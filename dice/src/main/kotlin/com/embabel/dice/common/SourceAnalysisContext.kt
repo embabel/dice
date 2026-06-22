@@ -17,6 +17,7 @@ package com.embabel.dice.common
 
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
+import com.embabel.dice.provenance.SourceLocator
 
 /**
  * Base context for analyzing sources.
@@ -27,6 +28,9 @@ import com.embabel.agent.core.DataDictionary
  * @param relations optional collection of additional relation types beyond those defined in the schema
  * @param promptVariables optional additional model data for analysis. Must be passed to any templated
  * LLM prompts used.
+ * @param defaultSourceLocator optional locator for the material being analyzed in this run.
+ *   Used by [com.embabel.dice.provenance.ChunkProvenanceFactory] when chunk metadata does not
+ *   specify a more specific source.
  */
 data class SourceAnalysisContext @JvmOverloads constructor(
     val schema: DataDictionary,
@@ -35,6 +39,7 @@ data class SourceAnalysisContext @JvmOverloads constructor(
     val knownEntities: List<KnownEntity> = emptyList(),
     val relations: Relations = Relations.empty(),
     val promptVariables: Map<String, Any> = emptyMap(),
+    val defaultSourceLocator: SourceLocator? = null,
 ) {
 
     companion object {
@@ -88,6 +93,12 @@ data class SourceAnalysisContext @JvmOverloads constructor(
      */
     fun withPromptVariables(promptVariables: Map<String, Any>): SourceAnalysisContext =
         copy(promptVariables = promptVariables)
+
+    /**
+     * Returns a copy with the default [SourceLocator] for provenance on extracted propositions.
+     */
+    fun withDefaultSourceLocator(locator: SourceLocator?): SourceAnalysisContext =
+        copy(defaultSourceLocator = locator)
 
     /**
      * Builder step: has context ID, needs entity resolver.

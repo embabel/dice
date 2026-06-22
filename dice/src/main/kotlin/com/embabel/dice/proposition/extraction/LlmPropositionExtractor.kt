@@ -34,6 +34,7 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.SuggestedMention
 import com.embabel.dice.proposition.SuggestedProposition
 import com.embabel.dice.proposition.SuggestedPropositions
+import com.embabel.dice.provenance.ProvenanceEntry
 import org.slf4j.LoggerFactory
 
 
@@ -322,6 +323,7 @@ data class LlmPropositionExtractor(
         suggestedPropositions: SuggestedPropositions,
         resolutions: Resolutions<SuggestedEntityResolution>,
         context: SourceAnalysisContext,
+        provenanceEntries: List<ProvenanceEntry>,
     ): List<Proposition> {
         // Build a map from mention key to resolved entity ID
         val resolutionMap = buildResolutionMap(resolutions)
@@ -335,7 +337,11 @@ data class LlmPropositionExtractor(
                 mention.toEntityMention(resolvedId)
             }
 
-            suggested.toProposition(chunkIds = listOf(suggestedPropositions.chunkId), contextId = context.contextId)
+            suggested.toProposition(
+                chunkIds = listOf(suggestedPropositions.chunkId),
+                contextId = context.contextId,
+                provenanceEntries = provenanceEntries,
+            )
                 .copy(mentions = resolvedMentions)
         }
     }

@@ -24,6 +24,7 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.provenance.mergeProvenanceEntries
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.Locale
@@ -590,11 +591,13 @@ data class LlmPropositionReviser(
         val slowedDecay = (existing.decay * 0.7).coerceAtLeast(0.0)
         // Combine grounding
         val combinedGrounding = (existing.grounding + new.grounding).distinct()
+        val combinedProvenance = mergeProvenanceEntries(existing.provenanceEntries, new.provenanceEntries)
 
         return existing.copy(
             confidence = boostedConfidence,
             decay = slowedDecay,
             grounding = combinedGrounding,
+            provenanceEntries = combinedProvenance,
             reinforceCount = existing.reinforceCount + 1,
             contentRevised = Instant.now(),
             lastAccessed = Instant.now(),
@@ -612,11 +615,13 @@ data class LlmPropositionReviser(
         val slowedDecay = (existing.decay * 0.85).coerceAtLeast(0.0)
         // Combine grounding
         val combinedGrounding = (existing.grounding + new.grounding).distinct()
+        val combinedProvenance = mergeProvenanceEntries(existing.provenanceEntries, new.provenanceEntries)
 
         return existing.copy(
             confidence = boostedConfidence,
             decay = slowedDecay,
             grounding = combinedGrounding,
+            provenanceEntries = combinedProvenance,
             reinforceCount = existing.reinforceCount + 1,
             contentRevised = Instant.now(),
             lastAccessed = Instant.now(),

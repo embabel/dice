@@ -27,6 +27,7 @@ import com.embabel.dice.incremental.BookmarkKey
 import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.HashKey
 import com.embabel.dice.incremental.ProcessedChunkRecord
+import com.embabel.dice.provenance.ChunkProvenanceFactory
 import com.embabel.dice.proposition.PropositionExtractor
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.revision.PropositionReviser
@@ -116,9 +117,11 @@ class PropositionPipeline private constructor(
      * @param context Configuration including schema and entity resolver
      * @return Processing result with propositions, entities, and optional revision results
      */
+    @JvmOverloads
     fun processChunk(
         chunk: Chunk,
         context: SourceAnalysisContext,
+        contentHash: String? = null,
     ): ChunkPropositionResult {
         logger.debug("Processing chunk: {}", chunk.id)
 
@@ -142,7 +145,17 @@ class PropositionPipeline private constructor(
         logger.debug("Resolved {} entities", resolutions.resolutions.size)
 
         // Step 4: Apply resolutions to create final propositions
-        val propositions = extractor.resolvePropositions(suggestedPropositions, resolutions, context)
+        val provenanceEntry = ChunkProvenanceFactory.entryFor(
+            chunk = chunk,
+            context = context,
+            contentHash = contentHash ?: Sha256ContentHasher.hash(chunk.text),
+        )
+        val propositions = extractor.resolvePropositions(
+            suggestedPropositions,
+            resolutions,
+            context,
+            provenanceEntries = listOf(provenanceEntry),
+        )
         logger.debug("Created {} propositions", propositions.size)
 
         // Step 5: Optionally revise propositions against existing ones
@@ -205,7 +218,11 @@ class PropositionPipeline private constructor(
             // Backward-compatible: callers that pass UUID-shaped
             // sourceIds get UUID chunk ids exactly as before.
             val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
-            val result = processChunk(chunk, context)
+            val result = processChunk(
+                chunk = chunk,
+                context = context,
+                contentHash = hash,
+            )
             historyStore.recordProcessed(
                 ProcessedChunkRecord(
                     bookmarkKey = BookmarkKey(context.contextId, sourceId),

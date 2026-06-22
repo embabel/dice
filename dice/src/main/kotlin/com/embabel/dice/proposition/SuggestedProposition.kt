@@ -17,6 +17,7 @@ package com.embabel.dice.proposition
 
 import com.embabel.agent.core.ContextId
 import com.embabel.common.core.types.ZeroToOne
+import com.embabel.dice.provenance.ProvenanceEntry
 import com.fasterxml.jackson.annotation.JsonPropertyDescription
 
 /**
@@ -98,7 +99,11 @@ data class SuggestedProposition(
      * Convert to a Proposition with the given chunk grounding.
      * Entity resolution happens separately.
      */
-    fun toProposition(chunkIds: List<String>, contextId: ContextId): Proposition =
+    fun toProposition(
+        chunkIds: List<String>,
+        contextId: ContextId,
+        provenanceEntries: List<ProvenanceEntry> = emptyList(),
+    ): Proposition =
         Proposition(
             contextId = contextId,
             text = text,
@@ -108,6 +113,7 @@ data class SuggestedProposition(
             importance = importance.coerceIn(0.0, 1.0),
             reasoning = reasoning.ifBlank { null },
             grounding = chunkIds,
+            provenanceEntries = provenanceEntries,
         )
 }
 
