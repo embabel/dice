@@ -22,6 +22,7 @@ import com.embabel.dice.common.PropositionRejected
 import com.embabel.dice.common.PropositionRoutedToReview
 import com.embabel.dice.common.SafeDiceEventListener
 import com.embabel.dice.proposition.Proposition
+import org.slf4j.LoggerFactory
 
 /**
  * Decorator that adds event emission to any [ExtractionGate].
@@ -57,6 +58,8 @@ class ObservableGate(
     private val listener: DiceEventListener = DiceEventListener.DEV_NULL,
 ) : ExtractionGate {
 
+    private val logger = LoggerFactory.getLogger(ObservableGate::class.java)
+
     override fun evaluate(
         proposition: Proposition,
         context: GateContext,
@@ -64,17 +67,25 @@ class ObservableGate(
         val evaluation = delegate.evaluate(proposition, context)
 
         when (val decision = evaluation.decision) {
-            is GateDecision.Reject ->
+            is GateDecision.Reject -> {
+                logger.debug("Emitting PropositionRejected for {}: {}", proposition.id.take(8), decision.reason)
                 listener.onEvent(PropositionRejected(proposition, decision.reason))
+            }
 
-            is GateDecision.RouteToReview ->
+            is GateDecision.RouteToReview -> {
+                logger.debug("Emitting PropositionRoutedToReview for {}: {}", proposition.id.take(8), decision.reason)
                 listener.onEvent(PropositionRoutedToReview(proposition, decision.reason))
+            }
 
-            is GateDecision.SkipProjection ->
+            is GateDecision.SkipProjection -> {
+                logger.debug("Emitting PropositionProjectionSkipped for {}: {}", proposition.id.take(8), decision.reason)
                 listener.onEvent(PropositionProjectionSkipped(proposition, decision.reason))
+            }
 
-            is GateDecision.Demote ->
+            is GateDecision.Demote -> {
+                logger.debug("Emitting PropositionDemoted for {}: demote to '{}', reason: {}", proposition.id.take(8), decision.toRelation, decision.reason)
                 listener.onEvent(PropositionDemoted(proposition, decision.toRelation, decision.reason))
+            }
 
             // The durable persist signal fires at the save boundary; emitting here would double-emit it.
             is GateDecision.Persist -> Unit

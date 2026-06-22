@@ -16,6 +16,7 @@
 package com.embabel.dice.proposition.gate
 
 import com.embabel.dice.proposition.Proposition
+import org.slf4j.LoggerFactory
 
 /**
  * A standalone runner that applies an ordered list of [ExtractionGate]s to propositions and
@@ -71,6 +72,8 @@ class ExtractionGatePipeline @JvmOverloads constructor(
     val shortCircuitOnReject: Boolean = true,
 ) {
 
+    private val logger = LoggerFactory.getLogger(ExtractionGatePipeline::class.java)
+
     /**
      * The gates to run, in convention order. Snapshotted at construction so that mutating an
      * aliased backing list a caller passed in cannot change the pipeline's iteration afterwards.
@@ -99,10 +102,15 @@ class ExtractionGatePipeline @JvmOverloads constructor(
             // First non-Persist decision wins; never overwrite it with a later decision.
             if (finalDecision is GateDecision.Persist && evaluation.decision !is GateDecision.Persist) {
                 finalDecision = evaluation.decision
+                logger.debug(
+                    "Gate '{}' set final decision to {} for proposition {}",
+                    evaluation.gateName, finalDecision::class.simpleName, proposition.id.take(8),
+                )
             }
 
             // Short-circuit on a hard reject AFTER recording the evaluation that produced it.
             if (shortCircuitOnReject && evaluation.decision is GateDecision.Reject) {
+                logger.debug("Short-circuiting gate pipeline on Reject from '{}' for proposition {}", evaluation.gateName, proposition.id.take(8))
                 break
             }
         }

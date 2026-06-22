@@ -21,6 +21,7 @@ import com.embabel.dice.common.StructuralAuthorityResolver
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.revision.RevisionResult
+import org.slf4j.LoggerFactory
 
 /**
  * Routes a proposition based purely on its own confidence: anything below [minConfidence] is
@@ -38,6 +39,8 @@ import com.embabel.dice.proposition.revision.RevisionResult
  */
 class ConfidenceGate(private val minConfidence: Double) : ExtractionGate {
 
+    private val logger = LoggerFactory.getLogger(ConfidenceGate::class.java)
+
     init {
         require(minConfidence in 0.0..1.0) { "minConfidence must be in 0.0..1.0, was $minConfidence" }
     }
@@ -52,6 +55,7 @@ class ConfidenceGate(private val minConfidence: Double) : ExtractionGate {
         } else {
             GateDecision.Reject("effective confidence $effectiveConfidence < $minConfidence")
         }
+        logger.debug("ConfidenceGate: {} for proposition {} (confidence={})", decision::class.simpleName, proposition.id.take(8), effectiveConfidence)
         return GateEvaluation(GATE_NAME, proposition, decision)
     }
 
@@ -70,6 +74,8 @@ class ConfidenceGate(private val minConfidence: Double) : ExtractionGate {
  */
 class MergeCandidateGate : ExtractionGate {
 
+    private val logger = LoggerFactory.getLogger(MergeCandidateGate::class.java)
+
     override fun evaluate(
         proposition: Proposition,
         context: GateContext,
@@ -82,6 +88,7 @@ class MergeCandidateGate : ExtractionGate {
             // null (not revised) and all other outcomes persist — fail open.
             else -> GateDecision.Persist
         }
+        logger.debug("MergeCandidateGate: {} for proposition {} (revisionResult={})", decision::class.simpleName, proposition.id.take(8), context.revisionResult?.let { it::class.simpleName })
         return GateEvaluation(GATE_NAME, proposition, decision)
     }
 
@@ -102,6 +109,8 @@ class MergeCandidateGate : ExtractionGate {
  */
 class ConflictClassificationGate : ExtractionGate {
 
+    private val logger = LoggerFactory.getLogger(ConflictClassificationGate::class.java)
+
     override fun evaluate(
         proposition: Proposition,
         context: GateContext,
@@ -112,6 +121,7 @@ class ConflictClassificationGate : ExtractionGate {
             // null (not revised) and all other outcomes persist — fail open.
             else -> GateDecision.Persist
         }
+        logger.debug("ConflictClassificationGate: {} for proposition {}", decision::class.simpleName, proposition.id.take(8))
         return GateEvaluation(GATE_NAME, proposition, decision)
     }
 
@@ -139,6 +149,8 @@ class TrustGate @JvmOverloads constructor(
     private val onMissingScore: GateDecision = GateDecision.Persist,
 ) : ExtractionGate {
 
+    private val logger = LoggerFactory.getLogger(TrustGate::class.java)
+
     init {
         require(minTrustScore in 0.0..1.0) { "minTrustScore must be in 0.0..1.0, was $minTrustScore" }
     }
@@ -153,6 +165,7 @@ class TrustGate @JvmOverloads constructor(
             trustScore >= minTrustScore -> GateDecision.Persist
             else -> GateDecision.RouteToReview("trust score $trustScore < $minTrustScore")
         }
+        logger.debug("TrustGate: {} for proposition {} (trustScore={})", decision::class.simpleName, proposition.id.take(8), trustScore)
         return GateEvaluation(GATE_NAME, proposition, decision)
     }
 
@@ -177,6 +190,8 @@ class ProjectionEligibilityGate @JvmOverloads constructor(
     private val minConfidence: Double = DEFAULT_MIN_PROJECTION_CONFIDENCE,
 ) : ExtractionGate {
 
+    private val logger = LoggerFactory.getLogger(ProjectionEligibilityGate::class.java)
+
     init {
         require(minConfidence in 0.0..1.0) { "minConfidence must be in 0.0..1.0, was $minConfidence" }
     }
@@ -193,6 +208,7 @@ class ProjectionEligibilityGate @JvmOverloads constructor(
                 GateDecision.SkipProjection("status is ${PropositionStatus.CONTRADICTED}")
             else -> GateDecision.Persist
         }
+        logger.debug("ProjectionEligibilityGate: {} for proposition {} (confidence={}, status={})", decision::class.simpleName, proposition.id.take(8), effectiveConfidence, proposition.status)
         return GateEvaluation(GATE_NAME, proposition, decision)
     }
 
@@ -234,6 +250,8 @@ class EvidenceFloorGate @JvmOverloads constructor(
     private val caseSensitive: Boolean = false,
 ) : ExtractionGate {
 
+    private val logger = LoggerFactory.getLogger(EvidenceFloorGate::class.java)
+
     override fun evaluate(
         proposition: Proposition,
         context: GateContext,
@@ -260,6 +278,10 @@ class EvidenceFloorGate @JvmOverloads constructor(
                 }
             }
         }
+        logger.debug(
+            "EvidenceFloorGate: {} for proposition {} (relation={})",
+            decision::class.simpleName, proposition.id.take(8), relation?.predicate,
+        )
         return GateEvaluation(GATE_NAME, proposition, decision)
     }
 

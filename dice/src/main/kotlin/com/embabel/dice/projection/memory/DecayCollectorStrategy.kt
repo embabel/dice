@@ -18,6 +18,7 @@ package com.embabel.dice.projection.memory
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
+import org.slf4j.LoggerFactory
 
 /**
  * A [CollectorStrategy] that marks propositions whose decayed confidence has fallen below a
@@ -38,14 +39,19 @@ class DecayCollectorStrategy @JvmOverloads constructor(
     private val retireDecayK: Double = 2.0,
 ) : CollectorStrategy {
 
+    private val logger = LoggerFactory.getLogger(DecayCollectorStrategy::class.java)
+
     override fun mark(
         candidates: List<Proposition>,
         repository: PropositionRepository,
         contextId: ContextId,
-    ): List<PropositionMark> =
-        candidates
+    ): List<PropositionMark> {
+        val marks = candidates
             .filter { it.effectiveConfidence(retireDecayK) < retireBelow }
             .map { PropositionMark(propositionId = it.id, reason = MarkReason.Stale, strategyName = STRATEGY_NAME) }
+        logger.debug("DecayCollectorStrategy: marked {} of {} candidates as stale (threshold={})", marks.size, candidates.size, retireBelow)
+        return marks
+    }
 
     companion object {
         private const val STRATEGY_NAME = "decay"

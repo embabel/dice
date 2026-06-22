@@ -63,6 +63,7 @@ class DefaultCollectorRunner(
     override fun collect(contextId: ContextId): CollectorRunResult {
         val startedAt = Instant.now()
         val (_, marks) = markPhase(contextId)
+        logger.debug("collect (read-only): {} mark(s) produced for context {}", marks.size, contextId)
         // Pure-read: no repository write, no run record. Nothing is persisted, so there is no run
         // to cross-reference — the runId is blank to signal it is not queryable in any store.
         return CollectorRunResult(
@@ -80,6 +81,10 @@ class DefaultCollectorRunner(
         val startedAt = Instant.now()
         val runId = newRunId()
         val (candidatesById, marks) = markPhase(contextId)
+        logger.info(
+            "Collector run {} started for context {} (dryRun={}, candidates={}, marks={})",
+            runId, contextId, dryRun, candidatesById.size, marks.size,
+        )
         val marksByProposition = marks.groupBy { it.propositionId }
 
         val applied = mutableListOf<PropositionMark>()
@@ -124,7 +129,7 @@ class DefaultCollectorRunner(
         val finishedAt = Instant.now()
         persistRun(runId, startedAt, finishedAt, dryRun, records)
 
-        return CollectorRunResult(
+        val result = CollectorRunResult(
             runId = runId,
             dryRun = dryRun,
             marks = marks,
@@ -134,6 +139,11 @@ class DefaultCollectorRunner(
             startedAt = startedAt,
             finishedAt = finishedAt,
         )
+        logger.info(
+            "Collector run {} complete: applied={} skipped={} hardDeleted={} (dryRun={})",
+            runId, result.applied.size, result.skipped.size, result.hardDeleted.size, dryRun,
+        )
+        return result
     }
 
     /**

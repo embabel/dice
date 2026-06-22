@@ -20,6 +20,7 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import org.slf4j.LoggerFactory
 
 /**
  * A [CollectorStrategy] that finds near-duplicate propositions and marks all but the strongest
@@ -45,6 +46,8 @@ class DuplicateCollectorStrategy @JvmOverloads constructor(
     private val similarityThreshold: Double = 0.7,
     private val topK: Int = 10,
 ) : CollectorStrategy {
+
+    private val logger = LoggerFactory.getLogger(DuplicateCollectorStrategy::class.java)
 
     override fun mark(
         candidates: List<Proposition>,
@@ -76,7 +79,7 @@ class DuplicateCollectorStrategy @JvmOverloads constructor(
             .mapNotNull { id -> byId[id] }
             .groupBy { unionFind.find(it.id) }
 
-        return componentMembers.values
+        val marks = componentMembers.values
             .filter { it.size >= 2 }
             .flatMap { members ->
                 // Global survivor per component: max effectiveConfidence, then reinforceCount,
@@ -98,6 +101,11 @@ class DuplicateCollectorStrategy @JvmOverloads constructor(
             // proposition is never marked more than once across overlapping clusters.
             .distinctBy { it.propositionId }
             .sortedBy { it.propositionId }
+        logger.debug(
+            "DuplicateCollectorStrategy: {} cluster(s) -> {} duplicate mark(s) from {} candidate(s)",
+            clusters.size, marks.size, candidates.size,
+        )
+        return marks
     }
 
     /**

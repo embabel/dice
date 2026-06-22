@@ -24,6 +24,9 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import org.slf4j.LoggerFactory
+
+private val logger = LoggerFactory.getLogger("com.embabel.dice.projection.memory.DefaultMemoryMaintenanceOrchestrator")
 
 /**
  * Default [MemoryMaintenanceOrchestrator]: runs consolidation, abstraction, retirement, and
@@ -79,6 +82,17 @@ data class DefaultMemoryMaintenanceOrchestrator(
         // Default off; when null the behavior is identical to the three-phase pipeline.
         val collectorResult = collector?.run(contextId)
 
+        logger.info(
+            "Maintenance complete for {}: promoted={} reinforced={} merged={} abstractions={} superseded={} retired={} collectorApplied={}",
+            contextId,
+            consolidation?.promoted?.size ?: 0,
+            consolidation?.reinforced?.size ?: 0,
+            consolidation?.merged?.size ?: 0,
+            abstractions.size,
+            superseded.size,
+            retired.size,
+            collectorResult?.applied?.size ?: 0,
+        )
         return MaintenanceResult(
             consolidation = consolidation,
             abstractions = abstractions,
@@ -196,6 +210,9 @@ data class DefaultMemoryMaintenanceOrchestrator(
             repository.delete(prop.id)
         }
 
+        if (toRetire.isNotEmpty()) {
+            logger.debug("Retired (hard-deleted) {} proposition(s) below confidence {} for {}", toRetire.size, threshold, contextId)
+        }
         return toRetire
     }
 

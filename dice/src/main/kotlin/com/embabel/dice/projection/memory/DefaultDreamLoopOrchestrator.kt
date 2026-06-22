@@ -116,7 +116,7 @@ data class DefaultDreamLoopOrchestrator(
         // (6) Build the report.
         val transitioned = changed.sumOf { it.propositionsToSave.size + it.propositionsToDelete.size }
         val newPropositions = toSave.size
-        return DreamLoopReport(
+        val report = DreamLoopReport(
             contextId = contextId,
             cycleStarted = cycleStarted,
             passResults = passResults,
@@ -125,6 +125,11 @@ data class DefaultDreamLoopOrchestrator(
             totalNewPropositions = newPropositions,
             triggered = true,
         )
+        logger.info(
+            "Dream-loop cycle complete for {}: examined={} transitioned={} newPropositions={}",
+            contextId, report.totalExamined, report.totalTransitioned, report.totalNewPropositions,
+        )
+        return report
     }
 
     /**
