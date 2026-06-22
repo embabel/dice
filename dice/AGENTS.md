@@ -39,10 +39,11 @@ Kotlin 2.1.10, Java 21. `embabel-agent-api` and `embabel-agent-rag-core` are `pr
 |---|---|
 | `proposition` | `Proposition`, `PropositionStore`, `PropositionRepository`, `PropositionQuery`, `EntityMention`, `DecayManager`, `DecaySweeper`, capability interfaces |
 | `proposition.extraction` | `PropositionExtractor`, `LlmPropositionExtractor`, extraction config |
-| `proposition.revision` | `PropositionReviser`, `LlmPropositionReviser`, `ConflictDetector`, `ConflictType` |
+| `proposition.revision` | `PropositionReviser`, `LlmPropositionReviser` |
 | `proposition.store` | `InMemoryPropositionRepository`, `JsonFilePropositionRepository`, `InMemoryDecayManager` |
 | `pipeline` | `PropositionPipeline`, `PropositionResults`, persistence helpers |
-| `common` | `SourceAnalysisContext`, `EntityResolver`, `Relations`, `TrustScorer`, `AuthorityWeightedTrustScorer`, `ContentHasher`, `KnowledgeType`, `StatusTransitionPolicy`, events, `SchemaAdherence`, validation rules |
+| `spi` | Policy extension points: `TrustScorer`, `AuthorityResolver`/`AuthorityTier`, `AuthorityWeightedTrustScorer`, `ConflictDetector`, `ConflictType`, `StatusTransitionPolicy`, and their shipped defaults |
+| `common` | `SourceAnalysisContext`, `EntityResolver`, `Relations`, `ContentHasher`, `KnowledgeType`, events, `SchemaAdherence`, validation rules |
 | `common.filter` | `MentionFilter`, `SchemaValidatedMentionFilter`, `ObservableMentionFilter`, context-aware filters |
 | `common.resolver` | `EscalatingEntityResolver`, `InMemoryEntityResolver`, `KnownEntityResolver`, `ChainedEntityResolver`, `LlmCandidateBakeoff`, `ContextCompressor` |
 | `common.resolver.searcher` | `CandidateSearcher` and all implementations: `ByIdCandidateSearcher`, `ByExactNameCandidateSearcher`, `NormalizedNameCandidateSearcher`, `PartialNameCandidateSearcher`, `FuzzyNameCandidateSearcher`, `VectorCandidateSearcher`, `AgenticCandidateSearcher`; `DefaultCandidateSearchers` factory |

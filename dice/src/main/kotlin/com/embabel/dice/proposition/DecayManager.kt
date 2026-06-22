@@ -22,7 +22,7 @@ import com.embabel.agent.core.ContextId
  * **materialise** decayed confidence where a backend can cache it.
  *
  * Two responsibilities, kept as separate callable operations (no forced `run()`):
- * - **Lifecycle** ([sweep] / [sweepAll]) — applies [com.embabel.dice.common.StatusTransitionPolicy]
+ * - **Lifecycle** ([sweep] / [sweepAll]) — applies [com.embabel.dice.spi.StatusTransitionPolicy]
  *   status transitions (ACTIVE→STALE, STALE→ACTIVE, optional pruning) through the repository.
  *   Works for any backend; pinned propositions are policy-exempt.
  * - **Materialisation** ([materialize] / [materializeAll]) — refreshes a cached `effectiveConfidence`

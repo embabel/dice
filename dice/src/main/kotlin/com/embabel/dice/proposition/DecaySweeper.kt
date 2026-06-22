@@ -16,8 +16,8 @@
 package com.embabel.dice.proposition
 
 import com.embabel.agent.core.ContextId
-import com.embabel.dice.common.DecayStatusPolicy
-import com.embabel.dice.common.StatusTransitionPolicy
+import com.embabel.dice.spi.DecayStatusPolicy
+import com.embabel.dice.spi.StatusTransitionPolicy
 
 /**
  * Evaluates propositions for lifecycle transitions and applies them according to a

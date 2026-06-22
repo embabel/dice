@@ -16,8 +16,8 @@
 package com.embabel.dice.proposition
 
 import com.embabel.agent.core.ContextId
-import com.embabel.dice.common.DecayStatusPolicy
-import com.embabel.dice.common.StatusTransitionPolicy
+import com.embabel.dice.spi.DecayStatusPolicy
+import com.embabel.dice.spi.StatusTransitionPolicy
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame

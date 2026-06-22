@@ -16,7 +16,7 @@
 package com.embabel.dice.storage.autoconfigure
 
 import com.embabel.agent.api.common.Ai
-import com.embabel.dice.common.DecayStatusPolicy
+import com.embabel.dice.spi.DecayStatusPolicy
 import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore
 import com.embabel.dice.proposition.DecayManager

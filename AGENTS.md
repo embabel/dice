@@ -46,10 +46,11 @@ The `dice` module is organized by responsibility:
 |---|---|
 | `com.embabel.dice.proposition` | `Proposition` (the core domain type), `PropositionStore`, `PropositionRepository`, `PropositionQuery`, `DecayManager`, `DecaySweeper`, capability fragment interfaces (`VectorSearchCapable`, `GraphTraversalCapable`, `TemporalQueryCapable`) |
 | `com.embabel.dice.proposition.extraction` | `PropositionExtractor` SPI, `LlmPropositionExtractor` |
-| `com.embabel.dice.proposition.revision` | `PropositionReviser` SPI, `LlmPropositionReviser`, `ConflictDetector`, `ConflictType` |
+| `com.embabel.dice.proposition.revision` | `PropositionReviser` SPI, `LlmPropositionReviser` |
 | `com.embabel.dice.proposition.store` | In-memory and JSON-file implementations of `PropositionRepository` and `DecayManager` |
 | `com.embabel.dice.pipeline` | `PropositionPipeline` — the orchestrating entry point that chains extractor → entity resolver → reviser |
-| `com.embabel.dice.common` | Shared types: `SourceAnalysisContext`, `EntityResolver`, `Relations`, `TrustScorer`, `ContentHasher`, `KnowledgeType`, events, validation rules, mention filters, resolver implementations |
+| `com.embabel.dice.spi` | Policy extension points consumers plug into: `TrustScorer`, `AuthorityResolver`/`AuthorityTier`, `AuthorityWeightedTrustScorer`, `ConflictDetector`, `ConflictType`, `StatusTransitionPolicy`, and their shipped defaults |
+| `com.embabel.dice.common` | Shared types: `SourceAnalysisContext`, `EntityResolver`, `Relations`, `ContentHasher`, `KnowledgeType`, events, validation rules, mention filters, resolver implementations |
 | `com.embabel.dice.entity` | Entity-only pipeline (`EntityPipeline`, `EntityIncrementalAnalyzer`, `EntityResolutionService`, `EntityResolutionTools`) |
 | `com.embabel.dice.incremental` | `AbstractIncrementalAnalyzer`, `ChunkHistoryStore`, `ConversationSource`, windowed processing |
 | `com.embabel.dice.projection` | Projectors: `GraphProjector`, `PrologProjector`, `MemoryProjector`; lineage tracking (`ProjectionRecordStore`, `Reconciler`) |
