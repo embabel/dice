@@ -20,6 +20,7 @@ import com.embabel.dice.metamodel.MetamodelDiff
 import com.embabel.dice.metamodel.MetamodelDiffer
 import com.embabel.dice.metamodel.MetamodelVersion
 import org.javers.core.JaversBuilder
+import org.slf4j.LoggerFactory
 
 /**
  * [MetamodelDiffer] that uses [JaVers](https://javers.org/) as its underlying comparison engine.
@@ -34,6 +35,8 @@ import org.javers.core.JaversBuilder
  * Stateless and thread-safe — a single shared instance is fine.
  */
 class JaversMetamodelDiffer : MetamodelDiffer {
+
+    private val logger = LoggerFactory.getLogger(JaversMetamodelDiffer::class.java)
 
     // JaVers instance kept for future richer diffing; entity-type shape comparison uses
     // direct string equality (see diff() below), which is sufficient and cheaper.
@@ -92,6 +95,18 @@ class JaversMetamodelDiffer : MetamodelDiffer {
 
         removedRels.sorted().mapTo(changes) { MetamodelChange.RelationshipRemoved(it) }
         addedRels.sorted().mapTo(changes) { MetamodelChange.RelationshipAdded(it) }
+
+        logger.debug(
+            "Metamodel diff '{}' → '{}': {} added types, {} removed types, {} modified types, " +
+                "{} added rels, {} removed rels",
+            from.schemaName,
+            to.schemaName,
+            addedTypes.size,
+            removedTypes.size,
+            changes.count { it is MetamodelChange.EntityTypeModified },
+            addedRels.size,
+            removedRels.size,
+        )
 
         return MetamodelDiff(fromVersion = from, toVersion = to, changes = changes)
     }

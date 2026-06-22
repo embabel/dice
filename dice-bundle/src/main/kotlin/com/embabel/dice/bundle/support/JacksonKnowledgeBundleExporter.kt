@@ -18,6 +18,7 @@ package com.embabel.dice.bundle.support
 import com.embabel.dice.bundle.KnowledgeBundle
 import com.embabel.dice.bundle.KnowledgeBundleExporter
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import org.slf4j.LoggerFactory
 import java.io.OutputStream
 import java.io.Writer
 
@@ -32,17 +33,35 @@ import java.io.Writer
  */
 class JacksonKnowledgeBundleExporter : KnowledgeBundleExporter {
 
+    private val logger = LoggerFactory.getLogger(JacksonKnowledgeBundleExporter::class.java)
+
     private val mapper = jacksonObjectMapper().findAndRegisterModules()
 
-    override fun exportToString(bundle: KnowledgeBundle): String =
-        mapper.writeValueAsString(bundle)
+    override fun exportToString(bundle: KnowledgeBundle): String {
+        logger.info(
+            "Exporting bundle: {} propositions, context={}",
+            bundle.propositions.size,
+            bundle.contextId,
+        )
+        return mapper.writeValueAsString(bundle)
+    }
 
     override fun exportToStream(bundle: KnowledgeBundle, outputStream: OutputStream) {
+        logger.info(
+            "Exporting bundle to stream: {} propositions, context={}",
+            bundle.propositions.size,
+            bundle.contextId,
+        )
         mapper.writeValue(outputStream, bundle)
         outputStream.flush()
     }
 
     override fun exportToWriter(bundle: KnowledgeBundle, writer: Writer) {
+        logger.info(
+            "Exporting bundle to writer: {} propositions, context={}",
+            bundle.propositions.size,
+            bundle.contextId,
+        )
         mapper.writeValue(writer, bundle)
         writer.flush()
     }
