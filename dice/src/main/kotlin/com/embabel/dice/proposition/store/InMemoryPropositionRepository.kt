@@ -27,6 +27,7 @@ import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.matchesFilters
+import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
@@ -45,6 +46,8 @@ import java.util.concurrent.ConcurrentHashMap
 class InMemoryPropositionRepository(
     private val embeddingService: EmbeddingService? = null,
 ) : PropositionRepository {
+
+    private val logger = LoggerFactory.getLogger(InMemoryPropositionRepository::class.java)
 
     private val propositions = ConcurrentHashMap<String, Proposition>()
     private val embeddings = ConcurrentHashMap<String, FloatArray>()
@@ -76,7 +79,10 @@ class InMemoryPropositionRepository(
     ): List<SimilarityResult<Proposition>> {
         if (propositions.isEmpty()) return emptyList()
 
-        val embedder = embeddingService ?: return emptyList()
+        val embedder = embeddingService ?: run {
+            logger.debug("Vector search requested but no embedder is configured; returning empty results")
+            return emptyList()
+        }
         val queryEmbedding = embedder.embed(textSimilaritySearchRequest.query)
         val minSimilarity = textSimilaritySearchRequest.similarityThreshold
 
@@ -96,7 +102,10 @@ class InMemoryPropositionRepository(
     ): List<SimilarityResult<Proposition>> {
         if (propositions.isEmpty()) return emptyList()
 
-        val embedder = embeddingService ?: return emptyList()
+        val embedder = embeddingService ?: run {
+            logger.debug("Vector search requested but no embedder is configured; returning empty results")
+            return emptyList()
+        }
         val queryEmbedding = embedder.embed(textSimilaritySearchRequest.query)
         val minSimilarity = textSimilaritySearchRequest.similarityThreshold
 

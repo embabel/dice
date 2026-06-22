@@ -18,7 +18,10 @@ package com.embabel.dice.proposition
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.dice.common.DiceMetadataKeys
+import org.slf4j.LoggerFactory
 import java.time.Instant
+
+private val logger = LoggerFactory.getLogger(PropositionStore::class.java)
 
 /**
  * Returns true if this proposition clears the minimum trust threshold. Shared between the
@@ -185,6 +188,7 @@ interface PropositionStore {
         // One evaluation instant for the whole query, so filtering and ordering agree.
         val asOf = query.effectiveConfidenceAsOf ?: Instant.now()
         var resultList = findAll().filter { query.matchesFilters(it, asOf) }
+        val matchedCount = resultList.size
 
         // Apply ordering
         resultList = when (query.orderBy) {
@@ -213,6 +217,10 @@ interface PropositionStore {
             resultList = resultList.take(limit)
         }
 
+        logger.debug(
+            "query matched {} proposition(s); returning {} (orderBy={}, limit={})",
+            matchedCount, resultList.size, query.orderBy, query.limit,
+        )
         return resultList
     }
 }

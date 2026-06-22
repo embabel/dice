@@ -18,6 +18,7 @@ package com.embabel.dice.proposition
 import com.embabel.agent.core.DataDictionary
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.ProjectionBatchCompleted
+import org.slf4j.LoggerFactory
 
 /**
  * Decorator that emits a [ProjectionBatchCompleted] event after every [projectAll] call.
@@ -46,6 +47,8 @@ class EventEmittingProjector<T : Projection>(
     private val listener: DiceEventListener = DiceEventListener.DEV_NULL,
 ) : Projector<T> by delegate {
 
+    private val logger = LoggerFactory.getLogger(EventEmittingProjector::class.java)
+
     /**
      * Delegates to the wrapped projector, then emits one [ProjectionBatchCompleted] carrying
      * the success/skip/failure/total counts. Returns the results unchanged.
@@ -59,6 +62,10 @@ class EventEmittingProjector<T : Projection>(
         schema: DataDictionary,
     ): ProjectionResults<T> {
         val results = delegate.projectAll(propositions, schema)
+        logger.debug(
+            "Emitting ProjectionBatchCompleted: success={} skip={} failure={} total={}",
+            results.successCount, results.skipCount, results.failureCount, results.totalCount,
+        )
         listener.onEvent(
             ProjectionBatchCompleted(
                 successCount = results.successCount,

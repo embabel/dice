@@ -22,6 +22,7 @@ import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.PropositionPersisted
 import com.embabel.dice.common.PropositionStatusChanged
+import org.slf4j.LoggerFactory
 
 /**
  * Decorator that emits lifecycle events at the persistence boundary.
@@ -64,6 +65,8 @@ class EventEmittingPropositionRepository(
     private val listener: DiceEventListener = DiceEventListener.DEV_NULL,
 ) : PropositionRepository by delegate {
 
+    private val logger = LoggerFactory.getLogger(EventEmittingPropositionRepository::class.java)
+
     /**
      * Persists via the delegate, then emits one lifecycle event carrying the saved instance.
      *
@@ -86,6 +89,7 @@ class EventEmittingPropositionRepository(
             }
         val saved = delegate.save(proposition)
         if (previousStatus != null && previousStatus != saved.status) {
+            logger.debug("Emitting PropositionStatusChanged for {}: {} -> {}", saved.id.take(8), previousStatus, saved.status)
             listener.onEvent(
                 PropositionStatusChanged(
                     proposition = saved,
@@ -95,6 +99,7 @@ class EventEmittingPropositionRepository(
                 ),
             )
         } else {
+            logger.debug("Emitting PropositionPersisted for {}", saved.id.take(8))
             listener.onEvent(PropositionPersisted(saved))
         }
         return saved

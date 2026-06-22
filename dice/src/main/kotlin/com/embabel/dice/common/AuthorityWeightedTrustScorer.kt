@@ -17,6 +17,7 @@ package com.embabel.dice.common
 
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.revision.ConflictType
+import org.slf4j.LoggerFactory
 
 /**
  * A [TrustScorer] that scores a proposition purely by the authority of its source: more
@@ -38,13 +39,17 @@ open class AuthorityWeightedTrustScorer @JvmOverloads constructor(
     private val unknownScore: Double = DEFAULT_UNKNOWN_SCORE,
 ) : TrustScorer {
 
+    private val logger = LoggerFactory.getLogger(AuthorityWeightedTrustScorer::class.java)
+
     override fun score(
         proposition: Proposition,
         authorityTier: AuthorityTier?,
         conflictType: ConflictType?,
     ): Double {
         val raw = authorityTier?.let { weights[it] } ?: unknownScore
-        return raw.coerceIn(0.0, 1.0)
+        val score = raw.coerceIn(0.0, 1.0)
+        logger.trace("Trust score {} for proposition {} (tier={})", score, proposition.id.take(8), authorityTier)
+        return score
     }
 
     companion object {

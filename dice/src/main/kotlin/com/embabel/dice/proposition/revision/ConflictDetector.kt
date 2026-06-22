@@ -16,6 +16,7 @@
 package com.embabel.dice.proposition.revision
 
 import com.embabel.dice.proposition.Proposition
+import org.slf4j.LoggerFactory
 import java.time.Instant
 
 /**
@@ -90,20 +91,31 @@ class TemporalConflictDetector @JvmOverloads constructor(
     private val evolvingPredicates: Set<String> = DEFAULT_EVOLVING_PREDICATES,
 ) : ConflictDetector {
 
+    private val logger = LoggerFactory.getLogger(TemporalConflictDetector::class.java)
+
     override fun detect(incoming: Proposition, existing: Proposition): ConflictType {
         val predicate = (
             (incoming.metadata[Proposition.PREDICATE] as? String)
                 ?: (existing.metadata[Proposition.PREDICATE] as? String)
             )?.lowercase()
-            ?: return ConflictType.Contradiction
-        if (predicate !in evolvingPredicates) return ConflictType.Contradiction
+        if (predicate == null || predicate !in evolvingPredicates) {
+            logger.debug("Conflict classified as Contradiction: predicate {} is not a tracked evolving predicate", predicate)
+            return ConflictType.Contradiction
+        }
+        val incomingRecency = recencyOf(incoming)
+        val existingRecency = recencyOf(existing)
         // Equal timestamps are not a temporal contradiction (neither strictly supersedes),
         // so only a strictly-older incoming falls back to Contradiction.
-        return if (recencyOf(incoming).isBefore(recencyOf(existing))) {
+        val verdict = if (incomingRecency.isBefore(existingRecency)) {
             ConflictType.Contradiction
         } else {
             ConflictType.WorldProgression
         }
+        logger.debug(
+            "Conflict on evolving predicate '{}' classified as {} (incoming@{} vs existing@{})",
+            predicate, verdict, incomingRecency, existingRecency,
+        )
+        return verdict
     }
 
     private fun recencyOf(proposition: Proposition): Instant =

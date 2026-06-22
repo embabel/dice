@@ -226,6 +226,7 @@ data class LlmPropositionReviser(
         val scorer = trustScorer ?: return p
         val tier = authorityResolver?.resolve(p)
         val score = scorer.score(p, tier, conflictType)
+        logger.trace("Cached trust score {} on proposition {} (tier={}, conflict={})", score, p.id.take(8), tier, conflictType)
         return p.withMetadataValue(DiceMetadataKeys.TRUST_SCORE, score)
     }
 

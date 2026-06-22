@@ -21,6 +21,7 @@ import com.embabel.dice.provenance.ContentAddressedLocator
 import com.embabel.dice.provenance.FileLocator
 import com.embabel.dice.provenance.SourceLocator
 import com.embabel.dice.provenance.UriLocator
+import org.slf4j.LoggerFactory
 import kotlin.reflect.KClass
 
 /**
@@ -92,14 +93,24 @@ class StructuralAuthorityResolver @JvmOverloads constructor(
     private val tierByLocatorKind: Map<KClass<out SourceLocator>, AuthorityTier> = DEFAULT_MAP,
 ) : AuthorityResolver {
 
+    private val logger = LoggerFactory.getLogger(StructuralAuthorityResolver::class.java)
+
     override fun resolve(proposition: Proposition): AuthorityTier {
         val locators = proposition.provenanceEntries.map { it.locator }
-        if (locators.isEmpty()) return AuthorityTier.UNKNOWN
+        if (locators.isEmpty()) {
+            logger.debug("No grounding locators on proposition {}; authority falls back to UNKNOWN", proposition.id.take(8))
+            return AuthorityTier.UNKNOWN
+        }
         // Strongest authority == lowest ordinal across all grounding locators.
-        return locators
+        val tier = locators
             .map { tierByLocatorKind[it::class] ?: AuthorityTier.UNKNOWN }
             .minByOrNull { it.ordinal }
             ?: AuthorityTier.UNKNOWN
+        logger.debug(
+            "Resolved authority {} for proposition {} from {} locator kind(s): {}",
+            tier, proposition.id.take(8), locators.size, locators.map { it::class.simpleName },
+        )
+        return tier
     }
 
     companion object {

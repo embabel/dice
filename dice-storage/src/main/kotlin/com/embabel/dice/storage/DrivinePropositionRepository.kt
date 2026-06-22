@@ -241,13 +241,17 @@ open class DrivinePropositionRepository(
             .map(PropositionGraphMapper::toProposition)
 
     @Transactional(readOnly = true)
-    override fun query(query: PropositionQuery): List<Proposition> =
-        if (needsLiveDecay(query)) queryWithLiveDecay(query)
+    override fun query(query: PropositionQuery): List<Proposition> {
+        val liveDecay = needsLiveDecay(query)
+        val results = if (liveDecay) queryWithLiveDecay(query)
         else graphObjectManager.loadAll<PropositionView> {
             where { applyFilters(query, includeEffectiveConfidence = true) }
             orderBy { applyOrder(query.orderBy) }
             query.limit?.let { limit(it) }
         }.map(PropositionGraphMapper::toProposition)
+        logger.debug("query returned {} proposition(s) (liveDecay={}, limit={})", results.size, liveDecay, query.limit)
+        return results
+    }
 
     @Transactional(readOnly = true)
     override fun query(query: PropositionQuery, withProvenance: Boolean): List<Proposition> {
@@ -356,9 +360,11 @@ open class DrivinePropositionRepository(
     ): List<SimilarityResult<Proposition>> {
         val vector = embeddingService.embed(textSimilaritySearchRequest.query).toList()
         val threshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }
-        return graphObjectManager
+        val results = graphObjectManager
             .loadNearest<PropositionView>(vector, textSimilaritySearchRequest.topK, threshold)
             .map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = it.score) }
+        logger.debug("findSimilarWithScores: {} hit(s) (topK={}, threshold={})", results.size, textSimilaritySearchRequest.topK, threshold)
+        return results
     }
 
     @Transactional(readOnly = true)
@@ -413,7 +419,7 @@ open class DrivinePropositionRepository(
                 .bind(mapOf("ids" to ids, "k" to topK + 1, "threshold" to similarityThreshold))
         ) as List<Map<String, Any>>
 
-        return rows
+        val clusters = rows
             .groupBy { it["anchorId"] as String }
             .mapNotNull { (anchorId, group) ->
                 val anchor = byId[anchorId] ?: return@mapNotNull null
@@ -428,6 +434,11 @@ open class DrivinePropositionRepository(
                 if (similar.isNotEmpty()) Cluster(anchor = anchor, similar = similar) else null
             }
             .sortedByDescending { it.similar.size }
+        logger.debug(
+            "findClusters: {} candidate(s) -> {} cluster(s) (threshold={}, topK={})",
+            candidates.size, clusters.size, similarityThreshold, topK,
+        )
+        return clusters
     }
 
     /** DELETE_ORPHAN (not DELETE_ALL) so shared `:Source` nodes survive unless this was their last reference. */

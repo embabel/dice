@@ -19,6 +19,9 @@ import com.embabel.agent.rag.service.Cluster
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
+import org.slf4j.LoggerFactory
+
+private val logger = LoggerFactory.getLogger(VectorSearchCapable::class.java)
 
 /**
  * Opt-in capability for proposition stores that support vector similarity search and clustering.
@@ -75,7 +78,9 @@ interface VectorSearchCapable {
         // Default: get vector results then filter using query criteria
         val vectorResults = findSimilarWithScores(textSimilaritySearchRequest)
         val matchingIds = this.query(query).map { it.id }.toSet()
-        return vectorResults.filter { it.match.id in matchingIds }
+        val filtered = vectorResults.filter { it.match.id in matchingIds }
+        logger.debug("findSimilarWithScores+query: {} vector hit(s) -> {} after query filter", vectorResults.size, filtered.size)
+        return filtered
     }
 
     // ========================================================================
@@ -102,7 +107,7 @@ interface VectorSearchCapable {
         val candidates = query(query)
         val candidateIds = candidates.map { it.id }.toSet()
 
-        return candidates.mapNotNull { anchor ->
+        val clusters = candidates.mapNotNull { anchor ->
             val similar = findSimilarWithScores(
                 TextSimilaritySearchRequest(
                     query = anchor.text,
@@ -116,5 +121,10 @@ interface VectorSearchCapable {
 
             if (similar.isNotEmpty()) Cluster(anchor = anchor, similar = similar) else null
         }.sortedByDescending { it.similar.size }
+        logger.debug(
+            "findClusters: {} candidate(s) -> {} cluster(s) (threshold={}, topK={})",
+            candidates.size, clusters.size, similarityThreshold, topK,
+        )
+        return clusters
     }
 }

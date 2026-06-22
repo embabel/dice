@@ -26,44 +26,24 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStoreType
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Durable, out-of-the-box [PropositionRepository] backed by a single JSON file. A consumer can
- * persist propositions and reload them across a process restart without hand-writing storage:
- * constructing a new instance over the same file recovers everything previously saved.
+ * [PropositionRepository] backed by a single JSON file. Propositions persist across restarts:
+ * constructing a new instance over the same file reloads everything previously saved.
  *
- * Storage is an in-memory [ConcurrentHashMap] index (mirroring [InMemoryPropositionRepository])
- * that is loaded from the file on construction and re-snapshotted to disk on every mutation.
- * The snapshot is crash-safe: each flush writes the full store to a temporary file in the same
- * directory and then atomically replaces the target with
- * [Files.move] using [StandardCopyOption.ATOMIC_MOVE], so the target is never partially written.
- * (A JSONL append log would scale better for very large stores and is a possible future
- * optimization, but is intentionally not built here.)
+ * This is a local, single-process reference backend, not a production durability mechanism. A local
+ * file does not survive a container or cloud redeploy, and the process may not have permission to
+ * write the given path. For durable persistence in a deployed environment use the graph store
+ * (Drivine/Neo4j), or point this at durable, writable storage. The [path] and its permissions are
+ * the caller's responsibility.
  *
- * The embedding service is optional. When supplied, embeddings are computed and cached in memory
- * (and recomputed on load) so cosine similarity search works after a reload. When absent (the
- * default), vector similarity degrades gracefully to empty results, while plain storage and
- * lookups keep working.
- *
- * Writes are serialized under a single lock, but reads are not — they iterate the live maps. Because
- * a save records the proposition just before its embedding, a read that interleaves mid-save can see
- * the proposition without its vector yet and drop it from that one similarity result; it reappears on
- * the next read. That eventual consistency is fine for a single-process reference store, but it is not
- * the snapshot isolation a transactional backend would give you.
- *
- * The store [Path] is treated as trusted caller-supplied input; guarding it against path
- * traversal or untrusted locations is the consumer's responsibility. The JSON is deserialized
- * with a plain Kotlin mapper (no polymorphic default typing), and every loaded [Proposition] is
- * re-validated by its own constructor invariants.
- *
- * A graph-backed durable store (e.g. Drivine/Neo4j) is a consumer/downstream extension point:
- * those backends are not on this library's classpath, and a DB-backed implementation should
- * override [findByContextId] (not [findByContextIdValue]) to push per-context filtering down to
- * the store.
+ * The embedding service is optional. When supplied, vector similarity search works; when absent
+ * (the default), it returns empty results while plain storage and lookups keep working.
  *
  * @param path the JSON file the store is persisted to and loaded from.
  * @param embeddingService optional embedder; when null, vector paths return empty results.
@@ -72,6 +52,8 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
     private val path: Path,
     private val embeddingService: EmbeddingService? = null,
 ) : PropositionRepository {
+
+    private val logger = LoggerFactory.getLogger(JsonFilePropositionRepository::class.java)
 
     private val mapper = jacksonObjectMapper().findAndRegisterModules()
 
@@ -89,6 +71,7 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
                 propositions[prop.id] = prop
                 embeddingService?.let { embeddings[prop.id] = it.embed(prop.text) }
             }
+            logger.info("Loaded {} proposition(s) from {}", propositions.size, path)
         }
     }
 
@@ -111,6 +94,7 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
         try {
             flush()
         } catch (e: Exception) {
+            logger.warn("Flush failed while saving proposition {}; rolling back in-memory state", proposition.id.take(8), e)
             // Keep in-memory state consistent with disk: undo the mutation on flush failure.
             if (previous == null) propositions.remove(proposition.id) else propositions[proposition.id] = previous
             if (embeddingService != null) {
@@ -134,7 +118,10 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
     ): List<SimilarityResult<Proposition>> {
         if (propositions.isEmpty()) return emptyList()
 
-        val embedder = embeddingService ?: return emptyList()
+        val embedder = embeddingService ?: run {
+            logger.debug("Vector search requested but no embedder is configured; returning empty results")
+            return emptyList()
+        }
         val queryEmbedding = embedder.embed(textSimilaritySearchRequest.query)
         val minSimilarity = textSimilaritySearchRequest.similarityThreshold
 
@@ -154,7 +141,10 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
     ): List<SimilarityResult<Proposition>> {
         if (propositions.isEmpty()) return emptyList()
 
-        val embedder = embeddingService ?: return emptyList()
+        val embedder = embeddingService ?: run {
+            logger.debug("Vector search requested but no embedder is configured; returning empty results")
+            return emptyList()
+        }
         val queryEmbedding = embedder.embed(textSimilaritySearchRequest.query)
         val minSimilarity = textSimilaritySearchRequest.similarityThreshold
 
@@ -204,6 +194,7 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
         try {
             flush()
         } catch (e: Exception) {
+            logger.warn("Flush failed while deleting proposition {}; rolling back in-memory state", id.take(8), e)
             // Keep in-memory state consistent with disk: restore the removed entry on flush failure.
             propositions[id] = previous
             if (previousEmbedding != null) embeddings[id] = previousEmbedding
@@ -215,9 +206,8 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
     override fun count(): Int = propositions.size
 
     /**
-     * Snapshot the full store to disk crash-safely: write to a temp file in the target's parent
-     * directory, then atomically rename it over the target. The parent directory is created if
-     * absent.
+     * Write the full store to a temp file in the target's parent directory, then atomically rename
+     * it over the target. The parent directory is created if absent.
      */
     private fun flush() {
         val parent = path.toAbsolutePath().parent
