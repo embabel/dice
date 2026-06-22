@@ -24,6 +24,7 @@ import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.spi.ConflictType
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested

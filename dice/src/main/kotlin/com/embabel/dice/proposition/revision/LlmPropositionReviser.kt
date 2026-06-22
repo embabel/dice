@@ -20,9 +20,11 @@ import com.embabel.common.ai.model.LlmOptions
 import com.embabel.common.core.types.SimilarityCutoff
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.util.trim
-import com.embabel.dice.common.AuthorityResolver
 import com.embabel.dice.common.DiceMetadataKeys
-import com.embabel.dice.common.TrustScorer
+import com.embabel.dice.spi.AuthorityResolver
+import com.embabel.dice.spi.ConflictDetector
+import com.embabel.dice.spi.ConflictType
+import com.embabel.dice.spi.TrustScorer
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository

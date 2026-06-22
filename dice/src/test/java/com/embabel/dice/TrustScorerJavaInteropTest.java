@@ -15,9 +15,9 @@
  */
 package com.embabel.dice;
 
-import com.embabel.dice.common.AuthorityTier;
-import com.embabel.dice.common.NeutralTrustScorer;
-import com.embabel.dice.common.TrustScorer;
+import com.embabel.dice.spi.AuthorityTier;
+import com.embabel.dice.spi.NeutralTrustScorer;
+import com.embabel.dice.spi.TrustScorer;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionStatus;
 import org.junit.jupiter.api.Test;

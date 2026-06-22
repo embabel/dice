@@ -13,10 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.common
+package com.embabel.dice.spi
 
 import com.embabel.dice.proposition.Proposition
-import com.embabel.dice.proposition.revision.ConflictType
 import org.slf4j.LoggerFactory
 
 /**
