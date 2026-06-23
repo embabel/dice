@@ -285,7 +285,7 @@ class PropositionPipeline private constructor(
      *
      * Single-chunk semantics are unchanged: this runs Phase 1 then Phase 2 serially on the
      * calling thread and propagates any extraction exception (it never produces a
-     * [ChunkPropositionResult.Failed] — only the batch [process] does, per A3).
+     * [ChunkPropositionResult.Failed] — only the batch [process] does).
      *
      * @param chunk The chunk to process
      * @param context Configuration including schema and entity resolver
