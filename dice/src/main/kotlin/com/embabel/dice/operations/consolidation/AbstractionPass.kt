@@ -83,24 +83,33 @@ class AbstractionPass @JvmOverloads constructor(
                 }
                 val abstractions = abstractor.abstract(PropositionGroup.of(entityId, props), abstractionTargetCount)
                     .filter { it.level <= maxLevel }
+                if (abstractions.isEmpty()) {
+                    // Every candidate abstraction exceeded maxLevel. Don't retire the sources to
+                    // SUPERSEDED with nothing to replace them — that would silently lose the facts.
+                    // Skip the group and leave the sources ACTIVE.
+                    skipped += props.size
+                    continue
+                }
                 toSave += abstractions
                 // withStatus preserves the contentRevised decay anchor (only metadataRevised moves).
-                toSave += props.map { it.withStatus(PropositionStatus.SUPERSEDED) }
+                // Pinned sources are eviction-immune: keep them ACTIVE alongside the abstraction
+                // rather than retiring them to SUPERSEDED.
+                toSave += props.filter { !it.pinned }.map { it.withStatus(PropositionStatus.SUPERSEDED) }
                 abstractedGroups++
             }
 
             logger.debug(
-                "Abstraction over {} level-0 active proposition(s) for {}: {} group(s) abstracted, {} skipped (already covered), {} proposition(s) to save",
+                "Abstraction over {} level-0 active proposition(s) for {}: {} group(s) abstracted, {} skipped (already covered or over the level cap), {} proposition(s) to save",
                 level0Active.size, contextId, abstractedGroups, skipped, toSave.size,
             )
             if (toSave.isEmpty()) {
-                ConsolidationPassResult.NoOp(name, "no groups above threshold or all covered")
+                ConsolidationPassResult.NoOp(name, "no groups above threshold, all covered, or all abstractions over the level cap")
             } else {
                 ConsolidationPassResult.Changed(
                     passName = name,
                     propositionsToSave = toSave,
                     skipped = skipped,
-                    summary = "abstracted $abstractedGroups groups, $skipped propositions skipped (already covered)",
+                    summary = "abstracted $abstractedGroups groups, $skipped propositions skipped (already covered or over the level cap)",
                 )
             }
         } catch (e: Throwable) {

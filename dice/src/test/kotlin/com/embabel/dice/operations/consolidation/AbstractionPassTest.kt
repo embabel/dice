@@ -41,6 +41,7 @@ class AbstractionPassTest {
         status: PropositionStatus = PropositionStatus.ACTIVE,
         level: Int = 0,
         sourceIds: List<String> = emptyList(),
+        pinned: Boolean = false,
     ): Proposition =
         Proposition(
             id = id,
@@ -52,6 +53,7 @@ class AbstractionPassTest {
             status = status,
             level = level,
             sourceIds = sourceIds,
+            pinned = pinned,
         )
 
     private fun group(entityId: String, count: Int): List<Proposition> =
@@ -104,6 +106,25 @@ class AbstractionPassTest {
     }
 
     @Test
+    fun `a pinned source is kept ACTIVE, not superseded, when its group is abstracted`() {
+        val members = group("bob", 4) + proposition("pinned-1", "bob", pinned = true)
+        val abstraction = proposition("abs-1", "bob", level = 1, sourceIds = members.map { it.id })
+        val abstractor = mockk<PropositionAbstractor>()
+        every { abstractor.abstract(any<PropositionGroup>(), any()) } returns listOf(abstraction)
+
+        val changed = assertInstanceOf(
+            ConsolidationPassResult.Changed::class.java,
+            AbstractionPass(abstractor, abstractionThreshold = 5).run(contextId, members),
+        )
+
+        // The abstraction plus the 4 unpinned sources superseded; the pinned source is eviction-
+        // immune, so it is neither superseded nor otherwise touched (stays ACTIVE, absent from saves).
+        assertTrue(changed.propositionsToSave.contains(abstraction))
+        assertEquals(4, changed.propositionsToSave.count { it.status == PropositionStatus.SUPERSEDED })
+        assertTrue(changed.propositionsToSave.none { it.id == "pinned-1" })
+    }
+
+    @Test
     fun `level-inflation guard skips a group already covered by an existing higher-level proposition`() {
         val members = group("bob", 5)
         val existingAbstraction = proposition(
@@ -146,7 +167,7 @@ class AbstractionPassTest {
     }
 
     @Test
-    fun `abstractions exceeding maxLevel are filtered out`() {
+    fun `when every abstraction exceeds maxLevel the sources are kept, not superseded`() {
         val members = group("bob", 5)
         val tooHigh = proposition("abs-high", "bob", level = 4, sourceIds = members.map { it.id })
         val abstractor = mockk<PropositionAbstractor>()
@@ -155,9 +176,28 @@ class AbstractionPassTest {
         val result = AbstractionPass(abstractor, abstractionThreshold = 5, maxLevel = 3)
             .run(contextId, members)
 
+        // The over-cap abstraction is dropped, and crucially the sources are NOT retired to
+        // SUPERSEDED — there would be no surviving abstraction to replace them, so retiring them
+        // would silently lose the facts. The group is skipped and the pass is a NoOp.
+        assertInstanceOf(ConsolidationPassResult.NoOp::class.java, result)
+    }
+
+    @Test
+    fun `a surviving abstraction still supersedes the sources even when an over-cap sibling is dropped`() {
+        val members = group("bob", 5)
+        val ok = proposition("abs-ok", "bob", level = 2, sourceIds = members.map { it.id })
+        val tooHigh = proposition("abs-high", "bob", level = 4, sourceIds = members.map { it.id })
+        val abstractor = mockk<PropositionAbstractor>()
+        every { abstractor.abstract(any<PropositionGroup>(), any()) } returns listOf(ok, tooHigh)
+
+        val result = AbstractionPass(abstractor, abstractionThreshold = 5, maxLevel = 3)
+            .run(contextId, members)
+
         val changed = assertInstanceOf(ConsolidationPassResult.Changed::class.java, result)
-        // the over-cap abstraction is dropped; only the 5 superseded sources remain
+        // Over-cap sibling dropped, the within-cap abstraction kept, and the sources superseded
+        // because there IS now a replacement.
         assertTrue(changed.propositionsToSave.none { it.level > 3 })
+        assertTrue(changed.propositionsToSave.contains(ok))
         assertEquals(5, changed.propositionsToSave.count { it.status == PropositionStatus.SUPERSEDED })
     }
 }
