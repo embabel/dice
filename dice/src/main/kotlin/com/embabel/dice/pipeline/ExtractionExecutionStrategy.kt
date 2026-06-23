@@ -35,8 +35,10 @@ import java.util.concurrent.Executors
  * ## Executor ownership
  * Each implementation owns its execution mechanism. The [execute] signature intentionally
  * does not mention [ExecutorService] — any executor is an injected implementation detail.
- * The executor lifecycle is always the caller's responsibility; no strategy ever calls
- * `executor.shutdown()`.
+ * A caller-supplied executor is never shut down by the strategy — its lifecycle stays the
+ * caller's. When a strategy creates its own pool (the no-executor constructors), that pool is
+ * the strategy's to clean up: both concurrent strategies are [AutoCloseable], and [close]
+ * shuts down only an internally-created pool.
  *
  * ## Thread-safety gate for production
  * The default is [SerialExtractionStrategy] (no concurrency). Before switching to
@@ -71,17 +73,30 @@ object SerialExtractionStrategy : ExtractionExecutionStrategy {
 }
 
 /**
- * Fans all chunks out concurrently on the injected [executor] via [CompletableFuture], then
- * joins them in input order. A failed extraction yields a `null` slot.
+ * Fans all chunks out concurrently on the [executor] via [CompletableFuture], then joins them in
+ * input order. A failed extraction yields a `null` slot.
  *
- * The [executor] is caller-owned — this class never calls [ExecutorService.shutdown].
+ * A caller-supplied executor is never shut down here; a pool created by the no-arg constructor is
+ * shut down by [close].
  *
  * Production use requires verifying extractor thread-safety first (see [ExtractionExecutionStrategy]).
  */
-class ParallelExtractionStrategy @JvmOverloads constructor(
-    private val executor: ExecutorService =
+class ParallelExtractionStrategy private constructor(
+    private val executor: ExecutorService,
+    private val ownsExecutor: Boolean,
+) : ExtractionExecutionStrategy, AutoCloseable {
+
+    /** Use a caller-supplied [executor]; [close] will not shut it down. */
+    constructor(executor: ExecutorService) : this(executor, ownsExecutor = false)
+
+    /**
+     * Create an internal fixed pool sized to the available processors. The pool is owned by this
+     * strategy, so call [close] (or use it as a resource) when you are done with it.
+     */
+    constructor() : this(
         Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors()),
-) : ExtractionExecutionStrategy {
+        ownsExecutor = true,
+    )
 
     override fun <T> execute(chunks: List<Chunk>, extract: (Chunk) -> T): List<T?> =
         chunks.map { chunk ->
@@ -89,6 +104,11 @@ class ParallelExtractionStrategy @JvmOverloads constructor(
                 runCatching { extract(chunk) }.getOrElse { null }
             }, executor)
         }.map { it.join() }
+
+    /** Shuts down an internally-created pool; a no-op when the executor was caller-supplied. */
+    override fun close() {
+        if (ownsExecutor) executor.shutdown()
+    }
 }
 
 /**
@@ -97,19 +117,29 @@ class ParallelExtractionStrategy @JvmOverloads constructor(
  * it caps in-flight `extract()` calls to [batchSize] at a time. Results are returned in input order.
  *
  * `BatchedExtractionStrategy(batchSize = 1)` is the safe degrade-to-serial path until extractor
- * thread-safety is verified (see [ExtractionExecutionStrategy]). The [executor] is caller-owned —
- * this class never calls [ExecutorService.shutdown].
+ * thread-safety is verified (see [ExtractionExecutionStrategy]). A caller-supplied executor is
+ * never shut down here; a pool created by the no-executor constructor is shut down by [close].
  *
  * @param batchSize maximum concurrent extractions per window; must be positive
  */
-class BatchedExtractionStrategy @JvmOverloads constructor(
-    private val batchSize: Int = 5,
-    private val executor: ExecutorService = Executors.newFixedThreadPool(batchSize),
-) : ExtractionExecutionStrategy {
+class BatchedExtractionStrategy private constructor(
+    private val batchSize: Int,
+    private val executor: ExecutorService,
+    private val ownsExecutor: Boolean,
+) : ExtractionExecutionStrategy, AutoCloseable {
 
     init {
         require(batchSize > 0) { "batchSize must be positive" }
     }
+
+    /** Use a caller-supplied [executor]; [close] will not shut it down. */
+    constructor(batchSize: Int = 5, executor: ExecutorService) : this(batchSize, executor, ownsExecutor = false)
+
+    /**
+     * Create an internal fixed pool sized to [batchSize]. The pool is owned by this strategy, so
+     * call [close] (or use it as a resource) when you are done with it.
+     */
+    constructor(batchSize: Int = 5) : this(batchSize, Executors.newFixedThreadPool(batchSize), ownsExecutor = true)
 
     override fun <T> execute(chunks: List<Chunk>, extract: (Chunk) -> T): List<T?> =
         chunks.chunked(batchSize).flatMap { window ->
@@ -119,4 +149,9 @@ class BatchedExtractionStrategy @JvmOverloads constructor(
                 }, executor)
             }.map { it.join() }
         }
+
+    /** Shuts down an internally-created pool; a no-op when the executor was caller-supplied. */
+    override fun close() {
+        if (ownsExecutor) executor.shutdown()
+    }
 }
