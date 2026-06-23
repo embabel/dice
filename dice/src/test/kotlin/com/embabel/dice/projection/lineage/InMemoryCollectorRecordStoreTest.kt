@@ -17,8 +17,10 @@ package com.embabel.dice.projection.lineage
 
 import com.embabel.dice.spi.MarkReason
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.time.Instant
 
 class InMemoryCollectorRecordStoreTest {
 
@@ -85,5 +87,16 @@ class InMemoryCollectorRecordStoreTest {
         store.record(record("p1", "r1"))
 
         assertTrue(store.findByProposition("nope").isEmpty())
+    }
+
+    @Test
+    fun `findRun returns the recorded run header and null for an unknown id`() {
+        val store = InMemoryCollectorRecordStore()
+        store.recordRun(CollectorRun(runId = "r1", startedAt = Instant.now(), dryRun = true))
+
+        val found = store.findRun("r1")
+        assertEquals("r1", found?.runId)
+        assertTrue(found?.dryRun == true)
+        assertNull(store.findRun("nope"))
     }
 }

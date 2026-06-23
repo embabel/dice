@@ -94,4 +94,15 @@ class CollectorStrategyTest {
         assertEquals(2, marks.size)
         assertTrue(marks.all { it.reason == MarkReason.Stale })
     }
+
+    @Test
+    fun `a Custom mark reason carries its consumer key and description`() {
+        val reason = MarkReason.Custom(key = "schema-version", description = "extracted under an old schema")
+        assertEquals("schema-version", reason.key)
+        assertEquals("extracted under an old schema", reason.description)
+
+        // A custom reason flows through a mark like the shipped reasons do.
+        val mark = PropositionMark(propositionId = "p1", reason = reason, strategyName = "custom")
+        assertEquals("schema-version", mark.reason.key)
+    }
 }
