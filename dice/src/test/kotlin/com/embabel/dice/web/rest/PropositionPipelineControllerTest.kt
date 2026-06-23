@@ -26,6 +26,7 @@ import com.embabel.dice.common.support.InMemorySchemaRegistry
 import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.proposition.*
+import com.embabel.dice.proposition.revision.RevisionResult
 import com.fasterxml.jackson.annotation.JsonClassDescription
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
@@ -199,5 +200,59 @@ class PropositionPipelineControllerTest {
         assert(propositionRepository.count() == 1)
         val saved = propositionRepository.findAll().first()
         assert(saved.text == "Wagner composed Tristan")
+    }
+
+    @Test
+    fun `POST extract persists the contradicted original, not just the new proposition`() {
+        val contextId = "test-context"
+        val requestBody = """{"text": "Brahms was born in 1833", "sourceId": "c1"}"""
+
+        // A revision that contradicts an existing proposition: the original is returned with
+        // reduced confidence and CONTRADICTED status, separate from the newly extracted one.
+        val original = Proposition(
+            id = "orig-1",
+            contextId = ContextId(contextId),
+            text = "Brahms was born in 1830",
+            mentions = listOf(EntityMention("Brahms", "Composer", "composer-brahms", MentionRole.SUBJECT)),
+            confidence = 0.3,
+            status = PropositionStatus.CONTRADICTED,
+        )
+        val newProp = Proposition(
+            contextId = ContextId(contextId),
+            text = "Brahms was born in 1833",
+            mentions = listOf(EntityMention("Brahms", "Composer", "composer-brahms", MentionRole.SUBJECT)),
+            confidence = 0.95,
+        )
+        val mockResult = ChunkPropositionResult.Success(
+            chunkId = "chunk-1",
+            suggestedPropositions = SuggestedPropositions(chunkId = "chunk-1", propositions = emptyList()),
+            entityResolutions = Resolutions(chunkIds = setOf("chunk-1"), resolutions = emptyList()),
+            // `propositions` carries only the new one; the original lives in the revision result.
+            propositions = listOf(newProp),
+            revisionResults = listOf(RevisionResult.Contradicted(original = original, new = newProp)),
+        )
+
+        every { propositionPipeline.processChunk(any(), any()) } returns mockResult
+
+        mockMvc.perform(
+            post("/api/v1/contexts/$contextId/extract")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody)
+        ).andExpect(status().isOk)
+
+        // Both the new proposition AND the retired original must be persisted.
+        assert(propositionRepository.count() == 2) { "expected new + contradicted original to be saved" }
+        val saved = propositionRepository.findAll().associateBy { it.id }
+        assert(saved.containsKey("orig-1")) { "the contradicted original must be persisted" }
+        assert(saved["orig-1"]!!.status == PropositionStatus.CONTRADICTED)
+    }
+
+    @Test
+    fun `POST extract rejects blank text with 400`() {
+        mockMvc.perform(
+            post("/api/v1/contexts/test-context/extract")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"text": "   "}""")
+        ).andExpect(status().isBadRequest)
     }
 }
