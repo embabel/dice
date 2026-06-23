@@ -17,6 +17,7 @@ package com.embabel.dice.projection.memory
 
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
+import org.slf4j.LoggerFactory
 
 /**
  * The "sweep" half of the mark-and-sweep collector: given a proposition and its marks, decides
@@ -56,9 +57,18 @@ class StatusTransitionSweepPolicy @JvmOverloads constructor(
     private val targetStatus: PropositionStatus = PropositionStatus.STALE,
 ) : SweepPolicy {
 
-    override fun decide(proposition: Proposition, marks: List<PropositionMark>): SweepAction = when {
-        proposition.pinned -> SweepAction.Skip
-        marks.isEmpty() -> SweepAction.Skip
-        else -> SweepAction.TransitionStatus(targetStatus)
+    private val logger = LoggerFactory.getLogger(StatusTransitionSweepPolicy::class.java)
+
+    override fun decide(proposition: Proposition, marks: List<PropositionMark>): SweepAction {
+        val action = when {
+            proposition.pinned -> SweepAction.Skip
+            marks.isEmpty() -> SweepAction.Skip
+            else -> SweepAction.TransitionStatus(targetStatus)
+        }
+        logger.trace(
+            "Sweep decision for {} (pinned={}, marks={}): {}",
+            proposition.id.take(8), proposition.pinned, marks.size, action,
+        )
+        return action
     }
 }

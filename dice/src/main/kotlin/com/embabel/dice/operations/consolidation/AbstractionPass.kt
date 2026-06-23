@@ -20,6 +20,7 @@ import com.embabel.dice.operations.PropositionGroup
 import com.embabel.dice.operations.abstraction.PropositionAbstractor
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
+import org.slf4j.LoggerFactory
 
 /**
  * Consolidation pass that synthesizes higher-level propositions from groups of related ground-level
@@ -52,6 +53,8 @@ class AbstractionPass @JvmOverloads constructor(
 ) : ConsolidationPass {
 
     override val name: String = "abstraction"
+
+    private val logger = LoggerFactory.getLogger(AbstractionPass::class.java)
 
     override fun run(contextId: ContextId, propositions: List<Proposition>): ConsolidationPassResult {
         return try {
@@ -86,6 +89,10 @@ class AbstractionPass @JvmOverloads constructor(
                 abstractedGroups++
             }
 
+            logger.debug(
+                "Abstraction over {} level-0 active proposition(s) for {}: {} group(s) abstracted, {} skipped (already covered), {} proposition(s) to save",
+                level0Active.size, contextId, abstractedGroups, skipped, toSave.size,
+            )
             if (toSave.isEmpty()) {
                 ConsolidationPassResult.NoOp(name, "no groups above threshold or all covered")
             } else {

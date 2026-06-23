@@ -20,6 +20,7 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.revision.PropositionRelation
 import com.embabel.dice.proposition.revision.PropositionReviser
+import org.slf4j.LoggerFactory
 
 /**
  * Consolidation pass that resolves contradictions among ACTIVE propositions by delegating
@@ -48,6 +49,8 @@ class ContradictionResolutionPass @JvmOverloads constructor(
 ) : ConsolidationPass {
 
     override val name: String = "contradiction-resolution"
+
+    private val logger = LoggerFactory.getLogger(ContradictionResolutionPass::class.java)
 
     override fun run(contextId: ContextId, propositions: List<Proposition>): ConsolidationPassResult {
         return try {
@@ -78,6 +81,10 @@ class ContradictionResolutionPass @JvmOverloads constructor(
                     }
             }
             val deduped = toSave.distinctBy { it.id }
+            logger.debug(
+                "Contradiction resolution over {} active proposition(s) for {}: {} retired to CONTRADICTED",
+                active.size, contextId, deduped.size,
+            )
             if (deduped.isEmpty()) {
                 ConsolidationPassResult.NoOp(name, "no contradictions found")
             } else {

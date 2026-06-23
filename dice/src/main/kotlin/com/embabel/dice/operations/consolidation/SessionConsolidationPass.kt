@@ -18,6 +18,7 @@ package com.embabel.dice.operations.consolidation
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.projection.memory.MemoryConsolidator
 import com.embabel.dice.proposition.Proposition
+import org.slf4j.LoggerFactory
 
 /**
  * Consolidation pass that folds a session's propositions into long-term memory by delegating
@@ -40,10 +41,17 @@ class SessionConsolidationPass @JvmOverloads constructor(
 
     override val name: String = "session-consolidation"
 
+    private val logger = LoggerFactory.getLogger(SessionConsolidationPass::class.java)
+
     override fun run(contextId: ContextId, propositions: List<Proposition>): ConsolidationPassResult {
         return try {
             val result = consolidator.consolidate(sessionPropositions, propositions)
             val toSave = result.promoted + result.reinforced + result.merged.map { it.result }
+            logger.debug(
+                "Session consolidation for {}: {} session vs {} long-term proposition(s) -> {} promoted, {} reinforced, {} merged, {} discarded",
+                contextId, sessionPropositions.size, propositions.size,
+                result.promoted.size, result.reinforced.size, result.merged.size, result.discarded.size,
+            )
             if (toSave.isEmpty()) {
                 ConsolidationPassResult.NoOp(name, "nothing to promote, reinforce, or merge")
             } else {
