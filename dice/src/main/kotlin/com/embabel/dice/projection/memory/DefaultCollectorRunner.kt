@@ -65,10 +65,11 @@ class DefaultCollectorRunner(
         val (_, marks) = markPhase(contextId)
         logger.debug("collect (read-only): {} mark(s) produced for context {}", marks.size, contextId)
         // Pure-read: no repository write, no run record. Nothing is persisted, so there is no run
-        // to cross-reference — the runId is blank to signal it is not queryable in any store.
+        // to cross-reference — the runId is blank to signal it is not queryable in any store. It is
+        // flagged dryRun because, like a dry run, it applied no transition.
         return CollectorRunResult(
             runId = EPHEMERAL_RUN_ID,
-            dryRun = false,
+            dryRun = true,
             marks = marks,
             applied = emptyList(),
             skipped = emptyList(),
@@ -97,9 +98,10 @@ class DefaultCollectorRunner(
             when (val action = policy.decide(proposition, propMarks)) {
                 is SweepAction.TransitionStatus -> {
                     if (dryRun) {
-                        // Would-be transition: record it, but mutate nothing, emit nothing, and
-                        // leave `applied` empty — `marks` already reflects what WOULD happen.
-                        records += records(propMarks, runId, CollectorOutcome.TRANSITIONED, proposition.status, action.newStatus)
+                        // Preview only: record the would-be transition as MARKED (nothing was swept),
+                        // mutate nothing, emit nothing, and leave `applied` empty. The record's
+                        // newStatus still carries what WOULD happen.
+                        records += records(propMarks, runId, CollectorOutcome.MARKED, proposition.status, action.newStatus)
                     } else {
                         applyTransition(proposition, action.newStatus, propMarks)
                         applied.addAll(propMarks)
@@ -108,13 +110,15 @@ class DefaultCollectorRunner(
                 }
 
                 SweepAction.HardDelete -> {
-                    if (!dryRun) {
+                    if (dryRun) {
+                        // Preview only: record what WOULD be removed as MARKED; delete nothing and
+                        // leave `hardDeleted` empty.
+                        records += records(propMarks, runId, CollectorOutcome.MARKED, proposition.status, null)
+                    } else {
                         repository.delete(proposition.id)
-                        // Only an actually-removed proposition is reported as hard-deleted; on a
-                        // dry run `hardDeleted` stays empty (the record still captures the preview).
                         hardDeleted += proposition.id
+                        records += records(propMarks, runId, CollectorOutcome.HARD_DELETED, proposition.status, null)
                     }
-                    records += records(propMarks, runId, CollectorOutcome.HARD_DELETED, proposition.status, null)
                 }
 
                 SweepAction.Skip -> {
