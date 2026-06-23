@@ -53,14 +53,23 @@ class ContradictionResolutionPass @JvmOverloads constructor(
         return try {
             val active = propositions.filter { it.status == PropositionStatus.ACTIVE }
             val toSave = mutableListOf<Proposition>()
+            // Each unordered pair is resolved once: a symmetric reviser reports the same conflict
+            // from both sides, and resolving both would retire both members and leave no survivor.
+            val resolvedPairs = mutableSetOf<Pair<String, String>>()
             for (p in active) {
                 val candidates = active.filter { it.id != p.id && sharesEntity(it, p) }
                 val classified = reviser.classify(p, candidates)
                 classified
                     .filter { it.relation == PropositionRelation.CONTRADICTORY }
                     .forEach { c ->
+                        val pairKey =
+                            if (p.id <= c.proposition.id) p.id to c.proposition.id
+                            else c.proposition.id to p.id
+                        if (!resolvedPairs.add(pairKey)) return@forEach
+                        // The lower effective confidence loses; a tie favors the proposition being
+                        // classified (p), so only the candidate is retired in that case.
                         val weaker =
-                            if (p.effectiveConfidence() <= c.proposition.effectiveConfidence()) p
+                            if (p.effectiveConfidence() < c.proposition.effectiveConfidence()) p
                             else c.proposition
                         if (weaker.status == PropositionStatus.ACTIVE) {
                             // withStatus preserves the contentRevised decay anchor.

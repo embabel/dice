@@ -29,6 +29,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.time.Instant
 
 class ContradictionResolutionPassTest {
 
@@ -39,6 +40,7 @@ class ContradictionResolutionPassTest {
         entityId: String,
         confidence: Double,
         status: PropositionStatus = PropositionStatus.ACTIVE,
+        contentRevised: Instant = Instant.now(),
     ): Proposition =
         Proposition(
             id = id,
@@ -48,6 +50,7 @@ class ContradictionResolutionPassTest {
             confidence = confidence,
             decay = 0.1,
             status = status,
+            contentRevised = contentRevised,
         )
 
     @Test
@@ -84,6 +87,32 @@ class ContradictionResolutionPassTest {
         )
 
         val result = ContradictionResolutionPass(reviser).run(contextId, listOf(stronger, weaker))
+
+        val changed = assertInstanceOf(ConsolidationPassResult.Changed::class.java, result)
+        assertEquals(1, changed.propositionsToSave.size)
+        val transitioned = changed.propositionsToSave.single()
+        assertEquals("b", transitioned.id)
+        assertEquals(PropositionStatus.CONTRADICTED, transitioned.status)
+    }
+
+    @Test
+    fun `equal-confidence symmetric contradiction retires exactly one, never both`() {
+        // Same effective confidence (same confidence, decay, and content anchor) and a symmetric
+        // reviser that reports the conflict from both sides. The pair must resolve to exactly one
+        // survivor — the bug was retiring both, leaving no survivor. A tie favors the proposition
+        // being classified, so 'a' (the outer-loop subject seen first) survives and 'b' is retired.
+        val anchor = Instant.now()
+        val a = proposition("a", "bob", 0.5, contentRevised = anchor)
+        val b = proposition("b", "bob", 0.5, contentRevised = anchor)
+        val reviser = mockk<PropositionReviser>()
+        every { reviser.classify(a, listOf(b)) } returns listOf(
+            ClassifiedProposition(b, PropositionRelation.CONTRADICTORY, 0.5),
+        )
+        every { reviser.classify(b, listOf(a)) } returns listOf(
+            ClassifiedProposition(a, PropositionRelation.CONTRADICTORY, 0.5),
+        )
+
+        val result = ContradictionResolutionPass(reviser).run(contextId, listOf(a, b))
 
         val changed = assertInstanceOf(ConsolidationPassResult.Changed::class.java, result)
         assertEquals(1, changed.propositionsToSave.size)
