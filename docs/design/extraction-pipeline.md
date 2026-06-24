@@ -25,7 +25,55 @@ flowchart LR
         RES["resolve entities<br/>through the shared resolver"] --> REV["optional revision<br/>against the store"]
     end
     P2 --> RESULT["Unsaved result<br/>(propositions + resolutions)"]
-    RESULT -.caller persists.-> STORE[(Proposition store)]
+    RESULT -.caller persists.-> GATE{Admission gates}
+    GATE -->|Persist| STORE[(Proposition store)]
+    GATE -->|Reject| DROP[Dropped]
+    GATE -->|RouteToReview| REVIEW[Review queue]
+    GATE -->|SkipProjection| STORE
+    GATE -->|Demote| STORE
+```
+
+The admission gates (see [knowledge-hygiene](knowledge-hygiene.md)) run between the pipeline result and the store — they are the caller's responsibility to apply.
+
+## Pipeline SPI seams
+
+Every variable part of the pipeline is a pluggable interface. This is how they fit together:
+
+```mermaid
+classDiagram
+    class PropositionPipeline {
+        +process(chunks, context) PropositionResults
+        +processOnce(text, sourceId, context, historyStore) PropositionResults
+        +processChunk(chunk, context) ChunkResult
+    }
+    class PropositionExtractor {
+        <<interface>>
+        +extract(chunk, context) ExtractionResult
+    }
+    class PropositionReviser {
+        <<interface>>
+        +revise(newProposition, existing) RevisionResult
+    }
+    class ExtractionExecutionStrategy {
+        <<interface>>
+        +execute(chunks, extractor) List
+    }
+    class ExtractionGate {
+        <<interface>>
+        +evaluate(proposition, context) GateDecision
+    }
+    class GateDecision {
+        <<sealed>>
+        Persist
+        Reject
+        RouteToReview
+        SkipProjection
+        Demote
+    }
+    PropositionPipeline --> PropositionExtractor : stage 1
+    PropositionPipeline --> PropositionReviser : stage 2 optional
+    PropositionPipeline --> ExtractionExecutionStrategy : dispatches extraction
+    ExtractionGate --> GateDecision : returns
 ```
 
 ## Why extraction and resolution are separate

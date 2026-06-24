@@ -18,7 +18,7 @@ flowchart LR
     GATE -->|reject| DROP[Dropped]
     GATE -->|skip projection| STORE
     GATE -->|demote| STORE
-    STORE --> COLLECT["Reclamation<br/>mark &amp; sweep"]
+    STORE --> COLLECT["Reclamation<br/>mark & sweep"]
     STORE --> DREAM["Consolidation<br/>dream loop"]
     COLLECT --> STORE
     DREAM --> STORE

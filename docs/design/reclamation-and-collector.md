@@ -17,13 +17,61 @@ flowchart LR
         S2[DuplicateCollectorStrategy] --> M
     end
     M --> SWEEP{"SweepPolicy.decide"}
-    SWEEP -->|TransitionStatus| T["→ STALE (reversible default)"]
+    SWEEP -->|TransitionStatus| T["-> STALE (reversible default)"]
     SWEEP -->|HardDelete| D["remove (opt-in only)"]
     SWEEP -->|Skip| K["leave untouched"]
     T --> REC[CollectorRecordStore]
     D --> REC
     K --> REC
 ```
+
+## Collector SPI seams
+
+```mermaid
+classDiagram
+    class CollectorRunner {
+        <<interface>>
+        +run(contextId, dryRun) CollectorRunResult
+        +collect(contextId) List
+    }
+    class CollectorStrategy {
+        <<interface>>
+        +mark(candidates) List
+    }
+    class PropositionMark {
+        +propositionId String
+        +strategyName String
+        +reason MarkReason
+    }
+    class MarkReason {
+        <<sealed>>
+        Stale
+        Duplicate(survivorId)
+        Custom(label)
+    }
+    class SweepPolicy {
+        <<interface>>
+        +decide(proposition, marks) SweepAction
+    }
+    class SweepAction {
+        <<sealed>>
+        TransitionStatus(status)
+        HardDelete
+        Skip
+    }
+    class StatusTransitionSweepPolicy {
+        +targetStatus PropositionStatus
+    }
+    CollectorRunner --> CollectorStrategy : collects marks from
+    CollectorRunner --> SweepPolicy : routes each mark to
+    CollectorStrategy --> PropositionMark : produces
+    PropositionMark --> MarkReason : typed reason
+    SweepPolicy --> SweepAction : returns
+    SweepPolicy <|.. StatusTransitionSweepPolicy
+```
+
+`StatusTransitionSweepPolicy` is the default — it skips pinned propositions unconditionally,
+skips anything unmarked, and otherwise transitions to `STALE`. It never returns `HardDelete`.
 
 ## The mark phase: strategies and marks
 

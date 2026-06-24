@@ -6,6 +6,41 @@ back to their evidence, duplicate nodes on every re-run, and stale structure lef
 underlying facts change. This note is about the decisions that keep the projected graph honest — not
 about the projector classes themselves.
 
+## The projection pipeline
+
+Propositions flow from the store through a reconciler and into the target backend, with a
+`ProjectionRecord` written for every outcome whether the proposition lands as a new artifact, adopts
+an existing one, is skipped, or fails. The authority tier travels with the record.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Caller
+    participant Projector as GraphProjector
+    participant Reconciler
+    participant Backend as Target backend
+    participant Records as ProjectionRecordStore
+    Caller->>Projector: project(propositions, target)
+    loop each proposition
+        Projector->>Reconciler: reconcile(proposition, target)
+        Reconciler-->>Projector: CreateNew / Adopt / Align
+        alt CreateNew
+            Projector->>Backend: create new edge / node
+            Backend-->>Projector: targetRef
+        else Adopt
+            Projector->>Backend: point at existing node (targetRef from decision)
+        else Align
+            Projector->>Backend: merge attributes into existing node
+            Backend-->>Projector: targetRef
+        end
+        Projector->>Records: record(propositionId, target, lifecycle, authority)
+    end
+    Projector-->>Caller: ProjectionBatchResult
+```
+
+After the batch, the `EventEmittingProjector` decorator publishes a `ProjectionBatchCompleted`
+event so downstream consumers can react without polling.
+
 ## Edge lineage
 
 When a proposition becomes a graph edge, that's not the end of the story — DICE writes a record of
@@ -27,9 +62,9 @@ whenever an edge is re-persisted, so it's never silently lost.
 ## Projection outcomes
 
 Projection isn't a boolean. A proposition might be successfully projected as a new edge, *adopted*
-onto a node that already existed, *skipped* because it met no projection criteria, or *failed*
-because something threw. DICE records which of these happened for every proposition, with a reason
-for the skips and failures.
+onto a node that already existed, *aligned* by merging attributes into a match, *skipped* because it
+met no projection criteria, or *failed* because something threw. DICE records which of these
+happened for every proposition, with a reason for the skips and failures.
 
 The point is that these outcomes mean different things to whatever decides what to re-project later.
 "Nothing to do here" and "this broke" look identical if you only track success/failure, and you'd
@@ -37,18 +72,75 @@ either retry things that were fine or ignore things that need attention. Disting
 from *newly projected* also records the reconciliation decision in the lineage, not just in the
 graph write.
 
+The reconciler returns one of three decisions — `CreateNew`, `Adopt`, or `Align` — each recorded in the lineage.
+
 ```mermaid
 flowchart TD
     P[Proposition] --> RECON{"Reconcile against<br/>existing graph"}
-    RECON -->|new entity| NEW[Project new edge]
-    RECON -->|already exists| ADOPT[Adopt existing node]
+    RECON -->|"CreateNew — no match"| NEW[Project new artifact]
+    RECON -->|"Adopt — exact match found"| ADOPT[Adopt existing node]
+    RECON -->|"Align — merge attrs into match"| ALIGN[Align with existing node]
     P -.->|met no criteria| SKIP[Skipped]
     P -.->|projector threw| FAIL[Failed]
     NEW --> REC[("ProjectionRecord<br/>lineage + authority + outcome")]
     ADOPT --> REC
+    ALIGN --> REC
     SKIP --> REC
     FAIL --> REC
 ```
+
+`CreateNew` creates a fresh artifact in the target backend. `Adopt` reuses an existing artifact verbatim — the proposition's projected identity becomes that node's reference. `Align` is the middle option: the proposition merges attributes into an existing artifact while keeping its own distinct identity (for example, a projector that enriches an existing entity node rather than pointing at it wholesale). The shipped `RepositoryBackedReconciler` uses exact entity-ID match to return `Adopt` or `CreateNew`; `Align` is available for backends that need finer-grained merging.
+
+## SPI seams for projection
+
+The projectors, the reconciler, and the record stores are all SPIs. Here is how they fit together:
+
+```mermaid
+classDiagram
+    class GraphProjector {
+        +project(propositions, target) ProjectionBatchResult
+    }
+    class Reconciler {
+        +reconcile(proposition, target) ReconciliationDecision
+    }
+    class ReconciliationDecision {
+        <<sealed>>
+        CreateNew
+        Adopt(targetRef)
+        Align(targetRef)
+    }
+    class ProjectionRecordStore {
+        +record(record)
+        +markStaleByProposition(propositionId)
+        +all() List
+    }
+    class ProjectionRecord {
+        +propositionId
+        +target
+        +targetRef
+        +lifecycle ProjectionLifecycle
+        +runId
+        +at
+    }
+    class ProjectionLifecycle {
+        <<enum>>
+        PROJECTED
+        ADOPTED
+        ALIGNED
+        SKIPPED
+        FAILED
+        STALE
+    }
+    GraphProjector --> Reconciler : delegates reconciliation
+    GraphProjector --> ProjectionRecordStore : writes outcome
+    ProjectionRecordStore --> ProjectionRecord : stores
+    ProjectionRecord --> ProjectionLifecycle : lifecycle field
+    Reconciler --> ReconciliationDecision : returns
+```
+
+The in-memory `InMemoryProjectionRecordStore` and the durable `DrivineProjectionRecordStore` (in
+`dice-storage`) both satisfy this SPI — the durable one persists `(:ProjectionRecord)` nodes in
+Neo4j so lineage survives a restart.
 
 ## Stale-cascade on source change
 
@@ -76,7 +168,7 @@ sequenceDiagram
     participant Records as Projection records
     Life->>Bus: status becomes superseded / contradicted / stale
     Bus->>Cascade: deliver the change
-    Cascade->>Records: mark every record derived from this proposition stale
+    Cascade->>Records: markStaleByProposition(propositionId)
     Note over Records: the graph edge is left intact — the mark is only a refresh signal for later
 ```
 

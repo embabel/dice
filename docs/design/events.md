@@ -28,10 +28,35 @@ A few deliberate choices:
 
 ```mermaid
 flowchart LR
-    STORE[Proposition store] -->|persisted / status changed| L[DiceEventListener]
-    PROJ[Projector] -->|batch completed| L
-    PIPE[Revision pipeline] -->|discovered / merged / reinforced / contradicted / generalized| L
+    STORE[Proposition store] -->|"PropositionPersisted<br/>PropositionStatusChanged"| L[DiceEventListener]
+    PROJ[Projector] -->|ProjectionBatchCompleted| L
+    PIPE[Revision pipeline] -->|"PropositionDiscovered<br/>PropositionMerged<br/>PropositionReinforced<br/>PropositionContradicted<br/>PropositionGeneralized<br/>ExtractionBatchCompleted"| L
     L --> C["your consumers:<br/>audit, dashboards, indexes"]
+```
+
+## Event taxonomy
+
+```mermaid
+flowchart TB
+    DE["DiceEvent (marker)"]
+    PE["PropositionPersisted<br/>(save — no status change)"]
+    SC["PropositionStatusChanged<br/>(previous + new status + reason)"]
+    PBC["ProjectionBatchCompleted<br/>(success / skip / fail counts)"]
+    EBC["ExtractionBatchCompleted<br/>(run statistics)"]
+    PD["PropositionDiscovered<br/>(revision: new fact)"]
+    PM["PropositionMerged<br/>(revision: identical)"]
+    PR["PropositionReinforced<br/>(revision: similar)"]
+    PC["PropositionContradicted<br/>(revision: conflict)"]
+    PG["PropositionGeneralized<br/>(revision: generalizes)"]
+    DE --> PE
+    DE --> SC
+    DE --> PBC
+    DE --> EBC
+    DE --> PD
+    DE --> PM
+    DE --> PR
+    DE --> PC
+    DE --> PG
 ```
 
 ## What the store and pipeline emit

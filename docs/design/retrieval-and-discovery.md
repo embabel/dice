@@ -6,6 +6,60 @@ the ones around *how* retrieval stays honest across different backends, why trus
 when you read rather than when you write, how the system surfaces connections nobody queried for,
 and why it can explain itself. This note is about those choices.
 
+## The query surface: SPIs and entry points
+
+Three things give callers access to propositions: the `GraphQuery` facade (portable entity-graph
+operations), the `RetrievalRouter` (mode-routed multi-modal retrieval), and the agent tools and
+REST controller that wrap both.
+
+```mermaid
+classDiagram
+    class RetrievalRouter {
+        +retrieve(DiscoveryQuery) DiscoveryResult
+        +graphPath(fromId, toId) List
+        +whyExplain(propositionId) LineageDto
+    }
+    class DiscoveryQuery {
+        +mode RetrievalMode
+        +text String
+        +entityId String
+        +from Instant
+        +to Instant
+        +topK Int
+        +depth Int
+    }
+    class RetrievalMode {
+        <<enum>>
+        VECTOR
+        ENTITY
+        GRAPH_WALK
+        TEMPORAL
+        HYBRID
+    }
+    class GraphQuery {
+        +neighborhood(entityId, depth) GraphNeighborhood
+        +pathBetween(entityIdA, entityIdB) List
+        +whyExplain(propositionId) PropositionLineage
+    }
+    class GraphQueryCapable {
+        <<interface>>
+        +honorsAuthorityFilter Boolean
+        +neighborhood(entityId, depth, minAuthority)
+        +pathBetween(entityIdA, entityIdB, minAuthority)
+        +whyExplain(propositionId)
+    }
+    RetrievalRouter --> GraphQuery : delegates graph ops
+    RetrievalRouter --> DiscoveryQuery : parameterized by
+    DiscoveryQuery --> RetrievalMode : mode field
+    GraphQuery --> GraphQueryCapable : routes to when declared
+```
+
+`RetrievalRouter` is the single entry point for mode-routed queries. `GraphQuery` is the portable
+graph facade — it walks propositions hop-by-hop over whatever store is underneath, routing to a
+native `GraphQueryCapable` backend when one declares the capability. Agent tools (`DiscoveryTools`,
+`GraphQueryTools`) and the REST surface (`DiscoveryController`) wrap these from the outside,
+baking in the `contextId` so a caller can't cross context boundaries.
+
 ## Store-agnostic graph queries
 
 Neighborhood, path, and lineage queries don't require a graph database. A proposition that mentions
@@ -19,6 +73,17 @@ The decision behind this is that graph-shaped *reasoning* shouldn't be chained t
 without standing up Neo4j. And when a capability genuinely isn't there, these operations return
 empty or null rather than throwing — asking a question the backend can't fully answer gives you
 "nothing found," not an error.
+
+```mermaid
+flowchart TD
+    GQ["GraphQuery.neighborhood(entityId, depth)"] --> CAP{"store implements<br/>GraphQueryCapable?"}
+    CAP -->|"yes AND honorsAuthorityFilter"| NATIVE["route to native neighborhood()<br/>with minAuthority"]
+    CAP -->|"yes, no authority filter"| NATIVEPLAIN["route to native neighborhood()"]
+    CAP -->|"no"| PORTABLE["portable walk: follow proposition<br/>mentions hop by hop"]
+    NATIVE --> RESULT[GraphNeighborhood]
+    NATIVEPLAIN --> RESULT
+    PORTABLE --> RESULT
+```
 
 ## Query-time authority filtering
 
@@ -34,6 +99,13 @@ cautious to be. The safe-fail detail matters here: a proposition with no provena
 weakest tier, so any non-trivial floor drops it — unknown provenance is treated as low trust, not
 waved through.
 
+The `GraphQueryCapable.honorsAuthorityFilter` flag is how a native backend opts in to handling the
+filtering itself. When it is false (the default), the portable facade applies authority filtering
+on its own proposition-walk, so the correct result comes back either way. A backend sets it to true
+only after it genuinely honours the `minAuthority` argument in its `neighborhood` and `pathBetween`
+overloads — and if it sets the flag without overriding those overloads, the default bodies throw
+rather than silently returning unfiltered results.
+
 ## Single retrieval entry point
 
 There are several ways to find propositions — by vector similarity, by entity, by walking the graph,
@@ -44,12 +116,12 @@ front of all of them.
 ```mermaid
 flowchart LR
     Q[DiscoveryQuery] --> R{Retrieval router}
-    R -->|VECTOR| V[similarity]
-    R -->|ENTITY| E[by entity]
-    R -->|GRAPH_WALK| G[neighborhood]
+    R -->|VECTOR| V[similarity search]
+    R -->|ENTITY| E[by entity id]
+    R -->|GRAPH_WALK| G[neighborhood walk]
     R -->|TEMPORAL| T[time window]
-    R -->|HYBRID| H[vector ∪ graph, merged]
-    V --> DTO[Result: mode + supported + DTOs]
+    R -->|HYBRID| H[vector + graph walk, merged]
+    V --> DTO[DiscoveryResult: mode + supported + DTOs]
     E --> DTO
     G --> DTO
     T --> DTO
@@ -95,6 +167,33 @@ sequenceDiagram
     Router-->>Entry: results
     Entry-->>Caller: DTOs only — primitives and enums, no internal types
 ```
+
+## Agent tools and REST surface
+
+Both the agent tools and the REST controller wrap exactly the same router and record stores,
+so behavior is identical whether the caller is an LLM agent or a REST client.
+
+```mermaid
+flowchart TB
+    subgraph agent ["Agent tools (baked-in contextId)"]
+        DT["DiscoveryTools<br/>(query, path, why, health, dry-run)"]
+        GQT["GraphQueryTools<br/>(neighborhood, path, why-explain)"]
+    end
+    subgraph rest ["REST (contextId from URL path)"]
+        DC["DiscoveryController<br/>/api/v1/contexts/{contextId}/discovery"]
+    end
+    DT --> RR[RetrievalRouter]
+    DC --> RR
+    GQT --> GQ[GraphQuery]
+    RR --> GQ
+    RR --> PS[PropositionStore]
+    GQ --> PS
+```
+
+`DiscoveryTools` and `GraphQueryTools` are registered as `List<Tool>` via their `asTools()` factory
+and added to an agent's tool set alongside `Memory`. `DiscoveryController` activates only when
+`spring-webmvc` is on the classpath and a `PropositionStore` bean is present; it is not
+component-scanned and must be imported via `DiceRestConfiguration`.
 
 ## Serendipitous link discovery
 

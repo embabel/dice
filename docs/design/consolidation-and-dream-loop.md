@@ -21,6 +21,44 @@ flowchart LR
     ORCH --> REPORT["DreamLoopReport<br/>(counts per cycle)"]
 ```
 
+## Pass SPI and result types
+
+```mermaid
+classDiagram
+    class ConsolidationPass {
+        <<interface>>
+        +run(contextId, snapshot) ConsolidationPassResult
+    }
+    class ConsolidationPassResult {
+        <<sealed>>
+        Changed
+        NoOp
+        Failed
+    }
+    class Changed {
+        +propositionsToSave List
+        +propositionsToDelete List
+        +skipped Int
+        +externallyApplied Int
+    }
+    class DreamLoopOrchestrator {
+        <<interface>>
+        +consolidate(contextId) DreamLoopReport
+        +consolidateNow(contextId) DreamLoopReport
+    }
+    class DefaultDreamLoopOrchestrator {
+        +changeVolumeThreshold Int
+        +allowHardDelete Boolean
+        +lastActiveCount Map
+    }
+    ConsolidationPass --> ConsolidationPassResult : returns
+    ConsolidationPassResult <|-- Changed
+    ConsolidationPassResult <|-- NoOp
+    ConsolidationPassResult <|-- Failed
+    DreamLoopOrchestrator <|.. DefaultDreamLoopOrchestrator
+    DefaultDreamLoopOrchestrator --> ConsolidationPass : runs in order
+```
+
 ## The pass abstraction
 
 Every consolidation step is a `ConsolidationPass`: it takes the context's snapshot of propositions,

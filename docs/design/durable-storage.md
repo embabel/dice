@@ -7,6 +7,64 @@ happens behind that port: how a deployment picks a backend, how the durable Neo4
 duplicates and provenance honest, and how confidence decay is kept fast and current. The mechanics
 (class names, Cypher, the KSP DSL) live in `dice-storage`'s own guide; this note is the *why*.
 
+## Store SPI family
+
+The store layer is a family of composable interfaces. `PropositionStore` is the base — CRUD plus a
+composable query. `PropositionRepository` extends it with optional capability fragments a backend
+declares only when it genuinely supports them.
+
+```mermaid
+classDiagram
+    class PropositionStore {
+        +save(proposition) Proposition
+        +findById(id) Proposition
+        +delete(id)
+        +findAll() List
+        +query(PropositionQuery) List
+        +pin(id) Proposition
+        +unpin(id) Proposition
+        +findPinned(contextId) List
+    }
+    class PropositionRepository {
+        +storeType PropositionStoreType
+        +query(query, withProvenance) List
+        +reembedAll() Int
+        +clearAll() Int
+    }
+    class VectorSearchCapable {
+        <<interface>>
+        +findSimilarWithScores(request) List
+        +findClusters(contextId) List
+    }
+    class GraphTraversalCapable {
+        <<interface>>
+        +findAbstractionSources(propositionId) List
+        +findDerivedFrom(propositionId) List
+    }
+    class TemporalQueryCapable {
+        <<interface>>
+        +findByValidWindow(contextId, from, to) List
+        +findByObservedWindow(contextId, from, to) List
+    }
+    class GraphQueryCapable {
+        <<interface>>
+        +honorsAuthorityFilter Boolean
+        +neighborhood(entityId, depth) GraphNeighborhood
+        +pathBetween(entityIdA, entityIdB) List
+        +whyExplain(propositionId) PropositionLineage
+    }
+    PropositionRepository --|> PropositionStore
+    PropositionRepository --|> VectorSearchCapable
+    PropositionRepository --|> GraphTraversalCapable
+    PropositionRepository --|> TemporalQueryCapable
+    PropositionRepository --|> GraphQueryCapable
+```
+
+`DrivinePropositionRepository` (in `dice-storage`) implements all four capability fragments.
+`InMemoryPropositionRepository` (in `dice`) implements the base store plus vector search, but not
+graph traversal or temporal queries, because it can't genuinely back them. The backend declares what
+it supports; callers degrade rather than break when a capability is absent.
+
 ## Choosing a backend without choosing it
 
 A deployment selects its store with one property — `embabel.dice.store.type=graph` for Drivine/Neo4j,
@@ -23,16 +81,17 @@ flowchart TD
     APP["Application context starts"] --> OWN{"App already defines<br/>a PropositionRepository?"}
     OWN -->|yes| KEEP["Use the app's bean<br/>(ConditionalOnMissingBean backs off)"]
     OWN -->|no| TYPE{"embabel.dice.store.type"}
-    TYPE -->|graph| G["Drivine/Neo4j beans:<br/>repository, chunk history,<br/>decay manager, lineage stores"]
-    TYPE -->|in-memory / unset| M["In-memory beans<br/>(same SPIs, process-scoped)"]
+    TYPE -->|graph| G["Drivine/Neo4j beans:<br/>DrivinePropositionRepository<br/>DrivineChunkHistoryStore<br/>GraphDecayManager<br/>DrivineProjectionRecordStore<br/>DrivineCollectorRecordStore"]
+    TYPE -->|"in-memory / unset"| M["In-memory beans<br/>(same SPIs, process-scoped)"]
     G --> SAME["Both satisfy the same SPIs —<br/>callers never branch on backend"]
     M --> SAME
 ```
 
 The point is that the rest of DICE is written against the SPIs and never learns which backend won.
 The graph backend even declares only the capabilities it can genuinely honour (vector search, graph
-traversal, temporal queries); a leaner backend simply doesn't claim them, and callers degrade rather
-than break — the same "declare only what you really support" stance the store layer takes everywhere.
+traversal, temporal queries, graph query); a leaner backend simply doesn't claim them, and callers
+degrade rather than break — the same "declare only what you really support" stance the store layer
+takes everywhere.
 
 ## Dedup as defense in depth
 
@@ -55,7 +114,7 @@ flowchart TB
     F -->|no| INS["insert"]
     INS --> C{"uniqueness constraint<br/>(contextId, text)"}
     C -->|ok| DONE["written"]
-    C -->|violated by a cross-JVM race| REUSE
+    C -->|"violated by cross-JVM race"| REUSE
 ```
 
 Two layers because each covers the other's blind spot: the lock is fast but only sees one instance,
@@ -127,10 +186,10 @@ flowchart LR
     T["@Scheduled tick<br/>(default hourly)"] --> EN{"decay enabled?"}
     EN -->|no| OFF["scheduling never switched on"]
     EN -->|yes| MAT["materialise effectiveConfidence"]
-    MAT --> TRANS["apply lifecycle transitions<br/>(ACTIVE → STALE)"]
+    MAT --> TRANS["apply lifecycle transitions<br/>(ACTIVE -> STALE)"]
     TRANS --> PRUNE{"prune-stale?"}
-    PRUNE -->|false default| KEEP["leave STALE in place (reversible)"]
-    PRUNE -->|true opt-in| DEL["hard-delete STALE"]
+    PRUNE -->|"false (default)"| KEEP["leave STALE in place (reversible)"]
+    PRUNE -->|"true (opt-in)"| DEL["hard-delete STALE"]
 ```
 
 The defaults are deliberately gentle — tick hourly, transition to a reversible `STALE`, and *don't*

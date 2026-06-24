@@ -17,16 +17,54 @@ design decision — most exits are one-way, and almost none of them actually des
 stateDiagram-v2
     [*] --> ACTIVE : ingested
     ACTIVE --> PROMOTED : projected into the typed graph
-    ACTIVE --> CONTRADICTED : a newer fact clashes with it
-    ACTIVE --> SUPERSEDED : folded into a higher-level abstraction
-    ACTIVE --> STALE : effective confidence decays past the floor
+    ACTIVE --> CONTRADICTED : a newer fact clashes with it (revision or ContradictionResolutionPass)
+    ACTIVE --> SUPERSEDED : folded into a higher-level abstraction (AbstractionPass)
+    ACTIVE --> STALE : effectiveConfidence decays past threshold (DecaySweepPass / collector)
     STALE --> ACTIVE : reinforced when the fact is seen again
     STALE --> [*] : deliberately retired by hard delete
     CONTRADICTED --> [*] : kept for audit, no auto-revival
     SUPERSEDED --> [*] : kept for audit, no auto-revival
+    note right of ACTIVE
+        pinned=true: immune to STALE transition
+        and contradiction demotion
+    end note
 ```
 
+What triggers each transition:
+- **ACTIVE → CONTRADICTED**: `LlmPropositionReviser` at ingest time, or `ContradictionResolutionPass` during a dream-loop cycle.
+- **ACTIVE → SUPERSEDED**: `AbstractionPass` during a dream-loop cycle, when a cluster of facts is folded into a higher-level proposition.
+- **ACTIVE → STALE**: `DecaySweepPass` (via the mark-and-sweep collector), or the scheduled decay tick in `GraphDecayManager`.
+- **STALE → ACTIVE**: `PropositionReviser` on re-ingest, which reinforces the existing proposition and resets its confidence.
+- **PROMOTED**: set by `GraphProjector` on successful projection into the typed graph; it complements ACTIVE rather than replacing it.
+
 The rest of this document is the reasoning behind those transitions.
+
+## Trust and authority SPI seams
+
+```mermaid
+classDiagram
+    class TrustScorer {
+        <<interface>>
+        +score(proposition) Double
+    }
+    class AuthorityResolver {
+        <<interface>>
+        +resolve(proposition) AuthorityTier
+    }
+    class AuthorityTier {
+        <<enum>>
+        PRIMARY
+        NAMED_EXTERNAL
+        DERIVED
+        UNKNOWN
+    }
+    class AuthorityWeightedTrustScorer {
+        +score(proposition) Double
+    }
+    TrustScorer <|.. AuthorityWeightedTrustScorer
+    AuthorityWeightedTrustScorer --> AuthorityResolver
+    AuthorityResolver --> AuthorityTier
+```
 
 ## Trust scoring is advisory
 
@@ -164,6 +202,41 @@ effective confidence decays until it goes **stale**, where it waits to be either
 active or eventually retired. Or, if many siblings about the same entity pile up, a consolidation
 pass folds them into one abstraction and our fact is marked **superseded** — still true, now said
 more concisely.
+
+## Pinning: permanent protection from the lifecycle
+
+Some propositions should never be retired by automated maintenance — a baseline identity claim, a
+manually curated anchor, a regulatory record. Pinning is how you express that: a pinned
+proposition is immune to every automated lifecycle transition.
+
+Concretely, the `pinned` field on `Proposition` is a boolean flag you set via `PropositionStore.pin(id)` and clear via `unpin(id)`. When it is true, three things change:
+
+- The decay collector's default sweep policy (`StatusTransitionSweepPolicy`) skips the proposition unconditionally, regardless of what marks it carries — pinned means exempt from reclamation.
+- The contradiction path in `LlmPropositionReviser` does not demote it when a conflicting fact arrives; instead, the new fact is stored alongside and the conflict is left for explicit resolution.
+- The dream-loop's contradiction resolution pass (`ContradictionResolutionPass`) inherits the same skip-if-pinned behavior, so background consolidation also respects the pin.
+
+Pinning is an *administrative* operation — it touches only `metadataRevised` and never resets the decay clock (`contentRevised` stays untouched).
+
+```mermaid
+stateDiagram-v2
+    state "Unpinned (normal lifecycle)" as UNPIN {
+        [*] --> ACTIVE
+        ACTIVE --> STALE : decay / collector
+        ACTIVE --> CONTRADICTED : revision or consolidation
+        ACTIVE --> SUPERSEDED : abstraction pass
+    }
+    state "Pinned (immune)" as PIN {
+        [*] --> ACTIVE_P : pin()
+        ACTIVE_P --> ACTIVE_P : contradiction arrives — kept intact,\nconflict stored alongside
+        ACTIVE_P --> ACTIVE_P : collector sweeps — skipped
+    }
+    UNPIN --> PIN : pin()
+    PIN --> UNPIN : unpin()
+```
+
+Use `PropositionQuery.withPinned(true)` to list all pinned propositions in a context
+(`PropositionStore.findPinned(contextId)` wraps that). Unpin when you're ready to let the
+lifecycle resume.
 
 ## Configurable behavior
 
