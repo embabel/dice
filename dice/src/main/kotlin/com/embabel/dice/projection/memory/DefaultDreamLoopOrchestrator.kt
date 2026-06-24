@@ -92,8 +92,11 @@ data class DefaultDreamLoopOrchestrator(
         val currentActive = activeSnapshot(contextId).size
         val delta = currentActive - (lastActiveCount[contextId] ?: 0)
         if (delta < changeVolumeThreshold) {
-            // Not enough has changed to be worth a cycle; record the count and skip.
-            lastActiveCount[contextId] = currentActive
+            // Not enough has accumulated *since the last cycle* to be worth one. Crucially we leave
+            // the baseline untouched here: advancing it on a skip would measure the delta since the
+            // last call instead, so steady incremental growth (the normal scheduled case) would
+            // never accumulate to the threshold and a cycle would never fire. The baseline only
+            // moves after a real cycle (step 5 below).
             logger.debug(
                 "Skipping consolidation for {}: active-count delta {} < threshold {}",
                 contextId, delta, changeVolumeThreshold,
@@ -114,10 +117,14 @@ data class DefaultDreamLoopOrchestrator(
         // (2) Run each pass in registration order, isolating failures into Failed results.
         val passResults = passes.map { pass -> runPass(pass, contextId, snapshot) }
 
-        // (3) Aggregate saves into a single write.
+        // (3) Aggregate saves into a single write, reconciling any proposition that more than one
+        // pass wants to re-save this cycle. Without this, the same id returned by two passes (e.g.
+        // SUPERSEDED from abstraction and CONTRADICTED from contradiction-resolution) would be
+        // written twice and the persisted status would depend on saveAll ordering. We collapse to
+        // one write per id with a deterministic winner — see [reconcileSaves].
         val snapshotIds = snapshot.mapTo(HashSet()) { it.id }
         val changed = passResults.filterIsInstance<ConsolidationPassResult.Changed>()
-        val toSave: List<Proposition> = changed.flatMap { it.propositionsToSave }
+        val toSave: List<Proposition> = reconcileSaves(changed.flatMap { it.propositionsToSave })
         if (toSave.isNotEmpty()) {
             repository.saveAll(toSave)
         }
@@ -137,8 +144,12 @@ data class DefaultDreamLoopOrchestrator(
         // by their own pass, so they are counted via externallyApplied rather than the save list.
         val newPropositions = toSave.count { it.id !in snapshotIds }
         val savedTransitions = toSave.count { it.id in snapshotIds }
-        val transitioned = savedTransitions +
-            changed.sumOf { it.propositionsToDelete.size + it.externallyApplied }
+        // Deletes only count as transitions when they are actually applied. With allowHardDelete
+        // off (the default) delete-intents are ignored, so counting them would over-report work
+        // that never happened.
+        val appliedDeletes = if (allowHardDelete) changed.sumOf { it.propositionsToDelete.size } else 0
+        val transitioned = savedTransitions + appliedDeletes +
+            changed.sumOf { it.externallyApplied }
         val report = DreamLoopReport(
             contextId = contextId,
             cycleStarted = cycleStarted,
@@ -188,6 +199,29 @@ data class DefaultDreamLoopOrchestrator(
             logger.warn("Pass '{}' failed; recording failure and continuing cycle", pass.name, e)
             ConsolidationPassResult.Failed(pass.name, e)
         }
+
+    /**
+     * Collapse the cycle's combined save list to one write per proposition id.
+     *
+     * When two passes each hand back a copy of the same proposition with a different target status,
+     * the order they happen to appear in the flat-mapped list must not decide what gets persisted.
+     * We pick a deterministic winner by status strength: a contradiction (the belief is now wrong)
+     * outranks a supersession (still true, just rolled up into an abstraction), which outranks a
+     * decay-to-STALE, and any retirement outranks leaving it ACTIVE. Freshly created propositions
+     * (new ids, e.g. abstractions) never collide, so they pass through untouched.
+     */
+    private fun reconcileSaves(toSave: List<Proposition>): List<Proposition> =
+        toSave
+            .groupBy { it.id }
+            .map { (_, copies) -> copies.maxByOrNull { statusStrength(it.status) }!! }
+
+    private fun statusStrength(status: PropositionStatus): Int = when (status) {
+        PropositionStatus.CONTRADICTED -> 4
+        PropositionStatus.SUPERSEDED -> 3
+        PropositionStatus.STALE -> 2
+        PropositionStatus.PROMOTED -> 1
+        PropositionStatus.ACTIVE -> 0
+    }
 
     private fun activeSnapshot(contextId: ContextId): List<Proposition> =
         repository.query(

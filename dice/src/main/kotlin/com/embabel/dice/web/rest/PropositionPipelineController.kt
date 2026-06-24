@@ -150,17 +150,19 @@ class PropositionPipelineController(
             ))
         }
 
-        // Process each chunk through the pipeline
+        // Process all chunks through the pipeline's batch entry point. process() isolates a failing
+        // chunk into a typed Failed result (so one bad chunk yields partial results instead of 500ing
+        // the whole upload), shares entity identity across chunks, and is the only path that honors
+        // the configured extraction execution strategy (Serial/Parallel/Batched). processChunk(), by
+        // contrast, propagates failures and runs one chunk in isolation.
         val context = buildContext(contextId, parseKnownEntities(knownEntitiesJson), schemaName)
-        val chunkResults = chunks.map { chunk ->
-            val result = propositionPipeline.processChunk(chunk, context)
+        val processResult = propositionPipeline.process(chunks, context)
+        val chunkResults = processResult.chunkResults
 
-            // Persist revised propositions too (e.g. a CONTRADICTED original), not just the new ones.
-            result.propositionsToPersist().forEach { proposition ->
-                propositionRepository.save(proposition)
-            }
-
-            result
+        // Persist what revision says to keep across the whole batch — revised originals (e.g. a
+        // CONTRADICTED original) as well as the new propositions, not just the new ones.
+        processResult.propositionsToPersist().forEach { proposition ->
+            propositionRepository.save(proposition)
         }
 
         // Aggregate results
@@ -168,7 +170,7 @@ class PropositionPipelineController(
         val allRevisions = chunkResults.flatMap { it.revisionResults }
         // Failed chunks contribute zero resolutions to the aggregate response:
         // entityResolutions is a Success-only field, and Failed returns empty propositions/
-        // revisionResults via the interface, so the :143-144 flatMaps already exclude them.
+        // revisionResults via the interface, so the flat-maps above already exclude them.
         val allResolutions = chunkResults
             .filterIsInstance<ChunkPropositionResult.Success>()
             .flatMap { it.entityResolutions.resolutions }

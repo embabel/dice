@@ -98,16 +98,21 @@ class AbstractionPass @JvmOverloads constructor(
                 abstractedGroups++
             }
 
+            // A source that mentions two qualifying entities lands in both groups and would be
+            // marked SUPERSEDED once per group. Collapse to one save per id so a single source is
+            // never written — or counted — twice (the abstractions all carry fresh ids and pass
+            // through untouched). Mirrors the dedup ContradictionResolutionPass already does.
+            val deduped = toSave.distinctBy { it.id }
             logger.debug(
                 "Abstraction over {} level-0 active proposition(s) for {}: {} group(s) abstracted, {} skipped (already covered or over the level cap), {} proposition(s) to save",
-                level0Active.size, contextId, abstractedGroups, skipped, toSave.size,
+                level0Active.size, contextId, abstractedGroups, skipped, deduped.size,
             )
-            if (toSave.isEmpty()) {
+            if (deduped.isEmpty()) {
                 ConsolidationPassResult.NoOp(name, "no groups above threshold, all covered, or all abstractions over the level cap")
             } else {
                 ConsolidationPassResult.Changed(
                     passName = name,
-                    propositionsToSave = toSave,
+                    propositionsToSave = deduped,
                     skipped = skipped,
                     summary = "abstracted $abstractedGroups groups, $skipped propositions skipped (already covered or over the level cap)",
                 )

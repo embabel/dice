@@ -102,6 +102,7 @@ class DefaultCollectorRunner(
         val hardDeleted = mutableListOf<String>()
         val records = mutableListOf<CollectorRecord>()
 
+        try {
         for ((propositionId, propMarks) in marksByProposition) {
             val proposition = candidatesById[propositionId] ?: continue
             when (val action = policy.decide(proposition, propMarks)) {
@@ -112,9 +113,15 @@ class DefaultCollectorRunner(
                         // newStatus still carries what WOULD happen.
                         records += records(propMarks, runId, CollectorOutcome.MARKED, proposition.status, action.newStatus)
                     } else {
-                        applyTransition(proposition, action.newStatus, propMarks)
+                        // Order matters: persist, then buffer the audit record, then emit. The
+                        // record lands between the durable write and the (inline, possibly throwing)
+                        // listener call, so a transition can never be persisted without its record —
+                        // even if a listener blows up before the run finishes.
+                        val previousStatus = proposition.status
+                        val saved = repository.save(proposition.withStatus(action.newStatus))
+                        records += records(propMarks, runId, CollectorOutcome.TRANSITIONED, previousStatus, action.newStatus)
                         applied.addAll(propMarks)
-                        records += records(propMarks, runId, CollectorOutcome.TRANSITIONED, proposition.status, action.newStatus)
+                        emitStatusChanged(saved, previousStatus, action.newStatus, propMarks)
                     }
                 }
 
@@ -135,6 +142,15 @@ class DefaultCollectorRunner(
                     records += records(propMarks, runId, CollectorOutcome.SKIPPED, proposition.status, null)
                 }
             }
+        }
+        } catch (e: Throwable) {
+            // A mutation failed partway through. Earlier iterations have already saved/deleted and
+            // emitted their events, and their records are buffered in `records` — persist that
+            // partial trail before rethrowing so a HARD_DELETED proposition is never lost without an
+            // audit record. The failing proposition added no record (the throw preempts it).
+            logger.warn("Collector run {} aborted mid-run; persisting the {} record(s) gathered so far", runId, records.size, e)
+            persistRun(runId, startedAt, Instant.now(), dryRun, records)
+            throw e
         }
 
         // Compute the finish instant once and thread it into both the persisted run header and
@@ -172,14 +188,17 @@ class DefaultCollectorRunner(
         return candidatesById to marks
     }
 
-    /** Persist the swept transition, then emit the lifecycle event (persist-then-emit). */
-    private fun applyTransition(
-        proposition: Proposition,
+    /**
+     * Emit the lifecycle event for a transition that has already been persisted and recorded.
+     * Kept as the final step so the durable write and its audit record are both in place before any
+     * (inline, possibly throwing) listener runs.
+     */
+    private fun emitStatusChanged(
+        saved: Proposition,
+        previousStatus: PropositionStatus,
         newStatus: PropositionStatus,
         propMarks: List<PropositionMark>,
     ) {
-        val previousStatus = proposition.status
-        val saved = repository.save(proposition.withStatus(newStatus))
         // Multiple strategies may mark the same proposition; combine their distinct reason keys
         // (sorted for run-to-run determinism) so the emitted event is order-independent and never
         // silently drops a reason. `reason` stays a nullable String for backward compatibility.

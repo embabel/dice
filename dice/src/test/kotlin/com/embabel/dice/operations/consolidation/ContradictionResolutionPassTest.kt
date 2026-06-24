@@ -16,6 +16,8 @@
 package com.embabel.dice.operations.consolidation
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.common.PropositionRoutedToReview
+import com.embabel.dice.common.RecordingDiceEventListener
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
@@ -141,6 +143,28 @@ class ContradictionResolutionPassTest {
 
         // Nothing retired: the only loser would have been the pinned proposition.
         assertInstanceOf(ConsolidationPassResult.NoOp::class.java, result)
+    }
+
+    @Test
+    fun `a contradicted pinned proposition is surfaced for review, not silently dropped`() {
+        // Same setup as above (the pinned one would lose), but now assert the contradiction is not
+        // swallowed: a review signal must be emitted so the contested pin can be resolved or unpinned.
+        val pinned = proposition("a", "bob", 0.2, pinned = true)
+        val strong = proposition("b", "bob", 0.9)
+        val reviser = mockk<PropositionReviser>()
+        every { reviser.classify(pinned, listOf(strong)) } returns listOf(
+            ClassifiedProposition(strong, PropositionRelation.CONTRADICTORY, 0.5),
+        )
+        every { reviser.classify(strong, listOf(pinned)) } returns listOf(
+            ClassifiedProposition(pinned, PropositionRelation.CONTRADICTORY, 0.5),
+        )
+        val listener = RecordingDiceEventListener()
+
+        ContradictionResolutionPass(reviser, listener).run(contextId, listOf(pinned, strong))
+
+        val routed = listener.eventsOfType<PropositionRoutedToReview>()
+        assertEquals(1, routed.size)
+        assertEquals("a", routed.single().proposition.id)
     }
 
     @Test

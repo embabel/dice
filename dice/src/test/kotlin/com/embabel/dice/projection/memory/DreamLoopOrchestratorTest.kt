@@ -20,6 +20,7 @@ import com.embabel.dice.operations.consolidation.ConsolidationPass
 import com.embabel.dice.operations.consolidation.ConsolidationPassResult
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.PropositionStatus
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
@@ -291,6 +292,72 @@ class DreamLoopOrchestratorTest {
         threads.forEach { it.join() }
 
         assertEquals(1, maxObserved.get(), "the per-context lock must serialize cycles for one context")
+    }
+
+    @Test
+    fun `consolidate accumulates growth across skipped calls until the threshold is reached`() {
+        // Growth arrives in increments of 3, each below the default threshold of 10. The trigger
+        // measures the delta since the last CYCLE, so it must keep accumulating across skipped calls
+        // rather than resetting the baseline on every call — otherwise a steadily-growing context
+        // never consolidates.
+        var activeCount = 0
+        every { repository.query(any()) } answers { List(activeCount) { proposition("p$it") } }
+        val pass = FakePass("noop") { ConsolidationPassResult.NoOp("noop") }
+        val orchestrator = DefaultDreamLoopOrchestrator.withRepository(repository).withPass(pass)
+
+        repeat(5) { activeCount += 3; orchestrator.consolidate(contextId) } // 3, 6, 9, 12, 15
+
+        assertTrue(pass.runCount >= 1) {
+            "consolidation never fired despite cumulative growth to $activeCount (threshold 10)"
+        }
+    }
+
+    @Test
+    fun `aggregated saves reconcile to a single status per proposition id`() {
+        // Two passes return the same proposition id with different target statuses in one cycle. The
+        // persisted result must not depend on saveAll ordering: it is collapsed to one write whose
+        // status is the stronger of the two (CONTRADICTED outranks SUPERSEDED).
+        val original = proposition("shared")
+        every { repository.query(any()) } returns listOf(original)
+        val captured = slot<Collection<Proposition>>()
+        every { repository.saveAll(capture(captured)) } returns Unit
+
+        DefaultDreamLoopOrchestrator.withRepository(repository)
+            .withPass(FakePass("abstraction") {
+                ConsolidationPassResult.Changed(
+                    "abstraction",
+                    propositionsToSave = listOf(original.withStatus(PropositionStatus.SUPERSEDED)),
+                )
+            })
+            .withPass(FakePass("contradiction") {
+                ConsolidationPassResult.Changed(
+                    "contradiction",
+                    propositionsToSave = listOf(original.withStatus(PropositionStatus.CONTRADICTED)),
+                )
+            })
+            .consolidateNow(contextId)
+
+        assertEquals(1, captured.captured.count { it.id == original.id })
+        assertEquals(
+            PropositionStatus.CONTRADICTED,
+            captured.captured.single { it.id == original.id }.status,
+        )
+    }
+
+    @Test
+    fun `transition count excludes deletes that were never applied`() {
+        // allowHardDelete is off by default, so delete-intents are ignored. The report must not
+        // count those phantom deletes as transitions.
+        every { repository.query(any()) } returns emptyList()
+
+        val report = DefaultDreamLoopOrchestrator.withRepository(repository)
+            .withPass(FakePass("decay") {
+                ConsolidationPassResult.Changed("decay", propositionsToDelete = listOf("doomed-1", "doomed-2"))
+            })
+            .consolidateNow(contextId)
+
+        verify(exactly = 0) { repository.delete(any<String>()) }
+        assertEquals(0, report.totalTransitioned)
     }
 
     @Test

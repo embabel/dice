@@ -16,6 +16,8 @@
 package com.embabel.dice.operations.consolidation
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.common.DiceEventListener
+import com.embabel.dice.common.PropositionRoutedToReview
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.revision.PropositionRelation
@@ -35,6 +37,13 @@ import org.slf4j.LoggerFactory
  * Classification uses [PropositionReviser.classify] — NOT a contraster — because resolving a
  * contradiction is a lifecycle transition, not an articulation of differences.
  *
+ * ## Pinned losers are surfaced, not silently dropped
+ *
+ * A pinned proposition is conflict-protected and is never auto-retired. Rather than skip it in
+ * silence — which would let a wrong pin accumulate contradicting evidence invisibly — the pass
+ * emits a [PropositionRoutedToReview] for it via [eventListener], so a human (or a later pass) is
+ * prompted to resolve the conflict or unpin it.
+ *
  * ## Idempotency
  *
  * Only ACTIVE propositions are compared and only an ACTIVE loser is transitioned, so once a conflict
@@ -43,9 +52,12 @@ import org.slf4j.LoggerFactory
  * are pruned to those sharing at least one resolved entity, bounding `classify()` fan-out.
  *
  * @property reviser The delegate that classifies the relation between propositions.
+ * @property eventListener Notified when a contradiction lands on a pinned proposition; defaults to
+ *   a no-op listener so callers that don't care about the signal need not wire one.
  */
 class ContradictionResolutionPass @JvmOverloads constructor(
     private val reviser: PropositionReviser,
+    private val eventListener: DiceEventListener = DiceEventListener.DEV_NULL,
 ) : ConsolidationPass {
 
     override val name: String = "contradiction-resolution"
@@ -74,11 +86,23 @@ class ContradictionResolutionPass @JvmOverloads constructor(
                         val weaker =
                             if (p.effectiveConfidence() < c.proposition.effectiveConfidence()) p
                             else c.proposition
-                        if (weaker.status == PropositionStatus.ACTIVE && !weaker.pinned) {
-                            // withStatus preserves the contentRevised decay anchor. A pinned
-                            // proposition is conflict-protected — never auto-retired — so a
-                            // contradiction against it is left for explicit resolution.
-                            toSave += weaker.withStatus(PropositionStatus.CONTRADICTED)
+                        if (weaker.status == PropositionStatus.ACTIVE) {
+                            if (weaker.pinned) {
+                                // A pinned proposition is conflict-protected — never auto-retired —
+                                // so we don't transition it. But surface the contradiction as a
+                                // review signal instead of dropping it silently, so the pin can be
+                                // explicitly resolved or unpinned rather than quietly going wrong.
+                                val stronger = if (weaker.id == p.id) c.proposition else p
+                                eventListener.onEvent(
+                                    PropositionRoutedToReview(
+                                        weaker,
+                                        reason = "pinned proposition contradicted by '${stronger.id}'; resolve the conflict or unpin",
+                                    )
+                                )
+                            } else {
+                                // withStatus preserves the contentRevised decay anchor.
+                                toSave += weaker.withStatus(PropositionStatus.CONTRADICTED)
+                            }
                         }
                     }
             }

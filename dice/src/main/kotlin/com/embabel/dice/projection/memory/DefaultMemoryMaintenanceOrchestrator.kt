@@ -153,11 +153,11 @@ data class DefaultMemoryMaintenanceOrchestrator(
         )
 
         // Recover the per-entity grouping so abstraction runs per group, in the legacy granularity.
-        // Each group is abstracted in isolation through its OWN AbstractionPass invocation: a group's
-        // abstractions are exactly those returned by that group's abstract() call (no cross-group
-        // sourceId matching, so a source mentioning two entities is never saved or counted twice),
-        // persisted per group in the legacy call shape (one saveAll for the group's abstractions, one
-        // for its superseded sources).
+        // Each group is abstracted in isolation through its OWN AbstractionPass invocation, persisted
+        // per group in the legacy call shape (one saveAll for the group's abstractions, one for its
+        // superseded sources). A source that mentions two qualifying entities lands in both groups, so
+        // it would be superseded once per group — we dedup the superseded sources by id below so such
+        // a source is never saved or counted twice.
         val entityGroups = active
             .flatMap { prop -> prop.mentions.mapNotNull { it.resolvedId }.map { entityId -> entityId to prop } }
             .groupBy({ it.first }, { it.second })
@@ -166,6 +166,9 @@ data class DefaultMemoryMaintenanceOrchestrator(
 
         val allAbstractions = mutableListOf<Proposition>()
         val allSuperseded = mutableListOf<Proposition>()
+        // Ids already retired this call, so a source shared across two entity groups is superseded
+        // (saved and counted) exactly once.
+        val supersededIds = HashSet<String>()
 
         // maxLevel = Int.MAX_VALUE preserves the pre-refactor "persist every abstraction the
         // abstractor returns" contract — maintain() applies no level ceiling. Any cap belongs only on
@@ -187,9 +190,9 @@ data class DefaultMemoryMaintenanceOrchestrator(
             }
 
             val groupAbstractions = outcome.propositionsToSave.filter { it.level > 0 }
-            val groupSuperseded = outcome.propositionsToSave.filter {
-                it.status == PropositionStatus.SUPERSEDED
-            }
+            val groupSuperseded = outcome.propositionsToSave
+                .filter { it.status == PropositionStatus.SUPERSEDED }
+                .filter { supersededIds.add(it.id) }
 
             repository.saveAll(groupAbstractions)
             allAbstractions.addAll(groupAbstractions)

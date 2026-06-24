@@ -24,6 +24,7 @@ import com.embabel.dice.common.PropositionDiscovered
 import com.embabel.dice.common.PropositionGeneralized
 import com.embabel.dice.common.PropositionMerged
 import com.embabel.dice.common.PropositionReinforced
+import com.embabel.dice.common.PropositionRoutedToReview
 import com.embabel.dice.common.SafeDiceEventListener
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntities
@@ -257,6 +258,18 @@ class PropositionPipeline private constructor(
                     )
                 }
                 eventListener.onEvent(event)
+                // A contradiction against a pinned original leaves the pin intact (conflict
+                // protection). Surface a review signal alongside the contradiction event so the
+                // contested pin can be explicitly resolved or unpinned, rather than silently
+                // accumulating contradicting evidence.
+                if (revision is RevisionResult.Contradicted && revision.original.pinned) {
+                    eventListener.onEvent(
+                        PropositionRoutedToReview(
+                            revision.original,
+                            reason = "pinned proposition contradicted by newer evidence; resolve the conflict or unpin",
+                        )
+                    )
+                }
             }
             results
         } else {

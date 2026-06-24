@@ -16,6 +16,7 @@
 package com.embabel.dice.projection.memory
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.PropositionStatusChanged
 import com.embabel.dice.common.RecordingDiceEventListener
 import com.embabel.dice.projection.lineage.CollectorRecordStore
@@ -156,6 +157,49 @@ class DefaultCollectorRunnerTest {
         assertEquals(PropositionStatus.STALE, events[0].newStatus)
         // Persisted run + record for the applied transition.
         assertTrue(recordStore.findByRun(result.runId).isNotEmpty())
+    }
+
+    @Test
+    fun `a proposition transitioned before a mid-run failure still has an audit record`() {
+        // Two decayed candidates. The first transitions cleanly; the second's save throws partway
+        // through the run. The first proposition is already mutated and its event emitted, so its
+        // audit record must be persisted despite the abort — otherwise a transition (or a hard
+        // delete) is unrecoverable.
+        val first = decayedProp("first old fact")
+        val second = decayedProp("second old fact")
+        every { repository.query(any()) } returns listOf(first, second)
+        var saves = 0
+        every { repository.save(any()) } answers {
+            saves++
+            if (saves == 1) firstArg() else throw RuntimeException("storage failure")
+        }
+
+        runCatching { runner().run(contextId, dryRun = false) }
+
+        // The first really transitioned: exactly one event, and a durable audit record for it.
+        assertEquals(1, listener.eventsOfType<PropositionStatusChanged>().size)
+        assertTrue(recordStore.findByProposition(first.id).isNotEmpty())
+    }
+
+    @Test
+    fun `a transition is recorded even when a listener throws after the persist`() {
+        // persist-then-emit means a listener runs after the durable write. If it throws, the
+        // proposition is already transitioned — its audit record must still be captured rather than
+        // lost to the unhandled listener failure.
+        val decayed = decayedProp("old fact")
+        every { repository.query(any()) } returns listOf(decayed)
+        every { repository.save(any()) } answers { firstArg() }
+        val throwingListener = DiceEventListener { throw RuntimeException("listener boom") }
+        val runner = CollectorRunner
+            .withRepository(repository)
+            .withStrategy(DecayCollectorStrategy(retireBelow = 0.3))
+            .withRecordStore(recordStore)
+            .withEventListener(throwingListener)
+            .build()
+
+        runCatching { runner.run(contextId, dryRun = false) }
+
+        assertTrue(recordStore.findByProposition(decayed.id).isNotEmpty())
     }
 
     @Test

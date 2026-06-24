@@ -125,6 +125,38 @@ class AbstractionPassTest {
     }
 
     @Test
+    fun `a source mentioning two qualifying entities is superseded only once`() {
+        // `shared` mentions entities "a" and "b", so it lands in both group a = {a-1..a-4, shared}
+        // and group b = {b-1..b-4, shared}, each at the threshold of 5. Without dedup it would be
+        // marked SUPERSEDED once per group; the pass must collapse it to a single save.
+        val shared = Proposition(
+            id = "shared",
+            contextId = contextId,
+            text = "prop-shared",
+            mentions = listOf(
+                EntityMention(span = "e", type = "Person", resolvedId = "a"),
+                EntityMention(span = "e", type = "Person", resolvedId = "b"),
+            ),
+            confidence = 0.8,
+        )
+        val members = group("a", 4) + group("b", 4) + shared
+        val abstractor = mockk<PropositionAbstractor>()
+        // A distinct abstraction per group, so the dedup collapses only the shared source — never an
+        // abstraction.
+        every { abstractor.abstract(any<PropositionGroup>(), any()) } answers {
+            val grp = firstArg<PropositionGroup>()
+            listOf(proposition("abs-${grp.label}", grp.label, level = 1, sourceIds = grp.propositions.map { it.id }))
+        }
+
+        val changed = assertInstanceOf(
+            ConsolidationPassResult.Changed::class.java,
+            AbstractionPass(abstractor, abstractionThreshold = 5).run(contextId, members),
+        )
+
+        assertEquals(1, changed.propositionsToSave.count { it.id == "shared" })
+    }
+
+    @Test
     fun `level-inflation guard skips a group already covered by an existing higher-level proposition`() {
         val members = group("bob", 5)
         val existingAbstraction = proposition(
