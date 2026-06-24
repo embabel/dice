@@ -46,7 +46,10 @@ class InMemoryProjectionRecordStore : ProjectionRecordStore {
      * @param propositionId ID of the proposition whose records should go stale
      * @return the number of records transitioned to STALE
      */
-    override fun markStaleByProposition(propositionId: String): Int {
+    override fun markStaleByProposition(propositionId: String): Int = synchronized(records) {
+        // The check (is this record non-STALE?) and the set must be atomic together: two concurrent
+        // calls for the same proposition could otherwise both observe the same non-STALE record and
+        // both count it, double-counting the transition (and racing the index write).
         var count = 0
         for (index in records.indices) {
             val current = records[index]
@@ -57,7 +60,7 @@ class InMemoryProjectionRecordStore : ProjectionRecordStore {
                 count++
             }
         }
-        return count
+        count
     }
 
     override fun all(): List<ProjectionRecord> = records.toList()

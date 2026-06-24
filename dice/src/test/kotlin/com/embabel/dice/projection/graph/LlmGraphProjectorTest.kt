@@ -507,5 +507,32 @@ class LlmGraphProjectorTest {
             assertTrue(result is ProjectionSuccess)
             assertEquals("RELATED_TO", (result as ProjectionSuccess).projected.type)
         }
+
+        @Test
+        fun `the LLM span picks the mention even when an earlier mention has the fallback role`() {
+            // from-span names the OBJECT-role mention and to-span names the SUBJECT-role mention.
+            // A combined `span || role` find would let the earlier SUBJECT mention win the source,
+            // producing a wrong-direction (here self-loop) edge; span must take precedence.
+            val ai = mockAi(RelationshipClassification(
+                hasRelationship = true,
+                relationshipType = null,
+                fromMentionSpan = "Bob",
+                toMentionSpan = "Alice",
+                reasoning = "Bob knows Alice",
+            ))
+            val projector = LlmGraphProjector(ai, Relations.empty().withSemantic("knows"), LenientProjectionPolicy())
+            val prop = proposition(
+                text = "Bob knows Alice",
+                subjectSpan = "Alice", subjectType = "Person", subjectId = "alice-1",
+                objectSpan = "Bob", objectType = "Person", objectId = "bob-1",
+            )
+
+            val result = projector.project(prop, emptySchema)
+
+            assertTrue(result is ProjectionSuccess)
+            val rel = (result as ProjectionSuccess).projected
+            assertEquals("bob-1", rel.sourceId)
+            assertEquals("alice-1", rel.targetId)
+        }
     }
 }

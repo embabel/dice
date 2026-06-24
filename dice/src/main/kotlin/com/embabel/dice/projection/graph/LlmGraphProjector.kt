@@ -184,15 +184,16 @@ data class LlmGraphProjector(
             return ProjectionFailed(proposition, classification.reasoning ?: "No relationship implied")
         }
 
-        // Find the source and target entity IDs
+        // Find the source and target entity IDs. The LLM's span is authoritative when it matches a
+        // mention, so try the span first and only fall back to role when no span matches. Doing both
+        // in one `find { span || role }` let an earlier role-matching mention win over a later mention
+        // the span actually named, silently producing a wrong-direction edge.
         val fromMention = proposition.mentions.find {
-            it.span.equals(classification.fromMentionSpan, ignoreCase = true) ||
-                it.role == MentionRole.SUBJECT
-        }
+            it.span.equals(classification.fromMentionSpan, ignoreCase = true)
+        } ?: proposition.mentions.find { it.role == MentionRole.SUBJECT }
         val toMention = proposition.mentions.find {
-            it.span.equals(classification.toMentionSpan, ignoreCase = true) ||
-                it.role == MentionRole.OBJECT
-        }
+            it.span.equals(classification.toMentionSpan, ignoreCase = true)
+        } ?: proposition.mentions.find { it.role == MentionRole.OBJECT }
 
         if (fromMention?.resolvedId == null || toMention?.resolvedId == null) {
             logger.debug("Could not resolve entity IDs for relationship")

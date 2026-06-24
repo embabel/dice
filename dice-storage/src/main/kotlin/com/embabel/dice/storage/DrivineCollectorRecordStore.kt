@@ -79,7 +79,13 @@ open class DrivineCollectorRecordStore(
         val rows = persistenceManager.query(
             QuerySpecification.withStatement("MATCH (n:CollectorRecord) RETURN n") as QuerySpecification<Any>,
         )
-        return rows.filterIsInstance<Map<*, *>>().map(CollectorRecordRowMapper::fromRow)
+        // Skip a corrupt/partial node rather than letting one bad row throw out of fromRow and make
+        // the entire collector audit trail unreadable.
+        return rows.filterIsInstance<Map<*, *>>().mapNotNull { row ->
+            runCatching { CollectorRecordRowMapper.fromRow(row) }
+                .onFailure { logger.warn("Skipping unreadable CollectorRecord row: {}", it.message) }
+                .getOrNull()
+        }
     }
 
     @Transactional(readOnly = true)

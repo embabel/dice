@@ -59,14 +59,19 @@ interface GraphQueryCapable {
      * The entity neighbourhood reachable from [entityId], keeping only edges whose source authority is
      * at least [minAuthority] (a null floor keeps everything).
      *
-     * The facade only calls this when [honorsAuthorityFilter] is true. The default body ignores the
-     * floor and delegates to the plain [neighborhood], so a backend that hasn't opted in never returns
-     * silently-unfiltered results through this path.
+     * The facade only calls this when [honorsAuthorityFilter] is true. A backend that opts in by
+     * setting that flag MUST override this overload — the default body throws rather than silently
+     * returning unfiltered results, which would let a backend claim to honor the floor and then drop
+     * it on the floor.
      *
      * @param minAuthority weakest source authority to keep; null keeps all edges
      */
-    fun neighborhood(entityId: String, depth: Int, minAuthority: AuthorityTier?): GraphNeighborhood =
-        neighborhood(entityId, depth)
+    fun neighborhood(entityId: String, depth: Int, minAuthority: AuthorityTier?): GraphNeighborhood {
+        check(!honorsAuthorityFilter) {
+            "honorsAuthorityFilter is true but the authority-aware neighborhood() overload was not overridden"
+        }
+        return neighborhood(entityId, depth)
+    }
 
     /**
      * The paths connecting [entityIdA] to [entityIdB].
@@ -81,11 +86,16 @@ interface GraphQueryCapable {
      * The paths connecting [entityIdA] to [entityIdB], keeping only edges whose source authority is at
      * least [minAuthority] (a null floor keeps everything).
      *
-     * The facade only calls this when [honorsAuthorityFilter] is true; the default body ignores the
-     * floor and delegates to the plain [pathBetween].
+     * The facade only calls this when [honorsAuthorityFilter] is true. A backend that opts in MUST
+     * override this overload — the default body throws rather than silently returning unfiltered
+     * paths.
      */
-    fun pathBetween(entityIdA: String, entityIdB: String, minAuthority: AuthorityTier?): List<GraphPath> =
-        pathBetween(entityIdA, entityIdB)
+    fun pathBetween(entityIdA: String, entityIdB: String, minAuthority: AuthorityTier?): List<GraphPath> {
+        check(!honorsAuthorityFilter) {
+            "honorsAuthorityFilter is true but the authority-aware pathBetween() overload was not overridden"
+        }
+        return pathBetween(entityIdA, entityIdB)
+    }
 
     /**
      * The lineage behind the proposition with the given id, assembled from its durable fields.

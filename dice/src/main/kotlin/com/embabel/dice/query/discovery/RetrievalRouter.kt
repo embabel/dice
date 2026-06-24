@@ -82,11 +82,16 @@ class RetrievalRouter(
      * a caller can never observe an edge proposition belonging to another context.
      */
     fun graphPath(entityIdA: String, entityIdB: String): List<PathDto> {
-        val paths = graphQuery.pathBetween(entityIdA, entityIdB)
-            .filter { path -> path.edges.all { it.contextId == contextId } }
-            .map { PathDto.from(it) }
-        logger.debug("Graph path {} -> {}: {} path(s) found", entityIdA, entityIdB, paths.size)
-        return paths
+        val found = graphQuery.pathBetween(entityIdA, entityIdB)
+        val kept = found.filter { path -> path.edges.all { it.contextId == contextId } }
+        val dropped = found.size - kept.size
+        if (dropped > 0) {
+            // A path crossing into another context is dropped wholesale for isolation. Surface it so
+            // an empty result is distinguishable from a genuinely disconnected graph.
+            logger.debug("Graph path {} -> {}: dropped {} cross-context path(s)", entityIdA, entityIdB, dropped)
+        }
+        logger.debug("Graph path {} -> {}: {} path(s) kept", entityIdA, entityIdB, kept.size)
+        return kept.map { PathDto.from(it) }
     }
 
     /**

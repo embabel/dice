@@ -249,6 +249,10 @@ class GraphQuery(
 
     private fun defaultWhyExplain(propositionId: String): PropositionLineage? {
         val prop = store.findById(propositionId) ?: return null
+        // findById is a global lookup; every other query path goes through baseQuery() which is
+        // context-scoped. Honor the same scope here so a context-bound GraphQuery can't return
+        // lineage for a proposition belonging to another context.
+        if (contextId != null && prop.contextId != contextId) return null
         val sources = (store as? GraphTraversalCapable)?.findSources(prop) ?: emptyList()
         return PropositionLineage(
             proposition = prop,

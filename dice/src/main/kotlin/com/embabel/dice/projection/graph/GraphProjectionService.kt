@@ -27,6 +27,7 @@ import com.embabel.dice.proposition.ProjectionResults
 import com.embabel.dice.proposition.ProjectionSkipped
 import com.embabel.dice.proposition.ProjectionSuccess
 import com.embabel.dice.proposition.Proposition
+import org.slf4j.LoggerFactory
 import java.util.UUID
 
 /**
@@ -51,6 +52,8 @@ class GraphProjectionService(
     private val recordStore: ProjectionRecordStore? = null,
     private val reconciler: Reconciler = AlwaysCreateReconciler,
 ) {
+
+    private val logger = LoggerFactory.getLogger(GraphProjectionService::class.java)
 
     companion object {
         @JvmStatic
@@ -116,16 +119,21 @@ class GraphProjectionService(
                         result.structuredReason?.describe() ?: result.reason,
                     )
                 }
-                store.record(
-                    ProjectionRecord.of(
-                        propositionId = result.proposition.id,
-                        target = "neo4j",
-                        lifecycle = lifecycle,
-                        runId = runId,
-                        targetRef = targetRef,
-                        reason = reason,
-                    ),
-                )
+                // The graph side is already persisted above; a failure writing one lineage record
+                // must not abort the loop and drop the records for every remaining result. Isolate
+                // each write so a flaky record store loses at most the one row, not the whole trail.
+                runCatching {
+                    store.record(
+                        ProjectionRecord.of(
+                            propositionId = result.proposition.id,
+                            target = "neo4j",
+                            lifecycle = lifecycle,
+                            runId = runId,
+                            targetRef = targetRef,
+                            reason = reason,
+                        ),
+                    )
+                }.onFailure { logger.warn("Failed to record projection lineage for {}: {}", result.proposition.id, it.message) }
             }
         }
         return pair

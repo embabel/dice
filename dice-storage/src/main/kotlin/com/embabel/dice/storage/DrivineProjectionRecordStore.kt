@@ -65,7 +65,13 @@ open class DrivineProjectionRecordStore(
         val rows = persistenceManager.query(
             QuerySpecification.withStatement("MATCH (n:ProjectionRecord) RETURN n") as QuerySpecification<Any>,
         )
-        return rows.filterIsInstance<Map<*, *>>().map(ProjectionRecordRowMapper::fromRow)
+        // Skip a corrupt/partial node (e.g. a missing required property from an older schema) rather
+        // than letting one bad row throw out of fromRow and make the entire lineage unreadable.
+        return rows.filterIsInstance<Map<*, *>>().mapNotNull { row ->
+            runCatching { ProjectionRecordRowMapper.fromRow(row) }
+                .onFailure { logger.warn("Skipping unreadable ProjectionRecord row: {}", it.message) }
+                .getOrNull()
+        }
     }
 
     /**
