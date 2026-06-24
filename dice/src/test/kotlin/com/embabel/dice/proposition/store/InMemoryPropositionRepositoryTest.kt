@@ -28,6 +28,9 @@ import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 class InMemoryPropositionRepositoryTest {
 
@@ -176,5 +179,32 @@ class InMemoryPropositionRepositoryTest {
 
         assertEquals(setOf("confident match"), similar, "minEffectiveConfidence must drop the low-confidence match")
         assertEquals(repo.query(query).map { it.text }.toSet(), similar)
+    }
+
+    @Test
+    fun `saveIfAbsent admits exactly one writer under concurrency`() {
+        val threads = 32
+        val target = proposition("racing fact")
+        val pool = Executors.newFixedThreadPool(threads)
+        val start = CountDownLatch(1)
+        val winners = AtomicInteger(0)
+        try {
+            val futures = (1..threads).map { i ->
+                pool.submit {
+                    start.await()
+                    // Every thread races to insert the SAME id (copy keeps it), with distinct text so
+                    // a stray overwrite would be visible. Exactly one putIfAbsent may win.
+                    if (repo.saveIfAbsent(target.copy(text = "racing fact #$i")) != null) {
+                        winners.incrementAndGet()
+                    }
+                }
+            }
+            start.countDown() // release all threads at once for maximum contention
+            futures.forEach { it.get() }
+        } finally {
+            pool.shutdownNow()
+        }
+        assertEquals(1, winners.get(), "exactly one saveIfAbsent must win for a contended id")
+        assertEquals(1, repo.count())
     }
 }

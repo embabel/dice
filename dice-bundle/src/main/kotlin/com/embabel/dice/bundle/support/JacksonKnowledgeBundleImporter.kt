@@ -187,27 +187,37 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
                 continue
             }
 
-            val existing = store.findById(proposition.id)
-            if (existing != null && conflictPolicy == ImportConflictPolicy.SKIP_EXISTING) {
-                skipped++
-                notes += PropositionImportNote(
-                    propositionId = proposition.id,
-                    reason = "proposition already exists in store; skipped per $conflictPolicy policy",
-                )
-                continue
-            }
             try {
-                store.save(proposition)
-                if (existing != null) {
-                    // Pre-existing copy replaced under OVERWRITE — a destructive write, so it leaves
-                    // its own note and count instead of hiding among the net-new imports.
-                    overwritten++
-                    notes += PropositionImportNote(
-                        propositionId = proposition.id,
-                        reason = "replaced existing proposition per $conflictPolicy policy",
-                    )
-                } else {
-                    imported++
+                when (conflictPolicy) {
+                    ImportConflictPolicy.SKIP_EXISTING -> {
+                        // Atomic insert-once: the store writes only if the id was absent, so the
+                        // skip can't be lost to a concurrent insert between a check and a write.
+                        if (store.saveIfAbsent(proposition) != null) {
+                            imported++
+                        } else {
+                            skipped++
+                            notes += PropositionImportNote(
+                                propositionId = proposition.id,
+                                reason = "proposition already exists in store; skipped per $conflictPolicy policy",
+                            )
+                        }
+                    }
+
+                    ImportConflictPolicy.OVERWRITE -> {
+                        val existing = store.findById(proposition.id)
+                        store.save(proposition)
+                        if (existing != null) {
+                            // Pre-existing copy replaced — a destructive write, so it leaves its own
+                            // note and count instead of hiding among the net-new imports.
+                            overwritten++
+                            notes += PropositionImportNote(
+                                propositionId = proposition.id,
+                                reason = "replaced existing proposition per $conflictPolicy policy",
+                            )
+                        } else {
+                            imported++
+                        }
+                    }
                 }
             } catch (ex: Exception) {
                 logger.warn("Failed to save proposition {}: {}", proposition.id, ex.message)

@@ -134,10 +134,10 @@ sealed interface BundleImportOutcome {
  * - apply the given [ImportConflictPolicy] when a proposition ID already exists in the store;
  * - return [BundleImportOutcome.ParseFailure] for malformed input rather than throwing.
  *
- * [ImportConflictPolicy.SKIP_EXISTING] decides skip-vs-write by reading the store and then writing,
- * which is not atomic. The skip is therefore best-effort if the same store is being imported into
- * concurrently: a proposition that appears absent at the check may exist by the time of the write.
- * Run imports into a given store one at a time when the skip guarantee must be exact.
+ * [ImportConflictPolicy.SKIP_EXISTING] writes through [PropositionStore.saveIfAbsent], so the skip is
+ * atomic — and safe under concurrent imports into the same store — for any store that implements that
+ * primitive atomically (the in-memory and Neo4j-backed stores do). Against a store that only inherits
+ * the non-atomic SPI default, the skip falls back to best-effort.
  *
  * The default implementation is [support.JacksonKnowledgeBundleImporter].
  */
