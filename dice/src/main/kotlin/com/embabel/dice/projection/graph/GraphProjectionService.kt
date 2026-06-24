@@ -140,6 +140,7 @@ class GraphProjectionService(
                             runId = runId,
                             targetRef = targetRef,
                             reason = reason,
+                            contextId = result.proposition.contextId.value,
                         ),
                     )
                 }.onFailure { logger.warn("Failed to record projection lineage for {}: {}", result.proposition.id, it.message) }

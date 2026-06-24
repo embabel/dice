@@ -37,6 +37,15 @@ class InMemoryCollectorRecordStore : CollectorRecordStore {
         runHeaders.add(run)
     }
 
+    override fun findByProposition(propositionId: String): List<CollectorRecord> =
+        records.filter { it.propositionId == propositionId }
+
+    override fun findByRun(runId: String): List<CollectorRecord> =
+        records.filter { it.runId == runId }
+
+    override fun findRun(runId: String): CollectorRun? =
+        runHeaders.firstOrNull { it.runId == runId }
+
     override fun all(): List<CollectorRecord> = records.toList()
 
     override fun runs(): List<CollectorRun> = runHeaders.toList()

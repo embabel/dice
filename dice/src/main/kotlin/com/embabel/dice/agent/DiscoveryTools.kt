@@ -159,7 +159,8 @@ class DiscoveryTools(
     )
     fun projectionHealth(): Tool.Result {
         logger.info("Discovery projection health")
-        return Tool.Result.text(json(ProjectionHealthDto.from(projectionRecordStore.all())))
+        // Scoped to the tool's fixed context — never aggregate lineage across contexts.
+        return Tool.Result.text(json(ProjectionHealthDto.from(projectionRecordStore.findByContext(contextId.value))))
     }
 
     /**

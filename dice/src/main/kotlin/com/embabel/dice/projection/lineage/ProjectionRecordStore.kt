@@ -19,8 +19,10 @@ package com.embabel.dice.projection.lineage
  * Store of [ProjectionRecord]s — the inverse index of "what projected where".
  *
  * Implementations may be in-memory, graph-backed, or relational. The default
- * query methods are expressed in terms of [all] so that simple implementations
- * only need to supply [record] and [all].
+ * query methods are expressed in terms of [all] purely as a fallback for trivial
+ * in-memory stores. A durable store MUST override each finder with a scoped query
+ * (e.g. a parameterized `MATCH`) so a single-key lookup never loads the whole table
+ * into memory — the SPI default is not an acceptable data-access path for a database.
  */
 interface ProjectionRecordStore {
 
@@ -48,6 +50,16 @@ interface ProjectionRecordStore {
      */
     fun findByTarget(target: String): List<ProjectionRecord> =
         all().filter { it.target == target }
+
+    /**
+     * Find all records for propositions in a given context. Used to scope projection-health summaries
+     * so one context never sees another's lineage.
+     *
+     * @param contextId The context the projected propositions belong to
+     * @return records whose [ProjectionRecord.contextId] matches
+     */
+    fun findByContext(contextId: String): List<ProjectionRecord> =
+        all().filter { it.contextId == contextId }
 
     /**
      * Find all records produced by a given run.

@@ -22,8 +22,9 @@ package com.embabel.dice.projection.lineage
  * Implementations may be in-memory, graph-backed, or relational. The store is
  * append-only: there is no method to remove or mutate records, so the history is
  * non-destructive. The default query methods are expressed in terms of [all] and [runs]
- * so that simple implementations only need to supply the writers ([record], [recordRun])
- * and the readers ([all], [runs]).
+ * purely as a fallback for trivial in-memory stores. A durable store MUST override each
+ * finder with a scoped query so a single-key lookup never loads the whole table into
+ * memory — the SPI default is not an acceptable data-access path for a database.
  */
 interface CollectorRecordStore {
 

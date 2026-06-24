@@ -33,6 +33,8 @@ import java.time.Instant
  * @property runId ID of the projection run that produced this record
  * @property at When this record was created
  * @property reason Optional explanation (e.g. skip/failure reason)
+ * @property contextId The context the projected proposition belongs to, so projection health can be
+ *   scoped per context and one context's lineage never leaks into another's. Empty when unknown.
  */
 data class ProjectionRecord @JvmOverloads constructor(
     val propositionId: String,
@@ -42,6 +44,7 @@ data class ProjectionRecord @JvmOverloads constructor(
     val runId: String,
     val at: Instant = Instant.now(),
     val reason: String? = null,
+    val contextId: String = "",
 ) {
 
     init {
@@ -73,6 +76,7 @@ data class ProjectionRecord @JvmOverloads constructor(
             targetRef: String? = null,
             at: Instant = Instant.now(),
             reason: String? = null,
+            contextId: String = "",
         ): ProjectionRecord = ProjectionRecord(
             propositionId = propositionId,
             target = target,
@@ -81,6 +85,7 @@ data class ProjectionRecord @JvmOverloads constructor(
             runId = runId,
             at = at,
             reason = reason,
+            contextId = contextId,
         )
     }
 }

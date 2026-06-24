@@ -113,7 +113,8 @@ class DiscoveryController(
         @PathVariable contextId: String,
     ): ResponseEntity<ProjectionHealthDto> {
         logger.debug("Discovery projection health for context {}", contextId)
-        return ResponseEntity.ok(ProjectionHealthDto.from(projectionRecordStore.all()))
+        // Scope to this context's lineage only — never aggregate across contexts.
+        return ResponseEntity.ok(ProjectionHealthDto.from(projectionRecordStore.findByContext(contextId)))
     }
 
     /** Preview what the maintenance collector would mark and sweep, without mutating anything. */

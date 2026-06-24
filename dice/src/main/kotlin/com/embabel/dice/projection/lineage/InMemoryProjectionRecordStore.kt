@@ -63,5 +63,23 @@ class InMemoryProjectionRecordStore : ProjectionRecordStore {
         count
     }
 
+    override fun findByProposition(propositionId: String): List<ProjectionRecord> =
+        records.filter { it.propositionId == propositionId }
+
+    override fun findByTarget(target: String): List<ProjectionRecord> =
+        records.filter { it.target == target }
+
+    override fun findByContext(contextId: String): List<ProjectionRecord> =
+        records.filter { it.contextId == contextId }
+
+    override fun findByRun(runId: String): List<ProjectionRecord> =
+        records.filter { it.runId == runId }
+
+    override fun findByTargetRef(targetRef: String): List<ProjectionRecord> =
+        records.filter { it.targetRef == targetRef }
+
+    override fun findStale(): List<ProjectionRecord> =
+        records.filter { it.lifecycle == ProjectionLifecycle.STALE }
+
     override fun all(): List<ProjectionRecord> = records.toList()
 }

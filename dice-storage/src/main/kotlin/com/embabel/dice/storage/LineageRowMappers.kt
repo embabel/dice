@@ -45,6 +45,7 @@ object ProjectionRecordRowMapper {
         "lifecycle" to record.lifecycle.name,
         "at" to record.at.toString(),
         "reason" to record.reason,
+        "contextId" to record.contextId,
     )
 
     /** Rebuild a [ProjectionRecord] from a returned node's property map. */
@@ -57,6 +58,7 @@ object ProjectionRecordRowMapper {
         runId = row.str("runId"),
         at = parseInstant(row.strOrNull("at")),
         reason = row.strOrNull("reason"),
+        contextId = row.str("contextId"),
     )
 }
 

@@ -144,6 +144,16 @@ class DrivineLineageRecordStoreIntegrationTest {
         assertEquals(3, projectionStore.all().size)
     }
 
+    @Test
+    fun `findByContext returns only the requested context's records, never another's`() {
+        projectionStore.record(ProjectionRecord("pA", "neo4j", "eA", ProjectionLifecycle.PROJECTED, "run-1", contextId = "ctx-1"))
+        projectionStore.record(ProjectionRecord("pB", "neo4j", "eB", ProjectionLifecycle.ADOPTED, "run-1", contextId = "ctx-2"))
+
+        assertEquals(setOf("pA"), projectionStore.findByContext("ctx-1").map { it.propositionId }.toSet())
+        assertEquals(setOf("pB"), projectionStore.findByContext("ctx-2").map { it.propositionId }.toSet())
+        assertTrue(projectionStore.findByContext("ctx-missing").isEmpty())
+    }
+
     // ---- CollectorRecordStore ----
 
     @Test

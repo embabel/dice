@@ -53,7 +53,8 @@ open class DrivineProjectionRecordStore(
                 SET n.targetRef = ${'$'}targetRef,
                     n.lifecycle = ${'$'}lifecycle,
                     n.at        = ${'$'}at,
-                    n.reason    = ${'$'}reason
+                    n.reason    = ${'$'}reason,
+                    n.contextId = ${'$'}contextId
                 """.trimIndent(),
             ).bind(ProjectionRecordRowMapper.bindMap(record)),
         )
@@ -74,6 +75,10 @@ open class DrivineProjectionRecordStore(
     @Transactional(readOnly = true)
     override fun findByTarget(target: String): List<ProjectionRecord> =
         query("MATCH (n:ProjectionRecord {target: ${'$'}target}) RETURN n", mapOf("target" to target))
+
+    @Transactional(readOnly = true)
+    override fun findByContext(contextId: String): List<ProjectionRecord> =
+        query("MATCH (n:ProjectionRecord {contextId: ${'$'}contextId}) RETURN n", mapOf("contextId" to contextId))
 
     @Transactional(readOnly = true)
     override fun findByRun(runId: String): List<ProjectionRecord> =
