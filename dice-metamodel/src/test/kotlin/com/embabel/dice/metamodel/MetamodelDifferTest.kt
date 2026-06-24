@@ -228,12 +228,12 @@ class MetamodelDifferTest {
     }
 
     @Nested
-    inner class CommaInLabelName {
+    inner class DelimiterSafetyInNames {
 
         /**
          * A label name that contains a comma — possible when names come from LLM extraction.
-         * Confirms that the space delimiter used internally in TypeShapeSnapshot does not split
-         * such names incorrectly and that the diff still detects the label change correctly.
+         * The diff compares label sets directly, so punctuation in a name is just a character;
+         * the change is still detected and the label comes back as one entry, not split.
          */
         @Test
         fun `label containing a comma is treated as a single label`() {
@@ -254,6 +254,41 @@ class MetamodelDifferTest {
             assertEquals(1, change.removedLabels.size)
             assertTrue(change.removedLabels.single().contains(","))
             assertTrue(change.addedLabels.isEmpty())
+        }
+
+        /**
+         * Property names can contain spaces when they come from free-text / LLM extraction.
+         * The two sets `{"a", "b c"}` and `{"a b", "c"}` are genuinely different, yet both
+         * collapse to the string "a b c" if you compare a space-joined projection instead of
+         * the sets themselves. A real property change must never be hidden by that collision.
+         */
+        @Test
+        fun `property sets that collide under a space delimiter are still reported as modified`() {
+            val old = DataDictionary.fromDomainTypes(
+                "test",
+                listOf(
+                    DynamicType(
+                        name = "Person",
+                        ownProperties = listOf(ValuePropertyDefinition("a"), ValuePropertyDefinition("b c")),
+                    ),
+                ),
+            )
+            val new = DataDictionary.fromDomainTypes(
+                "test",
+                listOf(
+                    DynamicType(
+                        name = "Person",
+                        ownProperties = listOf(ValuePropertyDefinition("a b"), ValuePropertyDefinition("c")),
+                    ),
+                ),
+            )
+            val diff = differ.diff(old, new)
+
+            assertFalse(diff.isEmpty, "a real property change must not be hidden by a delimiter collision")
+            val change = diff.modifiedEntityTypes.single()
+            assertEquals("Person", change.typeName)
+            assertEquals(setOf("a b", "c"), change.addedProperties)
+            assertEquals(setOf("a", "b c"), change.removedProperties)
         }
     }
 }

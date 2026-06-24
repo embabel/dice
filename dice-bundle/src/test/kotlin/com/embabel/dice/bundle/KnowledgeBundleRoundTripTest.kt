@@ -92,6 +92,36 @@ class KnowledgeBundleRoundTripTest {
     }
 
     @Test
+    fun `round-trip preserves abstraction, pinning, and reinforcement fields`() {
+        // A derived (level 1) proposition that is pinned, reinforced, and carries source IDs and
+        // reasoning. These fields are easy to drop silently if one is ever excluded from Jackson,
+        // so assert each one survives rather than trusting the core-field check above.
+        val abstracted = Proposition(
+            contextId = contextId,
+            text = "Derived insight",
+            mentions = emptyList(),
+            confidence = 0.7,
+            importance = 0.9,
+            reasoning = "merged from two observations",
+            pinned = true,
+            level = 1,
+            sourceIds = listOf("src-1", "src-2"),
+            reinforceCount = 3,
+        )
+        val json = exporter.exportToString(KnowledgeBundle.from(contextId, listOf(abstracted)))
+        val store = InMemoryPropositionRepository()
+        importer.importFromString(json, store)
+
+        val restored = store.findById(abstracted.id)!!
+        assertEquals(0.9, restored.importance)
+        assertEquals("merged from two observations", restored.reasoning)
+        assertTrue(restored.pinned, "pinned flag must survive the round-trip")
+        assertEquals(1, restored.level)
+        assertEquals(listOf("src-1", "src-2"), restored.sourceIds)
+        assertEquals(3, restored.reinforceCount)
+    }
+
+    @Test
     fun `round-trip preserves metadata on propositions`() {
         val prop = proposition("Knowledge decays over time").withMetadataValue("dice.trust.score", 0.95)
         val bundle = KnowledgeBundle.from(contextId, listOf(prop))
@@ -298,10 +328,37 @@ class KnowledgeBundleRoundTripTest {
 
         assertInstanceOf(BundleImportOutcome.Success::class.java, outcome)
         val success = outcome as BundleImportOutcome.Success
-        assertEquals(1, success.result.imported)
+        // A replace of a pre-existing proposition is counted as overwritten, not imported, and
+        // leaves a note so an idempotency audit can see the destructive write.
+        assertEquals(0, success.result.imported)
+        assertEquals(1, success.result.overwritten)
         assertEquals(0, success.result.skipped)
+        assertEquals(1, success.result.total)
+        assertTrue(success.result.notes.single().reason.contains("replaced existing"))
         assertEquals("Overwritten text", store.findById(original.id)!!.text)
         assertEquals(0.3, store.findById(original.id)!!.confidence)
+    }
+
+    @Test
+    fun `duplicate ID within one bundle is imported once and the repeat is skipped`() {
+        val store = InMemoryPropositionRepository()
+        val prop = proposition("Only once", 0.8)
+        // Same ID twice in a single bundle — KnowledgeBundle.from preserves duplicates.
+        val bundle = KnowledgeBundle.from(contextId, listOf(prop, prop.copy(text = "Repeat")))
+        val json = exporter.exportToString(bundle)
+
+        val outcome = importer.importFromString(json, store, ImportConflictPolicy.OVERWRITE)
+
+        val success = assertInstanceOf(BundleImportOutcome.Success::class.java, outcome)
+        // The repeat must not double-write or double-count: one import, one skip.
+        assertEquals(1, success.result.imported)
+        assertEquals(0, success.result.overwritten)
+        assertEquals(1, success.result.skipped)
+        assertEquals(2, success.result.total)
+        assertEquals(1, store.count())
+        assertTrue(success.result.notes.any { it.reason.contains("duplicate ID within the same bundle") })
+        // The first occurrence is the one that wins.
+        assertEquals("Only once", store.findById(prop.id)!!.text)
     }
 
     // -------------------------------------------------------------------------

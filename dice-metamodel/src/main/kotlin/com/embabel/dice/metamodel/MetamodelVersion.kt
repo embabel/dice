@@ -70,11 +70,19 @@ data class MetamodelVersion(
          */
         @JvmStatic
         fun from(dataDictionary: DataDictionary): MetamodelVersion {
+            // A DataDictionary can legally hold two domain types that share a name but differ in
+            // shape (DynamicType is a data class, so same-named instances with different labels are
+            // not equal and both survive a set). Merge their labels and properties by union per name
+            // rather than letting associate() keep only the last — otherwise a label or property
+            // present under that name would vanish from the fingerprint, and later removing it
+            // wouldn't change the hash, hiding a real drift.
             val entityTypeLabels = dataDictionary.domainTypes
-                .associate { it.name to it.labels.toSet() }
+                .groupBy { it.name }
+                .mapValues { (_, types) -> types.flatMap { it.labels }.toSet() }
 
             val entityTypeProperties = dataDictionary.domainTypes
-                .associate { type -> type.name to type.properties.map { it.name }.toSet() }
+                .groupBy { it.name }
+                .mapValues { (_, types) -> types.flatMap { type -> type.properties.map { it.name } }.toSet() }
 
             val entityTypeNames = entityTypeLabels.keys.sorted()
 

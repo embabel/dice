@@ -125,6 +125,33 @@ class MetamodelVersionTest {
             val version = MetamodelVersion.from(dict)
             assertEquals(setOf("age", "email"), version.entityTypeProperties["Person"])
         }
+
+        @Test
+        fun `same-named types with different shapes are merged, not dropped`() {
+            // A DataDictionary can hold two "Person" types with different shapes. The fingerprint
+            // must union both, never silently keep only the last — otherwise a label or property
+            // would disappear from the hash and its later removal would go undetected.
+            val dict = DataDictionary.fromDomainTypes(
+                "test",
+                listOf(
+                    DynamicType(
+                        name = "Person",
+                        parents = listOf(DynamicType(name = "Agent")),
+                        ownProperties = listOf(ValuePropertyDefinition("age")),
+                    ),
+                    DynamicType(
+                        name = "Person",
+                        parents = listOf(DynamicType(name = "Robot")),
+                        ownProperties = listOf(ValuePropertyDefinition("email")),
+                    ),
+                ),
+            )
+            val version = MetamodelVersion.from(dict)
+            assertEquals(setOf("Person", "Agent", "Robot"), version.entityTypeLabels["Person"])
+            assertEquals(setOf("age", "email"), version.entityTypeProperties["Person"])
+            // The name is deduped in the sorted name list, not repeated.
+            assertEquals(listOf("Person"), version.entityTypeNames)
+        }
     }
 
     @Nested

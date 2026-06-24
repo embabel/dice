@@ -276,6 +276,9 @@ class DriftQuarantinePolicyTest {
                 alreadyQuarantined.metadata[DiceMetadataKeys.QUARANTINE_REASON],
                 preserved.metadata[DiceMetadataKeys.QUARANTINE_REASON],
             )
+            // It passes through as conforming but stays STALE — a caller must not read "conforming"
+            // as "active again".
+            assertEquals(PropositionStatus.STALE, preserved.status)
         }
     }
 

@@ -64,6 +64,11 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
 
         val conforming = mutableListOf<QuarantineDecision.Conforming>()
         val quarantined = mutableListOf<QuarantineDecision.Quarantined>()
+        // Propositions left untouched because a previous sweep already quarantined them. They sit in
+        // the conforming list (unchanged, as the contract promises), but they aren't "unaffected" —
+        // count them separately and surface the number so a re-sweep's log doesn't read as if every
+        // conforming proposition was clean.
+        var alreadyQuarantined = 0
 
         for (proposition in propositions) {
             // Skip propositions that were already quarantined by a previous drift sweep so we
@@ -72,6 +77,11 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
             if (proposition.status == PropositionStatus.STALE
                 && proposition.metadata.containsKey(DiceMetadataKeys.QUARANTINE_REASON)
             ) {
+                alreadyQuarantined++
+                logger.debug(
+                    "Leaving already-quarantined proposition (id={}) untouched; original reason preserved",
+                    proposition.id,
+                )
                 conforming += QuarantineDecision.Conforming(proposition)
                 continue
             }
@@ -110,9 +120,10 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
         }
 
         logger.info(
-            "Drift quarantine sweep complete: {} conforming, {} quarantined " +
-                "(removed types: {}, lossy-modified types: {})",
+            "Drift quarantine sweep complete: {} conforming ({} already quarantined from a prior sweep), " +
+                "{} newly quarantined (removed types: {}, lossy-modified types: {})",
             conforming.size,
+            alreadyQuarantined,
             quarantined.size,
             removedTypes,
             lossyModified.keys,

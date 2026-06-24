@@ -52,19 +52,26 @@ data class PropositionImportNote(
 /**
  * Immutable summary of a completed import operation.
  *
- * @property imported Number of propositions successfully written to the store.
- * @property skipped Number of propositions skipped (conflict policy or pre-existing).
+ * `imported` counts only net-new writes; replacing an existing proposition under
+ * [ImportConflictPolicy.OVERWRITE] is counted separately as `overwritten` so a caller
+ * can tell a fresh load from a re-load (e.g. when auditing idempotency).
+ *
+ * @property imported Number of net-new propositions written to the store (no prior copy existed).
+ * @property overwritten Number of pre-existing propositions replaced under OVERWRITE.
+ * @property skipped Number of propositions skipped (already present under SKIP_EXISTING, or a
+ *   duplicate ID seen earlier in the same bundle).
  * @property rejected Number of propositions that could not be imported due to errors.
- * @property notes Per-proposition notes for skipped and rejected items.
+ * @property notes Per-proposition notes for overwritten, skipped, and rejected items.
  */
 data class ImportResult(
     val imported: Int,
+    val overwritten: Int,
     val skipped: Int,
     val rejected: Int,
     val notes: List<PropositionImportNote> = emptyList(),
 ) {
     /** Total number of propositions the bundle contained. */
-    val total: Int get() = imported + skipped + rejected
+    val total: Int get() = imported + overwritten + skipped + rejected
 }
 
 /**
@@ -126,6 +133,11 @@ sealed interface BundleImportOutcome {
  *   [BundleImportOutcome.UnknownFormatVersion] for unrecognised versions;
  * - apply the given [ImportConflictPolicy] when a proposition ID already exists in the store;
  * - return [BundleImportOutcome.ParseFailure] for malformed input rather than throwing.
+ *
+ * [ImportConflictPolicy.SKIP_EXISTING] decides skip-vs-write by reading the store and then writing,
+ * which is not atomic. The skip is therefore best-effort if the same store is being imported into
+ * concurrently: a proposition that appears absent at the check may exist by the time of the write.
+ * Run imports into a given store one at a time when the skip guarantee must be exact.
  *
  * The default implementation is [support.JacksonKnowledgeBundleImporter].
  */

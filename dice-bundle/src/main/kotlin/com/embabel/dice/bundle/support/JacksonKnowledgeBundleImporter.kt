@@ -167,11 +167,26 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
         }
 
         var imported = 0
+        var overwritten = 0
         var skipped = 0
         var rejected = 0
         val notes = mutableListOf<PropositionImportNote>()
+        // IDs already processed in THIS bundle. A bundle may legally carry the same ID twice
+        // (KnowledgeBundle.from leaves dedup to the caller). Without this guard the repeat would
+        // be written — and counted — a second time under OVERWRITE; instead we skip it with a note
+        // so the counts reflect distinct propositions, not raw entries.
+        val seenInBundle = mutableSetOf<String>()
 
         for (proposition in bundle.propositions) {
+            if (!seenInBundle.add(proposition.id)) {
+                skipped++
+                notes += PropositionImportNote(
+                    propositionId = proposition.id,
+                    reason = "duplicate ID within the same bundle; only the first occurrence is imported",
+                )
+                continue
+            }
+
             val existing = store.findById(proposition.id)
             if (existing != null && conflictPolicy == ImportConflictPolicy.SKIP_EXISTING) {
                 skipped++
@@ -183,7 +198,17 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
             }
             try {
                 store.save(proposition)
-                imported++
+                if (existing != null) {
+                    // Pre-existing copy replaced under OVERWRITE — a destructive write, so it leaves
+                    // its own note and count instead of hiding among the net-new imports.
+                    overwritten++
+                    notes += PropositionImportNote(
+                        propositionId = proposition.id,
+                        reason = "replaced existing proposition per $conflictPolicy policy",
+                    )
+                } else {
+                    imported++
+                }
             } catch (ex: Exception) {
                 logger.warn("Failed to save proposition {}: {}", proposition.id, ex.message)
                 rejected++
@@ -195,8 +220,9 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
         }
 
         logger.debug(
-            "Bundle import complete: {} imported, {} skipped, {} rejected, context={}",
+            "Bundle import complete: {} imported, {} overwritten, {} skipped, {} rejected, context={}",
             imported,
+            overwritten,
             skipped,
             rejected,
             bundle.contextId,
@@ -206,6 +232,7 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
             bundle = bundle,
             result = ImportResult(
                 imported = imported,
+                overwritten = overwritten,
                 skipped = skipped,
                 rejected = rejected,
                 notes = notes,
