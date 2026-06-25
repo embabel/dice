@@ -53,6 +53,23 @@ enum class ExtractionPerspective(val description: String) {
 
     /** Extract facts stated by or about the assistant — what it decided, expressed, or revealed about itself */
     AGENT("Extract facts about the assistant's own knowledge, decisions, and expressed opinions. Focus on what the assistant said, decided, or revealed about itself. Do NOT extract facts about the user unless the assistant is referencing them."),
+
+    /**
+     * Everything [ALL] extracts, PLUS relationships a non-user entity explicitly
+     * states about itself or another non-user entity (employment, affiliation, role).
+     * Opt-in; the default stays [ALL]. Lets a consumer mine e.g. a correspondent's
+     * own employer from their signature — facts the user-centric default guidance
+     * otherwise suppresses because the user is not a participant.
+     */
+    NON_USER_RELATIONSHIPS(
+        "Extract facts stated by any speaker in the text. ADDITIONALLY, when the text " +
+            "explicitly states a relationship between two non-user entities — employment, " +
+            "role, or affiliation (for example a correspondent's own employer drawn from " +
+            "their message body or email signature) — extract it as a proposition and emit " +
+            "BOTH the SUBJECT and OBJECT mentions, even when the workspace user is not a " +
+            "participant in that relationship. Key a person by their NAME, never by an " +
+            "email address.",
+    ),
 }
 
 interface ExtractionConfig {
@@ -251,7 +268,9 @@ data class LlmPropositionExtractor(
                         chunk = chunk,
                         schemaAdherence = schemaAdherence,
                         existingPropositions = existingPropositions,
-                        perspective = perspective,
+                        // A per-call perspective on the context overrides this
+                        // extractor's instance default; otherwise unchanged.
+                        perspective = context.perspective ?: perspective,
                     ),
                 ) + context.promptVariables,
             )

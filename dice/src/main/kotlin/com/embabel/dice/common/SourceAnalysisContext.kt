@@ -17,6 +17,7 @@ package com.embabel.dice.common
 
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
+import com.embabel.dice.proposition.extraction.ExtractionPerspective
 
 /**
  * Base context for analyzing sources.
@@ -27,6 +28,9 @@ import com.embabel.agent.core.DataDictionary
  * @param relations optional collection of additional relation types beyond those defined in the schema
  * @param promptVariables optional additional model data for analysis. Must be passed to any templated
  * LLM prompts used.
+ * @param perspective optional per-call extraction perspective. When set it overrides the
+ * extractor instance's default perspective for this analysis only (see [ExtractionPerspective]).
+ * `null` (the default) means "use the extractor's own perspective" — zero behaviour change.
  */
 data class SourceAnalysisContext @JvmOverloads constructor(
     val schema: DataDictionary,
@@ -35,6 +39,7 @@ data class SourceAnalysisContext @JvmOverloads constructor(
     val knownEntities: List<KnownEntity> = emptyList(),
     val relations: Relations = Relations.empty(),
     val promptVariables: Map<String, Any> = emptyMap(),
+    val perspective: ExtractionPerspective? = null,
 ) {
 
     companion object {
@@ -88,6 +93,13 @@ data class SourceAnalysisContext @JvmOverloads constructor(
      */
     fun withPromptVariables(promptVariables: Map<String, Any>): SourceAnalysisContext =
         copy(promptVariables = promptVariables)
+
+    /**
+     * Returns a copy carrying the given per-call extraction [perspective], which
+     * overrides the extractor instance's default for this analysis only.
+     */
+    fun withPerspective(perspective: ExtractionPerspective): SourceAnalysisContext =
+        copy(perspective = perspective)
 
     /**
      * Builder step: has context ID, needs entity resolver.
