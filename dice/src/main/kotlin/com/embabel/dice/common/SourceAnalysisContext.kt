@@ -18,6 +18,7 @@ package com.embabel.dice.common
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.proposition.extraction.ExtractionPerspective
 
 /**
  * Base context for analyzing sources.
@@ -28,6 +29,9 @@ import com.embabel.dice.provenance.SourceLocator
  * @param relations optional collection of additional relation types beyond those defined in the schema
  * @param promptVariables optional additional model data for analysis. Must be passed to any templated
  * LLM prompts used.
+ * @param perspective optional per-call extraction perspective. When set it overrides the
+ * extractor instance's default perspective for this analysis only (see [ExtractionPerspective]).
+ * `null` (the default) means "use the extractor's own perspective" — zero behaviour change.
  * @param sourceLocator optional pointer to where this run's material lives. When set, the pipeline
  * stamps it onto every extracted proposition's provenance, so a caller that knows the real source
  * (a file, a URI, a connector record) gets richer grounding than the content-hash fallback.
@@ -40,6 +44,7 @@ data class SourceAnalysisContext @JvmOverloads constructor(
     val relations: Relations = Relations.empty(),
     val promptVariables: Map<String, Any> = emptyMap(),
     val sourceLocator: SourceLocator? = null,
+    val perspective: ExtractionPerspective? = null,
 ) {
 
     companion object {
@@ -93,6 +98,13 @@ data class SourceAnalysisContext @JvmOverloads constructor(
      */
     fun withPromptVariables(promptVariables: Map<String, Any>): SourceAnalysisContext =
         copy(promptVariables = promptVariables)
+
+    /**
+     * Returns a copy carrying the given per-call extraction [perspective], which
+     * overrides the extractor instance's default for this analysis only.
+     */
+    fun withPerspective(perspective: ExtractionPerspective): SourceAnalysisContext =
+        copy(perspective = perspective)
 
     /**
      * Returns a copy that grounds this run's propositions in the given source.

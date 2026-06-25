@@ -162,6 +162,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      *   e.g. a chat-recovery answer synthesised from `email:<threadId>` and a
      *   connected-service record can attribute back to both. Empty (default)
      *   preserves prior behaviour.
+     * @param perspective optional per-call extraction perspective. `null` (default)
+     *   leaves the extractor's own perspective in force — zero behaviour change.
+     *   A caller can pass e.g. [ExtractionPerspective.NON_USER_RELATIONSHIPS] to
+     *   opt this one source into mining non-user relationships.
      */
     @JvmOverloads
     open fun rememberText(
@@ -169,8 +173,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         sourceId: String,
         user: NamedEntity,
         additionalGrounding: List<String> = emptyList(),
+        perspective: ExtractionPerspective? = null,
     ) {
-        val context = buildContext(user, sourceId)
+        val context = buildContext(user, sourceId, perspective)
         val result = propositionPipeline.processOnce(
             text, sourceId, context, additionalGrounding = additionalGrounding,
         )
@@ -243,7 +248,11 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         }
     }
 
-    private fun buildContext(user: NamedEntity, sourceId: String = ""): SourceAnalysisContext {
+    private fun buildContext(
+        user: NamedEntity,
+        sourceId: String = "",
+        perspective: ExtractionPerspective? = null,
+    ): SourceAnalysisContext {
         val currentUser = KnownEntity.asCurrentUser(user)
         val extras = try {
             extraKnownEntitiesProvider(user, sourceId)
@@ -267,6 +276,12 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         val extra = promptVariablesProvider.apply(user)
         if (extra.isNotEmpty()) {
             ctx = ctx.withPromptVariables(extra)
+        }
+        // Per-call perspective (e.g. NON_USER_RELATIONSHIPS) overrides the
+        // extractor instance default only when explicitly supplied. The event
+        // path never passes one, so its behaviour is unchanged.
+        if (perspective != null) {
+            ctx = ctx.withPerspective(perspective)
         }
         return ctx
     }

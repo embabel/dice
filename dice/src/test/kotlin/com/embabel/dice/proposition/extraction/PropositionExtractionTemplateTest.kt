@@ -486,5 +486,64 @@ class PropositionExtractionTemplateTest {
 
             assertTrue(result.contains("assistant's own knowledge"))
         }
+
+        @Test
+        fun `renders NON_USER_RELATIONSHIPS perspective when opted in`() {
+            val context = createTestContext()
+            val model = createTemplateModel(context).copy(
+                perspective = ExtractionPerspective.NON_USER_RELATIONSHIPS,
+            )
+
+            val result = renderer.renderLoadedTemplate(
+                "dice/extract_propositions",
+                mapOf("model" to model)
+            )
+
+            assertTrue(
+                result.contains("even when the workspace user is not a"),
+                "NON_USER_RELATIONSHIPS additive clause should reach the extraction prompt",
+            )
+        }
+
+        @Test
+        fun `default extraction prompt is inert — no non-user-relationship clause`() {
+            // Proves the new perspective is opt-in: the default (ALL) prompt must NOT
+            // carry the non-user-relationship directive, so existing consumers are unchanged.
+            val context = createTestContext()
+            val model = createTemplateModel(context)
+
+            val result = renderer.renderLoadedTemplate(
+                "dice/extract_propositions",
+                mapOf("model" to model)
+            )
+
+            assertFalse(
+                result.contains("even when the workspace user is not a"),
+                "Default prompt must not mine non-user relationships",
+            )
+        }
+    }
+
+    @Nested
+    inner class PerspectiveThreadingTests {
+
+        @Test
+        fun `context perspective defaults to null and overrides on demand`() {
+            val context = createTestContext()
+            // Default: no per-call perspective — the extractor's own perspective stays in force.
+            org.junit.jupiter.api.Assertions.assertNull(context.perspective)
+
+            val withPerspective = context.withPerspective(ExtractionPerspective.NON_USER_RELATIONSHIPS)
+            org.junit.jupiter.api.Assertions.assertEquals(
+                ExtractionPerspective.NON_USER_RELATIONSHIPS,
+                withPerspective.perspective,
+            )
+            // Original is untouched (immutability) and unrelated copies preserve the perspective.
+            org.junit.jupiter.api.Assertions.assertNull(context.perspective)
+            org.junit.jupiter.api.Assertions.assertEquals(
+                ExtractionPerspective.NON_USER_RELATIONSHIPS,
+                withPerspective.withPromptVariables(mapOf("k" to "v")).perspective,
+            )
+        }
     }
 }
