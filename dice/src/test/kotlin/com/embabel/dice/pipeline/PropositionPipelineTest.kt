@@ -35,6 +35,13 @@ import com.embabel.dice.common.validation.LengthConstraint
 import com.embabel.dice.incremental.BookmarkKey
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore
 import com.embabel.dice.proposition.*
+import com.embabel.dice.proposition.revision.LlmPropositionReviser
+import com.embabel.dice.proposition.revision.RevisionResult
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository
+import com.embabel.dice.provenance.ContentAddressedLocator
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.text2graph.builder.Animal
 import com.embabel.dice.text2graph.builder.Person
 import org.junit.jupiter.api.Assertions.*
@@ -197,6 +204,106 @@ class PropositionPipelineTest {
                     grounding = listOf(suggestedPropositions.chunkId),
                 )
             }
+        }
+    }
+
+    @Nested
+    inner class ProvenanceStampingTests {
+
+        private val pipeline = PropositionPipeline.withExtractor(MockPropositionExtractor())
+
+        private fun context(locator: SourceLocator? = null) = SourceAnalysisContext(
+            schema = schema,
+            entityResolver = AlwaysCreateEntityResolver,
+            contextId = testContextId,
+            sourceLocator = locator,
+        )
+
+        @Test
+        fun `processChunk stamps a content-addressed provenance entry carrying the chunk id`() {
+            val chunk = Chunk(id = "chunk-prov-1", text = "mentions:Alice,Bob", metadata = emptyMap(), parentId = "")
+
+            val result = pipeline.processChunk(chunk, context()) as ChunkPropositionResult.Success
+
+            val entry = result.propositions.single().provenanceEntries.single()
+            assertEquals("chunk-prov-1", entry.chunkId)
+            assertNotNull(entry.contentHash, "a content hash is recorded")
+            assertTrue(entry.locator is ContentAddressedLocator, "no source locator -> content-addressed fallback")
+            assertEquals((entry.locator as ContentAddressedLocator).contentHash, entry.contentHash)
+        }
+
+        @Test
+        fun `a context source locator grounds the proposition in that source`() {
+            val locator = UriLocator("https://example.com/doc-1")
+            val chunk = Chunk(id = "chunk-prov-2", text = "mentions:Alice,Bob", metadata = emptyMap(), parentId = "")
+
+            val result = pipeline.processChunk(chunk, context(locator)) as ChunkPropositionResult.Success
+
+            val entry = result.propositions.single().provenanceEntries.single()
+            assertEquals(locator, entry.locator, "the supplied locator wins over the content-hash fallback")
+            assertEquals("chunk-prov-2", entry.chunkId)
+            assertNotNull(entry.contentHash)
+        }
+
+        @Test
+        fun `processOnce records a content hash in provenance`() {
+            val result = pipeline.processOnce(
+                text = "mentions:Alice,Bob",
+                sourceId = "doc-42",
+                context = context(),
+            )!! as ChunkPropositionResult.Success
+
+            val entry = result.propositions.single().provenanceEntries.single()
+            // processOnce uses the sourceId as the chunk id, so provenance traces straight to it.
+            assertEquals("doc-42", entry.chunkId)
+            assertNotNull(entry.contentHash)
+        }
+    }
+
+    @Nested
+    inner class ProvenanceRevisionIntegrationTests {
+
+        /**
+         * The whole chain together: the pipeline stamps the new proposition's provenance, then its
+         * revision step folds it into an existing proposition in the store — and the merged result
+         * carries provenance from BOTH. The real [LlmPropositionReviser] merges via its canonical
+         * text-match fast path (identical text), so no LLM call is needed; the store is the
+         * production in-memory repository.
+         */
+        @Test
+        fun `revision unions the stamped provenance with an existing proposition's provenance`() {
+            val repository = InMemoryPropositionRepository()
+            val reviser = LlmPropositionReviser(llmOptions = io.mockk.mockk(), ai = io.mockk.mockk())
+            val pipeline = PropositionPipeline
+                .withExtractor(MockPropositionExtractor())
+                .withRevision(reviser, repository)
+
+            // Seed an existing proposition with the SAME text the extractor produces (so the
+            // canonical match fires) and a prior source.
+            val priorLocator = UriLocator("https://example.com/prior")
+            val existing = Proposition(
+                contextId = testContextId,
+                text = "Proposition about Alice and Bob",
+                mentions = emptyList(),
+                confidence = 0.8,
+            ).withProvenanceEntries(listOf(ProvenanceEntry(priorLocator, chunkId = "prior-chunk")))
+            repository.save(existing)
+
+            val newLocator = UriLocator("https://example.com/new")
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+                sourceLocator = newLocator,
+            )
+            val chunk = Chunk(id = "chunk-merge", text = "mentions:Alice,Bob", metadata = emptyMap(), parentId = "")
+
+            val result = pipeline.processChunk(chunk, context) as ChunkPropositionResult.Success
+
+            val merged = result.revisionResults.filterIsInstance<RevisionResult.Merged>().single()
+            val locators = merged.revised.provenanceEntries.map { it.locator }
+            assertTrue(priorLocator in locators, "keeps the existing source")
+            assertTrue(newLocator in locators, "adds the newly stamped source")
         }
     }
 

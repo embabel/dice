@@ -21,6 +21,7 @@ import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.revision.RevisionResult
+import com.embabel.dice.provenance.ProvenanceEntry
 import com.fasterxml.jackson.annotation.JsonInclude
 import java.time.Instant
 
@@ -174,6 +175,7 @@ data class PropositionDto(
     val decay: Double,
     val reasoning: String?,
     val grounding: List<String>,
+    val provenance: List<ProvenanceEntryDto>,
     val created: Instant,
     val revised: Instant,
     val lastAccessed: Instant,
@@ -190,6 +192,7 @@ data class PropositionDto(
             decay = proposition.decay,
             reasoning = proposition.reasoning,
             grounding = proposition.grounding,
+            provenance = proposition.provenanceEntries.map { ProvenanceEntryDto.from(it) },
             created = proposition.created,
             revised = proposition.revised,
             lastAccessed = proposition.lastAccessed,
@@ -215,6 +218,38 @@ data class EntityMentionDto(
             type = mention.type,
             resolvedId = mention.resolvedId,
             role = mention.role.name,
+        )
+    }
+}
+
+/**
+ * Slim view of where a proposition came from — one source reference per entry.
+ *
+ * @property locator stable key of the source reference (e.g. `content:<hash>`, `uri:...`,
+ *   `connector:gmail:<id>`); see [com.embabel.dice.provenance.SourceLocator.key]
+ * @property display optional human-readable label for the source
+ * @property chunkId the chunk this proposition was extracted from, when known
+ * @property startOffset character offset where the supporting span begins, when known
+ * @property endOffset character offset where the supporting span ends, when known
+ * @property contentHash hash of the source content, when known
+ */
+@JsonInclude(JsonInclude.Include.NON_NULL)
+data class ProvenanceEntryDto(
+    val locator: String,
+    val display: String?,
+    val chunkId: String?,
+    val startOffset: Int?,
+    val endOffset: Int?,
+    val contentHash: String?,
+) {
+    companion object {
+        fun from(entry: ProvenanceEntry): ProvenanceEntryDto = ProvenanceEntryDto(
+            locator = entry.locator.key(),
+            display = entry.locator.display,
+            chunkId = entry.chunkId,
+            startOffset = entry.startOffset,
+            endOffset = entry.endOffset,
+            contentHash = entry.contentHash,
         )
     }
 }

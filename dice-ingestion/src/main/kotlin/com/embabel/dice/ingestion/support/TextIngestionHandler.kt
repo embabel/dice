@@ -27,7 +27,6 @@ import com.embabel.dice.ingestion.IngestionLedger
 import com.embabel.dice.ingestion.IngestionResult
 import com.embabel.dice.ingestion.InMemoryIngestionLedger
 import com.embabel.dice.pipeline.PropositionPipeline
-import com.embabel.dice.provenance.ProvenanceEntry
 import org.slf4j.LoggerFactory
 
 /**
@@ -40,10 +39,10 @@ import org.slf4j.LoggerFactory
  * 2. atomically claims that key via [IngestionLedger.recordIfAbsent]; when the
  *    key was already present it short-circuits before any extraction, returning
  *    a [ArtifactOutcome.Deduplicated] marker (no extraction call),
- * 3. bridges the artifact text into a [Chunk] and runs the unchanged pipeline,
- * 4. stamps each returned proposition with a [ProvenanceEntry] carrying the
- *    artifact's source locator, and
- * 5. leaves the claimed key recorded so identical content is deduplicated next
+ * 3. bridges the artifact text into a [Chunk] and runs the pipeline with the
+ *    artifact's source locator on the context, so the pipeline grounds each
+ *    returned proposition's provenance in that locator, and
+ * 4. leaves the claimed key recorded so identical content is deduplicated next
  *    time; if extraction fails the claim is released so retries are not poisoned.
  *
  * The handler runs extraction only — no revision. Revision and persistence stay
@@ -96,13 +95,10 @@ class TextIngestionHandler @JvmOverloads constructor(
         // the same content is not wrongly deduplicated.
         return try {
             val chunk = Chunk.create(text = artifact.text, parentId = artifact.sourceId)
-            val result = pipeline.processChunk(chunk, context)
-            val entry = ProvenanceEntry(
-                locator = artifact.locator,
-                chunkId = chunk.id,
-                contentHash = hash,
-            )
-            val grounded = result.propositions.map { it.withProvenanceEntries(listOf(entry)) }
+            // Hand the pipeline the artifact's locator so it grounds each proposition in that
+            // source; the pipeline owns provenance stamping for every ingestion path.
+            val result = pipeline.processChunk(chunk, context.withSourceLocator(artifact.locator))
+            val grounded = result.propositions
             logger.debug("Extracted {} proposition(s) from artifact {}", grounded.size, artifact.sourceId)
             ArtifactOutcome.Ingested(artifact.sourceId, grounded)
         } catch (e: Throwable) {

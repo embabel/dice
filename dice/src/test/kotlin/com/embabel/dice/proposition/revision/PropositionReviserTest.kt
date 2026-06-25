@@ -24,6 +24,8 @@ import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.spi.ConflictType
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -1037,6 +1039,54 @@ class PropositionReviserTest {
         }
     }
 
+    /**
+     * The real reviser unions provenance when it folds a new proposition into an existing one.
+     * Driven through the canonical-text-match fast path (identical text), so no LLM or embedding
+     * call is needed — the merge runs exactly as it does in production.
+     */
+    @Nested
+    inner class ProvenanceUnionTests {
+
+        private fun realReviser() = LlmPropositionReviser(
+            llmOptions = io.mockk.mockk(),
+            ai = io.mockk.mockk(),
+        )
+
+        @Test
+        fun `merging unions the provenance entries from both propositions`() {
+            val repository = TestPropositionRepository()
+            val locA = UriLocator("https://example.com/a")
+            val existing = createProposition("Alice is a software engineer")
+                .withProvenanceEntries(listOf(ProvenanceEntry(locA, chunkId = "chunk-a")))
+            repository.save(existing)
+
+            val locB = UriLocator("https://example.com/b")
+            val incoming = createProposition("Alice is a software engineer") // identical text -> canonical match
+                .withProvenanceEntries(listOf(ProvenanceEntry(locB, chunkId = "chunk-b")))
+
+            val result = realReviser().revise(incoming, repository)
+
+            assertTrue(result is RevisionResult.Merged, "identical text merges")
+            val merged = (result as RevisionResult.Merged).revised
+            val locators = merged.provenanceEntries.map { it.locator }
+            assertTrue(locA in locators, "keeps the existing source")
+            assertTrue(locB in locators, "adds the new source")
+            assertEquals(2, merged.provenanceEntries.size)
+        }
+
+        @Test
+        fun `merging deduplicates identical provenance entries`() {
+            val repository = TestPropositionRepository()
+            val entry = ProvenanceEntry(UriLocator("https://example.com/same"), chunkId = "chunk-same")
+            repository.save(createProposition("Bob likes hiking").withProvenanceEntries(listOf(entry)))
+
+            val incoming = createProposition("Bob likes hiking").withProvenanceEntries(listOf(entry))
+            val result = realReviser().revise(incoming, repository) as RevisionResult.Merged
+
+            assertEquals(1, result.revised.provenanceEntries.size, "the same entry is not duplicated")
+        }
+    }
+
     private fun createProposition(
         text: String,
         confidence: Double = 0.8,
@@ -1305,11 +1355,13 @@ class TestPropositionReviser(
         val boostedConfidence = (existing.confidence + new.confidence * 0.3).coerceAtMost(0.99)
         val slowedDecay = (existing.decay * 0.7).coerceAtLeast(0.0)
         val combinedGrounding = (existing.grounding + new.grounding).distinct()
+        val combinedProvenance = (existing.provenanceEntries + new.provenanceEntries).distinct()
 
         return existing.copy(
             confidence = boostedConfidence,
             decay = slowedDecay,
             grounding = combinedGrounding,
+            provenanceEntries = combinedProvenance,
             reinforceCount = existing.reinforceCount + 1,
         )
     }
@@ -1318,11 +1370,13 @@ class TestPropositionReviser(
         val boostedConfidence = (existing.confidence + new.confidence * 0.1).coerceAtMost(0.95)
         val slowedDecay = (existing.decay * 0.85).coerceAtLeast(0.0)
         val combinedGrounding = (existing.grounding + new.grounding).distinct()
+        val combinedProvenance = (existing.provenanceEntries + new.provenanceEntries).distinct()
 
         return existing.copy(
             confidence = boostedConfidence,
             decay = slowedDecay,
             grounding = combinedGrounding,
+            provenanceEntries = combinedProvenance,
             reinforceCount = existing.reinforceCount + 1,
         )
     }

@@ -668,13 +668,15 @@ data class LlmPropositionReviser(
         val boostedConfidence = (existing.confidence + new.confidence * 0.3).coerceAtMost(0.99)
         // Slow decay — repeated confirmation means the fact is durable
         val slowedDecay = (existing.decay * 0.7).coerceAtLeast(0.0)
-        // Combine grounding
+        // Combine grounding and the richer provenance entries (both deduplicated)
         val combinedGrounding = (existing.grounding + new.grounding).distinct()
+        val combinedProvenance = (existing.provenanceEntries + new.provenanceEntries).distinct()
 
         return existing.copy(
             confidence = boostedConfidence,
             decay = slowedDecay,
             grounding = combinedGrounding,
+            provenanceEntries = combinedProvenance,
             reinforceCount = existing.reinforceCount + 1,
             contentRevised = Instant.now(),
             lastAccessed = Instant.now(),
@@ -690,13 +692,15 @@ data class LlmPropositionReviser(
         val boostedConfidence = (existing.confidence + new.confidence * 0.1).coerceAtMost(0.95)
         // Slow decay slightly — corroborating evidence extends shelf life
         val slowedDecay = (existing.decay * 0.85).coerceAtLeast(0.0)
-        // Combine grounding
+        // Combine grounding and the richer provenance entries (both deduplicated)
         val combinedGrounding = (existing.grounding + new.grounding).distinct()
+        val combinedProvenance = (existing.provenanceEntries + new.provenanceEntries).distinct()
 
         return existing.copy(
             confidence = boostedConfidence,
             decay = slowedDecay,
             grounding = combinedGrounding,
+            provenanceEntries = combinedProvenance,
             reinforceCount = existing.reinforceCount + 1,
             contentRevised = Instant.now(),
             lastAccessed = Instant.now(),

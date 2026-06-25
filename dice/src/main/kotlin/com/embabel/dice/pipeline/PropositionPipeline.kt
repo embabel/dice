@@ -37,9 +37,12 @@ import com.embabel.dice.incremental.BookmarkKey
 import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.HashKey
 import com.embabel.dice.incremental.ProcessedChunkRecord
+import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionExtractor
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.SuggestedPropositions
+import com.embabel.dice.provenance.ContentAddressedLocator
+import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.proposition.revision.PropositionReviser
 import com.embabel.dice.proposition.revision.RevisionResult
 import org.slf4j.LoggerFactory
@@ -224,8 +227,14 @@ class PropositionPipeline private constructor(
         val resolutions = resolver.resolve(suggestedEntities, context.schema)
         logger.debug("Resolved {} entities", resolutions.resolutions.size)
 
-        // Step 4: Apply resolutions to create final propositions
-        val propositions = extractor.resolvePropositions(suggestedPropositions, resolutions, context)
+        // Step 4: Apply resolutions to create final propositions, each stamped with provenance
+        // back to its source chunk. Done before revision so merges union the entries and a brand
+        // new proposition keeps its grounding.
+        val propositions = stampProvenance(
+            extractor.resolvePropositions(suggestedPropositions, resolutions, context),
+            chunk,
+            context,
+        )
         logger.debug("Created {} propositions", propositions.size)
 
         // Step 5: Optionally revise propositions against existing ones
@@ -283,6 +292,30 @@ class PropositionPipeline private constructor(
             propositions = propositions,
             revisionResults = revisionResults,
         )
+    }
+
+    /**
+     * Stamp each proposition with a [ProvenanceEntry] linking it back to the chunk it came from.
+     *
+     * The locator is the caller's [SourceAnalysisContext.sourceLocator] when known (a file, a URI,
+     * a connector record); otherwise it falls back to a [ContentAddressedLocator] over the chunk
+     * text, which is always available and grounds the fact in the exact content it was read from.
+     * Either way the entry also carries the chunk id and a content hash, so a consumer can trace a
+     * proposition to its source without the source needing to be a stored entity first.
+     */
+    private fun stampProvenance(
+        propositions: List<Proposition>,
+        chunk: Chunk,
+        context: SourceAnalysisContext,
+    ): List<Proposition> {
+        if (propositions.isEmpty()) return propositions
+        val contentHash = Sha256ContentHasher.hash(chunk.text)
+        val entry = ProvenanceEntry(
+            locator = context.sourceLocator ?: ContentAddressedLocator(contentHash),
+            chunkId = chunk.id,
+            contentHash = contentHash,
+        )
+        return propositions.map { it.withProvenanceEntries(listOf(entry)) }
     }
 
     /**
