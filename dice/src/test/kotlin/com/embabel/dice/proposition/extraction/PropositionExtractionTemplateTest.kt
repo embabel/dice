@@ -503,6 +503,17 @@ class PropositionExtractionTemplateTest {
                 result.contains("even when the workspace user is not a"),
                 "NON_USER_RELATIONSHIPS additive clause should reach the extraction prompt",
             )
+            // The clause must defer to the schema's relationship types, not hardcode a
+            // fixed list (employment/role/affiliation). This is what lets a new case like
+            // "X is Y's dentist" work by adding a schema relation, with no enum edit.
+            assertTrue(
+                result.contains("relationship types defined in the schema"),
+                "NON_USER_RELATIONSHIPS should point at the schema's relations, not a hardcoded list",
+            )
+            assertFalse(
+                result.contains("employment, role, or affiliation"),
+                "NON_USER_RELATIONSHIPS must not hardcode the old fixed relationship list",
+            )
         }
 
         @Test

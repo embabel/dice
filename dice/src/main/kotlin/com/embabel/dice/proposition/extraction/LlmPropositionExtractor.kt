@@ -56,19 +56,26 @@ enum class ExtractionPerspective(val description: String) {
 
     /**
      * Everything [ALL] extracts, PLUS relationships a non-user entity explicitly
-     * states about itself or another non-user entity (employment, affiliation, role).
-     * Opt-in; the default stays [ALL]. Lets a consumer mine e.g. a correspondent's
-     * own employer from their signature — facts the user-centric default guidance
-     * otherwise suppresses because the user is not a participant.
+     * states about itself or another non-user entity, using whatever relationship
+     * types the extraction schema already declares. Opt-in; the default stays [ALL].
+     * Lets a consumer mine e.g. a correspondent's own employer from their signature —
+     * facts the user-centric default guidance otherwise suppresses because the user is
+     * not a participant.
+     *
+     * This stays a *value of the existing perspective enum* deliberately: it composes
+     * with neither [USER] nor [AGENT] (a single call has one perspective). The day a
+     * consumer needs "non-user relationships" AND a user/agent lens at the same time,
+     * that is the signal to promote it to its own orthogonal setting rather than adding
+     * more enum values here.
      */
     NON_USER_RELATIONSHIPS(
         "Extract facts stated by any speaker in the text. ADDITIONALLY, when the text " +
-            "explicitly states a relationship between two non-user entities — employment, " +
-            "role, or affiliation (for example a correspondent's own employer drawn from " +
-            "their message body or email signature) — extract it as a proposition and emit " +
-            "BOTH the SUBJECT and OBJECT mentions, even when the workspace user is not a " +
-            "participant in that relationship. Key a person by their NAME, never by an " +
-            "email address.",
+            "explicitly states a relationship between two non-user entities that matches " +
+            "one of the relationship types defined in the schema (for example a " +
+            "correspondent's own employer drawn from their message body or email " +
+            "signature) — extract it as a proposition and emit BOTH the SUBJECT and " +
+            "OBJECT mentions, even when the workspace user is not a participant in that " +
+            "relationship. Key a person by their NAME, never by an email address.",
     ),
 }
 
