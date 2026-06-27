@@ -6,12 +6,13 @@ DICE (Domain-Integrated Context Engineering) is a proposition-first knowledge su
 
 | Module | What it owns |
 |---|---|
-| `dice` | The entire domain: `Proposition` model, `PropositionStore`/`PropositionRepository` SPIs, extraction pipeline, revision/conflict detection, entity resolution, projectors (graph, Prolog, memory), graph and discovery query/retrieval, incremental analysis, in-memory and file-backed stores, tuProlog integration, REST endpoints |
+| `dice` | The entire domain: `Proposition` model, `PropositionStore`/`PropositionRepository` SPIs, extraction pipeline, revision/conflict detection, entity resolution, projectors (graph, Prolog, memory), graph and discovery query/retrieval, incremental analysis, in-memory and file-backed stores, tuProlog integration, REST endpoints, MCP tool surface (`DiceMcpTools`) |
 | `dice-storage` | Drivine/Neo4j implementation of `PropositionRepository`, `ChunkHistoryStore`, and `DecayManager`; uses Kotlin 2.2 for the Drivine KSP-generated query DSL |
 | `dice-storage-autoconfigure` | Spring Boot auto-configuration that wires the right backend based on `embabel.dice.store.type` and schedules the decay tick |
 | `dice-report` | Output projectors over propositions: rationale (why a fact is believed, with evidence), structured report, and surprising-link discovery |
 | `dice-ingestion` | Ingestion SPI (artifacts → chunks) with a content-hash dedup ledger so the same source isn't extracted twice |
 | `dice-integration-tests` | Test-only: the cross-feature end-to-end canonical-flow harness |
+| `dice-mcp-autoconfigure` | Spring Boot auto-configuration that exports `DiceMcpTools` over MCP via embabel-agent when `embabel.dice.mcp.enabled=true` |
 
 ## Build & test
 
@@ -63,6 +64,7 @@ The `dice` module is organized by responsibility:
 | `com.embabel.dice.provenance` | `ProvenanceEntry`, `SourceLocator` — rich evidence links from propositions back to source material |
 | `com.embabel.dice.query.oracle` | `Oracle`, `LlmOracle`, `PrologTools` — natural language question answering over propositions |
 | `com.embabel.dice.web.rest` | Optional REST endpoints for the pipeline and memory; activated by `spring-webmvc` on the classpath |
+| `com.embabel.dice.mcp` | `DiceMcpTools`, `DiceMcpProfile` — simplified MCP/agent tool surface over propositions |
 
 ## Conventions
 
@@ -82,6 +84,7 @@ The `dice` module is organized by responsibility:
 
 - **Adding or changing extraction logic** → `com.embabel.dice.proposition.extraction.LlmPropositionExtractor` and the Mustache prompt templates in `dice/src/main/resources/dice/`.
 - **Wiring a new Spring Boot app** → `dice-storage-autoconfigure`, specifically `DiceStorageAutoConfiguration` (backend selection) and `DiceStoreProperties` (property keys). Set `embabel.dice.store.type=graph` for Neo4j.
+- **Exposing DICE over MCP** → `DiceMcpTools` in `com.embabel.dice.mcp` for the tool surface; `dice-mcp-autoconfigure` + `embabel-agent-starter-mcpserver` for zero-code export (`embabel.dice.mcp.enabled=true`).
 - **Understanding the proposition data model** → `Proposition.kt` in `com.embabel.dice.proposition`. Every field is documented inline.
 - **Adding a new entity resolver strategy** → implement `CandidateSearcher` in `com.embabel.dice.common.resolver.searcher`, then compose it into an `EscalatingEntityResolver`.
 - **Writing integration tests against Neo4j** → look at `DrivinePropositionStoreIntegrationTest` in `dice-storage/src/test`; it shows the `@SpringBootTest` + Testcontainers pattern in use.
