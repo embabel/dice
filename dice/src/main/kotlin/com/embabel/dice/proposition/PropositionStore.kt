@@ -100,6 +100,22 @@ interface PropositionStore {
     fun save(proposition: Proposition): Proposition
 
     /**
+     * Save [proposition] only if no proposition with the same ID already exists.
+     *
+     * @return the saved proposition if it was absent and is now stored, or `null` if an entry with
+     *   the same ID already existed — in which case nothing is written and the stored copy is left
+     *   untouched.
+     *
+     * The default is NOT atomic: it reads then writes, so two concurrent callers can both observe
+     * "absent" and both write. A store that can do better — a concurrent map, a database MERGE or a
+     * unique constraint — MUST override this with a genuinely atomic implementation. The in-memory
+     * and Neo4j-backed stores in this library do, so callers that need an exact insert-once guarantee
+     * (e.g. bundle import under SKIP_EXISTING) get it there.
+     */
+    fun saveIfAbsent(proposition: Proposition): Proposition? =
+        if (findById(proposition.id) != null) null else save(proposition)
+
+    /**
      * Save multiple propositions.
      */
     fun saveAll(propositions: Collection<Proposition>) {

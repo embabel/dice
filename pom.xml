@@ -26,9 +26,11 @@
         <module>dice</module>
         <module>dice-storage</module>
         <module>dice-storage-autoconfigure</module>
-        <module>dice-report</module>
-        <module>dice-ingestion</module>
+        <module>dice-bundle</module>
+        <module>dice-metamodel</module>
         <module>dice-integration-tests</module>
+        <module>dice-ingestion</module>
+        <module>dice-report</module>
     </modules>
 
     <properties>

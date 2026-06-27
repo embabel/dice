@@ -12,6 +12,8 @@ DICE (Domain-Integrated Context Engineering) is a proposition-first knowledge su
 | `dice-report` | Output projectors over propositions: rationale (why a fact is believed, with evidence), structured report, and surprising-link discovery |
 | `dice-ingestion` | Ingestion SPI (artifacts → chunks) with a content-hash dedup ledger so the same source isn't extracted twice |
 | `dice-integration-tests` | Test-only: the cross-feature end-to-end canonical-flow harness |
+| `dice-metamodel` | Metamodel versioning, diffing between versions, and quarantining propositions whose types drift from the schema |
+| `dice-bundle` | Self-contained export/import of knowledge bundles (propositions, provenance, decay status) for snapshot and transfer |
 
 ## Build & test
 
@@ -88,4 +90,4 @@ The `dice` module is organized by responsibility:
 - **Tuning what gets into the store** → admission gates in `com.embabel.dice.proposition.gate` (`ExtractionGatePipeline`, `StandardGates`); they run on pipeline output before the caller persists.
 - **Running maintenance / consolidation** → `DefaultDreamLoopOrchestrator` (threshold-gated consolidation passes) or `DefaultMemoryMaintenanceOrchestrator` (the legacy four-step pipeline), both in `com.embabel.dice.projection.memory`.
 - **Reclaiming stale or duplicate propositions** → `DefaultCollectorRunner` and its `CollectorStrategy` in `com.embabel.dice.projection.memory` (the `SweepPolicy` that decides each fate lives in `com.embabel.dice.spi`); runs are auditable via `CollectorRecordStore`.
-- **Understanding *why* the system behaves as it does** → [`docs/design/`](docs/design/) holds the design-decision notes — start with [`docs/design/architecture.md`](docs/design/architecture.md) for a system-level map and then follow to: the extraction pipeline, the proposition lifecycle (trust, authority, supersession, decay, pinning), knowledge hygiene (gates, reclamation, consolidation), graph projection, retrieval and discovery, durable storage (backends, dedup, the decay tick), and the event model.
+- **Understanding *why* the system behaves as it does** → [`docs/design/`](docs/design/) holds the design-decision notes — start with [`docs/design/architecture.md`](docs/design/architecture.md) for a system-level map and then follow to: the extraction pipeline, the proposition lifecycle (trust, authority, supersession, decay, pinning), knowledge hygiene (gates, reclamation, consolidation), graph projection, retrieval and discovery, durable storage (backends, dedup, the decay tick), metamodel governance (schema versioning, drift quarantine), knowledge bundles (export/import fidelity), and the event model.

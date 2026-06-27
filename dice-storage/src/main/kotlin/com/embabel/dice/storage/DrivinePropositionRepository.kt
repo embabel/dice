@@ -114,6 +114,31 @@ open class DrivinePropositionRepository(
         }
     }
 
+    /**
+     * Atomic save-if-absent by id. Runs the existence check and the insert inside the same
+     * stripe-locked transaction as [save], so a concurrent sibling can't read pre-commit and slip a
+     * second copy past the check. If a proposition with this id already exists the store is left
+     * untouched and null is returned.
+     */
+    override fun saveIfAbsent(proposition: Proposition): Proposition? {
+        val text = proposition.text
+        if (text.isBlank()) {
+            return txTemplate.execute { if (findById(proposition.id) != null) null else doPersist(proposition) }
+        }
+        val contextId = proposition.contextId.value
+        return synchronized(lockFor(contextId, text)) {
+            try {
+                txTemplate.execute { if (findById(proposition.id) != null) null else doPersist(proposition) }
+            } catch (e: RuntimeException) {
+                if (!isUniquenessViolation(e)) throw e
+                // Cross-instance race: another writer inserted the same (contextId, text). It now
+                // exists, so this save-if-absent is correctly a no-op.
+                logger.debug("saveIfAbsent dedup constraint hit for context {} — already present: '{}'", contextId, text)
+                null
+            }
+        }
+    }
+
     private fun findOrPersist(proposition: Proposition, contextId: String, text: String): Proposition {
         val existingId = findDuplicateId(contextId, text, proposition.id)
         val existing = existingId?.let(::findById)

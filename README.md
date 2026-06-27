@@ -112,6 +112,10 @@ recover by reading a single class — see the design notes in [`docs/design/`](d
   query-time authority filtering, the single retrieval router, and serendipitous link discovery.
 - [Durable storage](docs/design/durable-storage.md) — backend selection, defense-in-depth dedup,
   two-phase save, materialised effective confidence, schema-as-beans, and the decay tick.
+- [Metamodel governance](docs/design/metamodel-governance.md) — versioned schema stamps, diffing
+  additive vs. lossy changes, and quarantining propositions whose types drift from the schema.
+- [Knowledge bundles](docs/design/knowledge-bundles.md) — full-proposition fidelity on export and
+  defensive, forward-compatible import for snapshotting and transferring knowledge.
 - [Events](docs/design/events.md) — the domain-event model the store and pipeline emit.
 
 ## Real-World Example: Impromptu
