@@ -88,8 +88,7 @@ class ApiKeySecurityAutoConfiguration {
             pathPatterns = properties.pathPatterns,
         )
 
-        return FilterRegistrationBean<ApiKeyAuthenticationFilter>().apply {
-            this.filter = filter
+        return FilterRegistrationBean(filter).apply {
             this.order = Ordered.HIGHEST_PRECEDENCE + 100
             this.urlPatterns = listOf("/*")
             log.info(

@@ -5,7 +5,7 @@
     <parent>
         <groupId>com.embabel.dice</groupId>
         <artifactId>dice-parent</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>2.0.0-SNAPSHOT</version>
     </parent>
     <artifactId>dice</artifactId>
     <packaging>jar</packaging>
@@ -50,6 +50,12 @@
             <groupId>jakarta.servlet</groupId>
             <artifactId>jakarta.servlet-api</artifactId>
             <optional>true</optional>
+        </dependency>
+
+        <!-- Jackson 2 Kotlin module: no longer provided transitively under Spring Boot 4.1 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.module</groupId>
+            <artifactId>jackson-module-kotlin</artifactId>
         </dependency>
 
         <!-- JetBrains annotations for @ApiStatus -->
