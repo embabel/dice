@@ -2412,6 +2412,42 @@ Everything is pushed into the database rather than scanned in memory:
 > `dice-storage/HANDOFF.md` for architecture and `dice-storage/INTEGRATE-INTO-ASSISTANT.md` for a
 > migration walkthrough.
 
+### MCP Server
+
+Expose DICE recall/list/store/get to an MCP client (Claude Desktop, Cursor, etc.) with
+`dice-mcp-autoconfigure` and embabel-agent's MCP server starter. Off until you set
+`embabel.dice.mcp.enabled=true`. Every tool takes a `context_id` — MCP clients are stateless,
+unlike in-process `Memory` / `DiscoveryTools` which bake context in at construction.
+
+```xml
+<dependency>
+    <groupId>com.embabel.dice</groupId>
+    <artifactId>dice-mcp-autoconfigure</artifactId>
+    <version>${dice.version}</version>
+</dependency>
+<dependency>
+    <groupId>com.embabel.agent</groupId>
+    <artifactId>embabel-agent-starter-mcpserver</artifactId>
+    <version>${embabel-agent.version}</version>
+</dependency>
+```
+
+```yaml
+embabel:
+  dice:
+    mcp:
+      enabled: true
+```
+
+| Tool | Description |
+|------|-------------|
+| `dice_recall` | Hybrid semantic + keyword search in a `context_id` |
+| `dice_list` | List active propositions for a context |
+| `dice_store` | Store a proposition directly |
+| `dice_get` | Fetch one proposition by id, refused if it belongs to another context |
+
+Discovery and graph tools stay on `DiscoveryTools.asTools(...)` / `GraphQueryTools.asTools(...)`.
+
 ### API Key Security
 
 DICE provides API key authentication for the REST endpoints. Enable it via configuration:
