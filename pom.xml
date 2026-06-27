@@ -29,6 +29,7 @@
         <module>dice-report</module>
         <module>dice-ingestion</module>
         <module>dice-integration-tests</module>
+        <module>dice-mcp-autoconfigure</module>
     </modules>
 
     <properties>
@@ -78,6 +79,11 @@
             <dependency>
                 <groupId>com.embabel.dice</groupId>
                 <artifactId>dice-report</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.embabel.dice</groupId>
+                <artifactId>dice-mcp-autoconfigure</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

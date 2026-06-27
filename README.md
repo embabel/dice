@@ -2412,6 +2412,56 @@ Everything is pushed into the database rather than scanned in memory:
 > `dice-storage/HANDOFF.md` for architecture and `dice-storage/INTEGRATE-INTO-ASSISTANT.md` for a
 > migration walkthrough.
 
+### MCP Server
+
+Expose DICE knowledge tools to any MCP-compatible client (Claude Desktop, Cursor, etc.)
+using embabel-agent's MCP server starter and the `dice-mcp-autoconfigure` module.
+
+```xml
+<dependency>
+    <groupId>com.embabel.dice</groupId>
+    <artifactId>dice-mcp-autoconfigure</artifactId>
+    <version>${dice.version}</version>
+</dependency>
+<dependency>
+    <groupId>com.embabel.agent</groupId>
+    <artifactId>embabel-agent-starter-mcpserver</artifactId>
+    <version>${embabel-agent.version}</version>
+</dependency>
+```
+
+```yaml
+embabel:
+  dice:
+    mcp:
+      enabled: true
+      profile: core      # dice_recall, dice_list, dice_store, dice_get
+      # profile: extended  # + dice_extract, dice_assert_entities when wired
+```
+
+**Core tools** (always available when a `PropositionRepository` is configured):
+
+| Tool | Description |
+|------|-------------|
+| `dice_recall` | Hybrid semantic + keyword search over propositions in a `context_id` |
+| `dice_list` | List active propositions for a context |
+| `dice_store` | Store a proposition directly |
+| `dice_get` | Fetch one proposition by id |
+
+**Extended tools** (exported when the host app wires the corresponding beans):
+
+| Tool | Requires |
+|------|----------|
+| `dice_extract` | `PropositionPipeline`, `EntityResolver`, `SchemaRegistry` |
+| `dice_assert_entities` | `EntityResolutionService` |
+
+Programmatic export without Spring Boot:
+
+```kotlin
+val tools = DiceMcpTools(propositionRepository)
+val export = McpToolExport.fromToolObject(ToolObject(objects = listOf(tools)))
+```
+
 ### API Key Security
 
 DICE provides API key authentication for the REST endpoints. Enable it via configuration:
