@@ -490,4 +490,48 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals(listOf(grounded.id), repository.findByGrounding("chunk-1").map { it.id })
         assertTrue(repository.findByGrounding("chunk-x").isEmpty(), "no proposition is grounded in an unknown chunk")
     }
+
+    /**
+     * A node written before a field existed comes back with that property present-null, which used to
+     * fail the load (`MissingKotlinParameterException`). The `@Default` annotations must let such a node
+     * load, falling back to the declared defaults. Here we strip the PR#47 revision columns to mimic a
+     * pre-#47 node.
+     */
+    @Test
+    fun `loads a legacy node missing the PR#47 revision columns, defaulting them to created`() {
+        val saved = repository.save(prop(text = "legacy fact", contentRevised = Instant.parse("2021-06-01T00:00:00Z")))
+        persistenceManager.execute(
+            QuerySpecification
+                .withStatement("MATCH (p:Proposition {id: \$id}) REMOVE p.contentRevised, p.metadataRevised, p.lastTouched")
+                .bind(mapOf("id" to saved.id)),
+        )
+
+        val found = repository.findById(saved.id)
+
+        assertNotNull(found, "a node missing the revision columns must still load")
+        found!!
+        assertEquals(found.created, found.contentRevised, "missing contentRevised falls back to created")
+        assertEquals(found.created, found.metadataRevised, "missing metadataRevised falls back to created")
+    }
+
+    /**
+     * The same load-resilience for a stripped scalar and collection: a node missing `status` and
+     * `grounding` must default to `"ACTIVE"` and an empty list rather than failing to load.
+     */
+    @Test
+    fun `loads a legacy node missing status and grounding, applying defaults`() {
+        val saved = repository.save(prop(text = "another legacy fact", grounding = listOf("chunk-1")))
+        persistenceManager.execute(
+            QuerySpecification
+                .withStatement("MATCH (p:Proposition {id: \$id}) REMOVE p.status, p.grounding")
+                .bind(mapOf("id" to saved.id)),
+        )
+
+        val found = repository.findById(saved.id)
+
+        assertNotNull(found, "a node missing status/grounding must still load")
+        found!!
+        assertEquals(PropositionStatus.ACTIVE, found.status, "missing status defaults to ACTIVE")
+        assertTrue(found.grounding.isEmpty(), "missing grounding defaults to an empty list")
+    }
 }
