@@ -116,7 +116,14 @@ open class DrivinePropositionRepository(
     private fun findOrPersist(proposition: Proposition, contextId: String, text: String): Proposition {
         val existingId = findDuplicateId(contextId, text, proposition.id)
         val existing = existingId?.let(::findById)
-        return if (existing != null) {
+        // A same-text sibling only collapses a brand-NEW insert (parallel writers minting one fact as
+        // two ids). If the incoming id is already stored this is an in-place UPDATE — a reinforce, a
+        // status change, or a dedup sweep folding a loser's grounding onto the survivor — and it must
+        // write to its own node, never silently redirect to the sibling and drop the update. The
+        // (contextId, text) uniqueness constraint normally makes a foreign same-text sibling
+        // impossible, so this guard only bites when that constraint is absent; then existsById runs
+        // (cheap, and only on the rare collision path). Genuine inserts skip it: existingId is null.
+        return if (existing != null && !existsById(proposition.id)) {
             logger.debug(
                 "Dedup: proposition already present as {} in context {} — reusing: '{}'",
                 existingId, contextId, text,
@@ -198,6 +205,15 @@ open class DrivinePropositionRepository(
                 .bind(mapOf("contextId" to contextId, "text" to text, "excludeId" to excludeId))
                 .transform(String::class.java)
         )
+
+    /** True if a proposition with this exact id is already stored, so a [save] is an update, not an insert. */
+    private fun existsById(id: String): Boolean =
+        persistenceManager.maybeGetOne(
+            QuerySpecification
+                .withStatement("MATCH (p:Proposition {id: \$id}) RETURN p.id AS id LIMIT 1")
+                .bind(mapOf("id" to id))
+                .transform(String::class.java)
+        ) != null
 
     private fun lockFor(contextId: String, text: String): Any =
         dedupLocks[Math.floorMod("$contextId $text".hashCode(), DEDUP_STRIPES)]

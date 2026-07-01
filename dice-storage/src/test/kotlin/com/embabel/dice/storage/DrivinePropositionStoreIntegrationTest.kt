@@ -37,6 +37,7 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.drivine.manager.CascadeType
 import org.drivine.manager.GraphObjectManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
@@ -533,5 +534,76 @@ class DrivinePropositionStoreIntegrationTest {
         found!!
         assertEquals(PropositionStatus.ACTIVE, found.status, "missing status defaults to ACTIVE")
         assertTrue(found.grounding.isEmpty(), "missing grounding defaults to an empty list")
+    }
+
+    /** Insert a proposition node directly, bypassing [DrivinePropositionRepository]'s in-JVM dedup. */
+    private fun seedRawNode(p: Proposition) {
+        val embedding = embeddingService.embed(p.text).toList()
+        graphObjectManager.save(PropositionGraphMapper.toView(p, embedding), CascadeType.DELETE_ORPHAN)
+    }
+
+    /** Run [body] with the (contextId, text) uniqueness constraint dropped, then restore it. */
+    private fun withoutContextTextConstraint(body: () -> Unit) {
+        val name = persistenceManager.maybeGetOne(
+            QuerySpecification
+                .withStatement(
+                    "SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties " +
+                        "WHERE 'Proposition' IN labelsOrTypes AND properties = ['contextId', 'text'] " +
+                        "RETURN name",
+                )
+                .transform(String::class.java),
+        )
+        name?.let { persistenceManager.execute(QuerySpecification.withStatement("DROP CONSTRAINT $it IF EXISTS")) }
+        try {
+            body()
+        } finally {
+            // Duplicate rows seeded while the constraint was off would block recreating it, so clear
+            // the Proposition nodes first (as @AfterEach would anyway), then restore the constraint.
+            persistenceManager.execute(QuerySpecification.withStatement("MATCH (p:Proposition) DETACH DELETE p"))
+            persistenceManager.execute(
+                QuerySpecification.withStatement(
+                    "CREATE CONSTRAINT proposition_context_text_unique IF NOT EXISTS " +
+                        "FOR (p:Proposition) REQUIRE (p.contextId, p.text) IS UNIQUE",
+                ),
+            )
+        }
+    }
+
+    /**
+     * #56 robustness: an in-place `save` of an already-stored proposition must update its own node,
+     * never redirect the write to a same-text sibling and silently drop the update — the exact
+     * evidence-loss the dedup-merge PR kills (a survivor gaining a loser's grounding, or a loser being
+     * retired to STALE, is an update by id). The (contextId, text) uniqueness constraint normally makes
+     * a foreign same-text sibling impossible; this asserts `save` stays correct even where that
+     * constraint is absent, since the schema is adopter-supplied. The dedup-on-INSERT behaviour is
+     * unchanged (see `save dedups identical text in the same context`).
+     */
+    @Test
+    fun `save of an existing id updates its own node even when a same-text sibling exists`() {
+        withoutContextTextConstraint {
+            val survivor = repository.save(prop("Grace Hopper coined the term debugging", grounding = listOf("g-survivor")))
+            // A STALE same-text twin with a different id — the kind of foreign sibling that can only
+            // exist when the uniqueness constraint is absent.
+            val twin = prop("Grace Hopper coined the term debugging", status = PropositionStatus.STALE)
+            seedRawNode(twin)
+
+            // What the dedup sweep does to the survivor: append the loser's grounding, bump reinforcement.
+            repository.save(survivor.withGrounding(listOf("g-loser")).copy(reinforceCount = survivor.reinforceCount + 1))
+
+            val reloaded = repository.findById(survivor.id)
+            assertNotNull(reloaded)
+            assertEquals(
+                setOf("g-survivor", "g-loser"),
+                reloaded!!.grounding.toSet(),
+                "the survivor persists its merged grounding, not lost to the same-text twin",
+            )
+            assertEquals(1, reloaded.reinforceCount, "the reinforcement bump persists on the survivor")
+            assertEquals(PropositionStatus.STALE, repository.findById(twin.id)?.status, "the twin is untouched")
+
+            // And retiring a proposition to STALE lands on its own node, not the sibling.
+            val retired = repository.save(reloaded.withStatus(PropositionStatus.STALE))
+            assertEquals(survivor.id, retired.id, "save returns the updated node, not the same-text sibling")
+            assertEquals(PropositionStatus.STALE, repository.findById(survivor.id)?.status)
+        }
     }
 }
