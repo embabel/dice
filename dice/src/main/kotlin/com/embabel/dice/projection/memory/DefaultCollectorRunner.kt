@@ -142,9 +142,11 @@ class DefaultCollectorRunner(
                         } else {
                             // Survivor vanished (e.g. filtered out of the candidate snapshot, or
                             // deleted since marking). Nothing to merge into, so fall back to a plain
-                            // retirement rather than throwing — the loser still leaves ACTIVE.
-                            logger.debug(
-                                "MergeInto survivor {} not found; retiring {} without merge",
+                            // retirement rather than throwing — the loser still leaves ACTIVE. Logged
+                            // at WARN because the audit record looks like a normal transition, so this
+                            // is the only signal that a merge dropped its evidence fold.
+                            logger.warn(
+                                "MergeInto survivor {} not found; retiring {} without merging its evidence",
                                 action.survivorId, proposition.id,
                             )
                         }

@@ -16,6 +16,8 @@
 package com.embabel.dice.projection.memory
 
 import com.embabel.agent.core.ContextId
+import com.embabel.agent.rag.service.Cluster
+import com.embabel.common.core.types.SimilarityResult
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.PropositionStatusChanged
 import com.embabel.dice.common.RecordingDiceEventListener
@@ -498,6 +500,32 @@ class DefaultCollectorRunnerTest {
         // between them), with one reinforcement per absorbed duplicate.
         assertEquals(setOf("chunk-s", "chunk-a", "chunk-b"), survivorState.grounding.toSet())
         assertEquals(2, survivorState.reinforceCount)
+    }
+
+    @Test
+    fun `withDuplicateDetection does not clobber a policy the caller set explicitly`() {
+        // A caller who sets a policy explicitly must keep it, whatever the call order. Here a Skip
+        // policy must win over the MergingSweepPolicy that withDuplicateDetection would otherwise
+        // install, so the marked duplicate is skipped rather than merged.
+        val survivor = proposition("survivor")
+        val loser = proposition("loser")
+        every { repository.query(any()) } returns listOf(survivor, loser)
+        every { repository.findClusters(any(), any(), any()) } returns
+            listOf(Cluster(survivor, listOf(SimilarityResult.create(loser, 0.99))))
+
+        val skipEverything = SweepPolicy { _, _ -> SweepAction.Skip }
+        val runner = CollectorRunner
+            .withRepository(repository)
+            .withPolicy(skipEverything)
+            .withDuplicateDetection()
+            .withEventListener(listener)
+            .build()
+
+        val result = runner.run(contextId, dryRun = false)
+
+        assertTrue(result.applied.isEmpty())
+        assertTrue(result.skipped.isNotEmpty())
+        verify(exactly = 0) { repository.save(any()) }
     }
 
     @Test

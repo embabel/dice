@@ -85,6 +85,7 @@ interface CollectorRunner {
 
         private val strategies = mutableListOf<CollectorStrategy>()
         private var policy: SweepPolicy = StatusTransitionSweepPolicy()
+        private var policyExplicitlySet = false
         private var recordStore: CollectorRecordStore? = null
         private var listener: DiceEventListener = DiceEventListener.DEV_NULL
 
@@ -106,6 +107,13 @@ interface CollectorRunner {
          * retrieval, so the dedup sweep deliberately opts into merge semantics here rather than
          * changing the global builder default (which the decay/stale path still relies on).
          *
+         * Policy precedence: this only installs [MergingSweepPolicy] when no policy was set
+         * explicitly via [withPolicy]. A caller-chosen policy always wins, whatever the call order.
+         *
+         * Pair it only with strategies that never mark the survivor. The built-in
+         * [DuplicateCollectorStrategy] never marks survivors; a strategy that could (e.g. a decay
+         * strategy) would retire the survivor mid-run, before it absorbs its duplicates' evidence.
+         *
          * @param strategy The duplicate-detection strategy (defaults to a [DuplicateCollectorStrategy]
          *   with the repository-matching thresholds).
          * @return this builder, for chaining.
@@ -114,16 +122,20 @@ interface CollectorRunner {
             strategy: DuplicateCollectorStrategy = DuplicateCollectorStrategy(),
         ): Builder = apply {
             strategies.add(strategy)
-            policy = MergingSweepPolicy()
+            if (!policyExplicitlySet) policy = MergingSweepPolicy()
         }
 
         /**
-         * Set the policy that decides each marked proposition's fate.
+         * Set the policy that decides each marked proposition's fate. An explicit choice here always
+         * takes precedence over the merge policy [withDuplicateDetection] would otherwise install.
          *
          * @param policy The sweep policy (defaults to [StatusTransitionSweepPolicy]).
          * @return this builder, for chaining.
          */
-        fun withPolicy(policy: SweepPolicy): Builder = apply { this.policy = policy }
+        fun withPolicy(policy: SweepPolicy): Builder = apply {
+            this.policy = policy
+            policyExplicitlySet = true
+        }
 
         /**
          * Attach an audit store so run records are persisted. Without this, no trail is written.
