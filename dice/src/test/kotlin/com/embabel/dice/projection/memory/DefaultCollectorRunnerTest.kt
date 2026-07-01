@@ -366,8 +366,6 @@ class DefaultCollectorRunnerTest {
         assertEquals("audit,stale", events[0].reason)
     }
 
-    // ---- MergeInto / dedup-collapse behavior (issue #56) ----------------------------------------
-
     private fun provenance(uri: String): ProvenanceEntry = ProvenanceEntry(UriLocator(uri))
 
     /** A strategy that marks every candidate as a duplicate of [survivorId]. */

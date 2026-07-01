@@ -31,14 +31,14 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * End-to-end proof for issue #56: when the dedup sweep collapses a real cluster, the survivor must
- * ABSORB the loser's grounding and provenance before the loser is retired — otherwise that evidence
- * silently disappears from retrieval (STALE is excluded).
+ * Collapsing a duplicate cluster should carry the loser's grounding and provenance over to the
+ * survivor before the loser is retired. Without that, the evidence vanishes from retrieval the
+ * moment the loser goes STALE.
  *
- * This drives the whole path against a real [InMemoryPropositionRepository] with the deterministic
- * [FixedVectorEmbeddingService]: two propositions with identical text embed to the same vector and
- * so cluster as near-duplicates. The runner is assembled via [CollectorRunner.Builder.withDuplicateDetection],
- * the dedicated dedup wiring, so this also exercises that the dedup sweep selects the merging policy.
+ * Two propositions with identical text embed to the same vector under [FixedVectorEmbeddingService],
+ * so they cluster as near-duplicates. The runner is built with
+ * [CollectorRunner.Builder.withDuplicateDetection], so this also confirms the dedup wiring picks the
+ * merging policy.
  */
 class CollectorDedupMergesGroundingTest {
 
