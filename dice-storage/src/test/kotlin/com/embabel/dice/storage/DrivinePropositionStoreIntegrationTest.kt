@@ -209,11 +209,10 @@ class DrivinePropositionStoreIntegrationTest {
 
     @Test
     fun `findClusters reports raw cosine, not Neo4j's normalized score`() {
-        // Neo4j's cosine index scores as (1 + cosine) / 2, but SimilarityResult.score is meant to be raw
-        // cosine (as the in-memory store returns, and as the multi-signal dedup scorer assumes). If the
-        // normalized score leaks through, a cosine-0.5 pair reads as 0.75 and distinct facts over-merge.
-        // Two 16-dim vectors with an exact cosine of 0.8 pin the units; 0.8 also keeps them each other's
-        // nearest neighbour, so the index's global top-k never truncates the edge.
+        // score must be raw cosine (what the in-memory store returns), but a COSINE index reports
+        // (1 + cosine) / 2 — if that leaks through, a cosine-0.5 pair reads as 0.75 and the dedup
+        // scorer over-merges distinct facts. Cosine 0.8 also keeps the pair each other's nearest
+        // neighbour, so the index's global top-k can't truncate the edge.
         val v1 = FloatArray(embeddingService.dimensions).also { it[0] = 1f }
         val v2 = FloatArray(embeddingService.dimensions).also { it[0] = 0.8f; it[1] = 0.6f }
         seedRawNodeWithEmbedding(prop("alpha fact", context = "ctx-cos"), v1.toList())

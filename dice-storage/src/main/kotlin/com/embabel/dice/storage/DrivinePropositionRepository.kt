@@ -419,8 +419,9 @@ open class DrivinePropositionRepository(
         val byId = candidates.associateBy { it.id }
         val ids = candidates.map { it.id }
 
-        // Neo4j's cosine index scores as (1 + cosine) / 2. Convert back to raw cosine so the threshold
-        // gate and the returned score are both cosine, as the in-memory store and score's consumers assume.
+        // A COSINE index scores as (1 + cosine) / 2; the `cosine` binding below converts back to raw
+        // cosine so the gate and the returned score are both cosine, as the in-memory store returns.
+        // COSINE-only: a EUCLIDEAN index normalizes differently.
         @Suppress("UNCHECKED_CAST")
         val rows = persistenceManager.query(
             QuerySpecification
@@ -429,8 +430,9 @@ open class DrivinePropositionRepository(
                     UNWIND ${'$'}ids AS sid
                     MATCH (seed:Proposition {id: sid}) WHERE seed.embedding IS NOT NULL
                     CALL db.index.vector.queryNodes('$vectorIndexName', ${'$'}k, seed.embedding) YIELD node AS m, score
-                    WHERE m.id IN ${'$'}ids AND sid < m.id AND (2.0 * score - 1.0) >= ${'$'}threshold
-                    RETURN { anchorId: sid, otherId: m.id, score: 2.0 * score - 1.0 } AS row
+                    WITH sid, m, 2.0 * score - 1.0 AS cosine
+                    WHERE m.id IN ${'$'}ids AND sid < m.id AND cosine >= ${'$'}threshold
+                    RETURN { anchorId: sid, otherId: m.id, score: cosine } AS row
                     """.trimIndent()
                 )
                 .bind(mapOf("ids" to ids, "k" to topK + 1, "threshold" to similarityThreshold))
