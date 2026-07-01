@@ -2579,7 +2579,7 @@ Add to your `pom.xml`:
 <dependency>
     <groupId>com.embabel</groupId>
     <artifactId>dice</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.1-SNAPSHOT</version>
 </dependency>
 ```
 
