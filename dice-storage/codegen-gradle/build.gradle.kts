@@ -10,6 +10,13 @@
 // Kotlin/JDK stdlib. The fromDice/toDice mappers and the repository live elsewhere and are
 // compiled by Maven, so this build needs no dice-core / embabel-agent dependencies.
 //
+// Daemon JVM: Gradle 8.12.1 cannot run on JDK 25 (its embedded Kotlin script compiler throws
+// `IllegalArgumentException: 25` when compiling this build.gradle.kts). Maven's exec plugin launches
+// gradlew with whatever JAVA_HOME the outer build uses, which locally may be JDK 25. gradle/
+// gradle-daemon-jvm.properties pins the daemon to an auto-detected JDK 21 (also CI's JDK) so the
+// nested build always runs on a supported JVM regardless of the outer JAVA_HOME. Requires a JDK
+// 17-24 to be installed/discoverable; regenerate with: ./gradlew updateDaemonJvm --jvm-version=21
+//
 // Run manually with: ./gradlew kspKotlin
 
 plugins {
@@ -18,7 +25,7 @@ plugins {
 }
 
 group = "com.embabel.dice.storage"
-version = "0.1.0-SNAPSHOT"
+version = "0.1.1-SNAPSHOT"
 
 val drivineVersion = "0.0.57"
 
