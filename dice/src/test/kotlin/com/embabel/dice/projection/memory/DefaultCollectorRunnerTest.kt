@@ -25,7 +25,10 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.spi.MarkReason
+import com.embabel.dice.spi.MergingSweepPolicy
 import com.embabel.dice.spi.PropositionMark
 import com.embabel.dice.spi.StatusTransitionSweepPolicy
 import com.embabel.dice.spi.SweepAction
@@ -359,6 +362,142 @@ class DefaultCollectorRunnerTest {
         assertEquals(1, events.size)
         // Distinct keys, sorted: "audit" then "stale".
         assertEquals("audit,stale", events[0].reason)
+    }
+
+    // ---- MergeInto / dedup-collapse behavior (issue #56) ----------------------------------------
+
+    private fun provenance(uri: String): ProvenanceEntry = ProvenanceEntry(UriLocator(uri))
+
+    /** A strategy that marks every candidate as a duplicate of [survivorId]. */
+    private fun duplicateStrategy(survivorId: String): CollectorStrategy =
+        CollectorStrategy { candidates, _, _ ->
+            candidates.map { PropositionMark(it.id, MarkReason.Duplicate(survivorId = survivorId), "duplicate") }
+        }
+
+    private fun mergingRunner(survivorId: String): CollectorRunner =
+        CollectorRunner
+            .withRepository(repository)
+            .withStrategy(duplicateStrategy(survivorId))
+            .withPolicy(MergingSweepPolicy())
+            .withRecordStore(recordStore)
+            .withEventListener(listener)
+            .build()
+
+    @Test
+    fun `live MergeInto folds the loser's evidence onto the survivor then retires the loser`() {
+        // The bug: a dedup collapse used to flip the loser STALE with a pure status change, so its
+        // grounding/provenance vanished from retrieval. The survivor must instead absorb the loser's
+        // evidence (deduped) and get a reinforcement bump before the loser goes STALE.
+        val survivor = proposition("survivor").copy(
+            grounding = listOf("chunk-s"),
+            sourceIds = listOf("src-s"),
+            provenanceEntries = listOf(provenance("uri://s")),
+            reinforceCount = 2,
+        )
+        val loser = proposition("loser").copy(
+            grounding = listOf("chunk-l"),
+            sourceIds = listOf("src-l"),
+            provenanceEntries = listOf(provenance("uri://l")),
+        )
+        every { repository.query(any()) } returns listOf(loser)
+        var survivorState = survivor
+        val saves = mutableListOf<Proposition>()
+        every { repository.findById(survivor.id) } answers { survivorState }
+        every { repository.save(any()) } answers {
+            val p = firstArg<Proposition>()
+            saves += p
+            if (p.id == survivor.id) survivorState = p
+            p
+        }
+
+        val result = mergingRunner(survivor.id).run(contextId, dryRun = false)
+
+        // The collapse counts as an applied transition for the loser.
+        assertEquals(1, result.applied.size)
+
+        // Survivor absorbed the union of the loser's evidence, deduped, with reinforce +1.
+        assertEquals(setOf("chunk-s", "chunk-l"), survivorState.grounding.toSet())
+        assertEquals(setOf("src-s", "src-l"), survivorState.sourceIds.toSet())
+        assertEquals(setOf("uri:uri://s", "uri:uri://l"), survivorState.provenanceEntries.map { it.locator.key() }.toSet())
+        assertEquals(3, survivorState.reinforceCount)
+
+        // Loser retired to STALE (nothing lost — the survivor now carries its evidence).
+        val loserSave = saves.single { it.id == loser.id }
+        assertEquals(PropositionStatus.STALE, loserSave.status)
+
+        // Same status-changed event the plain transition emits, for the loser.
+        val events = listener.eventsOfType<PropositionStatusChanged>()
+        assertEquals(1, events.size)
+        assertEquals(loser.id, events[0].proposition.id)
+        assertEquals(PropositionStatus.ACTIVE, events[0].previousStatus)
+        assertEquals(PropositionStatus.STALE, events[0].newStatus)
+        assertEquals("duplicate", events[0].reason)
+    }
+
+    @Test
+    fun `dry run MergeInto mutates nothing but records the would-be collapse`() {
+        val survivor = proposition("survivor").copy(grounding = listOf("chunk-s"))
+        val loser = proposition("loser").copy(grounding = listOf("chunk-l"))
+        every { repository.query(any()) } returns listOf(loser)
+
+        val result = mergingRunner(survivor.id).run(contextId, dryRun = true)
+
+        assertTrue(result.dryRun)
+        assertTrue(result.applied.isEmpty())
+        // Neither the survivor merge nor the loser retirement touches the store on a preview.
+        verify(exactly = 0) { repository.save(any()) }
+        verify(exactly = 0) { repository.findById(any()) }
+        assertTrue(listener.eventsOfType<PropositionStatusChanged>().isEmpty())
+        // The preview is still auditable.
+        assertTrue(recordStore.findByProposition(loser.id).isNotEmpty())
+    }
+
+    @Test
+    fun `MergeInto with a missing survivor falls back to a plain STALE retirement`() {
+        // The survivor was filtered out of the snapshot or deleted since marking. Rather than throw,
+        // the loser still leaves ACTIVE via a plain transition (no merge target to absorb it).
+        val loser = proposition("loser").copy(grounding = listOf("chunk-l"))
+        every { repository.query(any()) } returns listOf(loser)
+        every { repository.findById(any()) } returns null
+        val saves = mutableListOf<Proposition>()
+        every { repository.save(any()) } answers {
+            val p = firstArg<Proposition>()
+            saves += p
+            p
+        }
+
+        val result = mergingRunner("ghost-survivor").run(contextId, dryRun = false)
+
+        assertEquals(1, result.applied.size)
+        // Only the loser is saved (STALE); there was no survivor to merge onto.
+        assertEquals(listOf(loser.id), saves.map { it.id })
+        assertEquals(PropositionStatus.STALE, saves.single().status)
+        assertEquals(1, listener.eventsOfType<PropositionStatusChanged>().size)
+    }
+
+    @Test
+    fun `a multi-loser cluster has ALL losers' evidence absorbed by the survivor`() {
+        // Transitivity guard: two losers collapse into one survivor, which must end up carrying the
+        // union of BOTH losers' grounding and a reinforcement per collapse.
+        val survivor = proposition("survivor").copy(grounding = listOf("chunk-s"), reinforceCount = 0)
+        val loserA = proposition("loserA").copy(grounding = listOf("chunk-a"))
+        val loserB = proposition("loserB").copy(grounding = listOf("chunk-b"))
+        every { repository.query(any()) } returns listOf(loserA, loserB)
+        var survivorState = survivor
+        every { repository.findById(survivor.id) } answers { survivorState }
+        every { repository.save(any()) } answers {
+            val p = firstArg<Proposition>()
+            if (p.id == survivor.id) survivorState = p
+            p
+        }
+
+        val result = mergingRunner(survivor.id).run(contextId, dryRun = false)
+
+        assertEquals(2, result.applied.size)
+        // Survivor accumulates both losers' grounding across the two collapses (repository re-read
+        // between them), with one reinforcement per absorbed duplicate.
+        assertEquals(setOf("chunk-s", "chunk-a", "chunk-b"), survivorState.grounding.toSet())
+        assertEquals(2, survivorState.reinforceCount)
     }
 
     @Test

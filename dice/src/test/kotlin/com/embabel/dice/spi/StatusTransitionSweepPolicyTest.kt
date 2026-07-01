@@ -41,12 +41,14 @@ class StatusTransitionSweepPolicyTest {
     fun `SweepAction is a sealed family`() {
         val actions: List<SweepAction> = listOf(
             SweepAction.TransitionStatus(PropositionStatus.STALE),
+            SweepAction.MergeInto("survivor-1"),
             SweepAction.HardDelete,
             SweepAction.Skip,
         )
         actions.forEach { action ->
             val described: String = when (action) {
                 is SweepAction.TransitionStatus -> action.newStatus.name
+                is SweepAction.MergeInto -> action.survivorId
                 is SweepAction.HardDelete -> "delete"
                 is SweepAction.Skip -> "skip"
             }
