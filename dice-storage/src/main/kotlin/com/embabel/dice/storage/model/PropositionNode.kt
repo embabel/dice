@@ -36,19 +36,6 @@ import java.time.Instant
  * dice `Proposition` lives in `PropositionGraphMapper`, which the Maven build compiles with
  * dice-core available.
  *
- * ## Schema evolution: keep new fields loadable against old nodes
- *
- * Drivine hydrates a node by projecting each field explicitly, so a property a node was written
- * without comes back as *present-null*, not absent — and a plain Kotlin default only applies for an
- * *absent* property, so it never fires here. A non-nullable field with no null handling therefore
- * fails to load any node predating that field.
- *
- * So every field that might be missing on an older node must be either nullable, or carry a
- * `@Default` (scalars — falls back to the declared Kotlin default) or `@EmptyWhenAbsent`
- * (collections). Only the fields present since the node's first version — `id`, `contextId`,
- * `text`, `confidence`, `created` — are left strict; a node missing one of those is genuinely
- * corrupt and should fail loudly. Apply the same rule to any field added from here on.
- *
  * @see com.embabel.dice.storage.PropositionGraphMapper
  */
 @NodeFragment(labels = ["Proposition"])
