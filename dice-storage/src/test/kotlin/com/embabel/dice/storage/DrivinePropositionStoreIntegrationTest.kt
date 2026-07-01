@@ -570,13 +570,10 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     /**
-     * #56 robustness: an in-place `save` of an already-stored proposition must update its own node,
-     * never redirect the write to a same-text sibling and silently drop the update — the exact
-     * evidence-loss the dedup-merge PR kills (a survivor gaining a loser's grounding, or a loser being
-     * retired to STALE, is an update by id). The (contextId, text) uniqueness constraint normally makes
-     * a foreign same-text sibling impossible; this asserts `save` stays correct even where that
-     * constraint is absent, since the schema is adopter-supplied. The dedup-on-INSERT behaviour is
-     * unchanged (see `save dedups identical text in the same context`).
+     * An in-place `save` of an already-stored proposition must update its own node, not redirect the
+     * write to a same-text sibling and drop the update. The `(contextId, text)` uniqueness constraint
+     * normally makes a foreign same-text sibling impossible, but the schema is adopter-supplied, so
+     * this checks `save` stays correct without it. Dedup on a genuine insert is unchanged.
      */
     @Test
     fun `save of an existing id updates its own node even when a same-text sibling exists`() {

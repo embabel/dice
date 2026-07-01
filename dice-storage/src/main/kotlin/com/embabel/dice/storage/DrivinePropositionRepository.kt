@@ -116,8 +116,8 @@ open class DrivinePropositionRepository(
     private fun findOrPersist(proposition: Proposition, contextId: String, text: String): Proposition {
         val existingId = findDuplicateId(contextId, text, proposition.id)
         val existing = existingId?.let(::findById)
-        // A same-text sibling only collapses a brand-NEW insert (parallel writers minting one fact as
-        // two ids). If the incoming id is already stored this is an in-place UPDATE — a reinforce, a
+        // A same-text sibling only collapses a brand-new insert (parallel writers minting one fact as
+        // two ids). If the incoming id is already stored this is an in-place update — a reinforce, a
         // status change, or a dedup sweep folding a loser's grounding onto the survivor — and it must
         // write to its own node, never silently redirect to the sibling and drop the update. The
         // (contextId, text) uniqueness constraint normally makes a foreign same-text sibling
