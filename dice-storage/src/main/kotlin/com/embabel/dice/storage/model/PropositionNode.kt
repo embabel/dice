@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.storage.model
 
+import org.drivine.annotation.Default
+import org.drivine.annotation.EmptyWhenAbsent
 import org.drivine.annotation.NodeFragment
 import org.drivine.annotation.NodeId
 import org.drivine.annotation.PropertyBag
@@ -48,44 +50,56 @@ data class PropositionNode(
     val text: String,
 
     val confidence: Double,
-    val decay: Double,
-    val importance: Double,
+    @param:Default
+    val decay: Double = 0.0,
+    @param:Default
+    val importance: Double = 0.5,
     val reasoning: String? = null,
 
+    @param:EmptyWhenAbsent
     val grounding: List<String> = emptyList(),
+    @param:EmptyWhenAbsent
     val sourceIds: List<String> = emptyList(),
     val uri: String? = null,
 
     val created: Instant,
-    // Proposition splits revision into content vs metadata revisions (lifecycle work, PR #30).
-    val contentRevised: Instant,
-    val metadataRevised: Instant,
+    @param:Default
+    val contentRevised: Instant = created,
+    @param:Default
+    val metadataRevised: Instant = created,
 
     /**
      * The later of [contentRevised] and [metadataRevised] — "last touched of any kind". Materialised
      * (not derived at query time) so "revised" filtering and ordering push into the database against a
      * single indexable column, matching the in-memory backend's `Proposition.lastTouched` semantics.
      * Written on every save; the partial-update writers (decay sweep, re-embed) don't touch the
-     * revision clocks, so it never drifts.
+     * revision clocks, so it never drifts. On a node written before this column existed it falls back
+     * to the later of the two revision clocks.
      */
     @RangeIndex
-    val lastTouched: Instant,
+    @param:Default
+    val lastTouched: Instant = maxOf(contentRevised, metadataRevised),
 
-    val lastAccessed: Instant,
+    @param:Default
+    val lastAccessed: Instant = created,
 
     /** [com.embabel.dice.proposition.PropositionStatus] name. */
     @RangeIndex
-    val status: String,
+    @param:Default
+    val status: String = "ACTIVE",
 
     /** Pinned propositions are exempt from decay/forgetting (lifecycle, PR #30). */
     @RangeIndex
+    @param:Default
     val pinned: Boolean = false,
 
     /** Abstraction level: 0 = raw observation, 1+ = derived. Persisted (unlike the legacy store). */
     @RangeIndex
+    @param:Default
     val level: Int = 0,
 
     /** Merge/reinforcement count. Persisted (unlike the legacy store). */
+    @param:Default
     val reinforceCount: Int = 0,
 
     /** Embedding of [text]; the vector index this annotation declares is also what `loadNearest` infers. */
@@ -113,7 +127,9 @@ data class PropositionNode(
     val validTo: Instant? = null,
     val invalidatedAt: Instant? = null,
     val observedAt: Instant? = null,
+    @param:EmptyWhenAbsent
     val supersedes: List<String> = emptyList(),
+    @param:EmptyWhenAbsent
     val contradicts: List<String> = emptyList(),
 
     /**
