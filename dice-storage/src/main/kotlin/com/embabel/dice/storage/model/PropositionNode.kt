@@ -63,25 +63,22 @@ data class PropositionNode(
     val text: String,
 
     val confidence: Double,
-    @Default
+    @param:Default
     val decay: Double = 0.0,
-    @Default
+    @param:Default
     val importance: Double = 0.5,
     val reasoning: String? = null,
 
-    @EmptyWhenAbsent
+    @param:EmptyWhenAbsent
     val grounding: List<String> = emptyList(),
-    @EmptyWhenAbsent
+    @param:EmptyWhenAbsent
     val sourceIds: List<String> = emptyList(),
     val uri: String? = null,
 
     val created: Instant,
-    // Content vs metadata revision clocks (lifecycle work, PR #30), materialised as node properties
-    // in PR #47 — so nodes written earlier lack them. Fall back to `created` ("never revised since
-    // creation") rather than failing the load.
-    @Default
+    @param:Default
     val contentRevised: Instant = created,
-    @Default
+    @param:Default
     val metadataRevised: Instant = created,
 
     /**
@@ -93,29 +90,29 @@ data class PropositionNode(
      * to the later of the two revision clocks.
      */
     @RangeIndex
-    @Default
+    @param:Default
     val lastTouched: Instant = maxOf(contentRevised, metadataRevised),
 
-    @Default
+    @param:Default
     val lastAccessed: Instant = created,
 
     /** [com.embabel.dice.proposition.PropositionStatus] name. */
     @RangeIndex
-    @Default
+    @param:Default
     val status: String = "ACTIVE",
 
     /** Pinned propositions are exempt from decay/forgetting (lifecycle, PR #30). */
     @RangeIndex
-    @Default
+    @param:Default
     val pinned: Boolean = false,
 
     /** Abstraction level: 0 = raw observation, 1+ = derived. Persisted (unlike the legacy store). */
     @RangeIndex
-    @Default
+    @param:Default
     val level: Int = 0,
 
     /** Merge/reinforcement count. Persisted (unlike the legacy store). */
-    @Default
+    @param:Default
     val reinforceCount: Int = 0,
 
     /** Embedding of [text]; the vector index this annotation declares is also what `loadNearest` infers. */
@@ -143,9 +140,9 @@ data class PropositionNode(
     val validTo: Instant? = null,
     val invalidatedAt: Instant? = null,
     val observedAt: Instant? = null,
-    @EmptyWhenAbsent
+    @param:EmptyWhenAbsent
     val supersedes: List<String> = emptyList(),
-    @EmptyWhenAbsent
+    @param:EmptyWhenAbsent
     val contradicts: List<String> = emptyList(),
 
     /**
