@@ -125,6 +125,37 @@ class DefaultCollectorRunner(
                     }
                 }
 
+                is SweepAction.MergeInto -> {
+                    if (dryRun) {
+                        // Preview only: record the would-be retirement as MARKED (nothing merged,
+                        // nothing swept). The record's newStatus carries what WOULD happen; no
+                        // evidence is folded and nothing is emitted.
+                        records += records(propMarks, runId, CollectorOutcome.MARKED, proposition.status, action.thenStatus)
+                    } else {
+                        // Fold the loser's evidence onto the survivor BEFORE retiring the loser, so
+                        // the grounding/provenance that justified the loser stays visible on a
+                        // proposition retrieval still returns. A plain STALE flip here would make
+                        // that evidence invisible (STALE is excluded from retrieval).
+                        val survivor = repository.findById(action.survivorId)
+                        if (survivor != null) {
+                            repository.save(mergeEvidence(survivor = survivor, loser = proposition))
+                        } else {
+                            // Survivor vanished (e.g. filtered out of the candidate snapshot, or
+                            // deleted since marking). Nothing to merge into, so fall back to a plain
+                            // retirement rather than throwing — the loser still leaves ACTIVE.
+                            logger.debug(
+                                "MergeInto survivor {} not found; retiring {} without merge",
+                                action.survivorId, proposition.id,
+                            )
+                        }
+                        val previousStatus = proposition.status
+                        val saved = repository.save(proposition.withStatus(action.thenStatus))
+                        records += records(propMarks, runId, CollectorOutcome.TRANSITIONED, previousStatus, action.thenStatus)
+                        applied.addAll(propMarks)
+                        emitStatusChanged(saved, previousStatus, action.thenStatus, propMarks)
+                    }
+                }
+
                 SweepAction.HardDelete -> {
                     if (dryRun) {
                         // Preview only: record what WOULD be removed as MARKED; delete nothing and
@@ -217,6 +248,25 @@ class DefaultCollectorRunner(
             ),
         )
     }
+
+    /**
+     * Copy the loser's evidence onto the survivor: its grounding (chunk ids), its rich provenance
+     * entries, and its source ids — all appended and deduplicated so nothing is lost and nothing is
+     * double-counted. Also bumps the survivor's reinforcement by one, treating each collapsed
+     * duplicate as a single fresh confirmation. This matches how `LlmPropositionReviser` merges at
+     * ingestion time (`+ 1` per merge event, not `+ loser.reinforceCount`).
+     *
+     * `save` is append-only for provenance, so the survivor keeps any of its own entries even when
+     * they were not eagerly loaded here.
+     */
+    private fun mergeEvidence(survivor: Proposition, loser: Proposition): Proposition =
+        survivor
+            .withGrounding(loser.grounding)
+            .withProvenanceEntries(loser.provenanceEntries)
+            .copy(
+                sourceIds = (survivor.sourceIds + loser.sourceIds).distinct(),
+                reinforceCount = survivor.reinforceCount + 1,
+            )
 
     private fun records(
         propMarks: List<PropositionMark>,

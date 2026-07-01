@@ -19,6 +19,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.projection.lineage.CollectorRecordStore
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.spi.MergingSweepPolicy
 import com.embabel.dice.spi.StatusTransitionSweepPolicy
 import com.embabel.dice.spi.SweepPolicy
 
@@ -94,6 +95,27 @@ interface CollectorRunner {
          * @return this builder, for chaining.
          */
         fun withStrategy(strategy: CollectorStrategy): Builder = apply { strategies.add(strategy) }
+
+        /**
+         * Configure the near-duplicate dedup sweep: add a [DuplicateCollectorStrategy] AND switch
+         * the policy to [MergingSweepPolicy], so a collapsed duplicate has its grounding and
+         * provenance folded onto the survivor before it is retired.
+         *
+         * This is the assembly point for the dedup path. The plain [StatusTransitionSweepPolicy]
+         * default would flip the loser STALE with a pure status change and lose its evidence from
+         * retrieval, so the dedup sweep deliberately opts into merge semantics here rather than
+         * changing the global builder default (which the decay/stale path still relies on).
+         *
+         * @param strategy The duplicate-detection strategy (defaults to a [DuplicateCollectorStrategy]
+         *   with the repository-matching thresholds).
+         * @return this builder, for chaining.
+         */
+        fun withDuplicateDetection(
+            strategy: DuplicateCollectorStrategy = DuplicateCollectorStrategy(),
+        ): Builder = apply {
+            strategies.add(strategy)
+            policy = MergingSweepPolicy()
+        }
 
         /**
          * Set the policy that decides each marked proposition's fate.

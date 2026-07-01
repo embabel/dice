@@ -33,6 +33,25 @@ sealed interface SweepAction {
     data class TransitionStatus(val newStatus: PropositionStatus) : SweepAction
 
     /**
+     * Fold this (losing) proposition's evidence onto a surviving proposition, then retire it.
+     *
+     * A plain [TransitionStatus] to STALE loses the loser's grounding and provenance the moment
+     * retrieval starts excluding STALE — the evidence becomes invisible even though it was real.
+     * This outcome first copies the loser's grounding, provenance, and source ids onto the
+     * survivor (and bumps the survivor's reinforcement), then transitions the loser to
+     * [thenStatus]. Non-destructive and dry-run-safe: nothing is deleted, and a preview mutates
+     * nothing.
+     *
+     * @property survivorId ID of the proposition that keeps the merged evidence.
+     * @property thenStatus The status the loser transitions to once its evidence has been folded
+     *   onto the survivor (defaults to [PropositionStatus.STALE]).
+     */
+    data class MergeInto(
+        val survivorId: String,
+        val thenStatus: PropositionStatus = PropositionStatus.STALE,
+    ) : SweepAction
+
+    /**
      * Permanently remove the proposition. This is destructive and unrecoverable, so it is
      * never the default — a policy must opt in explicitly, and the default
      * [StatusTransitionSweepPolicy] never returns it.
