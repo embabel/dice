@@ -59,6 +59,15 @@
             <version>26.0.1</version>
         </dependency>
 
+        <!--
+            Jaro-Winkler similarity for LexicalSignalScorer.
+            Version managed by embabel-build-dependencies BOM.
+        -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-text</artifactId>
+        </dependency>
+
         <!-- https://mvnrepository.com/artifact/org.javers/javers-core -->
         <dependency>
             <groupId>org.javers</groupId>
