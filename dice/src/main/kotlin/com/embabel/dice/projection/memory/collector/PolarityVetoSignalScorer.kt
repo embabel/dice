@@ -23,8 +23,7 @@ import com.embabel.dice.spi.CollectorSignalScorer
 /**
  * Vetoes a merge when two propositions share an entity but assert opposite polarity about it —
  * one states something, the other negates it ("works at Acme" vs "no longer works at Acme" /
- * "left Acme"). Ports Me's `polarityVeto` / `containsNegation` / negation word and phrase lists
- * into its own scorer.
+ * "left Acme").
  *
  * This is a veto-only signal: it never contributes a positive score to the blend. When it fires
  * it returns a zero-weight veto so [CollectorEdgeAggregator] flips `vetoed = true` without

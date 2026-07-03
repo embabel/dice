@@ -34,6 +34,8 @@ import com.embabel.dice.spi.CollectorTraceStore
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
+import org.springframework.beans.factory.getBean
+import org.springframework.beans.factory.getBeanProvider
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
@@ -56,7 +58,7 @@ class CollectorAutoConfigurationTest {
         runner.run { ctx ->
             assertThat(ctx).hasSingleBean(MultiSignalCollectorStrategy::class.java)
 
-            val scorerTypes = ctx.getBeanProvider(CollectorSignalScorer::class.java).orderedStream().toList()
+            val scorerTypes = ctx.getBeanProvider<CollectorSignalScorer>().orderedStream().toList()
                 .map { it::class }
             assertThat(scorerTypes).containsExactly(
                 VectorSignalScorer::class,
@@ -77,14 +79,14 @@ class CollectorAutoConfigurationTest {
                 "embabel.dice.collector.signals.lexical.weight=0.9",
             )
             .run { ctx ->
-                val props = ctx.getBean(CollectorProperties::class.java)
+                val props = ctx.getBean<CollectorProperties>()
                 assertThat(props.matchThreshold).isEqualTo(0.75)
                 assertThat(props.signals["lexical"]?.weight).isEqualTo(0.9)
 
-                val scorer = ctx.getBean("lexicalSignalScorer", LexicalSignalScorer::class.java)
+                val scorer = ctx.getBean<LexicalSignalScorer>("lexicalSignalScorer")
                 val pair = CandidatePair(anchor = TestFixtures.proposition("a"), member = TestFixtures.proposition("a"))
                 val score = scorer.score(pair, TestFixtures.CONTEXT_ID)
-                assertThat(score?.weight).isEqualTo(0.9)
+                assertThat(score.weight).isEqualTo(0.9)
             }
     }
 
@@ -94,7 +96,7 @@ class CollectorAutoConfigurationTest {
             .withPropertyValues("embabel.dice.collector.signals.lexical.enabled=false")
             .run { ctx ->
                 assertThat(ctx).doesNotHaveBean("lexicalSignalScorer")
-                val scorerTypes = ctx.getBeanProvider(CollectorSignalScorer::class.java).orderedStream().toList()
+                val scorerTypes = ctx.getBeanProvider<CollectorSignalScorer>().orderedStream().toList()
                     .map { it::class }
                 assertThat(scorerTypes).doesNotContain(LexicalSignalScorer::class)
             }
@@ -105,7 +107,7 @@ class CollectorAutoConfigurationTest {
         runner
             .withUserConfiguration(CustomScorerConfig::class.java)
             .run { ctx ->
-                val scorers = ctx.getBeanProvider(CollectorSignalScorer::class.java).orderedStream().toList()
+                val scorers = ctx.getBeanProvider<CollectorSignalScorer>().orderedStream().toList()
                 assertThat(scorers).anyMatch { it is CustomScorer }
             }
     }
@@ -116,7 +118,7 @@ class CollectorAutoConfigurationTest {
             .withUserConfiguration(CustomStrategyConfig::class.java)
             .run { ctx ->
                 assertThat(ctx).hasSingleBean(MultiSignalCollectorStrategy::class.java)
-                assertThat(ctx.getBean(MultiSignalCollectorStrategy::class.java))
+                assertThat(ctx.getBean<MultiSignalCollectorStrategy>())
                     .isSameAs(CustomStrategyConfig.INSTANCE)
             }
     }
@@ -140,7 +142,7 @@ class CollectorAutoConfigurationTest {
                 "embabel.dice.collector.trace.detail-retention-days=30",
             )
             .run { ctx ->
-                val props = ctx.getBean(CollectorProperties::class.java)
+                val props = ctx.getBean<CollectorProperties>()
                 assertThat(props.sweep.delta).isTrue()
                 assertThat(props.trace.enabled).isFalse()
                 assertThat(props.trace.detailRetentionDays).isEqualTo(30)
@@ -148,13 +150,12 @@ class CollectorAutoConfigurationTest {
     }
 
     /**
-     * Runs [DiceStorageAutoConfiguration] and [CollectorAutoConfiguration] together — not the
-     * isolated stub the other tests use — to prove the `@AutoConfiguration(after = ...)` on
+     * Runs [DiceStorageAutoConfiguration] and [CollectorAutoConfiguration] together, not the
+     * isolated stub the other tests use, to prove `@AutoConfiguration(after = ...)` on
      * [CollectorAutoConfiguration] actually resolves `vectorCandidatePairSource`'s
-     * `@ConditionalOnBean(PropositionRepository::class)` once both auto-configurations are on the
-     * classpath. Without that `after`, Spring Boot doesn't guarantee `DiceStorageAutoConfiguration`
-     * registers its `PropositionRepository` bean before `CollectorAutoConfiguration` evaluates the
-     * condition, and the vector pair source can silently drop out.
+     * `@ConditionalOnBean(PropositionRepository::class)`. Without that `after`, Spring Boot
+     * doesn't guarantee `DiceStorageAutoConfiguration` registers its `PropositionRepository` bean
+     * first, and the vector pair source can silently drop out.
      */
     @Test
     fun `combining DiceStorageAutoConfiguration and CollectorAutoConfiguration wires the vector pair source`() {
@@ -171,28 +172,28 @@ class CollectorAutoConfigurationTest {
                 assertThat(ctx).hasSingleBean(VectorCandidatePairSource::class.java)
                 assertThat(ctx).hasSingleBean(MultiSignalCollectorStrategy::class.java)
 
-                val pairSources = ctx.getBeanProvider(CandidatePairSource::class.java).orderedStream().toList()
+                val pairSources = ctx.getBeanProvider<CandidatePairSource>().orderedStream().toList()
                 assertThat(pairSources).anyMatch { it is VectorCandidatePairSource }
             }
     }
 
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties(CollectorProperties::class)
-    open class StubPropositionRepositoryConfig {
+    class StubPropositionRepositoryConfig {
         @Bean
-        open fun propositionRepository(): PropositionRepository =
+        fun propositionRepository(): PropositionRepository =
             InMemoryPropositionRepository(mock<EmbeddingService>())
     }
 
     /**
      * Satisfies [DiceStorageAutoConfiguration]'s `@ConditionalOnBean(Ai::class)` gate on
-     * `inMemoryPropositionRepository` so the real in-memory `PropositionRepository` bean gets
-     * registered, exercising the actual cross-auto-configuration ordering path.
+     * `inMemoryPropositionRepository`, so the real in-memory `PropositionRepository` bean gets
+     * registered and exercises the actual cross-auto-configuration ordering path.
      */
     @Configuration(proxyBeanMethods = false)
-    open class StubAiConfig {
+    class StubAiConfig {
         @Bean
-        open fun ai(): com.embabel.agent.api.common.Ai {
+        fun ai(): com.embabel.agent.api.common.Ai {
             val ai = mock<com.embabel.agent.api.common.Ai>()
             org.mockito.kotlin.whenever(ai.withDefaultEmbeddingService()).thenReturn(mock<EmbeddingService>())
             return ai
@@ -204,15 +205,15 @@ class CollectorAutoConfigurationTest {
     }
 
     @Configuration(proxyBeanMethods = false)
-    open class CustomScorerConfig {
+    class CustomScorerConfig {
         @Bean
-        open fun customScorer(): CollectorSignalScorer = CustomScorer()
+        fun customScorer(): CollectorSignalScorer = CustomScorer()
     }
 
     @Configuration(proxyBeanMethods = false)
-    open class CustomStrategyConfig {
+    class CustomStrategyConfig {
         @Bean
-        open fun multiSignalCollectorStrategy(): MultiSignalCollectorStrategy = INSTANCE
+        fun multiSignalCollectorStrategy(): MultiSignalCollectorStrategy = INSTANCE
 
         companion object {
             val INSTANCE: MultiSignalCollectorStrategy = MultiSignalCollectorStrategy(

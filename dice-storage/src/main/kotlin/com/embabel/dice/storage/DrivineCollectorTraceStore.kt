@@ -16,12 +16,7 @@
 package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
-import com.embabel.dice.spi.CollectorCandidateEdge
-import com.embabel.dice.spi.CollectorComponent
-import com.embabel.dice.spi.CollectorDecision
-import com.embabel.dice.spi.CollectorSignalScore
-import com.embabel.dice.spi.CollectorTraceStore
-import com.embabel.dice.spi.RetiredProposition
+import com.embabel.dice.spi.*
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.slf4j.LoggerFactory
@@ -52,7 +47,7 @@ import java.time.Instant
  *   foldedProvenanceRefs, foldedSourceIds})-[:RETIRED_IN]->(:CollectorDecision)` per retired
  *   proposition, so a reversal has everything a merging sweep folded onto the survivor.
  *
- * Every write is a single `UNWIND $rows AS r ...` round trip (see [CollectorTraceRowMappers] for
+ * Every write is a single `UNWIND $rows AS r ...` round trip (see [com.embabel.dice.storage.CollectorTraceRowMappers] for
  * the flattening); no APOC, no GDS. Query methods are corrupt-row-tolerant: a row that fails to
  * map is logged and skipped rather than failing the whole read.
  */
@@ -188,11 +183,11 @@ open class DrivineCollectorTraceStore(
         logger.info("Deleted {} collector trace node(s) for context {}", totalDeleted, contextId.value)
     }
 
-    // ---- Query helpers (plan Phase 3 requires these; not on the CollectorTraceStore interface) ----
+    // ---- Query helpers (not on the CollectorTraceStore interface) ----
 
     /** Rehydrates every edge recorded under [runId], each with its signals nested. */
     @Transactional(readOnly = true)
-    fun findEdgesByRun(runId: String): List<CollectorCandidateEdge> {
+    open fun findEdgesByRun(runId: String): List<CollectorCandidateEdge> {
         val edgeRows = queryRows("MATCH (e:CollectorCandidateEdge {runId: \$runId}) RETURN e", mapOf("runId" to runId))
         val signalRows = queryRows(
             """
@@ -221,7 +216,7 @@ open class DrivineCollectorTraceStore(
 
     /** Rehydrates every decision recorded under [runId], each with its retired members nested. */
     @Transactional(readOnly = true)
-    fun findDecisionsByRun(runId: String): List<CollectorDecision> {
+    open fun findDecisionsByRun(runId: String): List<CollectorDecision> {
         val decisionRows = queryRows("MATCH (d:CollectorDecision {runId: \$runId}) RETURN d", mapOf("runId" to runId))
         return decisionRows.mapNotNull { node ->
             runCatching {
@@ -233,7 +228,7 @@ open class DrivineCollectorTraceStore(
 
     /** Finds the decision that retired or preserved [propositionId], whichever side of the merge it was on. */
     @Transactional(readOnly = true)
-    fun findDecisionForProposition(propositionId: String): CollectorDecision? {
+    open fun findDecisionForProposition(propositionId: String): CollectorDecision? {
         val bySurvivor = queryRows(
             "MATCH (d:CollectorDecision {survivorId: \$propositionId}) RETURN d",
             mapOf("propositionId" to propositionId),
@@ -263,7 +258,7 @@ open class DrivineCollectorTraceStore(
         @Suppress("UNCHECKED_CAST")
         val spec = QuerySpecification.withStatement(statement).let {
             if (params.isEmpty()) it else it.bind(params)
-        } as QuerySpecification<Any>
+        }
         return persistenceManager.query(spec).filterIsInstance<Map<*, *>>()
     }
 }

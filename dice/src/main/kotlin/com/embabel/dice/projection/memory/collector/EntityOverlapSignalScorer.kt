@@ -23,8 +23,7 @@ import kotlin.jvm.JvmOverloads
 
 /**
  * Scores how much two propositions' entity mentions overlap, as Jaccard similarity of their
- * stable mention ids. Ports the `entityJaccard` slice of Me's `PropositionMatchScorer` blend
- * into its own scorer.
+ * stable mention ids.
  *
  * When either proposition has no entity mentions at all, there's nothing to compare on the
  * entity axis — that's missing evidence, not a mismatch, so this scorer abstains rather than

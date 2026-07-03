@@ -21,8 +21,8 @@ import org.drivine.schema.UniquenessConstraintSpec
 
 /**
  * The constraints and indexes [DrivineCollectorTraceStore] needs, factored out as plain data so
- * both the integration-test harness and the Phase-4 autoconfigure module can share one source of
- * truth instead of redeclaring the schema twice.
+ * the integration-test harness and the autoconfigure module can share one source of truth
+ * instead of redeclaring the schema twice.
  */
 object CollectorTraceSchema {
 

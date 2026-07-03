@@ -19,18 +19,15 @@ import com.embabel.dice.proposition.Proposition
 
 /**
  * Picks the one proposition in a component that survives a merge; everyone else in the
- * component gets folded into it. Pulled out as a seam so a caller can plug in a different
- * policy later — this task ships only the default tie-break.
+ * component gets folded into it. Pulled out as a seam so a caller can plug in a different policy.
  */
 fun interface CollectorSurvivorPolicy {
     fun choose(members: List<Proposition>): Proposition
 }
 
 /**
- * Default implementation of [CollectorSurvivorPolicy]. Uses the same tie-break dice's
- * [com.embabel.dice.projection.memory.DuplicateCollectorStrategy] and Me's dedup sweep both use:
- * highest effective confidence, then reinforcement count, then stable id comparison so a full tie
- * is still deterministic.
+ * Default [CollectorSurvivorPolicy]: highest effective confidence, then reinforcement count, then
+ * stable id, so a full tie is still deterministic.
  */
 val defaultCollectorSurvivorPolicy = CollectorSurvivorPolicy { members ->
     members.maxWith(

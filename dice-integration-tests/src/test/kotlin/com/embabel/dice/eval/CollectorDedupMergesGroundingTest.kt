@@ -32,14 +32,13 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Collapsing a duplicate cluster should carry the loser's grounding and provenance over to the
- * survivor before the loser is retired. Without that, the evidence vanishes from retrieval the
- * moment the loser goes STALE.
+ * Collapsing a duplicate cluster must carry the loser's grounding and provenance to the survivor
+ * before the loser retires — otherwise that evidence vanishes from retrieval once the loser goes
+ * STALE.
  *
- * Two propositions with identical text embed to the same vector under [FixedVectorEmbeddingService],
- * so they cluster as near-duplicates. The runner is built with
- * [CollectorRunner.Builder.withDuplicateDetection], so this also confirms the dedup wiring picks the
- * merging policy.
+ * Identical text embeds to the same vector under [FixedVectorEmbeddingService], so the pair
+ * clusters as near-duplicates; the runner uses [CollectorRunner.Builder.withDuplicateDetection] to
+ * confirm the dedup wiring picks the merging policy.
  */
 class CollectorDedupMergesGroundingTest {
 
@@ -116,10 +115,9 @@ class CollectorDedupMergesGroundingTest {
         assertEquals(loser.id, statusEvent.proposition.id)
         assertEquals(PropositionStatus.STALE, statusEvent.newStatus)
 
-        // Retrieval path: the same ACTIVE-only query retrieval actually runs against this context
-        // must surface the survivor carrying the merged evidence, and must NOT surface the
-        // retired loser — proving the merged sources are still reachable, not just present in the
-        // record.
+        // Prove the merged evidence is actually reachable via retrieval, not just present in the
+        // record: an ACTIVE-only query must surface the survivor with the merged grounding/sources
+        // and must not surface the retired loser.
         val activeInContext = store.query(PropositionQuery.forContextId(contextId).withStatus(PropositionStatus.ACTIVE))
         assertEquals(listOf(survivor.id), activeInContext.map { it.id })
         val retrievedSurvivor = activeInContext.single()

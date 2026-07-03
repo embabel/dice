@@ -123,12 +123,10 @@ open class DrivinePropositionRepository(
         val existing = existingId?.let(::findById)
         val isUpdate = existsById(proposition.id)
         // A same-text sibling only collapses a brand-new insert (parallel writers minting one fact as
-        // two ids). If the incoming id is already stored this is an in-place update — a reinforce, a
-        // status change, or a dedup sweep folding a loser's grounding onto the survivor — and it must
-        // write to its own node, never silently redirect to the sibling and drop the update. The
-        // (contextId, text) uniqueness constraint normally makes a foreign same-text sibling
-        // impossible, so this guard only bites when that constraint is absent; then existsById runs
-        // (cheap, and only on the rare collision path). Genuine inserts skip it: existingId is null.
+        // two ids). An in-place update — reinforce, status change, dedup fold — must write to its own
+        // node, never redirect to the sibling and drop the update. The (contextId, text) constraint
+        // normally makes a foreign sibling impossible, so this only bites when it's absent; genuine
+        // inserts skip it.
         return if (existing != null && !isUpdate) {
             logger.debug(
                 "Dedup: proposition already present as {} in context {} — reusing: '{}'",
@@ -136,12 +134,10 @@ open class DrivinePropositionRepository(
             )
             existing
         } else {
-            // An update must land on its own node even when a same-text sibling exists — but if that
-            // sibling is also ACTIVE, writing here mints a second live copy of the same fact (only
-            // reachable without the (contextId, text) constraint). We still write to the caller's id
-            // — an update must never silently redirect away from it — but flag the pair so the dedup
-            // sweep or an operator can collapse them; a STALE/SUPERSEDED/etc. sibling isn't a live
-            // duplicate and stays quiet.
+            // An update lands on its own node even when a same-text sibling exists. If that sibling is
+            // also ACTIVE, this mints a second live copy of the same fact (only reachable without the
+            // (contextId, text) constraint) — we still write to the caller's id, but flag the pair so
+            // the dedup sweep or an operator can collapse them. A non-ACTIVE sibling stays quiet.
             if (existing != null && existing.status == PropositionStatus.ACTIVE &&
                 proposition.status == PropositionStatus.ACTIVE
             ) {
@@ -157,11 +153,9 @@ open class DrivinePropositionRepository(
 
     /**
      * Best-effort detection of a Neo4j uniqueness-constraint violation anywhere in the cause chain.
-     * Matches on message substrings, including the driver's error code
-     * (`Neo.ClientError.Schema.ConstraintValidationFailed`) as well as its prose form, since which one
-     * shows up in `getMessage()` isn't guaranteed across driver versions. [findOrPersist] pre-checks
-     * for a same-text sibling before writing, so this heuristic is now only the cross-instance-race
-     * backstop, not the main defence against a colliding write.
+     * Matches on message substrings, since which form (error code vs. prose) shows up in
+     * `getMessage()` isn't guaranteed across driver versions. [findOrPersist] pre-checks for a
+     * same-text sibling before writing, so this is just the cross-instance-race backstop now.
      */
     private fun isUniquenessViolation(error: Throwable?): Boolean {
         var t: Throwable? = error

@@ -131,10 +131,8 @@ class DefaultCollectorRunnerTest {
         assertTrue(result.dryRun)
         verify(exactly = 0) { repository.save(any()) }
         verify(exactly = 0) { repository.delete(any<String>()) }
-        // One auditable record persisted for the marked proposition.
         assertTrue(recordStore.findByRun(result.runId).isNotEmpty())
         assertTrue(recordStore.findByProposition(decayed.id).isNotEmpty())
-        // No lifecycle event emitted on a dry run.
         assertTrue(listener.eventsOfType<PropositionStatusChanged>().isEmpty())
     }
 
@@ -155,7 +153,6 @@ class DefaultCollectorRunnerTest {
         assertEquals(1, events.size)
         assertEquals(PropositionStatus.ACTIVE, events[0].previousStatus)
         assertEquals(PropositionStatus.STALE, events[0].newStatus)
-        // Persisted run + record for the applied transition.
         assertTrue(recordStore.findByRun(result.runId).isNotEmpty())
     }
 
@@ -176,7 +173,6 @@ class DefaultCollectorRunnerTest {
 
         runCatching { runner().run(contextId, dryRun = false) }
 
-        // The first really transitioned: exactly one event, and a durable audit record for it.
         assertEquals(1, listener.eventsOfType<PropositionStatusChanged>().size)
         assertTrue(recordStore.findByProposition(first.id).isNotEmpty())
     }
@@ -244,7 +240,6 @@ class DefaultCollectorRunnerTest {
         val run = recordStore.findRun(result.runId)
         assertEquals(result.runId, run?.runId)
         assertEquals(true, run?.dryRun)
-        // A dry run reports nothing as applied or hard-deleted (marks reflect the preview).
         assertTrue(result.applied.isEmpty())
         assertTrue(result.hardDeleted.isEmpty())
     }
@@ -464,7 +459,6 @@ class DefaultCollectorRunnerTest {
         val result = mergingRunner("ghost-survivor").run(contextId, dryRun = false)
 
         assertEquals(1, result.applied.size)
-        // Only the loser is saved (STALE); there was no survivor to merge onto.
         assertEquals(listOf(loser.id), saves.map { it.id })
         assertEquals(PropositionStatus.STALE, saves.single().status)
         assertEquals(1, listener.eventsOfType<PropositionStatusChanged>().size)

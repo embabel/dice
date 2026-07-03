@@ -59,18 +59,17 @@ private data class Decision(
  *   [PropositionStatusChanged] per applied transition.
  *
  * [SweepAction.MergeInto] handling: every loser marked into the same survivor in one run is
- * folded onto that survivor with a single read and a single save (not one round-trip per loser),
- * and every status transition this method applies afterwards reads the freshest state of its
- * proposition — never the pre-run candidate snapshot — so a survivor that was just merged into
- * never has its new evidence clobbered by a later transition applied against stale data. If the
- * survivor can't be found, or is found but is no longer ACTIVE (e.g. some other mark in the same
- * run already retired it), every loser in that merge group falls back to a plain retirement
- * instead of folding evidence onto a proposition that retrieval will never surface again.
+ * folded on with a single read and save (not one round-trip per loser), and every transition
+ * applied afterwards reads the freshest state of its proposition — never the pre-run snapshot —
+ * so a survivor just merged into never gets its new evidence clobbered by a later transition
+ * reading stale data. If the survivor can't be found, or isn't ACTIVE anymore (e.g. another mark
+ * this run already retired it), every loser in that group falls back to a plain retirement
+ * instead of folding evidence onto a proposition retrieval will never surface again.
  *
- * Concurrency: holds no shared mutable state — every [run] call works with its own locals — so
- * runs for different contexts are safe in parallel. Two runs for the *same* context at once are
- * not corrupting but are wasteful: both read the same ACTIVE set and the second simply re-applies
- * or skips already-transitioned propositions. Serialize per context at the scheduling layer if that
+ * Concurrency: no shared mutable state — each [run] call works with its own locals, so runs for
+ * different contexts are safe in parallel. Two runs for the *same* context at once aren't
+ * corrupting, just wasteful (both read the same ACTIVE set; the second re-applies or skips
+ * already-transitioned propositions). Serialize per context at the scheduling layer if that
  * matters (the [DefaultDreamLoopOrchestrator] that normally drives this already locks per context).
  *
  * @param repository Proposition store to read candidates from and write transitions to.
@@ -94,9 +93,8 @@ class DefaultCollectorRunner(
         val ctx = CollectorRunContext(runId = EPHEMERAL_RUN_ID, contextId = contextId, dryRun = true)
         val (_, marks) = markPhase(ctx)
         logger.debug("collect (read-only): {} mark(s) produced for context {}", marks.size, contextId)
-        // Pure-read: no repository write, no run record. Nothing is persisted, so there is no run
-        // to cross-reference — the runId is blank to signal it is not queryable in any store. It is
-        // flagged dryRun because, like a dry run, it applied no transition.
+        // Pure-read: nothing persisted, so runId is blank (nothing to cross-reference); flagged
+        // dryRun because, like a dry run, it applied no transition.
         return CollectorRunResult(
             runId = EPHEMERAL_RUN_ID,
             dryRun = true,
@@ -125,18 +123,17 @@ class DefaultCollectorRunner(
         val records = mutableListOf<CollectorRecord>()
 
         try {
-        // Decide every marked proposition's fate up front, against the pre-run snapshot — what
-        // the strategies actually observed — in mark order. A proposition that fell out of the
-        // snapshot (e.g. deleted between marking and this point) is silently skipped, same as
-        // before.
+        // Decide every marked proposition's fate up front, against the pre-run snapshot, in mark
+        // order. A proposition that fell out of the snapshot (e.g. deleted since marking) is
+        // silently skipped.
         val decisions = marksByProposition.mapNotNull { (propositionId, propMarks) ->
             val proposition = candidatesById[propositionId] ?: return@mapNotNull null
             Decision(propositionId, propMarks, policy.decide(proposition, propMarks))
         }
 
         if (dryRun) {
-            // Preview only: for every decision, record what WOULD happen (MARKED, or SKIPPED for
-            // an explicit Skip); mutate nothing, merge nothing, delete nothing, emit nothing.
+            // Preview only: record what WOULD happen (MARKED, or SKIPPED for an explicit Skip);
+            // mutate, merge, delete, and emit nothing.
             for (decision in decisions) {
                 val proposition = candidatesById.getValue(decision.propositionId)
                 when (val action = decision.action) {
@@ -153,17 +150,15 @@ class DefaultCollectorRunner(
                 }
             }
         } else {
-            // Freshest known state for any proposition touched this run, seeded from the pre-run
-            // snapshot. A status transition applied later in this method must read from here —
-            // never from `candidatesById` — or a proposition merged into as a survivor earlier in
-            // the same run would have its just-folded grounding/provenance/sourceIds silently
-            // overwritten by the stale pre-merge snapshot.
+            // Freshest state for any proposition touched this run, seeded from the pre-run
+            // snapshot. Later transitions must read from here, not `candidatesById` — else a
+            // survivor merged into earlier this run gets its just-folded evidence overwritten by
+            // the stale snapshot.
             val freshById = candidatesById.toMutableMap()
 
             // Fold every MergeInto's losers onto their survivor first, grouped by survivor id, so
-            // a survivor merged by several losers in one run gets a single read and a single save
-            // (each persistent-backend save re-embeds the survivor's text, so this also avoids
-            // re-embedding it once per loser).
+            // a survivor merged by several losers in one run gets a single read and save (also
+            // avoids re-embedding the survivor's text once per loser on persistent backends).
             val mergesBySurvivor = decisions
                 .mapNotNull { d -> (d.action as? SweepAction.MergeInto)?.let { d to it } }
                 .groupBy({ (_, action) -> action.survivorId })
@@ -171,12 +166,10 @@ class DefaultCollectorRunner(
             for ((survivorId, group) in mergesBySurvivor) {
                 val survivor = freshById[survivorId] ?: repository.findById(survivorId)?.also { freshById[survivorId] = it }
                 if (survivor == null || survivor.status != PropositionStatus.ACTIVE) {
-                    // Nothing safe to merge onto: either the survivor vanished (filtered out of
-                    // the snapshot, or deleted since marking) or it is no longer ACTIVE (e.g.
-                    // another mark in this same run already retired it, or it was already retired
-                    // going in). Folding evidence onto a non-ACTIVE proposition would bury it
-                    // where retrieval never looks, so every loser in the group falls back to a
-                    // plain retirement instead — the same fallback a missing survivor already gets.
+                    // Nothing safe to merge onto: the survivor vanished, or it's no longer ACTIVE
+                    // (e.g. another mark this run already retired it). Folding evidence onto a
+                    // non-ACTIVE proposition would bury it where retrieval never looks, so every
+                    // loser in the group falls back to a plain retirement instead.
                     val reason = if (survivor == null) "not found" else "not ACTIVE (status=${survivor.status})"
                     for ((decision, action) in group) {
                         logger.warn(
@@ -202,9 +195,8 @@ class DefaultCollectorRunner(
                 }
             }
 
-            // Everything else, in mark order, reading the freshest state — a proposition just
-            // merged into as a survivor above must transition from ITS merged state, not the
-            // pre-run snapshot.
+            // Everything else, in mark order, reading the freshest state — a survivor merged into
+            // above must transition from its merged state, not the pre-run snapshot.
             for (decision in decisions) {
                 when (val action = decision.action) {
                     is SweepAction.MergeInto -> continue // handled above
@@ -227,17 +219,17 @@ class DefaultCollectorRunner(
             }
         }
         } catch (e: Throwable) {
-            // A mutation failed partway through. Earlier iterations have already saved/deleted and
-            // emitted their events, and their records are buffered in `records` — persist that
-            // partial trail before rethrowing so a HARD_DELETED proposition is never lost without an
-            // audit record. The failing proposition added no record (the throw preempts it).
+            // A mutation failed partway through. Earlier iterations already saved/deleted and
+            // emitted, and their records are buffered in `records` — persist that partial trail
+            // before rethrowing so a HARD_DELETED proposition is never lost without an audit
+            // record. The failing proposition itself added no record (the throw preempted it).
             logger.warn("Collector run {} aborted mid-run; persisting the {} record(s) gathered so far", runId, records.size, e)
             persistRun(runId, startedAt, Instant.now(), dryRun, records)
             throw e
         }
 
-        // Compute the finish instant once and thread it into both the persisted run header and
-        // the returned result, so the audit object and the summary agree on the finish time.
+        // Shared finish instant for both the persisted run header and the returned result, so
+        // they agree on the finish time.
         val finishedAt = Instant.now()
         persistRun(runId, startedAt, finishedAt, dryRun, records)
 

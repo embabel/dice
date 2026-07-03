@@ -43,16 +43,16 @@ data class CollectorProperties(
     /** Per-signal overrides, keyed by short signal name (see [SignalProperties]). */
     val signals: Map<String, SignalProperties> = emptyMap(),
 
-    /** The periodic delta-sweep (bound now; the runner itself is a later follow-on). */
+    /** The periodic delta-sweep. Property binding only for now — no runner behind it yet. */
     val sweep: SweepProperties = SweepProperties(),
 
     /** The collector's inspectable decision trace. */
     val trace: TraceProperties = TraceProperties(),
 ) {
     /**
-     * One signal's override. [weight] and [similarityThreshold]/[topK] are nullable so "not set"
-     * is distinguishable from "set to the scorer's own default" — a null weight means fall back
-     * to the scorer's neutral constructor default rather than forcing a specific number.
+     * One signal's override. [weight], [similarityThreshold] and [topK] are nullable so "not set"
+     * is distinguishable from "set to the scorer's own default" — a null weight falls back to the
+     * scorer's own neutral default instead of forcing a specific number.
      */
     data class SignalProperties(
         /** Whether this signal participates at all. */
@@ -69,7 +69,7 @@ data class CollectorProperties(
         val topK: Int? = null,
     )
 
-    /** The periodic delta-sweep. Binding only for now — see the collector's follow-on plan. */
+    /** The periodic delta-sweep. Just the property, no runner wired up yet. */
     data class SweepProperties(
         val delta: Boolean = false,
     )

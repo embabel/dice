@@ -25,7 +25,6 @@ import kotlin.jvm.JvmOverloads
  * Turns the cosine similarity a [VectorCandidatePairSource] already computed into a signal
  * score, without re-embedding anything.
  *
- * Ports the `vector = cosine.coerceIn(0.0, 1.0)` slice of Me's `PropositionMatchScorer` blend.
  * Only speaks when the pair actually carries a proposal score — a pair proposed by a source
  * that never runs vector similarity has nothing for this scorer to say, so it abstains.
  *

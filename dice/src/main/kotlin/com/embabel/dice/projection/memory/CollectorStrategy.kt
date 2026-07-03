@@ -55,13 +55,11 @@ fun interface CollectorStrategy {
  * clock), not just the bare context id — so it can tag whatever it writes (e.g. trace rows) with
  * the run that produced them.
  *
- * Extending [CollectorStrategy] rather than replacing it means a runner that only knows about
- * plain `CollectorStrategy`s still works: the bridge below implements the legacy SAM method by
- * building an ephemeral, blank-runId context. That path is for callers who drive the strategy
- * without ever building a real run (e.g. calling it directly, or through code that hasn't been
- * updated to pass a run context yet) — anything it writes under a blank runId isn't queryable
- * anywhere, so implementations should treat a blank runId as "don't persist a trace, just compute
- * the marks."
+ * Extends rather than replaces [CollectorStrategy] so a runner that only knows the plain SAM
+ * still works: the bridge below satisfies it by building an ephemeral, blank-runId context. That
+ * path is for callers driving the strategy without a real run behind it — anything written under
+ * a blank runId isn't queryable anywhere, so implementations should treat a blank runId as "don't
+ * persist a trace, just compute the marks."
  */
 interface RunAwareCollectorStrategy : CollectorStrategy {
 

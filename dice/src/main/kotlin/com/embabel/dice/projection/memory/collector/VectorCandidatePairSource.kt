@@ -51,9 +51,7 @@ class VectorCandidatePairSource(
             query = PropositionQuery.forContextId(contextId).withStatus(PropositionStatus.ACTIVE),
         )
 
-        // Canonicalize (smaller id as anchor) and dedupe: findClusters already anchors on the
-        // smaller id and never emits symmetric duplicates, but we don't want to depend on that
-        // guarantee here, so we re-derive and dedupe defensively.
+        // Re-derive and dedupe defensively rather than trust findClusters' own canonicalization.
         val seen = mutableSetOf<Pair<String, String>>()
         val pairs = mutableListOf<CandidatePair>()
         for (cluster in clusters) {

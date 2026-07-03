@@ -22,10 +22,9 @@ import com.embabel.dice.spi.CollectorSignalScorer
 import kotlin.jvm.JvmOverloads
 
 /**
- * Net-new signal (no Me equivalent): scores how much two propositions' rich provenance overlaps,
- * as Jaccard similarity of their [com.embabel.dice.provenance.SourceLocator]s. Locators compare
- * by structural equality, so this catches "same source material" even when grounding chunk ids
- * differ or are absent.
+ * Scores how much two propositions' rich provenance overlaps, as Jaccard similarity of their
+ * [com.embabel.dice.provenance.SourceLocator]s. Locators compare by structural equality, so this
+ * catches "same source material" even when grounding chunk ids differ or are absent.
  *
  * Abstains when either side has no provenance entries at all — there's no evidence to compare.
  * Weighted conservatively (0.5), same reasoning as grounding overlap: corroborating, not

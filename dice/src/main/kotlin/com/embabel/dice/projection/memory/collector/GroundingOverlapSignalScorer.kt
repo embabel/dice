@@ -22,9 +22,8 @@ import com.embabel.dice.spi.CollectorSignalScorer
 import kotlin.jvm.JvmOverloads
 
 /**
- * Net-new signal (no Me equivalent): scores how much two propositions' grounding chunk ids
- * overlap, as Jaccard similarity. Two propositions extracted from the same source chunks are
- * more likely restating the same fact.
+ * Scores how much two propositions' grounding chunk ids overlap, as Jaccard similarity. Two
+ * propositions extracted from the same source chunks are more likely restating the same fact.
  *
  * Abstains when either side has no grounding at all — there's no evidence to compare, so this
  * stays out of the blend rather than counting as a mismatch. Weighted conservatively (0.5):

@@ -46,24 +46,22 @@ import org.springframework.context.annotation.Bean
 import org.springframework.core.annotation.Order
 
 /**
- * Auto-configures the multi-signal duplicate collector: the candidate-pair sources, signal
- * scorers, and everything else [MultiSignalCollectorStrategy] needs, all driven from
- * [CollectorProperties].
+ * Auto-configures the multi-signal duplicate collector: pair sources, signal scorers, and
+ * everything else [MultiSignalCollectorStrategy] needs, driven from [CollectorProperties].
  *
- * `embabel.dice.collector.enabled=false` switches the whole thing off — no beans, no strategy.
- * Every collaborator is `@ConditionalOnMissingBean`, so an application's own bean always wins;
- * every built-in scorer is individually `@ConditionalOnProperty` under
- * `embabel.dice.collector.signals.<name>.enabled`, so ops can drop one signal from the blend
- * without touching code. `@Order` on the scorer beans fixes the injected `List<CollectorSignalScorer>`
- * order, which is also the order signals show up in the trace.
+ * `embabel.dice.collector.enabled=false` is the master switch — off means no beans, no strategy.
+ * Every collaborator is `@ConditionalOnMissingBean` so an app's own bean wins, and each built-in
+ * scorer has its own `@ConditionalOnProperty` under `embabel.dice.collector.signals.<name>.enabled`
+ * so ops can drop a signal without touching code. `@Order` on the scorer beans fixes the injected
+ * `List<CollectorSignalScorer>` order, which is also the order signals appear in the trace.
  *
- * The graph trace store is declared before the in-memory one so the flip resolves by
+ * The graph trace store bean is declared before the in-memory one so the fallback resolves by
  * registration order, matching [DiceStorageAutoConfiguration]'s pattern for the proposition store.
  */
 @AutoConfiguration(after = [DiceStorageAutoConfiguration::class])
 @EnableConfigurationProperties(CollectorProperties::class)
 @ConditionalOnProperty(prefix = "embabel.dice.collector", name = ["enabled"], havingValue = "true", matchIfMissing = true)
-open class CollectorAutoConfiguration(
+class CollectorAutoConfiguration(
     private val props: CollectorProperties,
 ) {
 
@@ -73,11 +71,11 @@ open class CollectorAutoConfiguration(
 
     @Bean
     @ConditionalOnMissingBean(ConnectedComponentsFinder::class)
-    open fun connectedComponentsFinder(): ConnectedComponentsFinder = InMemoryConnectedComponentsFinder()
+    fun connectedComponentsFinder(): ConnectedComponentsFinder = InMemoryConnectedComponentsFinder()
 
     @Bean
     @ConditionalOnMissingBean(CollectorSurvivorPolicy::class)
-    open fun collectorSurvivorPolicy(): CollectorSurvivorPolicy = defaultCollectorSurvivorPolicy
+    fun collectorSurvivorPolicy(): CollectorSurvivorPolicy = defaultCollectorSurvivorPolicy
 
     // ---- Trace store: graph backend (embabel.dice.store.type=graph) before in-memory default ----
 
@@ -85,21 +83,21 @@ open class CollectorAutoConfiguration(
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
     @ConditionalOnProperty(prefix = "embabel.dice.collector.trace", name = ["enabled"], matchIfMissing = true)
     @ConditionalOnMissingBean(CollectorTraceStore::class)
-    open fun drivineCollectorTraceStore(persistenceManager: PersistenceManager): CollectorTraceStore {
+    fun drivineCollectorTraceStore(persistenceManager: PersistenceManager): CollectorTraceStore {
         logger.info("Wiring graph collector trace store (Drivine/Neo4j)")
         return DrivineCollectorTraceStore(persistenceManager)
     }
 
     @Bean
     @ConditionalOnMissingBean(CollectorTraceStore::class)
-    open fun inMemoryCollectorTraceStore(): CollectorTraceStore {
+    fun inMemoryCollectorTraceStore(): CollectorTraceStore {
         logger.info("Wiring in-memory collector trace store")
         return InMemoryCollectorTraceStore()
     }
 
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
-    open fun collectorTraceSchema(): SchemaCatalog = SchemaCatalog.of(*CollectorTraceSchema.specs().toTypedArray())
+    fun collectorTraceSchema(): SchemaCatalog = SchemaCatalog.of(*CollectorTraceSchema.specs().toTypedArray())
 
     // ---- Built-in pair source ----
 
@@ -111,7 +109,7 @@ open class CollectorAutoConfiguration(
         matchIfMissing = true,
     )
     @Order(1)
-    open fun vectorCandidatePairSource(repository: PropositionRepository): CandidatePairSource {
+    fun vectorCandidatePairSource(repository: PropositionRepository): CandidatePairSource {
         val vectorProps = props.signals["vector"]
         return VectorCandidatePairSource(
             repository = repository,
@@ -125,13 +123,13 @@ open class CollectorAutoConfiguration(
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.collector.signals.vector", name = ["enabled"], matchIfMissing = true)
     @Order(1)
-    open fun vectorSignalScorer(): CollectorSignalScorer =
+    fun vectorSignalScorer(): CollectorSignalScorer =
         VectorSignalScorer(weight = props.signals["vector"]?.weight ?: 1.0)
 
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.collector.signals.lexical", name = ["enabled"], matchIfMissing = true)
     @Order(2)
-    open fun lexicalSignalScorer(): CollectorSignalScorer =
+    fun lexicalSignalScorer(): CollectorSignalScorer =
         LexicalSignalScorer(weight = props.signals["lexical"]?.weight ?: 0.5)
 
     @Bean
@@ -141,7 +139,7 @@ open class CollectorAutoConfiguration(
         matchIfMissing = true,
     )
     @Order(3)
-    open fun entityOverlapSignalScorer(): CollectorSignalScorer =
+    fun entityOverlapSignalScorer(): CollectorSignalScorer =
         EntityOverlapSignalScorer(weight = props.signals["entity-overlap"]?.weight ?: 1.0)
 
     @Bean
@@ -151,7 +149,7 @@ open class CollectorAutoConfiguration(
         matchIfMissing = true,
     )
     @Order(4)
-    open fun groundingOverlapSignalScorer(): CollectorSignalScorer =
+    fun groundingOverlapSignalScorer(): CollectorSignalScorer =
         GroundingOverlapSignalScorer(weight = props.signals["grounding-overlap"]?.weight ?: 0.5)
 
     @Bean
@@ -161,7 +159,7 @@ open class CollectorAutoConfiguration(
         matchIfMissing = true,
     )
     @Order(5)
-    open fun provenanceOverlapSignalScorer(): CollectorSignalScorer =
+    fun provenanceOverlapSignalScorer(): CollectorSignalScorer =
         ProvenanceOverlapSignalScorer(weight = props.signals["provenance-overlap"]?.weight ?: 0.5)
 
     @Bean
@@ -171,13 +169,13 @@ open class CollectorAutoConfiguration(
         matchIfMissing = true,
     )
     @Order(6)
-    open fun polarityVetoSignalScorer(): CollectorSignalScorer = PolarityVetoSignalScorer()
+    fun polarityVetoSignalScorer(): CollectorSignalScorer = PolarityVetoSignalScorer()
 
     // ---- The strategy itself ----
 
     @Bean
     @ConditionalOnMissingBean(MultiSignalCollectorStrategy::class)
-    open fun multiSignalCollectorStrategy(
+    fun multiSignalCollectorStrategy(
         pairSources: List<CandidatePairSource>,
         scorers: List<CollectorSignalScorer>,
         componentsFinder: ConnectedComponentsFinder,

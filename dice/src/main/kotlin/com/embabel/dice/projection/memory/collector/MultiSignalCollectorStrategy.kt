@@ -36,8 +36,7 @@ import org.slf4j.LoggerFactory
  * Composes any number of candidate-pair sources and signal scorers into one duplicate-collapse
  * strategy, replacing the single-cosine cut in
  * [com.embabel.dice.projection.memory.DuplicateCollectorStrategy] with a pluggable multi-signal
- * blend — the same generalization Me's `MultiSignalCollectorStrategy` already proved out, now
- * ported into dice so any consumer can wire it up without depending on Me.
+ * blend.
  *
  * A run has four stages:
  * 1. every [CandidatePairSource] proposes pairs; they're canonicalized (smaller id as anchor)

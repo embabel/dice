@@ -45,15 +45,9 @@ enum class PropositionStatus {
     /**
      * Effective confidence has decayed below the staleness threshold.
      *
-     * STALE propositions are excluded from standard retrieval but are preserved
-     * for inspection and potential revival; staleness does NOT imply contradicting
-     * evidence (use [CONTRADICTED] for that). Re-reinforcement can lift a STALE
-     * proposition back to [ACTIVE].
-     *
-     * Migration note: this constant is newly introduced. Any future exhaustive
-     * `when (status)` over [PropositionStatus] must add a `STALE` branch. The
-     * library currently has no exhaustive `when` over this enum, so the addition
-     * is source-compatible today.
+     * Excluded from standard retrieval but preserved for inspection and potential revival.
+     * Staleness does NOT imply contradicting evidence (use [CONTRADICTED] for that), and
+     * re-reinforcement can lift a STALE proposition back to [ACTIVE].
      */
     @ApiStatus.Experimental
     STALE
@@ -143,12 +137,11 @@ data class Proposition(
     val revised: Instant get() = contentRevised
 
     /**
-     * The most recent update of any kind — the later of [contentRevised] and
-     * [metadataRevised]. Use this for "last touched / recently updated" recency
-     * queries and ordering, where an administrative touch (status change, pin,
-     * re-grounding) must still count as activity. Distinct from [contentRevised],
-     * which is the decay anchor and deliberately ignores administrative touches.
-     * Body-level getter: excluded from `copy()`/`equals`/`hashCode`.
+     * The most recent update of any kind — the later of [contentRevised] and [metadataRevised].
+     * Use for "last touched / recently updated" ordering, where an administrative touch (status
+     * change, pin, re-grounding) should still count as activity. Distinct from [contentRevised],
+     * the decay anchor, which deliberately ignores administrative touches. Body-level getter:
+     * excluded from `copy()`/`equals`/`hashCode`.
      */
     val lastTouched: Instant get() = maxOf(contentRevised, metadataRevised)
 
@@ -295,16 +288,14 @@ data class Proposition(
         copy(provenanceEntries = entries.distinct(), metadataRevised = Instant.now())
 
     /**
-     * Fold another proposition's evidence onto this one: its grounding (chunk ids), its rich
-     * provenance entries, and its source ids — all appended and deduplicated so nothing is lost
-     * and nothing is double-counted. Also bumps [reinforceCount] by one, treating the absorbed
-     * proposition as a single fresh confirmation (not `+ other.reinforceCount`, which would
-     * double-count whatever that proposition had already been reinforced by).
+     * Fold another proposition's evidence onto this one: grounding, provenance entries, and
+     * source ids, all appended and deduplicated. Bumps [reinforceCount] by one — treating the
+     * absorbed proposition as a single fresh confirmation, not `+ other.reinforceCount` (which
+     * would double-count whatever it had already been reinforced by).
      *
      * Idempotent: if [other]'s grounding, provenance, and source ids are already all present
      * here, this is a repeat of an already-applied absorption (e.g. a rerun after the other side
-     * of a two-step merge failed to save) — the [reinforceCount] bump is skipped so retrying
-     * can't double-count the same evidence.
+     * of a two-step merge failed to save), so the [reinforceCount] bump is skipped.
      *
      * @param other the proposition whose evidence is being folded into this one
      * @return a copy of this proposition carrying the union of both propositions' evidence

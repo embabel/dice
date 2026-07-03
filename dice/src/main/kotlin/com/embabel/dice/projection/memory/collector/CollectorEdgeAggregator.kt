@@ -21,11 +21,7 @@ import com.embabel.dice.spi.CollectorSignalScore
 
 /**
  * Blends every signal's verdict on one candidate pair into a single scored edge. Pure and
- * stateless — no repository, no IO — so Task 3's scorers plug into the exact same aggregation
- * this task ships, unchanged.
- *
- * Mirrors the shape of Me's `PropositionMatchScorer` blend, generalized from three hardcoded
- * signals to any number of pluggable ones.
+ * stateless — no repository, no IO.
  */
 internal object CollectorEdgeAggregator {
 

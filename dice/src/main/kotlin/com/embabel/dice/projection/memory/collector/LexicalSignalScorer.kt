@@ -24,8 +24,7 @@ import org.apache.commons.text.similarity.JaroWinklerSimilarity
 
 /**
  * Scores how similar two propositions' surface text is, using Commons Text's Jaro-Winkler
- * similarity. Ports the `lexical` slice of Me's `PropositionMatchScorer` blend into its own
- * scorer.
+ * similarity.
  *
  * Every proposition has text, so this scorer never abstains.
  *

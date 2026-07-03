@@ -18,8 +18,7 @@ package com.embabel.dice.projection.memory.collector
 import com.embabel.dice.proposition.Proposition
 
 /**
- * Small shared bits the signal scorers in this package all need. Kept to exactly what's reused
- * more than once — nothing here is a general-purpose utility belt.
+ * Small shared helpers for the signal scorers in this package.
  */
 
 /**

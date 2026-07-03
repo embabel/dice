@@ -88,8 +88,8 @@ class DrivinePropositionStoreIntegrationTest {
         confidence: Double = 0.9,
         decay: Double = 0.0,
         contentRevised: Instant = Instant.now(),
-        // Defaults to contentRevised so "revised" queries (which key on lastTouched = the later of the
-        // two clocks) see the intended time instead of an always-now metadata clock.
+        // Defaults to contentRevised so "revised" queries (keyed on lastTouched, the later of the two
+        // clocks) see the intended time instead of an always-now metadata clock.
         metadataRevised: Instant = contentRevised,
         status: PropositionStatus = PropositionStatus.ACTIVE,
         entityId: String? = null,
@@ -209,10 +209,10 @@ class DrivinePropositionStoreIntegrationTest {
 
     @Test
     fun `findClusters reports raw cosine, not Neo4j's normalized score`() {
-        // score must be raw cosine (what the in-memory store returns), but a COSINE index reports
-        // (1 + cosine) / 2 — if that leaks through, a cosine-0.5 pair reads as 0.75 and the dedup
-        // scorer over-merges distinct facts. Cosine 0.8 also keeps the pair each other's nearest
-        // neighbour, so the index's global top-k can't truncate the edge.
+        // Score must be raw cosine (what the in-memory store returns), but a COSINE index reports
+        // (1 + cosine) / 2 — if that leaked through, a cosine-0.5 pair would read as 0.75 and the
+        // dedup scorer would over-merge distinct facts. Cosine 0.8 also keeps the pair each other's
+        // nearest neighbour, so the index's global top-k can't truncate the edge.
         val v1 = FloatArray(embeddingService.dimensions).also { it[0] = 1f }
         val v2 = FloatArray(embeddingService.dimensions).also { it[0] = 0.8f; it[1] = 0.6f }
         seedRawNodeWithEmbedding(prop("alpha fact", context = "ctx-cos"), v1.toList())
@@ -236,10 +236,9 @@ class DrivinePropositionStoreIntegrationTest {
 
     @Test
     fun `findSimilarWithScores reports and gates on raw cosine, same scale as findClusters`() {
-        // findSimilarWithScores can't seed its own query vector (it always re-embeds the query text),
-        // so build the sibling's embedding as a controlled rotation of the anchor's *actual* stored
-        // embedding: cosine 0.8 to the anchor by construction, in whatever coordinate system the fake
-        // embedder happens to use.
+        // findSimilarWithScores always re-embeds the query text, so we can't seed the query vector.
+        // Build the sibling as a rotation of the anchor's stored embedding: cosine 0.8 by
+        // construction, whatever the embedder's coordinate system.
         val anchor = repository.save(prop("anchor fact", context = "ctx-sim-cos"))
         val anchorVector = embeddingService.embed(anchor.text).toList()
         val sibling = prop("sibling fact", context = "ctx-sim-cos")
@@ -256,9 +255,8 @@ class DrivinePropositionStoreIntegrationTest {
             "score must be raw cosine (0.8); Neo4j's normalized (1 + cos) / 2 = 0.9 must not leak through",
         )
 
-        // A threshold just above the true cosine excludes the pair even though the engine's own
-        // normalized score for it (0.9) would still clear that value if the threshold leaked through
-        // unconverted.
+        // A threshold just above the true cosine excludes the pair, even though the engine's own
+        // normalized score (0.9) would still clear it if the threshold leaked through unconverted.
         val excluded = repository.findSimilarWithScores(request(0.85))
         assertTrue(
             excluded.none { it.match.id == sibling.id },
@@ -345,7 +343,7 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals(listOf("high", "low"), ordered.map { it.text })
     }
 
-    /** #1: re-saving a proposition loaded via a lean path (no provenance projected) must not wipe its provenance. */
+    /** Re-saving a proposition loaded via a lean path (no provenance projected) must not wipe its provenance. */
     @Test
     fun `re-saving a proposition loaded without provenance preserves its provenance`() {
         val saved = repository.save(
@@ -369,7 +367,7 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals("ck1", reloaded.provenanceEntries.single().chunkId)
     }
 
-    /** #1b: the append-only save default — saving a lean-loaded copy with a NEW entry must add, not replace. */
+    /** The append-only save default — saving a lean-loaded copy with a new entry must add, not replace. */
     @Test
     fun `saving a lean-loaded proposition with a new provenance entry appends rather than replaces`() {
         val saved = repository.save(
@@ -432,7 +430,7 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals(1L, sourceCount, "the replaced source should be orphan-deleted")
     }
 
-    /** #2: the query-filtered vector search must honour the query's date/time predicates, not just status/level/entity. */
+    /** The query-filtered vector search must honour the query's date/time predicates, not just status/level/entity. */
     @Test
     fun `vector search with query honours revised-time filters`() {
         val old = repository.save(prop("alpha topic", contentRevised = Instant.now().minus(Duration.ofDays(30))))
@@ -448,7 +446,7 @@ class DrivinePropositionStoreIntegrationTest {
         assertTrue(old.id !in ids, "a proposition revised before the cutoff must be filtered out")
     }
 
-    /** #3: findClusters must query the configured vector index, not a hard-coded name. */
+    /** findClusters must query the configured vector index, not a hard-coded name. */
     @Test
     fun `findClusters uses the configured vector index name`() {
         repository.save(prop("shared fact", context = "ctx-a"))
@@ -467,7 +465,7 @@ class DrivinePropositionStoreIntegrationTest {
         assertTrue(messages.contains(bogusName), "findClusters should query the configured index; error chain was: $messages")
     }
 
-    /** #4: a null (never-materialised) effectiveConfidence must sort last under EFFECTIVE_CONFIDENCE_DESC, not first. */
+    /** A null (never-materialised) effectiveConfidence must sort last under EFFECTIVE_CONFIDENCE_DESC, not first. */
     @Test
     fun `effective-confidence ordering ranks null effectiveConfidence last`() {
         val materialised = repository.save(prop("materialised fact", confidence = 0.5))
@@ -489,7 +487,7 @@ class DrivinePropositionStoreIntegrationTest {
         )
     }
 
-    /** #5: `allEntityIds` is conjunctive — a proposition must mention *every* listed entity to match. */
+    /** `allEntityIds` is conjunctive — a proposition must mention *every* listed entity to match. */
     @Test
     fun `query allEntityIds matches only propositions mentioning every id`() {
         repository.save(propWithEntities("ab fact", listOf("a", "b")))
@@ -505,8 +503,8 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     /**
-     * #6: with a non-default `decayK`/`asOf` the materialised column no longer applies, so the repo must
-     * compute effective confidence live over the filtered set — matching the in-memory formula exactly.
+     * With a non-default `decayK`/`asOf` the materialised column no longer applies, so the repo must
+     * compute effective confidence live over the filtered set, matching the in-memory formula exactly.
      */
     @Test
     fun `query with non-default decay computes effective confidence live, matching in-memory`() {
@@ -525,7 +523,7 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals(expected, graphOrder, "graph live-decay order must equal the in-memory effectiveConfidenceAt order")
     }
 
-    /** #7: provenance is lean by default and only loaded when `withProvenance = true` (or via [findById]). */
+    /** Provenance is lean by default and only loaded when `withProvenance = true` (or via [findById]). */
     @Test
     fun `withProvenance loads entries only when requested`() {
         val saved = repository.save(
@@ -539,7 +537,7 @@ class DrivinePropositionStoreIntegrationTest {
         assertTrue(repository.findAll(withProvenance = false).single { it.id == saved.id }.provenanceEntries.isEmpty())
     }
 
-    /** #8: bulk clear is cascade-aware — no orphaned `:Mention` or `:Source` nodes are left behind. */
+    /** Bulk clear is cascade-aware — no orphaned `:Mention` or `:Source` nodes are left behind. */
     @Test
     fun `clearAll removes propositions, mentions, and orphaned sources`() {
         repository.save(
@@ -554,7 +552,7 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals(0L, nodeCount("Source"), "sources left with no DERIVED_FROM edge must be pruned")
     }
 
-    /** #9: `findByGrounding` selects propositions whose `grounding` list contains the chunk (one query, via `hasItem`). */
+    /** `findByGrounding` selects propositions whose `grounding` list contains the chunk (one query, via `hasItem`). */
     @Test
     fun `findByGrounding returns propositions grounded in the chunk`() {
         val grounded = repository.save(prop("grounded fact", grounding = listOf("chunk-1", "chunk-2")))
@@ -566,9 +564,8 @@ class DrivinePropositionStoreIntegrationTest {
 
     /**
      * A node written before a field existed comes back with that property present-null, which used to
-     * fail the load (`MissingKotlinParameterException`). The `@Default` annotations must let such a node
-     * load, falling back to the declared defaults. Here we strip the PR#47 revision columns to mimic a
-     * pre-#47 node.
+     * fail the load (`MissingKotlinParameterException`). The `@Default` annotations must let it load,
+     * falling back to the declared defaults instead.
      */
     @Test
     fun `loads a legacy node missing the PR#47 revision columns, defaulting them to created`() {
@@ -621,10 +618,10 @@ class DrivinePropositionStoreIntegrationTest {
 
     /**
      * A vector with exact cosine [cosTheta] to [vector], built by rotating [vector] toward an
-     * arbitrary orthogonal direction (Gram-Schmidt against a second, unrelated embedding named by
-     * [seedText]). Lets a test pin the true cosine between the query embedding (which
-     * `findSimilarWithScores` always derives from query text, so can't be seeded directly) and a
-     * stored sibling, without caring what coordinate system the embedder actually uses.
+     * arbitrary orthogonal direction (Gram-Schmidt against the unrelated embedding of [seedText]).
+     * Lets a test pin the true cosine to a stored sibling even though `findSimilarWithScores` always
+     * derives the query vector from query text and can't be seeded directly — whatever coordinate
+     * system the embedder uses.
      */
     private fun rotate(vector: List<Float>, cosTheta: Double, seedText: String): List<Float> {
         fun dot(a: List<Float>, b: List<Float>) = a.indices.sumOf { (a[it] * b[it]).toDouble() }
@@ -656,7 +653,7 @@ class DrivinePropositionStoreIntegrationTest {
             body()
         } finally {
             // Duplicate rows seeded while the constraint was off would block recreating it, so clear
-            // the Proposition nodes first (as @AfterEach would anyway), then restore the constraint.
+            // Proposition nodes first, then restore the constraint.
             persistenceManager.execute(QuerySpecification.withStatement("MATCH (p:Proposition) DETACH DELETE p"))
             persistenceManager.execute(
                 QuerySpecification.withStatement(
@@ -668,10 +665,9 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     /**
-     * An in-place `save` of an already-stored proposition must update its own node, not redirect the
-     * write to a same-text sibling and drop the update. The `(contextId, text)` uniqueness constraint
-     * normally makes a foreign same-text sibling impossible, but the schema is adopter-supplied, so
-     * this checks `save` stays correct without it. Dedup on a genuine insert is unchanged.
+     * An in-place `save` of an already-stored proposition must update its own node, not redirect to a
+     * same-text sibling and drop the update. The `(contextId, text)` constraint normally rules that
+     * sibling out, but the schema is adopter-supplied, so this checks `save` stays correct without it.
      */
     @Test
     fun `save of an existing id updates its own node even when a same-text sibling exists`() {
@@ -704,9 +700,8 @@ class DrivinePropositionStoreIntegrationTest {
 
     /**
      * An ACTIVE same-text sibling is a live duplicate, not history like the STALE twin above. Save
-     * still must not silently redirect the update away from its own id — but it also must not mint a
-     * second live copy of the fact behind the caller's back. It writes to its own id (logging a WARN
-     * naming both ids) and leaves the pair for the dedup sweep to collapse.
+     * still must not redirect the update to it, but also must not silently merge the two — it writes
+     * to its own id (logging a WARN naming both ids) and leaves the pair for the dedup sweep.
      */
     @Test
     fun `update of an existing id does not silently merge into an ACTIVE same-text sibling`() {

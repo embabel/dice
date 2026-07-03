@@ -21,13 +21,13 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * A thread-safe, in-process [CollectorTraceStore] that keeps everything in concurrent maps keyed
- * by run id. Good for tests and for single-node setups that don't need the trace to survive a
+ * by run id. Good for tests and single-node setups that don't need the trace to survive a
  * restart; a graph-backed store can implement the same interface for durability.
  *
  * The record calls don't carry a context id, but [deleteTracesForContext] needs one to know what
- * to erase. [recordRunContext] closes that gap: callers tell it once which context a run belongs
- * to, and deletion looks up every run for that context and clears its rows. A run that's never
- * registered with [recordRunContext] just won't be reachable from [deleteTracesForContext].
+ * to erase. [recordRunContext] closes that gap — callers tell it once which context a run belongs
+ * to, and deletion looks up every run for that context and clears its rows. A run never
+ * registered with [recordRunContext] is unreachable from [deleteTracesForContext].
  */
 class InMemoryCollectorTraceStore : CollectorTraceStore {
 

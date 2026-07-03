@@ -35,11 +35,11 @@ import org.mockito.kotlin.whenever
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Closes Task 2's deferred concern: wires [MultiSignalCollectorStrategy] with all six built-in
- * signals (vector, lexical, entity-overlap, grounding-overlap, provenance-overlap,
- * polarity-veto) and the vector pair source, then exercises the two behaviours that only show
- * up once every signal is in the blend together — agreement across signals driving a merge, and
- * the zero-weight veto signal excluding a merge without dragging down the persisted score.
+ * Wires [MultiSignalCollectorStrategy] with all six built-in signals (vector, lexical,
+ * entity-overlap, grounding-overlap, provenance-overlap, polarity-veto) and the vector pair
+ * source, then exercises behaviours that only show up once every signal is in the blend
+ * together — agreement across signals driving a merge, and the zero-weight veto signal
+ * excluding a merge without dragging down the persisted score.
  */
 class MultiSignalIntegrationTest {
 
