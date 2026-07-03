@@ -22,6 +22,7 @@ import com.embabel.dice.projection.lineage.CollectorOutcome
 import com.embabel.dice.projection.lineage.CollectorRecord
 import com.embabel.dice.projection.lineage.CollectorRecordStore
 import com.embabel.dice.projection.lineage.CollectorRun
+import com.embabel.dice.projection.memory.collector.CollectorRunContext
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
@@ -90,7 +91,8 @@ class DefaultCollectorRunner(
 
     override fun collect(contextId: ContextId): CollectorRunResult {
         val startedAt = Instant.now()
-        val (_, marks) = markPhase(contextId)
+        val ctx = CollectorRunContext(runId = EPHEMERAL_RUN_ID, contextId = contextId, dryRun = true)
+        val (_, marks) = markPhase(ctx)
         logger.debug("collect (read-only): {} mark(s) produced for context {}", marks.size, contextId)
         // Pure-read: no repository write, no run record. Nothing is persisted, so there is no run
         // to cross-reference — the runId is blank to signal it is not queryable in any store. It is
@@ -109,7 +111,8 @@ class DefaultCollectorRunner(
     override fun run(contextId: ContextId, dryRun: Boolean): CollectorRunResult {
         val startedAt = Instant.now()
         val runId = newRunId()
-        val (candidatesById, marks) = markPhase(contextId)
+        val ctx = CollectorRunContext(runId = runId, contextId = contextId, dryRun = dryRun)
+        val (candidatesById, marks) = markPhase(ctx)
         logger.info(
             "Collector run {} started for context {} (dryRun={}, candidates={}, marks={})",
             runId, contextId, dryRun, candidatesById.size, marks.size,
@@ -256,15 +259,20 @@ class DefaultCollectorRunner(
     }
 
     /**
-     * Fetches ACTIVE candidates once and runs every strategy over them.
+     * Fetches ACTIVE candidates once and runs every strategy over them. A [RunAwareCollectorStrategy]
+     * gets the full [ctx] (so it can tag whatever it writes with this run's id); any other
+     * [CollectorStrategy] still gets the bare context id it has always taken.
      * @return the candidates indexed by id, paired with all marks the strategies produced.
      */
-    private fun markPhase(contextId: ContextId): Pair<Map<String, Proposition>, List<PropositionMark>> {
+    private fun markPhase(ctx: CollectorRunContext): Pair<Map<String, Proposition>, List<PropositionMark>> {
         val candidates = repository.query(
-            PropositionQuery.forContextId(contextId).withStatus(PropositionStatus.ACTIVE),
+            PropositionQuery.forContextId(ctx.contextId).withStatus(PropositionStatus.ACTIVE),
         )
         val candidatesById = candidates.associateBy { it.id }
-        val marks = strategies.flatMap { it.mark(candidates, repository, contextId) }
+        val marks = strategies.flatMap { strategy ->
+            if (strategy is RunAwareCollectorStrategy) strategy.mark(candidates, repository, ctx)
+            else strategy.mark(candidates, repository, ctx.contextId)
+        }
         return candidatesById to marks
     }
 

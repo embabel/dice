@@ -16,6 +16,7 @@
 package com.embabel.dice.projection.memory
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.projection.memory.collector.CollectorRunContext
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.spi.PropositionMark
@@ -47,4 +48,36 @@ fun interface CollectorStrategy {
         repository: PropositionRepository,
         contextId: ContextId,
     ): List<PropositionMark>
+}
+
+/**
+ * A [CollectorStrategy] that also wants the full [CollectorRunContext] (run id, dry-run flag,
+ * clock), not just the bare context id — so it can tag whatever it writes (e.g. trace rows) with
+ * the run that produced them.
+ *
+ * Extending [CollectorStrategy] rather than replacing it means a runner that only knows about
+ * plain `CollectorStrategy`s still works: the bridge below implements the legacy SAM method by
+ * building an ephemeral, blank-runId context. That path is for callers who drive the strategy
+ * without ever building a real run (e.g. calling it directly, or through code that hasn't been
+ * updated to pass a run context yet) — anything it writes under a blank runId isn't queryable
+ * anywhere, so implementations should treat a blank runId as "don't persist a trace, just compute
+ * the marks."
+ */
+interface RunAwareCollectorStrategy : CollectorStrategy {
+
+    /**
+     * Same contract as [CollectorStrategy.mark], but with the full run context available.
+     */
+    fun mark(
+        candidates: List<Proposition>,
+        repository: PropositionRepository,
+        ctx: CollectorRunContext,
+    ): List<PropositionMark>
+
+    /** Legacy SAM bridge: driven without a run context => ephemeral (blank) runId, no trace persistence. */
+    override fun mark(
+        candidates: List<Proposition>,
+        repository: PropositionRepository,
+        contextId: ContextId,
+    ): List<PropositionMark> = mark(candidates, repository, CollectorRunContext(runId = "", contextId = contextId))
 }
