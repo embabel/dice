@@ -235,6 +235,51 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     @Test
+    fun `findSimilarWithScores reports and gates on raw cosine, same scale as findClusters`() {
+        // findSimilarWithScores can't seed its own query vector (it always re-embeds the query text),
+        // so build the sibling's embedding as a controlled rotation of the anchor's *actual* stored
+        // embedding: cosine 0.8 to the anchor by construction, in whatever coordinate system the fake
+        // embedder happens to use.
+        val anchor = repository.save(prop("anchor fact", context = "ctx-sim-cos"))
+        val anchorVector = embeddingService.embed(anchor.text).toList()
+        val sibling = prop("sibling fact", context = "ctx-sim-cos")
+        seedRawNodeWithEmbedding(sibling, rotate(anchorVector, cosTheta = 0.8, seedText = "orthogonal helper text"))
+
+        val request = { threshold: Double ->
+            TextSimilaritySearchRequest(query = anchor.text, topK = 10, similarityThreshold = threshold)
+        }
+
+        val hit = repository.findSimilarWithScores(request(0.0)).firstOrNull { it.match.id == sibling.id }
+        assertNotNull(hit, "expected the constructed sibling to be found")
+        assertEquals(
+            0.8, hit!!.score, 0.02,
+            "score must be raw cosine (0.8); Neo4j's normalized (1 + cos) / 2 = 0.9 must not leak through",
+        )
+
+        // A threshold just above the true cosine excludes the pair even though the engine's own
+        // normalized score for it (0.9) would still clear that value if the threshold leaked through
+        // unconverted.
+        val excluded = repository.findSimilarWithScores(request(0.85))
+        assertTrue(
+            excluded.none { it.match.id == sibling.id },
+            "threshold must gate on raw cosine, not the engine's normalized score",
+        )
+        val included = repository.findSimilarWithScores(request(0.75))
+        assertTrue(included.any { it.match.id == sibling.id }, "threshold at 0.75 should admit a true cosine-0.8 pair")
+
+        // Same scale on the query-filtered overload.
+        val filteredHit = repository.findSimilarWithScores(request(0.0), PropositionQuery.forContextId(ContextId("ctx-sim-cos")))
+            .firstOrNull { it.match.id == sibling.id }
+        assertNotNull(filteredHit, "expected the sibling to be found via the query-filtered overload")
+        assertEquals(0.8, filteredHit!!.score, 0.02, "the query-filtered overload must report raw cosine too")
+        val filteredExcluded = repository.findSimilarWithScores(request(0.85), PropositionQuery.forContextId(ContextId("ctx-sim-cos")))
+        assertTrue(
+            filteredExcluded.none { it.match.id == sibling.id },
+            "the query-filtered overload must gate on raw cosine too",
+        )
+    }
+
+    @Test
     fun `provenance sources are shared across propositions`() {
         val sharedSource = listOf(ProvenanceEntry(locator = UriLocator("https://example.com/shared")))
         repository.save(prop("fact one", context = "ctx-a", provenance = sharedSource))
@@ -574,6 +619,27 @@ class DrivinePropositionStoreIntegrationTest {
         graphObjectManager.save(PropositionGraphMapper.toView(p, embedding), CascadeType.DELETE_ORPHAN)
     }
 
+    /**
+     * A vector with exact cosine [cosTheta] to [vector], built by rotating [vector] toward an
+     * arbitrary orthogonal direction (Gram-Schmidt against a second, unrelated embedding named by
+     * [seedText]). Lets a test pin the true cosine between the query embedding (which
+     * `findSimilarWithScores` always derives from query text, so can't be seeded directly) and a
+     * stored sibling, without caring what coordinate system the embedder actually uses.
+     */
+    private fun rotate(vector: List<Float>, cosTheta: Double, seedText: String): List<Float> {
+        fun dot(a: List<Float>, b: List<Float>) = a.indices.sumOf { (a[it] * b[it]).toDouble() }
+        fun normalize(a: List<Float>): List<Float> {
+            val n = kotlin.math.sqrt(dot(a, a))
+            return a.map { (it / n).toFloat() }
+        }
+        val u = normalize(vector)
+        val raw = embeddingService.embed(seedText).toList()
+        val projection = dot(raw, u)
+        val orthogonal = normalize(raw.indices.map { (raw[it] - projection * u[it]).toFloat() })
+        val sinTheta = kotlin.math.sqrt(1.0 - cosTheta * cosTheta)
+        return u.indices.map { (cosTheta * u[it] + sinTheta * orthogonal[it]).toFloat() }
+    }
+
     /** Run [body] with the (contextId, text) uniqueness constraint dropped, then restore it. */
     private fun withoutContextTextConstraint(body: () -> Unit) {
         val name = persistenceManager.maybeGetOne(
@@ -633,6 +699,39 @@ class DrivinePropositionStoreIntegrationTest {
             val retired = repository.save(reloaded.withStatus(PropositionStatus.STALE))
             assertEquals(survivor.id, retired.id, "save returns the updated node, not the same-text sibling")
             assertEquals(PropositionStatus.STALE, repository.findById(survivor.id)?.status)
+        }
+    }
+
+    /**
+     * An ACTIVE same-text sibling is a live duplicate, not history like the STALE twin above. Save
+     * still must not silently redirect the update away from its own id — but it also must not mint a
+     * second live copy of the fact behind the caller's back. It writes to its own id (logging a WARN
+     * naming both ids) and leaves the pair for the dedup sweep to collapse.
+     */
+    @Test
+    fun `update of an existing id does not silently merge into an ACTIVE same-text sibling`() {
+        withoutContextTextConstraint {
+            val original = repository.save(prop("Ada Lovelace wrote the first algorithm", grounding = listOf("g-original")))
+            // An ACTIVE same-text twin — only reachable without the (contextId, text) constraint.
+            val twin = prop("Ada Lovelace wrote the first algorithm", status = PropositionStatus.ACTIVE)
+            seedRawNode(twin)
+
+            val updated = repository.save(original.withGrounding(listOf("g-original", "g-more")))
+
+            assertEquals(original.id, updated.id, "save must update its own node, not redirect to the ACTIVE twin")
+            assertEquals(
+                setOf("g-original", "g-more"),
+                repository.findById(original.id)!!.grounding.toSet(),
+                "the update lands on the caller's own node",
+            )
+            assertEquals(
+                PropositionStatus.ACTIVE, repository.findById(twin.id)?.status,
+                "save does not touch the twin — merging is the dedup sweep's job, not save's",
+            )
+            assertEquals(
+                2, repository.findAll().count { it.text == "Ada Lovelace wrote the first algorithm" },
+                "both nodes persist — a deliberate, logged duplicate, not a silently dropped update",
+            )
         }
     }
 }

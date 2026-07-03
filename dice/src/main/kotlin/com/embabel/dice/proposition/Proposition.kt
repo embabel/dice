@@ -295,6 +295,33 @@ data class Proposition(
         copy(provenanceEntries = entries.distinct(), metadataRevised = Instant.now())
 
     /**
+     * Fold another proposition's evidence onto this one: its grounding (chunk ids), its rich
+     * provenance entries, and its source ids — all appended and deduplicated so nothing is lost
+     * and nothing is double-counted. Also bumps [reinforceCount] by one, treating the absorbed
+     * proposition as a single fresh confirmation (not `+ other.reinforceCount`, which would
+     * double-count whatever that proposition had already been reinforced by).
+     *
+     * Idempotent: if [other]'s grounding, provenance, and source ids are already all present
+     * here, this is a repeat of an already-applied absorption (e.g. a rerun after the other side
+     * of a two-step merge failed to save) — the [reinforceCount] bump is skipped so retrying
+     * can't double-count the same evidence.
+     *
+     * @param other the proposition whose evidence is being folded into this one
+     * @return a copy of this proposition carrying the union of both propositions' evidence
+     */
+    fun absorbEvidence(other: Proposition): Proposition {
+        val alreadyContained = grounding.containsAll(other.grounding) &&
+            provenanceEntries.containsAll(other.provenanceEntries) &&
+            sourceIds.containsAll(other.sourceIds)
+        return withGrounding(other.grounding)
+            .withProvenanceEntries(other.provenanceEntries)
+            .copy(
+                sourceIds = (sourceIds + other.sourceIds).distinct(),
+                reinforceCount = if (alreadyContained) reinforceCount else reinforceCount + 1,
+            )
+    }
+
+    /**
      * Create a copy with an additional (or replaced) metadata entry.
      *
      * Administrative change: touches only [metadataRevised] and deliberately

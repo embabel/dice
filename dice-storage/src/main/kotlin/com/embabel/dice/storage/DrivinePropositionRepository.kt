@@ -93,6 +93,11 @@ open class DrivinePropositionRepository(
      * on the same stripe cannot read pre-commit and slip a duplicate past the existence check.
      *
      * Propositions with blank text have nothing to dedup on and are persisted directly.
+     *
+     * An update to an id already stored always writes to that id — it never redirects to a same-text
+     * sibling. If a foreign sibling turns out to be ACTIVE too (only reachable without the
+     * `(contextId, text)` constraint), that's a live duplicate this method won't silently create by
+     * redirecting, but won't collapse either — it logs a WARN naming both ids for the dedup sweep.
      */
     override fun save(proposition: Proposition): Proposition {
         val text = proposition.text
@@ -116,6 +121,7 @@ open class DrivinePropositionRepository(
     private fun findOrPersist(proposition: Proposition, contextId: String, text: String): Proposition {
         val existingId = findDuplicateId(contextId, text, proposition.id)
         val existing = existingId?.let(::findById)
+        val isUpdate = existsById(proposition.id)
         // A same-text sibling only collapses a brand-new insert (parallel writers minting one fact as
         // two ids). If the incoming id is already stored this is an in-place update — a reinforce, a
         // status change, or a dedup sweep folding a loser's grounding onto the survivor — and it must
@@ -123,18 +129,40 @@ open class DrivinePropositionRepository(
         // (contextId, text) uniqueness constraint normally makes a foreign same-text sibling
         // impossible, so this guard only bites when that constraint is absent; then existsById runs
         // (cheap, and only on the rare collision path). Genuine inserts skip it: existingId is null.
-        return if (existing != null && !existsById(proposition.id)) {
+        return if (existing != null && !isUpdate) {
             logger.debug(
                 "Dedup: proposition already present as {} in context {} — reusing: '{}'",
                 existingId, contextId, text,
             )
             existing
         } else {
+            // An update must land on its own node even when a same-text sibling exists — but if that
+            // sibling is also ACTIVE, writing here mints a second live copy of the same fact (only
+            // reachable without the (contextId, text) constraint). We still write to the caller's id
+            // — an update must never silently redirect away from it — but flag the pair so the dedup
+            // sweep or an operator can collapse them; a STALE/SUPERSEDED/etc. sibling isn't a live
+            // duplicate and stays quiet.
+            if (existing != null && existing.status == PropositionStatus.ACTIVE &&
+                proposition.status == PropositionStatus.ACTIVE
+            ) {
+                logger.warn(
+                    "Update to proposition {} in context {} leaves an ACTIVE same-text sibling {} unmerged — " +
+                        "dedup sweep should collapse them: '{}'",
+                    proposition.id, contextId, existingId, text,
+                )
+            }
             doPersist(proposition)
         }
     }
 
-    /** Best-effort detection of a Neo4j uniqueness-constraint violation anywhere in the cause chain. */
+    /**
+     * Best-effort detection of a Neo4j uniqueness-constraint violation anywhere in the cause chain.
+     * Matches on message substrings, including the driver's error code
+     * (`Neo.ClientError.Schema.ConstraintValidationFailed`) as well as its prose form, since which one
+     * shows up in `getMessage()` isn't guaranteed across driver versions. [findOrPersist] pre-checks
+     * for a same-text sibling before writing, so this heuristic is now only the cross-instance-race
+     * backstop, not the main defence against a colliding write.
+     */
     private fun isUniquenessViolation(error: Throwable?): Boolean {
         var t: Throwable? = error
         while (t != null) {
@@ -374,11 +402,12 @@ open class DrivinePropositionRepository(
         textSimilaritySearchRequest: TextSimilaritySearchRequest,
     ): List<SimilarityResult<Proposition>> {
         val vector = embeddingService.embed(textSimilaritySearchRequest.query).toList()
-        val threshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }
+        val rawThreshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }
+        val engineThreshold = rawThreshold?.let(::toEngineScore)
         val results = graphObjectManager
-            .loadNearest<PropositionView>(vector, textSimilaritySearchRequest.topK, threshold)
-            .map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = it.score) }
-        logger.debug("findSimilarWithScores: {} hit(s) (topK={}, threshold={})", results.size, textSimilaritySearchRequest.topK, threshold)
+            .loadNearest<PropositionView>(vector, textSimilaritySearchRequest.topK, engineThreshold)
+            .map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = toRawCosine(it.score)) }
+        logger.debug("findSimilarWithScores: {} hit(s) (topK={}, threshold={})", results.size, textSimilaritySearchRequest.topK, rawThreshold)
         return results
     }
 
@@ -393,20 +422,26 @@ open class DrivinePropositionRepository(
             return super<PropositionRepository>.findSimilarWithScores(textSimilaritySearchRequest, query)
         }
         val vector = embeddingService.embed(textSimilaritySearchRequest.query).toList()
-        val threshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }
+        val threshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }?.let(::toEngineScore)
         return graphObjectManager.loadNearest<PropositionView>(
             vector,
             textSimilaritySearchRequest.topK,
             threshold,
         ) {
             where { applyFilters(query, includeEffectiveConfidence = true) }
-        }.map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = it.score) }
+        }.map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = toRawCosine(it.score)) }
     }
 
     /**
      * Single correlated statement: select candidates DB-side via [query], then within that set run
      * the vector index once per seed using the seed's own embedding, keeping `seed.id < m.id` so each
      * pair appears once. No N+1 round trips; membership and dedup stay server-side.
+     *
+     * [similarityThreshold] is raw cosine — a candidate pair is admitted at cosine >= threshold, same
+     * scale as [findSimilarWithScores]. Older deployments that tuned a threshold against Neo4j's raw
+     * `(1 + cosine) / 2` index score (before this method converted back to cosine) admitted down to
+     * cosine `2*t - 1` for a stored `t`; that threshold now means something stricter and should be
+     * retuned.
      */
     @Transactional(readOnly = true)
     override fun findClusters(
@@ -419,9 +454,9 @@ open class DrivinePropositionRepository(
         val byId = candidates.associateBy { it.id }
         val ids = candidates.map { it.id }
 
-        // A COSINE index scores as (1 + cosine) / 2; the `cosine` binding below converts back to raw
-        // cosine so the gate and the returned score are both cosine, as the in-memory store returns.
-        // COSINE-only: a EUCLIDEAN index normalizes differently.
+        // A COSINE index scores as (1 + cosine) / 2 (see toRawCosine below); the `cosine` binding here
+        // converts back to raw cosine so the gate and the returned score are both cosine, as the
+        // in-memory store returns. COSINE-only: a EUCLIDEAN index normalizes differently.
         @Suppress("UNCHECKED_CAST")
         val rows = persistenceManager.query(
             QuerySpecification
@@ -459,6 +494,22 @@ open class DrivinePropositionRepository(
         )
         return clusters
     }
+
+    /**
+     * A Neo4j COSINE vector index reports `(1 + cosine) / 2`, not raw cosine — this converts an
+     * engine score back to the raw cosine every score in this repository's public API uses (matching
+     * the in-memory store). Paired with [toEngineScore]. COSINE-only: a EUCLIDEAN index normalizes
+     * differently.
+     */
+    private fun toRawCosine(engineScore: Double): Double = 2.0 * engineScore - 1.0
+
+    /**
+     * Converts a raw-cosine similarity threshold to the engine-normalized scale Drivine's
+     * `loadNearest` gates on, so a caller-supplied threshold (always raw cosine here) means the same
+     * thing whether it's applied by us (as in [findClusters]) or by the index itself (as in
+     * [findSimilarWithScores]). Inverse of [toRawCosine].
+     */
+    private fun toEngineScore(rawCosineThreshold: Double): Double = (1.0 + rawCosineThreshold) / 2.0
 
     /** DELETE_ORPHAN (not DELETE_ALL) so shared `:Source` nodes survive unless this was their last reference. */
     @Transactional

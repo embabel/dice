@@ -29,12 +29,7 @@ import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.UriLocator
-import com.embabel.dice.spi.MarkReason
-import com.embabel.dice.spi.MergingSweepPolicy
-import com.embabel.dice.spi.PropositionMark
-import com.embabel.dice.spi.StatusTransitionSweepPolicy
-import com.embabel.dice.spi.SweepAction
-import com.embabel.dice.spi.SweepPolicy
+import com.embabel.dice.spi.*
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
@@ -494,10 +489,94 @@ class DefaultCollectorRunnerTest {
         val result = mergingRunner(survivor.id).run(contextId, dryRun = false)
 
         assertEquals(2, result.applied.size)
-        // Survivor accumulates both losers' grounding across the two collapses (repository re-read
-        // between them), with one reinforcement per absorbed duplicate.
+        // Survivor accumulates both losers' grounding in one grouped read + save (both losers
+        // collapse into the same survivor in this run), with one reinforcement per absorbed
+        // duplicate.
         assertEquals(setOf("chunk-s", "chunk-a", "chunk-b"), survivorState.grounding.toSet())
         assertEquals(2, survivorState.reinforceCount)
+    }
+
+    @Test
+    fun `a survivor decayed in the same run as a merge keeps its merged evidence after the transition`() {
+        // Finding 1: the loser's MergeInto is marked in the same run as a decay strategy marking
+        // the survivor itself. If the survivor's later TransitionStatus were applied against the
+        // pre-run candidate snapshot, it would silently overwrite the just-merged
+        // grounding/sourceIds/reinforceCount with the stale pre-merge values. It must instead
+        // transition from the freshly-merged state.
+        val survivor = proposition("survivor").copy(
+            grounding = listOf("chunk-s"),
+            sourceIds = listOf("src-s"),
+            reinforceCount = 2,
+        )
+        val loser = proposition("loser").copy(grounding = listOf("chunk-l"), sourceIds = listOf("src-l"))
+        every { repository.query(any()) } returns listOf(survivor, loser)
+        var survivorState = survivor
+        val saves = mutableListOf<Proposition>()
+        every { repository.findById(survivor.id) } answers { survivorState }
+        every { repository.save(any()) } answers {
+            val p = firstArg<Proposition>()
+            saves += p
+            if (p.id == survivor.id) survivorState = p
+            p
+        }
+
+        // Two independent strategies in one run: one marks only the loser as a duplicate of the
+        // survivor; the other marks only the survivor itself (unrelated to the merge, e.g. a decay
+        // sweep catching it independently).
+        val duplicateOnlyLoser = CollectorStrategy { candidates, _, _ ->
+            candidates.filter { it.id == loser.id }
+                .map { PropositionMark(it.id, MarkReason.Duplicate(survivorId = survivor.id), "duplicate") }
+        }
+        val staleOnlySurvivor = CollectorStrategy { candidates, _, _ ->
+            candidates.filter { it.id == survivor.id }
+                .map { PropositionMark(it.id, MarkReason.Stale, "decay") }
+        }
+        val runner = CollectorRunner
+            .withRepository(repository)
+            .withStrategy(duplicateOnlyLoser)
+            .withStrategy(staleOnlySurvivor)
+            .withPolicy(MergingSweepPolicy())
+            .withRecordStore(recordStore)
+            .withEventListener(listener)
+            .build()
+
+        runner.run(contextId, dryRun = false)
+
+        // The survivor's final saved state is STALE (the decay mark won) but still carries the
+        // merged evidence — the transition must not have reverted to the pre-merge snapshot.
+        val finalSurvivor = saves.last { it.id == survivor.id }
+        assertEquals(PropositionStatus.STALE, finalSurvivor.status)
+        assertEquals(setOf("chunk-s", "chunk-l"), finalSurvivor.grounding.toSet())
+        assertEquals(setOf("src-s", "src-l"), finalSurvivor.sourceIds.toSet())
+        assertEquals(3, finalSurvivor.reinforceCount)
+    }
+
+    @Test
+    fun `MergeInto onto a survivor that is no longer ACTIVE falls back to a plain retirement`() {
+        // Finding 2, the opposite ordering from the test above: the survivor is already retired
+        // (e.g. some other mark already transitioned it) by the time the merge is attempted.
+        // Folding evidence onto it would leave that evidence stuck on a STALE proposition,
+        // invisible to retrieval and silently lost. The loser must instead fall back to a plain
+        // retirement, the same way a missing survivor does.
+        val retiredSurvivor = proposition("survivor", status = PropositionStatus.STALE)
+            .copy(grounding = listOf("chunk-s"))
+        val loser = proposition("loser").copy(grounding = listOf("chunk-l"))
+        every { repository.query(any()) } returns listOf(loser)
+        every { repository.findById(retiredSurvivor.id) } returns retiredSurvivor
+        val saves = mutableListOf<Proposition>()
+        every { repository.save(any()) } answers {
+            val p = firstArg<Proposition>()
+            saves += p
+            p
+        }
+
+        val result = mergingRunner(retiredSurvivor.id).run(contextId, dryRun = false)
+
+        assertEquals(1, result.applied.size)
+        // Only the loser is saved (STALE); the survivor is never re-saved with folded evidence.
+        assertEquals(listOf(loser.id), saves.map { it.id })
+        assertEquals(PropositionStatus.STALE, saves.single().status)
+        assertEquals(1, listener.eventsOfType<PropositionStatusChanged>().size)
     }
 
     @Test
@@ -509,7 +588,7 @@ class DefaultCollectorRunnerTest {
         val loser = proposition("loser")
         every { repository.query(any()) } returns listOf(survivor, loser)
         every { repository.findClusters(any(), any(), any()) } returns
-            listOf(Cluster(survivor, listOf(SimilarityResult.create(loser, 0.99))))
+                listOf(Cluster(survivor, listOf(SimilarityResult.create(loser, 0.99))))
 
         val skipEverything = SweepPolicy { _, _ -> SweepAction.Skip }
         val runner = CollectorRunner

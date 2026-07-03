@@ -68,8 +68,8 @@ interface CollectorRunner {
          * Start building a [CollectorRunner] backed by [repository].
          *
          * @param repository The proposition store to read candidates from and write transitions to.
-         * @return A [Builder] with defaults: no strategies, [StatusTransitionSweepPolicy], no
-         *   record store, and a no-op event listener.
+         * @return A [Builder] with defaults: no strategies, [MergingSweepPolicy], no record store,
+         *   and a no-op event listener.
          */
         @JvmStatic
         fun withRepository(repository: PropositionRepository): Builder = Builder(repository)
@@ -78,14 +78,19 @@ interface CollectorRunner {
     /**
      * Fluent builder for a [DefaultCollectorRunner].
      *
-     * Defaults: empty strategy list, [StatusTransitionSweepPolicy], no record store (audit off),
+     * Defaults: empty strategy list, [MergingSweepPolicy], no record store (audit off),
      * and [DiceEventListener.DEV_NULL] (events off).
+     *
+     * The default policy merges rather than plain-flips: a duplicate mark that names a survivor
+     * has the loser's grounding and provenance folded onto that survivor before the loser is
+     * retired. For every other mark it behaves exactly like [StatusTransitionSweepPolicy], which
+     * remains available via [withPolicy] for deployments that want pure status flips even on
+     * duplicates.
      */
     class Builder internal constructor(private val repository: PropositionRepository) {
 
         private val strategies = mutableListOf<CollectorStrategy>()
-        private var policy: SweepPolicy = StatusTransitionSweepPolicy()
-        private var policyExplicitlySet = false
+        private var policy: SweepPolicy = MergingSweepPolicy()
         private var recordStore: CollectorRecordStore? = null
         private var listener: DiceEventListener = DiceEventListener.DEV_NULL
 
@@ -98,21 +103,13 @@ interface CollectorRunner {
         fun withStrategy(strategy: CollectorStrategy): Builder = apply { strategies.add(strategy) }
 
         /**
-         * Configure the near-duplicate dedup sweep: add a [DuplicateCollectorStrategy] AND switch
-         * the policy to [MergingSweepPolicy], so a collapsed duplicate has its grounding and
-         * provenance folded onto the survivor before it is retired.
+         * Configure the near-duplicate dedup sweep by adding a [DuplicateCollectorStrategy].
          *
-         * This is the assembly point for the dedup path. The plain [StatusTransitionSweepPolicy]
-         * default would flip the loser STALE with a pure status change and lose its evidence from
-         * retrieval, so the dedup sweep deliberately opts into merge semantics here rather than
-         * changing the global builder default (which the decay/stale path still relies on).
-         *
-         * Policy precedence: this only installs [MergingSweepPolicy] when no policy was set
-         * explicitly via [withPolicy]. A caller-chosen policy always wins, whatever the call order.
-         *
-         * Pair it only with strategies that never mark the survivor. The built-in
-         * [DuplicateCollectorStrategy] never marks survivors; a strategy that could (e.g. a decay
-         * strategy) would retire the survivor mid-run, before it absorbs its duplicates' evidence.
+         * Merge-on-collapse comes from the builder's default [MergingSweepPolicy], so a duplicate
+         * loser has its grounding and provenance folded onto the survivor before it is retired —
+         * whether the strategy was added here or via plain [withStrategy]. If a mark in the same
+         * run retires the survivor, the merged evidence still wins: the runner applies merges
+         * first and later transitions read the merged state.
          *
          * @param strategy The duplicate-detection strategy (defaults to a [DuplicateCollectorStrategy]
          *   with the repository-matching thresholds).
@@ -120,22 +117,16 @@ interface CollectorRunner {
          */
         fun withDuplicateDetection(
             strategy: DuplicateCollectorStrategy = DuplicateCollectorStrategy(),
-        ): Builder = apply {
-            strategies.add(strategy)
-            if (!policyExplicitlySet) policy = MergingSweepPolicy()
-        }
+        ): Builder = apply { strategies.add(strategy) }
 
         /**
-         * Set the policy that decides each marked proposition's fate. An explicit choice here always
-         * takes precedence over the merge policy [withDuplicateDetection] would otherwise install.
+         * Set the policy that decides each marked proposition's fate.
          *
-         * @param policy The sweep policy (defaults to [StatusTransitionSweepPolicy]).
+         * @param policy The sweep policy (defaults to [MergingSweepPolicy]; pass
+         *   [StatusTransitionSweepPolicy] for pure status flips with no evidence merge).
          * @return this builder, for chaining.
          */
-        fun withPolicy(policy: SweepPolicy): Builder = apply {
-            this.policy = policy
-            policyExplicitlySet = true
-        }
+        fun withPolicy(policy: SweepPolicy): Builder = apply { this.policy = policy }
 
         /**
          * Attach an audit store so run records are persisted. Without this, no trail is written.

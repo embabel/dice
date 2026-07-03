@@ -34,6 +34,16 @@ import java.time.Instant
 import java.util.UUID
 
 /**
+ * One marked proposition's fate, decided against the pre-run candidate snapshot: which of its
+ * marks drove the decision, and what the [SweepPolicy] chose to do about it.
+ */
+private data class Decision(
+    val propositionId: String,
+    val marks: List<PropositionMark>,
+    val action: SweepAction,
+)
+
+/**
  * Default [CollectorRunner] implementation.
  *
  * Fetches ACTIVE candidates once per run (so already-STALE or PROMOTED propositions are
@@ -46,6 +56,15 @@ import java.util.UUID
  *   emits no event.
  * - [run] with `dryRun = false` applies each decision, saves the run record, then emits a
  *   [PropositionStatusChanged] per applied transition.
+ *
+ * [SweepAction.MergeInto] handling: every loser marked into the same survivor in one run is
+ * folded onto that survivor with a single read and a single save (not one round-trip per loser),
+ * and every status transition this method applies afterwards reads the freshest state of its
+ * proposition — never the pre-run candidate snapshot — so a survivor that was just merged into
+ * never has its new evidence clobbered by a later transition applied against stale data. If the
+ * survivor can't be found, or is found but is no longer ACTIVE (e.g. some other mark in the same
+ * run already retired it), every loser in that merge group falls back to a plain retirement
+ * instead of folding evidence onto a proposition that retrieval will never surface again.
  *
  * Concurrency: holds no shared mutable state — every [run] call works with its own locals — so
  * runs for different contexts are safe in parallel. Two runs for the *same* context at once are
@@ -103,76 +122,104 @@ class DefaultCollectorRunner(
         val records = mutableListOf<CollectorRecord>()
 
         try {
-        for ((propositionId, propMarks) in marksByProposition) {
-            val proposition = candidatesById[propositionId] ?: continue
-            when (val action = policy.decide(proposition, propMarks)) {
-                is SweepAction.TransitionStatus -> {
-                    if (dryRun) {
-                        // Preview only: record the would-be transition as MARKED (nothing was swept),
-                        // mutate nothing, emit nothing, and leave `applied` empty. The record's
-                        // newStatus still carries what WOULD happen.
-                        records += records(propMarks, runId, CollectorOutcome.MARKED, proposition.status, action.newStatus)
-                    } else {
-                        // Order matters: persist, then buffer the audit record, then emit. The
-                        // record lands between the durable write and the (inline, possibly throwing)
-                        // listener call, so a transition can never be persisted without its record —
-                        // even if a listener blows up before the run finishes.
-                        val previousStatus = proposition.status
-                        val saved = repository.save(proposition.withStatus(action.newStatus))
-                        records += records(propMarks, runId, CollectorOutcome.TRANSITIONED, previousStatus, action.newStatus)
-                        applied.addAll(propMarks)
-                        emitStatusChanged(saved, previousStatus, action.newStatus, propMarks)
+        // Decide every marked proposition's fate up front, against the pre-run snapshot — what
+        // the strategies actually observed — in mark order. A proposition that fell out of the
+        // snapshot (e.g. deleted between marking and this point) is silently skipped, same as
+        // before.
+        val decisions = marksByProposition.mapNotNull { (propositionId, propMarks) ->
+            val proposition = candidatesById[propositionId] ?: return@mapNotNull null
+            Decision(propositionId, propMarks, policy.decide(proposition, propMarks))
+        }
+
+        if (dryRun) {
+            // Preview only: for every decision, record what WOULD happen (MARKED, or SKIPPED for
+            // an explicit Skip); mutate nothing, merge nothing, delete nothing, emit nothing.
+            for (decision in decisions) {
+                val proposition = candidatesById.getValue(decision.propositionId)
+                when (val action = decision.action) {
+                    is SweepAction.TransitionStatus ->
+                        records += records(decision.marks, runId, CollectorOutcome.MARKED, proposition.status, action.newStatus)
+                    is SweepAction.MergeInto ->
+                        records += records(decision.marks, runId, CollectorOutcome.MARKED, proposition.status, action.thenStatus)
+                    SweepAction.HardDelete ->
+                        records += records(decision.marks, runId, CollectorOutcome.MARKED, proposition.status, null)
+                    SweepAction.Skip -> {
+                        skipped.addAll(decision.marks)
+                        records += records(decision.marks, runId, CollectorOutcome.SKIPPED, proposition.status, null)
                     }
                 }
+            }
+        } else {
+            // Freshest known state for any proposition touched this run, seeded from the pre-run
+            // snapshot. A status transition applied later in this method must read from here —
+            // never from `candidatesById` — or a proposition merged into as a survivor earlier in
+            // the same run would have its just-folded grounding/provenance/sourceIds silently
+            // overwritten by the stale pre-merge snapshot.
+            val freshById = candidatesById.toMutableMap()
 
-                is SweepAction.MergeInto -> {
-                    if (dryRun) {
-                        // Preview only: record the would-be retirement as MARKED (nothing merged,
-                        // nothing swept). The record's newStatus carries what WOULD happen; no
-                        // evidence is folded and nothing is emitted.
-                        records += records(propMarks, runId, CollectorOutcome.MARKED, proposition.status, action.thenStatus)
-                    } else {
-                        // Fold the loser's evidence onto the survivor BEFORE retiring the loser, so
-                        // the grounding/provenance that justified the loser stays visible on a
-                        // proposition retrieval still returns. A plain STALE flip here would make
-                        // that evidence invisible (STALE is excluded from retrieval).
-                        val survivor = repository.findById(action.survivorId)
-                        if (survivor != null) {
-                            repository.save(mergeEvidence(survivor = survivor, loser = proposition))
-                        } else {
-                            // Survivor vanished (e.g. filtered out of the candidate snapshot, or
-                            // deleted since marking). Nothing to merge into, so fall back to a plain
-                            // retirement rather than throwing — the loser still leaves ACTIVE. Logged
-                            // at WARN because the audit record looks like a normal transition, so this
-                            // is the only signal that a merge dropped its evidence fold.
-                            logger.warn(
-                                "MergeInto survivor {} not found; retiring {} without merging its evidence",
-                                action.survivorId, proposition.id,
-                            )
-                        }
-                        val previousStatus = proposition.status
-                        val saved = repository.save(proposition.withStatus(action.thenStatus))
-                        records += records(propMarks, runId, CollectorOutcome.TRANSITIONED, previousStatus, action.thenStatus)
-                        applied.addAll(propMarks)
-                        emitStatusChanged(saved, previousStatus, action.thenStatus, propMarks)
+            // Fold every MergeInto's losers onto their survivor first, grouped by survivor id, so
+            // a survivor merged by several losers in one run gets a single read and a single save
+            // (each persistent-backend save re-embeds the survivor's text, so this also avoids
+            // re-embedding it once per loser).
+            val mergesBySurvivor = decisions
+                .mapNotNull { d -> (d.action as? SweepAction.MergeInto)?.let { d to it } }
+                .groupBy({ (_, action) -> action.survivorId })
+
+            for ((survivorId, group) in mergesBySurvivor) {
+                val survivor = freshById[survivorId] ?: repository.findById(survivorId)?.also { freshById[survivorId] = it }
+                if (survivor == null || survivor.status != PropositionStatus.ACTIVE) {
+                    // Nothing safe to merge onto: either the survivor vanished (filtered out of
+                    // the snapshot, or deleted since marking) or it is no longer ACTIVE (e.g.
+                    // another mark in this same run already retired it, or it was already retired
+                    // going in). Folding evidence onto a non-ACTIVE proposition would bury it
+                    // where retrieval never looks, so every loser in the group falls back to a
+                    // plain retirement instead — the same fallback a missing survivor already gets.
+                    val reason = if (survivor == null) "not found" else "not ACTIVE (status=${survivor.status})"
+                    for ((decision, action) in group) {
+                        logger.warn(
+                            "MergeInto survivor {} {}; retiring {} without merging its evidence",
+                            survivorId, reason, decision.propositionId,
+                        )
+                        val loser = freshById.getValue(decision.propositionId)
+                        val saved = retire(loser, action.thenStatus, decision.marks, runId, records, applied)
+                        freshById[decision.propositionId] = saved
                     }
+                    continue
                 }
+                var merged: Proposition = survivor
+                for ((decision, _) in group) {
+                    merged = merged.absorbEvidence(freshById.getValue(decision.propositionId))
+                }
+                val savedSurvivor = repository.save(merged)
+                freshById[survivorId] = savedSurvivor
+                for ((decision, action) in group) {
+                    val loser = freshById.getValue(decision.propositionId)
+                    val saved = retire(loser, action.thenStatus, decision.marks, runId, records, applied)
+                    freshById[decision.propositionId] = saved
+                }
+            }
 
-                SweepAction.HardDelete -> {
-                    if (dryRun) {
-                        // Preview only: record what WOULD be removed as MARKED; delete nothing and
-                        // leave `hardDeleted` empty.
-                        records += records(propMarks, runId, CollectorOutcome.MARKED, proposition.status, null)
-                    } else {
+            // Everything else, in mark order, reading the freshest state — a proposition just
+            // merged into as a survivor above must transition from ITS merged state, not the
+            // pre-run snapshot.
+            for (decision in decisions) {
+                when (val action = decision.action) {
+                    is SweepAction.MergeInto -> continue // handled above
+                    is SweepAction.TransitionStatus -> {
+                        val proposition = freshById.getValue(decision.propositionId)
+                        retire(proposition, action.newStatus, decision.marks, runId, records, applied)
+                    }
+                    SweepAction.HardDelete -> {
+                        val proposition = freshById.getValue(decision.propositionId)
                         repository.delete(proposition.id)
                         hardDeleted += proposition.id
-                        records += records(propMarks, runId, CollectorOutcome.HARD_DELETED, proposition.status, null)
+                        records += records(decision.marks, runId, CollectorOutcome.HARD_DELETED, proposition.status, null)
                     }
-                }
-
-                SweepAction.Skip -> {
-                    skipped.addAll(propMarks)
-                    records += records(propMarks, runId, CollectorOutcome.SKIPPED, proposition.status, null)
+                    SweepAction.Skip -> {
+                        val proposition = freshById.getValue(decision.propositionId)
+                        skipped.addAll(decision.marks)
+                        records += records(decision.marks, runId, CollectorOutcome.SKIPPED, proposition.status, null)
+                    }
                 }
             }
         }
@@ -252,23 +299,29 @@ class DefaultCollectorRunner(
     }
 
     /**
-     * Copy the loser's evidence onto the survivor: its grounding (chunk ids), its rich provenance
-     * entries, and its source ids — all appended and deduplicated so nothing is lost and nothing is
-     * double-counted. Also bumps the survivor's reinforcement by one, treating each collapsed
-     * duplicate as a single fresh confirmation. This matches how `LlmPropositionReviser` merges at
-     * ingestion time (`+ 1` per merge event, not `+ loser.reinforceCount`).
+     * Retire one proposition to [newStatus]: persist, buffer its audit record as TRANSITIONED,
+     * add its marks to `applied`, then emit the status-changed event. Both a plain sweep and a
+     * merge's loser retirement end this way, so the persist-then-record-then-emit ordering
+     * invariant (a transition is never persisted without its record, even if the listener throws)
+     * lives in exactly one place.
      *
-     * `save` is append-only for provenance, so the survivor keeps any of its own entries even when
-     * they were not eagerly loaded here.
+     * @return the saved proposition, so a caller tracking per-run freshest state can cache it.
      */
-    private fun mergeEvidence(survivor: Proposition, loser: Proposition): Proposition =
-        survivor
-            .withGrounding(loser.grounding)
-            .withProvenanceEntries(loser.provenanceEntries)
-            .copy(
-                sourceIds = (survivor.sourceIds + loser.sourceIds).distinct(),
-                reinforceCount = survivor.reinforceCount + 1,
-            )
+    private fun retire(
+        proposition: Proposition,
+        newStatus: PropositionStatus,
+        propMarks: List<PropositionMark>,
+        runId: String,
+        records: MutableList<CollectorRecord>,
+        applied: MutableList<PropositionMark>,
+    ): Proposition {
+        val previousStatus = proposition.status
+        val saved = repository.save(proposition.withStatus(newStatus))
+        records += records(propMarks, runId, CollectorOutcome.TRANSITIONED, previousStatus, newStatus)
+        applied.addAll(propMarks)
+        emitStatusChanged(saved, previousStatus, newStatus, propMarks)
+        return saved
+    }
 
     private fun records(
         propMarks: List<PropositionMark>,

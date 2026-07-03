@@ -21,10 +21,11 @@ import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.PropositionStatusChanged
 import com.embabel.dice.projection.memory.CollectorRunner
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.UriLocator
-import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -114,5 +115,15 @@ class CollectorDedupMergesGroundingTest {
         val statusEvent = recording.events.filterIsInstance<PropositionStatusChanged>().single()
         assertEquals(loser.id, statusEvent.proposition.id)
         assertEquals(PropositionStatus.STALE, statusEvent.newStatus)
+
+        // Retrieval path: the same ACTIVE-only query retrieval actually runs against this context
+        // must surface the survivor carrying the merged evidence, and must NOT surface the
+        // retired loser — proving the merged sources are still reachable, not just present in the
+        // record.
+        val activeInContext = store.query(PropositionQuery.forContextId(contextId).withStatus(PropositionStatus.ACTIVE))
+        assertEquals(listOf(survivor.id), activeInContext.map { it.id })
+        val retrievedSurvivor = activeInContext.single()
+        assertEquals(setOf("chunk-survivor", "chunk-loser"), retrievedSurvivor.grounding.toSet())
+        assertEquals(setOf("src-survivor", "src-loser"), retrievedSurvivor.sourceIds.toSet())
     }
 }
