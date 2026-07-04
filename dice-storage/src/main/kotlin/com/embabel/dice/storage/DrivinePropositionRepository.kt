@@ -57,6 +57,7 @@ import java.time.Instant
  *   interface default's vector query per candidate.
  * - Detached re-saves with changed mentions may leave orphan Mention nodes (load-then-save avoids it).
  */
+@Transactional
 class DrivinePropositionRepository(
     private val graphObjectManager: GraphObjectManager,
     private val persistenceManager: PersistenceManager,

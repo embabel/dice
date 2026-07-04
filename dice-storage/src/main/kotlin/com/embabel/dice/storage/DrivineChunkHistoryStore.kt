@@ -32,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional
  * implementation of the dice-core SPI; ships here alongside [DrivinePropositionRepository] so a
  * consumer needs no hand-rolled store.
  */
+@Transactional
 class DrivineChunkHistoryStore(
     private val graphObjectManager: GraphObjectManager,
     private val persistenceManager: PersistenceManager,

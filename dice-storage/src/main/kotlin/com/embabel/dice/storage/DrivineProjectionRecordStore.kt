@@ -33,6 +33,7 @@ import org.springframework.transaction.annotation.Transactional
  * that one is a no-op, which against a durable store would silently leave the lifecycle cascade
  * dead. Every statement is parameterized; user-derived values are never interpolated into Cypher.
  */
+@Transactional
 class DrivineProjectionRecordStore(
     private val persistenceManager: PersistenceManager,
 ) : ProjectionRecordStore {

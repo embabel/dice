@@ -51,6 +51,7 @@ import java.time.Instant
  * the flattening); no APOC, no GDS. Query methods are corrupt-row-tolerant: a row that fails to
  * map is logged and skipped rather than failing the whole read.
  */
+@Transactional
 class DrivineCollectorTraceStore(
     private val persistenceManager: PersistenceManager,
 ) : CollectorTraceStore, CollectorTraceQuery {

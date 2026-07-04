@@ -82,11 +82,10 @@ data class CollectorComponent(
 )
 
 /**
- * Enough to undo a collapse without archaeology — reversibility is a hard contract. Ties the
- * decision to the run that made it, then records the chosen survivor and, for each retired
- * proposition, its prior status and the grounding, provenance and source ids that a merging sweep
- * would fold onto the survivor. The [runId] lets a caller find the candidate edges (and their
- * per-signal scores) behind this decision via [CollectorTraceQuery.findEdgesByRun].
+ * Records everything needed to reverse a collapse: the run it belongs to, the chosen survivor,
+ * and for each retired proposition its prior status plus the grounding, provenance and source ids
+ * that a merging sweep folded onto the survivor. The [runId] lets a caller find the candidate edges
+ * (and their per-signal scores) behind this decision via [CollectorTraceQuery.findEdgesByRun].
  */
 data class CollectorDecision(
     val runId: String,
