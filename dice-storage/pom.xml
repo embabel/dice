@@ -29,6 +29,12 @@
             <artifactId>dice</artifactId>
         </dependency>
 
+        <!-- Dice metamodel: MetamodelStore SPI and MetamodelVersion/DriftReport types -->
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice-metamodel</artifactId>
+        </dependency>
+
         <!-- Embabel agent types referenced by the repository/mapper (SimilarityResult, Cluster, etc.) -->
         <dependency>
             <groupId>com.embabel.agent</groupId>
@@ -66,6 +72,12 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
+        </dependency>
+
+        <!-- Jackson for JSON serialization of type sets with escape-safe encoding -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
         </dependency>
 
         <!-- Test: Drivine test support spins a Neo4j testcontainer; see TestApplication -->
