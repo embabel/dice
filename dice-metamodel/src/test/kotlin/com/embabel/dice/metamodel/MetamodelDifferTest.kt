@@ -23,14 +23,18 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import java.time.Instant
 
 class MetamodelDifferTest {
 
     private lateinit var differ: MetamodelDiffer
+    private lateinit var declaredObservedDiffer: DeclaredObservedDiffer
 
     @BeforeEach
     fun setUp() {
-        differ = StructuralMetamodelDiffer()
+        val structural = StructuralMetamodelDiffer()
+        differ = structural
+        declaredObservedDiffer = structural
     }
 
     private fun schemaWith(name: String = "test", vararg typeNames: String): DataDictionary =
@@ -289,6 +293,110 @@ class MetamodelDifferTest {
             assertEquals("Person", change.typeName)
             assertEquals(setOf("a b", "c"), change.addedProperties)
             assertEquals(setOf("a", "b c"), change.removedProperties)
+        }
+    }
+
+    @Nested
+    inner class DeclaredVsObserved {
+
+        private fun declared(vararg typeNames: String, relationshipNames: List<String> = emptyList()): MetamodelVersion =
+            MetamodelVersion(
+                schemaName = "test",
+                contentHash = "irrelevant",
+                entityTypeNames = typeNames.toList(),
+                entityTypeLabels = typeNames.associateWith { setOf(it) },
+                entityTypeProperties = typeNames.associateWith { emptySet() },
+                relationshipNames = relationshipNames,
+            )
+
+        private fun observed(
+            entityTypeNames: Set<String>,
+            relationshipTypeNames: Set<String> = emptySet(),
+            entityTypeCounts: Map<String, Long> = emptyMap(),
+        ): ObservedSchema =
+            ObservedSchema(
+                entityTypeNames = entityTypeNames,
+                relationshipTypeNames = relationshipTypeNames,
+                entityTypeCounts = entityTypeCounts,
+                capturedAt = Instant.parse("2026-01-01T00:00:00Z"),
+            )
+
+        @Test
+        fun `an observed type with no declaration is reported as drift`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declared("Person"),
+                observed(entityTypeNames = setOf("Person", "GhostIntegrationType")),
+            )
+            assertTrue(diff.hasDrift)
+            assertEquals(setOf("GhostIntegrationType"), diff.driftedEntityTypes)
+        }
+
+        @Test
+        fun `a declared type with zero observed instances is not drift`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declared("Person", "NeverSeenYet"),
+                observed(entityTypeNames = setOf("Person")),
+            )
+            assertFalse(diff.hasDrift, "absence of a declared type must not count as drift")
+            assertTrue(diff.driftedEntityTypes.isEmpty())
+            assertEquals(setOf("NeverSeenYet"), diff.unobservedEntityTypes)
+        }
+
+        @Test
+        fun `matching declared and observed types produce no drift and nothing unobserved`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declared("Person", "Company"),
+                observed(entityTypeNames = setOf("Person", "Company")),
+            )
+            assertFalse(diff.hasDrift)
+            assertTrue(diff.driftedEntityTypes.isEmpty())
+            assertTrue(diff.unobservedEntityTypes.isEmpty())
+        }
+
+        @Test
+        fun `drift and unobserved can both be present at once and don't overlap`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declared("Person", "NeverSeenYet"),
+                observed(entityTypeNames = setOf("Person", "GhostIntegrationType")),
+            )
+            assertEquals(setOf("GhostIntegrationType"), diff.driftedEntityTypes)
+            assertEquals(setOf("NeverSeenYet"), diff.unobservedEntityTypes)
+        }
+
+        @Test
+        fun `relationship drift is compared on the bare relationship type name, not the full descriptor`() {
+            // Declared descriptors carry from/to node types; an observed graph only reports
+            // bare relationship type names (e.g. via a `db.relationshipTypes()`-style query).
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declared("Person", "Company", relationshipNames = listOf("Person-[WORKS_AT]->Company")),
+                observed(
+                    entityTypeNames = setOf("Person", "Company"),
+                    relationshipTypeNames = setOf("WORKS_AT"),
+                ),
+            )
+            assertFalse(diff.hasDrift, "a declared relationship must not be reported as drift just because " +
+                "its bare name matches")
+            assertTrue(diff.driftedRelationshipTypes.isEmpty())
+            assertTrue(diff.unobservedRelationshipTypes.isEmpty())
+        }
+
+        @Test
+        fun `an observed relationship type with no declaration is reported as drift`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declared("Person", relationshipNames = emptyList()),
+                observed(entityTypeNames = setOf("Person"), relationshipTypeNames = setOf("GHOST_REL")),
+            )
+            assertTrue(diff.hasDrift)
+            assertEquals(setOf("GHOST_REL"), diff.driftedRelationshipTypes)
+        }
+
+        @Test
+        fun `diff carries the declared version and observed schema unchanged`() {
+            val declaredVersion = declared("Person")
+            val observedSchema = observed(entityTypeNames = setOf("Person"))
+            val diff = declaredObservedDiffer.diffAgainstObserved(declaredVersion, observedSchema)
+            assertEquals(declaredVersion, diff.declaredVersion)
+            assertEquals(observedSchema, diff.observedSchema)
         }
     }
 }

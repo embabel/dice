@@ -109,3 +109,40 @@ data class MetamodelDiff(
     val modifiedEntityTypes: List<MetamodelChange.EntityTypeModified>
         get() = changes.filterIsInstance<MetamodelChange.EntityTypeModified>()
 }
+
+/**
+ * The result of comparing a declared [MetamodelVersion] against what a live graph actually
+ * contains ([ObservedSchema]).
+ *
+ * This is a different question from [MetamodelDiff], which compares two declared versions
+ * against each other. Here, one side is the schema as declared and the other is a snapshot
+ * of reality, and the two can legitimately disagree in either direction:
+ *
+ * - **Drift** ([driftedEntityTypes] / [driftedRelationshipTypes]): a type observed in the graph
+ *   that was never declared. This is the actionable case — concretely, it means data is sitting
+ *   in the graph whose declaring integration has since been removed (or never registered one),
+ *   so nothing here can tell that data apart as valid or explain its shape.
+ * - **Unobserved** ([unobservedEntityTypes] / [unobservedRelationshipTypes]): a type that's
+ *   declared but currently has zero instances in the graph. This is purely informational —
+ *   a declared type with no data yet (or right now) is a completely normal state, not drift.
+ *
+ * @property declaredVersion The schema as declared at snapshot time.
+ * @property observedSchema What the live graph actually contained at snapshot time.
+ * @property driftedEntityTypes Entity type names observed in the graph with no matching declaration.
+ * @property driftedRelationshipTypes Relationship type names observed with no matching declaration.
+ * @property unobservedEntityTypes Declared entity type names with no observed instances.
+ * @property unobservedRelationshipTypes Declared relationship type names with no observed instances.
+ */
+data class DeclaredObservedDiff(
+    val declaredVersion: MetamodelVersion,
+    val observedSchema: ObservedSchema,
+    val driftedEntityTypes: Set<String>,
+    val driftedRelationshipTypes: Set<String>,
+    val unobservedEntityTypes: Set<String>,
+    val unobservedRelationshipTypes: Set<String>,
+) {
+
+    /** `true` when the graph contains any type or relationship that was never declared. */
+    val hasDrift: Boolean
+        get() = driftedEntityTypes.isNotEmpty() || driftedRelationshipTypes.isNotEmpty()
+}

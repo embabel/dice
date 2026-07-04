@@ -46,3 +46,28 @@ interface MetamodelDiffer {
     fun diff(from: DataDictionary, to: DataDictionary): MetamodelDiff =
         diff(MetamodelVersion.from(from), MetamodelVersion.from(to))
 }
+
+/**
+ * Compares a declared [MetamodelVersion] against an [ObservedSchema] — what a live graph
+ * actually contains — and reports where the two disagree.
+ *
+ * This is kept as its own interface rather than another overload on [MetamodelDiffer]
+ * because it answers a different question. [MetamodelDiffer] compares two declared schemas
+ * to each other (both sides are "what was decided"); this compares a declared schema to a
+ * runtime observation (one side is "what was decided", the other is "what's actually there").
+ * The result shape is different too — [MetamodelDiff] is a symmetric list of changes,
+ * while [DeclaredObservedDiff] is asymmetric (drift vs. merely-unobserved), and conflating
+ * the two would force callers to sift a generic change list to tell them apart.
+ */
+interface DeclaredObservedDiffer {
+
+    /**
+     * Compare [declared] against [observed] and return a [DeclaredObservedDiff].
+     *
+     * @param declared The schema as declared.
+     * @param observed A snapshot of what the live graph actually contains.
+     * @return An immutable diff distinguishing drift (observed-but-undeclared) from
+     *   unobserved-but-declared types.
+     */
+    fun diffAgainstObserved(declared: MetamodelVersion, observed: ObservedSchema): DeclaredObservedDiff
+}
