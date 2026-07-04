@@ -33,7 +33,7 @@ import org.springframework.transaction.annotation.Transactional
  * retried record updates in place rather than duplicating. Every statement is parameterized; user-
  * derived values are never interpolated into Cypher.
  */
-open class DrivineCollectorRecordStore(
+class DrivineCollectorRecordStore(
     private val persistenceManager: PersistenceManager,
 ) : CollectorRecordStore {
 

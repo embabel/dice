@@ -29,7 +29,7 @@ import java.util.concurrent.ConcurrentHashMap
  * to, and deletion looks up every run for that context and clears its rows. A run never
  * registered with [recordRunContext] is unreachable from [deleteTracesForContext].
  */
-class InMemoryCollectorTraceStore : CollectorTraceStore {
+class InMemoryCollectorTraceStore : CollectorTraceStore, CollectorTraceQuery {
 
     private val edgesByRun = ConcurrentHashMap<String, MutableList<CollectorCandidateEdge>>()
     private val componentsByRun = ConcurrentHashMap<String, MutableList<CollectorComponent>>()
@@ -51,8 +51,10 @@ class InMemoryCollectorTraceStore : CollectorTraceStore {
     }
 
     override fun recordDecision(runId: String, decision: CollectorDecision) {
+        // File the decision under the run id we're told to, and stamp that same id onto the record
+        // so a reader always sees the run it belongs to — no matter what the caller put on the field.
         decisionsByRun.computeIfAbsent(runId) { Collections.synchronizedList(mutableListOf()) }
-            .add(decision)
+            .add(decision.copy(runId = runId))
     }
 
     override fun deleteTracesForContext(contextId: ContextId) {
@@ -70,4 +72,16 @@ class InMemoryCollectorTraceStore : CollectorTraceStore {
     fun componentsFor(runId: String): List<CollectorComponent> = componentsByRun[runId]?.toList() ?: emptyList()
 
     fun decisionsFor(runId: String): List<CollectorDecision> = decisionsByRun[runId]?.toList() ?: emptyList()
+
+    // ---- CollectorTraceQuery ----
+
+    override fun findEdgesByRun(runId: String): List<CollectorCandidateEdge> = edgesFor(runId)
+
+    override fun findDecisionsByRun(runId: String): List<CollectorDecision> = decisionsFor(runId)
+
+    /** Scans every recorded decision for one where [propositionId] survived or was folded away. */
+    override fun findDecisionForProposition(propositionId: String): CollectorDecision? =
+        decisionsByRun.values.asSequence().flatten().firstOrNull { decision ->
+            decision.survivorId == propositionId || decision.retired.any { it.propositionId == propositionId }
+        }
 }

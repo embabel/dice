@@ -79,18 +79,24 @@ class CollectorAutoConfiguration(
 
     // ---- Trace store: graph backend (embabel.dice.store.type=graph) before in-memory default ----
 
+    // These beans return their concrete store type, not the CollectorTraceStore interface, on purpose:
+    // both stores also implement CollectorTraceQuery (the read side), and Spring predicts a bean's type
+    // from the factory-method return type before instantiating it. Declaring the interface would hide
+    // the CollectorTraceQuery capability at condition/injection time, so a CollectorTraceQuery injection
+    // point wouldn't resolve. The concrete return type lets the one store bean satisfy both interfaces —
+    // no separate query bean, no ambiguity.
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
     @ConditionalOnProperty(prefix = "embabel.dice.collector.trace", name = ["enabled"], matchIfMissing = true)
     @ConditionalOnMissingBean(CollectorTraceStore::class)
-    fun drivineCollectorTraceStore(persistenceManager: PersistenceManager): CollectorTraceStore {
+    fun drivineCollectorTraceStore(persistenceManager: PersistenceManager): DrivineCollectorTraceStore {
         logger.info("Wiring graph collector trace store (Drivine/Neo4j)")
         return DrivineCollectorTraceStore(persistenceManager)
     }
 
     @Bean
     @ConditionalOnMissingBean(CollectorTraceStore::class)
-    fun inMemoryCollectorTraceStore(): CollectorTraceStore {
+    fun inMemoryCollectorTraceStore(): InMemoryCollectorTraceStore {
         logger.info("Wiring in-memory collector trace store")
         return InMemoryCollectorTraceStore()
     }

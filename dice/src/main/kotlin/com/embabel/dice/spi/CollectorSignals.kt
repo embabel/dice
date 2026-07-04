@@ -82,11 +82,14 @@ data class CollectorComponent(
 )
 
 /**
- * Enough to undo a collapse without archaeology — reversibility is a hard contract. Records the
- * chosen survivor and, for each retired proposition, its prior status and the grounding,
- * provenance and source ids that a merging sweep would fold onto the survivor.
+ * Enough to undo a collapse without archaeology — reversibility is a hard contract. Ties the
+ * decision to the run that made it, then records the chosen survivor and, for each retired
+ * proposition, its prior status and the grounding, provenance and source ids that a merging sweep
+ * would fold onto the survivor. The [runId] lets a caller find the candidate edges (and their
+ * per-signal scores) behind this decision via [CollectorTraceQuery.findEdgesByRun].
  */
 data class CollectorDecision(
+    val runId: String,
     val componentId: String,
     val survivorId: String,
     val action: String,
@@ -122,6 +125,17 @@ interface CollectorTraceStore {
 
     /** Erasure hook: deleting a context's data must cascade to its trace rows. */
     fun deleteTracesForContext(contextId: ContextId)
+}
+
+/**
+ * The read side of the collector trace: look up what a run decided, or explain why one
+ * proposition was collapsed. Callers that only need to inspect trace data (e.g. an admin API)
+ * should depend on this instead of the concrete storage implementation.
+ */
+interface CollectorTraceQuery {
+    fun findEdgesByRun(runId: String): List<CollectorCandidateEdge>
+    fun findDecisionsByRun(runId: String): List<CollectorDecision>
+    fun findDecisionForProposition(propositionId: String): CollectorDecision?
 }
 
 /**

@@ -171,6 +171,7 @@ class MultiSignalCollectorStrategy(
             traceStore.recordDecision(
                 runId,
                 CollectorDecision(
+                    runId = runId,
                     componentId = component.componentId,
                     survivorId = survivor.id,
                     action = MERGE_ACTION,

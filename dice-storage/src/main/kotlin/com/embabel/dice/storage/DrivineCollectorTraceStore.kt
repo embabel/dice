@@ -51,9 +51,9 @@ import java.time.Instant
  * the flattening); no APOC, no GDS. Query methods are corrupt-row-tolerant: a row that fails to
  * map is logged and skipped rather than failing the whole read.
  */
-open class DrivineCollectorTraceStore(
+class DrivineCollectorTraceStore(
     private val persistenceManager: PersistenceManager,
-) : CollectorTraceStore {
+) : CollectorTraceStore, CollectorTraceQuery {
 
     private val logger = LoggerFactory.getLogger(DrivineCollectorTraceStore::class.java)
 
@@ -183,11 +183,11 @@ open class DrivineCollectorTraceStore(
         logger.info("Deleted {} collector trace node(s) for context {}", totalDeleted, contextId.value)
     }
 
-    // ---- Query helpers (not on the CollectorTraceStore interface) ----
+    // ---- CollectorTraceQuery ----
 
     /** Rehydrates every edge recorded under [runId], each with its signals nested. */
     @Transactional(readOnly = true)
-    open fun findEdgesByRun(runId: String): List<CollectorCandidateEdge> {
+    override fun findEdgesByRun(runId: String): List<CollectorCandidateEdge> {
         val edgeRows = queryRows("MATCH (e:CollectorCandidateEdge {runId: \$runId}) RETURN e", mapOf("runId" to runId))
         val signalRows = queryRows(
             """
@@ -216,7 +216,7 @@ open class DrivineCollectorTraceStore(
 
     /** Rehydrates every decision recorded under [runId], each with its retired members nested. */
     @Transactional(readOnly = true)
-    open fun findDecisionsByRun(runId: String): List<CollectorDecision> {
+    override fun findDecisionsByRun(runId: String): List<CollectorDecision> {
         val decisionRows = queryRows("MATCH (d:CollectorDecision {runId: \$runId}) RETURN d", mapOf("runId" to runId))
         return decisionRows.mapNotNull { node ->
             runCatching {
@@ -228,7 +228,7 @@ open class DrivineCollectorTraceStore(
 
     /** Finds the decision that retired or preserved [propositionId], whichever side of the merge it was on. */
     @Transactional(readOnly = true)
-    open fun findDecisionForProposition(propositionId: String): CollectorDecision? {
+    override fun findDecisionForProposition(propositionId: String): CollectorDecision? {
         val bySurvivor = queryRows(
             "MATCH (d:CollectorDecision {survivorId: \$propositionId}) RETURN d",
             mapOf("propositionId" to propositionId),

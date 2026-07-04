@@ -64,6 +64,8 @@ class DrivineCollectorTraceStoreIntegrationTest {
     )
 
     private fun decisionFor(componentId: String, survivorId: String, retiredId: String) = CollectorDecision(
+        // Persistence keys off the runId passed to recordDecision, so the field here is irrelevant.
+        runId = "",
         componentId = componentId,
         survivorId = survivorId,
         action = "duplicate-merge",

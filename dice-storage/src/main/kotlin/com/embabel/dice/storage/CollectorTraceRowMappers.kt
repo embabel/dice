@@ -120,6 +120,7 @@ object CollectorDecisionRowMapper {
     )
 
     fun fromRow(row: Map<*, *>, retired: List<RetiredProposition>): CollectorDecision = CollectorDecision(
+        runId = row.str("runId"),
         componentId = row.str("componentId"),
         survivorId = row.str("survivorId"),
         action = row.str("action"),

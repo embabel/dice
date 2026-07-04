@@ -39,7 +39,8 @@ class InMemoryCollectorTraceStoreTest {
         memberIds = members,
     )
 
-    private fun decision(componentId: String, survivorId: String) = CollectorDecision(
+    private fun decision(runId: String, componentId: String, survivorId: String) = CollectorDecision(
+        runId = runId,
         componentId = componentId,
         survivorId = survivorId,
         action = "merge",
@@ -56,11 +57,11 @@ class InMemoryCollectorTraceStoreTest {
         val store = InMemoryCollectorTraceStore()
         store.recordCandidateEdges("run-1", listOf(edge("A", "B")))
         store.recordComponents("run-1", listOf(component("A", listOf("A", "B"))))
-        store.recordDecision("run-1", decision("A", "A"))
+        store.recordDecision("run-1", decision("run-1", "A", "A"))
 
         assertEquals(listOf(edge("A", "B")), store.edgesFor("run-1"))
         assertEquals(listOf(component("A", listOf("A", "B"))), store.componentsFor("run-1"))
-        assertEquals(listOf(decision("A", "A")), store.decisionsFor("run-1"))
+        assertEquals(listOf(decision("run-1", "A", "A")), store.decisionsFor("run-1"))
     }
 
     @Test
@@ -88,11 +89,11 @@ class InMemoryCollectorTraceStoreTest {
 
         store.recordCandidateEdges("run-a", listOf(edge("A", "B")))
         store.recordComponents("run-a", listOf(component("A", listOf("A", "B"))))
-        store.recordDecision("run-a", decision("A", "A"))
+        store.recordDecision("run-a", decision("run-a", "A", "A"))
 
         store.recordCandidateEdges("run-b", listOf(edge("C", "D")))
         store.recordComponents("run-b", listOf(component("C", listOf("C", "D"))))
-        store.recordDecision("run-b", decision("C", "C"))
+        store.recordDecision("run-b", decision("run-b", "C", "C"))
 
         store.deleteTracesForContext(tenantA)
 
@@ -102,6 +103,6 @@ class InMemoryCollectorTraceStoreTest {
 
         assertEquals(listOf(edge("C", "D")), store.edgesFor("run-b"))
         assertEquals(listOf(component("C", listOf("C", "D"))), store.componentsFor("run-b"))
-        assertEquals(listOf(decision("C", "C")), store.decisionsFor("run-b"))
+        assertEquals(listOf(decision("run-b", "C", "C")), store.decisionsFor("run-b"))
     }
 }
