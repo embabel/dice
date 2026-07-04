@@ -16,15 +16,25 @@
 package com.embabel.dice.bundle
 
 import com.embabel.agent.core.ContextId
+import com.embabel.agent.rag.model.Retrievable
+import com.embabel.common.core.types.SimilarityResult
+import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.bundle.support.JacksonKnowledgeBundleExporter
+import com.embabel.dice.proposition.GraphTraversalCapable
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
+import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.TemporalQueryCapable
+import com.embabel.dice.proposition.VectorSearchCapable
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
+import com.embabel.dice.provenance.ProvenanceEntry
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-class ScopedBundleExportTest {
+class KnowledgeBundleAssemblerTest {
 
     private val exporter = JacksonKnowledgeBundleExporter()
 
@@ -43,11 +53,11 @@ class ScopedBundleExportTest {
         )
 
     // -------------------------------------------------------------------------
-    // Context-scoped export
+    // Context-scoped assembly
     // -------------------------------------------------------------------------
 
     @Test
-    fun `exportScoped returns bundle with propositions from the specified context only`() {
+    fun `forContext returns bundle with propositions from the specified context only`() {
         val ctxA = ContextId("ctx-a")
         val ctxB = ContextId("ctx-b")
 
@@ -60,8 +70,8 @@ class ScopedBundleExportTest {
         store.save(propA2)
         store.save(propB1)
 
-        // Export only context A
-        val bundleA = exporter.exportScoped("ctx-a", store)
+        val assembler = KnowledgeBundleAssembler(store)
+        val bundleA = assembler.forContext("ctx-a")
 
         assertEquals(ctxA, bundleA.contextId)
         assertEquals(2, bundleA.propositions.size)
@@ -76,13 +86,14 @@ class ScopedBundleExportTest {
     }
 
     @Test
-    fun `exportScoped excludes propositions from other contexts`() {
+    fun `forContext excludes propositions from other contexts`() {
         val store = InMemoryPropositionRepository()
         store.save(proposition("A fact", "ctx-a"))
         store.save(proposition("B fact", "ctx-b"))
         store.save(proposition("C fact", "ctx-c"))
 
-        val bundleA = exporter.exportScoped("ctx-a", store)
+        val assembler = KnowledgeBundleAssembler(store)
+        val bundleA = assembler.forContext("ctx-a")
 
         assertEquals(1, bundleA.propositions.size)
         assertEquals("A fact", bundleA.propositions.first().text)
@@ -90,12 +101,12 @@ class ScopedBundleExportTest {
     }
 
     @Test
-    fun `exportScoped returns empty but valid bundle for context with no propositions`() {
+    fun `forContext returns empty but valid bundle for context with no propositions`() {
         val store = InMemoryPropositionRepository()
         store.save(proposition("Lonely fact", "ctx-a"))
 
-        // Request a context that has no propositions
-        val bundleB = exporter.exportScoped("ctx-b", store)
+        val assembler = KnowledgeBundleAssembler(store)
+        val bundleB = assembler.forContext("ctx-b")
 
         assertEquals("ctx-b", bundleB.contextId.value)
         assertEquals(0, bundleB.propositions.size)
@@ -106,20 +117,22 @@ class ScopedBundleExportTest {
     }
 
     @Test
-    fun `exportScoped with empty repository returns empty bundle`() {
+    fun `forContext with empty repository returns empty bundle`() {
         val store = InMemoryPropositionRepository()
-        val bundle = exporter.exportScoped("ctx-x", store)
+
+        val assembler = KnowledgeBundleAssembler(store)
+        val bundle = assembler.forContext("ctx-x")
 
         assertEquals("ctx-x", bundle.contextId.value)
         assertEquals(0, bundle.propositions.size)
     }
 
     // -------------------------------------------------------------------------
-    // Export all contexts
+    // Assemble all contexts
     // -------------------------------------------------------------------------
 
     @Test
-    fun `exportAllContexts returns one bundle per context present in store`() {
+    fun `allContexts returns one bundle per context present in store`() {
         val store = InMemoryPropositionRepository()
 
         // Create propositions in three contexts
@@ -130,7 +143,8 @@ class ScopedBundleExportTest {
         store.save(proposition("C2", "ctx-c"))
         store.save(proposition("C3", "ctx-c"))
 
-        val bundles = exporter.exportAllContexts(store)
+        val assembler = KnowledgeBundleAssembler(store)
+        val bundles = assembler.allContexts()
 
         assertEquals(3, bundles.size, "Should have one bundle per context")
 
@@ -153,20 +167,23 @@ class ScopedBundleExportTest {
     }
 
     @Test
-    fun `exportAllContexts returns empty list when store is empty`() {
+    fun `allContexts returns empty list when store is empty`() {
         val store = InMemoryPropositionRepository()
-        val bundles = exporter.exportAllContexts(store)
+
+        val assembler = KnowledgeBundleAssembler(store)
+        val bundles = assembler.allContexts()
 
         assertEquals(0, bundles.size)
     }
 
     @Test
-    fun `exportAllContexts with single context returns list with one bundle`() {
+    fun `allContexts with single context returns list with one bundle`() {
         val store = InMemoryPropositionRepository()
         store.save(proposition("Only fact 1", "ctx-solo"))
         store.save(proposition("Only fact 2", "ctx-solo"))
 
-        val bundles = exporter.exportAllContexts(store)
+        val assembler = KnowledgeBundleAssembler(store)
+        val bundles = assembler.allContexts()
 
         assertEquals(1, bundles.size)
         assertEquals("ctx-solo", bundles.first().contextId.value)
@@ -174,12 +191,13 @@ class ScopedBundleExportTest {
     }
 
     @Test
-    fun `exportAllContexts bundles have correct contextId set on envelope`() {
+    fun `allContexts bundles have correct contextId set on envelope`() {
         val store = InMemoryPropositionRepository()
         store.save(proposition("X", "ctx-x"))
         store.save(proposition("Y", "ctx-y"))
 
-        val bundles = exporter.exportAllContexts(store)
+        val assembler = KnowledgeBundleAssembler(store)
+        val bundles = assembler.allContexts()
 
         val ctxXBundle = bundles.find { it.contextId.value == "ctx-x" }!!
         val ctxYBundle = bundles.find { it.contextId.value == "ctx-y" }!!
@@ -192,15 +210,16 @@ class ScopedBundleExportTest {
     }
 
     // -------------------------------------------------------------------------
-    // Round-trip with scoped export
+    // Round-trip with assembled bundles
     // -------------------------------------------------------------------------
 
     @Test
-    fun `exportScoped bundle can be serialized and deserialized`() {
+    fun `forContext bundle can be serialized and deserialized`() {
         val store = InMemoryPropositionRepository()
         store.save(proposition("Exportable fact", "ctx-rt"))
 
-        val bundle = exporter.exportScoped("ctx-rt", store)
+        val assembler = KnowledgeBundleAssembler(store)
+        val bundle = assembler.forContext("ctx-rt")
         val json = exporter.exportToString(bundle)
 
         // Deserialize and verify structure
@@ -209,14 +228,15 @@ class ScopedBundleExportTest {
     }
 
     @Test
-    fun `exportAllContexts bundles preserve proposition data through serialization`() {
+    fun `allContexts bundles preserve proposition data through serialization`() {
         val store = InMemoryPropositionRepository()
         val p1 = proposition("Preservable 1", "ctx-p", 0.95)
         val p2 = proposition("Preservable 2", "ctx-p", 0.85)
         store.save(p1)
         store.save(p2)
 
-        val bundles = exporter.exportAllContexts(store)
+        val assembler = KnowledgeBundleAssembler(store)
+        val bundles = assembler.allContexts()
         val bundle = bundles.first()
 
         // Verify propositions are intact before serialization
@@ -235,14 +255,15 @@ class ScopedBundleExportTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `exportScoped never leaks propositions from other contexts`() {
+    fun `forContext never leaks propositions from other contexts`() {
         val store = InMemoryPropositionRepository()
         // Create a scenario with many contexts where one is queried
         repeat(10) { i ->
             store.save(proposition("Fact $i", "ctx-$i"))
         }
 
-        val bundle = exporter.exportScoped("ctx-5", store)
+        val assembler = KnowledgeBundleAssembler(store)
+        val bundle = assembler.forContext("ctx-5")
 
         assertEquals(1, bundle.propositions.size)
         assertEquals("ctx-5", bundle.propositions.first().contextId.value)
@@ -250,7 +271,7 @@ class ScopedBundleExportTest {
     }
 
     @Test
-    fun `exportAllContexts maintains strict context boundaries for each bundle`() {
+    fun `allContexts maintains strict context boundaries for each bundle`() {
         val store = InMemoryPropositionRepository()
         // Create many propositions across contexts
         listOf("alpha", "beta", "gamma", "delta").forEach { ctx ->
@@ -259,7 +280,8 @@ class ScopedBundleExportTest {
             }
         }
 
-        val bundles = exporter.exportAllContexts(store)
+        val assembler = KnowledgeBundleAssembler(store)
+        val bundles = assembler.allContexts()
 
         assertEquals(4, bundles.size)
         // Verify each bundle contains ONLY propositions from its context
@@ -274,6 +296,70 @@ class ScopedBundleExportTest {
                 bundle.propositions.all { it.text.startsWith("$expectedContext-") },
                 "Bundle for $expectedContext contains unexpected proposition texts",
             )
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Read narrowness: forContext must use findByContextId, not full findAll()
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `forContext uses findByContextId and never triggers full-store scan`() {
+        // Create a spy repository that tracks which methods are called
+        val store = InMemoryPropositionRepository()
+        store.save(proposition("A1", "ctx-a"))
+        store.save(proposition("A2", "ctx-a"))
+        store.save(proposition("B1", "ctx-b"))
+        store.save(proposition("B2", "ctx-b"))
+        store.save(proposition("B3", "ctx-b"))
+
+        // Wrap with a spy that tracks method calls
+        val spyRepository = SpyRepository(store)
+
+        val assembler = KnowledgeBundleAssembler(spyRepository)
+
+        // Call forContext on one specific context
+        val bundleA = assembler.forContext("ctx-a")
+
+        // Assert the correct result
+        assertEquals(2, bundleA.propositions.size)
+        assertEquals("ctx-a", bundleA.contextId.value)
+
+        // Assert that findByContextId was called (the optimized path)
+        assertTrue(
+            spyRepository.findByContextIdCalled,
+            "forContext must call findByContextId for optimized backend filtering",
+        )
+
+        // Assert that the full-store scan fallback was NOT triggered
+        assertFalse(
+            spyRepository.findAllCalledBeforeFindByContextId,
+            "forContext must not fall back to findAll().filter() — it should call findByContextId",
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper: spy repository for read-narrowness assertions
+    // -------------------------------------------------------------------------
+
+    /**
+     * A spy repository that tracks whether methods were called to verify the assembler
+     * uses the optimized read path (findByContextId) and not the full-store scan fallback.
+     */
+    private class SpyRepository(private val delegate: InMemoryPropositionRepository) : PropositionRepository by delegate {
+        var findByContextIdCalled = false
+        var findAllCalledBeforeFindByContextId = false
+
+        override fun findByContextId(contextId: ContextId): List<Proposition> {
+            findByContextIdCalled = true
+            return delegate.findByContextId(contextId)
+        }
+
+        override fun findAll(): List<Proposition> {
+            if (!findByContextIdCalled) {
+                findAllCalledBeforeFindByContextId = true
+            }
+            return delegate.findAll()
         }
     }
 }

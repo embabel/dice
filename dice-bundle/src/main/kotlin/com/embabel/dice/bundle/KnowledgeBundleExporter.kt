@@ -15,7 +15,6 @@
  */
 package com.embabel.dice.bundle
 
-import com.embabel.dice.proposition.PropositionRepository
 import java.io.OutputStream
 import java.io.Writer
 
@@ -24,10 +23,6 @@ import java.io.Writer
  *
  * The default implementation ([support.JacksonKnowledgeBundleExporter]) uses Jackson JSON.
  * Callers that need a different format (e.g., CBOR, Protobuf) provide their own implementation.
- *
- * Implementations may also optionally support context-scoped export by implementing the
- * [exportScoped] and [exportAllContexts] methods, which read propositions from a repository
- * and assemble bundles.
  */
 interface KnowledgeBundleExporter {
 
@@ -58,39 +53,4 @@ interface KnowledgeBundleExporter {
      * @param writer Target writer. Caller is responsible for closing.
      */
     fun exportToWriter(bundle: KnowledgeBundle, writer: Writer)
-
-    /**
-     * Export all propositions in a given context as a [KnowledgeBundle].
-     *
-     * Reads propositions for the context from [repository] and assembles them into a single
-     * bundle with the given contextId. If no propositions exist for this context, returns
-     * an empty but valid bundle (zero propositions, correct contextId).
-     *
-     * The default implementation is a no-op that returns null; implementations that support
-     * repository-backed export must override this method.
-     *
-     * @param contextId The ID of the context to export.
-     * @param repository The source of propositions.
-     * @return A [KnowledgeBundle] containing all propositions in that context, or null if
-     *   repository-backed export is not supported.
-     */
-    fun exportScoped(contextId: String, repository: PropositionRepository): KnowledgeBundle? =
-        null
-
-    /**
-     * Export all contexts present in the store, returning one bundle per context.
-     *
-     * Scans the repository for all propositions, derives the set of distinct context IDs,
-     * and returns one [KnowledgeBundle] per context. If the repository is empty, returns
-     * an empty list.
-     *
-     * The default implementation is a no-op that returns null; implementations that support
-     * repository-backed export must override this method.
-     *
-     * @param repository The source of propositions.
-     * @return A list of [KnowledgeBundle], one per context (order unspecified), or null if
-     *   repository-backed export is not supported.
-     */
-    fun exportAllContexts(repository: PropositionRepository): List<KnowledgeBundle>? =
-        null
 }
