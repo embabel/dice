@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.bundle.support
 
+import com.embabel.agent.core.ContextId
 import com.embabel.dice.bundle.BundleImportOutcome
 import com.embabel.dice.bundle.ImportConflictPolicy
 import com.embabel.dice.bundle.ImportResult
@@ -84,6 +85,7 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
         serialised: String,
         store: PropositionStore,
         conflictPolicy: ImportConflictPolicy,
+        targetContextId: String?,
     ): BundleImportOutcome {
         // Measure the actual UTF-8 byte size, not String.length (which counts UTF-16 code units and
         // would under-count multi-byte characters, letting an over-limit bundle slip past the guard).
@@ -109,7 +111,7 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
             )
         }
 
-        return importFromTree(tree, store, conflictPolicy)
+        return importFromTree(tree, store, conflictPolicy, targetContextId)
     }
 
     /**
@@ -122,6 +124,7 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
         inputStream: InputStream,
         store: PropositionStore,
         conflictPolicy: ImportConflictPolicy,
+        targetContextId: String?,
     ): BundleImportOutcome {
         val tree = try {
             // Cap the bytes read so an untrusted stream can't exhaust memory; matches the byte
@@ -134,7 +137,7 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
                 cause = ex,
             )
         }
-        return importFromTree(tree, store, conflictPolicy)
+        return importFromTree(tree, store, conflictPolicy, targetContextId)
     }
 
     /**
@@ -145,6 +148,7 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
         reader: Reader,
         store: PropositionStore,
         conflictPolicy: ImportConflictPolicy,
+        targetContextId: String?,
     ): BundleImportOutcome {
         val tree = try {
             // Cap the UTF-8 bytes the characters would encode to, so this path enforces the same
@@ -157,7 +161,7 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
                 cause = ex,
             )
         }
-        return importFromTree(tree, store, conflictPolicy)
+        return importFromTree(tree, store, conflictPolicy, targetContextId)
     }
 
     /**
@@ -173,6 +177,7 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
         tree: JsonNode,
         store: PropositionStore,
         conflictPolicy: ImportConflictPolicy,
+        targetContextId: String?,
     ): BundleImportOutcome {
         // Empty or null input (an empty file, an empty HTTP body, or the literal "null") parses to a
         // missing/null node rather than throwing. Reject it cleanly here: otherwise it slips through the
@@ -218,70 +223,142 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
             return BundleImportOutcome.ParseFailure(reason = "bundle content did not bind to a KnowledgeBundle")
         }
 
-        return importParsedBundle(bundle, store, conflictPolicy)
+        return importParsedBundle(bundle, store, conflictPolicy, targetContextId)
     }
 
     /**
      * Runs the proposition import loop on a parsed, version-checked bundle.
+     *
+     * When [targetContextId] is set, every proposition is re-scoped to that context before it's
+     * written — the bundle's own `contextId` is still used above to validate the bundle is
+     * internally consistent, but every proposition actually saved carries [targetContextId] instead.
+     * Conflict detection then runs against the target context: [PropositionStore] keys propositions
+     * by ID only, so a row that already exists under a *different* context is a real storage-level
+     * collision (re-scoping would silently steal or corrupt that other context's data), not an
+     * ordinary duplicate — those IDs are rejected rather than skipped or overwritten.
      */
     private fun importParsedBundle(
         bundle: KnowledgeBundle,
         store: PropositionStore,
         conflictPolicy: ImportConflictPolicy,
+        targetContextId: String?,
     ): BundleImportOutcome {
+        val effectiveContextId = targetContextId?.let { ContextId(it) } ?: bundle.contextId
+        val rescoping = targetContextId != null
+
         var imported = 0
         var overwritten = 0
         var skipped = 0
         var rejected = 0
         val notes = mutableListOf<PropositionImportNote>()
+        val overwriteFailures = mutableListOf<String>()
         // IDs already processed in THIS bundle. A bundle may legally carry the same ID twice
         // (KnowledgeBundle.from leaves dedup to the caller). Without this guard the repeat would
         // be written — and counted — a second time under OVERWRITE; instead we skip it with a note
         // so the counts reflect distinct propositions, not raw entries.
         val seenInBundle = mutableSetOf<String>()
 
-        for (proposition in bundle.propositions) {
+        for (rawProposition in bundle.propositions) {
             // Enforce the context boundary on the way in. A bundle is scoped to one context; a
             // proposition carrying a different contextId would otherwise be saved under its own
-            // context, leaking facts across the boundary. Refuse it rather than import it.
-            if (proposition.contextId != bundle.contextId) {
+            // context, leaking facts across the boundary. Refuse it rather than import it. This check
+            // is always against the bundle's OWN declared context — it validates the bundle's internal
+            // consistency and is independent of where we're re-scoping the import to.
+            if (rawProposition.contextId != bundle.contextId) {
                 rejected++
                 notes += PropositionImportNote(
-                    propositionId = proposition.id,
-                    reason = "proposition belongs to context '${proposition.contextId.value}', not the " +
+                    propositionId = rawProposition.id,
+                    reason = "proposition belongs to context '${rawProposition.contextId.value}', not the " +
                         "bundle's context '${bundle.contextId.value}'; refused to cross the context boundary",
                 )
                 continue
             }
 
-            if (!seenInBundle.add(proposition.id)) {
+            if (!seenInBundle.add(rawProposition.id)) {
                 skipped++
                 notes += PropositionImportNote(
-                    propositionId = proposition.id,
+                    propositionId = rawProposition.id,
                     reason = "duplicate ID within the same bundle; only the first occurrence is imported",
                 )
                 continue
             }
+
+            // Propositions are immutable; re-scoping is just a copy with a different contextId. When
+            // targetContextId is null this is a no-op copy (same contextId), so behaviour is
+            // unchanged from before re-scoping existed.
+            val proposition = if (rescoping) rawProposition.copy(contextId = effectiveContextId) else rawProposition
 
             try {
                 when (conflictPolicy) {
                     ImportConflictPolicy.SKIP_EXISTING -> {
                         // Atomic insert-once: the store writes only if the id was absent, so the
                         // skip can't be lost to a concurrent insert between a check and a write.
-                        if (store.saveIfAbsent(proposition) != null) {
+                        val saved = store.saveIfAbsent(proposition)
+                        if (saved != null) {
                             imported++
                         } else {
-                            skipped++
-                            notes += PropositionImportNote(
-                                propositionId = proposition.id,
-                                reason = "proposition already exists in store; skipped per $conflictPolicy policy",
-                            )
+                            // Something with this ID already exists. Find out whether it belongs to the
+                            // context we're saving into (an ordinary duplicate) or a different one (a
+                            // storage-level ID collision that re-scoping must not paper over).
+                            val existing = store.findById(proposition.id)
+                            if (existing != null && existing.contextId != effectiveContextId) {
+                                rejected++
+                                notes += PropositionImportNote(
+                                    propositionId = proposition.id,
+                                    reason = "id already used by proposition in context " +
+                                        "'${existing.contextId.value}', not the target context " +
+                                        "'${effectiveContextId.value}'; refused rather than risk that " +
+                                        "context's data",
+                                )
+                            } else {
+                                skipped++
+                                notes += PropositionImportNote(
+                                    propositionId = proposition.id,
+                                    reason = "proposition already exists in target context; skipped per " +
+                                        "$conflictPolicy policy",
+                                )
+                            }
                         }
                     }
 
                     ImportConflictPolicy.OVERWRITE -> {
                         val existing = store.findById(proposition.id)
-                        store.save(proposition)
+                        if (existing != null && existing.contextId != effectiveContextId) {
+                            // Same ID, different context: overwriting here would clobber a row that
+                            // belongs to a context this import has no business touching.
+                            rejected++
+                            notes += PropositionImportNote(
+                                propositionId = proposition.id,
+                                reason = "id already used by proposition in context " +
+                                    "'${existing.contextId.value}', not the target context " +
+                                    "'${effectiveContextId.value}'; refused rather than overwrite that " +
+                                    "context's data",
+                            )
+                            continue
+                        }
+                        try {
+                            store.save(proposition)
+                        } catch (ex: Exception) {
+                            // OVERWRITE is best-effort, not atomic (see ImportConflictPolicy.OVERWRITE):
+                            // there's no store primitive tying the findById above to this save, so a
+                            // failure here leaves the store's state for this ID undetermined. Record it
+                            // distinctly so a caller can reconcile instead of assuming either outcome.
+                            logger.warn(
+                                "OVERWRITE failed for proposition {} after an existing copy was found " +
+                                    "(existing={}); store state for this id is not guaranteed: {}",
+                                proposition.id,
+                                existing != null,
+                                ex.message,
+                            )
+                            rejected++
+                            overwriteFailures += proposition.id
+                            notes += PropositionImportNote(
+                                propositionId = proposition.id,
+                                reason = "OVERWRITE save failed: ${ex.message ?: "unknown error"}; store " +
+                                    "state for this id is not guaranteed (see ImportResult.overwriteFailures)",
+                            )
+                            continue
+                        }
                         if (existing != null) {
                             // Pre-existing copy replaced — a destructive write, so it leaves its own
                             // note and count instead of hiding among the net-new imports.
@@ -311,7 +388,7 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
             overwritten,
             skipped,
             rejected,
-            bundle.contextId,
+            effectiveContextId,
         )
 
         return BundleImportOutcome.Success(
@@ -322,6 +399,7 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
                 skipped = skipped,
                 rejected = rejected,
                 notes = notes,
+                overwriteFailures = overwriteFailures,
             ),
         )
     }
