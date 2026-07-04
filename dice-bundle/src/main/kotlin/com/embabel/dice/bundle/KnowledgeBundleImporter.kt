@@ -32,6 +32,16 @@ enum class ImportConflictPolicy {
 
     /**
      * Replace the existing proposition with the incoming one.
+     *
+     * This is best-effort, not atomic. There's no store primitive in this library for a
+     * transactional "read then replace" — [PropositionStore] only offers a plain `save`, so the
+     * importer does a `findById` followed by a `save` with nothing tying the two together. If the
+     * store throws between those two calls (or partway through its own write), the proposition is
+     * left in whatever state the store's `save` failed in — the old copy, no copy, or a half-written
+     * one, depending on the backend. Callers that need a hard guarantee should check
+     * [ImportResult.overwriteFailures] after every OVERWRITE import and reconcile those IDs by hand
+     * (re-fetch from the source of truth, re-attempt, or restore from a snapshot) rather than assume
+     * the write either fully happened or fully didn't.
      */
     OVERWRITE,
 }
@@ -62,6 +72,13 @@ data class PropositionImportNote(
  *   duplicate ID seen earlier in the same bundle).
  * @property rejected Number of propositions that could not be imported due to errors.
  * @property notes Per-proposition notes for overwritten, skipped, and rejected items.
+ * @property overwriteFailures IDs of propositions that were mid-flight under
+ *   [ImportConflictPolicy.OVERWRITE] — an existing copy was found and a replace was attempted — when
+ *   the store's `save` call threw. Because OVERWRITE isn't atomic (see the policy's KDoc), the
+ *   store's actual state for each of these IDs is unknown: it may hold the old proposition, the new
+ *   one, or something in between, depending on where the underlying write failed. These IDs are also
+ *   present in [notes] and counted in [rejected]; this list exists so a caller can reconcile them
+ *   without having to parse note text.
  */
 data class ImportResult(
     val imported: Int,
@@ -69,6 +86,7 @@ data class ImportResult(
     val skipped: Int,
     val rejected: Int,
     val notes: List<PropositionImportNote> = emptyList(),
+    val overwriteFailures: List<String> = emptyList(),
 ) {
     /** Total number of propositions the bundle contained. */
     val total: Int get() = imported + overwritten + skipped + rejected
@@ -137,7 +155,16 @@ sealed interface BundleImportOutcome {
  * [ImportConflictPolicy.SKIP_EXISTING] writes through [PropositionStore.saveIfAbsent], so the skip is
  * atomic — and safe under concurrent imports into the same store — for any store that implements that
  * primitive atomically (the in-memory and Neo4j-backed stores do). Against a store that only inherits
- * the non-atomic SPI default, the skip falls back to best-effort.
+ * the non-atomic SPI default, the skip falls back to best-effort. [ImportConflictPolicy.OVERWRITE] is
+ * always best-effort, never atomic — see its KDoc.
+ *
+ * Every import path accepts an optional `targetContextId`. This is the re-scoping hook a multi-user
+ * consumer needs to restore a bundle into a *different* workspace/context than the one it was
+ * exported from — without it, a bundle could only ever be re-imported back into its own context.
+ * [PropositionStore] keys propositions by ID alone, not by (contextId, id), so an ID that already
+ * exists under a *different* context than the one being imported into is a genuine storage-level
+ * collision, not an ordinary duplicate: implementations must refuse to touch that row rather than
+ * silently relocating or overwriting another context's data.
  *
  * The default implementation is [support.JacksonKnowledgeBundleImporter].
  */
@@ -149,12 +176,21 @@ interface KnowledgeBundleImporter {
      * @param serialised The JSON string produced by a [KnowledgeBundleExporter].
      * @param store Target store into which propositions are written.
      * @param conflictPolicy What to do when a proposition ID already exists in [store].
+     * @param targetContextId When set, every imported proposition is re-scoped into this context
+     *   instead of the bundle's own — the classic "restore into a different workspace" move for a
+     *   multi-user consumer. The bundle's declared `contextId` is still used to validate that every
+     *   proposition inside it belongs together (see [KnowledgeBundle.from]); only the context each
+     *   proposition is *saved under* changes. Conflict checks (see [ImportConflictPolicy]) are run
+     *   against this target context, not the bundle's original one, so restoring the same bundle into
+     *   two different target contexts never collides. When `null` (the default), the bundle's own
+     *   `contextId` is used, matching prior behaviour exactly.
      * @return A [BundleImportOutcome] describing what happened; never throws.
      */
     fun importFromString(
         serialised: String,
         store: PropositionStore,
         conflictPolicy: ImportConflictPolicy = ImportConflictPolicy.SKIP_EXISTING,
+        targetContextId: String? = null,
     ): BundleImportOutcome
 
     /**
@@ -168,16 +204,20 @@ interface KnowledgeBundleImporter {
      * @param inputStream Source of the serialised bundle.
      * @param store Target store into which propositions are written.
      * @param conflictPolicy What to do when a proposition ID already exists in [store].
+     * @param targetContextId When set, re-scopes every imported proposition into this context;
+     *   see [importFromString] for the full contract.
      * @return A [BundleImportOutcome] describing what happened; never throws.
      */
     fun importFromStream(
         inputStream: InputStream,
         store: PropositionStore,
         conflictPolicy: ImportConflictPolicy = ImportConflictPolicy.SKIP_EXISTING,
+        targetContextId: String? = null,
     ): BundleImportOutcome = importFromString(
         inputStream.bufferedReader().readText(),
         store,
         conflictPolicy,
+        targetContextId,
     )
 
     /**
@@ -191,15 +231,19 @@ interface KnowledgeBundleImporter {
      * @param reader Source of the serialised bundle.
      * @param store Target store into which propositions are written.
      * @param conflictPolicy What to do when a proposition ID already exists in [store].
+     * @param targetContextId When set, re-scopes every imported proposition into this context;
+     *   see [importFromString] for the full contract.
      * @return A [BundleImportOutcome] describing what happened; never throws.
      */
     fun importFromReader(
         reader: Reader,
         store: PropositionStore,
         conflictPolicy: ImportConflictPolicy = ImportConflictPolicy.SKIP_EXISTING,
+        targetContextId: String? = null,
     ): BundleImportOutcome = importFromString(
         reader.readText(),
         store,
         conflictPolicy,
+        targetContextId,
     )
 }
