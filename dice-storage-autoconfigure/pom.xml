@@ -23,6 +23,20 @@
             <artifactId>dice-storage</artifactId>
         </dependency>
 
+        <!-- Metamodel drift check: DriftCheckRunner, ObservedSchemaSource, DeclaredSchemaSource -->
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice-metamodel</artifactId>
+        </dependency>
+        <!-- Retrievable (supertype of Proposition) lives in rag-core; provided, non-transitive from
+             dice-metamodel, needed here at test scope for the in-memory PropositionRepository used
+             in MetamodelAutoConfigurationTest -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-rag-core</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- Ai / EmbeddingService for backend + vector-index sizing -->
         <dependency>
             <groupId>com.embabel.agent</groupId>
