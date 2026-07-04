@@ -94,6 +94,35 @@ class KnowledgeBundleRoundTripTest {
     }
 
     @Test
+    fun `round-trip preserves the decay-anchor timestamps verbatim`() {
+        // created, contentRevised, and metadataRevised must survive export/import unchanged — the
+        // importer never re-stamps them, since they anchor decay and audit history, not import time.
+        val created = Instant.parse("2025-06-01T08:00:00Z")
+        val contentRevised = Instant.parse("2025-11-15T09:30:00Z")
+        val metadataRevised = Instant.parse("2026-01-20T14:00:00Z")
+        val prop = Proposition(
+            contextId = contextId,
+            text = "Timestamps survive the round trip",
+            mentions = emptyList(),
+            confidence = 0.8,
+            decay = 0.05,
+            status = PropositionStatus.ACTIVE,
+            created = created,
+            contentRevised = contentRevised,
+            metadataRevised = metadataRevised,
+        )
+        val bundle = KnowledgeBundle.from(contextId, listOf(prop))
+        val json = exporter.exportToString(bundle)
+        val store = InMemoryPropositionRepository()
+        importer.importFromString(json, store)
+
+        val restored = store.findById(prop.id)!!
+        assertEquals(created, restored.created)
+        assertEquals(contentRevised, restored.contentRevised)
+        assertEquals(metadataRevised, restored.metadataRevised)
+    }
+
+    @Test
     fun `round-trip preserves abstraction, pinning, and reinforcement fields`() {
         // A derived (level 1) proposition that is pinned, reinforced, and carries source IDs and
         // reasoning. These fields are easy to drop silently if one is ever excluded from Jackson,
@@ -290,6 +319,47 @@ class KnowledgeBundleRoundTripTest {
         assertEquals(0, store.count())
     }
 
+    @Test
+    fun `missing formatVersion is rejected, not defaulted to the current version`() {
+        // A single, exact-match format version means an absent field is treated the same as an
+        // unrecognised one — never silently coerced to "the current version".
+        val json = """{"contextId":"test-ctx","propositions":[]}"""
+        val store = InMemoryPropositionRepository()
+
+        val outcome = importer.importFromString(json, store)
+
+        val rejection = assertInstanceOf(BundleImportOutcome.UnknownFormatVersion::class.java, outcome)
+        assertEquals("", rejection.foundVersion)
+        assertTrue(KnowledgeBundle.FORMAT_VERSION in rejection.supportedVersions)
+        assertEquals(0, store.count())
+    }
+
+    // -------------------------------------------------------------------------
+    // contextId is required on the envelope
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `missing contextId returns ParseFailure instead of throwing`() {
+        val json = """{"formatVersion":"${KnowledgeBundle.FORMAT_VERSION}","propositions":[]}"""
+        val store = InMemoryPropositionRepository()
+
+        val outcome = importer.importFromString(json, store)
+
+        assertInstanceOf(BundleImportOutcome.ParseFailure::class.java, outcome)
+        assertEquals(0, store.count())
+    }
+
+    @Test
+    fun `blank contextId returns ParseFailure instead of throwing`() {
+        val json = """{"formatVersion":"${KnowledgeBundle.FORMAT_VERSION}","contextId":"","propositions":[]}"""
+        val store = InMemoryPropositionRepository()
+
+        val outcome = importer.importFromString(json, store)
+
+        assertInstanceOf(BundleImportOutcome.ParseFailure::class.java, outcome)
+        assertEquals(0, store.count())
+    }
+
     // -------------------------------------------------------------------------
     // Conflict policy
     // -------------------------------------------------------------------------
@@ -397,7 +467,7 @@ class KnowledgeBundleRoundTripTest {
         val tinyImporter = JacksonKnowledgeBundleImporter(maxBundleBytes = 10)
         val store = InMemoryPropositionRepository()
         val outcome = tinyImporter.importFromString(
-            """{"formatVersion":"1.0","contextId":"x","propositions":[]}""",
+            """{"formatVersion":"${KnowledgeBundle.FORMAT_VERSION}","contextId":"x","propositions":[]}""",
             store,
         )
 
@@ -727,7 +797,7 @@ class KnowledgeBundleRoundTripTest {
     @Test
     fun `oversized stream is rejected mid-parse rather than fully buffered`() {
         val tinyImporter = JacksonKnowledgeBundleImporter(maxBundleBytes = 10)
-        val json = """{"formatVersion":"1.0","contextId":"x","propositions":[]}"""
+        val json = """{"formatVersion":"${KnowledgeBundle.FORMAT_VERSION}","contextId":"x","propositions":[]}"""
         val store = InMemoryPropositionRepository()
 
         val outcome = tinyImporter.importFromStream(ByteArrayInputStream(json.toByteArray()), store)
@@ -740,7 +810,7 @@ class KnowledgeBundleRoundTripTest {
     @Test
     fun `oversized reader is rejected mid-parse rather than fully buffered`() {
         val tinyImporter = JacksonKnowledgeBundleImporter(maxBundleBytes = 10)
-        val json = """{"formatVersion":"1.0","contextId":"x","propositions":[]}"""
+        val json = """{"formatVersion":"${KnowledgeBundle.FORMAT_VERSION}","contextId":"x","propositions":[]}"""
         val store = InMemoryPropositionRepository()
 
         val outcome = tinyImporter.importFromReader(StringReader(json), store)

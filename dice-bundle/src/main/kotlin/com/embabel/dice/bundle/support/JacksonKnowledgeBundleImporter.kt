@@ -38,7 +38,11 @@ import java.io.Reader
  *
  * Format-version checking happens before the payload is bound to the model or written to the
  * store, so an unrecognised [KnowledgeBundle.formatVersion] is always a clean no-op — even when a
- * newer version also changed the payload shape.
+ * newer version also changed the payload shape. The check is an exact match against
+ * [supportedVersions]: there's no coercion of a missing or absent `formatVersion` to "the current
+ * version" — a bundle that doesn't name its version explicitly is rejected the same as one naming
+ * the wrong version. There's no installed base predating this library, so there's no older shape
+ * to bridge to.
  *
  * Each proposition must belong to the bundle's own context; one carrying a different `contextId` is
  * refused (counted as rejected, with a note) rather than imported, so a bundle can't leak facts
@@ -157,7 +161,7 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
     }
 
     /**
-     * Reject an unrecognised format version before binding the payload to the model.
+     * Reject anything but an exact [supportedVersions] match before binding the payload to the model.
      *
      * The JSON is read into a generic tree first (schema-agnostic), `formatVersion` is checked, and
      * only a supported version is then mapped to a [KnowledgeBundle]. So a newer bundle whose payload
@@ -172,30 +176,28 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
     ): BundleImportOutcome {
         // Empty or null input (an empty file, an empty HTTP body, or the literal "null") parses to a
         // missing/null node rather than throwing. Reject it cleanly here: otherwise it slips through the
-        // version gate on the default version and binds to a null bundle, which NPEs in the import loop.
+        // version gate as "absent" and binds to a null bundle, which NPEs in the import loop.
         if (tree.isMissingNode || tree.isNull) {
             logger.debug("Rejecting empty or null bundle content")
             return BundleImportOutcome.ParseFailure(reason = "bundle content is empty")
         }
 
-        // Distinguish "formatVersion absent" from "present but not a string". Absent mirrors the
-        // data-class default (the current version). A present-but-non-textual version — e.g. a numeric
-        // 2 from a future producer — must NOT be coerced to the current version; it goes through the
-        // gate as-is so a forward-incompatible bundle is rejected instead of bound to today's model.
+        // Single-version, exact-match gate: a bundle must name its formatVersion explicitly and it
+        // must be one this importer supports. There is no defaulting of an absent field to "the
+        // current version" and no coercion of a non-textual value (e.g. a numeric 2 from a future
+        // producer) — every value other than an exact string match is rejected the same way, so a
+        // bundle that doesn't declare its version is treated no differently from one declaring the
+        // wrong one.
         val versionNode = tree.get("formatVersion")
-        val version = if (versionNode == null || versionNode.isNull) {
-            KnowledgeBundle.FORMAT_VERSION
-        } else {
-            versionNode.asText()
-        }
-        if (version !in supportedVersions) {
+        val version = if (versionNode == null || versionNode.isNull) null else versionNode.asText()
+        if (version == null || version !in supportedVersions) {
             logger.debug(
                 "Rejecting bundle with unrecognised formatVersion '{}'; supported: {}",
                 version,
                 supportedVersions,
             )
             return BundleImportOutcome.UnknownFormatVersion(
-                foundVersion = version,
+                foundVersion = version ?: "",
                 supportedVersions = supportedVersions,
             )
         }
