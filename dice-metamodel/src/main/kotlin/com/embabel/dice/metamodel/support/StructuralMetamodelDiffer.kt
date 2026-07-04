@@ -15,10 +15,13 @@
  */
 package com.embabel.dice.metamodel.support
 
+import com.embabel.dice.metamodel.DeclaredObservedDiff
+import com.embabel.dice.metamodel.DeclaredObservedDiffer
 import com.embabel.dice.metamodel.MetamodelChange
 import com.embabel.dice.metamodel.MetamodelDiff
 import com.embabel.dice.metamodel.MetamodelDiffer
 import com.embabel.dice.metamodel.MetamodelVersion
+import com.embabel.dice.metamodel.ObservedSchema
 import org.slf4j.LoggerFactory
 
 /**
@@ -31,7 +34,7 @@ import org.slf4j.LoggerFactory
  *
  * Stateless and thread-safe — a single shared instance is fine.
  */
-class StructuralMetamodelDiffer : MetamodelDiffer {
+class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
 
     private val logger = LoggerFactory.getLogger(StructuralMetamodelDiffer::class.java)
 
@@ -100,5 +103,53 @@ class StructuralMetamodelDiffer : MetamodelDiffer {
         )
 
         return MetamodelDiff(fromVersion = from, toVersion = to, changes = changes)
+    }
+
+    override fun diffAgainstObserved(
+        declared: MetamodelVersion,
+        declaredRelationshipTypeNames: Set<String>,
+        observed: ObservedSchema,
+    ): DeclaredObservedDiff {
+        val declaredTypes = declared.entityTypeNames.toSet()
+        val observedTypes = observed.entityTypeNames
+
+        // Drift: observed but never declared — the concrete case is orphaned data whose
+        // declaring integration is gone (or was never registered). Missing-but-declared is
+        // the opposite situation and is not drift: a declared type with zero instances is fine.
+        val driftedEntityTypes = observedTypes - declaredTypes
+        val unobservedEntityTypes = declaredTypes - observedTypes
+
+        // MetamodelVersion.relationshipNames holds full "From-[name]->To" descriptors, but an
+        // observed graph only knows bare relationship type names (e.g. via Neo4j's
+        // db.relationshipTypes()) — it can't tell you which node types a relationship actually
+        // connected without walking the data. We compare on the bare name, but we never try to
+        // recover it by parsing the descriptor: these names are free-text / LLM-derived and can
+        // themselves contain a "-[...]->"-shaped substring, so a string-split extraction is
+        // ambiguous and can silently pick the wrong segment. The caller supplies the bare names
+        // directly (see DeclaredObservedDiffer.diffAgainstObserved) from the structured
+        // declaration, before it was ever rendered into a descriptor.
+        val observedRels = observed.relationshipTypeNames
+
+        val driftedRelationshipTypes = observedRels - declaredRelationshipTypeNames
+        val unobservedRelationshipTypes = declaredRelationshipTypeNames - observedRels
+
+        logger.debug(
+            "Declared/observed diff for '{}': {} drifted entity types, {} drifted relationship " +
+                "types, {} unobserved entity types, {} unobserved relationship types",
+            declared.schemaName,
+            driftedEntityTypes.size,
+            driftedRelationshipTypes.size,
+            unobservedEntityTypes.size,
+            unobservedRelationshipTypes.size,
+        )
+
+        return DeclaredObservedDiff(
+            declaredVersion = declared,
+            observedSchema = observed,
+            driftedEntityTypes = driftedEntityTypes,
+            driftedRelationshipTypes = driftedRelationshipTypes,
+            unobservedEntityTypes = unobservedEntityTypes,
+            unobservedRelationshipTypes = unobservedRelationshipTypes,
+        )
     }
 }
