@@ -65,9 +65,23 @@ interface DeclaredObservedDiffer {
      * Compare [declared] against [observed] and return a [DeclaredObservedDiff].
      *
      * @param declared The schema as declared.
+     * @param declaredRelationshipTypeNames The bare relationship type names [declared] allows
+     *   (e.g. `WORKS_AT`, not the rendered `Person-[WORKS_AT]->Company` descriptor stored in
+     *   [MetamodelVersion.relationshipNames]). This has to come from the caller rather than be
+     *   recovered here: relationship (and entity) names are free-text / LLM-derived and can
+     *   themselves contain a `-[...]->`-shaped substring, so reverse-parsing a rendered
+     *   descriptor to recover the bare name is ambiguous and can silently extract the wrong
+     *   segment. Callers hold the un-rendered relationship definitions before they're stamped
+     *   into a [MetamodelVersion] (e.g. `DataDictionary.allowedRelationships().map { it.name
+     *   }.toSet()`) and must pass that set directly instead of round-tripping through the
+     *   descriptor string.
      * @param observed A snapshot of what the live graph actually contains.
      * @return An immutable diff distinguishing drift (observed-but-undeclared) from
      *   unobserved-but-declared types.
      */
-    fun diffAgainstObserved(declared: MetamodelVersion, observed: ObservedSchema): DeclaredObservedDiff
+    fun diffAgainstObserved(
+        declared: MetamodelVersion,
+        declaredRelationshipTypeNames: Set<String>,
+        observed: ObservedSchema,
+    ): DeclaredObservedDiff
 }

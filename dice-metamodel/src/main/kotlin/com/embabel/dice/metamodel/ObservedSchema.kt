@@ -31,14 +31,10 @@ import java.time.Instant
  *
  * @property entityTypeNames Entity type (label) names actually observed in the graph.
  * @property relationshipTypeNames Relationship type names actually observed in the graph.
- * @property entityTypeCounts Optional instance count per entity type name, for types where
- *   the caller bothered to count. Types with no entry simply weren't counted — that's not
- *   the same as a count of zero, so don't treat a missing key as "no instances".
  * @property capturedAt When this snapshot was taken.
  */
 data class ObservedSchema(
     val entityTypeNames: Set<String>,
     val relationshipTypeNames: Set<String>,
-    val entityTypeCounts: Map<String, Long> = emptyMap(),
     val capturedAt: Instant,
 )

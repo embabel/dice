@@ -105,7 +105,11 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         return MetamodelDiff(fromVersion = from, toVersion = to, changes = changes)
     }
 
-    override fun diffAgainstObserved(declared: MetamodelVersion, observed: ObservedSchema): DeclaredObservedDiff {
+    override fun diffAgainstObserved(
+        declared: MetamodelVersion,
+        declaredRelationshipTypeNames: Set<String>,
+        observed: ObservedSchema,
+    ): DeclaredObservedDiff {
         val declaredTypes = declared.entityTypeNames.toSet()
         val observedTypes = observed.entityTypeNames
 
@@ -118,13 +122,16 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         // MetamodelVersion.relationshipNames holds full "From-[name]->To" descriptors, but an
         // observed graph only knows bare relationship type names (e.g. via Neo4j's
         // db.relationshipTypes()) — it can't tell you which node types a relationship actually
-        // connected without walking the data. Compare on the bare name so a declared relationship
-        // isn't reported as permanently drifted/unobserved just because we can't observe its ends.
-        val declaredRels = declared.relationshipNames.map(::relationshipTypeNameOf).toSet()
+        // connected without walking the data. We compare on the bare name, but we never try to
+        // recover it by parsing the descriptor: these names are free-text / LLM-derived and can
+        // themselves contain a "-[...]->"-shaped substring, so a string-split extraction is
+        // ambiguous and can silently pick the wrong segment. The caller supplies the bare names
+        // directly (see DeclaredObservedDiffer.diffAgainstObserved) from the structured
+        // declaration, before it was ever rendered into a descriptor.
         val observedRels = observed.relationshipTypeNames
 
-        val driftedRelationshipTypes = observedRels - declaredRels
-        val unobservedRelationshipTypes = declaredRels - observedRels
+        val driftedRelationshipTypes = observedRels - declaredRelationshipTypeNames
+        val unobservedRelationshipTypes = declaredRelationshipTypeNames - observedRels
 
         logger.debug(
             "Declared/observed diff for '{}': {} drifted entity types, {} drifted relationship " +
@@ -144,13 +151,5 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
             unobservedEntityTypes = unobservedEntityTypes,
             unobservedRelationshipTypes = unobservedRelationshipTypes,
         )
-    }
-
-    companion object {
-        private val RELATIONSHIP_DESCRIPTOR = Regex("""^.*-\[(.+)]->.*$""")
-
-        /** Pull the bare relationship type name out of a `From-[name]->To` descriptor. */
-        private fun relationshipTypeNameOf(descriptor: String): String =
-            RELATIONSHIP_DESCRIPTOR.matchEntire(descriptor)?.groupValues?.get(1) ?: descriptor
     }
 }

@@ -312,18 +312,28 @@ class MetamodelDifferTest {
         private fun observed(
             entityTypeNames: Set<String>,
             relationshipTypeNames: Set<String> = emptySet(),
-            entityTypeCounts: Map<String, Long> = emptyMap(),
         ): ObservedSchema =
             ObservedSchema(
                 entityTypeNames = entityTypeNames,
                 relationshipTypeNames = relationshipTypeNames,
-                entityTypeCounts = entityTypeCounts,
                 capturedAt = Instant.parse("2026-01-01T00:00:00Z"),
             )
 
+        /**
+         * Thin wrapper so most tests don't have to spell out an empty relationship-name set:
+         * [DeclaredObservedDiffer.diffAgainstObserved] takes the declared bare relationship type
+         * names as an explicit parameter (never parsed out of a rendered descriptor — see the
+         * interface doc and the `RelationshipNameParsing` tests below for why).
+         */
+        private fun diffAgainstObserved(
+            declaredVersion: MetamodelVersion,
+            observedSchema: ObservedSchema,
+            declaredRelationshipTypeNames: Set<String> = emptySet(),
+        ) = declaredObservedDiffer.diffAgainstObserved(declaredVersion, declaredRelationshipTypeNames, observedSchema)
+
         @Test
         fun `an observed type with no declaration is reported as drift`() {
-            val diff = declaredObservedDiffer.diffAgainstObserved(
+            val diff = diffAgainstObserved(
                 declared("Person"),
                 observed(entityTypeNames = setOf("Person", "GhostIntegrationType")),
             )
@@ -333,7 +343,7 @@ class MetamodelDifferTest {
 
         @Test
         fun `a declared type with zero observed instances is not drift`() {
-            val diff = declaredObservedDiffer.diffAgainstObserved(
+            val diff = diffAgainstObserved(
                 declared("Person", "NeverSeenYet"),
                 observed(entityTypeNames = setOf("Person")),
             )
@@ -344,7 +354,7 @@ class MetamodelDifferTest {
 
         @Test
         fun `matching declared and observed types produce no drift and nothing unobserved`() {
-            val diff = declaredObservedDiffer.diffAgainstObserved(
+            val diff = diffAgainstObserved(
                 declared("Person", "Company"),
                 observed(entityTypeNames = setOf("Person", "Company")),
             )
@@ -355,7 +365,7 @@ class MetamodelDifferTest {
 
         @Test
         fun `drift and unobserved can both be present at once and don't overlap`() {
-            val diff = declaredObservedDiffer.diffAgainstObserved(
+            val diff = diffAgainstObserved(
                 declared("Person", "NeverSeenYet"),
                 observed(entityTypeNames = setOf("Person", "GhostIntegrationType")),
             )
@@ -367,12 +377,13 @@ class MetamodelDifferTest {
         fun `relationship drift is compared on the bare relationship type name, not the full descriptor`() {
             // Declared descriptors carry from/to node types; an observed graph only reports
             // bare relationship type names (e.g. via a `db.relationshipTypes()`-style query).
-            val diff = declaredObservedDiffer.diffAgainstObserved(
+            val diff = diffAgainstObserved(
                 declared("Person", "Company", relationshipNames = listOf("Person-[WORKS_AT]->Company")),
                 observed(
                     entityTypeNames = setOf("Person", "Company"),
                     relationshipTypeNames = setOf("WORKS_AT"),
                 ),
+                declaredRelationshipTypeNames = setOf("WORKS_AT"),
             )
             assertFalse(diff.hasDrift, "a declared relationship must not be reported as drift just because " +
                 "its bare name matches")
@@ -382,7 +393,7 @@ class MetamodelDifferTest {
 
         @Test
         fun `an observed relationship type with no declaration is reported as drift`() {
-            val diff = declaredObservedDiffer.diffAgainstObserved(
+            val diff = diffAgainstObserved(
                 declared("Person", relationshipNames = emptyList()),
                 observed(entityTypeNames = setOf("Person"), relationshipTypeNames = setOf("GHOST_REL")),
             )
@@ -394,9 +405,81 @@ class MetamodelDifferTest {
         fun `diff carries the declared version and observed schema unchanged`() {
             val declaredVersion = declared("Person")
             val observedSchema = observed(entityTypeNames = setOf("Person"))
-            val diff = declaredObservedDiffer.diffAgainstObserved(declaredVersion, observedSchema)
+            val diff = diffAgainstObserved(declaredVersion, observedSchema)
             assertEquals(declaredVersion, diff.declaredVersion)
             assertEquals(observedSchema, diff.observedSchema)
+        }
+    }
+
+    @Nested
+    inner class RelationshipNameParsing {
+
+        private fun declared(vararg typeNames: String, relationshipNames: List<String>): MetamodelVersion =
+            MetamodelVersion(
+                schemaName = "test",
+                contentHash = "irrelevant",
+                entityTypeNames = typeNames.toList(),
+                entityTypeLabels = typeNames.associateWith { setOf(it) },
+                entityTypeProperties = typeNames.associateWith { emptySet() },
+                relationshipNames = relationshipNames,
+            )
+
+        private fun observed(entityTypeNames: Set<String>, relationshipTypeNames: Set<String>): ObservedSchema =
+            ObservedSchema(
+                entityTypeNames = entityTypeNames,
+                relationshipTypeNames = relationshipTypeNames,
+                capturedAt = Instant.parse("2026-01-01T00:00:00Z"),
+            )
+
+        /**
+         * A relationship name embedding a `-[...]->`-shaped substring — the exact case a
+         * previous implementation got wrong: it recovered the bare name by regex-matching the
+         * rendered `From-[name]->To` descriptor, and a greedy `.*-\[(.+)]->.*` pattern backtracks
+         * to the *last* such substring. Concretely, `"A-[X]->B-[Y]->C"` parsed to `"Y"`, not `"X"`.
+         * Since relationship (and entity) names are free-text / LLM-derived, a name shaped like
+         * `"A-[X]->B"` is realistic, not contrived. The fix passes the bare name in directly
+         * instead of ever parsing a descriptor, so this must classify correctly regardless of
+         * what the name looks like.
+         */
+        @Test
+        fun `a relationship name shaped like a full descriptor is matched by its bare name, not reverse-parsed`() {
+            val trickyRelName = "A-[X]->B"
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declared("Foo", "Bar", relationshipNames = listOf("Foo-[$trickyRelName]->Bar")),
+                declaredRelationshipTypeNames = setOf(trickyRelName),
+                observed(
+                    entityTypeNames = setOf("Foo", "Bar"),
+                    relationshipTypeNames = setOf(trickyRelName),
+                ),
+            )
+            assertFalse(diff.hasDrift, "the declared relationship must match the observed one by its full, " +
+                "unambiguous bare name, despite the tricky shape")
+            assertTrue(diff.driftedRelationshipTypes.isEmpty())
+            assertTrue(diff.unobservedRelationshipTypes.isEmpty())
+        }
+
+        /**
+         * The inverse check: if a naive regex-based extraction were reintroduced, it would parse
+         * `"Foo-[A-[X]->B]->Bar"` down to just `"B"` (or some other wrong substring), which would
+         * spuriously "match" a differently-named observed relationship. Observing the substring a
+         * greedy parse would have wrongly extracted must NOT be treated as a match — it must show
+         * up as both an unmatched observed relationship (drift) and an unmatched declared one
+         * (unobserved).
+         */
+        @Test
+        fun `an observed relationship type equal to a substring of the declared tricky name is not treated as a match`() {
+            val trickyRelName = "A-[X]->B"
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declared("Foo", "Bar", relationshipNames = listOf("Foo-[$trickyRelName]->Bar")),
+                declaredRelationshipTypeNames = setOf(trickyRelName),
+                observed(
+                    entityTypeNames = setOf("Foo", "Bar"),
+                    relationshipTypeNames = setOf("X"),
+                ),
+            )
+            assertTrue(diff.hasDrift, "observed 'X' must not be confused with the declared '$trickyRelName'")
+            assertEquals(setOf("X"), diff.driftedRelationshipTypes)
+            assertEquals(setOf(trickyRelName), diff.unobservedRelationshipTypes)
         }
     }
 }
