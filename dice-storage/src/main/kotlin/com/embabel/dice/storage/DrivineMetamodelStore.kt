@@ -31,9 +31,11 @@ import org.springframework.transaction.annotation.Transactional
  * rather than duplicating. All statements are parameterized; user-derived values are never
  * interpolated into Cypher.
  *
- * Type sets (entity types, relationship types) are serialized to and from delimited strings in
- * the graph, preserving round-trip fidelity. The query methods sort by storage timestamps in
- * Cypher rather than in memory, so ordering is deterministic across restarts.
+ * Type sets (entity types, relationship types, labels, properties) are serialized to JSON
+ * strings for escape-safe encoding that handles any characters in names. The query methods
+ * sort by storage timestamps in Cypher rather than in memory, so ordering is deterministic
+ * across restarts. savedAt is set only on CREATE, so idempotent re-saves preserve the original
+ * creation timestamp and history order.
  */
 open class DrivineMetamodelStore(
     private val persistenceManager: PersistenceManager,
@@ -48,11 +50,11 @@ open class DrivineMetamodelStore(
             QuerySpecification.withStatement(
                 """
                 MERGE (n:MetamodelVersion {schemaName: ${'$'}schemaName, contentHash: ${'$'}contentHash})
+                ON CREATE SET n.savedAt = ${'$'}savedAt
                 SET n.entityTypeNames       = ${'$'}entityTypeNames,
                     n.entityTypeLabels      = ${'$'}entityTypeLabels,
                     n.entityTypeProperties  = ${'$'}entityTypeProperties,
-                    n.relationshipNames     = ${'$'}relationshipNames,
-                    n.savedAt               = ${'$'}savedAt
+                    n.relationshipNames     = ${'$'}relationshipNames
                 """.trimIndent(),
             ).bind(MetamodelVersionRowMapper.bindMap(version)),
         )

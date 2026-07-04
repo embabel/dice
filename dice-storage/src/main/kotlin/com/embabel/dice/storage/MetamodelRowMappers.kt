@@ -17,12 +17,16 @@ package com.embabel.dice.storage
 
 import com.embabel.dice.metamodel.DriftReport
 import com.embabel.dice.metamodel.MetamodelVersion
+import com.fasterxml.jackson.databind.ObjectMapper
 import java.time.Instant
+
+private val objectMapper = ObjectMapper()
 
 /**
  * Translate metamodel versions to and from the property maps the Neo4j graph stores read and
  * write. Type sets (entity type names, labels per type, properties per type, relationship names)
- * are serialized to pipe-delimited lists and deserialized back into their original structures.
+ * are serialized to JSON strings for escape-safe round-trip encoding that handles names
+ * containing any characters (pipes, tabs, newlines, quotes, etc.).
  *
  * Timestamps are written as ISO-8601 strings and parsed back, which keeps reads off the
  * database's native temporal types and gives a single, predictable round-trip. A bad timestamp
@@ -55,8 +59,9 @@ object MetamodelVersionRowMapper {
 
 /**
  * Translate drift reports to and from the property maps the Neo4j graph stores read and write.
- * The drifting entity and relationship type sets are serialized to pipe-delimited strings and
- * deserialized back.
+ * The drifting entity and relationship type sets are serialized to JSON strings for escape-safe
+ * round-trip encoding that handles names containing any characters (pipes, tabs, newlines,
+ * quotes, etc.).
  *
  * Timestamps are written as ISO-8601 strings and parsed back. A bad timestamp falls back to
  * [Instant.EPOCH].
@@ -82,47 +87,51 @@ object DriftReportRowMapper {
     )
 }
 
-// Serialization helpers: tab/newline-delimited for robust round-trip fidelity.
+// Serialization helpers: JSON for escape-safe round-trip encoding.
 
-/** Serialize a list to a pipe-delimited string. */
+/** Serialize a list to a JSON string. */
 private fun serializeList(items: List<String>): String =
-    items.joinToString("|")
+    objectMapper.writeValueAsString(items)
 
-/** Deserialize a pipe-delimited string back to a list. */
+/** Deserialize a JSON string back to a list. */
 private fun deserializeList(serialized: String): List<String> =
     if (serialized.isEmpty()) emptyList()
-    else serialized.split("|")
+    else objectMapper.readValue(
+        serialized,
+        objectMapper.typeFactory.constructCollectionType(List::class.java, String::class.java)
+    )
 
-/** Deserialize a pipe-delimited string back to a set. */
+/** Deserialize a JSON string back to a set. */
 private fun deserializeSet(serialized: String): Set<String> =
     if (serialized.isEmpty()) emptySet()
-    else serialized.split("|").toSet()
+    else objectMapper.readValue(
+        serialized,
+        objectMapper.typeFactory.constructCollectionType(Set::class.java, String::class.java)
+    )
 
 /**
- * Serialize a map of Set<String> to a tab/newline-delimited string.
- * Format: "type1\tlab1\tlab2\ntype2\tlab3\n"
- * Uses tabs within a type entry and newlines to separate types.
+ * Serialize a map of Set<String> to a JSON string.
+ * The map is stored as: {"type1": ["lab1", "lab2"], "type2": ["lab3"], ...}
  */
 private fun serializeMapOfSets(map: Map<String, Set<String>>): String =
-    map.toSortedMap().entries.joinToString("\n") { (typeName, labels) ->
-        (listOf(typeName) + labels.sorted()).joinToString("\t")
-    }
+    objectMapper.writeValueAsString(map.mapValues { (_, v) -> v.toList() })
 
 /**
- * Deserialize a tab/newline-delimited string back to a map of sets.
- * Inverse of [serializeMapOfSets].
+ * Deserialize a JSON string back to a map of sets.
+ * Inverse of [serializeMapOfSets]: parses JSON object with lists and converts them to sets.
  */
 private fun deserializeMapOfSets(serialized: String): Map<String, Set<String>> {
     if (serialized.isEmpty()) return emptyMap()
-    return serialized.split("\n")
-        .filter { it.isNotEmpty() }
-        .map { line ->
-            val parts = line.split("\t")
-            if (parts.isEmpty()) null
-            else parts.first() to parts.drop(1).toSet()
-        }
-        .filterNotNull()
-        .toMap()
+    @Suppress("UNCHECKED_CAST")
+    val mapOfLists: Map<String, List<String>> = objectMapper.readValue(
+        serialized,
+        objectMapper.typeFactory.constructMapType(
+            Map::class.java,
+            String::class.java,
+            List::class.java
+        )
+    ) as Map<String, List<String>>
+    return mapOfLists.mapValues { (_, v) -> v.toSet() }
 }
 
 private fun Map<*, *>.str(key: String): String = this[key]?.toString().orEmpty()

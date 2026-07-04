@@ -247,4 +247,153 @@ class DrivineMetamodelStoreIntegrationTest {
         assertEquals(setOf("DriftA"), store.driftReports("schema-a").single().driftingEntityTypes)
         assertEquals(setOf("DriftB"), store.driftReports("schema-b").single().driftingEntityTypes)
     }
+
+    // ---- Adversarial serialization tests: names with delimiter characters ----
+
+    @Test
+    fun `version with entity type names containing pipe survives round-trip intact`() {
+        val version = MetamodelVersion(
+            schemaName = "pipe-test",
+            contentHash = "hash-pipe",
+            entityTypeNames = listOf("Type|WithPipe", "Normal", "A|B|C"),
+            entityTypeLabels = mapOf(
+                "Type|WithPipe" to setOf("Label1", "Label|2"),
+                "Normal" to setOf("LabelA"),
+            ),
+            entityTypeProperties = mapOf(
+                "Type|WithPipe" to setOf("prop|1", "prop2"),
+            ),
+            relationshipNames = listOf("REL|WITH|PIPES"),
+        )
+
+        store.saveVersion(version)
+
+        val reloaded = store.latestVersion("pipe-test")
+        assertEquals(version, reloaded)
+    }
+
+    @Test
+    fun `version with entity type names containing tab survives round-trip intact`() {
+        val version = MetamodelVersion(
+            schemaName = "tab-test",
+            contentHash = "hash-tab",
+            entityTypeNames = listOf("Type\tWithTab", "Normal"),
+            entityTypeLabels = mapOf(
+                "Type\tWithTab" to setOf("Label\t1", "Label2"),
+                "Normal" to setOf("LabelA"),
+            ),
+            entityTypeProperties = mapOf(
+                "Type\tWithTab" to setOf("prop\t1", "prop2"),
+            ),
+            relationshipNames = listOf("REL\tWITH\tTAB"),
+        )
+
+        store.saveVersion(version)
+
+        val reloaded = store.latestVersion("tab-test")
+        assertEquals(version, reloaded)
+    }
+
+    @Test
+    fun `version with entity type names containing newline survives round-trip intact`() {
+        val version = MetamodelVersion(
+            schemaName = "newline-test",
+            contentHash = "hash-newline",
+            entityTypeNames = listOf("Type\nWithNewline", "Normal"),
+            entityTypeLabels = mapOf(
+                "Type\nWithNewline" to setOf("Label\n1", "Label2"),
+                "Normal" to setOf("LabelA"),
+            ),
+            entityTypeProperties = mapOf(
+                "Type\nWithNewline" to setOf("prop\n1", "prop2"),
+            ),
+            relationshipNames = listOf("REL\nWITH\nNEWLINE"),
+        )
+
+        store.saveVersion(version)
+
+        val reloaded = store.latestVersion("newline-test")
+        assertEquals(version, reloaded)
+    }
+
+    @Test
+    fun `version with entity type names containing double quotes survives round-trip intact`() {
+        val version = MetamodelVersion(
+            schemaName = "quote-test",
+            contentHash = "hash-quote",
+            entityTypeNames = listOf("Type\"WithQuote", "Normal"),
+            entityTypeLabels = mapOf(
+                "Type\"WithQuote" to setOf("Label\"1", "Label2"),
+                "Normal" to setOf("LabelA"),
+            ),
+            entityTypeProperties = mapOf(
+                "Type\"WithQuote" to setOf("prop\"1", "prop2"),
+            ),
+            relationshipNames = listOf("REL\"WITH\"QUOTE"),
+        )
+
+        store.saveVersion(version)
+
+        val reloaded = store.latestVersion("quote-test")
+        assertEquals(version, reloaded)
+    }
+
+    @Test
+    fun `drift report with type names containing delimiters survives round-trip intact`() {
+        val report = DriftReport(
+            schemaName = "drift-delim-test",
+            versionHash = "v-delim",
+            driftingEntityTypes = setOf("Type|Pipe", "Type\tTab", "Type\nNewline", "Type\"Quote"),
+            driftingRelationshipTypes = setOf("REL|PIPE", "REL\tTAB", "REL\nNEWLINE"),
+            capturedAt = Instant.parse("2026-01-01T12:00:00Z"),
+        )
+
+        store.saveDriftReport(report)
+
+        val reloaded = store.driftReports("drift-delim-test").single()
+        assertEquals(report, reloaded)
+    }
+
+    // ---- F3: savedAt reset behavior on re-save ----
+
+    @Test
+    fun `re-saving an old version preserves original savedAt and history order`() {
+        val v1 = MetamodelVersion(
+            schemaName = "history-test",
+            contentHash = "hash1",
+            entityTypeNames = listOf("Type1"),
+            entityTypeLabels = emptyMap(),
+            entityTypeProperties = emptyMap(),
+            relationshipNames = emptyList(),
+        )
+        val v2 = MetamodelVersion(
+            schemaName = "history-test",
+            contentHash = "hash2",
+            entityTypeNames = listOf("Type2"),
+            entityTypeLabels = emptyMap(),
+            entityTypeProperties = emptyMap(),
+            relationshipNames = emptyList(),
+        )
+
+        store.saveVersion(v1)
+        Thread.sleep(10)
+        store.saveVersion(v2)
+
+        // Verify v2 is latest before re-saving v1
+        assertEquals(v2, store.latestVersion("history-test"))
+
+        Thread.sleep(10)
+        // Re-save v1 (idempotent MERGE)
+        store.saveVersion(v1)
+
+        // latestVersion should still be v2 — re-saving v1 must not change the history order
+        val latest = store.latestVersion("history-test")
+        assertEquals(v2, latest)
+
+        // Verify history order is still [v2, v1]
+        val history = store.versionHistory("history-test")
+        assertEquals(2, history.size)
+        assertEquals(v2, history[0], "Most recent should still be v2")
+        assertEquals(v1, history[1], "Second should still be v1")
+    }
 }

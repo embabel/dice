@@ -74,6 +74,12 @@
             <artifactId>slf4j-api</artifactId>
         </dependency>
 
+        <!-- Jackson for JSON serialization of type sets with escape-safe encoding -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
         <!-- Test: Drivine test support spins a Neo4j testcontainer; see TestApplication -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
