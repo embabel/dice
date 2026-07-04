@@ -74,6 +74,11 @@
             </dependency>
             <dependency>
                 <groupId>com.embabel.dice</groupId>
+                <artifactId>dice-bundle</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.embabel.dice</groupId>
                 <artifactId>dice-storage</artifactId>
                 <version>${project.version}</version>
             </dependency>

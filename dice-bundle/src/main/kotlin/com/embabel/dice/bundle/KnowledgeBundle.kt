@@ -49,6 +49,14 @@ import java.time.Instant
  * @property createdAt When this bundle was assembled. Included in structural equality —
  *   two bundles from the same data assembled at different times will not be `==`.
  * @property metadata Optional free-form string metadata (e.g. author, description, tags).
+ * @property entities Optional entity snapshots for the [com.embabel.dice.proposition.EntityMention.resolvedId]
+ *   values [propositions] mention — data dice doesn't own itself (see [EntitySnapshotPort]). Absent
+ *   or empty is a fully valid bundle; this section exists purely so a consumer that *does* own that
+ *   data can carry it alongside the facts that reference it.
+ * @property embeddings Optional embedding vectors for propositions in this bundle (see
+ *   [EmbeddingPort]), so a re-import doesn't have to re-embed at LLM cost. Absent or empty is a
+ *   fully valid bundle; propositions with no matching entry are simply re-embedded on import as
+ *   they always have been.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class KnowledgeBundle(
@@ -57,6 +65,8 @@ data class KnowledgeBundle(
     val propositions: List<Proposition>,
     val createdAt: Instant = Instant.now(),
     val metadata: Map<String, String> = emptyMap(),
+    val entities: List<EntitySnapshot> = emptyList(),
+    val embeddings: List<EmbeddingEntry> = emptyList(),
 ) {
     companion object {
 
@@ -69,6 +79,14 @@ data class KnowledgeBundle(
          * There is no installed base yet, so there's nothing to stay compatible with: a future
          * format change should bump this constant and the importer will reject "2.0" bundles
          * outright rather than trying to coerce them.
+         *
+         * [entities] and [embeddings] did NOT bump this constant when they were added: both are
+         * purely additive, default-empty fields that don't change how any existing field is read.
+         * A "2.0" bundle from before they existed deserialises with both sections empty (Jackson
+         * falls back to the constructor default for a missing property), and a "2.0" bundle
+         * carrying them deserialises fine on an importer built before they existed too, because
+         * [KnowledgeBundle] is annotated `@JsonIgnoreProperties(ignoreUnknown = true)`. Only a
+         * change that alters how an *existing* field must be interpreted would warrant a bump.
          */
         const val FORMAT_VERSION: String = "2.0"
 
@@ -90,6 +108,8 @@ data class KnowledgeBundle(
          * @param createdAt Assembly timestamp; defaults to now. Supply an explicit value
          *   when deterministic equality across two bundles from the same data is required
          *   (e.g. caching or idempotency checks).
+         * @param entities Optional entity snapshots to carry alongside [propositions]; defaults to none.
+         * @param embeddings Optional embedding vectors to carry alongside [propositions]; defaults to none.
          * @return A new [KnowledgeBundle] stamped with [createdAt].
          * @throws IllegalArgumentException if any proposition belongs to a context other than [contextId].
          */
@@ -100,6 +120,8 @@ data class KnowledgeBundle(
             propositions: List<Proposition>,
             metadata: Map<String, String> = emptyMap(),
             createdAt: Instant = Instant.now(),
+            entities: List<EntitySnapshot> = emptyList(),
+            embeddings: List<EmbeddingEntry> = emptyList(),
         ): KnowledgeBundle {
             val foreign = propositions.filter { it.contextId != contextId }
             require(foreign.isEmpty()) {
@@ -112,6 +134,8 @@ data class KnowledgeBundle(
                 propositions = propositions,
                 metadata = metadata,
                 createdAt = createdAt,
+                entities = entities,
+                embeddings = embeddings,
             )
         }
 
@@ -130,6 +154,8 @@ data class KnowledgeBundle(
             propositions: List<Proposition>,
             metadata: Map<String, String> = emptyMap(),
             createdAt: Instant = Instant.now(),
-        ): KnowledgeBundle = from(ContextId(contextIdValue), propositions, metadata, createdAt)
+            entities: List<EntitySnapshot> = emptyList(),
+            embeddings: List<EmbeddingEntry> = emptyList(),
+        ): KnowledgeBundle = from(ContextId(contextIdValue), propositions, metadata, createdAt, entities, embeddings)
     }
 }

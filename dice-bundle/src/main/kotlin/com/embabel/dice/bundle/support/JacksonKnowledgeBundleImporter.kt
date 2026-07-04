@@ -17,6 +17,9 @@ package com.embabel.dice.bundle.support
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.bundle.BundleImportOutcome
+import com.embabel.dice.bundle.EmbeddingCodec
+import com.embabel.dice.bundle.EmbeddingImporter
+import com.embabel.dice.bundle.EntitySnapshotImporter
 import com.embabel.dice.bundle.ImportConflictPolicy
 import com.embabel.dice.bundle.ImportResult
 import com.embabel.dice.bundle.KnowledgeBundle
@@ -60,10 +63,20 @@ import java.io.Reader
  * @param maxBundleBytes Maximum serialized bundle size accepted across all import paths.
  *   Bundles exceeding this limit return [BundleImportOutcome.ParseFailure]. Defaults to
  *   [DEFAULT_MAX_BUNDLE_BYTES] (50 MB).
+ * @param entitySnapshotImporter Optional collaborator that loads [KnowledgeBundle.entities] into
+ *   the consuming application's own graph. Deliberately nullable rather than defaulting to a
+ *   no-op: when the bundle carries a non-empty `entities` section but no importer is wired here,
+ *   that's worth a loud note in [ImportResult.notes] rather than a silent drop — see
+ *   [importParsedBundle]. Null (the default) means this consumer doesn't handle entity data at all.
+ * @param embeddingImporter Optional collaborator that persists [KnowledgeBundle.embeddings] vectors.
+ *   Same nullable-not-no-op reasoning as [entitySnapshotImporter]: a present `embeddings` section
+ *   with no importer wired is noted, not dropped silently.
  */
 class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
     private val supportedVersions: Set<String> = setOf(KnowledgeBundle.FORMAT_VERSION),
     private val maxBundleBytes: Int = DEFAULT_MAX_BUNDLE_BYTES,
+    private val entitySnapshotImporter: EntitySnapshotImporter? = null,
+    private val embeddingImporter: EmbeddingImporter? = null,
 ) : KnowledgeBundleImporter {
 
     private val logger = LoggerFactory.getLogger(JacksonKnowledgeBundleImporter::class.java)
@@ -236,6 +249,13 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
      * by ID only, so a row that already exists under a *different* context is a real storage-level
      * collision (re-scoping would silently steal or corrupt that other context's data), not an
      * ordinary duplicate — those IDs are rejected rather than skipped or overwritten.
+     *
+     * [KnowledgeBundle.entities] is applied first, before any proposition is saved, so that by the
+     * time a proposition's mentions land, the entities they resolve to already exist. See
+     * [applyEntities]. [KnowledgeBundle.embeddings] is applied last, after the proposition loop,
+     * since a vector is only meaningful once its proposition actually exists in the store. See
+     * [applyEmbeddings]. Either section is a no-op when empty; either section present with no
+     * corresponding importer wired is recorded as a note rather than dropped silently.
      */
     private fun importParsedBundle(
         bundle: KnowledgeBundle,
@@ -257,6 +277,8 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
         // be written — and counted — a second time under OVERWRITE; instead we skip it with a note
         // so the counts reflect distinct propositions, not raw entries.
         val seenInBundle = mutableSetOf<String>()
+
+        applyEntities(bundle, notes)
 
         for (rawProposition in bundle.propositions) {
             // Enforce the context boundary on the way in. A bundle is scoped to one context; a
@@ -391,6 +413,8 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
             effectiveContextId,
         )
 
+        applyEmbeddings(bundle, notes)
+
         return BundleImportOutcome.Success(
             bundle = bundle,
             result = ImportResult(
@@ -402,6 +426,59 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
                 overwriteFailures = overwriteFailures,
             ),
         )
+    }
+
+    /**
+     * Load [KnowledgeBundle.entities] via [entitySnapshotImporter], before any proposition in
+     * [bundle] is saved. A non-empty section with no importer wired is not a silent drop: it's
+     * appended to [notes] (keyed by the entity's own id, since these aren't proposition ids) and
+     * logged as a warning, so a caller inspecting [ImportResult] can tell the difference between
+     * "this bundle had no entities" and "this bundle had entities nobody was set up to receive".
+     */
+    private fun applyEntities(bundle: KnowledgeBundle, notes: MutableList<PropositionImportNote>) {
+        if (bundle.entities.isEmpty()) return
+        val importer = entitySnapshotImporter
+        if (importer == null) {
+            logger.warn(
+                "Bundle carries {} entity snapshot(s) but no EntitySnapshotImporter is configured; skipping",
+                bundle.entities.size,
+            )
+            bundle.entities.forEach { entity ->
+                notes += PropositionImportNote(
+                    propositionId = entity.id,
+                    reason = "entity snapshot present in bundle but no EntitySnapshotImporter configured; skipped",
+                )
+            }
+            return
+        }
+        importer.importSnapshots(bundle.entities)
+    }
+
+    /**
+     * Persist [KnowledgeBundle.embeddings] via [embeddingImporter], after the proposition loop has
+     * run — a vector is only meaningful once its proposition actually exists in the store. Same
+     * not-a-silent-drop treatment as [applyEntities]: a non-empty section with no importer wired
+     * gets one note per entry (keyed by the real proposition id this time) plus a warning log.
+     */
+    private fun applyEmbeddings(bundle: KnowledgeBundle, notes: MutableList<PropositionImportNote>) {
+        if (bundle.embeddings.isEmpty()) return
+        val importer = embeddingImporter
+        if (importer == null) {
+            logger.warn(
+                "Bundle carries {} embedding(s) but no EmbeddingImporter is configured; skipping",
+                bundle.embeddings.size,
+            )
+            bundle.embeddings.forEach { entry ->
+                notes += PropositionImportNote(
+                    propositionId = entry.propositionId,
+                    reason = "embedding present in bundle but no EmbeddingImporter configured; skipped",
+                )
+            }
+            return
+        }
+        bundle.embeddings.forEach { entry ->
+            importer.importEmbedding(entry.propositionId, EmbeddingCodec.decode(entry.vectorBase64))
+        }
     }
 }
 

@@ -16,6 +16,7 @@
 package com.embabel.dice.bundle
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import org.slf4j.LoggerFactory
 
@@ -33,8 +34,22 @@ import org.slf4j.LoggerFactory
  *
  * All propositions for a context (or all contexts) are loaded into memory per call —
  * there is no streaming support. Callers working with very large contexts should batch.
+ *
+ * @param repository Source of propositions to assemble into bundles.
+ * @param entitySnapshotExporter Optional collaborator that supplies entity snapshots for the
+ *   resolvedIds a bundle's propositions mention (see [EntitySnapshotPort]). Defaults to
+ *   [NoOpEntitySnapshotPort], which contributes nothing — the bundle's `entities` section stays
+ *   empty and the bundle remains fully valid. Wire a real one only if this consumer owns entity
+ *   data dice doesn't.
+ * @param embeddingExporter Optional collaborator that supplies each proposition's stored embedding
+ *   vector (see [EmbeddingPort]). Defaults to [NoOpEmbeddingPort], which contributes nothing —
+ *   the bundle's `embeddings` section stays empty and a later import simply re-embeds as before.
  */
-class KnowledgeBundleAssembler(private val repository: PropositionRepository) {
+class KnowledgeBundleAssembler(
+    private val repository: PropositionRepository,
+    private val entitySnapshotExporter: EntitySnapshotExporter = NoOpEntitySnapshotPort,
+    private val embeddingExporter: EmbeddingExporter = NoOpEmbeddingPort,
+) {
 
     private val logger = LoggerFactory.getLogger(KnowledgeBundleAssembler::class.java)
 
@@ -49,7 +64,8 @@ class KnowledgeBundleAssembler(private val repository: PropositionRepository) {
      * correct contextId). Empty contexts are not errors — they are valid states.
      *
      * @param contextId The ID of the context to assemble.
-     * @return A [KnowledgeBundle] containing all propositions in that context.
+     * @return A [KnowledgeBundle] containing all propositions in that context, plus whatever
+     *   [entitySnapshotExporter] and [embeddingExporter] contribute for them.
      */
     fun forContext(contextId: String): KnowledgeBundle {
         val ctxId = ContextId(contextId)
@@ -59,7 +75,12 @@ class KnowledgeBundleAssembler(private val repository: PropositionRepository) {
             contextId,
             propositions.size,
         )
-        return KnowledgeBundle.from(ctxId, propositions)
+        return KnowledgeBundle.from(
+            ctxId,
+            propositions,
+            entities = entitiesFor(propositions),
+            embeddings = embeddingsFor(propositions),
+        )
     }
 
     /**
@@ -90,7 +111,30 @@ class KnowledgeBundleAssembler(private val repository: PropositionRepository) {
         // Build one bundle per context
         return byContext.map { (contextId, propositions) ->
             logger.debug("Assembling bundle for context '{}': {} propositions", contextId.value, propositions.size)
-            KnowledgeBundle.from(contextId, propositions)
+            KnowledgeBundle.from(
+                contextId,
+                propositions,
+                entities = entitiesFor(propositions),
+                embeddings = embeddingsFor(propositions),
+            )
         }
     }
+
+    /** Snapshots for every resolvedId mentioned by [propositions], via [entitySnapshotExporter]. */
+    private fun entitiesFor(propositions: List<Proposition>): List<EntitySnapshot> {
+        val resolvedIds = propositions
+            .flatMap { it.mentions }
+            .mapNotNull { it.resolvedId }
+            .toSet()
+        if (resolvedIds.isEmpty()) return emptyList()
+        return entitySnapshotExporter.snapshotsFor(resolvedIds)
+    }
+
+    /** One [EmbeddingEntry] per proposition that [embeddingExporter] has a vector for. */
+    private fun embeddingsFor(propositions: List<Proposition>): List<EmbeddingEntry> =
+        propositions.mapNotNull { proposition ->
+            embeddingExporter.embeddingFor(proposition.id)?.let { vector ->
+                EmbeddingEntry(propositionId = proposition.id, vectorBase64 = EmbeddingCodec.encode(vector))
+            }
+        }
 }

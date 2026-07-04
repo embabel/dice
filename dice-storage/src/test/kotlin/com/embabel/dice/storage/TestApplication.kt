@@ -91,6 +91,11 @@ open class TestApplication {
         DrivinePropositionRepository(graphObjectManager, persistenceManager, embeddingService, transactionManager)
 
     @Bean
+    open fun embeddingAccess(
+        persistenceManager: PersistenceManager,
+    ): DrivineEmbeddingAccess = DrivineEmbeddingAccess(persistenceManager)
+
+    @Bean
     open fun chunkHistoryStore(
         graphObjectManager: GraphObjectManager,
         persistenceManager: PersistenceManager,
