@@ -118,4 +118,15 @@ open class TestApplication {
         repository: DrivinePropositionRepository,
         persistenceManager: PersistenceManager,
     ): GraphDecayManager = GraphDecayManager(repository, persistenceManager)
+
+    @Bean
+    open fun metamodelSchema(): SchemaCatalog = SchemaCatalog.of(
+        UniquenessConstraintSpec(label = "MetamodelVersion", properties = listOf("schemaName", "contentHash")),
+        UniquenessConstraintSpec(label = "MetamodelDriftReport", properties = listOf("schemaName", "versionHash", "capturedAt")),
+    )
+
+    @Bean
+    open fun metamodelStore(
+        persistenceManager: PersistenceManager,
+    ): DrivineMetamodelStore = DrivineMetamodelStore(persistenceManager)
 }
