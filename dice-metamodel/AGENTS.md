@@ -51,7 +51,8 @@ metadata. Nothing is deleted.
 - **Idempotency contract.** A proposition already in `STALE` status with a `QUARANTINE_REASON`
   metadata entry is placed in the `conforming` group unchanged — its original reason is preserved.
   To force re-evaluation, clear `QUARANTINE_REASON` from its metadata before passing it in.
-- **Label names must not contain spaces.** `TypeShapeSnapshot` uses a space as the join delimiter
-  when comparing sorted labels and properties. Commas in labels are safe; spaces are not.
+- **Label and property names can contain any character.** The `contentHash` uses length-prefixed
+  encoding (`<len>:<token>`) when building the fingerprint, so names with spaces, semicolons, or any
+  delimiter are safe and unambiguous.
 - **No Spring auto-configuration.** `MetamodelConfiguration` is not auto-registered. You must
   `@Import(MetamodelConfiguration::class)` or declare it in your application context explicitly.
