@@ -490,4 +490,108 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals(listOf(grounded.id), repository.findByGrounding("chunk-1").map { it.id })
         assertTrue(repository.findByGrounding("chunk-x").isEmpty(), "no proposition is grounded in an unknown chunk")
     }
+
+    /**
+     * #10: a proposition deleted and then re-saved under the SAME id writes every field, not just
+     * an id-only husk.
+     *
+     * Regression test for a real bug: Drivine's `GraphObjectManager` keeps a session-scoped cache
+     * of every view it has saved/loaded, keyed by `(view class, id)`, and diffs the next save
+     * against that cache to decide which fields actually need a `SET` clause ("optimized save").
+     * [DrivinePropositionRepository.delete] has no way to evict that cache — `GraphObjectManager`
+     * exposes no eviction API and its session field is private — so a proposition re-saved under an
+     * id it had *before* being deleted got diffed against its own stale pre-delete snapshot: any
+     * field whose new value happened to equal the old snapshot's value was never written to what is
+     * actually a brand-new, empty node, silently corrupting it down to an id-only husk. This is
+     * exactly what bundle restore does (wipe a context, reimport a bundle that preserves original
+     * proposition IDs) — see `BundleRoundTripIT` in dice-storage's `bundle` test package.
+     *
+     * The fix ([DrivinePropositionRepository.saveFully]) always performs a full write regardless of
+     * Drivine's session cache; this test pins that behavior directly against the repository, without
+     * going through the bundle import machinery at all.
+     */
+    @Test
+    fun `delete then re-save under the same id writes every field, not just the id`() {
+        val original = repository.save(
+            prop(
+                "Alice works with Bob",
+                context = "ctx-regression",
+                confidence = 0.8,
+                decay = 0.05,
+                entityId = "ent-0",
+            ),
+        )
+
+        repository.delete(original.id)
+        assertEquals(null, repository.findById(original.id), "precondition: the node is actually gone")
+
+        // Re-save under the SAME id with the SAME (contextId, text, confidence, ...) values a naive
+        // dirty-diff against a stale pre-delete snapshot would treat as "unchanged" and skip writing.
+        val resaved = original.copy()
+        val saved = repository.saveIfAbsent(resaved)
+        assertNotNull(saved, "saveIfAbsent must treat the deleted id as absent and write the row")
+
+        val restored = repository.findById(original.id)
+        assertNotNull(restored, "the re-saved proposition must be readable back")
+        assertEquals("ctx-regression", restored!!.contextId.value, "contextId must not be dropped to null")
+        assertEquals("Alice works with Bob", restored.text, "text must not be dropped to null")
+        assertEquals(0.8, restored.confidence, "confidence must not be dropped")
+        assertEquals(0.05, restored.decay, "decay must not be dropped")
+        assertEquals(1, restored.mentions.size, "mentions must not be dropped")
+        assertEquals("ent-0", restored.mentions.single().resolvedId)
+
+        // And a second delete + re-save with a CHANGED field must still write every OTHER
+        // (unchanged-looking) field too, not just the one that differs from the stale snapshot.
+        repository.delete(original.id)
+        val changed = original.copy(text = "Alice still works with Bob")
+        repository.saveIfAbsent(changed)
+        val restoredAfterChange = repository.findById(original.id)
+        assertNotNull(restoredAfterChange)
+        assertEquals("Alice still works with Bob", restoredAfterChange!!.text)
+        assertEquals("ctx-regression", restoredAfterChange.contextId.value, "unchanged-looking contextId must still be written")
+        assertEquals(0.8, restoredAfterChange.confidence, "unchanged-looking confidence must still be written")
+    }
+
+    /**
+     * #11: an ordinary re-save (no [delete] involved) that shrinks a proposition's mentions must
+     * still remove the stale `Mention` relationship/node — `DELETE_ORPHAN` must keep working for
+     * every normal update, not just the one-shot path right after a delete.
+     *
+     * Regression test for a bug introduced (and caught before shipping) while fixing the
+     * delete-then-resave staleness bug above: an earlier version of that fix routed EVERY save
+     * through an always-empty-session write (see [DrivinePropositionRepository.saveFully]'s
+     * KDoc), which happened to repair the delete-then-resave case but broke `DELETE_ORPHAN` for
+     * everything else — Drivine's relationship-diffing treats "no snapshot" as "every current
+     * relationship is new", so a shrunk mention set was never reconciled and the old `Mention`
+     * node was silently orphaned in the graph. The fix ([DrivinePropositionRepository.
+     * staleAfterDelete]) scopes the always-empty-session write to exactly the one save right
+     * after a `delete()` of that id; every other save — this one — goes through
+     * `graphObjectManager.save` directly, which is session-aware and does compute the removed
+     * relationship correctly.
+     */
+    @Test
+    fun `save with fewer mentions removes stale mention relationship`() {
+        val mentionA = EntityMention(span = "Alice", type = "Person", resolvedId = "alice", role = MentionRole.SUBJECT)
+        val mentionB = EntityMention(span = "Bob", type = "Person", resolvedId = "bob", role = MentionRole.OBJECT)
+
+        val original = Proposition(
+            contextId = ContextId("ctx-mention-shrink"),
+            text = "Alice works with Bob",
+            mentions = listOf(mentionA, mentionB),
+            confidence = 0.8,
+            decay = 0.05,
+            status = PropositionStatus.ACTIVE,
+        )
+        val saved = repository.save(original)
+        assertEquals(2, repository.findById(saved.id)!!.mentions.size, "precondition: both mentions saved")
+        assertEquals(2L, nodeCount("Mention"), "precondition: both Mention nodes exist")
+
+        // Re-save the SAME id with only one mention — NO delete() in between.
+        repository.save(saved.copy(mentions = listOf(mentionA)))
+
+        val restored = repository.findById(saved.id)!!
+        assertEquals(1, restored.mentions.size, "the removed mention must not still be attached")
+        assertEquals("alice", restored.mentions.single().resolvedId)
+        assertEquals(1L, nodeCount("Mention"), "the orphaned Mention node must be deleted, not left behind")
+    }
 }
