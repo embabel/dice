@@ -211,7 +211,7 @@ class DriftCheckRunnerTest {
         assertEquals(contextId, recording.findByContextIdCall)
         assertNull(recording.findAllCall)
         assertEquals(contextId, result.contextId)
-        assertEquals(contextId.value, result.reportRef.contextId)
+        assertEquals(contextId, result.reportRef.contextId)
     }
 
     @Test
@@ -236,8 +236,8 @@ class DriftCheckRunnerTest {
         val result = runner.run(dryRun = true, contextId = contextId)
 
         assertEquals(contextId, result.contextId)
-        assertEquals(contextId.value, result.reportRef.contextId)
-        assertEquals(contextId.value, store.driftReports(schemaName).single().contextId)
+        assertEquals(contextId, result.reportRef.contextId)
+        assertEquals(contextId, store.driftReports(schemaName).single().contextId)
     }
 
     /**

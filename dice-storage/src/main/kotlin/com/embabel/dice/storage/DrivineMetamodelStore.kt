@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.storage
 
+import com.embabel.agent.core.ContextId
 import com.embabel.dice.metamodel.DriftReport
 import com.embabel.dice.metamodel.MetamodelStore
 import com.embabel.dice.metamodel.MetamodelVersion
@@ -61,7 +62,7 @@ open class DrivineMetamodelStore(
         internal const val GLOBAL_DRIFT_REPORT_CONTEXT_KEY = "\u0000__global-context__\u0000"
     }
 
-    private fun contextKeyFor(contextId: String?): String = contextId ?: GLOBAL_DRIFT_REPORT_CONTEXT_KEY
+    private fun contextKeyFor(contextId: ContextId?): String = contextId?.value ?: GLOBAL_DRIFT_REPORT_CONTEXT_KEY
 
     @Transactional
     override fun saveVersion(version: MetamodelVersion) {
@@ -164,7 +165,7 @@ open class DrivineMetamodelStore(
      * equality on it.
      */
     @Transactional(readOnly = true)
-    override fun driftReports(schemaName: String, contextId: String?): List<DriftReport> {
+    override fun driftReports(schemaName: String, contextId: ContextId?): List<DriftReport> {
         @Suppress("UNCHECKED_CAST")
         val spec = if (contextId != null) {
             QuerySpecification.withStatement(
@@ -173,7 +174,7 @@ open class DrivineMetamodelStore(
                 RETURN n
                 ORDER BY n.capturedAt DESC
                 """.trimIndent(),
-            ).bind(mapOf("schemaName" to schemaName, "contextId" to contextId)) as QuerySpecification<Any>
+            ).bind(mapOf("schemaName" to schemaName, "contextId" to contextId.value)) as QuerySpecification<Any>
         } else {
             QuerySpecification.withStatement(
                 """
