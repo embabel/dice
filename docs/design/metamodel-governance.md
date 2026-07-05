@@ -184,12 +184,18 @@ observations against the same baseline.
 
 - `MetamodelVersion` node: `(schemaName, contentHash)` (`DrivineMetamodelStore.kt:52`); `savedAt` is
   set only `ON CREATE`, so an idempotent re-save preserves the original creation timestamp.
-- `MetamodelDriftReport` node: `(schemaName, versionHash, capturedAt)`
-  (`DrivineMetamodelStore.kt:106`). `contextId` is not part of this natural key — two reports for
-  different contexts, checked at the same instant against the same version, are two distinct
-  reports regardless, so `contextId` rides along as a plain property. A global report has no
-  `contextId` property on the node at all (a Neo4j node never stores an explicit null), which is
-  what `driftReports(schemaName, contextId = null)` matches against.
+- `MetamodelDriftReport` node: `(schemaName, versionHash, capturedAt, contextKey)`
+  (`DrivineMetamodelStore.kt:117-141`). `contextKey` is a separate property from `contextId`
+  purpose-built for this natural key: it's the real context id when there is one, or the sentinel
+  `GLOBAL_DRIFT_REPORT_CONTEXT_KEY` when the report is global. It has to be a distinct property,
+  not `contextId` itself, because Cypher property-map equality on a literal `null` never matches —
+  MERGE-ing directly on a nullable `contextId` would make every global report take the CREATE
+  branch and duplicate on every retry, instead of updating in place like every other natural key
+  here. With `contextKey` in the key, two reports for different contexts (including one global, one
+  scoped) checked at the same instant against the same version are always two distinct nodes, never
+  a silent overwrite. The domain-visible `contextId` property itself is still absent on the node for
+  a global report (a Neo4j node never stores an explicit null), which is what
+  `driftReports(schemaName, contextId = null)` matches against.
 
 Type sets (entity types, labels, properties, relationships) are stored as JSON strings
 (`MetamodelRowMappers.kt`), not delimiter-joined, for the same escape-safety reason the content hash

@@ -432,6 +432,41 @@ class DrivineMetamodelStoreIntegrationTest {
         assertEquals(3, store.driftReports(schemaName).size)
     }
 
+    @Test
+    fun `a null-context and a tenant-context report at the identical instant coexist as two nodes, not one overwriting the other`() {
+        // Same schemaName + versionHash + capturedAt -- the exact collision the natural key must
+        // not conflate. Before contextKey joined the MERGE key, the second save here would have
+        // silently overwritten the first (same match, only the SET differed).
+        val schemaName = "same-instant-collision-test"
+        val sameInstant = Instant.parse("2026-01-01T00:00:00Z")
+        val globalReport = DriftReport(
+            schemaName = schemaName,
+            versionHash = "v1",
+            driftingEntityTypes = setOf("GlobalGhost"),
+            driftingRelationshipTypes = emptySet(),
+            capturedAt = sameInstant,
+            contextId = null,
+        )
+        val tenantAReport = DriftReport(
+            schemaName = schemaName,
+            versionHash = "v1",
+            driftingEntityTypes = setOf("TenantAGhost"),
+            driftingRelationshipTypes = emptySet(),
+            capturedAt = sameInstant,
+            contextId = "tenant-a",
+        )
+
+        store.saveDriftReport(globalReport)
+        store.saveDriftReport(tenantAReport)
+
+        val all = store.driftReports(schemaName)
+        assertEquals(2, all.size, "both reports must survive as distinct nodes")
+        assertEquals(setOf(globalReport, tenantAReport), all.toSet())
+
+        assertEquals(listOf(tenantAReport), store.driftReports(schemaName, "tenant-a"))
+        assertEquals(listOf(globalReport), store.driftReports(schemaName, null))
+    }
+
     // ---- F3: savedAt reset behavior on re-save ----
 
     @Test
