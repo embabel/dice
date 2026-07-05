@@ -78,19 +78,28 @@ class DrivineObservedSchemaSourceTest {
         val observed = source.observe(ContextId("tenant-a"))
 
         assertThat(observed.entityTypeNames).isEqualTo(setOf("Person", "GhostType"))
-        assertThat(recording.lastStatement).contains("HAS_MENTION")
-        assertThat(recording.lastStatement).doesNotContain("db.labels")
-        assertThat(recording.lastParams["contextId"]).isEqualTo("tenant-a")
+        val mentionCall = recording.calls.single { it.statement.contains("HAS_MENTION") }
+        assertThat(mentionCall.statement).doesNotContain("db.labels")
+        assertThat(mentionCall.params["contextId"]).isEqualTo("tenant-a")
     }
 
     @Test
-    fun `a scoped observation always reports an empty relationship set -- relationships can't be honestly attributed to a context`() {
-        val recording = RecordingPersistenceManager(mentionTypes = setOf("Person"))
+    fun `a scoped observation joins relationship types through sourcePropositions, parameterized only on contextId`() {
+        val recording = RecordingPersistenceManager(
+            mentionTypes = setOf("Person"),
+            relationshipTypes = setOf("WORKS_AT", "LOCATED_IN"),
+        )
         val source = DrivineObservedSchemaSource(recording)
 
         val observed = source.observe(ContextId("tenant-a"))
 
-        assertThat(observed.relationshipTypeNames).isEmpty()
+        assertThat(observed.relationshipTypeNames).isEqualTo(setOf("WORKS_AT", "LOCATED_IN"))
+        val relCall = recording.calls.single { it.statement.contains("sourcePropositions") }
+        assertThat(relCall.statement).contains("Proposition")
+        assertThat(relCall.statement).contains("type(r)")
+        // Parameterized only on contextId -- no interpolation of anything else into the statement.
+        assertThat(relCall.params.keys).containsExactly("contextId")
+        assertThat(relCall.params["contextId"]).isEqualTo("tenant-a")
     }
 
     @Test
@@ -125,25 +134,32 @@ class DrivineObservedSchemaSourceTest {
         }
     }
 
+    /** One recorded call: the Cypher statement text and the parameters it was bound with. */
+    private data class RecordedCall(val statement: String, val params: Map<String, Any?>)
+
     /**
-     * Answers the scoped `HAS_MENTION` query with [mentionTypes] and records the last statement
-     * text and bound parameters, so a test can assert the scoped path's query shape (and the
-     * context value it was actually parameterized with) directly.
+     * Answers the scoped `HAS_MENTION` query with [mentionTypes] and the scoped
+     * `sourcePropositions` join with [relationshipTypes], and records every statement/params pair
+     * it saw, so a test can assert the scoped path's query shape (and the context value it was
+     * actually parameterized with) for either query.
      */
     private class RecordingPersistenceManager(
         private val mentionTypes: Set<String>,
+        private val relationshipTypes: Set<String> = emptySet(),
     ) : NoOpPersistenceManager() {
 
-        lateinit var lastStatement: String
-            private set
-        lateinit var lastParams: Map<String, Any?>
-            private set
+        val calls = mutableListOf<RecordedCall>()
 
         @Suppress("UNCHECKED_CAST")
         override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
-            lastStatement = spec.statement!!.text
-            lastParams = spec.parameters
-            return mentionTypes.toList() as List<T>
+            val statement = spec.statement!!.text
+            calls.add(RecordedCall(statement, spec.parameters))
+            val rows = when {
+                statement.contains("HAS_MENTION") -> mentionTypes.toList()
+                statement.contains("sourcePropositions") -> relationshipTypes.toList()
+                else -> error("Unexpected statement in test fake: $statement")
+            }
+            return rows as List<T>
         }
     }
 }

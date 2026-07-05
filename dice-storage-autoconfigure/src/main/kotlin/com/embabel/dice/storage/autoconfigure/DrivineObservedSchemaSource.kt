@@ -47,13 +47,19 @@ val DICE_BOOKKEEPING_LABELS: Set<String> = setOf(
  *   [DICE_BOOKKEEPING_LABELS] from the entity side. There is no equivalent relationship-type
  *   exclusion: dice's own bookkeeping is all represented as node labels, not relationship types.
  * - **Scoped** (`contextId != null`): `db.labels()` / `db.relationshipTypes()` have no notion of
- *   context, so the scoped path can't use them. Instead it derives the observed entity types from
- *   that context's own data: the distinct `Mention.type` values reachable from that context's
- *   `:Proposition` nodes via `HAS_MENTION`. There is no honest way to attribute a relationship to
- *   one context with the data this store currently persists (dice doesn't yet write relationship
- *   edges tagged by context), so the scoped relationship-type set is always empty — the diff then
- *   treats relationships as nothing-observed for that context, which is safe: it can never produce
- *   a false drift signal, only ever under-report.
+ *   context, so the scoped path can't use them. Instead it derives both sides from that context's
+ *   own data:
+ *   - Entity types: the distinct `Mention.type` values reachable from that context's `:Proposition`
+ *     nodes via `HAS_MENTION`.
+ *   - Relationship types: every edge the graph writer persists carries a `sourcePropositions`
+ *     property -- the ids of the propositions that produced it (see
+ *     `NamedEntityDataRepositoryGraphRelationshipPersister`). A relationship type belongs to a
+ *     context's scoped set if at least one edge of that type has a `sourcePropositions` entry that
+ *     is the id of a `:Proposition` in that context. That's a join on that property, not a stored
+ *     tag on the edge itself, and it deliberately does **not** collapse: an edge sourced from
+ *     propositions in two different contexts appears in *both* contexts' scoped sets. That's
+ *     correct, not a bug -- an undeclared relationship type present in your context's data is drift
+ *     in your context, regardless of who else also produced it.
  */
 class DrivineObservedSchemaSource(
     private val persistenceManager: PersistenceManager,
@@ -81,9 +87,19 @@ class DrivineObservedSchemaSource(
                 """.trimIndent(),
             params = mapOf("contextId" to contextId.value),
         )
+        val relationshipTypeNames = queryStrings(
+            cypher = """
+                MATCH (p:Proposition {contextId: ${'$'}contextId})
+                WITH collect(p.id) AS ids
+                MATCH ()-[r]->()
+                WHERE any(pid IN r.sourcePropositions WHERE pid IN ids)
+                RETURN DISTINCT type(r)
+                """.trimIndent(),
+            params = mapOf("contextId" to contextId.value),
+        )
         return ObservedSchema(
             entityTypeNames = entityTypeNames,
-            relationshipTypeNames = emptySet(),
+            relationshipTypeNames = relationshipTypeNames,
             capturedAt = Instant.now(),
         )
     }
