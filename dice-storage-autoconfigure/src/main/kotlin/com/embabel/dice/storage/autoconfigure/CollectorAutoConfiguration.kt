@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.storage.autoconfigure
 
+import com.embabel.dice.projection.memory.collector.CollectorSurvivorPolicy
+import com.embabel.dice.projection.memory.collector.defaultCollectorSurvivorPolicy
 import com.embabel.dice.projection.memory.collector.EntityOverlapSignalScorer
 import com.embabel.dice.projection.memory.collector.GroundingOverlapSignalScorer
 import com.embabel.dice.projection.memory.collector.LexicalSignalScorer
@@ -23,8 +25,6 @@ import com.embabel.dice.projection.memory.collector.PolarityVetoSignalScorer
 import com.embabel.dice.projection.memory.collector.ProvenanceOverlapSignalScorer
 import com.embabel.dice.projection.memory.collector.VectorCandidatePairSource
 import com.embabel.dice.projection.memory.collector.VectorSignalScorer
-import com.embabel.dice.projection.memory.collector.CollectorSurvivorPolicy
-import com.embabel.dice.projection.memory.collector.defaultCollectorSurvivorPolicy
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.spi.CandidatePairSource
 import com.embabel.dice.spi.CollectorSignalScorer

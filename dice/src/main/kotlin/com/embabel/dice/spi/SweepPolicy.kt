@@ -118,7 +118,7 @@ class MergingSweepPolicy @JvmOverloads constructor(
                 }
             }
         }
-        logger.trace(
+        logger.warn(
             "Merging sweep decision for {} (pinned={}, marks={}): {}",
             proposition.id.take(8), proposition.pinned, marks.size, action,
         )
