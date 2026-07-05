@@ -105,8 +105,14 @@ sections.
 
 ### Proposition
 
-Every field on `com.embabel.dice.proposition.Proposition` travels with the bundle — this is
-deliberate; see "Full-proposition fidelity" below.
+Every field on `com.embabel.dice.proposition.Proposition` travels with the bundle, deliberately.
+Confidence decays from the moment a proposition's content last changed (see
+[proposition-lifecycle](proposition-lifecycle.md)); if a bundle dropped that anchor, everything
+would arrive looking brand new on import, and a year-old stale fact would suddenly read as fresh.
+So the decay rate, the decay anchor, lifecycle status, reinforcement count, temporal metadata,
+provenance, and the metadata recording quarantine state and extraction-time schema version all
+travel too — a reloaded proposition keeps aging from its original extraction time, a fact that was
+stale arrives stale, and one that was quarantined arrives quarantined.
 
 | Field | Type | Optional | Notes |
 |---|---|---|---|
@@ -133,13 +139,14 @@ deliberate; see "Full-proposition fidelity" below.
 | `temporal` | TemporalMetadata or null | yes (default null) | `observedAt`, `validFrom`, `validTo`, `invalidatedAt`, `supersedes`, `contradicts`. |
 | `provenanceEntries` | array of ProvenanceEntry | yes (default `[]`) | Each has a `locator` (`SourceLocator`), plus optional `chunkId`, `startOffset`, `endOffset`, `contentHash`. |
 
-**Jackson also serializes three computed, constructor-less properties on every `Proposition`:
+**Jackson also serializes several computed, constructor-less properties on every `Proposition`:
 `contextIdValue` (a plain-string mirror of `contextId`), `revised` (deprecated alias of
-`contentRevised`), and `lastTouched` (max of `contentRevised`/`metadataRevised`) — plus `current`
-on `TemporalMetadata` when `temporal` is set (from its `isCurrent()` getter). These round-trip out
-on export but carry no meaning on import: `Proposition` and `KnowledgeBundle` are both
-`@JsonIgnoreProperties(ignoreUnknown = true)`, so they're silently dropped when read back. They are
-not part of the format contract — don't rely on them.**
+`contentRevised`), `lastTouched` (max of `contentRevised`/`metadataRevised`), and `isFullyResolved`
+(from the `ReferencesEntities` interface) — plus `isCurrent` on `TemporalMetadata` when `temporal`
+is set (from its `isCurrent()` getter). These round-trip out on export but carry no meaning on
+import: `Proposition` and `KnowledgeBundle` are both `@JsonIgnoreProperties(ignoreUnknown = true)`,
+so they're silently dropped when read back. They are not part of the format contract — don't rely
+on them.**
 
 ### EntityMention
 
@@ -210,7 +217,8 @@ included, since they're really on the wire):
       "provenanceEntries": [],
       "contextIdValue": "ctx-A",
       "revised": "2025-06-01T08:00:00Z",
-      "lastTouched": "2025-06-01T08:00:00Z"
+      "lastTouched": "2025-06-01T08:00:00Z",
+      "isFullyResolved": true
     },
     {
       "id": "prop-2",
@@ -245,7 +253,8 @@ included, since they're really on the wire):
       "provenanceEntries": [],
       "contextIdValue": "ctx-A",
       "revised": "2025-06-01T08:05:00Z",
-      "lastTouched": "2025-06-01T08:05:00Z"
+      "lastTouched": "2025-06-01T08:05:00Z",
+      "isFullyResolved": false
     }
   ],
   "createdAt": "2026-01-15T10:00:00Z",
@@ -275,7 +284,8 @@ included, since they're really on the wire):
 ### (a) Wiring both ports for a host application
 
 `DrivineEmbeddingAccess` (`dice-storage`) is the shipped `EmbeddingPort`, reading and writing the
-same `Proposition.embedding` Neo4j property the repository's vector index uses. There's no shipped
+same proposition-node embedding property (`DrivinePropositionRepository.VECTOR_INDEX_LABEL` /
+`VECTOR_INDEX_PROPERTY`) that the repository's own vector index is built on. There's no shipped
 `EntitySnapshotPort` — dice never owns entity data — so a host app implements one over its own
 entity store:
 
