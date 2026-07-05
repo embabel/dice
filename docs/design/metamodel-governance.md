@@ -2,37 +2,53 @@
 
 DICE extracts entities and relationships against a metamodel — the schema of entity types, their
 labels and properties, and the relationships allowed between them. That schema isn't frozen; it
-changes as a domain is understood better. The risk is that a schema change quietly invalidates
-propositions that were extracted under the old shape, leaving the graph full of references to types
-that no longer mean what they used to. This note is about the decisions that let the metamodel move
-without poisoning existing knowledge.
+changes as a domain is understood better, and it can also silently diverge from what's actually
+sitting in a live graph (an integration that stopped declaring a type it once wrote data under, for
+example). This note is about the decisions that let the metamodel move, and be checked against
+reality, without poisoning existing knowledge.
+
+There are two related but distinct comparisons in this module:
+
+- **Declared vs. declared** (`MetamodelDiffer`): comparing two schema versions you decided on, e.g.
+  "the schema before this migration" vs. "the schema after it".
+- **Declared vs. observed** (`DeclaredObservedDiffer`, `DriftCheckRunner`): comparing what you
+  declared against what a live graph actually contains right now.
 
 ## Versioned schema stamps
 
-At any moment the live schema can be captured as an immutable **metamodel version** — a sorted,
-deterministic snapshot of every entity type, its full label and property sets, and the allowed
-relationships — fingerprinted with a content hash. That stamp, not the mutable live dictionary, is
-what you store and compare.
+At any moment the live schema can be captured as an immutable **metamodel version**
+(`MetamodelVersion`) — a sorted, deterministic snapshot of every entity type, its full label and
+property sets, and the allowed relationships — fingerprinted with a SHA-256 content hash
+(`MetamodelVersion.contentHash`, `MetamodelVersion.kt:44`). That stamp, not the mutable live
+`DataDictionary`, is what you store and compare.
 
 The reason is reproducibility. The live schema can drift between when a proposition was extracted
 and when you later need to reason about schema changes; a stamp gives you a fixed point to compare
-against. Two design choices sharpen it: the hash deliberately excludes the schema's *name*, so the
-same structure in a dev and a prod environment fingerprints identically; and any real change — even
-adding one label to a type whose name is unchanged — produces a different hash. A proposition can
-record the version it was extracted under, which is what later lets the system tell which
-propositions a schema change actually affects.
+against. Two design choices sharpen it:
 
-## Diffing additive vs. lossy changes
+- The hash deliberately **excludes the schema's name**, so the same structure in a dev and a prod
+  environment fingerprints identically (`MetamodelVersion.kt:104`).
+- The hash input is built by **length-prefixing every name, label, and property** (`<len>:<token>`,
+  `MetamodelVersion.kt:60-62`) rather than joining them with a delimiter. Entity and relationship
+  names are free-text / LLM-extracted and routinely contain characters like `;`, `[`, `=`, or
+  spaces; a delimiter-joined encoding could make `["a;b"]` and `["a", "b"]` hash identically and hide
+  a real, lossy schema change. Length-prefixing makes the encoding unambiguous.
 
-Before taking on a new schema version, DICE computes a **diff** against the old one that enumerates
-exactly what changed — types added or removed, and per-type labels and properties added or removed.
-The diff isn't a summary or a flag; it's the concrete input the quarantine step reads.
+A proposition can record the version it was extracted under via the
+`DiceMetadataKeys.METAMODEL_VERSION` (`"dice.metamodel.version"`) metadata key, which is what later
+lets the system tell which propositions a schema change actually affects.
 
-The distinction that matters is *additive vs lossy*. Adding types, labels, or properties is safe —
-nothing that was valid before becomes invalid, so a purely additive change can be adopted without
-disturbing anything. Removing a type, or stripping labels or properties from a type that mentions
-relied on, is lossy: it can orphan existing references. Computing the diff up front means the system
-can fast-path the common, safe case and only do real work when a change can actually break something.
+## Diffing additive vs. lossy changes (declared vs. declared)
+
+Before taking on a new schema version, `StructuralMetamodelDiffer.diff` computes a **`MetamodelDiff`**
+against the old one that enumerates exactly what changed: `EntityTypeAdded`, `EntityTypeRemoved`,
+`EntityTypeModified` (label/property deltas on a same-named type), `RelationshipAdded`,
+`RelationshipRemoved` (`MetamodelDiff.kt:23-73`). The diff isn't a summary or a flag; it's the
+concrete input the quarantine step reads.
+
+The distinction that matters is *additive vs. lossy*. Adding types, labels, or properties is safe —
+nothing that was valid before becomes invalid. Removing a type, or stripping labels/properties from
+a type that mentions relied on, is lossy: it can orphan existing references.
 
 ```mermaid
 flowchart TD
@@ -43,27 +59,166 @@ flowchart TD
     Q -->|yes| SWEEP[Quarantine affected propositions]
 ```
 
+## Declared-vs-observed drift checking
+
+The declared-vs-declared diff above only fires when *you* change the schema. It says nothing about
+a graph that has quietly accumulated data under a type nobody ever declared — a common way for that
+to happen is an integration that used to register a `DeclaredSchemaSource` contribution and no
+longer does, while its old data is still sitting in the graph. `DriftCheckRunner` answers that
+different question: what does the live graph actually contain, and does any of it fall outside
+what's currently declared?
+
+### Components
+
+```mermaid
+flowchart TD
+    DSS[DeclaredSchemaSource<br/>consumer-supplied] --> RUNNER[DriftCheckRunner]
+    OSS[ObservedSchemaSource<br/>default: DrivineObservedSchemaSource] --> RUNNER
+    RUNNER --> DIFFER[DeclaredObservedDiffer<br/>default: StructuralMetamodelDiffer]
+    DIFFER --> RUNNER
+    RUNNER --> STORE[(MetamodelStore<br/>default: DrivineMetamodelStore)]
+    STORE --> REPORT[(DriftReport)]
+    RUNNER -->|live run only, entity-type drift only| QP[DriftQuarantinePolicy<br/>default: MentionTypeDriftQuarantinePolicy]
+    QP --> PROPREPO[(PropositionRepository)]
+```
+
+`ObservedSchemaSource.observe()` returns an `ObservedSchema` — a plain value type of
+`entityTypeNames`, `relationshipTypeNames`, and `capturedAt` (`ObservedSchema.kt:36`). The module
+itself has no graph driver dependency; `DrivineObservedSchemaSource` (`dice-storage-autoconfigure`)
+is the real implementation, querying `CALL db.labels()` / `CALL db.relationshipTypes()`.
+
+`DeclaredSchemaSource.declare()` returns a `DeclaredSchema` (the stamped `MetamodelVersion` plus the
+bare relationship type names it allows) — there's no default implementation, since there's no
+default declared schema; a consuming app supplies one over whatever it already uses to define its
+schema.
+
+### Drift semantics
+
+`DeclaredObservedDiff` (`MetamodelDiff.kt:136`) is asymmetric by design, unlike the symmetric
+`MetamodelDiff` above:
+
+- **Drift** (`driftedEntityTypes` / `driftedRelationshipTypes`) — observed in the graph, never
+  declared. This is the actionable case: it means data exists whose declaring integration is gone
+  (or never registered), so nothing can tell that data apart as valid or explain its shape.
+- **Unobserved** (`unobservedEntityTypes` / `unobservedRelationshipTypes`) — declared, but zero
+  instances currently in the graph. Purely informational; a declared type with no data yet is
+  normal, not drift.
+
+`StructuralMetamodelDiffer.diffAgainstObserved` computes this directly as set difference —
+`observedTypes - declaredTypes` is drift, `declaredTypes - observedTypes` is unobserved
+(`StructuralMetamodelDiffer.kt:119-120`). Relationship names are compared on the bare type name (a
+caller-supplied set), never by parsing the rendered `From-[name]->To` descriptor back apart — those
+descriptors are built from free-text names that can themselves contain `-[...]->`-shaped substrings,
+so reverse-parsing would be ambiguous.
+
+### One drift-check run
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Caller
+    participant Runner as DefaultDriftCheckRunner
+    participant OSS as ObservedSchemaSource
+    participant DSS as DeclaredSchemaSource
+    participant Differ as DeclaredObservedDiffer
+    participant Store as MetamodelStore
+    participant Policy as DriftQuarantinePolicy
+    participant Repo as PropositionRepository
+
+    Caller->>Runner: run(dryRun)
+    Runner->>OSS: observe()
+    OSS-->>Runner: ObservedSchema
+    Runner->>DSS: declare()
+    DSS-->>Runner: DeclaredSchema
+    Runner->>Differ: diffAgainstObserved(declared, declaredRelNames, observed)
+    Differ-->>Runner: DeclaredObservedDiff
+    Runner->>Store: saveDriftReport(report)
+    Note over Store: persisted unconditionally —<br/>even a zero-drift check is a fact worth having on record
+    alt dryRun == false AND driftedEntityTypes not empty
+        Runner->>Repo: findAll()
+        Runner->>Policy: evaluate(syntheticDiff, propositions)
+        Policy-->>Runner: QuarantineResult
+        Runner->>Repo: save(quarantined proposition) for each
+    else dryRun == true, or no entity-type drift
+        Note over Runner: no proposition touched;<br/>relationship-only drift can never match a mention's type
+    end
+    Runner-->>Caller: DriftCheckResult
+```
+
+`DriftCheckRunner.run(dryRun: Boolean = true)` (`DriftCheckRunner.kt:65`) always persists a
+`DriftReport`, dry run or not — "checked and found nothing" needs to be as retrievable as "checked
+and found drift". Quarantine only runs on a live call (`dryRun = false`) *and* only when
+`driftedEntityTypes` is non-empty; relationship-only drift is never handed to the quarantine policy,
+since nothing about a mention's type could ever match a relationship name. When it does run, the
+runner doesn't reimplement quarantine decisions — it synthesizes a `MetamodelDiff` whose only content
+is `EntityTypeRemoved` for each drifted type, and hands that to the same `DriftQuarantinePolicy`
+used for declared-vs-declared quarantine (`DriftCheckRunner.kt:156-166`), so "removed in a new
+declared version" and "observed but never declared" are handled by one policy, not two.
+
+### Version hashing recap
+
+Persistence keys off `MetamodelVersion.contentHash`, which is the same SHA-256, length-prefixed
+fingerprint described above — `DriftReport.versionHash` records which declared version a drift
+observation was checked against (`MetamodelDiff.kt:29-30`), so later checks can correlate repeated
+observations against the same baseline.
+
+### Persistence natural keys
+
+`MetamodelStore` is an append-only log for both versions and reports — no deletion, no updates
+(`MetamodelStore.kt:52`). `DrivineMetamodelStore` MERGEs on natural keys so retries are idempotent:
+
+- `MetamodelVersion` node: `(schemaName, contentHash)` (`DrivineMetamodelStore.kt:52`); `savedAt` is
+  set only `ON CREATE`, so an idempotent re-save preserves the original creation timestamp.
+- `MetamodelDriftReport` node: `(schemaName, versionHash, capturedAt)`
+  (`DrivineMetamodelStore.kt:106`).
+
+Type sets (entity types, labels, properties, relationships) are stored as JSON strings
+(`MetamodelRowMappers.kt`), not delimiter-joined, for the same escape-safety reason the content hash
+is length-prefixed.
+
+### The bookkeeping-label exclusion set
+
+`DrivineObservedSchemaSource` excludes dice's own storage bookkeeping labels from the entity side of
+what it reports as observed, because they were never part of any declared *domain* schema and would
+otherwise show up as "drift" on every single run:
+
+```kotlin
+val DICE_BOOKKEEPING_LABELS: Set<String> = setOf(
+    "Proposition",
+    "Mention",
+    "CollectorRecord",
+    "CollectorRun",
+    "MetamodelVersion",
+    "MetamodelDriftReport",
+    "ProjectionRecord",
+)
+```
+
+(`DrivineObservedSchemaSource.kt:31-39`.) There's no equivalent relationship-type exclusion: dice's
+bookkeeping is represented entirely as node labels, never relationship types.
+
 ## Drift quarantine
 
-When a change is lossy, the propositions whose entity mentions reference an affected type have
-*drifted* — they point at a type that was removed, or that lost a label or property they may have
-relied on. DICE moves each of those propositions to **stale** and annotates it with a
-human-readable reason, as an immutable copy. It is not deleted, and it is not left sitting in the
-graph looking valid.
+Whether a lossy change comes from a declared-vs-declared diff or a declared-vs-observed drift check,
+the propositions whose entity mentions reference an affected type have *drifted*. DICE moves each of
+those to **`STALE`** and annotates it with a human-readable reason under
+`DiceMetadataKeys.QUARANTINE_REASON` (`"dice.metamodel.quarantine.reason"`), as an immutable copy —
+never deleted, never left sitting in the graph looking valid.
 
 This is the same instinct as the rest of the lifecycle (see
 [proposition-lifecycle](proposition-lifecycle.md)): silently leaving drifted propositions in normal
-retrieval would corrupt query results, but deleting them would destroy information that a human
-might want to rescue. Quarantine takes the middle path — pull them out of normal use, keep them,
-and flag *why* — so a person can review and decide.
+retrieval would corrupt query results, but deleting them would destroy information a human might
+want to rescue. Quarantine takes the middle path — pull them out of normal use, keep them, and flag
+*why*.
 
-Two properties make this safe to run as routine maintenance. It's **non-destructive**: the original
-proposition is never mutated; a quarantined copy is produced and the caller persists it. And it's
-**idempotent**: a proposition that's already quarantined from an earlier sweep is left exactly as it
-is, original reason intact, rather than being re-flagged or overwritten. Re-evaluating one
-deliberately requires clearing its quarantine annotation first.
+Two properties make this safe to run as routine maintenance:
 
-A sweep takes a diff and the propositions, and decides each one independently:
+- **Non-destructive**: the original proposition is never mutated; a quarantined copy is produced
+  and the caller persists it (`MentionTypeDriftQuarantinePolicy.kt:103-105`).
+- **Idempotent**: a proposition already quarantined from an earlier sweep (`STALE` status *and* a
+  `QUARANTINE_REASON` entry) is left exactly as it is, original reason intact, rather than
+  re-flagged (`MentionTypeDriftQuarantinePolicy.kt:77-87`). Re-evaluating one deliberately requires
+  clearing its quarantine annotation first.
 
 ```mermaid
 sequenceDiagram
@@ -82,9 +237,85 @@ sequenceDiagram
     Note over Caller: the caller persists the quarantined copies
 ```
 
-## Configurable behavior
+## Kotlin samples
 
-Diffing and quarantine are both policies. The shipped diff does a cheap, deterministic shape
-comparison, and the shipped quarantine policy keys on whether a mention's type was removed or lost
-shape. Both are swappable, and the default stance is conservative: only lossy changes ever trigger
-quarantine, and quarantine preserves rather than destroys.
+### (a) Implementing `DeclaredSchemaSource`
+
+A consuming Spring app maps whatever it already uses to define its schema (a `DataDictionary`, a
+config file, a registry) into a stamped `DeclaredSchema`, including the un-rendered relationship
+names — those have to come from the caller directly, not be recovered by parsing a rendered
+descriptor:
+
+```kotlin
+class MyAppDeclaredSchemaSource(
+    private val dataDictionary: DataDictionary,
+    private val allowedRelationshipNames: Set<String>, // e.g. {"WORKS_AT", "LOCATED_IN"}
+) : DeclaredSchemaSource {
+
+    override fun declare(): DeclaredSchema = DeclaredSchema(
+        version = MetamodelVersion.from(dataDictionary),
+        relationshipTypeNames = allowedRelationshipNames,
+    )
+}
+```
+
+### (b) Enabling via properties
+
+`MetamodelProperties` (`dice-storage-autoconfigure`, prefix `embabel.dice.metamodel`):
+
+| Property | Type | Default |
+|---|---|---|
+| `embabel.dice.metamodel.enabled` | boolean | `false` |
+| `embabel.dice.metamodel.dry-run` | boolean | `true` |
+| `embabel.dice.metamodel.schema-name` | string (nullable) | `null` |
+
+```yaml
+embabel:
+  dice:
+    metamodel:
+      enabled: true
+      dry-run: true       # flip to false once you trust the checks
+      schema-name: my-app-schema
+```
+
+`MetamodelAutoConfiguration` is gated by `@ConditionalOnProperty(enabled=true)` on the whole feature,
+and its `driftCheckRunner` bean additionally requires a `DeclaredSchemaSource` bean to exist
+(`@ConditionalOnBean`) — there's no sensible default declared schema, so nothing runs until the
+consumer supplies one:
+
+```kotlin
+@Bean
+fun myAppDeclaredSchemaSource(dataDictionary: DataDictionary): DeclaredSchemaSource =
+    MyAppDeclaredSchemaSource(dataDictionary, allowedRelationshipNames = setOf("WORKS_AT", "LOCATED_IN"))
+```
+
+### (c) Reading `DriftReport`s back for review
+
+```kotlin
+val reports: List<DriftReport> = metamodelStore.driftReports("my-app-schema") // newest first
+reports.firstOrNull()?.let { latest ->
+    if (latest.driftingEntityTypes.isNotEmpty() || latest.driftingRelationshipTypes.isNotEmpty()) {
+        println("Drift as of ${latest.capturedAt}: entities=${latest.driftingEntityTypes}, " +
+            "relationships=${latest.driftingRelationshipTypes}")
+    }
+}
+```
+
+## Limits
+
+- **No scheduler.** `MetamodelAutoConfiguration` only wires the *capability* to run a check; nothing
+  calls `DriftCheckRunner.run()` on its own. A consumer decides when (cron, an admin endpoint, a
+  startup hook) — the auto-configuration's own doc comment notes the `me` app has its own scheduling
+  harness for this.
+- **Quarantine delegates to existing policy semantics.** A live drift check doesn't introduce new
+  quarantine behavior; it synthesizes a `MetamodelDiff` and hands it to the same
+  `DriftQuarantinePolicy` used for declared-vs-declared changes — non-destructive, idempotent, and
+  already-quarantined (pinned via `STALE` + `QUARANTINE_REASON`) propositions are skipped rather than
+  re-flagged.
+- **Schema name excluded from the content hash.** Two schemas with identical structure but different
+  names produce the same `contentHash` — intentional, for dev/prod parity — but it means
+  `contentHash` alone can't distinguish schemas by name; `MetamodelStore` keys on
+  `(schemaName, contentHash)` together for that reason.
+- **`EntityTypeModified` only fires for types common to both versions.** A type removed and re-added
+  under the same name in one diff shows up as `EntityTypeRemoved` + `EntityTypeAdded`, not a single
+  `EntityTypeModified`.
