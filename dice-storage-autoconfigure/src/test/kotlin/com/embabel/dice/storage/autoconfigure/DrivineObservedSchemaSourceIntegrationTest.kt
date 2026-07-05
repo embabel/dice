@@ -23,6 +23,8 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
 
 /**
  * Real-Neo4j proof for [DrivineObservedSchemaSource]'s scoped relationship-type join: fakes can
@@ -31,10 +33,17 @@ import org.springframework.boot.test.context.SpringBootTest
  * fixture nodes/edges directly with Cypher (never through the dice/ write path -- this class only
  * reads).
  *
- * Every test starts from an empty graph via [cleanUp].
+ * Every test starts from an empty graph via [cleanUp]. Runs against [Neo4jTestContainer], not
+ * Drivine's own built-in testcontainer -- see that class for why.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivineObservedSchemaSourceIntegrationTest {
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
+    }
 
     @Autowired
     private lateinit var persistenceManager: PersistenceManager

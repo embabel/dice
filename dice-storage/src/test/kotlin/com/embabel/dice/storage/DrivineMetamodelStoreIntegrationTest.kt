@@ -26,14 +26,25 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
 import java.time.Instant
 
 /**
  * Integration tests for [DrivineMetamodelStore] against a Neo4j testcontainer (provided by
  * Drivine's test support). Each test starts from an empty graph via [cleanUp].
+ *
+ * Runs against [Neo4jTestContainer], not Drivine's own built-in testcontainer -- see that class
+ * for why.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivineMetamodelStoreIntegrationTest {
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
+    }
 
     @Autowired
     private lateinit var store: DrivineMetamodelStore
