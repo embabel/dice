@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.storage
 
+import com.embabel.agent.core.ContextId
 import com.embabel.dice.metamodel.DriftReport
 import com.embabel.dice.metamodel.MetamodelVersion
 import org.drivine.manager.PersistenceManager
@@ -376,7 +377,7 @@ class DrivineMetamodelStoreIntegrationTest {
 
     @Test
     fun `a report's contextId round-trips intact, including delimiter characters`() {
-        val delimiterLadenContextId = "tenant|with\ttab\nand\"quote"
+        val delimiterLadenContextId = ContextId("tenant|with\ttab\nand\"quote")
         val report = DriftReport(
             schemaName = "context-delim-test",
             versionHash = "v1",
@@ -402,7 +403,7 @@ class DrivineMetamodelStoreIntegrationTest {
             driftingEntityTypes = setOf("TenantAType"),
             driftingRelationshipTypes = emptySet(),
             capturedAt = Instant.parse("2026-01-01T00:00:00Z"),
-            contextId = "tenant-a",
+            contextId = ContextId("tenant-a"),
         )
         val tenantB = DriftReport(
             schemaName = schemaName,
@@ -410,7 +411,7 @@ class DrivineMetamodelStoreIntegrationTest {
             driftingEntityTypes = setOf("TenantBType"),
             driftingRelationshipTypes = emptySet(),
             capturedAt = Instant.parse("2026-01-01T00:00:01Z"),
-            contextId = "tenant-b",
+            contextId = ContextId("tenant-b"),
         )
         val global = DriftReport(
             schemaName = schemaName,
@@ -425,8 +426,8 @@ class DrivineMetamodelStoreIntegrationTest {
         store.saveDriftReport(tenantB)
         store.saveDriftReport(global)
 
-        assertEquals(listOf(tenantA), store.driftReports(schemaName, "tenant-a"))
-        assertEquals(listOf(tenantB), store.driftReports(schemaName, "tenant-b"))
+        assertEquals(listOf(tenantA), store.driftReports(schemaName, ContextId("tenant-a")))
+        assertEquals(listOf(tenantB), store.driftReports(schemaName, ContextId("tenant-b")))
         assertEquals(listOf(global), store.driftReports(schemaName, null))
         // The unscoped overload still returns everything, newest first.
         assertEquals(3, store.driftReports(schemaName).size)
@@ -453,7 +454,7 @@ class DrivineMetamodelStoreIntegrationTest {
             driftingEntityTypes = setOf("TenantAGhost"),
             driftingRelationshipTypes = emptySet(),
             capturedAt = sameInstant,
-            contextId = "tenant-a",
+            contextId = ContextId("tenant-a"),
         )
 
         store.saveDriftReport(globalReport)
@@ -463,8 +464,49 @@ class DrivineMetamodelStoreIntegrationTest {
         assertEquals(2, all.size, "both reports must survive as distinct nodes")
         assertEquals(setOf(globalReport, tenantAReport), all.toSet())
 
-        assertEquals(listOf(tenantAReport), store.driftReports(schemaName, "tenant-a"))
+        assertEquals(listOf(tenantAReport), store.driftReports(schemaName, ContextId("tenant-a")))
         assertEquals(listOf(globalReport), store.driftReports(schemaName, null))
+    }
+
+    @Test
+    fun `re-saving an identical global drift report MERGEs in place, not a duplicate`() {
+        val schemaName = "drift-idempotent-global-test"
+        val report = DriftReport(
+            schemaName = schemaName,
+            versionHash = "v1",
+            driftingEntityTypes = setOf("GhostType"),
+            driftingRelationshipTypes = emptySet(),
+            capturedAt = Instant.parse("2026-01-01T00:00:00Z"),
+            contextId = null,
+        )
+
+        store.saveDriftReport(report)
+        store.saveDriftReport(report)
+
+        val reports = store.driftReports(schemaName)
+        assertEquals(1, reports.size, "identical schema+version+instant+context must MERGE, not duplicate")
+        assertEquals(report, reports.single())
+    }
+
+    @Test
+    fun `re-saving an identical context-scoped drift report MERGEs in place, not a duplicate`() {
+        val schemaName = "drift-idempotent-scoped-test"
+        val report = DriftReport(
+            schemaName = schemaName,
+            versionHash = "v1",
+            driftingEntityTypes = setOf("GhostType"),
+            driftingRelationshipTypes = emptySet(),
+            capturedAt = Instant.parse("2026-01-01T00:00:00Z"),
+            contextId = ContextId("tenant-a"),
+        )
+
+        store.saveDriftReport(report)
+        store.saveDriftReport(report)
+
+        val reports = store.driftReports(schemaName)
+        assertEquals(1, reports.size, "identical schema+version+instant+context must MERGE, not duplicate")
+        assertEquals(report, reports.single())
+        assertEquals(listOf(report), store.driftReports(schemaName, ContextId("tenant-a")))
     }
 
     // ---- F3: savedAt reset behavior on re-save ----

@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.metamodel
 
+import com.embabel.agent.core.ContextId
 import java.time.Instant
 
 /**
@@ -42,7 +43,7 @@ data class DriftReport(
     val driftingEntityTypes: Set<String>,
     val driftingRelationshipTypes: Set<String>,
     val capturedAt: Instant,
-    val contextId: String? = null,
+    val contextId: ContextId? = null,
 )
 
 /**
@@ -112,6 +113,6 @@ interface MetamodelStore {
      * @param contextId The context to restrict to, or `null` for the global reports.
      * @return A list of matching [DriftReport]s, ordered newest first.
      */
-    fun driftReports(schemaName: String, contextId: String?): List<DriftReport> =
+    fun driftReports(schemaName: String, contextId: ContextId?): List<DriftReport> =
         driftReports(schemaName).filter { it.contextId == contextId }
 }

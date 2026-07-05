@@ -116,7 +116,7 @@ class DefaultDriftCheckRunner(
             driftingEntityTypes = diff.driftedEntityTypes,
             driftingRelationshipTypes = diff.driftedRelationshipTypes,
             capturedAt = observed.capturedAt,
-            contextId = contextId?.value,
+            contextId = contextId,
         )
         // Persisted unconditionally: a zero-drift check is itself a fact worth having on record,
         // not just a no-op.

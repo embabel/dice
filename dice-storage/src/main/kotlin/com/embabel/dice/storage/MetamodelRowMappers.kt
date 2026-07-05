@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.storage
 
+import com.embabel.agent.core.ContextId
 import com.embabel.dice.metamodel.DriftReport
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -77,8 +78,10 @@ object DriftReportRowMapper {
         "driftingRelationshipTypes" to serializeList(report.driftingRelationshipTypes.sorted()),
         // Left out of the node entirely (not written as an empty/sentinel string) when null, so a
         // global report has no contextId property at all -- see fromRow, and the store's scoped
-        // driftReports query, which relies on that absence.
-        "contextId" to report.contextId,
+        // driftReports query, which relies on that absence. ContextId is stored as its plain
+        // string value -- the Neo4j property shape is unchanged from before ContextId replaced
+        // the raw String here.
+        "contextId" to report.contextId?.value,
     )
 
     /** Rebuild a [DriftReport] from a returned node's property map. */
@@ -88,7 +91,7 @@ object DriftReportRowMapper {
         driftingEntityTypes = deserializeSet(row.strOrNull("driftingEntityTypes") ?: ""),
         driftingRelationshipTypes = deserializeSet(row.strOrNull("driftingRelationshipTypes") ?: ""),
         capturedAt = parseInstant(row.strOrNull("capturedAt")),
-        contextId = row.strOrNull("contextId"),
+        contextId = row.strOrNull("contextId")?.let { ContextId(it) },
     )
 }
 
