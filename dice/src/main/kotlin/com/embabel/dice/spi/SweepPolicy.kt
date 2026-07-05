@@ -114,11 +114,15 @@ class MergingSweepPolicy @JvmOverloads constructor(
                 if (survivorId != null) {
                     SweepAction.MergeInto(survivorId, targetStatus)
                 } else {
+                    logger.warn(
+                        "No valid survivor found for {} (marks={}); falling back to status transition",
+                        proposition.id.take(8), marks.size,
+                    )
                     SweepAction.TransitionStatus(targetStatus)
                 }
             }
         }
-        logger.warn(
+        logger.trace(
             "Merging sweep decision for {} (pinned={}, marks={}): {}",
             proposition.id.take(8), proposition.pinned, marks.size, action,
         )
