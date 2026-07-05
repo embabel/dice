@@ -127,7 +127,7 @@ open class TestApplication {
     @Bean
     open fun metamodelSchema(): SchemaCatalog = SchemaCatalog.of(
         UniquenessConstraintSpec(label = "MetamodelVersion", properties = listOf("schemaName", "contentHash")),
-        UniquenessConstraintSpec(label = "MetamodelDriftReport", properties = listOf("schemaName", "versionHash", "capturedAt")),
+        UniquenessConstraintSpec(label = "MetamodelDriftReport", properties = listOf("schemaName", "versionHash", "capturedAt", "contextKey")),
     )
 
     @Bean

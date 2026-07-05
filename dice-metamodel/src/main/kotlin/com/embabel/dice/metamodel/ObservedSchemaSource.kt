@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.metamodel
 
+import com.embabel.agent.core.ContextId
+
 /**
  * Takes a fresh snapshot of what a live graph actually contains, for [DriftCheckRunner] to compare
  * against the declared schema.
@@ -23,11 +25,20 @@ package com.embabel.dice.metamodel
  * (Neo4j via Drivine, or anything else) provides the real implementation by querying its live
  * database for distinct entity and relationship type labels. Tests can supply a canned
  * [ObservedSchema] instead of touching a database at all.
+ *
+ * An ordinary interface, not a `fun interface`: [observe] takes an optional [ContextId], and only
+ * a normal override — not a SAM lambda — can carry that parameter's default value, which is what
+ * lets `observe()` with no argument resolve to the global (unscoped) snapshot.
  */
-fun interface ObservedSchemaSource {
+interface ObservedSchemaSource {
 
     /**
+     * @param contextId `null` (the default) snapshots the whole graph. Non-null scopes the
+     *   snapshot to that one context: only that context's own data is consulted. See
+     *   [DrivineObservedSchemaSource][com.embabel.dice.storage.autoconfigure.DrivineObservedSchemaSource]
+     *   for what "scoped" means concretely (and why the scoped relationship-type set may come back
+     *   empty).
      * @return a fresh [ObservedSchema] snapshot, captured at call time.
      */
-    fun observe(): ObservedSchema
+    fun observe(contextId: ContextId? = null): ObservedSchema
 }

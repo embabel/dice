@@ -354,6 +354,119 @@ class DrivineMetamodelStoreIntegrationTest {
         assertEquals(report, reloaded)
     }
 
+    // ---- Context-scoped drift reports ----
+
+    @Test
+    fun `a report with no contextId round-trips as null, not an empty string or sentinel`() {
+        val report = DriftReport(
+            schemaName = "context-null-test",
+            versionHash = "v1",
+            driftingEntityTypes = setOf("GhostType"),
+            driftingRelationshipTypes = emptySet(),
+            capturedAt = Instant.parse("2026-01-01T00:00:00Z"),
+            contextId = null,
+        )
+
+        store.saveDriftReport(report)
+
+        val reloaded = store.driftReports("context-null-test").single()
+        assertEquals(report, reloaded)
+        assertNull(reloaded.contextId)
+    }
+
+    @Test
+    fun `a report's contextId round-trips intact, including delimiter characters`() {
+        val delimiterLadenContextId = "tenant|with\ttab\nand\"quote"
+        val report = DriftReport(
+            schemaName = "context-delim-test",
+            versionHash = "v1",
+            driftingEntityTypes = setOf("GhostType"),
+            driftingRelationshipTypes = emptySet(),
+            capturedAt = Instant.parse("2026-01-01T00:00:00Z"),
+            contextId = delimiterLadenContextId,
+        )
+
+        store.saveDriftReport(report)
+
+        val reloaded = store.driftReports("context-delim-test").single()
+        assertEquals(report, reloaded)
+        assertEquals(delimiterLadenContextId, reloaded.contextId)
+    }
+
+    @Test
+    fun `scoped driftReports overload returns only reports for that context, filtered in the database`() {
+        val schemaName = "context-scoped-test"
+        val tenantA = DriftReport(
+            schemaName = schemaName,
+            versionHash = "v1",
+            driftingEntityTypes = setOf("TenantAType"),
+            driftingRelationshipTypes = emptySet(),
+            capturedAt = Instant.parse("2026-01-01T00:00:00Z"),
+            contextId = "tenant-a",
+        )
+        val tenantB = DriftReport(
+            schemaName = schemaName,
+            versionHash = "v1",
+            driftingEntityTypes = setOf("TenantBType"),
+            driftingRelationshipTypes = emptySet(),
+            capturedAt = Instant.parse("2026-01-01T00:00:01Z"),
+            contextId = "tenant-b",
+        )
+        val global = DriftReport(
+            schemaName = schemaName,
+            versionHash = "v1",
+            driftingEntityTypes = setOf("GlobalType"),
+            driftingRelationshipTypes = emptySet(),
+            capturedAt = Instant.parse("2026-01-01T00:00:02Z"),
+            contextId = null,
+        )
+
+        store.saveDriftReport(tenantA)
+        store.saveDriftReport(tenantB)
+        store.saveDriftReport(global)
+
+        assertEquals(listOf(tenantA), store.driftReports(schemaName, "tenant-a"))
+        assertEquals(listOf(tenantB), store.driftReports(schemaName, "tenant-b"))
+        assertEquals(listOf(global), store.driftReports(schemaName, null))
+        // The unscoped overload still returns everything, newest first.
+        assertEquals(3, store.driftReports(schemaName).size)
+    }
+
+    @Test
+    fun `a null-context and a tenant-context report at the identical instant coexist as two nodes, not one overwriting the other`() {
+        // Same schemaName + versionHash + capturedAt -- the exact collision the natural key must
+        // not conflate. Before contextKey joined the MERGE key, the second save here would have
+        // silently overwritten the first (same match, only the SET differed).
+        val schemaName = "same-instant-collision-test"
+        val sameInstant = Instant.parse("2026-01-01T00:00:00Z")
+        val globalReport = DriftReport(
+            schemaName = schemaName,
+            versionHash = "v1",
+            driftingEntityTypes = setOf("GlobalGhost"),
+            driftingRelationshipTypes = emptySet(),
+            capturedAt = sameInstant,
+            contextId = null,
+        )
+        val tenantAReport = DriftReport(
+            schemaName = schemaName,
+            versionHash = "v1",
+            driftingEntityTypes = setOf("TenantAGhost"),
+            driftingRelationshipTypes = emptySet(),
+            capturedAt = sameInstant,
+            contextId = "tenant-a",
+        )
+
+        store.saveDriftReport(globalReport)
+        store.saveDriftReport(tenantAReport)
+
+        val all = store.driftReports(schemaName)
+        assertEquals(2, all.size, "both reports must survive as distinct nodes")
+        assertEquals(setOf(globalReport, tenantAReport), all.toSet())
+
+        assertEquals(listOf(tenantAReport), store.driftReports(schemaName, "tenant-a"))
+        assertEquals(listOf(globalReport), store.driftReports(schemaName, null))
+    }
+
     // ---- F3: savedAt reset behavior on re-save ----
 
     @Test

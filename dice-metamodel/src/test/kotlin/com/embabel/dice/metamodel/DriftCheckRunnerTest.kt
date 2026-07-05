@@ -22,6 +22,7 @@ import com.embabel.dice.metamodel.support.StructuralMetamodelDiffer
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -61,7 +62,7 @@ class DriftCheckRunnerTest {
         propositionRepository = InMemoryPropositionRepository()
     }
 
-    private fun buildRunner(): DriftCheckRunner {
+    private fun buildRunner(repo: PropositionRepository = propositionRepository): DriftCheckRunner {
         val declaredVersion = MetamodelVersion(
             schemaName = schemaName,
             contentHash = "hash-$schemaName",
@@ -80,12 +81,14 @@ class DriftCheckRunnerTest {
             capturedAt = Instant.parse("2026-01-01T00:00:00Z"),
         )
         return DefaultDriftCheckRunner(
-            observedSchemaSource = ObservedSchemaSource { observedSchema },
+            observedSchemaSource = object : ObservedSchemaSource {
+                override fun observe(contextId: ContextId?): ObservedSchema = observedSchema
+            },
             declaredSchemaSource = DeclaredSchemaSource { declaredSchema },
             differ = StructuralMetamodelDiffer(),
             store = store,
             quarantinePolicy = MentionTypeDriftQuarantinePolicy(),
-            propositionRepository = propositionRepository,
+            propositionRepository = repo,
         )
     }
 
@@ -192,6 +195,74 @@ class DriftCheckRunnerTest {
         assertEquals(setOf("UNDECLARED|ALSO\tDELIMITED"), result.driftedRelationshipTypes)
         val report = store.driftReports(schemaName).single()
         assertEquals(setOf("UNDECLARED|ALSO\tDELIMITED"), report.driftingRelationshipTypes)
+    }
+
+    // ---- Context scoping ----
+
+    @Test
+    fun `a scoped run reads candidates via findByContextId, not findAll`() {
+        observedEntityTypes = setOf("Person", "Company", "GhostType")
+        propositionRepository.save(proposition("a ghost was mentioned", "GhostType"))
+        val recording = RecordingPropositionRepository(propositionRepository)
+        runner = buildRunner(recording)
+
+        val result = runner.run(dryRun = false, contextId = contextId)
+
+        assertEquals(contextId, recording.findByContextIdCall)
+        assertNull(recording.findAllCall)
+        assertEquals(contextId, result.contextId)
+        assertEquals(contextId.value, result.reportRef.contextId)
+    }
+
+    @Test
+    fun `a global run (no contextId) reads candidates via findAll, not findByContextId`() {
+        observedEntityTypes = setOf("Person", "Company", "GhostType")
+        propositionRepository.save(proposition("a ghost was mentioned", "GhostType"))
+        val recording = RecordingPropositionRepository(propositionRepository)
+        runner = buildRunner(recording)
+
+        val result = runner.run(dryRun = false)
+
+        assertTrue(recording.findAllCall == true)
+        assertNull(recording.findByContextIdCall)
+        assertNull(result.contextId)
+        assertNull(result.reportRef.contextId)
+    }
+
+    @Test
+    fun `a dry-run scoped check still stamps the report with the context, even with nothing to quarantine`() {
+        runner = buildRunner()
+
+        val result = runner.run(dryRun = true, contextId = contextId)
+
+        assertEquals(contextId, result.contextId)
+        assertEquals(contextId.value, result.reportRef.contextId)
+        assertEquals(contextId.value, store.driftReports(schemaName).single().contextId)
+    }
+
+    /**
+     * Records which candidate-read method [DefaultDriftCheckRunner] actually called, so the tests
+     * above can assert the scoped/global read path directly rather than inferring it from a side
+     * effect. Delegates everything else to the wrapped [InMemoryPropositionRepository] unchanged.
+     */
+    private class RecordingPropositionRepository(
+        private val delegate: PropositionRepository,
+    ) : PropositionRepository by delegate {
+
+        var findAllCall: Boolean? = null
+            private set
+        var findByContextIdCall: ContextId? = null
+            private set
+
+        override fun findAll(): List<Proposition> {
+            findAllCall = true
+            return delegate.findAll()
+        }
+
+        override fun findByContextId(contextId: ContextId): List<Proposition> {
+            findByContextIdCall = contextId
+            return delegate.findByContextId(contextId)
+        }
     }
 
     /** Minimal in-memory [MetamodelStore] fake: append-only, newest first, no deletion. */

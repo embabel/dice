@@ -33,6 +33,8 @@ import java.time.Instant
  * @property driftingRelationshipTypes Relationship type names observed in the graph but not
  *   declared in the baseline version.
  * @property capturedAt The instant the observation was taken.
+ * @property contextId The context this check was scoped to, or `null` if it covered the whole
+ *   graph.
  */
 data class DriftReport(
     val schemaName: String,
@@ -40,6 +42,7 @@ data class DriftReport(
     val driftingEntityTypes: Set<String>,
     val driftingRelationshipTypes: Set<String>,
     val capturedAt: Instant,
+    val contextId: String? = null,
 )
 
 /**
@@ -95,4 +98,20 @@ interface MetamodelStore {
      *   for this schema.
      */
     fun driftReports(schemaName: String): List<DriftReport>
+
+    /**
+     * Same as [driftReports], further restricted to reports with the given [contextId] — `null`
+     * matches the global (unscoped) reports, not "any context".
+     *
+     * The default filters the full [driftReports] list in memory, which is correct for every
+     * implementation but not necessarily efficient; a backend that can push the filter down (a
+     * database `WHERE`, not an in-memory `filter`) should override this directly rather than rely
+     * on the default.
+     *
+     * @param schemaName The schema to look up.
+     * @param contextId The context to restrict to, or `null` for the global reports.
+     * @return A list of matching [DriftReport]s, ordered newest first.
+     */
+    fun driftReports(schemaName: String, contextId: String?): List<DriftReport> =
+        driftReports(schemaName).filter { it.contextId == contextId }
 }

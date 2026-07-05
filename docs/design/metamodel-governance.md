@@ -72,25 +72,30 @@ what's currently declared?
 
 ```mermaid
 flowchart TD
-    DSS[DeclaredSchemaSource<br/>consumer-supplied] --> RUNNER[DriftCheckRunner]
-    OSS[ObservedSchemaSource<br/>default: DrivineObservedSchemaSource] --> RUNNER
+    CALLER[Caller<br/>run#40;dryRun, contextId?#41;] --> RUNNER[DriftCheckRunner]
+    DSS[DeclaredSchemaSource<br/>consumer-supplied] --> RUNNER
+    OSS["ObservedSchemaSource<br/>default: DrivineObservedSchemaSource<br/>observe(contextId?)"] --> RUNNER
     RUNNER --> DIFFER[DeclaredObservedDiffer<br/>default: StructuralMetamodelDiffer]
     DIFFER --> RUNNER
     RUNNER --> STORE[(MetamodelStore<br/>default: DrivineMetamodelStore)]
-    STORE --> REPORT[(DriftReport)]
+    STORE --> REPORT[(DriftReport<br/>contextId: String?)]
     RUNNER -->|live run only, entity-type drift only| QP[DriftQuarantinePolicy<br/>default: MentionTypeDriftQuarantinePolicy]
-    QP --> PROPREPO[(PropositionRepository)]
+    QP --> PROPREPO["PropositionRepository<br/>findByContextId(contextId) or findAll()"]
 ```
 
-`ObservedSchemaSource.observe()` returns an `ObservedSchema` — a plain value type of
-`entityTypeNames`, `relationshipTypeNames`, and `capturedAt` (`ObservedSchema.kt:36`). The module
-itself has no graph driver dependency; `DrivineObservedSchemaSource` (`dice-storage-autoconfigure`)
-is the real implementation, querying `CALL db.labels()` / `CALL db.relationshipTypes()`.
+`ObservedSchemaSource.observe(contextId: ContextId? = null)` returns an `ObservedSchema` — a plain
+value type of `entityTypeNames`, `relationshipTypeNames`, and `capturedAt` (`ObservedSchema.kt:36`).
+The module itself has no graph driver dependency; `DrivineObservedSchemaSource`
+(`dice-storage-autoconfigure`) is the real implementation. It has two observation paths, chosen by
+whether `contextId` is `null`: the global path queries `CALL db.labels()` / `CALL
+db.relationshipTypes()`; the scoped path is covered in
+[Context-scoped drift checks](#context-scoped-drift-checks) below.
 
 `DeclaredSchemaSource.declare()` returns a `DeclaredSchema` (the stamped `MetamodelVersion` plus the
 bare relationship type names it allows) — there's no default implementation, since there's no
 default declared schema; a consuming app supplies one over whatever it already uses to define its
-schema.
+schema. A declared schema is not context-scoped: what a deployment declares as valid is one thing
+regardless of which context a check is currently looking at.
 
 ### Drift semantics
 
@@ -125,17 +130,22 @@ sequenceDiagram
     participant Policy as DriftQuarantinePolicy
     participant Repo as PropositionRepository
 
-    Caller->>Runner: run(dryRun)
-    Runner->>OSS: observe()
+    Caller->>Runner: run(dryRun, contextId?)
+    Runner->>OSS: observe(contextId?)
+    Note over OSS: contextId == null: global db.labels()/db.relationshipTypes()<br/>contextId != null: that context's own mention types only
     OSS-->>Runner: ObservedSchema
     Runner->>DSS: declare()
     DSS-->>Runner: DeclaredSchema
     Runner->>Differ: diffAgainstObserved(declared, declaredRelNames, observed)
     Differ-->>Runner: DeclaredObservedDiff
-    Runner->>Store: saveDriftReport(report)
+    Runner->>Store: saveDriftReport(report with contextId)
     Note over Store: persisted unconditionally —<br/>even a zero-drift check is a fact worth having on record
     alt dryRun == false AND driftedEntityTypes not empty
-        Runner->>Repo: findAll()
+        alt contextId != null
+            Runner->>Repo: findByContextId(contextId)
+        else contextId == null
+            Runner->>Repo: findAll()
+        end
         Runner->>Policy: evaluate(syntheticDiff, propositions)
         Policy-->>Runner: QuarantineResult
         Runner->>Repo: save(quarantined proposition) for each
@@ -145,15 +155,20 @@ sequenceDiagram
     Runner-->>Caller: DriftCheckResult
 ```
 
-`DriftCheckRunner.run(dryRun: Boolean = true)` (`DriftCheckRunner.kt:65`) always persists a
-`DriftReport`, dry run or not — "checked and found nothing" needs to be as retrievable as "checked
-and found drift". Quarantine only runs on a live call (`dryRun = false`) *and* only when
-`driftedEntityTypes` is non-empty; relationship-only drift is never handed to the quarantine policy,
-since nothing about a mention's type could ever match a relationship name. When it does run, the
-runner doesn't reimplement quarantine decisions — it synthesizes a `MetamodelDiff` whose only content
-is `EntityTypeRemoved` for each drifted type, and hands that to the same `DriftQuarantinePolicy`
-used for declared-vs-declared quarantine (`DriftCheckRunner.kt:156-166`), so "removed in a new
-declared version" and "observed but never declared" are handled by one policy, not two.
+`DriftCheckRunner.run(dryRun: Boolean = true, contextId: ContextId? = null)`
+(`DriftCheckRunner.kt:74`) always persists a `DriftReport`, dry run or not — "checked and found
+nothing" needs to be as retrievable as "checked and found drift". Quarantine only runs on a live
+call (`dryRun = false`) *and* only when `driftedEntityTypes` is non-empty; relationship-only drift
+is never handed to the quarantine policy, since nothing about a mention's type could ever match a
+relationship name. When it does run, the runner doesn't reimplement quarantine decisions — it
+synthesizes a `MetamodelDiff` whose only content is `EntityTypeRemoved` for each drifted type, and
+hands that to the same `DriftQuarantinePolicy` used for declared-vs-declared quarantine
+(`DriftCheckRunner.kt:168-188`), so "removed in a new declared version" and "observed but never
+declared" are handled by one policy, not two.
+
+`contextId` is threaded through every step that touches data: the observed snapshot, the candidate
+propositions read for quarantine, and the persisted report. See
+[Context-scoped drift checks](#context-scoped-drift-checks) for the full semantics.
 
 ### Version hashing recap
 
@@ -169,8 +184,18 @@ observations against the same baseline.
 
 - `MetamodelVersion` node: `(schemaName, contentHash)` (`DrivineMetamodelStore.kt:52`); `savedAt` is
   set only `ON CREATE`, so an idempotent re-save preserves the original creation timestamp.
-- `MetamodelDriftReport` node: `(schemaName, versionHash, capturedAt)`
-  (`DrivineMetamodelStore.kt:106`).
+- `MetamodelDriftReport` node: `(schemaName, versionHash, capturedAt, contextKey)`
+  (`DrivineMetamodelStore.kt:117-141`). `contextKey` is a separate property from `contextId`
+  purpose-built for this natural key: it's the real context id when there is one, or the sentinel
+  `GLOBAL_DRIFT_REPORT_CONTEXT_KEY` when the report is global. It has to be a distinct property,
+  not `contextId` itself, because Cypher property-map equality on a literal `null` never matches —
+  MERGE-ing directly on a nullable `contextId` would make every global report take the CREATE
+  branch and duplicate on every retry, instead of updating in place like every other natural key
+  here. With `contextKey` in the key, two reports for different contexts (including one global, one
+  scoped) checked at the same instant against the same version are always two distinct nodes, never
+  a silent overwrite. The domain-visible `contextId` property itself is still absent on the node for
+  a global report (a Neo4j node never stores an explicit null), which is what
+  `driftReports(schemaName, contextId = null)` matches against.
 
 Type sets (entity types, labels, properties, relationships) are stored as JSON strings
 (`MetamodelRowMappers.kt`), not delimiter-joined, for the same escape-safety reason the content hash
@@ -196,6 +221,69 @@ val DICE_BOOKKEEPING_LABELS: Set<String> = setOf(
 
 (`DrivineObservedSchemaSource.kt:31-39`.) There's no equivalent relationship-type exclusion: dice's
 bookkeeping is represented entirely as node labels, never relationship types.
+
+## Context-scoped drift checks
+
+Every piece of the pipeline above accepts an optional `ContextId` and, when it's non-null,
+confines itself to that one context: `DriftCheckRunner.run`, `ObservedSchemaSource.observe`, the
+candidate propositions read for quarantine, and the persisted `DriftReport`. `null` means what it
+always meant — the whole graph.
+
+### Why scope a drift check
+
+- **Multi-tenant schemas.** Different tenants often enable different integrations, and each
+  integration contributes its own entity and relationship types. A type that's perfectly valid for
+  one tenant is drift for another; checking the whole graph at once conflates the two, either
+  hiding a real problem in one tenant behind a `union` of everyone's declared types, or flagging
+  another tenant's normal data as drift. A per-context check compares each tenant against exactly
+  the schema that applies to it.
+- **Canary rollout.** Before running a drift check live across an entire deployment, scope it to
+  one context first. A dry run there tells you what a full rollout would find, at a fraction of the
+  blast radius, before you trust it everywhere.
+- **Blast-radius containment.** Quarantine is powerful precisely because it mutates data; scoping a
+  live check to one context means a mis-declared schema — an integration accidentally left out of
+  `DeclaredSchemaSource`, say — can only ever quarantine propositions inside that one context. It
+  has no way to reach any other.
+- **Per-context integration removal.** When one context stops using an integration but others still
+  do, the global observed schema still shows the type (other contexts have it). A scoped check
+  against just the context that dropped the integration is the only way to see that its own data is
+  now orphaned.
+
+### Semantics: null vs. scoped
+
+| | `contextId = null` (global) | `contextId = X` (scoped) |
+|---|---|---|
+| Candidate propositions (quarantine) | `PropositionRepository.findAll()` | `PropositionRepository.findByContextId(X)` |
+| Observed entity types | `CALL db.labels()`, minus dice's bookkeeping labels | Distinct `Mention.type` values reachable from context `X`'s own `Proposition` nodes |
+| Observed relationship types | `CALL db.relationshipTypes()` | Always empty — see below |
+| Persisted `DriftReport.contextId` | `null` | `X.value` |
+| Quarantine blast radius | Any proposition in the graph | Only propositions in context `X` |
+
+The scoped relationship-type set is always empty, not best-effort. Dice doesn't currently persist
+relationship edges tagged by context, so there's no honest way to attribute an observed
+relationship type to one context specifically — reporting *something* there would be a guess dressed
+up as an observation. An empty set means the differ finds no relationship drift for a scoped check,
+which is the safe direction to be wrong in: it can only under-report, never manufacture a false
+positive that quarantines something it shouldn't.
+
+### One Kotlin sample: canary, then global
+
+```kotlin
+val tenantA = ContextId("tenant-a")
+
+// Canary: see what a live check would find for one tenant first, without touching anything.
+val canary = driftCheckRunner.run(dryRun = true, contextId = tenantA)
+if (canary.hasDrift) {
+    logger.warn("tenant-a drift: entities=${canary.driftedEntityTypes}")
+}
+
+// Satisfied it's clean (or ready to accept the quarantine), run it live for real, scoped first...
+driftCheckRunner.run(dryRun = false, contextId = tenantA)
+
+// ...then, once every tenant's been checked this way, or once you trust the check outright,
+// run the same check across the whole graph.
+driftCheckRunner.run(dryRun = false)
+```
 
 ## Drift quarantine
 
@@ -319,3 +407,11 @@ reports.firstOrNull()?.let { latest ->
 - **`EntityTypeModified` only fires for types common to both versions.** A type removed and re-added
   under the same name in one diff shows up as `EntityTypeRemoved` + `EntityTypeAdded`, not a single
   `EntityTypeModified`.
+- **Scoped observation has no relationship-type signal.** A context-scoped observed schema always
+  reports an empty relationship-type set, because dice doesn't persist relationship edges tagged by
+  context; there's nothing honest to attribute one to. A scoped check only ever finds entity-type
+  drift, never relationship-type drift — see
+  [Context-scoped drift checks](#context-scoped-drift-checks).
+- **Declared schema is never scoped.** `DeclaredSchemaSource` has no `contextId` parameter; what a
+  deployment declares as valid schema is one thing, independent of which context a check happens to
+  be looking at.

@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.metamodel
 
+import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.PropositionRepository
 import org.slf4j.LoggerFactory
 
@@ -23,6 +24,8 @@ import org.slf4j.LoggerFactory
  *
  * @property dryRun Whether this was a preview run (no propositions were quarantined).
  * @property schemaName The declared schema name the check was performed against.
+ * @property contextId The context this check was scoped to, or `null` if it checked the whole
+ *   graph.
  * @property driftedEntityTypes Entity type names observed in the graph but never declared.
  * @property driftedRelationshipTypes Relationship type names observed but never declared.
  * @property quarantinedCount How many propositions were newly quarantined. Always 0 on a dry run
@@ -36,6 +39,7 @@ data class DriftCheckResult(
     val driftedRelationshipTypes: Set<String>,
     val quarantinedCount: Int,
     val reportRef: DriftReport,
+    val contextId: ContextId? = null,
 ) {
     /** `true` when the graph contained any type or relationship never declared. */
     val hasDrift: Boolean get() = driftedEntityTypes.isNotEmpty() || driftedRelationshipTypes.isNotEmpty()
@@ -60,9 +64,14 @@ interface DriftCheckRunner {
      *   but no proposition is touched. When `false`, propositions whose mentions reference a
      *   drifted entity type are handed to the configured [DriftQuarantinePolicy] and any it flags
      *   are persisted as quarantined.
+     * @param contextId `null` (the default) means the check covers the whole graph. Non-null scopes
+     *   everything the check touches to that one context: the candidate propositions read for
+     *   quarantine, the observed schema snapshot, and the persisted [DriftReport]. A mis-declared
+     *   schema in one context can then only ever quarantine propositions in that same context — it
+     *   has no way to reach another one.
      * @return A [DriftCheckResult] summarizing what was found and (if live) what was quarantined.
      */
-    fun run(dryRun: Boolean = true): DriftCheckResult
+    fun run(dryRun: Boolean = true, contextId: ContextId? = null): DriftCheckResult
 }
 
 /**
@@ -91,8 +100,8 @@ class DefaultDriftCheckRunner(
 
     private val logger = LoggerFactory.getLogger(DefaultDriftCheckRunner::class.java)
 
-    override fun run(dryRun: Boolean): DriftCheckResult {
-        val observed = observedSchemaSource.observe()
+    override fun run(dryRun: Boolean, contextId: ContextId?): DriftCheckResult {
+        val observed = observedSchemaSource.observe(contextId)
         val declared = declaredSchemaSource.declare()
 
         val diff = differ.diffAgainstObserved(
@@ -107,22 +116,24 @@ class DefaultDriftCheckRunner(
             driftingEntityTypes = diff.driftedEntityTypes,
             driftingRelationshipTypes = diff.driftedRelationshipTypes,
             capturedAt = observed.capturedAt,
+            contextId = contextId?.value,
         )
         // Persisted unconditionally: a zero-drift check is itself a fact worth having on record,
         // not just a no-op.
         store.saveDriftReport(report)
 
         val quarantinedCount = if (!dryRun && diff.driftedEntityTypes.isNotEmpty()) {
-            quarantineDriftedEntityTypes(declared.version, diff.driftedEntityTypes)
+            quarantineDriftedEntityTypes(declared.version, diff.driftedEntityTypes, contextId)
         } else {
             0
         }
 
         logger.info(
-            "Drift check for '{}' complete (dryRun={}): {} drifted entity type(s), {} drifted " +
+            "Drift check for '{}' complete (dryRun={}, contextId={}): {} drifted entity type(s), {} drifted " +
                 "relationship type(s), {} quarantined",
             declared.version.schemaName,
             dryRun,
+            contextId?.value,
             diff.driftedEntityTypes.size,
             diff.driftedRelationshipTypes.size,
             quarantinedCount,
@@ -135,6 +146,7 @@ class DefaultDriftCheckRunner(
             driftedRelationshipTypes = diff.driftedRelationshipTypes,
             quarantinedCount = quarantinedCount,
             reportRef = report,
+            contextId = contextId,
         )
     }
 
@@ -153,13 +165,24 @@ class DefaultDriftCheckRunner(
      * the same declared version — there was no "old declared vs. new declared" transition, so
      * they're only there to give the policy's human-readable reason string something to name.
      */
-    private fun quarantineDriftedEntityTypes(declaredVersion: MetamodelVersion, driftedEntityTypes: Set<String>): Int {
+    private fun quarantineDriftedEntityTypes(
+        declaredVersion: MetamodelVersion,
+        driftedEntityTypes: Set<String>,
+        contextId: ContextId?,
+    ): Int {
         val syntheticDiff = MetamodelDiff(
             fromVersion = declaredVersion,
             toVersion = declaredVersion,
             changes = driftedEntityTypes.sorted().map { MetamodelChange.EntityTypeRemoved(it) },
         )
-        val propositions = propositionRepository.findAll()
+        // Scoped to one context, this is the whole blast radius: a proposition in another context
+        // is never a candidate, so it can never be quarantined by this run no matter what its
+        // mentions reference.
+        val propositions = if (contextId != null) {
+            propositionRepository.findByContextId(contextId)
+        } else {
+            propositionRepository.findAll()
+        }
         val result = quarantinePolicy.evaluate(syntheticDiff, propositions)
         result.quarantined.forEach { decision -> propositionRepository.save(decision.proposition) }
         return result.quarantined.size
