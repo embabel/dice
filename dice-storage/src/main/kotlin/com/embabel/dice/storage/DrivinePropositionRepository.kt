@@ -84,6 +84,28 @@ open class DrivinePropositionRepository(
      */
     private val dedupLocks: Array<Any> = Array(DEDUP_STRIPES) { Any() }
 
+    /**
+     * Ids [delete]d by this repository instance whose Drivine session snapshot is stale — see
+     * [saveFully] for the full story. [doPersist] consults this set to decide, per save, whether
+     * it must bypass `GraphObjectManager`'s dirty-diffed save (this set) or can use it normally
+     * (everything else, which keeps `DELETE_ORPHAN` mention/relationship cleanup working).
+     *
+     * JVM-local by design, not a correctness compromise: the staleness this tracks IS JVM-local
+     * in-memory state. Drivine's `SessionManager` lives inside this process's `GraphObjectManager`
+     * bean, so it can only ever go stale for an id THIS process deleted — a different JVM (a
+     * different repository instance entirely, e.g. another app instance, or this same app after a
+     * restart) has no snapshot for that id at all, stale or otherwise, and doesn't need the
+     * bypass. Tracking id membership in-memory exactly matches the shape of the problem being
+     * worked around; it isn't a shortcut that happens to work; it's the right scope.
+     *
+     * `ConcurrentHashMap`-backed since [delete] and [doPersist] can run from different threads.
+     * One-shot: [doPersist] removes the id the moment it uses it, so only the very next save after
+     * a delete gets the always-full-write treatment — every later save for that id goes back
+     * through the normal, dirty-diffed path, which is what restores `DELETE_ORPHAN` semantics for
+     * ordinary updates (see [saveFully]'s KDoc for why an always-empty session broke that).
+     */
+    private val staleAfterDelete: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
     override val storeType: PropositionStoreType get() = PropositionStoreType.STORED
 
     override val luceneSyntaxNotes: String get() = "no lucene support"
@@ -176,26 +198,45 @@ open class DrivinePropositionRepository(
      *
      * Two writes with deliberately different cascades — Drivine applies one cascade per `save`:
      * - **Node + mentions** via the lean [PropositionView] with `DELETE_ORPHAN`: authoritative, so a
-     *   changed mention set is reconciled and stale Mention nodes are cleaned. Provenance is *not* in
-     *   this view, so existing `DERIVED_FROM` edges are left intact.
+     *   changed mention set is reconciled and stale Mention nodes are cleaned — but ONLY on the
+     *   normal, session-aware path (see below). Provenance is *not* in this view, so existing
+     *   `DERIVED_FROM` edges are left intact.
      * - **Provenance** via [PropositionWithProvenanceView] with `PRESERVE`: additive — edges are merged,
      *   never deleted, and idempotent by the shared `:Source` key. So the all-in-one save never drops
      *   evidence it didn't load (the lean query/findAll paths, the decay sweep). Authoritative
      *   replacement/removal is the job of [setProvenance] / [clearProvenance].
      *
-     * Both writes go through [saveFully], not `graphObjectManager.save` directly — see its KDoc for
-     * why: a proposition [delete]d and then re-persisted under the same id (exactly what bundle
-     * restore does) must always get every field written, and `graphObjectManager.save`'s own
-     * session-cached dirty-diffing can't be trusted to do that.
+     * **Two write paths, chosen per call via [staleAfterDelete].** Ordinarily this goes straight
+     * through `graphObjectManager.save(view, cascade)` — Drivine's own dirty-diffed save, which is
+     * what makes `DELETE_ORPHAN` actually remove a mention/relationship that's no longer present
+     * (see [saveFully]'s KDoc for what breaks if this path is bypassed unconditionally). The ONE
+     * exception: if this proposition's id was [delete]d by this repository and hasn't been
+     * re-persisted since (checked via `staleAfterDelete.remove(id)`, which is also how the
+     * exception is consumed — one-shot), this save goes through [saveFully] instead, because
+     * `graphObjectManager.save` would otherwise diff against a stale pre-delete snapshot and
+     * silently drop unchanged-looking fields to `null` on what's actually a brand-new node.
      */
     private fun doPersist(proposition: Proposition): Proposition {
         val embedding = embeddingFor(proposition)
-        saveFully(PropositionGraphMapper.toView(proposition, embedding), CascadeType.DELETE_ORPHAN)
+        // One-shot: consumes the flag so only this save (the one right after the delete) gets the
+        // always-full-write treatment; every later save for this id goes back through the normal,
+        // DELETE_ORPHAN-respecting path.
+        val staleSnapshot = staleAfterDelete.remove(proposition.id)
+
+        val nodeAndMentions = PropositionGraphMapper.toView(proposition, embedding)
+        if (staleSnapshot) {
+            saveFully(nodeAndMentions, CascadeType.DELETE_ORPHAN)
+        } else {
+            graphObjectManager.save(nodeAndMentions, CascadeType.DELETE_ORPHAN)
+        }
+
         if (proposition.provenanceEntries.isNotEmpty()) {
-            saveFully(
-                PropositionGraphMapper.toProvenanceView(proposition, embedding),
-                CascadeType.PRESERVE,
-            )
+            val provenanceView = PropositionGraphMapper.toProvenanceView(proposition, embedding)
+            if (staleSnapshot) {
+                saveFully(provenanceView, CascadeType.PRESERVE)
+            } else {
+                graphObjectManager.save(provenanceView, CascadeType.PRESERVE)
+            }
         }
         return proposition
     }
@@ -205,13 +246,32 @@ open class DrivinePropositionRepository(
      * always writes every declared field instead of Drivine's own "only write what changed since
      * this id was last saved/loaded" optimization.
      *
-     * **Why this exists.** `GraphObjectManager` keeps a session-scoped cache
+     * **Only used for the one-shot save right after a [delete] of the same id** — see
+     * [staleAfterDelete] and [doPersist]. Every other save goes through `graphObjectManager.save`
+     * directly, NOT this method, because an always-empty session breaks more than it fixes:
+     *
+     * **Why this can't be the default path.** Drivine's `GraphViewMergeBuilder.buildMergeStatements`
+     * derives its relationship diff from the session snapshot: `snapshotItems == null` (which is
+     * what an always-empty `SessionManager` guarantees, every time) unconditionally treats every
+     * current relationship as "added" and NONE as "removed" — regardless of cascade type. That
+     * means `CascadeType.DELETE_ORPHAN`'s whole point — deleting a `Mention` relationship/node that
+     * a re-save no longer includes — silently stops happening for every save that goes through this
+     * method. An earlier version of this fix routed ALL saves through this method and broke exactly
+     * that: re-saving an existing proposition with fewer mentions left the stale `Mention` node
+     * orphaned in the graph. Confirmed live against Neo4j (2 mentions saved, re-saved with 1, both
+     * `findById` and a direct `Mention` node count still showed 2). Restoring the delete-then-resave
+     * fix while keeping ordinary saves session-aware is exactly what [staleAfterDelete] does: this
+     * method now only ever runs for a save Drivine's own cache genuinely cannot be trusted for.
+     *
+     * **Why this exists at all.** `GraphObjectManager` keeps a session-scoped cache
      * (`org.drivine.session.SessionManager`) of every view it has saved or loaded, keyed by
      * `(view class, id)`. On the next save for that same key it diffs the incoming object against
      * the cached snapshot and only emits `SET` clauses for fields that differ — it never checks
      * whether the underlying node still exists. [delete] physically removes the node but has no way
-     * to evict that cache: `GraphObjectManager` exposes no eviction API (per-id or whole-session),
-     * and its `SessionManager` field is `private`. So a proposition that's deleted and then
+     * to evict that cache: `GraphObjectManager` exposes no eviction API (per-id or whole-session;
+     * confirmed by reading Drivine 0.0.58's actual sources — `delete` never touches the session, and
+     * `SessionManager` is reachable only through `GraphObjectManager`'s `private` field), and its
+     * own `SessionManager.clear()` wipes every id, not one. So a proposition that's deleted and then
      * re-persisted under the **same id** — exactly what bundle restore does when it preserves
      * original proposition IDs across a wipe-and-reimport — gets diffed against its own pre-delete
      * snapshot: any field whose new value happens to equal the old snapshot's value is treated as
@@ -228,11 +288,10 @@ open class DrivinePropositionRepository(
      * is exactly the full-write behavior a proposition gets on its very first save. This reuses
      * Drivine's real serialization and relationship/mention-cascade logic verbatim — it does not
      * reimplement any of it — it just makes the "is this id already tracked?" question always come
-     * back "no".
-     *
-     * **Trade-off.** A genuinely-unchanged proposition now rewrites every field on every save
-     * instead of just the diff. That's an acceptable cost at this store's documented ~10–50K row
-     * scale (see the scale note on [reembedAll]) in exchange for never silently corrupting a row.
+     * back "no" for this one call, which is safe here (and only here) because [staleAfterDelete]
+     * guarantees the very next save after a delete has no *existing* relationships to reconcile
+     * against in the first place: the node was just deleted, so "no snapshot" is actually true, not
+     * merely simulated.
      *
      * **Known residual scope.** [setProvenance] still calls `graphObjectManager.save` directly and
      * is exposed to the same class of staleness bug if a proposition is deleted and its provenance
@@ -242,7 +301,7 @@ open class DrivinePropositionRepository(
      * **Upstream note.** The real fix belongs in Drivine: either `GraphObjectManager.delete` should
      * evict the id's session entry itself, or it should expose a public eviction/detach method so
      * callers who delete-then-recreate under the same id (any restore/rollback workflow, not just
-     * this one) aren't forced to route around the optimization entirely like this.
+     * this one) aren't forced to route around the optimization at all.
      */
     private fun <T : Any> saveFully(view: T, cascade: CascadeType) {
         val neverTrackedSession = SessionManager(Neo4jObjectMapper.instance)
@@ -536,10 +595,20 @@ open class DrivinePropositionRepository(
         return clusters
     }
 
-    /** DELETE_ORPHAN (not DELETE_ALL) so shared `:Source` nodes survive unless this was their last reference. */
+    /**
+     * DELETE_ORPHAN (not DELETE_ALL) so shared `:Source` nodes survive unless this was their last
+     * reference.
+     *
+     * Marks [id] in [staleAfterDelete] when the delete actually removed a node, so the next
+     * [doPersist] for this id knows Drivine's session snapshot for it is now stale (see that
+     * field's KDoc and [saveFully]'s).
+     */
     @Transactional
-    override fun delete(id: String): Boolean =
-        graphObjectManager.delete<PropositionWithProvenanceView>(id, CascadeType.DELETE_ORPHAN) > 0
+    override fun delete(id: String): Boolean {
+        val deleted = graphObjectManager.delete<PropositionWithProvenanceView>(id, CascadeType.DELETE_ORPHAN) > 0
+        if (deleted) staleAfterDelete += id
+        return deleted
+    }
 
     @Transactional(readOnly = true)
     override fun count(): Int = graphObjectManager.count<PropositionView>().toInt()

@@ -551,4 +551,47 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals("ctx-regression", restoredAfterChange.contextId.value, "unchanged-looking contextId must still be written")
         assertEquals(0.8, restoredAfterChange.confidence, "unchanged-looking confidence must still be written")
     }
+
+    /**
+     * #11: an ordinary re-save (no [delete] involved) that shrinks a proposition's mentions must
+     * still remove the stale `Mention` relationship/node — `DELETE_ORPHAN` must keep working for
+     * every normal update, not just the one-shot path right after a delete.
+     *
+     * Regression test for a bug introduced (and caught before shipping) while fixing the
+     * delete-then-resave staleness bug above: an earlier version of that fix routed EVERY save
+     * through an always-empty-session write (see [DrivinePropositionRepository.saveFully]'s
+     * KDoc), which happened to repair the delete-then-resave case but broke `DELETE_ORPHAN` for
+     * everything else — Drivine's relationship-diffing treats "no snapshot" as "every current
+     * relationship is new", so a shrunk mention set was never reconciled and the old `Mention`
+     * node was silently orphaned in the graph. The fix ([DrivinePropositionRepository.
+     * staleAfterDelete]) scopes the always-empty-session write to exactly the one save right
+     * after a `delete()` of that id; every other save — this one — goes through
+     * `graphObjectManager.save` directly, which is session-aware and does compute the removed
+     * relationship correctly.
+     */
+    @Test
+    fun `save with fewer mentions removes stale mention relationship`() {
+        val mentionA = EntityMention(span = "Alice", type = "Person", resolvedId = "alice", role = MentionRole.SUBJECT)
+        val mentionB = EntityMention(span = "Bob", type = "Person", resolvedId = "bob", role = MentionRole.OBJECT)
+
+        val original = Proposition(
+            contextId = ContextId("ctx-mention-shrink"),
+            text = "Alice works with Bob",
+            mentions = listOf(mentionA, mentionB),
+            confidence = 0.8,
+            decay = 0.05,
+            status = PropositionStatus.ACTIVE,
+        )
+        val saved = repository.save(original)
+        assertEquals(2, repository.findById(saved.id)!!.mentions.size, "precondition: both mentions saved")
+        assertEquals(2L, nodeCount("Mention"), "precondition: both Mention nodes exist")
+
+        // Re-save the SAME id with only one mention — NO delete() in between.
+        repository.save(saved.copy(mentions = listOf(mentionA)))
+
+        val restored = repository.findById(saved.id)!!
+        assertEquals(1, restored.mentions.size, "the removed mention must not still be attached")
+        assertEquals("alice", restored.mentions.single().resolvedId)
+        assertEquals(1L, nodeCount("Mention"), "the orphaned Mention node must be deleted, not left behind")
+    }
 }
