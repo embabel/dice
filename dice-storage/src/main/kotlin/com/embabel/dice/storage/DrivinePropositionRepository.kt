@@ -32,10 +32,13 @@ import com.embabel.dice.proposition.PropositionStoreType
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.storage.model.*
 import org.drivine.manager.*
+import org.drivine.mapper.Neo4jObjectMapper
 import org.drivine.query.CypherStatement
+import org.drivine.query.GraphObjectMergeBuilder
 import org.drivine.query.QueryLoader
 import org.drivine.query.QuerySpecification
 import org.drivine.query.dsl.*
+import org.drivine.session.SessionManager
 import org.slf4j.LoggerFactory
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.annotation.Transactional
@@ -179,17 +182,78 @@ open class DrivinePropositionRepository(
      *   never deleted, and idempotent by the shared `:Source` key. So the all-in-one save never drops
      *   evidence it didn't load (the lean query/findAll paths, the decay sweep). Authoritative
      *   replacement/removal is the job of [setProvenance] / [clearProvenance].
+     *
+     * Both writes go through [saveFully], not `graphObjectManager.save` directly — see its KDoc for
+     * why: a proposition [delete]d and then re-persisted under the same id (exactly what bundle
+     * restore does) must always get every field written, and `graphObjectManager.save`'s own
+     * session-cached dirty-diffing can't be trusted to do that.
      */
     private fun doPersist(proposition: Proposition): Proposition {
         val embedding = embeddingFor(proposition)
-        graphObjectManager.save(PropositionGraphMapper.toView(proposition, embedding), CascadeType.DELETE_ORPHAN)
+        saveFully(PropositionGraphMapper.toView(proposition, embedding), CascadeType.DELETE_ORPHAN)
         if (proposition.provenanceEntries.isNotEmpty()) {
-            graphObjectManager.save(
+            saveFully(
                 PropositionGraphMapper.toProvenanceView(proposition, embedding),
                 CascadeType.PRESERVE,
             )
         }
         return proposition
+    }
+
+    /**
+     * Saves a graph view exactly like `graphObjectManager.save(view, cascade)` does, EXCEPT it
+     * always writes every declared field instead of Drivine's own "only write what changed since
+     * this id was last saved/loaded" optimization.
+     *
+     * **Why this exists.** `GraphObjectManager` keeps a session-scoped cache
+     * (`org.drivine.session.SessionManager`) of every view it has saved or loaded, keyed by
+     * `(view class, id)`. On the next save for that same key it diffs the incoming object against
+     * the cached snapshot and only emits `SET` clauses for fields that differ — it never checks
+     * whether the underlying node still exists. [delete] physically removes the node but has no way
+     * to evict that cache: `GraphObjectManager` exposes no eviction API (per-id or whole-session),
+     * and its `SessionManager` field is `private`. So a proposition that's deleted and then
+     * re-persisted under the **same id** — exactly what bundle restore does when it preserves
+     * original proposition IDs across a wipe-and-reimport — gets diffed against its own pre-delete
+     * snapshot: any field whose new value happens to equal the old snapshot's value is treated as
+     * "unchanged" and never gets a `SET` clause, silently leaving it `null` on what is actually a
+     * brand-new, empty node. Confirmed by direct reproduction: `delete(id)` followed by
+     * `saveIfAbsent(sameId, sameValues)` persists a node with only `id` populated; changing one
+     * field on the resave writes that field but leaves every other (unchanged-looking) field null.
+     *
+     * **The fix.** `GraphObjectMergeBuilder.forClass(...)` and `SessionManager`'s constructor are
+     * both public Drivine API, so this builds the exact same merge statements Drivine would, but
+     * against a throwaway `SessionManager` that starts — and stays — empty (nothing ever calls
+     * `.snapshot()` on it), instead of the shared, long-lived one `GraphObjectManager` owns
+     * internally. An empty session means every id looks "never seen before" to the dirty-diff, which
+     * is exactly the full-write behavior a proposition gets on its very first save. This reuses
+     * Drivine's real serialization and relationship/mention-cascade logic verbatim — it does not
+     * reimplement any of it — it just makes the "is this id already tracked?" question always come
+     * back "no".
+     *
+     * **Trade-off.** A genuinely-unchanged proposition now rewrites every field on every save
+     * instead of just the diff. That's an acceptable cost at this store's documented ~10–50K row
+     * scale (see the scale note on [reembedAll]) in exchange for never silently corrupting a row.
+     *
+     * **Known residual scope.** [setProvenance] still calls `graphObjectManager.save` directly and
+     * is exposed to the same class of staleness bug if a proposition is deleted and its provenance
+     * re-set under the same id later — not fixed here because it isn't exercised by this store's
+     * current tests; flagged for a follow-up if that path turns out to need the same treatment.
+     *
+     * **Upstream note.** The real fix belongs in Drivine: either `GraphObjectManager.delete` should
+     * evict the id's session entry itself, or it should expose a public eviction/detach method so
+     * callers who delete-then-recreate under the same id (any restore/rollback workflow, not just
+     * this one) aren't forced to route around the optimization entirely like this.
+     */
+    private fun <T : Any> saveFully(view: T, cascade: CascadeType) {
+        val neverTrackedSession = SessionManager(Neo4jObjectMapper.instance)
+        val builder = GraphObjectMergeBuilder.forClass(view.javaClass, Neo4jObjectMapper.instance, neverTrackedSession)
+        builder.buildMergeStatements(view, cascade).forEach { statement ->
+            persistenceManager.execute(
+                QuerySpecification
+                    .withStatement(statement.statement)
+                    .bind(statement.bindings)
+            )
+        }
     }
 
     private fun embeddingFor(proposition: Proposition): List<Float>? =
