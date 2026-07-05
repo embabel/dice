@@ -150,7 +150,7 @@ sequenceDiagram
         Policy-->>Runner: QuarantineResult
         Runner->>Repo: save(quarantined proposition) for each
     else dryRun == true, or no entity-type drift
-        Note over Runner: no proposition touched;<br/>relationship-only drift can never match a mention's type
+        Note over Runner: no proposition touched -<br/>relationship-only drift can never match a mention's type
     end
     Runner-->>Caller: DriftCheckResult
 ```
