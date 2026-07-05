@@ -105,7 +105,8 @@ open class DrivineMetamodelStore(
                 """
                 MERGE (n:MetamodelDriftReport {schemaName: ${'$'}schemaName, versionHash: ${'$'}versionHash, capturedAt: ${'$'}capturedAt})
                 SET n.driftingEntityTypes       = ${'$'}driftingEntityTypes,
-                    n.driftingRelationshipTypes = ${'$'}driftingRelationshipTypes
+                    n.driftingRelationshipTypes = ${'$'}driftingRelationshipTypes,
+                    n.contextId                 = ${'$'}contextId
                 """.trimIndent(),
             ).bind(DriftReportRowMapper.bindMap(report)),
         )
@@ -121,6 +122,40 @@ open class DrivineMetamodelStore(
             ORDER BY n.capturedAt DESC
             """.trimIndent(),
         ).bind(mapOf("schemaName" to schemaName)) as QuerySpecification<Any>
+        return persistenceManager.query(spec).filterIsInstance<Map<*, *>>().mapNotNull { row ->
+            runCatching { DriftReportRowMapper.fromRow(row) }
+                .onFailure { logger.warn("Skipping unreadable MetamodelDriftReport row: {}", it.message) }
+                .getOrNull()
+        }
+    }
+
+    /**
+     * [contextId] filters in Cypher, not in memory: a `null` context matches reports with no
+     * `contextId` property at all (a Neo4j node never stores an explicitly-null property, so
+     * "global" reports simply don't have the property), and a non-null context matches an exact
+     * equality on it.
+     */
+    @Transactional(readOnly = true)
+    override fun driftReports(schemaName: String, contextId: String?): List<DriftReport> {
+        @Suppress("UNCHECKED_CAST")
+        val spec = if (contextId != null) {
+            QuerySpecification.withStatement(
+                """
+                MATCH (n:MetamodelDriftReport {schemaName: ${'$'}schemaName, contextId: ${'$'}contextId})
+                RETURN n
+                ORDER BY n.capturedAt DESC
+                """.trimIndent(),
+            ).bind(mapOf("schemaName" to schemaName, "contextId" to contextId)) as QuerySpecification<Any>
+        } else {
+            QuerySpecification.withStatement(
+                """
+                MATCH (n:MetamodelDriftReport {schemaName: ${'$'}schemaName})
+                WHERE n.contextId IS NULL
+                RETURN n
+                ORDER BY n.capturedAt DESC
+                """.trimIndent(),
+            ).bind(mapOf("schemaName" to schemaName)) as QuerySpecification<Any>
+        }
         return persistenceManager.query(spec).filterIsInstance<Map<*, *>>().mapNotNull { row ->
             runCatching { DriftReportRowMapper.fromRow(row) }
                 .onFailure { logger.warn("Skipping unreadable MetamodelDriftReport row: {}", it.message) }

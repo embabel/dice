@@ -75,6 +75,10 @@ object DriftReportRowMapper {
         "capturedAt" to report.capturedAt.toString(),
         "driftingEntityTypes" to serializeList(report.driftingEntityTypes.sorted()),
         "driftingRelationshipTypes" to serializeList(report.driftingRelationshipTypes.sorted()),
+        // Left out of the node entirely (not written as an empty/sentinel string) when null, so a
+        // global report has no contextId property at all -- see fromRow, and the store's scoped
+        // driftReports query, which relies on that absence.
+        "contextId" to report.contextId,
     )
 
     /** Rebuild a [DriftReport] from a returned node's property map. */
@@ -84,6 +88,7 @@ object DriftReportRowMapper {
         driftingEntityTypes = deserializeSet(row.strOrNull("driftingEntityTypes") ?: ""),
         driftingRelationshipTypes = deserializeSet(row.strOrNull("driftingRelationshipTypes") ?: ""),
         capturedAt = parseInstant(row.strOrNull("capturedAt")),
+        contextId = row.strOrNull("contextId"),
     )
 }
 

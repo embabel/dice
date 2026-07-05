@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.storage.autoconfigure
 
+import com.embabel.agent.core.ContextId
 import com.embabel.dice.metamodel.DeclaredObservedDiffer
 import com.embabel.dice.metamodel.DeclaredSchema
 import com.embabel.dice.metamodel.DeclaredSchemaSource
@@ -157,7 +158,8 @@ class MetamodelAutoConfigurationTest {
 
         companion object {
             val INSTANCE: DriftCheckRunner = object : DriftCheckRunner {
-                override fun run(dryRun: Boolean) = throw UnsupportedOperationException("unused in this test")
+                override fun run(dryRun: Boolean, contextId: ContextId?) =
+                    throw UnsupportedOperationException("unused in this test")
             }
         }
     }
