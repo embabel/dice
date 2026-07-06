@@ -1,10 +1,10 @@
 # Graph projection: lineage, outcomes, and staleness
 
 DICE projects its propositions into a typed graph so they can be queried as entities and
-relationships. Projection is easy to get wrong in ways that quietly erode trust: edges with no trail
-back to their evidence, duplicate nodes on every re-run, and stale structure left behind when the
-underlying facts change. This note is about the decisions that keep the projected graph honest — not
-about the projector classes themselves.
+relationships. Projection can quietly erode trust: edges with no trail back to their evidence,
+duplicate nodes on every re-run, and stale structure left behind when the underlying facts change.
+This note is about the decisions that keep the projected graph honest — not about the projector
+classes themselves.
 
 ## The projection pipeline
 
@@ -16,30 +16,46 @@ an existing one, is skipped, or fails. The authority tier travels with the recor
 sequenceDiagram
     autonumber
     participant Caller
+    participant Service as GraphProjectionService
     participant Projector as GraphProjector
     participant Reconciler
-    participant Backend as Target backend
+    participant Backend as GraphRelationshipPersister
     participant Records as ProjectionRecordStore
-    Caller->>Projector: project(propositions, target)
-    loop each proposition
-        Projector->>Reconciler: reconcile(proposition, target)
-        Reconciler-->>Projector: CreateNew / Adopt / Align
-        alt CreateNew
-            Projector->>Backend: create new edge / node
-            Backend-->>Projector: targetRef
-        else Adopt
-            Projector->>Backend: point at existing node (targetRef from decision)
-        else Align
-            Projector->>Backend: merge attributes into existing node
-            Backend-->>Projector: targetRef
-        end
-        Projector->>Records: record(propositionId, target, lifecycle, authority)
+    Caller->>Service: projectAndPersist(propositions)
+    Service->>Projector: projectAll(propositions, schema)
+    Projector-->>Service: ProjectionResults<ProjectedRelationship>
+    loop each successful result
+        Service->>Reconciler: reconcile(proposition, target, projected)
+        Reconciler-->>Service: CreateNew / Adopt / Align
     end
-    Projector-->>Caller: ProjectionBatchResult
+    Service->>Backend: persist(projectionResults)
+    Backend-->>Service: RelationshipPersistenceResult
+    loop each result
+        Service->>Records: record(ProjectionRecord)
+    end
+    Service-->>Caller: Pair<ProjectionResults, RelationshipPersistenceResult>
 ```
 
-After the batch, the `EventEmittingProjector` decorator publishes a `ProjectionBatchCompleted`
-event so downstream consumers can react without polling.
+```kotlin
+val (projectionResults, persistenceResult) = graphProjectionService.projectAndPersist(propositions)
+projectionResults.results.forEach { result ->
+    when (result) {
+        is ProjectionSuccess -> println("projected: ${result.projected}")
+        is ProjectionSkipped -> println("skipped: ${result.reason}")
+        is ProjectionFailed -> println("failed: ${result.reason}")
+    }
+}
+```
+
+`GraphProjector` itself only does the classification step (`project`/`projectAll`, turning a
+proposition into a `ProjectedRelationship`); it has no notion of a reconciler, a backend, or a
+record store. Reconciliation, persistence, and lineage recording are all orchestrated by
+`GraphProjectionService.projectAndPersist`.
+
+`EventEmittingProjector` is a generic decorator available for any `Projector`: it wraps a
+delegate, forwards `projectAll`, and publishes a `ProjectionBatchCompleted` event afterwards so
+listeners can react without polling. It isn't wired into `GraphProjectionService` by default —
+use it if you want that event.
 
 ## Edge lineage
 
@@ -50,9 +66,14 @@ propositions and the authority tier of their source.
 
 The reason is auditability. An edge with no provenance is an opaque assertion: you can't ask "where
 did this come from?" or "how much should I trust it?" Keeping the record turns the graph into
-something you can interrogate. The record store is even reversible — given a node in the graph you
-can find every record that created or adopted it — so a graph artifact can always be traced back to
-the text that justified it.
+something you can interrogate. The record store is even reversible — given an artifact reference
+from the graph you can find every record that created or adopted it:
+
+```kotlin
+val records = recordStore.findByTargetRef(targetRef)
+```
+
+so a graph artifact can always be traced back to the text that justified it.
 
 Authority travels with the edge for the same reason it matters everywhere else (see
 [proposition-lifecycle](proposition-lifecycle.md)): a relationship derived from a first-party record
@@ -91,17 +112,21 @@ flowchart TD
 
 `CreateNew` creates a fresh artifact in the target backend. `Adopt` reuses an existing artifact verbatim — the proposition's projected identity becomes that node's reference. `Align` is the middle option: the proposition merges attributes into an existing artifact while keeping its own distinct identity (for example, a projector that enriches an existing entity node rather than pointing at it wholesale). The shipped `RepositoryBackedReconciler` uses exact entity-ID match to return `Adopt` or `CreateNew`; `Align` is available for backends that need finer-grained merging.
 
-## SPI seams for projection
+## SPI extension points for projection
 
 The projectors, the reconciler, and the record stores are all SPIs. Here is how they fit together:
 
 ```mermaid
 classDiagram
+    class GraphProjectionService {
+        +projectAndPersist(propositions) Pair
+    }
     class GraphProjector {
-        +project(propositions, target) ProjectionBatchResult
+        +project(proposition, schema) ProjectionResult
+        +projectAll(propositions, schema) ProjectionResults
     }
     class Reconciler {
-        +reconcile(proposition, target) ReconciliationDecision
+        +reconcile(proposition, target, projected) ReconciliationDecision
     }
     class ReconciliationDecision {
         <<sealed>>
@@ -131,8 +156,9 @@ classDiagram
         FAILED
         STALE
     }
-    GraphProjector --> Reconciler : delegates reconciliation
-    GraphProjector --> ProjectionRecordStore : writes outcome
+    GraphProjectionService --> GraphProjector : projects
+    GraphProjectionService --> Reconciler : delegates reconciliation
+    GraphProjectionService --> ProjectionRecordStore : writes outcome
     ProjectionRecordStore --> ProjectionRecord : stores
     ProjectionRecord --> ProjectionLifecycle : lifecycle field
     Reconciler --> ReconciliationDecision : returns
@@ -151,10 +177,10 @@ record derived from it as stale.
 Two deliberate choices live here. First, the trigger is the proposition's *status change*, not a
 manual sweep, so the graph self-heals as a side effect of the lifecycle rather than needing a
 separate reconciliation job to remember. Second, the cascade only marks the *records* stale; it
-doesn't rip out the actual edge. Edge removal or refresh is a re-projection concern, and keeping the
-cascade to a fast, idempotent "flag it" step means a status change never triggers expensive graph
-surgery inline. The stale flag is a signal to downstream consumers that the edge needs a refresh,
-not the refresh itself.
+doesn't rip out the actual edge. Edge removal or refresh is a re-projection concern — the stale flag
+is a signal to downstream consumers that the edge needs a refresh, not the refresh itself, and
+keeping the cascade to a fast, idempotent "flag it" step means a status change never triggers
+expensive graph surgery inline.
 
 The trigger is the `PropositionStatusChanged` event (see [events](events.md)) — this cascade is the
 one place DICE consumes its own events, so nothing has to remember to run it:
@@ -169,7 +195,6 @@ sequenceDiagram
     Life->>Bus: status becomes superseded / contradicted / stale
     Bus->>Cascade: deliver the change
     Cascade->>Records: markStaleByProposition(propositionId)
-    Note over Records: the graph edge is left intact — the mark is only a refresh signal for later
 ```
 
 ## Idempotent ingestion and reconciliation
@@ -183,13 +208,29 @@ and if extraction fails, the claim is released so a transient error doesn't perm
 re-ingestion. (A second, durable layer tracks processed chunks across sessions for the incremental
 path.)
 
-At the **graph end**, a reconciler checks the live graph before creating anything: if an entity a
-proposition mentions already exists, the projection adopts that node instead of minting a duplicate.
-The default match is exact-ID and deterministic — the reconciler would rather create a clean new
-node than guess a fuzzy match and merge two things that aren't the same.
+At the **graph end**, deduplication is opt-in, not the default. `GraphProjectionService` defaults
+to `AlwaysCreateReconciler`, which always returns `CreateNew` and never looks at the live graph —
+running it twice over the same content mints a new edge each time. To dedupe, configure a
+`RepositoryBackedReconciler`, which checks whether the exact edge already exists before deciding to
+adopt it:
+
+```kotlin
+val reconciler = RepositoryBackedReconciler(repository = namedEntityDataRepository)
+val service = GraphProjectionService(
+    graphProjector = graphProjector,
+    persister = persister,
+    schema = schema,
+    recordStore = recordStore,
+    reconciler = reconciler,
+)
+```
+
+The match is exact-ID and deterministic — it would rather create a clean new node than guess a
+fuzzy match and merge two things that aren't the same.
 
 The unifying idea is that ingestion and projection are operations you'll run repeatedly over
-overlapping material, so they're built to converge rather than accumulate.
+overlapping material, so they're built to converge rather than accumulate — but for the graph end,
+you have to ask for it.
 
 ## Backend access through a port
 
@@ -200,10 +241,10 @@ port. All the Neo4j-specific wiring lives in the storage module; domain code nev
 driver. Because the core talks only to those interfaces, you can swap the backend or test against an
 in-memory substitute.
 
-One consequence worth noting: the entity-repository-backed proposition store deliberately declares
-only what it can honestly support — plain storage and vector search — and not proposition-scoped
-graph traversal or temporal queries, because the entity-scoped repository can't genuinely back them.
-That's the same "declare only what you really support" stance the store layer takes.
+The entity-repository-backed proposition store follows the same "declare only what you really
+support" stance as the durable-storage design (see [durable storage](durable-storage.md)): it
+exposes plain storage and vector search, not proposition-scoped graph traversal or temporal
+queries, because the entity-scoped repository can't genuinely back them.
 
 ## Configurable behavior
 

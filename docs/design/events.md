@@ -2,7 +2,7 @@
 
 DICE emits domain events as it works — a fact was persisted, a proposition changed status, a batch
 finished — so other parts of a system can react without DICE having to know about them. This note
-covers the event model and what the store and pipeline emit; it's the seam that loosely couples the
+covers the event model and what the store and pipeline emit; it's the extension point that loosely couples the
 substrate to whatever observes it.
 
 ## The model
@@ -41,6 +41,8 @@ flowchart TB
     DE["DiceEvent (marker)"]
     PE["PropositionPersisted<br/>(save — no status change)"]
     SC["PropositionStatusChanged<br/>(previous + new status + reason)"]
+    PIN["PropositionPinned<br/>(exempted from decay)"]
+    UNP["PropositionUnpinned<br/>(back in scope for decay)"]
     PBC["ProjectionBatchCompleted<br/>(success / skip / fail counts)"]
     EBC["ExtractionBatchCompleted<br/>(run statistics)"]
     PD["PropositionDiscovered<br/>(revision: new fact)"]
@@ -48,8 +50,14 @@ flowchart TB
     PR["PropositionReinforced<br/>(revision: similar)"]
     PC["PropositionContradicted<br/>(revision: conflict)"]
     PG["PropositionGeneralized<br/>(revision: generalizes)"]
+    REJ["PropositionRejected<br/>(gate: discarded)"]
+    RTR["PropositionRoutedToReview<br/>(gate: needs a second look)"]
+    SKIP["PropositionProjectionSkipped<br/>(gate: saved but not projected)"]
+    DEM["PropositionDemoted<br/>(gate: relation weakened)"]
     DE --> PE
     DE --> SC
+    DE --> PIN
+    DE --> UNP
     DE --> PBC
     DE --> EBC
     DE --> PD
@@ -57,6 +65,10 @@ flowchart TB
     DE --> PR
     DE --> PC
     DE --> PG
+    DE --> REJ
+    DE --> RTR
+    DE --> SKIP
+    DE --> DEM
 ```
 
 ## What the store and pipeline emit
@@ -80,8 +92,73 @@ new proposition against what's stored — **`PropositionDiscovered`**, **`Propos
 **`ExtractionBatchCompleted`** with run statistics at the end of a batch. These are pre-persistence
 signals about what the reviser decided; the durable record of a save is still `PropositionPersisted`.
 
+## The emitter map
+
+Events aren't limited to the store and pipeline above — several other components emit them too. This is
+every emitter in the system today, and what each one puts out:
+
+```mermaid
+flowchart LR
+    REPO["EventEmittingPropositionRepository<br/>(store decorator)"] -->|"PropositionPersisted<br/>PropositionStatusChanged"| L((DiceEventListener))
+    PROJ["EventEmittingProjector<br/>(projection decorator)"] -->|ProjectionBatchCompleted| L
+    PIPE["PropositionPipeline<br/>(revision reconciliation)"] -->|"PropositionDiscovered<br/>PropositionMerged<br/>PropositionReinforced<br/>PropositionContradicted<br/>PropositionGeneralized<br/>PropositionRoutedToReview<br/>ExtractionBatchCompleted"| L
+    GATE["ObservableGate<br/>(admission gate decorator)"] -->|"PropositionRejected<br/>PropositionRoutedToReview<br/>PropositionProjectionSkipped<br/>PropositionDemoted"| L
+    COLLECTOR["DefaultCollectorRunner<br/>(reclamation sweep)"] -->|PropositionStatusChanged| L
+    DREAM["ContradictionResolutionPass<br/>(dream-loop consolidation)"] -->|PropositionRoutedToReview| L
+    T2G["MultiPassKnowledgeGraphBuilder<br/>(text2graph entity resolution)"] -->|NewEntity| L
+    L --> CASCADE["ProjectionLineageStaleCascade<br/>(built-in consumer)"]
+    L --> C["your consumers:<br/>audit, dashboards, indexes"]
+    CASCADE -.->|"marks ProjectionRecord STALE<br/>on terminal PropositionStatusChanged"| LIN[(ProjectionRecordStore)]
+```
+
+Source locations for each emitter: `EventEmittingPropositionRepository`
+(`dice/src/main/kotlin/com/embabel/dice/proposition/EventEmittingPropositionRepository.kt`),
+`EventEmittingProjector`
+(`dice/src/main/kotlin/com/embabel/dice/proposition/EventEmittingProjector.kt`),
+`PropositionPipeline`
+(`dice/src/main/kotlin/com/embabel/dice/pipeline/PropositionPipeline.kt:269-280,499`),
+`ObservableGate`
+(`dice/src/main/kotlin/com/embabel/dice/proposition/gate/ObservableGate.kt:72-88`),
+`DefaultCollectorRunner`
+(`dice/src/main/kotlin/com/embabel/dice/projection/memory/DefaultCollectorRunner.kt:291`),
+`ContradictionResolutionPass`
+(`dice/src/main/kotlin/com/embabel/dice/operations/consolidation/ContradictionResolutionPass.kt:96`),
+`MultiPassKnowledgeGraphBuilder`
+(`dice/src/main/kotlin/com/embabel/dice/text2graph/support/MultiPassKnowledgeGraphBuilder.kt:71`).
+
+Two things worth noticing in that map:
+
+- If you need the cause of a `PropositionStatusChanged`, use the `reason` field rather than trying
+  to infer it from which emitter fired — it's a comma-joined list of `MarkReason.key` values (e.g.
+  `"duplicate"`, or `"stale,duplicate"` when more than one strategy marked the same proposition).
+- **`ProjectionLineageStaleCascade` is a listener that is also an internal consumer** — it doesn't
+  emit new `DiceEvent`s, but it reacts to `PropositionStatusChanged` by writing to the
+  `ProjectionRecordStore` directly. If you're deciding whether your own consumer belongs beside it
+  (in-process, synchronous) or as an out-of-process subscriber, the deciding factor is exactly
+  what it optimizes for: cascade must run before the sweep that triggered it returns, because lineage
+  staleness is part of the same consistency boundary as the status change.
+
 ## Wiring
 
 Events are off until you wire them. Wrap the store and projector in their event-emitting decorators,
 hand a listener to the pipeline, and combine several listeners with `CompositeDiceEventListener`.
 Every event is set up for polymorphic JSON, so a listener can forward them out of process.
+
+```kotlin
+val repo = EventEmittingPropositionRepository(
+    delegate = inMemoryRepository,
+    listener = SafeDiceEventListener(myListener),
+)
+```
+
+A listener is a one-method fun interface, so a lambda or a class both work:
+
+```kotlin
+val myListener = DiceEventListener { event ->
+    when (event) {
+        is PropositionPersisted -> println("saved: ${event.proposition.id}")
+        is PropositionStatusChanged -> println("${event.previousStatus} -> ${event.newStatus}: ${event.reason}")
+        else -> Unit
+    }
+}
+```

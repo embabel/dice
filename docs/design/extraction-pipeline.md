@@ -35,7 +35,7 @@ flowchart LR
 
 The admission gates (see [knowledge-hygiene](knowledge-hygiene.md)) run between the pipeline result and the store — they are the caller's responsibility to apply.
 
-## Pipeline SPI seams
+## Pipeline extension points
 
 Every variable part of the pipeline is a pluggable interface. This is how they fit together:
 
@@ -43,12 +43,12 @@ Every variable part of the pipeline is a pluggable interface. This is how they f
 classDiagram
     class PropositionPipeline {
         +process(chunks, context) PropositionResults
-        +processOnce(text, sourceId, context, historyStore) PropositionResults
+        +processOnce(text, sourceId, context, historyStore) ChunkPropositionResult?
         +processChunk(chunk, context) ChunkResult
     }
     class PropositionExtractor {
         <<interface>>
-        +extract(chunk, context) ExtractionResult
+        +extract(chunk, context) SuggestedPropositions
     }
     class PropositionReviser {
         <<interface>>
@@ -60,7 +60,7 @@ classDiagram
     }
     class ExtractionGate {
         <<interface>>
-        +evaluate(proposition, context) GateDecision
+        +evaluate(proposition, context) GateEvaluation
     }
     class GateDecision {
         <<sealed>>
@@ -74,6 +74,32 @@ classDiagram
     PropositionPipeline --> PropositionReviser : stage 2 optional
     PropositionPipeline --> ExtractionExecutionStrategy : dispatches extraction
     ExtractionGate --> GateDecision : returns
+```
+
+## Using the pipeline
+
+Build a pipeline from an extractor, optionally chain in revision, then run it over chunks:
+
+```kotlin
+val pipeline = PropositionPipeline
+    .withExtractor(LlmPropositionExtractor(ai))
+    .withRevision(reviser, propositionRepository)  // Optional
+
+val result = pipeline.process(chunks, context)
+```
+
+A gate is a plain function from proposition + context to a routing decision, applied by the caller
+after the pipeline runs and before it saves anything:
+
+```kotlin
+val confidenceGate = ExtractionGate { proposition, _ ->
+    val decision = if (proposition.effectiveConfidence() < 0.5) {
+        GateDecision.Reject("confidence below threshold")
+    } else {
+        GateDecision.Persist
+    }
+    GateEvaluation("ConfidenceGate", proposition, decision)
+}
 ```
 
 ## Why extraction and resolution are separate
@@ -242,10 +268,6 @@ the store emits on save (see [events](events.md)). `processOnce` adds a hash che
 the same text is a no-op, and lets a caller attach extra grounding ids — the source records a fact
 came from — that later become provenance edges.
 
-## Configurable behavior
-
-The extractor, the optional reviser and mention filter, the event listener, and the execution
-strategy are all pluggable through the pipeline's fluent builders. What ships is intentionally
-conservative — serial execution, revision off, no persistence — so the safe, predictable behaviour
-is the default, and a deployment opts into concurrency, reconciliation, and its own write boundary
-as it needs them.
+Every piece here — extractor, reviser, mention filter, event listener, execution strategy — is
+pluggable through the pipeline's fluent builders, and what ships defaults to the conservative choice
+at each one (serial, revision off, no persistence).
