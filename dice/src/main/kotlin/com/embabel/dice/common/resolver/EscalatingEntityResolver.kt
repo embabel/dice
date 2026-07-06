@@ -144,13 +144,13 @@ class EscalatingEntityResolver(
         val allCandidates = mutableListOf<NamedEntityData>()
 
         // Run each searcher in order
-        for ((index, searcher) in searchers.withIndex()) {
+        for (searcher in searchers) {
             val result = searcher.search(suggested, schema)
             allCandidates.addAll(result.candidates)
 
             // If we got a confident match, return early
             if (result.confident != null) {
-                val level = levelForSearcherIndex(index)
+                val level = searcher.resolutionLevel
                 logger.debug(
                     "{}: '{}' -> '{}' (searcher: {})",
                     level, suggested.name, result.confident.name, searcher::class.simpleName
@@ -210,15 +210,6 @@ class EscalatingEntityResolver(
         }
 
         return LevelResult(ResolutionLevel.NO_MATCH, null, 0.0, uniqueCandidates.size)
-    }
-
-    private fun levelForSearcherIndex(index: Int): ResolutionLevel {
-        return when (index) {
-            0 -> ResolutionLevel.EXACT_MATCH
-            1 -> ResolutionLevel.HEURISTIC_MATCH
-            2 -> ResolutionLevel.EMBEDDING_MATCH
-            else -> ResolutionLevel.HEURISTIC_MATCH
-        }
     }
 
     private fun createNewOrVeto(

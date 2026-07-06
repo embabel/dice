@@ -19,6 +19,7 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.resolver.CandidateSearcher
+import com.embabel.dice.common.resolver.ResolutionLevel
 import com.embabel.dice.common.resolver.SearchResult
 import org.slf4j.LoggerFactory
 
@@ -33,6 +34,8 @@ import org.slf4j.LoggerFactory
 class ByIdCandidateSearcher(
     private val repository: NamedEntityDataRepository,
 ) : CandidateSearcher {
+
+    override val resolutionLevel = ResolutionLevel.EXACT_MATCH
 
     private val logger = LoggerFactory.getLogger(ByIdCandidateSearcher::class.java)
 

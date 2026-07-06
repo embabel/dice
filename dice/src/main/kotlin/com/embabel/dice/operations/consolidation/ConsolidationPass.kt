@@ -30,9 +30,10 @@ import com.embabel.dice.proposition.Proposition
  * and applies the accumulated saves/deletes in a single write per cycle.
  *
  * Passes MUST be idempotent: running the same pass twice with no intervening write must produce
- * [ConsolidationPassResult.NoOp] on the second run. The consolidation loop runs passes
- * repeatedly until the snapshot settles, so a pass that keeps returning [ConsolidationPassResult.Changed]
- * for an already-consolidated snapshot would loop forever.
+ * [ConsolidationPassResult.NoOp] on the second run. The orchestrator runs each pass once per cycle,
+ * so successive scheduled cycles converge on a settled snapshot; a pass that keeps returning
+ * [ConsolidationPassResult.Changed] for an already-consolidated snapshot would re-save the same
+ * data every cycle instead of quieting down.
  *
  * Implement this interface to add domain-specific consolidation behavior without touching DICE core.
  */
