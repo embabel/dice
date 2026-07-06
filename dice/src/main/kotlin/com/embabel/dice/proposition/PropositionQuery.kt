@@ -83,6 +83,11 @@ data class PropositionQuery(
     // Ordering and limits
     val orderBy: OrderBy = OrderBy.NONE,
     val limit: Int? = null,
+
+    // Upper confidence bound: keep only propositions whose effective confidence is STRICTLY below
+    // this (mirrors [minEffectiveConfidence]'s >= as a strict <). Decays with the same [decayK] /
+    // [effectiveConfidenceAsOf]. Appended after [limit] so existing positional call sites are unaffected.
+    val belowEffectiveConfidence: Double? = null,
 ) {
 
     /**
@@ -191,6 +196,10 @@ data class PropositionQuery(
 
     fun withMinEffectiveConfidence(threshold: Double): PropositionQuery =
         copy(minEffectiveConfidence = threshold)
+
+    /** Keep only propositions whose effective confidence is strictly below [threshold]. */
+    fun withBelowEffectiveConfidence(threshold: Double): PropositionQuery =
+        copy(belowEffectiveConfidence = threshold)
 
     fun withEffectiveConfidenceAsOf(asOf: Instant): PropositionQuery =
         copy(effectiveConfidenceAsOf = asOf)

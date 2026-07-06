@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.proposition
 
+import com.embabel.agent.core.ContextId
 import com.embabel.dice.spi.AuthorityTier
 import com.embabel.dice.query.graph.GraphNeighborhood
 import com.embabel.dice.query.graph.GraphPath
@@ -46,6 +47,17 @@ interface GraphQueryCapable {
     val honorsAuthorityFilter: Boolean get() = false
 
     /**
+     * Whether this backend confines entity-axis graph queries to a supplied context on its own.
+     *
+     * Left false by default. While it is false the portable facade keeps context scoping on its own
+     * proposition-edge path for any context-bound query, so a scoped query still returns correct,
+     * context-confined results even on a backend that ignores the context. Flip it to true only once
+     * the context-aware overloads below genuinely honour their `contextId` argument — that is the
+     * signal that lets the facade route scoped queries down here instead of falling back.
+     */
+    val honorsContextFilter: Boolean get() = false
+
+    /**
      * The entity neighbourhood reachable from [entityId] within [depth] hops.
      *
      * @param entityId the opaque entity identifier to centre the neighbourhood on
@@ -54,6 +66,23 @@ interface GraphQueryCapable {
      */
     fun neighborhood(entityId: String, depth: Int = 1): GraphNeighborhood =
         GraphNeighborhood.empty(entityId)
+
+    /**
+     * The entity neighbourhood reachable from [entityId], confined to [contextId] (a null context is
+     * unscoped — exactly the plain [neighborhood] overload).
+     *
+     * The facade routes a context-bound query here only when [honorsContextFilter] is true; the
+     * default body delegates to the unscoped overload, so a backend that hasn't opted in never sees a
+     * non-null context here (a `check` guards that invariant). A null context always delegates.
+     *
+     * @param contextId the context to confine the walk to; null keeps it unscoped
+     */
+    fun neighborhood(entityId: String, depth: Int, contextId: ContextId?): GraphNeighborhood {
+        check(contextId == null || !honorsContextFilter) {
+            "honorsContextFilter is true but the context-aware neighborhood() overload was not overridden"
+        }
+        return neighborhood(entityId, depth)
+    }
 
     /**
      * The entity neighbourhood reachable from [entityId], keeping only edges whose source authority is
@@ -83,6 +112,20 @@ interface GraphQueryCapable {
     fun pathBetween(entityIdA: String, entityIdB: String): List<GraphPath> = emptyList()
 
     /**
+     * The paths connecting [entityIdA] to [entityIdB], confined to [contextId] (a null context is
+     * unscoped — exactly the plain [pathBetween] overload). Routed here only when
+     * [honorsContextFilter] is true; the default body delegates to the unscoped overload.
+     *
+     * @param contextId the context to confine the walk to; null keeps it unscoped
+     */
+    fun pathBetween(entityIdA: String, entityIdB: String, contextId: ContextId?): List<GraphPath> {
+        check(contextId == null || !honorsContextFilter) {
+            "honorsContextFilter is true but the context-aware pathBetween() overload was not overridden"
+        }
+        return pathBetween(entityIdA, entityIdB)
+    }
+
+    /**
      * The paths connecting [entityIdA] to [entityIdB], keeping only edges whose source authority is at
      * least [minAuthority] (a null floor keeps everything).
      *
@@ -103,4 +146,19 @@ interface GraphQueryCapable {
      * @return the lineage, or `null` if no such proposition exists; `null` by default
      */
     fun whyExplain(propositionId: String): PropositionLineage? = null
+
+    /**
+     * The lineage behind [propositionId], confined to [contextId]: a proposition in another context is
+     * treated as absent (null). A null context is unscoped — exactly the plain [whyExplain] overload.
+     * Routed here only when [honorsContextFilter] is true; the default body delegates to the unscoped
+     * overload.
+     *
+     * @param contextId the context the proposition must belong to; null keeps it unscoped
+     */
+    fun whyExplain(propositionId: String, contextId: ContextId?): PropositionLineage? {
+        check(contextId == null || !honorsContextFilter) {
+            "honorsContextFilter is true but the context-aware whyExplain() overload was not overridden"
+        }
+        return whyExplain(propositionId)
+    }
 }

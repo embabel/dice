@@ -343,6 +343,155 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals(listOf("high", "low"), ordered.map { it.text })
     }
 
+    @Test
+    fun `findAbstractionsOf pushes down and finds propositions citing a source`() {
+        val source = repository.save(prop("raw observation"))
+        val abstractionA = repository.save(prop("abstraction A", level = 1, sourceIds = listOf(source.id)))
+        val abstractionB = repository.save(prop("abstraction B", level = 1, sourceIds = listOf(source.id, "other")))
+        repository.save(prop("unrelated", level = 1, sourceIds = listOf("other")))
+
+        val found = repository.findAbstractionsOf(source.id)
+
+        assertEquals(setOf(abstractionA.id, abstractionB.id), found.map { it.id }.toSet())
+    }
+
+    /**
+     * The Cypher decay sweep must reproduce [Proposition.effectiveConfidenceAt] for every branch of the
+     * formula: fresh, decayed, retracted, and the three dated cases (in a closed window, open-ended, and
+     * out of window). The materialised column is asserted equal to the Kotlin oracle within a tiny
+     * epsilon. Anchors sit half a day off a day boundary so the small gap between the sweep's clock and
+     * the oracle's can't change the floored day count.
+     */
+    @Test
+    fun `materializeAll matches effectiveConfidenceAt across every decay branch`() {
+        fun daysAgo(days: Long): Instant = Instant.now().minus(Duration.ofDays(days)).minus(Duration.ofHours(12))
+
+        val seeds = listOf(
+            repository.save(prop("fresh", confidence = 0.9, decay = 0.1)),
+            repository.save(prop("decayed", confidence = 0.8, decay = 0.05, contentRevised = daysAgo(10))),
+            repository.save(
+                prop("retracted", confidence = 0.9, decay = 0.1,
+                    temporal = TemporalMetadata(invalidatedAt = Instant.now().minus(Duration.ofDays(1)))),
+            ),
+            repository.save(
+                prop("dated-closed", confidence = 0.7, decay = 0.2,
+                    temporal = TemporalMetadata(validFrom = daysAgo(100), validTo = Instant.now().plus(Duration.ofDays(100)))),
+            ),
+            repository.save(
+                prop("dated-open", confidence = 0.85, decay = 0.03,
+                    temporal = TemporalMetadata(validFrom = daysAgo(20))),
+            ),
+            repository.save(
+                prop("dated-future", confidence = 0.6, decay = 0.1,
+                    temporal = TemporalMetadata(validFrom = Instant.now().plus(Duration.ofDays(5)))),
+            ),
+            repository.save(
+                prop("dated-expired", confidence = 0.6, decay = 0.1,
+                    temporal = TemporalMetadata(validFrom = daysAgo(50), validTo = Instant.now().minus(Duration.ofDays(10)))),
+            ),
+        )
+
+        // Corrupt the compute-on-write seed so the assertion proves the sweep recomputed the column.
+        persistenceManager.execute(QuerySpecification.withStatement("MATCH (p:Proposition) SET p.effectiveConfidence = -999.0"))
+        decayManager.materializeAll()
+
+        seeds.forEach { seed ->
+            val expected = seed.effectiveConfidenceAt(Instant.now())
+            val actual = storedEffectiveConfidence(seed.id)
+            assertNotNull(actual, "no effectiveConfidence materialised for '${seed.text}'")
+            assertTrue(
+                kotlin.math.abs(expected - actual!!) < 1e-6,
+                "decay mismatch for '${seed.text}': cypher=$actual kotlin=$expected",
+            )
+        }
+    }
+
+    /**
+     * A node written before the `decay`/`contentRevised` columns existed comes back with them absent.
+     * The sweep must coalesce to the Kotlin defaults (decay = 0.0, contentRevised = created) rather
+     * than let the arithmetic go NULL: `SET p.effectiveConfidence = NULL` would erase the value and
+     * hide the node from every `minEffectiveConfidence`/`belowEffectiveConfidence` filter (NULL fails
+     * every comparison).
+     */
+    @Test
+    fun `materializeAll defaults a legacy node missing decay and contentRevised instead of nulling the column`() {
+        val legacy = repository.save(
+            prop("legacy fact", confidence = 0.7, decay = 0.4, contentRevised = Instant.now().minus(Duration.ofDays(100))),
+        )
+        // Strip the columns to mimic a node persisted before they existed.
+        persistenceManager.execute(
+            QuerySpecification
+                .withStatement("MATCH (p:Proposition {id: \$id}) REMOVE p.decay, p.contentRevised")
+                .bind(mapOf("id" to legacy.id)),
+        )
+        persistenceManager.execute(QuerySpecification.withStatement("MATCH (p:Proposition) SET p.effectiveConfidence = -999.0"))
+
+        decayManager.materializeAll()
+
+        val stored = storedEffectiveConfidence(legacy.id)
+        assertNotNull(stored, "the sweep must not null out a legacy node's effectiveConfidence")
+        // With decay defaulting to 0.0 there is no decay, so effective confidence equals raw confidence —
+        // exactly effectiveConfidenceAt(now) for a proposition defaulted to decay=0.0, contentRevised=created.
+        val expected = legacy.copy(decay = 0.0, contentRevised = legacy.created).effectiveConfidenceAt(Instant.now())
+        assertTrue(
+            kotlin.math.abs(expected - stored!!) < 1e-6,
+            "legacy-node decay mismatch: cypher=$stored kotlin=$expected",
+        )
+        assertEquals(0.7, stored, 1e-6, "decay=0.0 default means the column equals raw confidence")
+    }
+
+    /**
+     * The store holds temporal fields inconsistently: an older write path stored them as ISO-8601
+     * strings rather than native Neo4j datetimes. The sweep normalises every temporal read through
+     * `datetime(toString(x))` so `.epochSeconds` and the window comparisons work either way. Before
+     * that, a string-typed `contentRevised` threw "expected a map but was String" and aborted the
+     * whole sweep (caught in a live production database, not synthetic data).
+     */
+    @Test
+    fun `materializeAll tolerates temporal properties stored as ISO strings`() {
+        val p = repository.save(
+            prop("string-dated fact", confidence = 0.8, decay = 0.5, contentRevised = Instant.now().minus(Duration.ofDays(30))),
+        )
+        // Rewrite the temporals as strings to mimic the older write path.
+        persistenceManager.execute(
+            QuerySpecification
+                .withStatement(
+                    "MATCH (p:Proposition {id: \$id}) " +
+                        "SET p.contentRevised = toString(p.contentRevised), p.created = toString(p.created)",
+                )
+                .bind(mapOf("id" to p.id)),
+        )
+        persistenceManager.execute(QuerySpecification.withStatement("MATCH (p:Proposition) SET p.effectiveConfidence = -999.0"))
+
+        // Must not throw, and must compute the same value as the Kotlin definition.
+        decayManager.materializeAll()
+
+        val stored = storedEffectiveConfidence(p.id)
+        assertNotNull(stored, "string-typed temporal must not break the sweep")
+        val expected = p.effectiveConfidenceAt(Instant.now())
+        assertTrue(
+            kotlin.math.abs(expected - stored!!) < 1e-6,
+            "string-temporal decay mismatch: cypher=$stored kotlin=$expected",
+        )
+    }
+
+    @Test
+    fun `materialize(context) only refreshes its own context`() {
+        val a = repository.save(prop("in A", context = "ctx-a", confidence = 0.9))
+        val b = repository.save(prop("in B", context = "ctx-b", confidence = 0.9))
+        persistenceManager.execute(QuerySpecification.withStatement("MATCH (p:Proposition) SET p.effectiveConfidence = -999.0"))
+
+        decayManager.materialize(ContextId("ctx-a"))
+
+        assertTrue(kotlin.math.abs(storedEffectiveConfidence(a.id)!! - a.effectiveConfidenceAt(Instant.now())) < 1e-6)
+        assertEquals(-999.0, storedEffectiveConfidence(b.id), "ctx-b must be untouched")
+    }
+
+    private fun storedEffectiveConfidence(id: String): Double? = persistenceManager.maybeGetOne(
+        QuerySpecification.withStatement("MATCH (p:Proposition {id: \$id}) RETURN p.effectiveConfidence AS ec")
+            .bind(mapOf("id" to id)).transform(Double::class.java),
+    )
+
     /** Re-saving a proposition loaded via a lean path (no provenance projected) must not wipe its provenance. */
     @Test
     fun `re-saving a proposition loaded without provenance preserves its provenance`() {

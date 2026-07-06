@@ -108,4 +108,76 @@ abstract class AbstractPropositionStoreContractTest {
         // lastTouched: touched (2023) before stale (2021). Keyed on contentRevised this would reverse.
         assertEquals(listOf(touched.id, stale.id), result.map { it.id })
     }
+
+    // ---- count(query): a filtered count agrees with the size of the same query's results ----
+
+    @Test
+    fun `count(query) equals the number of matching propositions on both backends`() {
+        val store = store()
+        store.save(propWithConfidence("high a", 0.9))
+        store.save(propWithConfidence("high b", 0.8))
+        store.save(propWithConfidence("low", 0.2))
+
+        val query = PropositionQuery.forContextId(ctx).withMinEffectiveConfidence(0.5)
+        // The pushed-down count must equal what a full materialise-and-size would return.
+        assertEquals(store.query(query).size, store.count(query))
+        assertEquals(2, store.count(query))
+    }
+
+    @Test
+    fun `count(query) is capped by the query's limit on both backends`() {
+        val store = store()
+        store.save(propWithConfidence("high a", 0.9))
+        store.save(propWithConfidence("high b", 0.8))
+        store.save(propWithConfidence("high c", 0.7))
+
+        // Three matches, but the query caps at two — count must mirror query().size, which truncates
+        // to the limit. A server-side count that ignored the cap would return 3.
+        val query = PropositionQuery.forContextId(ctx).withMinEffectiveConfidence(0.5).withLimit(2)
+        assertEquals(store.query(query).size, store.count(query))
+        assertEquals(2, store.count(query))
+    }
+
+    // ---- belowEffectiveConfidence: strict upper bound, mirroring minEffectiveConfidence ----
+
+    @Test
+    fun `belowEffectiveConfidence keeps only propositions strictly under the threshold`() {
+        val store = store()
+        val low = store.save(propWithConfidence("low", 0.2))
+        val high = store.save(propWithConfidence("high", 0.9))
+
+        // Fresh saves (age 0) don't decay, so effective confidence == confidence on both backends.
+        val result = store.query(PropositionQuery.forContextId(ctx).withBelowEffectiveConfidence(0.5))
+
+        assertEquals(setOf(low.id), result.map { it.id }.toSet())
+        assertEquals(false, result.any { it.id == high.id })
+    }
+
+    // ---- keywordOverlap: case-insensitive term overlap, ranked by overlap count ----
+
+    @Test
+    fun `keywordOverlap matches case-insensitively and ranks by overlap`() {
+        val store = store()
+        val canva = store.save(propWithConfidence("I love Canva design", 0.9))
+        val both = store.save(propWithConfidence("Canva and Figma both", 0.9))
+        store.save(propWithConfidence("something unrelated", 0.9))
+
+        val base = PropositionQuery.forContextId(ctx)
+        // Tokens are lower-case; the propositions capitalise "Canva"/"Figma" — matching must ignore case.
+        val result = store.keywordOverlap(base, listOf("canva", "figma"), limit = 10)
+
+        assertEquals(setOf(canva.id, both.id), result.map { it.id }.toSet())
+        // `both` contains two of the tokens, so it must rank ahead of the single-token hit.
+        assertEquals(both.id, result.first().id)
+    }
+
+    @Test
+    fun `keywordOverlap returns nothing for empty tokens`() {
+        val store = store()
+        store.save(propWithConfidence("anything", 0.9))
+        assertEquals(emptyList<String>(), store.keywordOverlap(PropositionQuery.forContextId(ctx), emptyList(), 10).map { it.id })
+    }
+
+    private fun propWithConfidence(text: String, confidence: Double): Proposition =
+        Proposition(contextId = ctx, text = text, mentions = emptyList(), confidence = confidence)
 }

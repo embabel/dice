@@ -53,49 +53,59 @@ abstract class DecayManager(
 
     final override fun sweep(contextId: ContextId, config: DecaySweepConfig): DecaySweepResult =
         applyTransitions(config, "no propositions in context ${contextId.value}") {
-            repository.query(PropositionQuery(contextId = contextId))
+            repository.query(PropositionQuery(contextId = contextId, statuses = config.targetStatuses))
         }
 
     final override fun sweepAll(config: DecaySweepConfig): DecaySweepResult =
-        applyTransitions(config, "no propositions") { repository.findAll() }
+        applyTransitions(config, "no propositions") {
+            repository.query(PropositionQuery(statuses = config.targetStatuses))
+        }
 
     private fun applyTransitions(
         config: DecaySweepConfig,
         emptyReason: String,
         candidates: () -> List<Proposition>,
-    ): DecaySweepResult = try {
-        val targets = candidates().filter { it.status in config.targetStatuses }
-        if (targets.isEmpty()) {
-            DecaySweepResult.NoOp(emptyReason)
-        } else {
-            val decisions = targets.map { it to config.policy.evaluate(it) }
-
-            val revived = decisions
-                .filter { it.second == PropositionStatus.ACTIVE }
-                .map { repository.save(it.first.withStatus(PropositionStatus.ACTIVE)) }
-
-            val toStale = decisions
-                .filter { it.second == PropositionStatus.STALE }
-                .map { it.first }
-
-            val transitioned: List<Proposition>
-            val pruned: List<Proposition>
-            if (config.pruneStale) {
-                val alreadyStale = decisions
-                    .filter { it.first.status == PropositionStatus.STALE && it.second != PropositionStatus.ACTIVE }
-                    .map { it.first }
-                pruned = (toStale + alreadyStale).distinctBy { it.id }
-                pruned.forEach { repository.delete(it.id) }
-                transitioned = emptyList()
+    ): DecaySweepResult {
+        // With no target statuses nothing can ever transition, so short-circuit before touching the
+        // store — a misconfigured sweep shouldn't load everything just to hand back a NoOp. (An empty
+        // set would otherwise mean "no status filter" to the query and pull the whole store back.)
+        if (config.targetStatuses.isEmpty()) return DecaySweepResult.NoOp(emptyReason)
+        return try {
+            // The query pushes the status filter into the store; keep this in-JVM guard as the final
+            // word on what counts as a target (with an empty set nothing is, exactly as before).
+            val targets = candidates().filter { it.status in config.targetStatuses }
+            if (targets.isEmpty()) {
+                DecaySweepResult.NoOp(emptyReason)
             } else {
-                transitioned = toStale.map { repository.save(it.withStatus(PropositionStatus.STALE)) }
-                pruned = emptyList()
-            }
+                val decisions = targets.map { it to config.policy.evaluate(it) }
 
-            val skipped = targets.size - revived.size - transitioned.size - pruned.size
-            DecaySweepResult.Swept(transitioned, revived, pruned, skipped)
+                val revived = decisions
+                    .filter { it.second == PropositionStatus.ACTIVE }
+                    .map { repository.save(it.first.withStatus(PropositionStatus.ACTIVE)) }
+
+                val toStale = decisions
+                    .filter { it.second == PropositionStatus.STALE }
+                    .map { it.first }
+
+                val transitioned: List<Proposition>
+                val pruned: List<Proposition>
+                if (config.pruneStale) {
+                    val alreadyStale = decisions
+                        .filter { it.first.status == PropositionStatus.STALE && it.second != PropositionStatus.ACTIVE }
+                        .map { it.first }
+                    pruned = (toStale + alreadyStale).distinctBy { it.id }
+                    pruned.forEach { repository.delete(it.id) }
+                    transitioned = emptyList()
+                } else {
+                    transitioned = toStale.map { repository.save(it.withStatus(PropositionStatus.STALE)) }
+                    pruned = emptyList()
+                }
+
+                val skipped = targets.size - revived.size - transitioned.size - pruned.size
+                DecaySweepResult.Swept(transitioned, revived, pruned, skipped)
+            }
+        } catch (e: Exception) {
+            DecaySweepResult.Failed(e)
         }
-    } catch (e: Exception) {
-        DecaySweepResult.Failed(e)
     }
 }

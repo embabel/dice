@@ -33,10 +33,11 @@ import com.embabel.dice.proposition.PropositionStore
  * Entity neighbourhoods and paths are derived store-agnostically from repeated 1-hop proposition
  * queries: a proposition that mentions two resolved entities IS the edge between them. Proposition
  * lineage is assembled from the proposition's own durable fields. When the wrapped store declares
- * [GraphQueryCapable], unscoped operations route to that native override instead; otherwise the
- * portable default bodies run. Context-scoped operations stay on the portable path because the
- * current native capability SPI has no context parameter. Operations never throw for a missing
- * capability — they degrade to empty/typed/null results.
+ * [GraphQueryCapable], operations route to that native override instead; otherwise the portable
+ * default bodies run. Unscoped queries always route native; a context-scoped query routes native
+ * only when the store declares [GraphQueryCapable.honorsContextFilter] (so it confines the walk to
+ * the context itself) — otherwise it stays on the context-scoped portable path. Operations never
+ * throw for a missing capability — they degrade to empty/typed/null results.
  *
  * Traversal is bounded by [maxDepth] and guarded by a visited set so cyclic data terminates.
  *
@@ -73,8 +74,10 @@ class GraphQuery(
     /**
      * The entity neighbourhood reachable from [entityId] within [depth] hops.
      *
-     * Routes to a native [GraphQueryCapable] store only for unscoped queries; otherwise builds the
-     * neighbourhood from bounded BFS over ACTIVE proposition edges.
+     * Routes to a native [GraphQueryCapable] store for unscoped queries, and for context-scoped
+     * queries when the store declares [GraphQueryCapable.honorsContextFilter]; otherwise builds the
+     * neighbourhood from bounded BFS over ACTIVE proposition edges. The context is passed straight
+     * into the native context-aware method, which confines the walk in its own engine.
      *
      * When [minAuthority] is set, the query routes to a native [GraphQueryCapable] store only if that
      * store declares [GraphQueryCapable.honorsAuthorityFilter] — letting a graph backend apply the
@@ -93,7 +96,7 @@ class GraphQuery(
         val native = nativeGraph()
         return when {
             native == null -> defaultNeighborhood(entityId, depth, minAuthority)
-            minAuthority == null -> native.neighborhood(entityId, depth)
+            minAuthority == null -> native.neighborhood(entityId, depth, contextId)
             native.honorsAuthorityFilter -> native.neighborhood(entityId, depth, minAuthority)
             else -> defaultNeighborhood(entityId, depth, minAuthority)
         }
@@ -102,7 +105,8 @@ class GraphQuery(
     /**
      * The paths connecting [entityIdA] to [entityIdB]; an empty list when none exists (never throws).
      *
-     * Routes to a native [GraphQueryCapable] store only for unscoped queries; otherwise runs bounded,
+     * Routes to a native [GraphQueryCapable] store for unscoped queries, and for context-scoped
+     * queries when the store declares [GraphQueryCapable.honorsContextFilter]; otherwise runs bounded,
      * cycle-safe BFS over ACTIVE proposition edges. When [minAuthority] is set, the native adapter is
      * consulted only if it declares [GraphQueryCapable.honorsAuthorityFilter]; otherwise the portable
      * path applies the floor (re-resolving authority from provenance), as in [neighborhood].
@@ -123,7 +127,7 @@ class GraphQuery(
         val native = nativeGraph()
         return when {
             native == null -> defaultPathBetween(entityIdA, entityIdB, minAuthority)
-            minAuthority == null -> native.pathBetween(entityIdA, entityIdB)
+            minAuthority == null -> native.pathBetween(entityIdA, entityIdB, contextId)
             native.honorsAuthorityFilter -> native.pathBetween(entityIdA, entityIdB, minAuthority)
             else -> defaultPathBetween(entityIdA, entityIdB, minAuthority)
         }
@@ -132,20 +136,26 @@ class GraphQuery(
     /**
      * The lineage behind the proposition with the given id, or `null` if it does not exist.
      *
-     * Routes to a native [GraphQueryCapable] store only for unscoped queries; otherwise assembles the
-     * lineage from the proposition's durable fields (grounding, sources, reinforcement, status,
-     * temporal).
+     * Routes to a native [GraphQueryCapable] store for unscoped queries, and for context-scoped
+     * queries when the store declares [GraphQueryCapable.honorsContextFilter] (passing the context so
+     * the backend treats a foreign-context proposition as absent); otherwise assembles the lineage
+     * from the proposition's durable fields (grounding, sources, reinforcement, status, temporal),
+     * scoped to this context.
      */
     fun whyExplain(propositionId: String): PropositionLineage? =
-        nativeGraph()?.whyExplain(propositionId)
+        nativeGraph()?.whyExplain(propositionId, contextId)
             ?: defaultWhyExplain(propositionId)
 
     // ========================================================================
     // Default (store-agnostic) bodies
     // ========================================================================
 
+    // An unscoped query always uses the native override; a context-scoped one only when the store
+    // confines the walk to a context itself (honorsContextFilter). Otherwise a scoped query stays on
+    // the context-scoped portable path, so it can't leak edges from another context through a
+    // context-blind native method.
     private fun nativeGraph(): GraphQueryCapable? =
-        (store as? GraphQueryCapable)?.takeIf { contextId == null }
+        (store as? GraphQueryCapable)?.takeIf { contextId == null || it.honorsContextFilter }
 
     private fun baseQuery(): PropositionQuery =
         (contextId?.let { PropositionQuery.forContextId(it) } ?: PropositionQuery())

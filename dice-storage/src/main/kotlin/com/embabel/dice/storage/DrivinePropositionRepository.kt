@@ -27,9 +27,14 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionQuery.OrderBy
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.GraphQueryCapable
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStoreType
 import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.query.graph.GraphNeighborhood
+import com.embabel.dice.query.graph.GraphPath
+import com.embabel.dice.query.graph.PropositionLineage
+import com.embabel.dice.query.graph.RelatedEntity
 import com.embabel.dice.storage.model.*
 import org.drivine.manager.*
 import org.drivine.query.CypherStatement
@@ -68,7 +73,7 @@ class DrivinePropositionRepository(
      * [findClusters] Cypher. Defaults to the canonical [VECTOR_INDEX]; overridable only for tests.
      */
     private val vectorIndexName: String = VECTOR_INDEX,
-) : PropositionRepository {
+) : PropositionRepository, GraphQueryCapable {
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
 
@@ -278,6 +283,16 @@ class DrivinePropositionRepository(
         graphObjectManager.loadAll<PropositionView> { where { proposition.grounding hasItem chunkId } }
             .map(PropositionGraphMapper::toProposition)
 
+    /**
+     * Abstractions of a proposition, pushed down: the default in [GraphTraversalCapable] scans the
+     * whole store, so match on the stored `sourceIds` list directly — `WHERE $propositionId IN
+     * p.sourceIds`, the same shape as [findByGrounding].
+     */
+    @Transactional(readOnly = true)
+    override fun findAbstractionsOf(propositionId: String): List<Proposition> =
+        graphObjectManager.loadAll<PropositionView> { where { proposition.sourceIds hasItem propositionId } }
+            .map(PropositionGraphMapper::toProposition)
+
     @Transactional(readOnly = true)
     override fun query(query: PropositionQuery): List<Proposition> {
         val liveDecay = needsLiveDecay(query)
@@ -310,7 +325,8 @@ class DrivinePropositionRepository(
      */
     private fun needsLiveDecay(query: PropositionQuery): Boolean =
         (query.decayK != DEFAULT_DECAY_K || query.effectiveConfidenceAsOf != null) &&
-            (query.minEffectiveConfidence != null || query.orderBy == OrderBy.EFFECTIVE_CONFIDENCE_DESC)
+            (query.minEffectiveConfidence != null || query.belowEffectiveConfidence != null ||
+                query.orderBy == OrderBy.EFFECTIVE_CONFIDENCE_DESC)
 
     /**
      * Push every *non-decay* filter into the DB, then apply `effectiveConfidenceAt(asOf, decayK)` as the
@@ -328,6 +344,9 @@ class DrivinePropositionRepository(
         var seq = candidates.asSequence()
         query.minEffectiveConfidence?.let { threshold ->
             seq = seq.filter { it.effectiveConfidenceAt(asOf, query.decayK) >= threshold }
+        }
+        query.belowEffectiveConfidence?.let { threshold ->
+            seq = seq.filter { it.effectiveConfidenceAt(asOf, query.decayK) < threshold }
         }
         val ordered = if (query.orderBy == OrderBy.EFFECTIVE_CONFIDENCE_DESC) {
             seq.sortedByDescending { it.effectiveConfidenceAt(asOf, query.decayK) }
@@ -364,7 +383,10 @@ class DrivinePropositionRepository(
         query.accessedBefore?.let { proposition.lastAccessed lte it }
         query.minImportance?.let { proposition.importance gte it }
         query.minReinforceCount?.let { proposition.reinforceCount gte it }
-        if (includeEffectiveConfidence) query.minEffectiveConfidence?.let { proposition.effectiveConfidence gte it }
+        if (includeEffectiveConfidence) {
+            query.minEffectiveConfidence?.let { proposition.effectiveConfidence gte it }
+            query.belowEffectiveConfidence?.let { proposition.effectiveConfidence lt it }
+        }
         query.minTrustScore?.let { threshold ->
             // Fail-open, matching the in-memory backend's passesMinTrust: an unscored proposition (no
             // cached trust property) passes the gate, so the predicate is "missing OR >= threshold".
@@ -515,6 +537,84 @@ class DrivinePropositionRepository(
     override fun count(): Int = graphObjectManager.count<PropositionView>().toInt()
 
     /**
+     * Filtered count pushed into the DB: same `where` block as [query], counted server-side instead
+     * of materialising and sizing the rows. Non-default decay can't push onto the materialised
+     * `effectiveConfidence` column, so that case falls back to counting [query]'s live-decay result.
+     *
+     * A [PropositionQuery.limit] caps the count, mirroring the SPI default (`query(query).size`) and
+     * the in-memory store, which both size a limit-truncated result — a server-side `count()` would
+     * otherwise count every match and ignore the cap.
+     */
+    @Transactional(readOnly = true)
+    override fun count(query: PropositionQuery): Int {
+        if (needsLiveDecay(query)) return query(query).size
+        val counted = graphObjectManager.count<PropositionView> {
+            where { applyFilters(query, includeEffectiveConfidence = true) }
+        }.toInt()
+        return query.limit?.let { minOf(it, counted) } ?: counted
+    }
+
+    /**
+     * Case-insensitive keyword-overlap probe pushed into the DB. The typed DSL has no
+     * case-insensitive `CONTAINS` and no list-comprehension, and there's no full-text index (see
+     * [luceneSyntaxNotes]), so this drops to hand-written Cypher: `size([t IN $tokens WHERE
+     * toLower(p.text) CONTAINS t]) > 0`, ordered by that overlap then effective confidence. Only the
+     * structured filters this statement understands are handled; a [base] carrying anything else
+     * (entity, level, temporal, non-default decay, …) falls back to the portable default, which still
+     * pushes [base]'s filters through [query].
+     */
+    @Transactional(readOnly = true)
+    override fun keywordOverlap(base: PropositionQuery, tokens: List<String>, limit: Int): List<Proposition> {
+        if (tokens.isEmpty() || limit <= 0) return emptyList()
+        if (!keywordPushable(base)) return super.keywordOverlap(base, tokens, limit)
+
+        val lowered = tokens.map { it.lowercase() }.distinct()
+        val conds = mutableListOf<String>()
+        val params = mutableMapOf<String, Any>("tokens" to lowered, "limit" to limit)
+        base.contextId?.let { conds += "p.contextId = \$contextId"; params["contextId"] = it.value }
+        base.statuses?.takeIf { it.isNotEmpty() }?.let { statuses ->
+            conds += "p.status IN \$statuses"; params["statuses"] = statuses.map { it.name }
+        }
+        base.minEffectiveConfidence?.let { conds += "p.effectiveConfidence >= \$minEc"; params["minEc"] = it }
+        base.minImportance?.let { conds += "p.importance >= \$minImp"; params["minImp"] = it }
+        val whereHead = if (conds.isEmpty()) "" else "WHERE " + conds.joinToString(" AND ")
+
+        // A single-column RETURN yields the raw column values (here proposition ids), not row maps.
+        @Suppress("UNCHECKED_CAST")
+        val ids = persistenceManager.query(
+            QuerySpecification.withStatement(
+                """
+                MATCH (p:Proposition)
+                $whereHead
+                WITH p, size([t IN ${'$'}tokens WHERE toLower(p.text) CONTAINS t]) AS overlap
+                WHERE overlap > 0
+                RETURN p.id AS id
+                ORDER BY overlap DESC, coalesce(p.effectiveConfidence, -1.0) DESC
+                LIMIT ${'$'}limit
+                """.trimIndent()
+            ).bind(params)
+        ) as List<String>
+
+        val byId = hydrate(ids)
+        return ids.mapNotNull { byId[it] }
+    }
+
+    /**
+     * True when [keywordOverlap]'s hand-written Cypher covers every filter [base] carries. It handles
+     * contextId, statuses, minEffectiveConfidence, and minImportance; anything else routes to the
+     * portable default so the result stays correct (just less optimal).
+     */
+    private fun keywordPushable(base: PropositionQuery): Boolean =
+        base.entityId == null && base.anyEntityIds == null && base.allEntityIds == null &&
+            base.minLevel == null && base.maxLevel == null &&
+            base.createdAfter == null && base.createdBefore == null &&
+            base.revisedAfter == null && base.revisedBefore == null &&
+            base.accessedAfter == null && base.accessedBefore == null &&
+            base.minReinforceCount == null && base.minTrustScore == null && base.pinned == null &&
+            base.belowEffectiveConfidence == null &&
+            base.effectiveConfidenceAsOf == null && base.decayK == DEFAULT_DECAY_K
+
+    /**
      * Re-embed every proposition by writing a fresh vector onto each node. Lighter than the
      * interface default (which re-saves the whole view): it SETs only `embedding`, leaving mentions
      * and other properties untouched. The `@VectorIndex`-declared index is owned by Drivine, so a
@@ -572,6 +672,117 @@ class DrivinePropositionRepository(
      * `orderBy { }` DSL can't express coalesce, so add the order expression straight to the builder —
      * the in-scope context parameter, mirroring the generated property accessors.
      */
+    // ========================================================================
+    // GraphQueryCapable — entity-axis graph queries pushed down to Cypher
+    // ========================================================================
+
+    /**
+     * This backend confines every entity-axis walk to a supplied context in its own Cypher (a
+     * `p.contextId = $ctx` predicate on each hop), so the portable facade routes context-scoped
+     * queries straight down here instead of falling back to the proposition-edge path.
+     */
+    override val honorsContextFilter: Boolean get() = true
+
+    @Transactional(readOnly = true)
+    override fun neighborhood(entityId: String, depth: Int): GraphNeighborhood =
+        neighborhood(entityId, depth, null as ContextId?)
+
+    /**
+     * Native entity neighbourhood: [GraphProjectionCypher.neighborhood] walks the entity projection
+     * in Neo4j and hands back each reachable entity, its shortest hop distance, and the proposition
+     * ids on a shortest final hop into it. We only hydrate those `via` propositions (via the lean
+     * view) — the traversal itself never leaves the database. A non-null [contextId] confines the
+     * walk to that context (every hop's proposition must match); null is unscoped.
+     */
+    @Transactional(readOnly = true)
+    override fun neighborhood(entityId: String, depth: Int, contextId: ContextId?): GraphNeighborhood {
+        val bound = depth.coerceIn(1, GraphProjectionCypher.MAX_DEPTH)
+        val params = mutableMapOf<String, Any>("origin" to entityId)
+        contextId?.let { params["ctx"] = it.value }
+        @Suppress("UNCHECKED_CAST")
+        val rows = persistenceManager.query(
+            QuerySpecification.withStatement(GraphProjectionCypher.neighborhood(bound, contextId))
+                .bind(params) as QuerySpecification<Any>,
+        ).filterIsInstance<Map<*, *>>()
+
+        val byId = hydrate(rows.flatMap { it["viaIds"].asStringList() })
+        val neighbours = rows.map { row ->
+            RelatedEntity(
+                entityId = row["entityId"] as String,
+                via = row["viaIds"].asStringList().distinct().mapNotNull { byId[it] },
+                distance = (row["distance"] as Number).toInt(),
+            )
+        }
+        return GraphNeighborhood(entityId = entityId, neighbours = neighbours)
+    }
+
+    @Transactional(readOnly = true)
+    override fun pathBetween(entityIdA: String, entityIdB: String): List<GraphPath> =
+        pathBetween(entityIdA, entityIdB, null as ContextId?)
+
+    /**
+     * Native shortest path: [GraphProjectionCypher.pathBetween] returns the shortest entity sequence
+     * (up to [GraphProjectionCypher.MAX_DEPTH] hops) and the connecting proposition ids; empty when
+     * the two entities are unreachable. Same-entity is the trivial one-node path, as in the portable
+     * facade. A non-null [contextId] confines every hop to that context; null is unscoped.
+     */
+    @Transactional(readOnly = true)
+    override fun pathBetween(entityIdA: String, entityIdB: String, contextId: ContextId?): List<GraphPath> {
+        if (entityIdA == entityIdB) return listOf(GraphPath(entityIds = listOf(entityIdA), edges = emptyList()))
+        val params = mutableMapOf<String, Any>("a" to entityIdA, "b" to entityIdB)
+        contextId?.let { params["ctx"] = it.value }
+        @Suppress("UNCHECKED_CAST")
+        val row = persistenceManager.query(
+            QuerySpecification.withStatement(GraphProjectionCypher.pathBetween(GraphProjectionCypher.MAX_DEPTH, contextId))
+                .bind(params) as QuerySpecification<Any>,
+        ).filterIsInstance<Map<*, *>>().firstOrNull() ?: return emptyList()
+
+        val edgeIds = row["edgeIds"].asStringList()
+        val byId = hydrate(edgeIds)
+        return listOf(
+            GraphPath(
+                entityIds = row["entityIds"].asStringList(),
+                edges = edgeIds.mapNotNull { byId[it] },
+            ),
+        )
+    }
+
+    @Transactional(readOnly = true)
+    override fun whyExplain(propositionId: String): PropositionLineage? =
+        whyExplain(propositionId, null)
+
+    /**
+     * Native lineage: read the proposition's own durable fields (provenance, grounding, reinforcement,
+     * status, temporal) and resolve its abstraction sources via [findSources]. A non-null [contextId]
+     * treats a proposition in another context as absent (null), matching the portable facade's scoped
+     * lineage. Null when no such proposition exists.
+     */
+    @Transactional(readOnly = true)
+    override fun whyExplain(propositionId: String, contextId: ContextId?): PropositionLineage? {
+        val prop = findById(propositionId) ?: return null
+        if (contextId != null && prop.contextId != contextId) return null
+        return PropositionLineage(
+            proposition = prop,
+            provenanceEntries = prop.provenanceEntries,
+            groundingChunkIds = prop.grounding,
+            sources = findSources(prop),
+            reinforceCount = prop.reinforceCount,
+            status = prop.status,
+            temporal = prop.temporal,
+        )
+    }
+
+    /** Load the given proposition ids through the lean view, mapped and keyed by id. */
+    private fun hydrate(ids: List<String>): Map<String, Proposition> {
+        val distinct = ids.distinct()
+        if (distinct.isEmpty()) return emptyMap()
+        return graphObjectManager.loadAll<PropositionView> { where { proposition.id inList distinct } }
+            .associate { it.proposition.id to PropositionGraphMapper.toProposition(it) }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun Any?.asStringList(): List<String> = (this as? List<String>) ?: emptyList()
+
     context(builder: OrderBuilder<PropositionViewQueryDsl>)
     private fun orderByEffectiveConfidenceDescNullsLast() {
         builder(OrderSpec("coalesce(proposition.effectiveConfidence, -1.0)", OrderDirection.DESC))

@@ -77,6 +77,9 @@ internal fun PropositionQuery.matchesFilters(
     minEffectiveConfidence?.let { threshold ->
         if (prop.effectiveConfidenceAt(asOf, decayK) < threshold) return false
     }
+    belowEffectiveConfidence?.let { threshold ->
+        if (prop.effectiveConfidenceAt(asOf, decayK) >= threshold) return false
+    }
     if (minImportance != null && prop.importance < minImportance) return false
     if (minReinforceCount != null && prop.reinforceCount < minReinforceCount) return false
     if (pinned != null && prop.pinned != pinned) return false
@@ -170,6 +173,35 @@ interface PropositionStore {
      * Get the total count of propositions.
      */
     fun count(): Int
+
+    /**
+     * Count the propositions matching [query]. The default materialises [query]'s results and counts
+     * them; a backend that can count server-side (e.g. the graph store) overrides to avoid loading the
+     * rows just to size them.
+     */
+    fun count(query: PropositionQuery): Int = query(query).size
+
+    /**
+     * Find propositions in [base]'s scope whose text contains at least one of [tokens]
+     * (case-insensitive), ranked by how many distinct tokens each contains (descending), ties broken
+     * by [base]'s ordering. At most [limit] results; empty [tokens] or non-positive [limit] returns
+     * nothing.
+     *
+     * There is no full-text index here, so this is CONTAINS-based, not lexically ranked. The default
+     * applies [base]'s structured filters through [query] (ordered by effective confidence so ties are
+     * stable) and does the token overlap in memory; a backend with server-side text matching pushes
+     * the overlap down. The overlap filter runs before [limit] so a keyword hit isn't lost to a
+     * confidence-ordered cut-off.
+     */
+    fun keywordOverlap(base: PropositionQuery, tokens: List<String>, limit: Int): List<Proposition> {
+        if (tokens.isEmpty() || limit <= 0) return emptyList()
+        return query(base.orderedByEffectiveConfidence())
+            .map { prop -> prop to tokens.count { t -> prop.text.contains(t, ignoreCase = true) } }
+            .filter { it.second > 0 }
+            .sortedByDescending { it.second }
+            .map { it.first }
+            .take(limit)
+    }
 
     // ========================================================================
     // Pinning — "must retain" propositions that resist eviction and decay

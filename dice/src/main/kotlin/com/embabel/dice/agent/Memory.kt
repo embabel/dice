@@ -241,7 +241,7 @@ data class Memory @JvmOverloads constructor(
     override fun tools(): List<Tool> = listOf(this)
 
     override fun contribution(): String {
-        val memoryCount = repository.query(baseQuery()).size
+        val memoryCount = repository.count(baseQuery())
         val eagerMemories = loadEagerMemories()
 
         return buildString {
@@ -267,7 +267,7 @@ data class Memory @JvmOverloads constructor(
      */
     private val toolDescription: String
         get() {
-            val memoryCount = repository.query(baseQuery()).size
+            val memoryCount = repository.count(baseQuery())
             logger.info(
                 "Found {} memories > {} confidence in context {}", memoryCount, minConfidence,
                 contextId

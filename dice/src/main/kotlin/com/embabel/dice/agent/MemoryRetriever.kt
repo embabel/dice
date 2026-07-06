@@ -137,16 +137,8 @@ internal class MemoryRetriever(
      * overlap-count ranking naturally floats the propositions sharing
      * the rare, meaningful tokens.
      */
-    private fun keywordProbe(query: String, base: PropositionQuery, limit: Int): List<Proposition> {
-        val tokens = tokenize(query)
-        if (tokens.isEmpty()) return emptyList()
-        return repository.query(base.orderedByEffectiveConfidence().withLimit(limit * 10))
-            .map { p -> p to tokens.count { t -> p.text.contains(t, ignoreCase = true) } }
-            .filter { it.second > 0 }
-            .sortedByDescending { it.second }
-            .map { it.first }
-            .take(limit)
-    }
+    private fun keywordProbe(query: String, base: PropositionQuery, limit: Int): List<Proposition> =
+        repository.keywordOverlap(base, tokenize(query), limit)
 
     /**
      * Tier 3 — neighbourhood recall: more propositions about the SAME
@@ -179,7 +171,7 @@ internal class MemoryRetriever(
 
     /** Empty-result message that nudges the LLM to try another query. */
     private fun noMatch(query: String, base: PropositionQuery): Tool.Result {
-        val total = repository.query(base).size
+        val total = repository.count(base)
         val tail = if (total > 0) " — $total memories are stored about $topic." else "."
         return Tool.Result.text("No memories matched '$query'. Try rephrasing or a broader query$tail")
     }
