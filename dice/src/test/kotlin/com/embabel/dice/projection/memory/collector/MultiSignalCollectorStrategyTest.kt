@@ -19,6 +19,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.projection.memory.DuplicateCollectorStrategy
 import com.embabel.dice.proposition.EntityMention
+import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.spi.CollectorCandidateEdge
@@ -27,6 +28,7 @@ import com.embabel.dice.spi.CollectorDecision
 import com.embabel.dice.spi.CollectorTraceStore
 import com.embabel.dice.spi.InMemoryCollectorTraceStore
 import com.embabel.dice.spi.InMemoryConnectedComponentsFinder
+import com.embabel.dice.spi.MarkReason
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -58,19 +60,42 @@ class MultiSignalCollectorStrategyTest {
         text: String,
         confidence: Double = 0.8,
         reinforceCount: Int = 0,
+        mentions: List<EntityMention> = emptyList(),
     ): Proposition =
         Proposition(
             contextId = contextId,
             text = text,
-            mentions = emptyList<EntityMention>(),
+            mentions = mentions,
             confidence = confidence,
             decay = 0.0,
             reinforceCount = reinforceCount,
         )
 
+    private fun mention(resolvedId: String): EntityMention =
+        EntityMention(span = resolvedId, type = "Organization", resolvedId = resolvedId, role = MentionRole.OBJECT)
+
     private fun setEmbedding(text: String, embedding: FloatArray) {
         embeddingMap[text] = embedding
     }
+
+    /**
+     * A vector-plus-polarity strategy: the vector source proposes pairs by cosine similarity
+     * (a transitive chain can link two ids that were never proposed as a pair directly), and the
+     * polarity scorer both contributes to directly-scored edges and backs the component-level
+     * contradiction guard.
+     */
+    private fun vectorAndPolarityStrategy(
+        traceStore: CollectorTraceStore = InMemoryCollectorTraceStore(),
+        similarityThreshold: Double = 0.65,
+        matchThreshold: Double = 0.6,
+    ): MultiSignalCollectorStrategy =
+        MultiSignalCollectorStrategy(
+            pairSources = listOf(VectorCandidatePairSource(repo, similarityThreshold = similarityThreshold)),
+            scorers = listOf(VectorSignalScorer(), PolarityVetoSignalScorer()),
+            componentsFinder = InMemoryConnectedComponentsFinder(),
+            traceStore = traceStore,
+            matchThreshold = matchThreshold,
+        )
 
     /** Builds a vector-only strategy: matchThreshold <= similarityThreshold so nothing dice kept is dropped. */
     private fun vectorOnlyStrategy(
@@ -162,6 +187,82 @@ class MultiSignalCollectorStrategyTest {
         assertEquals(weak.status, retired.priorStatus)
         assertEquals(weak.grounding, retired.foldedGrounding)
         assertEquals(weak.sourceIds, retired.foldedSourceIds)
+    }
+
+    @Test
+    fun `does not merge a and c through a shared neighbor b when a and c contradict`() {
+        // Cosine similarity isn't transitive: a-b and b-c are both proposed and score above
+        // threshold, but a-c never gets proposed directly (its cosine is 0). The union-find still
+        // chains a, b and c into one component - a and c must not merge into one survivor because
+        // they assert opposite polarity about the same shared entity.
+        setEmbedding("Jim works at Acme", floatArrayOf(1f, 0f, 0f))
+        setEmbedding("Jim is around", floatArrayOf(0.7f, 0.714f, 0f))
+        setEmbedding("Jim no longer works at Acme", floatArrayOf(0f, 1f, 0f))
+        val a = repo.save(proposition("Jim works at Acme", mentions = listOf(mention("org:acme"))))
+        val b = repo.save(proposition("Jim is around"))
+        val c = repo.save(proposition("Jim no longer works at Acme", mentions = listOf(mention("org:acme"))))
+        val candidates = listOf(a, b, c)
+
+        val marks = vectorAndPolarityStrategy().mark(candidates, repo, CollectorRunContext("run-contradict", contextId))
+
+        val mergedTogether = marks.any { mark ->
+            val survivorId = (mark.reason as MarkReason.Duplicate).survivorId
+            setOf(mark.propositionId, survivorId) == setOf(a.id, c.id)
+        }
+        assertTrue(!mergedTogether, "a and c must never be folded into the same survivor")
+
+        // b still merges with whichever of a/c it isn't vetoed against.
+        assertTrue(marks.isNotEmpty())
+    }
+
+    @Test
+    fun `does not merge a and c when a-c was itself proposed, scored and vetoed`() {
+        // Unlike the transitive-only case above, here every pair (a-b, b-c, a-c) is above the
+        // similarity threshold and gets proposed and scored directly - a-c's edge is vetoed for
+        // polarity contradiction, but the component union still chains a and c together via the
+        // b bridge (a-b and b-c are eligible). The guard must catch this: a vetoed edge is still
+        // a live contradiction, not something already "safely scored".
+        setEmbedding("Jim works at Acme", floatArrayOf(1f, 0f, 0f))
+        setEmbedding("Jim is around", floatArrayOf(0.9f, 0.4359f, 0f))
+        setEmbedding("Jim no longer works at Acme", floatArrayOf(0.7420f, 0.6704f, 0f))
+        val a = repo.save(proposition("Jim works at Acme", mentions = listOf(mention("org:acme"))))
+        val b = repo.save(proposition("Jim is around"))
+        val c = repo.save(proposition("Jim no longer works at Acme", mentions = listOf(mention("org:acme"))))
+        val candidates = listOf(a, b, c)
+
+        val marks = vectorAndPolarityStrategy().mark(candidates, repo, CollectorRunContext("run-vetoed-bridge", contextId))
+
+        val mergedTogether = marks.any { mark ->
+            val survivorId = (mark.reason as MarkReason.Duplicate).survivorId
+            setOf(mark.propositionId, survivorId) == setOf(a.id, c.id)
+        }
+        assertTrue(!mergedTogether, "a and c must never be folded into the same survivor")
+
+        // b still merges with whichever of a/c it isn't vetoed against.
+        assertTrue(marks.isNotEmpty())
+    }
+
+    @Test
+    fun `a clean chain with no contradiction still merges fully`() {
+        // Same a-b-c cosine topology as above, but a and c share an entity with the *same*
+        // polarity, so the contradiction guard must not touch this component at all.
+        setEmbedding("Jim works at Acme", floatArrayOf(1f, 0f, 0f))
+        setEmbedding("Jim is around", floatArrayOf(0.7f, 0.714f, 0f))
+        setEmbedding("Jim is employed at Acme", floatArrayOf(0f, 1f, 0f))
+        val a = repo.save(proposition("Jim works at Acme", mentions = listOf(mention("org:acme"))))
+        val b = repo.save(proposition("Jim is around"))
+        val c = repo.save(proposition("Jim is employed at Acme", mentions = listOf(mention("org:acme"))))
+        val candidates = listOf(a, b, c)
+
+        val marks = vectorAndPolarityStrategy().mark(candidates, repo, CollectorRunContext("run-clean", contextId))
+
+        // All three end up in one merge group: 2 duplicate marks, one shared survivor.
+        assertEquals(2, marks.size)
+        val survivors = marks.map { (it.reason as MarkReason.Duplicate).survivorId }.toSet()
+        assertEquals(1, survivors.size)
+        val allIds = setOf(a.id, b.id, c.id)
+        val markedIds = marks.map { it.propositionId }.toSet()
+        assertEquals(allIds - survivors.first(), markedIds)
     }
 
     /** A [CollectorTraceStore] whose every record call throws, simulating a broken trace backend. */
