@@ -216,6 +216,33 @@ class MultiSignalCollectorStrategyTest {
     }
 
     @Test
+    fun `does not merge a and c when a-c was itself proposed, scored and vetoed`() {
+        // Unlike the transitive-only case above, here every pair (a-b, b-c, a-c) is above the
+        // similarity threshold and gets proposed and scored directly - a-c's edge is vetoed for
+        // polarity contradiction, but the component union still chains a and c together via the
+        // b bridge (a-b and b-c are eligible). The guard must catch this: a vetoed edge is still
+        // a live contradiction, not something already "safely scored".
+        setEmbedding("Jim works at Acme", floatArrayOf(1f, 0f, 0f))
+        setEmbedding("Jim is around", floatArrayOf(0.9f, 0.4359f, 0f))
+        setEmbedding("Jim no longer works at Acme", floatArrayOf(0.7420f, 0.6704f, 0f))
+        val a = repo.save(proposition("Jim works at Acme", mentions = listOf(mention("org:acme"))))
+        val b = repo.save(proposition("Jim is around"))
+        val c = repo.save(proposition("Jim no longer works at Acme", mentions = listOf(mention("org:acme"))))
+        val candidates = listOf(a, b, c)
+
+        val marks = vectorAndPolarityStrategy().mark(candidates, repo, CollectorRunContext("run-vetoed-bridge", contextId))
+
+        val mergedTogether = marks.any { mark ->
+            val survivorId = (mark.reason as MarkReason.Duplicate).survivorId
+            setOf(mark.propositionId, survivorId) == setOf(a.id, c.id)
+        }
+        assertTrue(!mergedTogether, "a and c must never be folded into the same survivor")
+
+        // b still merges with whichever of a/c it isn't vetoed against.
+        assertTrue(marks.isNotEmpty())
+    }
+
+    @Test
     fun `a clean chain with no contradiction still merges fully`() {
         // Same a-b-c cosine topology as above, but a and c share an entity with the *same*
         // polarity, so the contradiction guard must not touch this component at all.

@@ -45,11 +45,12 @@ import org.slf4j.LoggerFactory
  *    [CollectorEdgeAggregator] blends what's left into one [CollectorCandidateEdge] per pair;
  * 3. [componentsFinder] groups candidate ids into components using the non-vetoed edges at or
  *    above [matchThreshold]; because this unions transitively, two members can end up in the
- *    same component without ever having been scored against each other directly (A~B, B~C puts
- *    A and C together even if no source ever proposed the pair (A,C)), so before survivors are
- *    picked, every such never-scored intra-component pair is checked for a polarity contradiction
- *    and one side of any contradicting pair is vetoed out of the component (see
- *    `resolveContradictions`);
+ *    same component even when their own direct pair was never proposed (A~B, B~C puts A and C
+ *    together even if no source ever proposed (A,C)), or even when it *was* proposed and scored
+ *    but vetoed - a veto only drops that one edge from the union, it doesn't stop A and C landing
+ *    in the same component via bridging B. So before survivors are picked, every such never-scored
+ *    or vetoed intra-component pair is treated as a cannot-cohabit constraint and one side of any
+ *    contradicting pair is vetoed out of the component (see `resolveContradictions`);
  * 4. each surviving component of size 2+ gets one survivor (via [survivorPolicy]); everyone else
  *    in the component is marked [MarkReason.Duplicate] pointing at the survivor.
  *
@@ -120,17 +121,18 @@ class MultiSignalCollectorStrategy(
 
         // A component can chain propositions that were never directly compared to each other -
         // e.g. A~B and B~C union A and C into one component even though no pair source ever
-        // proposed (A,C). Before we pick a survivor, check every intra-component pair that
-        // wasn't already scored as an edge for a polarity contradiction, and veto any member
-        // that would drag a contradiction into the merge.
-        val scoredPairKeys = pairs.mapTo(mutableSetOf()) { pairKey(it.anchor.id, it.member.id) }
-        val edgeCounts = eligibleEdges
-            .flatMap { listOf(it.anchorId, it.memberId) }
-            .groupingBy { it }
-            .eachCount()
+        // proposed (A,C). Before we pick a survivor, every intra-component pair is treated as a
+        // cannot-cohabit constraint if either: (a) it was proposed, scored, and vetoed at the edge
+        // stage - a component union only removes that one edge, not the two ids from the same
+        // component via a bridge, so a vetoed pair is still a live contradiction here; or (b) it
+        // was never scored at all and the guard's own polarity check flags it. Pairs that were
+        // scored and NOT vetoed are the only ones already known safe and get skipped.
+        val edgeByPairKey = edges.associateBy { pairKey(it.anchorId, it.memberId) }
+        val vetoedPairKeys = edgeByPairKey.filterValues { it.vetoed }.keys
+        val safeScoredPairKeys = edgeByPairKey.filterValues { !it.vetoed }.keys
 
         val resolvedComponents = components.mapNotNull { component ->
-            resolveContradictions(component, byId, scoredPairKeys, edgeCounts, contextId)
+            resolveContradictions(component, byId, safeScoredPairKeys, vetoedPairKeys, eligibleEdges, contextId)
         }
 
         val marks = resolvedComponents
@@ -188,10 +190,16 @@ class MultiSignalCollectorStrategy(
 
     /**
      * Guards one component against contradictions that only show up once ids are chained
-     * together transitively (never scored as a direct edge). Repeatedly finds a contradicting
-     * pair among the component's members and vetoes one side of it (the member with fewer
-     * surviving edges, lowest id wins a tie) until no contradiction remains. Returns null if
-     * the component drops below 2 members along the way, meaning it should be skipped entirely.
+     * together transitively (never scored as a direct edge), and against pairs that *were*
+     * proposed and scored but vetoed at the edge stage - a veto only drops that one edge from
+     * [componentsFinder]'s input, it doesn't stop the two ids from still landing in the same
+     * component via a bridging third member, so those pairs remain live cannot-cohabit
+     * constraints here too. Repeatedly finds such a pair among the component's current members
+     * and vetoes one side of it (fewer surviving edges within the current membership loses,
+     * lowest id wins a tie) until none remain. Surviving-edge counts are recomputed after every
+     * eviction so later rounds in a multi-contradiction component judge against the current
+     * membership, not the pre-guard graph. Returns null if the component drops below 2 members
+     * along the way, meaning it should be skipped entirely.
      *
      * Skips the check (and just returns the component unchanged) once a component is bigger than
      * [MAX_CONTRADICTION_CHECK_MEMBERS] members, since the check is quadratic in component size
@@ -200,8 +208,9 @@ class MultiSignalCollectorStrategy(
     private fun resolveContradictions(
         component: CollectorComponent,
         byId: Map<String, Proposition>,
-        scoredPairKeys: Set<Pair<String, String>>,
-        edgeCounts: Map<String, Int>,
+        safeScoredPairKeys: Set<Pair<String, String>>,
+        vetoedPairKeys: Set<Pair<String, String>>,
+        eligibleEdges: List<CollectorCandidateEdge>,
         contextId: ContextId,
     ): CollectorComponent? {
         if (component.memberIds.size > MAX_CONTRADICTION_CHECK_MEMBERS) {
@@ -215,12 +224,14 @@ class MultiSignalCollectorStrategy(
 
         var members = component.memberIds
         while (true) {
-            val contradiction = findContradiction(members, byId, scoredPairKeys, contextId) ?: break
+            val contradiction = findContradiction(members, byId, safeScoredPairKeys, vetoedPairKeys, contextId)
+                ?: break
             val (a, b) = contradiction
+            val edgeCounts = surviveEdgeCounts(members, eligibleEdges)
             val loser = pickLoser(a, b, edgeCounts)
             logger.warn(
                 "MultiSignalCollectorStrategy: component {} - {} and {} assert opposite polarity " +
-                    "about a shared entity via a transitive chain; vetoing {} out of the merge",
+                    "about a shared entity (directly vetoed or via a transitive chain); vetoing {} out of the merge",
                 component.componentId, a, b, loser,
             )
             members = members.filterNot { it == loser }
@@ -230,18 +241,26 @@ class MultiSignalCollectorStrategy(
         return if (members.size == component.memberIds.size) component else component.copy(memberIds = members)
     }
 
-    /** First pair among [members] that wasn't already scored as an edge and vetoes on polarity. */
+    /**
+     * First pair among [members] that is a cannot-cohabit constraint: either it was proposed,
+     * scored, and vetoed at the edge stage, or it was never scored at all and the guard's own
+     * polarity check flags it now. Pairs already known safe ([safeScoredPairKeys] - scored and
+     * not vetoed) are skipped.
+     */
     private fun findContradiction(
         members: List<String>,
         byId: Map<String, Proposition>,
-        scoredPairKeys: Set<Pair<String, String>>,
+        safeScoredPairKeys: Set<Pair<String, String>>,
+        vetoedPairKeys: Set<Pair<String, String>>,
         contextId: ContextId,
     ): Pair<String, String>? {
         for (i in members.indices) {
             for (j in i + 1 until members.size) {
                 val a = members[i]
                 val b = members[j]
-                if (pairKey(a, b) in scoredPairKeys) continue
+                val key = pairKey(a, b)
+                if (key in vetoedPairKeys) return a to b
+                if (key in safeScoredPairKeys) continue
                 val anchor = byId[a] ?: continue
                 val member = byId[b] ?: continue
                 val score = polarityGuard.score(CandidatePair(anchor, member), contextId)
@@ -249,6 +268,19 @@ class MultiSignalCollectorStrategy(
             }
         }
         return null
+    }
+
+    /** Degree of each of [members] within the eligible edges connecting only current [members]. */
+    private fun surviveEdgeCounts(
+        members: List<String>,
+        eligibleEdges: List<CollectorCandidateEdge>,
+    ): Map<String, Int> {
+        val memberSet = members.toSet()
+        return eligibleEdges
+            .filter { it.anchorId in memberSet && it.memberId in memberSet }
+            .flatMap { listOf(it.anchorId, it.memberId) }
+            .groupingBy { it }
+            .eachCount()
     }
 
     /** The member to drop from a contradicting pair: fewer surviving edges loses; ties keep the lower id. */
