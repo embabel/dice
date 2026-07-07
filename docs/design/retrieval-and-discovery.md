@@ -16,7 +16,7 @@ REST controller that wrap both.
 classDiagram
     class RetrievalRouter {
         +retrieve(DiscoveryQuery) DiscoveryResult
-        +graphPath(fromId, toId) List
+        +graphPath(entityIdA, entityIdB) List
         +whyExplain(propositionId) LineageDto
     }
     class DiscoveryQuery {
@@ -44,9 +44,12 @@ classDiagram
     class GraphQueryCapable {
         <<interface>>
         +honorsAuthorityFilter Boolean
+        +honorsContextFilter Boolean
+        +neighborhood(entityId, depth, contextId)
         +neighborhood(entityId, depth, minAuthority)
+        +pathBetween(entityIdA, entityIdB, contextId)
         +pathBetween(entityIdA, entityIdB, minAuthority)
-        +whyExplain(propositionId)
+        +whyExplain(propositionId, contextId)
     }
     RetrievalRouter --> GraphQuery : delegates graph ops
     RetrievalRouter --> DiscoveryQuery : parameterized by
@@ -66,38 +69,42 @@ Neighborhood, path, and lineage queries don't require a graph database. A propos
 two resolved entities already *is* an edge between them, so the portable query surface answers
 graph-shaped questions by walking propositions one hop at a time over whatever store is underneath.
 A native graph backend gets routed to first when it can do the traversal faster, but the portable
-walk is always there as the floor.
-
-The decision behind this is that graph-shaped *reasoning* shouldn't be chained to graph
+walk is always there as the floor — graph-shaped *reasoning* shouldn't be chained to graph
 *infrastructure*. A lightweight in-memory setup should still answer "how is A connected to B?"
-without standing up Neo4j. And when a capability genuinely isn't there, these operations return
-empty or null rather than throwing — asking a question the backend can't fully answer gives you
-"nothing found," not an error.
+without standing up Neo4j.
+
+The durable Neo4j backend implements `GraphQueryCapable`, so graph queries there run as native
+Cypher — for both unscoped and context-scoped queries. The context is pushed straight into the
+traversal (a `contextId` predicate on every hop), so the production callers, which are all
+context-scoped (`DiscoveryController`, `GraphQueryTools`, and downstream consumers), still get the
+native Cypher rather than dropping to the portable walk. A store without the capability, or one that
+doesn't confine a walk to a context itself, falls back to the portable walk below.
 
 ```mermaid
 flowchart TD
     GQ["GraphQuery.neighborhood(entityId, depth)"] --> CAP{"store implements<br/>GraphQueryCapable?"}
-    CAP -->|"yes AND honorsAuthorityFilter"| NATIVE["route to native neighborhood()<br/>with minAuthority"]
-    CAP -->|"yes, no authority filter"| NATIVEPLAIN["route to native neighborhood()"]
-    CAP -->|"no"| PORTABLE["portable walk: follow proposition<br/>mentions hop by hop"]
+    CAP -->|"no"| PORTABLE["portable walk: follow proposition<br/>mentions hop by hop (context-scoped)"]
+    CAP -->|"yes"| SCOPE{"context-scoped query?"}
+    SCOPE -->|"no (unscoped)"| AUTH
+    SCOPE -->|"yes AND honorsContextFilter"| AUTH{"authority floor set?"}
+    SCOPE -->|"yes, no honorsContextFilter"| PORTABLE
+    AUTH -->|"no floor"| NATIVEPLAIN["route to native neighborhood()<br/>with contextId"]
+    AUTH -->|"floor AND honorsAuthorityFilter"| NATIVE["route to native neighborhood()<br/>with minAuthority"]
+    AUTH -->|"floor, no honorsAuthorityFilter"| PORTABLE
     NATIVE --> RESULT[GraphNeighborhood]
     NATIVEPLAIN --> RESULT
     PORTABLE --> RESULT
 ```
 
-## Query-time authority filtering
-
-Graph queries take an optional authority floor. Edges below it are dropped *during* the traversal,
-with authority re-resolved from each proposition's provenance as the walk proceeds — nothing is
-filtered out at write time.
-
-This is a deliberate tradeoff. Trust policy changes more often than data does, and different callers
-want different floors over the same facts. Baking a trust cutoff into stored edges would mean
-re-ingesting everything whenever the policy moved, and would force one global standard on every
-consumer. Filtering at read time keeps the stored graph complete and lets each query decide how
-cautious to be. The safe-fail detail matters here: a proposition with no provenance resolves to the
-weakest tier, so any non-trivial floor drops it — unknown provenance is treated as low trust, not
-waved through.
+Graph queries also take an optional authority floor. Edges below it are dropped *during* the
+traversal, with authority re-resolved from each proposition's provenance as the walk proceeds —
+nothing is filtered out at write time. Trust policy changes more often than data does, and different
+callers want different floors over the same facts; baking a trust cutoff into stored edges would
+mean re-ingesting everything whenever the policy moved, and would force one global standard on every
+consumer. A proposition with no provenance resolves to the weakest tier, so any non-trivial floor
+drops it — unknown provenance is treated as low trust, not waved through. And when a capability
+genuinely isn't there, these operations return empty or null rather than throwing — asking a
+question the backend can't fully answer gives you "nothing found," not an error.
 
 The `GraphQueryCapable.honorsAuthorityFilter` flag is how a native backend opts in to handling the
 filtering itself. When it is false (the default), the portable facade applies authority filtering
@@ -105,6 +112,14 @@ on its own proposition-walk, so the correct result comes back either way. A back
 only after it genuinely honours the `minAuthority` argument in its `neighborhood` and `pathBetween`
 overloads — and if it sets the flag without overriding those overloads, the default bodies throw
 rather than silently returning unfiltered results.
+
+`GraphQueryCapable.honorsContextFilter` works the same way for context scoping. When it is false (the
+default), the facade keeps a context-scoped query on its own proposition-walk, which already confines
+the walk to the context — so a backend that ignores context never receives a scoped query and can't
+leak another context's edges. A backend sets it to true only once its context-aware `neighborhood`,
+`pathBetween`, and `whyExplain` overloads genuinely confine the walk to the supplied `contextId`; the
+Neo4j backend does exactly that, adding a `contextId` predicate to every hop. An unscoped query (null
+context) behaves identically down either path.
 
 ## Single retrieval entry point
 
@@ -138,14 +153,14 @@ capabilities; that's exactly the knowledge the router is there to hold.
 
 Everything that crosses out to a caller is a DTO of primitives and enums — never an internal type
 like a proposition or a store handle. And the request itself never carries a context of its own: the
-agent tools fix the context when they're constructed, and the REST layer takes it from the URL path.
+agent tools fix the context when they're constructed, the REST layer takes it from the URL path, and
+the request body has no context field, so a caller *cannot* ask one context's endpoint for another
+context's data. Cross-context reads aren't forbidden by a check; they're structurally impossible, and
+an LLM given the agent tools can't wander across context boundaries either.
 
-Two concerns drive this. One is a stable external contract: internal types can evolve without
-breaking the wire, and a leak-check guards against a domain type sneaking into a DTO by accident. The
-other is isolation — because the request body has no context field, a caller *cannot* ask one
-context's endpoint for another context's data. Cross-context reads aren't forbidden by a check;
-they're structurally impossible, and an LLM given the agent tools can't wander across context
-boundaries either.
+Two concerns drive this: a stable external contract (internal types can evolve without breaking the
+wire, and a leak-check guards against a domain type sneaking into a DTO by accident) and that
+structural isolation.
 
 ```mermaid
 sequenceDiagram
@@ -166,6 +181,111 @@ sequenceDiagram
     end
     Router-->>Entry: results
     Entry-->>Caller: DTOs only — primitives and enums, no internal types
+```
+
+## The discovery DTO shapes
+
+The request/result DTOs (`com.embabel.dice.query.discovery.DiscoveryDtos`, plus `DiscoveryQuery`
+and `RetrievalMode` alongside them) are the concrete shapes that make the "DTO boundary" above real.
+Every one of them is primitives, `String`, `Instant`, enums, or another DTO in this same file — the
+`from()` factory on each one is the only place a domain type (`Proposition`, `GraphPath`,
+`GraphNeighborhood`, `PropositionLineage`) is read, and a reflection-based leak-check test
+(`DiscoveryDtoLeakTest`) fails the build if a future field reintroduces one.
+
+```mermaid
+classDiagram
+    class DiscoveryQuery {
+        +mode RetrievalMode
+        +text String
+        +entityId String
+        +from Instant
+        +to Instant
+        +topK Int
+        +depth Int
+        +similarityThreshold Double
+    }
+    class RetrievalMode {
+        <<enum>>
+        VECTOR
+        ENTITY
+        GRAPH_WALK
+        TEMPORAL
+        HYBRID
+    }
+    class DiscoveryResult {
+        +mode RetrievalMode
+        +supported Boolean
+        +propositions List~PropositionSummaryDto~
+    }
+    class PropositionSummaryDto {
+        +id String
+        +text String
+        +confidence Double
+        +status String
+        +mentions List~EntityMentionSummaryDto~
+        +grounding List~String~
+    }
+    class EntityMentionSummaryDto {
+        +name String
+        +type String
+        +resolvedId String
+        +role String
+    }
+    class PathDto {
+        +entityIds List~String~
+        +edges List~PropositionSummaryDto~
+    }
+    class NeighborhoodDto {
+        +centerEntityId String
+        +via List~PropositionSummaryDto~
+    }
+    class LineageDto {
+        +propositionId String
+        +text String
+        +status String
+        +reinforceCount Int
+        +groundingChunkIds List~String~
+        +sourceSummaries List~String~
+    }
+    DiscoveryQuery --> RetrievalMode : mode
+    DiscoveryResult --> RetrievalMode : mode
+    DiscoveryResult --> PropositionSummaryDto : propositions
+    PropositionSummaryDto --> EntityMentionSummaryDto : mentions
+    PathDto --> PropositionSummaryDto : edges
+    NeighborhoodDto --> PropositionSummaryDto : via
+```
+
+`DiscoveryQuery` is the one request shape for every mode in `RetrievalMode` — the router reads only
+the fields the mode needs (see the retrieval-router flowchart above for which) and clamps
+`topK`/`depth`/`similarityThreshold` before doing any work, so a caller can't force an unbounded scan
+or traversal. `PropositionSummaryDto` is the leaf every
+discovery result bottoms out to — `DiscoveryResult.propositions`, `PathDto.edges`, and
+`NeighborhoodDto.via` are all lists of it, each entry carrying its own leak-free
+`EntityMentionSummaryDto` mentions. `LineageDto` is the odd one out: it flattens a
+`PropositionLineage` (proposition + status + reinforcement count + grounding + abstraction sources)
+into one record rather than nesting further DTOs, because "why is this held" is meant to read as a
+flat explanation, not a graph to walk.
+
+A minimal discovery query, issued through `RetrievalRouter` directly (the same call an agent tool or
+the REST controller makes underneath):
+
+```kotlin
+val router = RetrievalRouter(store, graphQuery, contextId)
+
+val result = router.retrieve(
+    DiscoveryQuery(
+        mode = RetrievalMode.HYBRID,
+        text = "who reviewed the Q3 budget",
+        entityId = "entity:alice",
+        depth = 2,
+        topK = 5,
+    ),
+)
+
+if (!result.supported) {
+    // store has no VectorSearchCapable fragment — HYBRID degraded to the graph-only arm
+}
+result.propositions.forEach { println("${it.text} (confidence=${it.confidence})") }
 ```
 
 ## Agent tools and REST surface
@@ -191,9 +311,10 @@ flowchart TB
 ```
 
 `DiscoveryTools` and `GraphQueryTools` are registered as `List<Tool>` via their `asTools()` factory
-and added to an agent's tool set alongside `Memory`. `DiscoveryController` activates only when
-`spring-webmvc` is on the classpath and a `PropositionStore` bean is present; it is not
-component-scanned and must be imported via `DiceRestConfiguration`.
+and added to an agent's tool set alongside `Memory`. `DiscoveryController` activates only when beans
+for `PropositionStore`, `ProjectionRecordStore`, and `CollectorRunner` are all present
+(`@ConditionalOnBean(value = [...])`); it is not component-scanned and must be imported via
+`DiceRestConfiguration`.
 
 ## Serendipitous link discovery
 
@@ -211,11 +332,11 @@ flowchart LR
 
 The design decision is that this is *proactive* rather than reactive — anchorless discovery instead of
 anchored lookup. It's kept purely structural and deterministic (two hops over co-mention edges, over
-active propositions only), which makes it cheap and reproducible. And it deliberately reports only
-evidence quality, not a "surprise" ranking — the confidence on a discovered link reflects how well
-the evidence supports it, and judging which links are *interesting* is left to the consumer. Each
-discovered link starts as a candidate and carries a review state, because suggesting a connection and
-accepting it as known are different acts.
+active propositions only), which makes it cheap and reproducible. And it deliberately doesn't try to
+rank links by "surprise" — that judgement is left to the consumer. `TwoHopSemanticLinkDiscoverer`
+gives every discovered link a neutral `confidence = 0.5`: a starting point for review, not an
+evidence-strength score. Each link starts as a candidate and carries a review state, because
+suggesting a connection and accepting it as known are different acts.
 
 ## Explainability: rationale and reports
 

@@ -28,6 +28,7 @@ import com.embabel.agent.rag.tools.ToolishRag
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.resolver.CandidateSearcher
+import com.embabel.dice.common.resolver.ResolutionLevel
 import com.embabel.dice.common.resolver.SearchResult
 import com.fasterxml.jackson.annotation.JsonPropertyDescription
 import org.slf4j.LoggerFactory
@@ -77,6 +78,9 @@ class AgenticCandidateSearcher(
     private val ai: Ai,
     private val llmOptions: LlmOptions,
 ) : CandidateSearcher {
+
+    // A confident hit here is the LLM choosing among the results it searched up — a bakeoff.
+    override val resolutionLevel = ResolutionLevel.LLM_BAKEOFF
 
     private val logger = LoggerFactory.getLogger(AgenticCandidateSearcher::class.java)
 

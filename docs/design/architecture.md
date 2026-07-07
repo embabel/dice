@@ -5,6 +5,65 @@ language statements (propositions), keeps them healthy over time, and projects t
 representation a task needs — a Neo4j graph, a Prolog fact base, vector embeddings, or agent
 working memory. Propositions are the single system of record. Everything else derives from them.
 
+## Module map
+
+DICE is a multi-module Maven build. Each module's intent, and what it's allowed to depend on:
+
+| Module | Intent |
+|---|---|
+| `dice` | The core: proposition model, pipeline, gates, projection interfaces, query facades, agent tools, REST controllers. In-memory implementations only — no database driver. |
+| `dice-storage` | The durable Neo4j backend: `Drivine`-based repository, graph/Prolog/lineage projectors, schema and index bootstrap. Depends on `dice`. |
+| `dice-storage-autoconfigure` | Spring Boot autoconfiguration that wires `dice-storage`'s beans (repository, projectors, trust scorer) into a host application. Depends on `dice-storage`. |
+| `dice-ingestion` | Content-hash dedup ledger and source adapters that sit in front of `PropositionPipeline`, so the same artifact is never extracted twice concurrently. Depends on `dice`. |
+| `dice-report` | Rationale and structured report generation over propositions and their lineage. Depends on `dice`. |
+| `dice-integration-tests` | End-to-end tests exercising the real Neo4j backend and full pipeline across module boundaries. Depends on `dice`, `dice-ingestion`, `dice-report` (and transitively `dice-storage`). Not shipped. |
+
+```mermaid
+flowchart TB
+    dice["dice<br/>(core)"]
+    storage["dice-storage<br/>(Neo4j backend)"]
+    autoconf["dice-storage-autoconfigure<br/>(Spring Boot wiring)"]
+    ingestion["dice-ingestion<br/>(dedup ledger)"]
+    report["dice-report<br/>(rationale/reports)"]
+    itest["dice-integration-tests"]
+
+    storage --> dice
+    autoconf --> storage
+    ingestion --> dice
+    report --> dice
+    itest --> dice
+    itest --> ingestion
+    itest --> report
+```
+
+`dice` never depends on any other DICE module — it's the leaf of the graph, so every other module
+can be added or removed without touching core logic. `dice-storage-autoconfigure` is the only
+module that knows about Spring Boot autoconfiguration; plain `dice-storage` stays framework-neutral
+so it can be wired by hand outside Spring Boot.
+
+### Subsystem design docs
+
+Each subsystem below the module level has its own design note:
+
+- [proposition-lifecycle](proposition-lifecycle.md) — proposition states and transitions
+- [extraction-pipeline](extraction-pipeline.md) — `PropositionPipeline` extraction and revision
+- [ingestion](ingestion.md) — content-hash dedup ledger, source adapters
+- [graph-projection](graph-projection.md) — `GraphProjector`, `Reconciler`, lineage
+- [prolog-projection](prolog-projection.md) — `PrologProjector`, fact base generation
+- [retrieval-and-discovery](retrieval-and-discovery.md) — `RetrievalRouter`, `GraphQuery`
+- [oracle-and-query](oracle-and-query.md) — query answering over the substrate
+- [consolidation-and-dream-loop](consolidation-and-dream-loop.md) — `DreamLoopOrchestrator`
+- [knowledge-hygiene](knowledge-hygiene.md) — admission gates, pinning, decay
+- [reclamation-and-collector](reclamation-and-collector.md) — mark-and-sweep reclamation
+- [multi-signal-collector](multi-signal-collector.md) — collector marking strategies
+- [collector-trace-store](collector-trace-store.md) — collector audit trail persistence
+- [grounding-and-conflicts](grounding-and-conflicts.md) — contradiction and grounding resolution
+- [entity-resolution-and-text2graph](entity-resolution-and-text2graph.md) — entity resolution, text-to-graph
+- [durable-storage](durable-storage.md) — `dice-storage` backend, schema, indexes
+- [events](events.md) — `DiceEvent` model and emitters
+- [report](report.md) — `dice-report` rationale and structured reports
+- [web-api](web-api.md) — REST surface (`DiscoveryController` and friends)
+
 ## System-level map
 
 The subsystems form a left-to-right pipeline from ingestion through maintenance to query. Each box
@@ -64,7 +123,7 @@ and where to persist. See [extraction-pipeline](extraction-pipeline.md).
 ### Store and trust/authority
 
 `PropositionStore` is the base port: CRUD plus a composable `PropositionQuery`. `PropositionRepository`
-extends it with four opt-in capability fragments a backend declares only when it genuinely supports
+extends it with three opt-in capability fragments a backend declares only when it genuinely supports
 them:
 
 | Fragment | What it adds |
@@ -72,7 +131,16 @@ them:
 | `VectorSearchCapable` | similarity search and clustering |
 | `GraphTraversalCapable` | proposition abstraction-hierarchy traversal |
 | `TemporalQueryCapable` | bitemporal valid/observed window queries |
-| `GraphQueryCapable` | native neighbourhood, path, and lineage queries; `honorsAuthorityFilter` opt-in |
+
+A separate interface, `GraphQueryCapable`, adds native neighbourhood, path, and lineage queries
+(with `honorsAuthorityFilter` and `honorsContextFilter` as its own opt-ins) for a graph-native
+backend. It is not part of `PropositionRepository` — a store implements it in addition, and
+`GraphQuery` casts the store `as? GraphQueryCapable` at runtime, routing to the native implementation
+when the backend provides one. The durable Neo4j backend (`dice-storage`) implements it and confines
+each walk to the query's context in Cypher, so graph queries there run as native Cypher for both
+unscoped and context-scoped queries (which is what the production callers issue); a store without the
+capability, or one that doesn't confine a walk to a context itself, falls back to the portable,
+store-agnostic walk.
 
 `TrustScorer` and `AuthorityResolver` are advisory — they score and rank, never delete or hide.
 `AuthorityWeightedTrustScorer` is the production scorer; the default is neutral (everything trusted
@@ -80,7 +148,7 @@ equally). See [proposition-lifecycle](proposition-lifecycle.md) and [durable-sto
 
 ### Maintenance
 
-Three seams keep the store healthy at three different moments:
+Three mechanisms keep the store healthy at three different moments:
 
 ```mermaid
 flowchart TB

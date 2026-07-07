@@ -18,21 +18,23 @@ flowchart LR
     end
     M --> SWEEP{"SweepPolicy.decide"}
     SWEEP -->|TransitionStatus| T["-> STALE (reversible default)"]
+    SWEEP -->|MergeInto| MG["fold loser onto survivor,<br/>then retire"]
     SWEEP -->|HardDelete| D["remove (opt-in only)"]
     SWEEP -->|Skip| K["leave untouched"]
     T --> REC[CollectorRecordStore]
+    MG --> REC
     D --> REC
     K --> REC
 ```
 
-## Collector SPI seams
+## Collector extension points
 
 ```mermaid
 classDiagram
     class CollectorRunner {
         <<interface>>
         +run(contextId, dryRun) CollectorRunResult
-        +collect(contextId) List
+        +collect(contextId) CollectorRunResult
     }
     class CollectorStrategy {
         <<interface>>
@@ -56,6 +58,7 @@ classDiagram
     class SweepAction {
         <<sealed>>
         TransitionStatus(status)
+        MergeInto(survivorId, status)
         HardDelete
         Skip
     }
@@ -76,9 +79,30 @@ skips anything unmarked, and otherwise transitions to `STALE`. It never returns 
 ## The mark phase: strategies and marks
 
 A `CollectorStrategy` inspects the candidate set and flags propositions, producing `PropositionMark`s
-— each carries the proposition id, the strategy name, and a typed `MarkReason` (`Stale`, `Duplicate`,
-or a domain-specific `Custom`). Marking is **purely descriptive**: a strategy never mutates anything,
-it only reports what looks reclaimable. Two strategies ship:
+— each carries the proposition id, the strategy name, and a typed `MarkReason`. `MarkReason` is a
+sealed hierarchy, closed for the built-in strategies but open for consumer-specific signals:
+
+```kotlin
+sealed interface MarkReason {
+    val key: String
+
+    data object Stale : MarkReason {
+        override val key: String = "stale"
+    }
+
+    data class Duplicate(val survivorId: String) : MarkReason {
+        override val key: String = RESERVED_KEY
+        companion object {
+            const val RESERVED_KEY = "duplicate"
+        }
+    }
+
+    data class Custom(override val key: String, val description: String) : MarkReason
+}
+```
+
+Marking is **purely descriptive**: a strategy never mutates anything, it only reports what looks
+reclaimable. Two strategies ship:
 
 **`DecayCollectorStrategy`** marks a proposition whose `effectiveConfidence()` has fallen below a
 retirement threshold — the decay path into staleness (decay itself is covered in
@@ -108,7 +132,7 @@ flowchart TB
 ## The sweep phase: policy and actions
 
 A `SweepPolicy` looks at a proposition and its marks and returns a `SweepAction` — `TransitionStatus`,
-`HardDelete`, or `Skip`. The policy only *decides*; applying the action is the runner's job, which
+`MergeInto`, `HardDelete`, or `Skip`. The policy only *decides*; applying the action is the runner's job, which
 keeps "what counts as garbage" (strategies) independent from "what happens to it" (policy).
 
 The default `StatusTransitionSweepPolicy` is deliberately safe: it skips pinned propositions no matter
@@ -116,7 +140,26 @@ what marks they carry, skips anything unmarked, and otherwise transitions to `ST
 returns `HardDelete` — the shipped default is reversible, and destructive removal is something a
 deployment opts into with a different policy.
 
+`MergingSweepPolicy` is actually the builder's default policy — unconditional, not gated on calling
+`withDuplicateDetection()`. It returns `MergeInto` for duplicates marked by the
+`DuplicateCollectorStrategy`: it folds the loser's grounding, provenance, and source IDs onto the
+survivor before retiring the loser to `STALE`. Without this merge, the loser's evidence would become
+invisible from retrieval the instant STALE propositions are excluded, even though that evidence was
+real. The policy still skips pinned propositions and unmarked ones, and falls back to a plain
+status transition when a mark doesn't name a usable survivor (no duplicate mark, or a duplicate mark
+pointing at a blank id or itself) — so a non-dedup mark still retires normally. A deployment that
+wants pure status flips even for duplicates can swap it out via `withPolicy(StatusTransitionSweepPolicy())`.
+
 ## Entry points: collect, dry run, live run
+
+A runner is assembled with `CollectorRunner.withRepository(...)`'s fluent builder:
+
+```kotlin
+val runner = CollectorRunner.withRepository(repository)
+    .withStrategy(DecayCollectorStrategy(retireBelow = 0.1))
+    .withDuplicateDetection()
+    .build()
+```
 
 The `CollectorRunner` has two entry points and the run has two modes, separating "what would happen"
 from "make it happen":
@@ -133,8 +176,24 @@ flowchart TB
 **dry run** decides every fate and writes the audit trail but mutates nothing, so a policy can be
 previewed against real data before it's let loose. A **live run** applies each decision, emits a
 `PropositionStatusChanged` per transition (the same event the store emits, so a collector transition
-looks identical to any other — see [events](events.md)), and records every outcome. A
-`CollectorRunResult` partitions what happened into `marks`, `applied`, `skipped`, and `hardDeleted`.
+looks identical to any other — see [events](events.md)), and records every outcome. Both entry points
+return the same shape:
+
+```kotlin
+data class CollectorRunResult(
+    val runId: String,
+    val dryRun: Boolean,
+    val marks: List<PropositionMark>,
+    val applied: List<PropositionMark>,
+    val skipped: List<PropositionMark>,
+    val hardDeleted: List<String>,
+    val startedAt: Instant,
+    val finishedAt: Instant = Instant.now(),
+)
+```
+
+`collect()` only ever populates `marks` — `applied`/`skipped`/`hardDeleted` stay empty and `runId` is
+blank, since nothing was persisted.
 
 ## The audit trail
 
@@ -142,6 +201,12 @@ Reclamation is built to be explainable after the fact. When a `CollectorRecordSt
 each run writes one `CollectorRun` header and a `CollectorRecord` per acted-upon proposition. A record
 carries the typed reason, the `CollectorOutcome`, and the before/after status, so a reviewer can trace
 exactly why each proposition was touched and what happened to it.
+
+`CollectorRecordStore` and `CollectorTraceStore` (see
+[collector-trace-store](collector-trace-store.md)) are two independent, coexisting audit systems, not
+two descriptions of the same thing: the record store logs a per-proposition outcome for any collector
+strategy's mark-and-sweep, while the trace store logs the per-run signal/edge/component/decision detail
+that only `MultiSignalCollectorStrategy` produces.
 
 The store is **append-only**, and a run header is written even for a zero-mark run, so "the collector
 ran and found nothing" is a retrievable fact rather than silence. The outcome vocabulary keeps a

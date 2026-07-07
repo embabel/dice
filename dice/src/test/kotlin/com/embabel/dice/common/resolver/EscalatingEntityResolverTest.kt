@@ -24,6 +24,7 @@ import com.embabel.dice.common.ExistingEntity
 import com.embabel.dice.common.NewEntity
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
+import com.embabel.dice.common.resolver.searcher.AgenticCandidateSearcher
 import com.embabel.dice.common.resolver.searcher.ByExactNameCandidateSearcher
 import com.embabel.dice.common.resolver.searcher.ByIdCandidateSearcher
 import com.embabel.dice.common.resolver.searcher.FuzzyNameCandidateSearcher
@@ -367,6 +368,33 @@ class EscalatingEntityResolverTest {
             assertEquals(1, result.resolutions.size)
             assertTrue(result.resolutions.first() is ExistingEntity)
             assertEquals("brahms-123", (result.resolutions.first() as ExistingEntity).existing.id)
+        }
+    }
+
+    @Nested
+    inner class ResolutionLevels {
+
+        @Test
+        fun `each default searcher reports its true tier regardless of chain position`() {
+            assertEquals(ResolutionLevel.EXACT_MATCH, ByIdCandidateSearcher(repository).resolutionLevel)
+            assertEquals(ResolutionLevel.EXACT_MATCH, ByExactNameCandidateSearcher(repository).resolutionLevel)
+            assertEquals(ResolutionLevel.HEURISTIC_MATCH, NormalizedNameCandidateSearcher(repository).resolutionLevel)
+            assertEquals(ResolutionLevel.HEURISTIC_MATCH, PartialNameCandidateSearcher(repository).resolutionLevel)
+            assertEquals(ResolutionLevel.HEURISTIC_MATCH, FuzzyNameCandidateSearcher(repository).resolutionLevel)
+            assertEquals(ResolutionLevel.EMBEDDING_MATCH, VectorCandidateSearcher(repository).resolutionLevel)
+            assertEquals(
+                ResolutionLevel.LLM_BAKEOFF,
+                AgenticCandidateSearcher(repository, mockk(), mockk()).resolutionLevel,
+            )
+        }
+
+        @Test
+        fun `a searcher that does not override defaults to heuristic`() {
+            val plain = object : CandidateSearcher {
+                override fun search(suggested: SuggestedEntity, schema: DataDictionary): SearchResult =
+                    SearchResult.empty()
+            }
+            assertEquals(ResolutionLevel.HEURISTIC_MATCH, plain.resolutionLevel)
         }
     }
 }

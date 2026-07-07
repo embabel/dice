@@ -34,36 +34,48 @@ classDiagram
     class VectorSearchCapable {
         <<interface>>
         +findSimilarWithScores(request) List
-        +findClusters(contextId) List
+        +findClusters(similarityThreshold, topK, query) List
     }
     class GraphTraversalCapable {
         <<interface>>
-        +findAbstractionSources(propositionId) List
-        +findDerivedFrom(propositionId) List
+        +findSources(proposition) List
+        +findAbstractionsOf(propositionId) List
     }
     class TemporalQueryCapable {
         <<interface>>
-        +findByValidWindow(contextId, from, to) List
-        +findByObservedWindow(contextId, from, to) List
-    }
-    class GraphQueryCapable {
-        <<interface>>
-        +honorsAuthorityFilter Boolean
-        +neighborhood(entityId, depth) GraphNeighborhood
-        +pathBetween(entityIdA, entityIdB) List
-        +whyExplain(propositionId) PropositionLineage
+        +findByCreatedBetween(start, end) List
+        +findByRevisedBetween(start, end) List
+        +findAllOrderedByEffectiveConfidence(k) List
     }
     PropositionRepository --|> PropositionStore
     PropositionRepository --|> VectorSearchCapable
     PropositionRepository --|> GraphTraversalCapable
     PropositionRepository --|> TemporalQueryCapable
-    PropositionRepository --|> GraphQueryCapable
 ```
 
-`DrivinePropositionRepository` (in `dice-storage`) implements all four capability fragments.
-`InMemoryPropositionRepository` (in `dice`) implements the base store plus vector search, but not
-graph traversal or temporal queries, because it can't genuinely back them. The backend declares what
-it supports; callers degrade rather than break when a capability is absent.
+`DrivinePropositionRepository` (in `dice-storage`) implements all three capability fragments plus
+`CoreSearchOperations`. `InMemoryPropositionRepository` (in `dice`) implements the base store plus
+vector search, but not graph traversal or temporal queries, because it can't genuinely back them.
+The backend declares what it supports; callers degrade rather than break when a capability is
+absent.
+
+A fourth interface, `GraphQueryCapable`, adds native neighbourhood, path, and lineage queries for a
+graph-native backend — it is not part of `PropositionRepository`. The durable Neo4j backend
+implements it, so graph queries there run as native Cypher; a store without it falls back to the
+portable, store-agnostic walk (see [retrieval-and-discovery](retrieval-and-discovery.md#store-agnostic-graph-queries)).
+
+Callers check for a capability with an `is`/`as?` test rather than calling and guessing from an empty
+result:
+
+```kotlin
+fun supports(mode: RetrievalMode): Boolean = when (mode) {
+    RetrievalMode.VECTOR -> store is VectorSearchCapable
+    RetrievalMode.TEMPORAL -> store is TemporalQueryCapable
+    RetrievalMode.ENTITY -> true
+    RetrievalMode.GRAPH_WALK -> true
+    RetrievalMode.HYBRID -> store is VectorSearchCapable
+}
+```
 
 ## Choosing a backend without choosing it
 
@@ -87,11 +99,21 @@ flowchart TD
     M --> SAME
 ```
 
-The point is that the rest of DICE is written against the SPIs and never learns which backend won.
-The graph backend even declares only the capabilities it can genuinely honour (vector search, graph
-traversal, temporal queries, graph query); a leaner backend simply doesn't claim them, and callers
-degrade rather than break — the same "declare only what you really support" stance the store layer
-takes everywhere.
+The point is that the rest of DICE is written against the SPIs and never learns which backend won —
+callers degrade rather than break when a capability is absent, the same stance the store layer takes
+everywhere.
+
+A consuming application overrides the default wiring by defining its own bean; autoconfig backs off
+because the default is `@ConditionalOnMissingBean(PropositionRepository::class)`:
+
+```kotlin
+@Configuration
+class MyStoreConfiguration {
+
+    @Bean
+    fun propositionRepository(): PropositionRepository = MyCustomPropositionRepository()
+}
+```
 
 ## Dedup as defense in depth
 
@@ -119,7 +141,17 @@ flowchart TB
 
 Two layers because each covers the other's blind spot: the lock is fast but only sees one instance,
 the constraint is global but only fires after the fact. Together they make "the same fact, minted
-twice" converge to one node no matter how the writes interleave.
+twice" converge to one node no matter how the writes interleave. Saving the same fact twice returns
+the same id rather than minting a twin:
+
+```kotlin
+val fact = Proposition(contextId = ContextId("ctx"), text = "Rod visited Sydney", mentions = emptyList(), confidence = 0.9)
+
+val first = repository.save(fact)
+val second = repository.save(fact)
+
+check(first.id == second.id) { "same (contextId, text) must dedup to one node" }
+```
 
 ## Two-phase save: authoritative facts, append-only evidence
 
@@ -144,7 +176,18 @@ sequenceDiagram
 
 The consequence is that a routine save can't accidentally erase the evidence behind a fact. Replacing
 provenance is therefore a *deliberate* act through explicit set/clear provenance calls — never a side
-effect of an ordinary update.
+effect of an ordinary update:
+
+```kotlin
+// Routine save: preserves any provenance the loaded proposition already carries.
+repository.save(proposition.withText("Rod visited Sydney last week"))
+
+// Deliberate replace: authoritatively sets provenance to exactly these entries.
+repository.setProvenance(proposition.id, newEntries)
+
+// Deliberate wipe: removes all provenance.
+repository.clearProvenance(proposition.id)
+```
 
 ## Materialised effective confidence
 
@@ -202,3 +245,39 @@ Backend choice, every store bean, the schema catalogs, and the decay schedule ar
 define your own bean and the autoconfig backs off. What ships is safe by default: in-memory unless
 asked otherwise, dedup enforced in two independent layers, provenance never dropped by a routine
 save, and decay that ages knowledge gently rather than deleting it.
+
+## Config-property reference
+
+All store-oriented properties are bound by `DiceStoreProperties` in `dice-storage-autoconfigure`
+under prefix `embabel.dice.store`. (The collector's own properties, `CollectorProperties` under
+`embabel.dice.collector`, are documented in depth in
+[multi-signal-collector.md](multi-signal-collector.md#configuration-embabeldicecollector) — not
+repeated here.)
+
+| Property | Type | Default | Meaning |
+|---|---|---|---|
+| `embabel.dice.store.type` | `String` | `in-memory` | Backend kind: `graph` (Drivine/Neo4j) or anything else (in-memory). Drives the flowchart in [Choosing a backend without choosing it](#choosing-a-backend-without-choosing-it). |
+| `embabel.dice.store.decay.enabled` | `Boolean` | `true` | Master switch for the scheduled decay tick. `false` means `@EnableScheduling` never switches on for decay. |
+| `embabel.dice.store.decay.interval-ms` | `Long` | `3600000` (1 hour) | Delay between decay ticks, in milliseconds. |
+| `embabel.dice.store.decay.k` | `Double` | `2.0` | Decay-rate multiplier `k` for the staleness policy (see [proposition-lifecycle](proposition-lifecycle.md)). |
+| `embabel.dice.store.decay.prune-stale` | `Boolean` | `false` | Opt-in hard-delete of `STALE` propositions during the lifecycle sweep. Left `false`, `STALE` propositions are kept (reversible). |
+| `embabel.dice.store.vector-index.enabled` | `Boolean` | `true` | Whether the graph backend declares its vector index (graph backend only). Label, property name, and similarity metric are fixed by the `@VectorIndex` annotation on `PropositionNode.embedding`, not configurable here. |
+
+### How to configure the store: a worked example
+
+A deployment that wants the graph backend, a faster decay tick, and pruning turned on:
+
+```yaml
+embabel:
+  dice:
+    store:
+      type: graph
+      decay:
+        interval-ms: 900000   # 15 minutes
+        k: 2.5
+        prune-stale: true
+```
+
+Everything else — vector index, dedup, schema catalogs — keeps its safe default. Because every
+store bean is `@ConditionalOnMissingBean`, an application can still override any single piece (say,
+its own `GraphDecayManager`) without touching this file at all.

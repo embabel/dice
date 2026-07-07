@@ -46,6 +46,26 @@ routed to review, projection-skipped, or demoted — so a consumer can watch adm
 persisted proposition stays silent here, because the save boundary already emits that
 (see [events](events.md)).
 
+`ExtractionGate` is a `fun interface`, so a gate is just a function from a proposition and its
+context to one of the five `GateDecision` outcomes:
+
+```kotlin
+val confidenceGate = ExtractionGate { proposition, _ ->
+    val decision = if (proposition.effectiveConfidence() < 0.5) {
+        GateDecision.Reject("confidence below threshold")
+    } else {
+        GateDecision.Persist
+    }
+    GateEvaluation("ConfidenceGate", proposition, decision)
+}
+```
+
+The other three decisions cover the cases a flat persist/reject can't: `GateDecision.RouteToReview`
+holds a proposition for a human or downstream process instead of committing either way,
+`GateDecision.SkipProjection` persists the fact but keeps it out of the typed graph, and
+`GateDecision.Demote(toRelation, reason)` is the evidence-floor case above — persist the
+proposition, but project its relation under a weaker predicate.
+
 ## Reclamation: mark and sweep
 
 Reclamation borrows the shape of a tracing garbage collector on purpose: one stage decides *what
@@ -69,11 +89,25 @@ losing data quietly erodes trust in the whole store.
 Reclamation is built to be auditable: when an audit trail is configured, a run records what was
 marked, why, and what happened to it — and a **dry run** records that trail while changing nothing,
 so you can preview a policy before it touches real data. Duplicate handling resolves overlapping
-clusters down to a single survivor, so merging is deterministic rather than order-dependent.
+clusters down to a single survivor, so merging is deterministic rather than order-dependent. Each
+status transition a sweep applies (on real runs, not dry runs) also emits a
+`PropositionStatusChanged` event — the same event the store emits when a status changes anywhere
+else, so a transition made by the collector isn't a special case downstream (see
+[events](events.md)).
 
-Each status transition a sweep applies also emits a `PropositionStatusChanged` event (on real runs,
-not dry runs) — the same event the store emits when a status changes, so a transition made by the
-collector looks identical to one made anywhere else (see [events](events.md)).
+A marker only ever produces a `MarkReason` — it never decides a fate. `SweepPolicy` is the other
+half, reading the accumulated marks for a proposition and returning a `SweepAction`:
+
+```kotlin
+val marks = listOf(
+    PropositionMark(proposition.id, MarkReason.Stale, strategyName = "DecayMarker"),
+    PropositionMark(proposition.id, MarkReason.Duplicate(survivorId = survivor.id), strategyName = "DedupMarker"),
+)
+
+val action = MergingSweepPolicy().decide(proposition, marks)
+// -> SweepAction.MergeInto(survivor.id, PropositionStatus.STALE), because a Duplicate mark
+//    with a real survivor takes priority over the plain Stale mark.
+```
 
 A run marks candidates, lets the policy decide each one's fate, and records the outcome:
 
@@ -110,7 +144,22 @@ The passes are composable and each does one thing: fold a session's raw facts to
 cluster of related facts into a higher-level proposition, resolve lingering contradictions, and
 sweep decayed entries. Composability is the design decision — consolidation isn't one monolithic
 LLM step you either run or don't; it's a pipeline of small, individually understandable, repeatable
-operations you can reorder, extend, or run on their own.
+operations you can reorder, extend, or run on their own:
+
+```kotlin
+val orchestrator = DefaultDreamLoopOrchestrator(
+    repository = propositionRepository,
+    passes = listOf(
+        SessionConsolidationPass(/* ... */),
+        AbstractionPass(/* ... */),
+        ContradictionResolutionPass(/* ... */),
+        DecaySweepPass(/* ... */),
+    ),
+)
+
+// Add a domain-specific pass without touching the shipped ones.
+val withCustomPass = orchestrator.withPass(myCustomPass)
+```
 
 The loop is threshold-gated: it only does expensive work when there's enough accumulated material
 to be worth it, so running it often is cheap when nothing has changed. And it ties directly back to

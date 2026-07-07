@@ -16,11 +16,10 @@ design decision — most exits are one-way, and almost none of them actually des
 ```mermaid
 stateDiagram-v2
     [*] --> ACTIVE : ingested
-    ACTIVE --> PROMOTED : projected into the typed graph
     ACTIVE --> CONTRADICTED : a newer fact clashes with it (revision or ContradictionResolutionPass)
     ACTIVE --> SUPERSEDED : folded into a higher-level abstraction (AbstractionPass)
-    ACTIVE --> STALE : effectiveConfidence decays past threshold (DecaySweepPass / collector)
-    STALE --> ACTIVE : reinforced when the fact is seen again
+    ACTIVE --> STALE : DecayStatusPolicy.evaluate — utility drops below stalenessThreshold
+    STALE --> ACTIVE : DecayStatusPolicy.evaluate — utility recovers above recoveryThreshold
     STALE --> [*] : deliberately retired by hard delete
     CONTRADICTED --> [*] : kept for audit, no auto-revival
     SUPERSEDED --> [*] : kept for audit, no auto-revival
@@ -33,13 +32,16 @@ stateDiagram-v2
 What triggers each transition:
 - **ACTIVE → CONTRADICTED**: `LlmPropositionReviser` at ingest time, or `ContradictionResolutionPass` during a dream-loop cycle.
 - **ACTIVE → SUPERSEDED**: `AbstractionPass` during a dream-loop cycle, when a cluster of facts is folded into a higher-level proposition.
-- **ACTIVE → STALE**: `DecaySweepPass` (via the mark-and-sweep collector), or the scheduled decay tick in `GraphDecayManager`.
-- **STALE → ACTIVE**: `PropositionReviser` on re-ingest, which reinforces the existing proposition and resets its confidence.
-- **PROMOTED**: set by `GraphProjector` on successful projection into the typed graph; it complements ACTIVE rather than replacing it.
+- **ACTIVE → STALE**: `StatusTransitionPolicy.evaluate` (default `DecayStatusPolicy`), run per-proposition by `DecayManager`/`DecaySweeper` (`sweep` / `sweepAll` / `tick`), or by a mark-and-sweep collector run.
+- **STALE → ACTIVE**: the same `DecayStatusPolicy.evaluate` call, when a proposition's decayed utility recovers back above `recoveryThreshold`. The reviser itself never flips status — `reinforceProposition` only boosts confidence and resets the decay clock, which is what lets the next sweep's utility calculation cross back over the threshold.
+A projected proposition keeps its ACTIVE status so it stays retrievable — projection records the
+lineage on the graph side rather than moving the proposition off ACTIVE. `PROMOTED` is a reserved
+status in the enum for a projected fact, and the decay sweep and collector already exclude it from
+their ACTIVE candidate sets, but the lifecycle does not enter it; projection leaves status alone.
 
 The rest of this document is the reasoning behind those transitions.
 
-## Trust and authority SPI seams
+## Trust and authority SPIs
 
 ```mermaid
 classDiagram
@@ -54,7 +56,7 @@ classDiagram
     class AuthorityTier {
         <<enum>>
         PRIMARY
-        NAMED_EXTERNAL
+        SECONDARY
         DERIVED
         UNKNOWN
     }
@@ -68,17 +70,22 @@ classDiagram
 
 ## Trust scoring is advisory
 
-Every proposition can be scored for how much its *source* should be believed, but that score
-never deletes, rewrites, or hides anything. It's advisory: it ranks, and the consumer decides
-what to do with the ranking.
+Every proposition can be scored for how much its *source* should be believed, but the score is
+advisory — it never deletes, rewrites, or hides anything, it just ranks, and the consumer
+decides what to do with the ranking. Destructive automation on a knowledge base is hard to undo,
+so a confident-sounding extraction from a sketchy source shouldn't silently erase a quieter fact
+from a good one; trust should just lose when something has to choose.
 
-The reason is that destructive automation on a knowledge base is hard to undo and easy to get
-wrong. A confident-sounding extraction from a sketchy source shouldn't silently erase a quieter
-fact from a good one — it should just lose when something has to choose. So trust is a number a
-query filter or a ranker can lean on, not a gate baked into the store.
+The shipped scorer, `NeutralTrustScorer`, is deliberately trivial — it returns `1.0` for every
+proposition, so trust scoring is a no-op until a deployment opts in to a real model. `TrustScorer`
+is a `fun interface`, so a custom scorer can be a lambda:
 
-This is why the shipped scorer is deliberately neutral (it trusts everything equally). The seam
-exists so that real deployments opt *in* to a judgment model; nothing changes until they do.
+```kotlin
+// Trust primary sources fully; halve everything else. Ignores conflictType.
+val scorer = TrustScorer { proposition, authorityTier, _ ->
+    if (authorityTier == AuthorityTier.PRIMARY) 1.0 else 0.5
+}
+```
 
 ## Source authority from provenance
 
@@ -165,18 +172,13 @@ flowchart TB
     end
 ```
 
-**Contradiction** happens in the moment a new proposition arrives and is judged to conflict with an
-existing one. The loser is demoted — its confidence is cut and it's marked contradicted. The
-statement we're making is "this is no longer believed."
-
-**Supersession** happens later and for the opposite reason. During background consolidation, a
-cluster of true, low-level facts about the same thing gets abstracted into a single higher-level
-proposition. The originals aren't wrong — they've been *absorbed* — so they're marked superseded
-rather than contradicted. The statement is "there's now a better way to say all of this at once."
-
-Two consequences fall out of keeping them distinct: each transition answers a different question
-("was this wrong?" versus "is there a better summary now?"), and in both cases the original record
-is kept for audit. We don't pretend we never believed something.
+**Contradiction** says "this is no longer believed" — a new proposition arrives and clashes, so
+the loser is demoted on the spot. **Supersession** says "there's now a better way to say all of
+this at once" — during background consolidation a cluster of true, low-level facts is folded into
+one higher-level proposition, and the originals are marked superseded because they've been
+*absorbed*, not disproven. Keeping the two distinct means each transition answers a different
+question ("was this wrong?" vs. "is there a better summary now?"), and either way the original
+record is kept for audit — we don't pretend we never believed something.
 
 ## Decay instead of deletion
 
@@ -192,16 +194,19 @@ is seeing it again (reinforcement), not the passage of time. Hard removal exists
 separate, deliberate step: the default preference is "cold" over "gone," because a knowledge base
 that quietly deletes things is one you stop trusting.
 
-## End-to-end walkthrough
+`Proposition.effectiveConfidence()` is what a sweep's utility calculation actually reads — raw
+`confidence` never changes on its own, only the decayed view of it does:
 
-Follow one fact through its life. It's ingested **active** and scored by the authority of its
-source. It may get **promoted** when it's projected into the typed graph. Later a conflicting fact
-arrives; the reviser demotes the older fact (its confidence cut and its status set to contradicted)
-and a conflict detector labels what kind of clash it was. If nothing references the fact for a while its
-effective confidence decays until it goes **stale**, where it waits to be either reinforced back to
-active or eventually retired. Or, if many siblings about the same entity pile up, a consolidation
-pass folds them into one abstraction and our fact is marked **superseded** — still true, now said
-more concisely.
+```kotlin
+// Same proposition, decay applied against "now" vs. against a fixed past instant.
+val nowConfidence = proposition.effectiveConfidence()
+val lastWeekConfidence = proposition.effectiveConfidenceAt(Instant.now().minus(7, ChronoUnit.DAYS))
+
+// Pinning doesn't change the math above — effectiveConfidence keeps decaying either way.
+// What pinning does is stop DecayStatusPolicy from acting on the result:
+val pinned = proposition.withPinned(true)
+check(DecayStatusPolicy().evaluate(pinned) == null) // sweep-exempt regardless of utility
+```
 
 ## Pinning: permanent protection from the lifecycle
 
@@ -216,6 +221,22 @@ Concretely, the `pinned` field on `Proposition` is a boolean flag you set via `P
 - The dream-loop's contradiction resolution pass (`ContradictionResolutionPass`) inherits the same skip-if-pinned behavior, so background consolidation also respects the pin.
 
 Pinning is an *administrative* operation — it touches only `metadataRevised` and never resets the decay clock (`contentRevised` stays untouched).
+
+```kotlin
+val proposition = Proposition(
+    contextId = contextId,
+    text = "Alice's employee id is E-4471",
+    mentions = listOf(subjectMention, objectMention),
+    confidence = 0.95,
+)
+
+// Pin in place (no store round-trip yet)...
+val pinnedLocally = proposition.withPinned(true)
+
+// ...or pin the persisted record by id.
+propositionStore.save(proposition)
+propositionStore.pin(proposition.id)
+```
 
 ```mermaid
 stateDiagram-v2

@@ -78,6 +78,16 @@ data class SearchResult(
 interface CandidateSearcher {
 
     /**
+     * Which [ResolutionLevel] a confident hit from this searcher counts as, for the per-level
+     * telemetry [EscalatingEntityResolver] logs. Each searcher declares its own tier so the counts
+     * stay accurate whatever the chain's length or order. Defaults to [ResolutionLevel.HEURISTIC_MATCH];
+     * exact-lookup searchers report [ResolutionLevel.EXACT_MATCH] and vector search reports
+     * [ResolutionLevel.EMBEDDING_MATCH].
+     */
+    val resolutionLevel: ResolutionLevel
+        get() = ResolutionLevel.HEURISTIC_MATCH
+
+    /**
      * Search for candidates matching the suggested entity.
      *
      * @param suggested The suggested entity to find matches for

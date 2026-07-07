@@ -67,7 +67,39 @@ itself**. That purity contract is the whole design. The orchestrator fetches the
 each pass over it, and applies the accumulated changes in a single write per cycle, so passes stay
 small, independently testable, and reorderable.
 
+```kotlin
+interface ConsolidationPass {
+    val name: String
+    fun run(contextId: ContextId, propositions: List<Proposition>): ConsolidationPassResult
+}
+```
+
 A result is one of three things, sealed so the orchestrator handles every case:
+
+```kotlin
+sealed class ConsolidationPassResult {
+    abstract val passName: String
+
+    data class Changed @JvmOverloads constructor(
+        override val passName: String,
+        val propositionsToSave: List<Proposition> = emptyList(),
+        val propositionsToDelete: List<String> = emptyList(),
+        val skipped: Int = 0,
+        val externallyApplied: Int = 0,
+        val summary: String = "",
+    ) : ConsolidationPassResult()
+
+    data class NoOp(
+        override val passName: String,
+        val reason: String = "",
+    ) : ConsolidationPassResult()
+
+    data class Failed(
+        override val passName: String,
+        val cause: Throwable,
+    ) : ConsolidationPassResult()
+}
+```
 
 - **`Changed`** — propositions to upsert (`propositionsToSave`), ids to hard-delete
   (`propositionsToDelete`, honored only when the orchestrator opts in), a `skipped` count, and an
@@ -77,9 +109,10 @@ A result is one of three things, sealed so the orchestrator handles every case:
 - **`Failed`** — the pass threw; the orchestrator records it and continues with the remaining passes
   rather than aborting the cycle.
 
-Passes must be **idempotent**: running one twice over an unchanged snapshot must yield `NoOp`, because
-the loop runs passes repeatedly until the snapshot settles. A pass that always reports `Changed` would
-loop forever.
+Passes must be **idempotent**: running one twice over an unchanged snapshot must yield `NoOp`. Each
+pass runs exactly once per scheduled cycle, not in a repeat-until-settled loop within a cycle — a pass
+that always reports `Changed` just re-saves its propositions every cycle rather than looping forever.
+Convergence happens across successive scheduled cycles, not within a single one.
 
 ## The four passes that ship
 
@@ -105,6 +138,41 @@ unordered pair once, so a symmetric reviser can't retire both members and leave 
 save/delete lists and reports the count via `externallyApplied`, avoiding a double write.
 
 ## How a cycle composes them
+
+An orchestrator is assembled with `DefaultDreamLoopOrchestrator.withRepository(...)`'s builder,
+registering passes in the order they should run:
+
+```kotlin
+val orchestrator = DefaultDreamLoopOrchestrator.withRepository(repository)
+    .withPass(sessionConsolidationPass)
+    .withPass(abstractionPass)
+    .withPass(contradictionResolutionPass)
+    .withPass(decaySweepPass)
+
+// Scheduled / threshold-gated: may return null if little has changed.
+val maybeReport = orchestrator.consolidate(contextId)
+
+// Always runs.
+val report = orchestrator.consolidateNow(contextId)
+```
+
+`DecaySweepPass` is the report-only pass mentioned above: it drives its own `CollectorRunner` and
+writes the `STALE` transitions itself, then reports the count back as `externallyApplied` instead of
+via `propositionsToSave`, so `DreamLoopReport.totalTransitioned` still reflects the work without the
+orchestrator writing the same transition a second time:
+
+```kotlin
+ConsolidationPassResult.Changed(
+    passName = name,
+    propositionsToSave = emptyList(),
+    propositionsToDelete = emptyList(),
+    skipped = result.skipped.size,
+    externallyApplied = result.applied.size + result.hardDeleted.size,
+    summary = "decay sweep: ${result.applied.size} -> STALE, ${result.hardDeleted.size} hard-deleted",
+)
+```
+
+(from `DecaySweepPass.run`, `dice/src/main/kotlin/com/embabel/dice/operations/consolidation/DecaySweepPass.kt`)
 
 `consolidateNow` is the cycle. It does six things in order, and the shape is deliberate:
 

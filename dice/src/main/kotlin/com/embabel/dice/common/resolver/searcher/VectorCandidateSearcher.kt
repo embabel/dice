@@ -22,6 +22,7 @@ import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.resolver.CandidateSearcher
+import com.embabel.dice.common.resolver.ResolutionLevel
 import com.embabel.dice.common.resolver.SearchResult
 import org.slf4j.LoggerFactory
 
@@ -42,6 +43,8 @@ class VectorCandidateSearcher(
     private val candidateThreshold: Double = 0.7,
     private val topK: Int = 10,
 ) : CandidateSearcher {
+
+    override val resolutionLevel = ResolutionLevel.EMBEDDING_MATCH
 
     private val logger = LoggerFactory.getLogger(VectorCandidateSearcher::class.java)
 
