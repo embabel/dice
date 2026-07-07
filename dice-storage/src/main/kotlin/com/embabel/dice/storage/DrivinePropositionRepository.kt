@@ -569,14 +569,22 @@ class DrivinePropositionRepository(
         if (!keywordPushable(base)) return super.keywordOverlap(base, tokens, limit)
 
         val lowered = tokens.map { it.lowercase() }.distinct()
-        val conds = mutableListOf<String>()
-        val params = mutableMapOf<String, Any>("tokens" to lowered, "limit" to limit)
-        base.contextId?.let { conds += "p.contextId = \$contextId"; params["contextId"] = it.value }
-        base.statuses?.takeIf { it.isNotEmpty() }?.let { statuses ->
-            conds += "p.status IN \$statuses"; params["statuses"] = statuses.map { it.name }
+        val conds = listOfNotNull(
+            base.contextId?.let { "p.contextId = \$contextId" },
+            base.statuses?.takeIf { it.isNotEmpty() }?.let { "p.status IN \$statuses" },
+            base.minEffectiveConfidence?.let { "p.effectiveConfidence >= \$minEc" },
+            base.minImportance?.let { "p.importance >= \$minImp" }
+        )
+        val params = buildMap {
+            put("tokens", lowered)
+            put("limit", limit)
+            base.contextId?.let { put("contextId", it.value) }
+            base.statuses?.takeIf { it.isNotEmpty() }?.let { statuses ->
+                put("statuses", statuses.map { it.name })
+            }
+            base.minEffectiveConfidence?.let { put("minEc", it) }
+            base.minImportance?.let { put("minImp", it) }
         }
-        base.minEffectiveConfidence?.let { conds += "p.effectiveConfidence >= \$minEc"; params["minEc"] = it }
-        base.minImportance?.let { conds += "p.importance >= \$minImp"; params["minImp"] = it }
         val whereHead = if (conds.isEmpty()) "" else "WHERE " + conds.joinToString(" AND ")
 
         // A single-column RETURN yields the raw column values (here proposition ids), not row maps.

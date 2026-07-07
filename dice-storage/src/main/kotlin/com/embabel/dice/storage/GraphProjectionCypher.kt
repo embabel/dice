@@ -72,25 +72,21 @@ internal object GraphProjectionCypher {
     }
 
     private fun neighborhoodBranch(k: Int, scoped: Boolean): String {
-        val lines = mutableListOf(
-            "MATCH (m0:Mention {resolvedId: \$origin})<-[:HAS_MENTION]-(p1:Proposition)-[:HAS_MENTION]->(x1:Mention)",
-        )
-        for (i in 2..k) {
-            lines += "MATCH (b${i - 1}:Mention {resolvedId: x${i - 1}.resolvedId})<-[:HAS_MENTION]-" +
-                "(p$i:Proposition)-[:HAS_MENTION]->(x$i:Mention)"
+        val matchLines = buildList {
+            add("MATCH (m0:Mention {resolvedId: \$origin})<-[:HAS_MENTION]-(p1:Proposition)-[:HAS_MENTION]->(x1:Mention)")
+            for (i in 2..k) {
+                add("MATCH (b${i - 1}:Mention {resolvedId: x${i - 1}.resolvedId})<-[:HAS_MENTION]-" +
+                    "(p$i:Proposition)-[:HAS_MENTION]->(x$i:Mention)")
+            }
         }
-        val conds = mutableListOf<String>()
-        for (i in 1..k) conds += "p$i.status = 'ACTIVE'"
-        if (scoped) for (i in 1..k) conds += "p$i.contextId = \$ctx"
-        for (i in 1..k) conds += "x$i.resolvedId <> \$origin"
-        for (i in 1..k) for (j in i + 1..k) conds += "x$i.resolvedId <> x$j.resolvedId"
-        lines += "WHERE " + conds.joinToString(" AND ")
-        // A branch can reach the same (ent, dist, via) triple by many distinct simple paths through the
-        // intermediate hops — a hub entity on hundreds of propositions makes that count blow up (≈fanout^k
-        // rows). DISTINCT collapses those duplicates in the branch, before the outer grouping, so the walk
-        // stays bounded without changing the result: the grouping only needs each triple once.
-        lines += "RETURN DISTINCT x$k.resolvedId AS ent, $k AS dist, p$k.id AS via"
-        return lines.joinToString("\n  ")
+        val conds = buildList {
+            for (i in 1..k) add("p$i.status = 'ACTIVE'")
+            if (scoped) for (i in 1..k) add("p$i.contextId = \$ctx")
+            for (i in 1..k) add("x$i.resolvedId <> \$origin")
+            for (i in 1..k) for (j in i + 1..k) add("x$i.resolvedId <> x$j.resolvedId")
+        }
+        return (matchLines + "WHERE " + conds.joinToString(" AND ") +
+                "RETURN DISTINCT x$k.resolvedId AS ent, $k AS dist, p$k.id AS via").joinToString("\n  ")
     }
 
     /**
@@ -116,25 +112,26 @@ internal object GraphProjectionCypher {
     }
 
     private fun pathBranch(len: Int, scoped: Boolean): String {
-        val lines = mutableListOf<String>()
-        val firstTail = if (len == 1) "y1:Mention {resolvedId: \$b}" else "y1:Mention"
-        lines += "MATCH (a0:Mention {resolvedId: \$a})<-[:HAS_MENTION]-(p1:Proposition)-[:HAS_MENTION]->($firstTail)"
-        for (i in 2..len) {
-            val tail = if (i == len) "y$i:Mention {resolvedId: \$b}" else "y$i:Mention"
-            lines += "MATCH (c${i - 1}:Mention {resolvedId: y${i - 1}.resolvedId})<-[:HAS_MENTION]-" +
-                "(p$i:Proposition)-[:HAS_MENTION]->($tail)"
+        val matchLines = buildList {
+            val firstTail = if (len == 1) "y1:Mention {resolvedId: \$b}" else "y1:Mention"
+            add("MATCH (a0:Mention {resolvedId: \$a})<-[:HAS_MENTION]-(p1:Proposition)-[:HAS_MENTION]->($firstTail)")
+            for (i in 2..len) {
+                val tail = if (i == len) "y$i:Mention {resolvedId: \$b}" else "y$i:Mention"
+                add("MATCH (c${i - 1}:Mention {resolvedId: y${i - 1}.resolvedId})<-[:HAS_MENTION]-" +
+                    "(p$i:Proposition)-[:HAS_MENTION]->($tail)")
+            }
         }
-        val conds = mutableListOf<String>()
-        for (i in 1..len) conds += "p$i.status = 'ACTIVE'"
-        if (scoped) for (i in 1..len) conds += "p$i.contextId = \$ctx"
-        // Intermediate entities must be simple (distinct, and neither endpoint); the final node is
-        // pinned to $b in the pattern, the start is $a.
-        for (i in 1 until len) {
-            conds += "y$i.resolvedId <> \$a"
-            conds += "y$i.resolvedId <> \$b"
+        val conds = buildList {
+            for (i in 1..len) add("p$i.status = 'ACTIVE'")
+            if (scoped) for (i in 1..len) add("p$i.contextId = \$ctx")
+            // Intermediate entities must be simple (distinct, and neither endpoint); the final node is
+            // pinned to $b in the pattern, the start is $a.
+            for (i in 1 until len) {
+                add("y$i.resolvedId <> \$a")
+                add("y$i.resolvedId <> \$b")
+            }
+            for (i in 1 until len) for (j in i + 1 until len) add("y$i.resolvedId <> y$j.resolvedId")
         }
-        for (i in 1 until len) for (j in i + 1 until len) conds += "y$i.resolvedId <> y$j.resolvedId"
-        if (conds.isNotEmpty()) lines += "WHERE " + conds.joinToString(" AND ")
 
         val entityIds = buildString {
             append("[\$a")
@@ -142,12 +139,16 @@ internal object GraphProjectionCypher {
             append(", \$b]")
         }
         val edgeIds = (1..len).joinToString(", ") { "p$it.id" }
-        // Only one candidate per length survives the outer `ORDER BY len LIMIT 1`, and every path of a
-        // given length is an equally valid answer, so a hub entity's many same-length simple paths need
-        // not all be enumerated: LIMIT 1 keeps one per branch, bounding the work without changing which
-        // length wins.
-        lines += "RETURN $len AS len, $entityIds AS entityIds, [$edgeIds] AS edgeIds"
-        lines += "LIMIT 1"
-        return lines.joinToString("\n  ")
+
+        return buildList {
+            addAll(matchLines)
+            if (conds.isNotEmpty()) add("WHERE " + conds.joinToString(" AND "))
+            // Only one candidate per length survives the outer `ORDER BY len LIMIT 1`, and every path of a
+            // given length is an equally valid answer, so a hub entity's many same-length simple paths need
+            // not all be enumerated: LIMIT 1 keeps one per branch, bounding the work without changing which
+            // length wins.
+            add("RETURN $len AS len, $entityIds AS entityIds, [$edgeIds] AS edgeIds")
+            add("LIMIT 1")
+        }.joinToString("\n  ")
     }
 }
