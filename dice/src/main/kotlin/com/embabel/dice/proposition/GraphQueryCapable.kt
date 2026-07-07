@@ -85,6 +85,20 @@ interface GraphQueryCapable {
     }
 
     /**
+     * Same as the context-scoped overload above, but also carries the caller's own depth ceiling
+     * ([maxDepth]) so a backend that enforces its own hard cap on the walk can clamp against the
+     * caller's ceiling instead of a value it hardcodes itself. The facade always calls this overload
+     * (passing its own configured `maxDepth`) rather than the three-arg one, so a store that only
+     * overrides the three-arg overload keeps working unchanged — it just never sees the caller's
+     * ceiling and falls back to whatever bound it enforces on its own.
+     *
+     * @param maxDepth the caller's own depth ceiling; a backend combines this with its own hard cap
+     *   (e.g. `min(maxDepth, ownHardCap)`) rather than trusting it blindly
+     */
+    fun neighborhood(entityId: String, depth: Int, contextId: ContextId?, maxDepth: Int): GraphNeighborhood =
+        neighborhood(entityId, depth, contextId)
+
+    /**
      * The entity neighbourhood reachable from [entityId], keeping only edges whose source authority is
      * at least [minAuthority] (a null floor keeps everything).
      *
@@ -101,6 +115,13 @@ interface GraphQueryCapable {
         }
         return neighborhood(entityId, depth)
     }
+
+    /**
+     * Same as the authority-aware overload above, but also carries the caller's own depth ceiling
+     * ([maxDepth]), for the same reason as the context-aware [maxDepth]-carrying overload.
+     */
+    fun neighborhood(entityId: String, depth: Int, minAuthority: AuthorityTier?, maxDepth: Int): GraphNeighborhood =
+        neighborhood(entityId, depth, minAuthority)
 
     /**
      * The paths connecting [entityIdA] to [entityIdB].
@@ -126,6 +147,20 @@ interface GraphQueryCapable {
     }
 
     /**
+     * Same as the context-scoped overload above, but also carries the caller's own hop ceiling
+     * ([maxDepth]) for the walk, so a backend that enforces its own hard cap can clamp against the
+     * caller's ceiling instead of a value it hardcodes itself — mirroring the [maxDepth]-carrying
+     * [neighborhood] overload. The facade always calls this overload rather than the three-arg one, so
+     * a store that only overrides the three-arg overload keeps working unchanged, just without seeing
+     * the caller's ceiling.
+     *
+     * @param maxDepth the caller's own hop ceiling; a backend combines this with its own hard cap
+     *   (e.g. `min(maxDepth, ownHardCap)`) rather than trusting it blindly
+     */
+    fun pathBetween(entityIdA: String, entityIdB: String, contextId: ContextId?, maxDepth: Int): List<GraphPath> =
+        pathBetween(entityIdA, entityIdB, contextId)
+
+    /**
      * The paths connecting [entityIdA] to [entityIdB], keeping only edges whose source authority is at
      * least [minAuthority] (a null floor keeps everything).
      *
@@ -139,6 +174,13 @@ interface GraphQueryCapable {
         }
         return pathBetween(entityIdA, entityIdB)
     }
+
+    /**
+     * Same as the authority-aware overload above, but also carries the caller's own hop ceiling
+     * ([maxDepth]), for the same reason as the context-aware [maxDepth]-carrying overload.
+     */
+    fun pathBetween(entityIdA: String, entityIdB: String, minAuthority: AuthorityTier?, maxDepth: Int): List<GraphPath> =
+        pathBetween(entityIdA, entityIdB, minAuthority)
 
     /**
      * The lineage behind the proposition with the given id, assembled from its durable fields.

@@ -41,6 +41,13 @@ internal object GraphProjectionCypher {
     const val MAX_DEPTH = 5
 
     /**
+     * Clamp a requested hop count into `1..MAX_DEPTH`. Cypher can't parameterize a variable-length
+     * bound, so the generated query always bakes in a literal hop count — this is the one place that
+     * count is pinned to a safe range before it goes into the query string.
+     */
+    fun clampDepth(requested: Int): Int = requested.coerceIn(1, MAX_DEPTH)
+
+    /**
      * Neighbourhood query: every entity reachable from `$origin` within [bound] hops, with its
      * SHORTEST hop distance and the proposition ids on a shortest final hop into it (a valid `via`).
      *

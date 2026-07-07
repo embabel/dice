@@ -77,7 +77,9 @@ class GraphQuery(
      * Routes to a native [GraphQueryCapable] store for unscoped queries, and for context-scoped
      * queries when the store declares [GraphQueryCapable.honorsContextFilter]; otherwise builds the
      * neighbourhood from bounded BFS over ACTIVE proposition edges. The context is passed straight
-     * into the native context-aware method, which confines the walk in its own engine.
+     * into the native context-aware method, which confines the walk in its own engine. This query's
+     * own [maxDepth] ceiling goes along with it, so a native backend clamps its walk to the same bound
+     * the portable path enforces rather than a value it hardcodes itself.
      *
      * When [minAuthority] is set, the query routes to a native [GraphQueryCapable] store only if that
      * store declares [GraphQueryCapable.honorsAuthorityFilter] — letting a graph backend apply the
@@ -96,8 +98,8 @@ class GraphQuery(
         val native = nativeGraph()
         return when {
             native == null -> defaultNeighborhood(entityId, depth, minAuthority)
-            minAuthority == null -> native.neighborhood(entityId, depth, contextId)
-            native.honorsAuthorityFilter -> native.neighborhood(entityId, depth, minAuthority)
+            minAuthority == null -> native.neighborhood(entityId, depth, contextId, maxDepth)
+            native.honorsAuthorityFilter -> native.neighborhood(entityId, depth, minAuthority, maxDepth)
             else -> defaultNeighborhood(entityId, depth, minAuthority)
         }
     }
@@ -107,7 +109,9 @@ class GraphQuery(
      *
      * Routes to a native [GraphQueryCapable] store for unscoped queries, and for context-scoped
      * queries when the store declares [GraphQueryCapable.honorsContextFilter]; otherwise runs bounded,
-     * cycle-safe BFS over ACTIVE proposition edges. When [minAuthority] is set, the native adapter is
+     * cycle-safe BFS over ACTIVE proposition edges. This query's own [maxDepth] ceiling is passed along
+     * to the native adapter too, so it bounds the walk to the same hop ceiling the portable path uses.
+     * When [minAuthority] is set, the native adapter is
      * consulted only if it declares [GraphQueryCapable.honorsAuthorityFilter]; otherwise the portable
      * path applies the floor (re-resolving authority from provenance), as in [neighborhood].
      *
@@ -127,8 +131,8 @@ class GraphQuery(
         val native = nativeGraph()
         return when {
             native == null -> defaultPathBetween(entityIdA, entityIdB, minAuthority)
-            minAuthority == null -> native.pathBetween(entityIdA, entityIdB, contextId)
-            native.honorsAuthorityFilter -> native.pathBetween(entityIdA, entityIdB, minAuthority)
+            minAuthority == null -> native.pathBetween(entityIdA, entityIdB, contextId, maxDepth)
+            native.honorsAuthorityFilter -> native.pathBetween(entityIdA, entityIdB, minAuthority, maxDepth)
             else -> defaultPathBetween(entityIdA, entityIdB, minAuthority)
         }
     }

@@ -692,11 +692,25 @@ class DrivinePropositionRepository(
      * in Neo4j and hands back each reachable entity, its shortest hop distance, and the proposition
      * ids on a shortest final hop into it. We only hydrate those `via` propositions (via the lean
      * view) — the traversal itself never leaves the database. A non-null [contextId] confines the
-     * walk to that context (every hop's proposition must match); null is unscoped.
+     * walk to that context (every hop's proposition must match); null is unscoped. Called directly
+     * (bypassing the facade's own ceiling), this bounds the walk at [GraphProjectionCypher.MAX_DEPTH].
      */
     @Transactional(readOnly = true)
-    override fun neighborhood(entityId: String, depth: Int, contextId: ContextId?): GraphNeighborhood {
-        val bound = depth.coerceIn(1, GraphProjectionCypher.MAX_DEPTH)
+    override fun neighborhood(entityId: String, depth: Int, contextId: ContextId?): GraphNeighborhood =
+        neighborhoodNative(entityId, depth, contextId, GraphProjectionCypher.MAX_DEPTH)
+
+    /**
+     * Same walk as above, but bounded by the caller's own [maxDepth] ceiling instead of the store's
+     * hard cap — this is the overload [com.embabel.dice.query.graph.GraphQuery] actually calls, so a
+     * facade configured with a smaller (or larger) ceiling than [GraphProjectionCypher.MAX_DEPTH] gets
+     * a walk that honors it, clamped at that hard cap.
+     */
+    @Transactional(readOnly = true)
+    override fun neighborhood(entityId: String, depth: Int, contextId: ContextId?, maxDepth: Int): GraphNeighborhood =
+        neighborhoodNative(entityId, depth, contextId, clampToNativeCeiling(maxDepth))
+
+    private fun neighborhoodNative(entityId: String, depth: Int, contextId: ContextId?, ceiling: Int): GraphNeighborhood {
+        val bound = depth.coerceIn(1, ceiling)
         val params = mutableMapOf<String, Any>("origin" to entityId)
         contextId?.let { params["ctx"] = it.value }
         @Suppress("UNCHECKED_CAST")
@@ -724,16 +738,31 @@ class DrivinePropositionRepository(
      * Native shortest path: [GraphProjectionCypher.pathBetween] returns the shortest entity sequence
      * (up to [GraphProjectionCypher.MAX_DEPTH] hops) and the connecting proposition ids; empty when
      * the two entities are unreachable. Same-entity is the trivial one-node path, as in the portable
-     * facade. A non-null [contextId] confines every hop to that context; null is unscoped.
+     * facade. A non-null [contextId] confines every hop to that context; null is unscoped. Called
+     * directly (bypassing the facade's own ceiling), this bounds the walk at
+     * [GraphProjectionCypher.MAX_DEPTH].
      */
     @Transactional(readOnly = true)
-    override fun pathBetween(entityIdA: String, entityIdB: String, contextId: ContextId?): List<GraphPath> {
+    override fun pathBetween(entityIdA: String, entityIdB: String, contextId: ContextId?): List<GraphPath> =
+        pathBetweenNative(entityIdA, entityIdB, contextId, GraphProjectionCypher.MAX_DEPTH)
+
+    /**
+     * Same walk as above, but bounded by the caller's own [maxDepth] ceiling instead of the store's
+     * hard cap — this is the overload [com.embabel.dice.query.graph.GraphQuery] actually calls, so a
+     * facade configured with a smaller (or larger) ceiling than [GraphProjectionCypher.MAX_DEPTH] gets
+     * a walk that honors it, clamped at that hard cap.
+     */
+    @Transactional(readOnly = true)
+    override fun pathBetween(entityIdA: String, entityIdB: String, contextId: ContextId?, maxDepth: Int): List<GraphPath> =
+        pathBetweenNative(entityIdA, entityIdB, contextId, clampToNativeCeiling(maxDepth))
+
+    private fun pathBetweenNative(entityIdA: String, entityIdB: String, contextId: ContextId?, ceiling: Int): List<GraphPath> {
         if (entityIdA == entityIdB) return listOf(GraphPath(entityIds = listOf(entityIdA), edges = emptyList()))
         val params = mutableMapOf<String, Any>("a" to entityIdA, "b" to entityIdB)
         contextId?.let { params["ctx"] = it.value }
         @Suppress("UNCHECKED_CAST")
         val row = persistenceManager.query(
-            QuerySpecification.withStatement(GraphProjectionCypher.pathBetween(GraphProjectionCypher.MAX_DEPTH, contextId))
+            QuerySpecification.withStatement(GraphProjectionCypher.pathBetween(ceiling, contextId))
                 .bind(params) as QuerySpecification<Any>,
         ).filterIsInstance<Map<*, *>>().firstOrNull() ?: return emptyList()
 
@@ -745,6 +774,22 @@ class DrivinePropositionRepository(
                 edges = edgeIds.mapNotNull { byId[it] },
             ),
         )
+    }
+
+    /**
+     * Clamp a caller-supplied depth ceiling to this store's hard cap, warning when the caller asked
+     * for more than the walk can give. A silent truncation here is exactly the bug this clamp exists
+     * to avoid, so it logs instead of quietly dropping hops.
+     */
+    private fun clampToNativeCeiling(requestedMaxDepth: Int): Int {
+        if (requestedMaxDepth > GraphProjectionCypher.MAX_DEPTH) {
+            logger.warn(
+                "Requested maxDepth {} exceeds native graph query ceiling {}; clamping to the ceiling",
+                requestedMaxDepth,
+                GraphProjectionCypher.MAX_DEPTH,
+            )
+        }
+        return GraphProjectionCypher.clampDepth(requestedMaxDepth)
     }
 
     @Transactional(readOnly = true)
