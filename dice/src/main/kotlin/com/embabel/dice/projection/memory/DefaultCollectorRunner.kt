@@ -156,12 +156,88 @@ class DefaultCollectorRunner(
             // the stale snapshot.
             val freshById = candidatesById.toMutableMap()
 
-            // Fold every MergeInto's losers onto their survivor first, grouped by survivor id, so
-            // a survivor merged by several losers in one run gets a single read and save (also
-            // avoids re-embedding the survivor's text once per loser on persistent backends).
+            // A proposition can be a survivor for one mark and a loser for another in the same
+            // run (stacked strategies via the Builder can produce this). Applying merges by raw
+            // survivor id would then be order-dependent: whichever group happened to process
+            // first decides whether the in-between proposition's evidence reaches the final
+            // survivor or gets dropped as "not ACTIVE". Resolve every merge target to where it
+            // ultimately lands before grouping, so the result no longer depends on map iteration
+            // order.
+            val mergeTargetById: Map<String, String> = decisions
+                .mapNotNull { d -> (d.action as? SweepAction.MergeInto)?.let { d.propositionId to it.survivorId } }
+                .toMap()
+
+            // Follows survivor pointers (A -> B means "A's survivor is B") to the end of the
+            // chain. A cycle within one run (A -> B -> A) is a defect in the marks, not something
+            // we can resolve acyclically — break it deterministically by picking the lowest id
+            // among the CYCLE'S OWN members (not every id walked to reach it) as the winner, and
+            // warn, so repeated runs over the same bad input always land the same way.
+            //
+            // A chain can feed into a cycle from outside it (X -> A -> Y -> B -> Y, cycle {Y, B},
+            // with A just a tail on the way in). Every id on that walk — the tail nodes and the
+            // cycle members alike — must resolve to the SAME terminal survivor, or the tail's
+            // evidence lands on a node (A) that then gets folded away as a loser somewhere else,
+            // silently dropping it. `resolved` memoizes every id we've already pinned down (both
+            // previous calls and nodes seen partway through the current walk) so every decision in
+            // this run shares one consistent view of where each id ultimately lands.
+            val resolved = mutableMapOf<String, String>()
+
+            fun terminalSurvivor(startId: String): String {
+                resolved[startId]?.let { return it }
+                val path = mutableListOf<String>()
+                val indexOnPath = mutableMapOf<String, Int>()
+                var current = startId
+                while (true) {
+                    resolved[current]?.let { cached ->
+                        path.forEach { resolved[it] = cached }
+                        return cached
+                    }
+                    val cycleStart = indexOnPath[current]
+                    if (cycleStart != null) {
+                        val cycle = path.subList(cycleStart, path.size)
+                        val winner = cycle.min()
+                        logger.warn(
+                            "Collector run {}: MergeInto cycle detected among {}; resolving deterministically to {}",
+                            runId, cycle, winner,
+                        )
+                        path.forEach { resolved[it] = winner }
+                        return winner
+                    }
+                    val next = mergeTargetById[current]
+                    if (next == null) {
+                        path.forEach { resolved[it] = current }
+                        resolved[current] = current
+                        return current
+                    }
+                    indexOnPath[current] = path.size
+                    path.add(current)
+                    current = next
+                }
+            }
+
+            // Fold every MergeInto's losers onto their terminal survivor first, grouped by that
+            // survivor's id, so a survivor merged by several losers in one run (directly or via a
+            // chain) gets a single read and save (also avoids re-embedding the survivor's text
+            // once per loser on persistent backends).
             val mergesBySurvivor = decisions
                 .mapNotNull { d -> (d.action as? SweepAction.MergeInto)?.let { d to it } }
-                .groupBy({ (_, action) -> action.survivorId })
+                .mapNotNull { (d, action) ->
+                    val terminal = terminalSurvivor(action.survivorId)
+                    if (terminal == d.propositionId) {
+                        // This decision is the broken link of a cycle: chain resolution kept this
+                        // very proposition as the winning survivor, so its own "merge into
+                        // someone else" can't be applied without merging it into itself. Drop it
+                        // — the proposition just stays put as the survivor everyone else lands on.
+                        logger.warn(
+                            "Collector run {}: dropping MergeInto {} -> {}; cycle resolution kept {} as the survivor",
+                            runId, d.propositionId, action.survivorId, terminal,
+                        )
+                        null
+                    } else {
+                        Triple(d, action, terminal)
+                    }
+                }
+                .groupBy({ (_, _, terminal) -> terminal }) { (d, action, _) -> d to action }
 
             for ((survivorId, group) in mergesBySurvivor) {
                 val survivor = freshById[survivorId] ?: repository.findById(survivorId)?.also { freshById[survivorId] = it }
