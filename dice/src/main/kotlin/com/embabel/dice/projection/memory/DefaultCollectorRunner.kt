@@ -169,22 +169,48 @@ class DefaultCollectorRunner(
 
             // Follows survivor pointers (A -> B means "A's survivor is B") to the end of the
             // chain. A cycle within one run (A -> B -> A) is a defect in the marks, not something
-            // we can resolve acyclically — break it deterministically by picking the lowest id in
-            // the cycle as the winner, and warn, so repeated runs over the same bad input always
-            // land the same way.
+            // we can resolve acyclically — break it deterministically by picking the lowest id
+            // among the CYCLE'S OWN members (not every id walked to reach it) as the winner, and
+            // warn, so repeated runs over the same bad input always land the same way.
+            //
+            // A chain can feed into a cycle from outside it (X -> A -> Y -> B -> Y, cycle {Y, B},
+            // with A just a tail on the way in). Every id on that walk — the tail nodes and the
+            // cycle members alike — must resolve to the SAME terminal survivor, or the tail's
+            // evidence lands on a node (A) that then gets folded away as a loser somewhere else,
+            // silently dropping it. `resolved` memoizes every id we've already pinned down (both
+            // previous calls and nodes seen partway through the current walk) so every decision in
+            // this run shares one consistent view of where each id ultimately lands.
+            val resolved = mutableMapOf<String, String>()
+
             fun terminalSurvivor(startId: String): String {
-                val visited = linkedSetOf(startId)
+                resolved[startId]?.let { return it }
+                val path = mutableListOf<String>()
+                val indexOnPath = mutableMapOf<String, Int>()
                 var current = startId
                 while (true) {
-                    val next = mergeTargetById[current] ?: return current
-                    if (!visited.add(next)) {
-                        val winner = visited.min()
+                    resolved[current]?.let { cached ->
+                        path.forEach { resolved[it] = cached }
+                        return cached
+                    }
+                    val cycleStart = indexOnPath[current]
+                    if (cycleStart != null) {
+                        val cycle = path.subList(cycleStart, path.size)
+                        val winner = cycle.min()
                         logger.warn(
                             "Collector run {}: MergeInto cycle detected among {}; resolving deterministically to {}",
-                            runId, visited, winner,
+                            runId, cycle, winner,
                         )
+                        path.forEach { resolved[it] = winner }
                         return winner
                     }
+                    val next = mergeTargetById[current]
+                    if (next == null) {
+                        path.forEach { resolved[it] = current }
+                        resolved[current] = current
+                        return current
+                    }
+                    indexOnPath[current] = path.size
+                    path.add(current)
                     current = next
                 }
             }

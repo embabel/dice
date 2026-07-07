@@ -711,6 +711,105 @@ class DefaultCollectorRunnerTest {
     }
 
     @Test
+    fun `a chain feeding into a cycle resolves every node to the same terminal survivor`() {
+        // X -> A -> Y -> B -> Y: the real cycle is {Y, B}; A is just a tail on the way in, not a
+        // cycle member. The tie-break must be computed over the cycle's own members only — if it
+        // were computed over the whole walked path (the bug this test guards against), X would
+        // resolve to A while A resolves to Y/B, so X's evidence would land on A right before A
+        // itself gets retired as a loser elsewhere, silently losing it.
+        val x = proposition("X").copy(grounding = listOf("chunk-x"), reinforceCount = 0)
+        val a = proposition("A").copy(grounding = listOf("chunk-a"), reinforceCount = 0)
+        val y = proposition("Y").copy(grounding = listOf("chunk-y"), reinforceCount = 0)
+        val b = proposition("B").copy(grounding = listOf("chunk-b"), reinforceCount = 0)
+        val winnerId = minOf(y.id, b.id)
+        val loserOfCycleId = maxOf(y.id, b.id)
+        every { repository.query(any()) } returns listOf(x, a, y, b)
+        val saved = mutableMapOf(x.id to x, a.id to a, y.id to y, b.id to b)
+        every { repository.findById(any()) } answers { saved[firstArg()] }
+        every { repository.save(any()) } answers {
+            val p = firstArg<Proposition>()
+            saved[p.id] = p
+            p
+        }
+
+        val strategy = CollectorStrategy { _, _, _ ->
+            listOf(
+                PropositionMark(x.id, MarkReason.Duplicate(survivorId = a.id), "duplicate"),
+                PropositionMark(a.id, MarkReason.Duplicate(survivorId = y.id), "duplicate"),
+                PropositionMark(y.id, MarkReason.Duplicate(survivorId = b.id), "duplicate"),
+                PropositionMark(b.id, MarkReason.Duplicate(survivorId = y.id), "duplicate"),
+            )
+        }
+        val runner = CollectorRunner
+            .withRepository(repository)
+            .withStrategy(strategy)
+            .withPolicy(MergingSweepPolicy())
+            .withRecordStore(recordStore)
+            .withEventListener(listener)
+            .build()
+
+        runner.run(contextId, dryRun = false)
+
+        // Every id on the walk — chain and cycle alike — lands on the same terminal survivor, and
+        // X's evidence (fed in from outside the cycle) reaches it rather than being dropped on A.
+        val winnerState = saved.getValue(winnerId)
+        assertEquals(PropositionStatus.ACTIVE, winnerState.status)
+        assertEquals(setOf("chunk-x", "chunk-a", "chunk-y", "chunk-b"), winnerState.grounding.toSet())
+        assertEquals(PropositionStatus.STALE, saved.getValue(a.id).status)
+        assertEquals(PropositionStatus.STALE, saved.getValue(x.id).status)
+        assertEquals(PropositionStatus.STALE, saved.getValue(loserOfCycleId).status)
+    }
+
+    @Test
+    fun `a longer tail of two nodes into a cycle still resolves everyone to the same survivor`() {
+        // W -> X -> A -> Y -> B -> Y: two tail nodes (W, X) ahead of the same {Y, B} cycle as
+        // above. Guards against an off-by-one in where the tail/cycle boundary is detected.
+        val w = proposition("W").copy(grounding = listOf("chunk-w"), reinforceCount = 0)
+        val x = proposition("X").copy(grounding = listOf("chunk-x"), reinforceCount = 0)
+        val a = proposition("A").copy(grounding = listOf("chunk-a"), reinforceCount = 0)
+        val y = proposition("Y").copy(grounding = listOf("chunk-y"), reinforceCount = 0)
+        val b = proposition("B").copy(grounding = listOf("chunk-b"), reinforceCount = 0)
+        val winnerId = minOf(y.id, b.id)
+        every { repository.query(any()) } returns listOf(w, x, a, y, b)
+        val saved = mutableMapOf(w.id to w, x.id to x, a.id to a, y.id to y, b.id to b)
+        every { repository.findById(any()) } answers { saved[firstArg()] }
+        every { repository.save(any()) } answers {
+            val p = firstArg<Proposition>()
+            saved[p.id] = p
+            p
+        }
+
+        val strategy = CollectorStrategy { _, _, _ ->
+            listOf(
+                PropositionMark(w.id, MarkReason.Duplicate(survivorId = x.id), "duplicate"),
+                PropositionMark(x.id, MarkReason.Duplicate(survivorId = a.id), "duplicate"),
+                PropositionMark(a.id, MarkReason.Duplicate(survivorId = y.id), "duplicate"),
+                PropositionMark(y.id, MarkReason.Duplicate(survivorId = b.id), "duplicate"),
+                PropositionMark(b.id, MarkReason.Duplicate(survivorId = y.id), "duplicate"),
+            )
+        }
+        val runner = CollectorRunner
+            .withRepository(repository)
+            .withStrategy(strategy)
+            .withPolicy(MergingSweepPolicy())
+            .withRecordStore(recordStore)
+            .withEventListener(listener)
+            .build()
+
+        runner.run(contextId, dryRun = false)
+
+        val winnerState = saved.getValue(winnerId)
+        assertEquals(PropositionStatus.ACTIVE, winnerState.status)
+        assertEquals(
+            setOf("chunk-w", "chunk-x", "chunk-a", "chunk-y", "chunk-b"),
+            winnerState.grounding.toSet(),
+        )
+        assertEquals(PropositionStatus.STALE, saved.getValue(w.id).status)
+        assertEquals(PropositionStatus.STALE, saved.getValue(x.id).status)
+        assertEquals(PropositionStatus.STALE, saved.getValue(a.id).status)
+    }
+
+    @Test
     fun `withDuplicateDetection does not clobber a policy the caller set explicitly`() {
         // A caller who sets a policy explicitly must keep it, whatever the call order. Here a Skip
         // policy must win over the MergingSweepPolicy that withDuplicateDetection would otherwise
