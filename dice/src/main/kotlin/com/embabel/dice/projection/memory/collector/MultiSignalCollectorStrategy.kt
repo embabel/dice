@@ -161,24 +161,18 @@ class MultiSignalCollectorStrategy(
 
     /** Pools every pair source's proposals, canonicalizing (smaller id as anchor) and deduping. */
     private fun collectPairs(candidates: List<Proposition>, contextId: ContextId): List<CandidatePair> {
-        val seen = mutableSetOf<Pair<String, String>>()
-        val pairs = mutableListOf<CandidatePair>()
-        for (source in pairSources) {
-            for (proposed in source.propose(candidates, contextId)) {
+        return pairSources
+            .flatMap { it.propose(candidates, contextId) }
+            .mapNotNull { proposed ->
                 val (first, second) = if (proposed.anchor.id <= proposed.member.id) {
                     proposed.anchor to proposed.member
                 } else {
                     proposed.member to proposed.anchor
                 }
-                if (first.id == second.id) continue
-                val key = first.id to second.id
-                if (!seen.add(key)) continue
-                pairs.add(
-                    if (first === proposed.anchor) proposed else proposed.copy(anchor = first, member = second),
-                )
+                if (first.id == second.id) return@mapNotNull null
+                if (first === proposed.anchor) proposed else proposed.copy(anchor = first, member = second)
             }
-        }
-        return pairs
+            .distinctBy { it.anchor.id to it.member.id }
     }
 
     private fun scoreAndAggregate(pair: CandidatePair, contextId: ContextId): CollectorCandidateEdge {

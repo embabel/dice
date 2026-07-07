@@ -37,9 +37,14 @@ internal fun normalizedText(p: Proposition): String = p.text.trim().lowercase()
  * score 0, not 1 — there's no positive evidence of overlap, just an absence of data on both
  * sides. Callers that want "no data" to mean something different (e.g. abstain rather than 0)
  * need to check emptiness themselves before calling this.
+ *
+ * This is a set-based Jaccard for domain IDs (entities, groundings, sources), deliberately not
+ * [org.apache.commons.text.similarity.JaccardSimilarity]. That class is character-level over
+ * CharSequences and treats empty/empty as 1.0 (maximal similarity); this one scores pre-built
+ * domain-id sets and interprets empty/empty as no-evidence (score 0) because both sides being
+ * absent of any mention, grounding, or source material is simply not comparable.
  */
 internal fun jaccard(a: Set<*>, b: Set<*>): Double {
-    if (a.isEmpty() && b.isEmpty()) return 0.0
     val intersection = a.intersect(b).size
     val union = a.size + b.size - intersection
     return if (union == 0) 0.0 else intersection.toDouble() / union

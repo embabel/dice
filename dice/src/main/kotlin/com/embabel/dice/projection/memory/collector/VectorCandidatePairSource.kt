@@ -52,19 +52,16 @@ class VectorCandidatePairSource(
         )
 
         // Re-derive and dedupe defensively rather than trust findClusters' own canonicalization.
-        val seen = mutableSetOf<Pair<String, String>>()
-        val pairs = mutableListOf<CandidatePair>()
-        for (cluster in clusters) {
-            val anchor = byId[cluster.anchor.id] ?: continue
-            for (result in cluster.similar) {
-                val member = byId[result.match.id] ?: continue
-                if (anchor.id == member.id) continue
-                val (first, second) = if (anchor.id <= member.id) anchor to member else member to anchor
-                val key = first.id to second.id
-                if (!seen.add(key)) continue
-                pairs.add(CandidatePair(anchor = first, member = second, proposalScore = result.score))
+        return clusters
+            .flatMap { cluster ->
+                val anchor = byId[cluster.anchor.id] ?: return@flatMap emptyList()
+                cluster.similar.mapNotNull { result ->
+                    val member = byId[result.match.id] ?: return@mapNotNull null
+                    if (anchor.id == member.id) return@mapNotNull null
+                    val (first, second) = if (anchor.id <= member.id) anchor to member else member to anchor
+                    CandidatePair(anchor = first, member = second, proposalScore = result.score)
+                }
             }
-        }
-        return pairs
+            .distinctBy { it.anchor.id to it.member.id }
     }
 }
