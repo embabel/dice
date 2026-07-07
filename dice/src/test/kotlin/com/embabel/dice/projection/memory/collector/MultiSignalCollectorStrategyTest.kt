@@ -21,6 +21,10 @@ import com.embabel.dice.projection.memory.DuplicateCollectorStrategy
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
+import com.embabel.dice.spi.CollectorCandidateEdge
+import com.embabel.dice.spi.CollectorComponent
+import com.embabel.dice.spi.CollectorDecision
+import com.embabel.dice.spi.CollectorTraceStore
 import com.embabel.dice.spi.InMemoryCollectorTraceStore
 import com.embabel.dice.spi.InMemoryConnectedComponentsFinder
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -70,7 +74,7 @@ class MultiSignalCollectorStrategyTest {
 
     /** Builds a vector-only strategy: matchThreshold <= similarityThreshold so nothing dice kept is dropped. */
     private fun vectorOnlyStrategy(
-        traceStore: InMemoryCollectorTraceStore = InMemoryCollectorTraceStore(),
+        traceStore: CollectorTraceStore = InMemoryCollectorTraceStore(),
         similarityThreshold: Double = 0.7,
         matchThreshold: Double = 0.6,
     ): MultiSignalCollectorStrategy =
@@ -158,5 +162,38 @@ class MultiSignalCollectorStrategyTest {
         assertEquals(weak.status, retired.priorStatus)
         assertEquals(weak.grounding, retired.foldedGrounding)
         assertEquals(weak.sourceIds, retired.foldedSourceIds)
+    }
+
+    /** A [CollectorTraceStore] whose every record call throws, simulating a broken trace backend. */
+    private class ThrowingCollectorTraceStore : CollectorTraceStore {
+        override fun recordRunContext(runId: String, contextId: ContextId): Unit =
+            throw RuntimeException("trace store unavailable")
+
+        override fun recordCandidateEdges(runId: String, edges: List<CollectorCandidateEdge>): Unit =
+            throw RuntimeException("trace store unavailable")
+
+        override fun recordComponents(runId: String, components: List<CollectorComponent>): Unit =
+            throw RuntimeException("trace store unavailable")
+
+        override fun recordDecision(runId: String, decision: CollectorDecision): Unit =
+            throw RuntimeException("trace store unavailable")
+
+        override fun deleteTracesForContext(contextId: ContextId): Unit =
+            throw RuntimeException("trace store unavailable")
+    }
+
+    @Test
+    fun `still produces marks when the trace store fails on every write`() {
+        setEmbedding("strong statement", floatArrayOf(1f, 0f, 0f))
+        setEmbedding("weak statement", floatArrayOf(0.99f, 0.1f, 0f))
+        val strong = repo.save(proposition("strong statement", confidence = 0.9))
+        val weak = repo.save(proposition("weak statement", confidence = 0.3))
+        val candidates = listOf(strong, weak)
+
+        val actual = vectorOnlyStrategy(traceStore = ThrowingCollectorTraceStore())
+            .mark(candidates, repo, CollectorRunContext("trace-failure-run", contextId))
+
+        assertEquals(1, actual.size)
+        assertEquals(weak.id, actual[0].propositionId)
     }
 }
