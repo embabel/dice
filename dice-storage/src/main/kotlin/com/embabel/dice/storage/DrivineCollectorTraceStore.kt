@@ -162,10 +162,9 @@ class DrivineCollectorTraceStore(
     @Transactional
     override fun deleteTracesForContext(contextId: ContextId) {
         val params = mapOf("contextId" to contextId.value)
-        var totalDeleted = 0
         // One statement per label rather than a single multi-label match: keeps each delete a plain
         // parameterized MATCH + DETACH DELETE, no APOC/GDS needed to loop over labels in Cypher itself.
-        for (label in CollectorTraceSchema.LABELS) {
+        val totalDeleted = CollectorTraceSchema.LABELS.sumOf { label ->
             val deleted = persistenceManager.maybeGetOne(
                 QuerySpecification
                     .withStatement(
@@ -179,7 +178,7 @@ class DrivineCollectorTraceStore(
                     .bind(params)
                     .transform(Long::class.java),
             )
-            totalDeleted += deleted?.toInt() ?: 0
+            deleted?.toInt() ?: 0
         }
         logger.info("Deleted {} collector trace node(s) for context {}", totalDeleted, contextId.value)
     }
@@ -215,14 +214,39 @@ class DrivineCollectorTraceStore(
         }
     }
 
-    /** Rehydrates every decision recorded under [runId], each with its retired members nested. */
+    /** Rehydrates every decision recorded under [runId], each with its retired members nested — one round trip. */
     @Transactional(readOnly = true)
     override fun findDecisionsByRun(runId: String): List<CollectorDecision> {
-        val decisionRows = queryRows("MATCH (d:CollectorDecision {runId: \$runId}) RETURN d", mapOf("runId" to runId))
-        return decisionRows.mapNotNull { node ->
+        val rows = queryRows(
+            """
+            MATCH (d:CollectorDecision {runId: ${'$'}runId})
+            OPTIONAL MATCH (ret:CollectorRetired)-[:RETIRED_IN]->(d)
+            WITH d, collect(ret) AS retiredNodes
+            RETURN {
+                id: d.id, runId: d.runId, componentId: d.componentId, survivorId: d.survivorId, action: d.action,
+                retired: [r IN retiredNodes WHERE r IS NOT NULL | {
+                    propositionId: r.propositionId, priorStatus: r.priorStatus,
+                    foldedGrounding: r.foldedGrounding, foldedProvenanceRefs: r.foldedProvenanceRefs,
+                    foldedSourceIds: r.foldedSourceIds
+                }]
+            } AS row
+            """.trimIndent(),
+            mapOf("runId" to runId),
+        )
+        return rows.mapNotNull { row ->
             runCatching {
-                val decisionId = node["id"]?.toString().orEmpty()
-                CollectorDecisionRowMapper.fromRow(node, retiredFor(decisionId))
+                val decisionId = row["id"]?.toString().orEmpty()
+                require(decisionId.isNotBlank()) { "CollectorDecision row missing id" }
+                @Suppress("UNCHECKED_CAST")
+                val retiredRows = (row["retired"] as? List<*>).orEmpty()
+                val retired = retiredRows.mapNotNull { entry ->
+                    (entry as? Map<*, *>)?.let { retiredRow ->
+                        runCatching { CollectorDecisionRowMapper.retiredFromRow(retiredRow) }
+                            .onFailure { logger.warn("Skipping unreadable CollectorRetired row for decision {}: {}", decisionId, it.message) }
+                            .getOrNull()
+                    }
+                }
+                CollectorDecisionRowMapper.fromRow(row, retired)
             }.onFailure { logger.warn("Skipping unreadable CollectorDecision row: {}", it.message) }.getOrNull()
         }
     }

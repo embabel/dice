@@ -211,10 +211,23 @@ negligible, but the signals query pulls every `SCORED` signal for the run and gr
 client-side, so an unusually large run means a correspondingly large in-memory result set — the
 ceiling to watch if run sizes grow.
 
-`findDecisionsByRun` and `findDecisionForProposition` follow the same shape: fetch the decision
-node(s), then a helper (`retiredFor`) fetches the `CollectorRetired` children keyed by
-`decisionId`. `findDecisionForProposition` checks both sides of a merge — first whether the id is
-a decision's `survivorId`, then (if not) whether it appears on a `CollectorRetired` node reachable
+`findDecisionsByRun` takes the opposite approach: it's the one place D+1 round trips (one for the
+decisions, one per decision for its retired members) actually mattered, since a run can have many
+decisions. It runs a single query — `MATCH` the run's decisions, `OPTIONAL MATCH` their
+`CollectorRetired` children, aggregate each decision's retired nodes with `collect()`, then build
+one map-per-decision (`RETURN { id: ..., retired: [r IN retiredNodes WHERE r IS NOT NULL | {...}]
+} AS row`) — so the whole read is one round trip regardless of how many decisions or retired
+members the run has. The `WHERE r IS NOT NULL` filter matters: `OPTIONAL MATCH` yields a null
+`ret` for decisions with no retired members, and leaving it in would turn every childless decision
+into a decision with one bogus retired row. Each decision row is still mapped inside its own
+`runCatching`, and each nested retired entry inside its own inner `runCatching`, so one unreadable
+decision or retired entry is skipped and logged rather than poisoning the read — the same
+corrupt-row tolerance as the two-pass queries, just applied to one result set instead of two.
+
+`findDecisionForProposition` looks up a single decision, so the D+1 concern doesn't apply — it
+keeps the two-pass shape (fetch the decision node, then `retiredFor` fetches its `CollectorRetired`
+children keyed by `decisionId`). It checks both sides of a merge — first whether the id is a
+decision's `survivorId`, then (if not) whether it appears on a `CollectorRetired` node reachable
 via `RETIRED_IN` — so it answers "what happened to this proposition" whether it survived or was
 folded away.
 
