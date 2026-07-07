@@ -44,9 +44,14 @@ import org.slf4j.LoggerFactory
  * 2. every [CollectorSignalScorer] scores each pair, abstentions (null) dropped, and
  *    [CollectorEdgeAggregator] blends what's left into one [CollectorCandidateEdge] per pair;
  * 3. [componentsFinder] groups candidate ids into components using the non-vetoed edges at or
- *    above [matchThreshold];
- * 4. each component of size 2+ gets one survivor (via [survivorPolicy]); everyone else in the
- *    component is marked [MarkReason.Duplicate] pointing at the survivor.
+ *    above [matchThreshold]; because this unions transitively, two members can end up in the
+ *    same component without ever having been scored against each other directly (A~B, B~C puts
+ *    A and C together even if no source ever proposed the pair (A,C)), so before survivors are
+ *    picked, every such never-scored intra-component pair is checked for a polarity contradiction
+ *    and one side of any contradicting pair is vetoed out of the component (see
+ *    `resolveContradictions`);
+ * 4. each surviving component of size 2+ gets one survivor (via [survivorPolicy]); everyone else
+ *    in the component is marked [MarkReason.Duplicate] pointing at the survivor.
  *
  * Every edge, component, and decision is recorded in [traceStore] under the run's id, so a run
  * can be inspected or reversed after the fact — see [RetiredProposition] for what's kept about
@@ -73,6 +78,13 @@ class MultiSignalCollectorStrategy(
 ) : RunAwareCollectorStrategy {
 
     private val logger = LoggerFactory.getLogger(MultiSignalCollectorStrategy::class.java)
+
+    /**
+     * Reused directly for the component-level contradiction guard below — see [resolveContradictions].
+     * Not necessarily the same instance as any [PolarityVetoSignalScorer] in [scorers]; it only ever
+     * abstains or vetoes, so calling it twice on an already-scored pair is harmless.
+     */
+    private val polarityGuard = PolarityVetoSignalScorer()
 
     /**
      * Runs one full mark pass over [candidates] and returns the duplicate marks it produced.
@@ -106,7 +118,22 @@ class MultiSignalCollectorStrategy(
             .map { (componentId, memberIds) -> CollectorComponent(componentId, memberIds) }
         if (tracing) trace("recordComponents") { traceStore.recordComponents(ctx.runId, components) }
 
-        val marks = components
+        // A component can chain propositions that were never directly compared to each other -
+        // e.g. A~B and B~C union A and C into one component even though no pair source ever
+        // proposed (A,C). Before we pick a survivor, check every intra-component pair that
+        // wasn't already scored as an edge for a polarity contradiction, and veto any member
+        // that would drag a contradiction into the merge.
+        val scoredPairKeys = pairs.mapTo(mutableSetOf()) { pairKey(it.anchor.id, it.member.id) }
+        val edgeCounts = eligibleEdges
+            .flatMap { listOf(it.anchorId, it.memberId) }
+            .groupingBy { it }
+            .eachCount()
+
+        val resolvedComponents = components.mapNotNull { component ->
+            resolveContradictions(component, byId, scoredPairKeys, edgeCounts, contextId)
+        }
+
+        val marks = resolvedComponents
             .filter { it.memberIds.size >= 2 }
             .flatMap { component -> markComponent(component, byId, ctx.runId, tracing) }
             .distinctBy { it.propositionId }
@@ -157,6 +184,84 @@ class MultiSignalCollectorStrategy(
         return CollectorEdgeAggregator.aggregate(pair, signals)
     }
 
+    private fun pairKey(a: String, b: String): Pair<String, String> = if (a <= b) a to b else b to a
+
+    /**
+     * Guards one component against contradictions that only show up once ids are chained
+     * together transitively (never scored as a direct edge). Repeatedly finds a contradicting
+     * pair among the component's members and vetoes one side of it (the member with fewer
+     * surviving edges, lowest id wins a tie) until no contradiction remains. Returns null if
+     * the component drops below 2 members along the way, meaning it should be skipped entirely.
+     *
+     * Skips the check (and just returns the component unchanged) once a component is bigger than
+     * [MAX_CONTRADICTION_CHECK_MEMBERS] members, since the check is quadratic in component size
+     * and components this large are already unusual.
+     */
+    private fun resolveContradictions(
+        component: CollectorComponent,
+        byId: Map<String, Proposition>,
+        scoredPairKeys: Set<Pair<String, String>>,
+        edgeCounts: Map<String, Int>,
+        contextId: ContextId,
+    ): CollectorComponent? {
+        if (component.memberIds.size > MAX_CONTRADICTION_CHECK_MEMBERS) {
+            logger.warn(
+                "MultiSignalCollectorStrategy: component {} has {} member(s), skipping the " +
+                    "transitive contradiction guard above {} member(s)",
+                component.componentId, component.memberIds.size, MAX_CONTRADICTION_CHECK_MEMBERS,
+            )
+            return component
+        }
+
+        var members = component.memberIds
+        while (true) {
+            val contradiction = findContradiction(members, byId, scoredPairKeys, contextId) ?: break
+            val (a, b) = contradiction
+            val loser = pickLoser(a, b, edgeCounts)
+            logger.warn(
+                "MultiSignalCollectorStrategy: component {} - {} and {} assert opposite polarity " +
+                    "about a shared entity via a transitive chain; vetoing {} out of the merge",
+                component.componentId, a, b, loser,
+            )
+            members = members.filterNot { it == loser }
+        }
+
+        if (members.size < 2) return null
+        return if (members.size == component.memberIds.size) component else component.copy(memberIds = members)
+    }
+
+    /** First pair among [members] that wasn't already scored as an edge and vetoes on polarity. */
+    private fun findContradiction(
+        members: List<String>,
+        byId: Map<String, Proposition>,
+        scoredPairKeys: Set<Pair<String, String>>,
+        contextId: ContextId,
+    ): Pair<String, String>? {
+        for (i in members.indices) {
+            for (j in i + 1 until members.size) {
+                val a = members[i]
+                val b = members[j]
+                if (pairKey(a, b) in scoredPairKeys) continue
+                val anchor = byId[a] ?: continue
+                val member = byId[b] ?: continue
+                val score = polarityGuard.score(CandidatePair(anchor, member), contextId)
+                if (score?.veto == true) return a to b
+            }
+        }
+        return null
+    }
+
+    /** The member to drop from a contradicting pair: fewer surviving edges loses; ties keep the lower id. */
+    private fun pickLoser(a: String, b: String, edgeCounts: Map<String, Int>): String {
+        val countA = edgeCounts[a] ?: 0
+        val countB = edgeCounts[b] ?: 0
+        return when {
+            countA > countB -> b
+            countB > countA -> a
+            else -> maxOf(a, b)
+        }
+    }
+
     /** One survivor for the component; every other member is marked as its duplicate. */
     private fun markComponent(
         component: CollectorComponent,
@@ -205,5 +310,11 @@ class MultiSignalCollectorStrategy(
     companion object {
         private const val STRATEGY_NAME = "multi-signal"
         private const val MERGE_ACTION = "duplicate-merge"
+
+        /**
+         * Above this many members, the transitive contradiction guard is skipped for a component
+         * (it's quadratic in member count and components this large are already anomalous).
+         */
+        private const val MAX_CONTRADICTION_CHECK_MEMBERS = 32
     }
 }
