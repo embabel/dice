@@ -574,6 +574,143 @@ class DefaultCollectorRunnerTest {
     }
 
     @Test
+    fun `a survivor that is itself merged away in the same run passes its absorbed evidence on to the final survivor`() {
+        // Finding F2: X merges into A, and A separately merges into B, all in the same run
+        // (possible once multiple strategies are stacked). Whichever group the runner happened
+        // to process first used to decide whether X's evidence reached B or was dropped to the
+        // "not ACTIVE" fallback. Chain resolution must land X on B regardless of decision order.
+        val finalSurvivor = proposition("B").copy(grounding = listOf("chunk-b"), reinforceCount = 0)
+        val middle = proposition("A").copy(grounding = listOf("chunk-a"), reinforceCount = 0)
+        val loser = proposition("X").copy(grounding = listOf("chunk-x"))
+        every { repository.query(any()) } returns listOf(loser, middle)
+        val saved = mutableMapOf(finalSurvivor.id to finalSurvivor, middle.id to middle)
+        every { repository.findById(any()) } answers { saved[firstArg()] }
+        every { repository.save(any()) } answers {
+            val p = firstArg<Proposition>()
+            saved[p.id] = p
+            p
+        }
+
+        // X -> A (marked first) and A -> B (marked second): decision order puts the middle
+        // proposition's own merge-away AFTER the merge that targets it.
+        val xIntoA = CollectorStrategy { candidates, _, _ ->
+            candidates.filter { it.id == loser.id }
+                .map { PropositionMark(it.id, MarkReason.Duplicate(survivorId = middle.id), "duplicate") }
+        }
+        val aIntoB = CollectorStrategy { candidates, _, _ ->
+            candidates.filter { it.id == middle.id }
+                .map { PropositionMark(it.id, MarkReason.Duplicate(survivorId = finalSurvivor.id), "duplicate") }
+        }
+        val runner = CollectorRunner
+            .withRepository(repository)
+            .withStrategy(xIntoA)
+            .withStrategy(aIntoB)
+            .withPolicy(MergingSweepPolicy())
+            .withRecordStore(recordStore)
+            .withEventListener(listener)
+            .build()
+
+        runner.run(contextId, dryRun = false)
+
+        val finalState = saved.getValue(finalSurvivor.id)
+        // X's evidence reached B directly, not just A's — the chain is fully resolved, not just
+        // one hop.
+        assertEquals(setOf("chunk-b", "chunk-a", "chunk-x"), finalState.grounding.toSet())
+        // Both X (into A) and A (into B) collapsed, so B gets two reinforcements.
+        assertEquals(2, finalState.reinforceCount)
+        // A itself was retired (it merged away) rather than left dangling ACTIVE.
+        assertEquals(PropositionStatus.STALE, saved.getValue(middle.id).status)
+        // Neither collapse falls back to a plain retirement missing its evidence.
+        assertEquals(2, listener.eventsOfType<PropositionStatusChanged>().size)
+    }
+
+    @Test
+    fun `the same survivor chain resolves identically when the middle proposition's own merge is marked first`() {
+        // Same scenario as above, opposite mark order: A -> B is marked before X -> A. Since
+        // chain resolution happens before grouping (not during iteration), the outcome must be
+        // identical regardless of which mark came first.
+        val finalSurvivor = proposition("B").copy(grounding = listOf("chunk-b"), reinforceCount = 0)
+        val middle = proposition("A").copy(grounding = listOf("chunk-a"), reinforceCount = 0)
+        val loser = proposition("X").copy(grounding = listOf("chunk-x"))
+        every { repository.query(any()) } returns listOf(middle, loser)
+        val saved = mutableMapOf(finalSurvivor.id to finalSurvivor, middle.id to middle)
+        every { repository.findById(any()) } answers { saved[firstArg()] }
+        every { repository.save(any()) } answers {
+            val p = firstArg<Proposition>()
+            saved[p.id] = p
+            p
+        }
+
+        val aIntoB = CollectorStrategy { candidates, _, _ ->
+            candidates.filter { it.id == middle.id }
+                .map { PropositionMark(it.id, MarkReason.Duplicate(survivorId = finalSurvivor.id), "duplicate") }
+        }
+        val xIntoA = CollectorStrategy { candidates, _, _ ->
+            candidates.filter { it.id == loser.id }
+                .map { PropositionMark(it.id, MarkReason.Duplicate(survivorId = middle.id), "duplicate") }
+        }
+        val runner = CollectorRunner
+            .withRepository(repository)
+            .withStrategy(aIntoB)
+            .withStrategy(xIntoA)
+            .withPolicy(MergingSweepPolicy())
+            .withRecordStore(recordStore)
+            .withEventListener(listener)
+            .build()
+
+        runner.run(contextId, dryRun = false)
+
+        val finalState = saved.getValue(finalSurvivor.id)
+        assertEquals(setOf("chunk-b", "chunk-a", "chunk-x"), finalState.grounding.toSet())
+        assertEquals(2, finalState.reinforceCount)
+        assertEquals(PropositionStatus.STALE, saved.getValue(middle.id).status)
+        assertEquals(2, listener.eventsOfType<PropositionStatusChanged>().size)
+    }
+
+    @Test
+    fun `a merge cycle within one run resolves deterministically instead of merging a survivor into itself`() {
+        // A -> B and B -> A in the same run is a defect in the marks (nothing produces this on
+        // purpose), but the runner must not corrupt state over it: it should pick a deterministic
+        // winner (lowest id), keep that one ACTIVE with the other's evidence folded in, and retire
+        // the loser — not attempt to merge a proposition into itself.
+        val propA = proposition("A").copy(grounding = listOf("chunk-a"), reinforceCount = 0)
+        val propB = proposition("B").copy(grounding = listOf("chunk-b"), reinforceCount = 0)
+        val winnerId = minOf(propA.id, propB.id)
+        val loserId = maxOf(propA.id, propB.id)
+        every { repository.query(any()) } returns listOf(propA, propB)
+        val saved = mutableMapOf(propA.id to propA, propB.id to propB)
+        every { repository.findById(any()) } answers { saved[firstArg()] }
+        every { repository.save(any()) } answers {
+            val p = firstArg<Proposition>()
+            saved[p.id] = p
+            p
+        }
+
+        val cyclicStrategy = CollectorStrategy { _, _, _ ->
+            listOf(
+                PropositionMark(propA.id, MarkReason.Duplicate(survivorId = propB.id), "duplicate"),
+                PropositionMark(propB.id, MarkReason.Duplicate(survivorId = propA.id), "duplicate"),
+            )
+        }
+        val runner = CollectorRunner
+            .withRepository(repository)
+            .withStrategy(cyclicStrategy)
+            .withPolicy(MergingSweepPolicy())
+            .withRecordStore(recordStore)
+            .withEventListener(listener)
+            .build()
+
+        runner.run(contextId, dryRun = false)
+
+        // The lower id survives ACTIVE, having absorbed the other's evidence; the higher id is
+        // retired. Nothing is left dangling ACTIVE-but-unmerged, and nothing merges into itself.
+        assertEquals(PropositionStatus.ACTIVE, saved.getValue(winnerId).status)
+        assertEquals(PropositionStatus.STALE, saved.getValue(loserId).status)
+        assertEquals(setOf("chunk-a", "chunk-b"), saved.getValue(winnerId).grounding.toSet())
+        assertEquals(1, listener.eventsOfType<PropositionStatusChanged>().size)
+    }
+
+    @Test
     fun `withDuplicateDetection does not clobber a policy the caller set explicitly`() {
         // A caller who sets a policy explicitly must keep it, whatever the call order. Here a Skip
         // policy must win over the MergingSweepPolicy that withDuplicateDetection would otherwise

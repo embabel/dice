@@ -156,12 +156,62 @@ class DefaultCollectorRunner(
             // the stale snapshot.
             val freshById = candidatesById.toMutableMap()
 
-            // Fold every MergeInto's losers onto their survivor first, grouped by survivor id, so
-            // a survivor merged by several losers in one run gets a single read and save (also
-            // avoids re-embedding the survivor's text once per loser on persistent backends).
+            // A proposition can be a survivor for one mark and a loser for another in the same
+            // run (stacked strategies via the Builder can produce this). Applying merges by raw
+            // survivor id would then be order-dependent: whichever group happened to process
+            // first decides whether the in-between proposition's evidence reaches the final
+            // survivor or gets dropped as "not ACTIVE". Resolve every merge target to where it
+            // ultimately lands before grouping, so the result no longer depends on map iteration
+            // order.
+            val mergeTargetById: Map<String, String> = decisions
+                .mapNotNull { d -> (d.action as? SweepAction.MergeInto)?.let { d.propositionId to it.survivorId } }
+                .toMap()
+
+            // Follows survivor pointers (A -> B means "A's survivor is B") to the end of the
+            // chain. A cycle within one run (A -> B -> A) is a defect in the marks, not something
+            // we can resolve acyclically — break it deterministically by picking the lowest id in
+            // the cycle as the winner, and warn, so repeated runs over the same bad input always
+            // land the same way.
+            fun terminalSurvivor(startId: String): String {
+                val visited = linkedSetOf(startId)
+                var current = startId
+                while (true) {
+                    val next = mergeTargetById[current] ?: return current
+                    if (!visited.add(next)) {
+                        val winner = visited.min()
+                        logger.warn(
+                            "Collector run {}: MergeInto cycle detected among {}; resolving deterministically to {}",
+                            runId, visited, winner,
+                        )
+                        return winner
+                    }
+                    current = next
+                }
+            }
+
+            // Fold every MergeInto's losers onto their terminal survivor first, grouped by that
+            // survivor's id, so a survivor merged by several losers in one run (directly or via a
+            // chain) gets a single read and save (also avoids re-embedding the survivor's text
+            // once per loser on persistent backends).
             val mergesBySurvivor = decisions
                 .mapNotNull { d -> (d.action as? SweepAction.MergeInto)?.let { d to it } }
-                .groupBy({ (_, action) -> action.survivorId })
+                .mapNotNull { (d, action) ->
+                    val terminal = terminalSurvivor(action.survivorId)
+                    if (terminal == d.propositionId) {
+                        // This decision is the broken link of a cycle: chain resolution kept this
+                        // very proposition as the winning survivor, so its own "merge into
+                        // someone else" can't be applied without merging it into itself. Drop it
+                        // — the proposition just stays put as the survivor everyone else lands on.
+                        logger.warn(
+                            "Collector run {}: dropping MergeInto {} -> {}; cycle resolution kept {} as the survivor",
+                            runId, d.propositionId, action.survivorId, terminal,
+                        )
+                        null
+                    } else {
+                        Triple(d, action, terminal)
+                    }
+                }
+                .groupBy({ (_, _, terminal) -> terminal }) { (d, action, _) -> d to action }
 
             for ((survivorId, group) in mergesBySurvivor) {
                 val survivor = freshById[survivorId] ?: repository.findById(survivorId)?.also { freshById[survivorId] = it }
