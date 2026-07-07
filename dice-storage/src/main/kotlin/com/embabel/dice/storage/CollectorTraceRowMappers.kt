@@ -129,8 +129,7 @@ object CollectorDecisionRowMapper {
 
     fun retiredFromRow(row: Map<*, *>): RetiredProposition = RetiredProposition(
         propositionId = row.str("propositionId"),
-        priorStatus = runCatching { PropositionStatus.valueOf(row.str("priorStatus")) }
-            .getOrDefault(PropositionStatus.ACTIVE),
+        priorStatus = PropositionStatus.valueOf(row.str("priorStatus")),
         foldedGrounding = row.stringList("foldedGrounding"),
         foldedProvenanceRefs = row.stringList("foldedProvenanceRefs"),
         foldedSourceIds = row.stringList("foldedSourceIds"),
