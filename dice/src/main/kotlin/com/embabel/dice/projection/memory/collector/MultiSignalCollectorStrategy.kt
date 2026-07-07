@@ -91,11 +91,11 @@ class MultiSignalCollectorStrategy(
         val byId = candidates.associateBy { it.id }
         val contextId = ctx.contextId
         val tracing = ctx.runId.isNotBlank()
-        if (tracing) traceStore.recordRunContext(ctx.runId, contextId)
+        if (tracing) trace("recordRunContext") { traceStore.recordRunContext(ctx.runId, contextId) }
 
         val pairs = collectPairs(candidates, contextId)
         val edges = pairs.map { pair -> scoreAndAggregate(pair, contextId) }
-        if (tracing) traceStore.recordCandidateEdges(ctx.runId, edges)
+        if (tracing) trace("recordCandidateEdges") { traceStore.recordCandidateEdges(ctx.runId, edges) }
 
         val eligibleEdges = edges.filter { !it.vetoed && it.aggregateScore >= matchThreshold }
         val candidateIds = candidates.map { it.id }.toSet()
@@ -104,7 +104,7 @@ class MultiSignalCollectorStrategy(
         val components = componentByPropositionId.entries
             .groupBy({ it.value }, { it.key })
             .map { (componentId, memberIds) -> CollectorComponent(componentId, memberIds) }
-        if (tracing) traceStore.recordComponents(ctx.runId, components)
+        if (tracing) trace("recordComponents") { traceStore.recordComponents(ctx.runId, components) }
 
         val marks = components
             .filter { it.memberIds.size >= 2 }
@@ -117,6 +117,17 @@ class MultiSignalCollectorStrategy(
             pairs.size, edges.size, eligibleEdges.size, marks.size, candidates.size,
         )
         return marks
+    }
+
+    /**
+     * Runs a trace-store write best-effort: trace/audit data is observability, not the product,
+     * so a failure here (a transient Neo4j hiccup, a constraint violation) is logged and swallowed
+     * rather than aborting the collector run.
+     */
+    private fun trace(what: String, block: () -> Unit) {
+        runCatching(block).onFailure { e ->
+            logger.warn("MultiSignalCollectorStrategy: trace store write '{}' failed, continuing run", what, e)
+        }
     }
 
     /** Pools every pair source's proposals, canonicalizing (smaller id as anchor) and deduping. */
@@ -168,16 +179,18 @@ class MultiSignalCollectorStrategy(
                     foldedSourceIds = loser.sourceIds,
                 )
             }
-            traceStore.recordDecision(
-                runId,
-                CollectorDecision(
-                    runId = runId,
-                    componentId = component.componentId,
-                    survivorId = survivor.id,
-                    action = MERGE_ACTION,
-                    retired = retired,
-                ),
-            )
+            trace("recordDecision") {
+                traceStore.recordDecision(
+                    runId,
+                    CollectorDecision(
+                        runId = runId,
+                        componentId = component.componentId,
+                        survivorId = survivor.id,
+                        action = MERGE_ACTION,
+                        retired = retired,
+                    ),
+                )
+            }
         }
 
         return losers.map {
