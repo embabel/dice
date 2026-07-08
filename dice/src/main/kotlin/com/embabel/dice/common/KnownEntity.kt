@@ -24,10 +24,17 @@ import com.embabel.agent.rag.model.NamedEntity
  * @param entity The named entity
  * @param role The role this entity plays in the current analysis,
  *        e.g., "The user in the conversation", "A referenced entity".
+ * @param aliases Alternate NAME forms this entity is also known by,
+ *        beyond [entity]'s primary name — e.g. a nickname ("Tom" for
+ *        "Thomas") or a maiden/former name. Resolvers may match a chunk
+ *        mention against any alias so an alt-name reference to the
+ *        current user binds to the user rather than forking a new
+ *        external entity. Distinct from alternate email ADDRESSES.
  */
 data class KnownEntity(
     val entity: NamedEntity,
     val role: String,
+    val aliases: List<String> = emptyList(),
 ) : NamedEntity by entity {
 
     companion object {
@@ -36,8 +43,16 @@ data class KnownEntity(
          */
         @JvmStatic
         fun asCurrentUser(entity: NamedEntity): KnownEntity =
-            KnownEntity(entity, role = "The user in the conversation")
+            asCurrentUser(entity, emptyList())
 
+        /**
+         * Create a KnownEntity marking this as the current user, threading
+         * alternate name forms so a resolver can match an alt-name chunk
+         * mention (e.g. "Tom" for "Thomas") back to the user.
+         */
+        @JvmStatic
+        fun asCurrentUser(entity: NamedEntity, aliases: List<String>): KnownEntity =
+            KnownEntity(entity, role = "The user in the conversation", aliases = aliases)
 
         @JvmStatic
         fun of(entity: NamedEntity): RoleStep =

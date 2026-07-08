@@ -90,6 +90,17 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * to opt in.
      */
     private val groundingWiringService: com.embabel.dice.projection.grounding.GroundingWiringService? = null,
+    /**
+     * Alternate NAME forms for the current user (nicknames, former
+     * names) — NOT alternate email addresses. Called with the event's
+     * user; the returned aliases are threaded into the current-user
+     * [KnownEntity] so the [KnownEntityResolver] binds an alt-name chunk
+     * mention (e.g. "Tom" for "Thomas") to the user instead of letting
+     * it escalate to a heuristic match that mints a separate external
+     * Person. Defaults to a no-op returning no aliases, so existing
+     * consumers see no behaviour change.
+     */
+    private val currentUserAliasesProvider: (NamedEntity) -> List<String> = { _ -> emptyList() },
 ) {
     private val analyzer: IncrementalAnalyzer<Message, ChunkPropositionResult> =
         PropositionIncrementalAnalyzer(
@@ -253,7 +264,13 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         sourceId: String = "",
         perspective: ExtractionPerspective? = null,
     ): SourceAnalysisContext {
-        val currentUser = KnownEntity.asCurrentUser(user)
+        val aliases = try {
+            currentUserAliasesProvider(user)
+        } catch (e: Exception) {
+            logger.warn("[buildContext] currentUserAliasesProvider threw for {}: {}", sourceId, e.message)
+            emptyList()
+        }
+        val currentUser = KnownEntity.asCurrentUser(user, aliases)
         val extras = try {
             extraKnownEntitiesProvider(user, sourceId)
                 .filter { it.id != user.id }

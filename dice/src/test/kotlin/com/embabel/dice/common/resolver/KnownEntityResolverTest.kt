@@ -19,6 +19,7 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.SimpleNamedEntityData
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.ExistingEntity
+import com.embabel.dice.common.KnownEntity
 import com.embabel.dice.common.ReferenceOnlyEntity
 import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntities
@@ -223,6 +224,63 @@ class KnownEntityResolverTest {
         val resolution = result.resolutions.single()
         assertNotNull(resolution.recommended)
         assertEquals("airbnb-1", resolution.recommended!!.id)
+    }
+
+    @Test
+    fun `alias match binds to the known entity and short-circuits before the delegate`() {
+        // The current user "Thomas" also goes by "Tom". A chunk mention
+        // of "Tom" must resolve to the user via the known-entity path —
+        // NOT fall through to the delegate, which is where the escalating
+        // resolver would heuristic-match (or mint) a separate external
+        // Person. Asserting the delegate is never called proves the
+        // exact/known match takes precedence over heuristic escalation.
+        val user = namedKnown("user-1", "Thomas", setOf("AssistantUser", "Person"))
+        val known = KnownEntity.asCurrentUser(user, listOf("Tom"))
+        val captured = mutableListOf<SuggestedEntity>()
+        val capturingDelegate: EntityResolver = object : EntityResolver {
+            override fun resolve(
+                suggestedEntities: SuggestedEntities,
+                schema: DataDictionary,
+            ): Resolutions<SuggestedEntityResolution> {
+                captured += suggestedEntities.suggestedEntities
+                return Resolutions(
+                    chunkIds = suggestedEntities.chunkIds,
+                    resolutions = suggestedEntities.suggestedEntities.map { VetoedEntity(it) },
+                )
+            }
+        }
+        val resolver = KnownEntityResolver(listOf(known), capturingDelegate)
+
+        val result = resolver.resolve(
+            SuggestedEntities(listOf(suggestion("Tom", listOf("Person")))),
+            schema,
+        )
+
+        val resolution = result.resolutions.single()
+        assertEquals("user-1", resolution.recommended?.id)
+        assertTrue(captured.isEmpty(), "Alias match must resolve without invoking the delegate")
+    }
+
+    @Test
+    fun `alias mention of the user widens the user's node instead of forking an external Person`() {
+        // Root-cause fixture: the user "Thomas" is only an AssistantUser
+        // in the graph; a chunk mentions the alt name "Tom" as a Person.
+        // The alias match must bind to the user's existing node (gaining
+        // the Person label via ExistingEntity), NOT create a distinct
+        // external Person keyed on the alias.
+        val user = namedKnown("user-1", "Thomas", setOf("AssistantUser"))
+        val known = KnownEntity.asCurrentUser(user, listOf("Tom"))
+        val resolver = KnownEntityResolver(listOf(known), noOpDelegate)
+
+        val result = resolver.resolve(
+            SuggestedEntities(listOf(suggestion("Tom", listOf("Person")))),
+            schema,
+        )
+
+        val resolution = result.resolutions.single()
+        assertTrue(resolution is ExistingEntity, "Expected widening ExistingEntity, got $resolution")
+        assertEquals("user-1", resolution.recommended!!.id)
+        assertTrue("Person" in resolution.recommended!!.labels(), "User node should gain the Person label")
     }
 
     @Test

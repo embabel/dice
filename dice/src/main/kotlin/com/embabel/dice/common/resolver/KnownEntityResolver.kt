@@ -21,6 +21,7 @@ import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.model.SimpleNamedEntityData
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.ExistingEntity
+import com.embabel.dice.common.KnownEntity
 import com.embabel.dice.common.ReferenceOnlyEntity
 import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntities
@@ -120,9 +121,20 @@ class KnownEntityResolver(
         // type and the known type don't yet intersect — we want to
         // *widen* the known entity, not create a duplicate row keyed
         // by the same name.
+        //
+        // A [KnownEntity] may also carry alternate NAME forms
+        // (aliases): matching any of them binds the mention to the known
+        // entity here — BEFORE the delegate's heuristic escalation — so
+        // an alt-name reference to the current user (e.g. "Tom" for
+        // "Thomas") resolves to the user rather than forking an external
+        // Person.
         val nameMatches = knownEntities.filter { known ->
-            val normalizedKnown = NormalizedNameCandidateSearcher.normalizeName(known.name)
-            normalizedSuggested.equals(normalizedKnown, ignoreCase = true)
+            nameFormsOf(known).any { form ->
+                normalizedSuggested.equals(
+                    NormalizedNameCandidateSearcher.normalizeName(form),
+                    ignoreCase = true,
+                )
+            }
         }
         if (nameMatches.isEmpty()) return null
 
@@ -135,6 +147,17 @@ class KnownEntityResolver(
             known.labels().map { it.lowercase() }.toSet().intersect(suggestedLabels).isNotEmpty()
         }
         return labelOverlap ?: nameMatches.first()
+    }
+
+    /**
+     * All name forms a known entity can be matched on: its primary name
+     * plus any aliases it carries as a [KnownEntity]. Blank forms are
+     * dropped so a null/empty primary name can never match a blank
+     * suggestion.
+     */
+    private fun nameFormsOf(known: NamedEntity): List<String> {
+        val aliases = (known as? KnownEntity)?.aliases ?: emptyList()
+        return (listOf(known.name ?: "") + aliases).filter { it.isNotBlank() }
     }
 
     @Suppress("USELESS_ELVIS")  // Java interop: name can be null despite Kotlin declaration
