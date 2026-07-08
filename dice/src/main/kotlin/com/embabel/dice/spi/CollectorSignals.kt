@@ -18,6 +18,7 @@ package com.embabel.dice.spi
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.PropositionStore
 
 /**
  * One proposed pair of propositions worth scoring.
@@ -135,6 +136,82 @@ interface CollectorTraceQuery {
     fun findEdgesByRun(runId: String): List<CollectorCandidateEdge>
     fun findDecisionsByRun(runId: String): List<CollectorDecision>
     fun findDecisionForProposition(propositionId: String): CollectorDecision?
+
+    /**
+     * The undo-record for one retired member of a collapse: its prior status and exactly the
+     * grounding/provenance/source ids a merging sweep folded onto its survivor from it. Looks up
+     * the [CollectorDecision] that retired [retiredId] and picks out its entry — a targeted
+     * alternative to [findDecisionForProposition] for callers that only want this one member's
+     * record, e.g. before undoing a single collapse rather than a whole run.
+     *
+     * @return null if no decision retired [retiredId] (nothing recorded, or it's a survivor id).
+     */
+    fun findRetirement(retiredId: String): RetiredProposition? =
+        findDecisionForProposition(retiredId)?.retired?.firstOrNull { it.propositionId == retiredId }
+}
+
+/**
+ * The result of undoing one collapse: the survivor with that member's exclusive evidence
+ * subtracted, and the member restored to its prior status.
+ */
+data class CollapseUndoResult(
+    val survivor: Proposition,
+    val restored: Proposition,
+)
+
+/**
+ * Undoes ONE collapse — a single survivor/retired-member pair — without disturbing the run's
+ * other collapses. This is the targeted counterpart to a run-level undo: restore exactly the
+ * member named by [retiredId] to its prior status, and subtract only what it (not some other
+ * still-retired member of the same collapse) contributed to the survivor.
+ *
+ * Overlap-safe: if another member retired in the same [CollectorDecision] also folded the same
+ * grounding/provenance/source id, that ref is left on the survivor — subtracting [retiredId]'s
+ * copy would otherwise strip evidence a sibling merge still needs. This is why each
+ * [RetiredProposition] carries its own folded set rather than the decision carrying one shared
+ * union.
+ *
+ * @param traceQuery where the collapse decision (and its retired members) is looked up
+ * @param propositions where the survivor and retired proposition are read and saved
+ * @param survivorId the collapse's survivor — must match the decision that retired [retiredId]
+ * @param retiredId the one retired member to restore
+ * @return the updated survivor and restored proposition, or null if nothing was retired under
+ *   [retiredId] (no trace of this collapse), or if either proposition no longer exists
+ * @throws IllegalArgumentException if [retiredId] was retired into a different survivor than
+ *   [survivorId] — a caller error, not a missing-data case
+ */
+fun undoSingleCollapse(
+    traceQuery: CollectorTraceQuery,
+    propositions: PropositionStore,
+    survivorId: String,
+    retiredId: String,
+): CollapseUndoResult? {
+    val decision = traceQuery.findDecisionForProposition(retiredId) ?: return null
+    require(decision.survivorId == survivorId) {
+        "Proposition $retiredId was retired into survivor ${decision.survivorId}, not $survivorId"
+    }
+    val retirement = decision.retired.firstOrNull { it.propositionId == retiredId } ?: return null
+
+    // Other members of this same collapse: whatever they also folded must stay on the survivor
+    // even though we're subtracting retirement's copy of it.
+    val others = decision.retired.filter { it.propositionId != retiredId }
+    val stillNeededGrounding = others.flatMap { it.foldedGrounding }.toSet()
+    val stillNeededProvenanceRefs = others.flatMap { it.foldedProvenanceRefs }.toSet()
+    val stillNeededSourceIds = others.flatMap { it.foldedSourceIds }.toSet()
+
+    val survivor = propositions.findById(survivorId) ?: return null
+    val updatedSurvivor = propositions.save(
+        survivor.withoutFoldedEvidence(
+            groundingToRemove = retirement.foldedGrounding.filterNot { it in stillNeededGrounding },
+            provenanceRefsToRemove = retirement.foldedProvenanceRefs.filterNot { it in stillNeededProvenanceRefs },
+            sourceIdsToRemove = retirement.foldedSourceIds.filterNot { it in stillNeededSourceIds },
+        ),
+    )
+
+    val retiredProposition = propositions.findById(retiredId) ?: return null
+    val restored = propositions.save(retiredProposition.withStatus(retirement.priorStatus))
+
+    return CollapseUndoResult(survivor = updatedSurvivor, restored = restored)
 }
 
 /**
