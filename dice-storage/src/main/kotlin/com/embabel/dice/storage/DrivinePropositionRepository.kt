@@ -381,6 +381,7 @@ class DrivinePropositionRepository(
         query.revisedBefore?.let { proposition.lastTouched lte it }
         query.accessedAfter?.let { proposition.lastAccessed gte it }
         query.accessedBefore?.let { proposition.lastAccessed lte it }
+        query.minConfidence?.let { proposition.confidence gte it }
         query.minImportance?.let { proposition.importance gte it }
         query.minReinforceCount?.let { proposition.reinforceCount gte it }
         if (includeEffectiveConfidence) {
@@ -537,6 +538,22 @@ class DrivinePropositionRepository(
     override fun count(): Int = graphObjectManager.count<PropositionView>().toInt()
 
     /**
+     * Batch `SET` in one round trip instead of the SPI default's per-id find-then-save. Runs in its
+     * own [Propagation.REQUIRES_NEW] transaction: callers commonly invoke this from inside a
+     * `readOnly = true` query transaction (e.g. Memory's eager load), which cannot itself take a write.
+     * Empty [ids] is a no-op — no need to open a transaction for nothing.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    override fun touchAccessed(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        persistenceManager.execute(
+            QuerySpecification
+                .withStatement("MATCH (p:Proposition) WHERE p.id IN \$ids SET p.lastAccessed = \$now")
+                .bind(mapOf("ids" to ids.distinct(), "now" to Instant.now())),
+        )
+    }
+
+    /**
      * Filtered count pushed into the DB: same `where` block as [query], counted server-side instead
      * of materialising and sizing the rows. Non-default decay can't push onto the materialised
      * `effectiveConfidence` column, so that case falls back to counting [query]'s live-decay result.
@@ -619,7 +636,7 @@ class DrivinePropositionRepository(
             base.revisedAfter == null && base.revisedBefore == null &&
             base.accessedAfter == null && base.accessedBefore == null &&
             base.minReinforceCount == null && base.minTrustScore == null && base.pinned == null &&
-            base.belowEffectiveConfidence == null &&
+            base.minConfidence == null && base.belowEffectiveConfidence == null &&
             base.effectiveConfidenceAsOf == null && base.decayK == DEFAULT_DECAY_K
 
     /**

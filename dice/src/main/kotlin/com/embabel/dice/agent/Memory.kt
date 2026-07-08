@@ -182,13 +182,19 @@ data class Memory @JvmOverloads constructor(
     /**
      * Build the base query that all operations start from.
      * Applies contextId, minConfidence, and any narrowing.
+     *
+     * The floor gates on RAW confidence ("was this ever reliable?"), not the decayed effective
+     * value — a stable, high-confidence fact stays in the eager set even once it's decayed, so
+     * decay only ever demotes a fact's rank, never silently drops it from context. Callers that
+     * want decay-ordered results should sort with [PropositionQuery.orderedByEffectiveConfidence]
+     * (already the default for listing/searching without a query).
      */
     private fun baseQuery(): PropositionQuery {
         // Scope retrieval to ACTIVE so STALE/SUPERSEDED/CONTRADICTED never
         // reach LLM context by default. Applied before narrowedBy so a consumer
         // can still explicitly widen the status set via the narrowing operator.
         val base = PropositionQuery.forContextId(contextId)
-            .withMinEffectiveConfidence(minConfidence)
+            .withMinConfidence(minConfidence)
             .withStatuses(setOf(PropositionStatus.ACTIVE))
         return narrowedBy?.apply(base) ?: base
     }
@@ -228,7 +234,21 @@ data class Memory @JvmOverloads constructor(
 
         // Merge all sources, deduplicating by ID, aboutMemories first (most contextual)
         val seen = mutableSetOf<String>()
-        (aboutMemories + topicMemories + queryMemories).filter { seen.add(it.id) }
+        val merged = (aboutMemories + topicMemories + queryMemories).filter { seen.add(it.id) }
+
+        // Reinforce on access: eagerly-surfaced memories are the ones actually being used, so
+        // refresh their decay anchor. Best-effort and scoped to this read path only (not every
+        // internal query) to bound write amplification — a failure here must never break the
+        // eager load itself.
+        if (merged.isNotEmpty()) {
+            try {
+                repository.touchAccessed(merged.map { it.id })
+            } catch (t: Throwable) {
+                logger.warn("Unable to touch lastAccessed for eagerly loaded memories", t)
+            }
+        }
+
+        merged
     } catch (t: Throwable) {
         logger.warn("Unable to perform vector search")
         emptyList()
