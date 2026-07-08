@@ -301,13 +301,20 @@ class MultiSignalCollectorStrategy(
         val losers = members.filter { it.id != survivor.id }
 
         if (tracing) {
+            // Record only what each loser actually ADDS to the survivor, not its whole evidence
+            // set: absorbEvidence is a deduplicating union, so any ref the survivor already owned
+            // pre-merge (common for near-duplicates from the same source) must not be recorded as
+            // "folded", or undo would later strip evidence the survivor held independently.
+            val survivorGrounding = survivor.grounding.toSet()
+            val survivorProvenanceRefs = survivor.provenanceEntries.map { it.locator.key() }.toSet()
+            val survivorSourceIds = survivor.sourceIds.toSet()
             val retired = losers.map { loser ->
                 RetiredProposition(
                     propositionId = loser.id,
                     priorStatus = loser.status,
-                    foldedGrounding = loser.grounding,
-                    foldedProvenanceRefs = loser.provenanceEntries.map { it.locator.key() },
-                    foldedSourceIds = loser.sourceIds,
+                    foldedGrounding = loser.grounding - survivorGrounding,
+                    foldedProvenanceRefs = loser.provenanceEntries.map { it.locator.key() } - survivorProvenanceRefs,
+                    foldedSourceIds = loser.sourceIds - survivorSourceIds,
                 )
             }
             trace("recordDecision") {

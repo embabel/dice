@@ -16,12 +16,19 @@
 package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.projection.memory.collector.CollectorRunContext
+import com.embabel.dice.projection.memory.collector.CollectorSurvivorPolicy
+import com.embabel.dice.projection.memory.collector.MultiSignalCollectorStrategy
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.spi.CandidatePair
+import com.embabel.dice.spi.CandidatePairSource
 import com.embabel.dice.spi.CollectorCandidateEdge
 import com.embabel.dice.spi.CollectorComponent
 import com.embabel.dice.spi.CollectorDecision
 import com.embabel.dice.spi.CollectorSignalScore
+import com.embabel.dice.spi.CollectorSignalScorer
+import com.embabel.dice.spi.InMemoryConnectedComponentsFinder
 import com.embabel.dice.spi.RetiredProposition
 import com.embabel.dice.spi.undoSingleCollapse
 import org.drivine.manager.PersistenceManager
@@ -267,5 +274,69 @@ class DrivineCollectorTraceStoreIntegrationTest {
         // loserB is untouched — still STALE, not restored.
         val loserB = propositionRepository.findById("loserB-5")
         assertEquals(PropositionStatus.STALE, loserB?.status)
+    }
+
+    @Test
+    fun `collapse then undo keeps grounding the survivor already owned before the merge`() {
+        // Regression for B1 (fable review): the survivor independently owns "shared" grounding
+        // BEFORE the collapse; the loser also carries it, plus a ref the loser exclusively
+        // contributed. A blind foldedGrounding = loser.grounding would record "shared" as folded
+        // from the loser, and undo would then strip it from the survivor even though the survivor
+        // never lost it — silent evidence loss on the near-duplicate case the sweep exists for.
+        val runId = "run-6"
+        val contextId = ContextId("ctx-6")
+
+        // Distinct text: DrivinePropositionRepository dedups by (contextId, text), and this test
+        // needs two genuinely separate proposition rows to merge.
+        val survivor = propositionRepository.save(
+            prop("survivor-6", "Acme signed the deal", grounding = listOf("shared")),
+        )
+        val loser = propositionRepository.save(
+            prop("loser-6", "Acme signed a deal", grounding = listOf("shared", "loser-exclusive")),
+        )
+
+        // Deterministic pair source/scorer/survivor policy so the real markComponent path runs
+        // without depending on embeddings: this exercises the actual fix, not a hand-built trace.
+        val strategy = MultiSignalCollectorStrategy(
+            pairSources = listOf(
+                CandidatePairSource { candidates, _ -> listOf(CandidatePair(anchor = candidates[0], member = candidates[1])) },
+            ),
+            scorers = listOf(
+                CollectorSignalScorer { _, _ -> CollectorSignalScore(signal = "fixed", score = 1.0) },
+            ),
+            componentsFinder = InMemoryConnectedComponentsFinder(),
+            traceStore = traceStore,
+            survivorPolicy = CollectorSurvivorPolicy { members -> members.single { it.id == survivor.id } },
+            matchThreshold = 0.5,
+        )
+
+        strategy.mark(listOf(survivor, loser), propositionRepository, CollectorRunContext(runId, contextId))
+
+        // Merge the loser's evidence onto the survivor the way DefaultCollectorRunner would.
+        val mergedSurvivor = propositionRepository.findById(survivor.id)!!.absorbEvidence(loser)
+        propositionRepository.save(mergedSurvivor)
+
+        val decision = traceStore.findDecisionsByRun(runId).single()
+        val retired = decision.retired.single { it.propositionId == loser.id }
+        // The fix under test: only the delta the loser actually contributed is recorded.
+        assertEquals(listOf("loser-exclusive"), retired.foldedGrounding)
+
+        val result = undoSingleCollapse(
+            traceQuery = traceStore,
+            propositions = propositionRepository,
+            survivorId = survivor.id,
+            retiredId = loser.id,
+        )
+
+        assertTrue(result != null)
+        assertEquals(PropositionStatus.ACTIVE, result!!.restored.status)
+
+        val restoredLoser = propositionRepository.findById(loser.id)
+        assertEquals(PropositionStatus.ACTIVE, restoredLoser?.status)
+
+        val updatedSurvivor = propositionRepository.findById(survivor.id)
+        // (a) the survivor keeps "shared" — it owned that ref before the merge.
+        // (b) the survivor loses "loser-exclusive" — that one really did come from the loser.
+        assertEquals(setOf("shared"), updatedSurvivor?.grounding?.toSet())
     }
 }
