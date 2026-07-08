@@ -16,12 +16,14 @@
 package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.spi.CollectorCandidateEdge
 import com.embabel.dice.spi.CollectorComponent
 import com.embabel.dice.spi.CollectorDecision
 import com.embabel.dice.spi.CollectorSignalScore
 import com.embabel.dice.spi.RetiredProposition
+import com.embabel.dice.spi.undoSingleCollapse
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
@@ -45,12 +47,31 @@ class DrivineCollectorTraceStoreIntegrationTest {
     @Autowired
     private lateinit var persistenceManager: PersistenceManager
 
+    @Autowired
+    private lateinit var propositionRepository: DrivinePropositionRepository
+
     @AfterEach
     fun cleanUp() {
         CollectorTraceSchema.LABELS.forEach { label ->
             persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:$label) DETACH DELETE n"))
         }
+        propositionRepository.clearAll()
     }
+
+    private fun prop(
+        id: String,
+        text: String,
+        status: PropositionStatus = PropositionStatus.ACTIVE,
+        grounding: List<String> = emptyList(),
+    ) = Proposition(
+        id = id,
+        contextId = ContextId("ctx-undo"),
+        text = text,
+        mentions = emptyList(),
+        confidence = 0.9,
+        status = status,
+        grounding = grounding,
+    )
 
     private fun edge(anchorId: String, memberId: String, vetoed: Boolean = false, score: Double = 0.9) = CollectorCandidateEdge(
         anchorId = anchorId,
@@ -174,5 +195,77 @@ class DrivineCollectorTraceStoreIntegrationTest {
         assertEquals(2, traceStore.findEdgesByRun(runId).single().signals.size) // signals also MERGE, not duplicate
         assertEquals(1, traceStore.findDecisionsByRun(runId).size)
         assertEquals(1, traceStore.findDecisionsByRun(runId).single().retired.size)
+    }
+
+    @Test
+    fun `findRetirement fetches one retired member's undo record by id`() {
+        val runId = "run-4"
+        traceStore.recordRunContext(runId, ContextId("ctx-4"))
+        traceStore.recordDecision(runId, decisionFor("comp-4", survivorId = "S4", retiredId = "R4"))
+
+        val retirement = traceStore.findRetirement("R4")
+        assertEquals("R4", retirement?.propositionId)
+        assertEquals(PropositionStatus.ACTIVE, retirement?.priorStatus)
+        assertEquals(listOf("g1", "g2"), retirement?.foldedGrounding)
+
+        assertNull(traceStore.findRetirement("S4")) // survivor id, not a retired member
+        assertNull(traceStore.findRetirement("unknown"))
+    }
+
+    @Test
+    fun `undoSingleCollapse restores one member and subtracts only its exclusive grounding, leaving the sibling member retired`() {
+        val runId = "run-5"
+        val contextId = ContextId("ctx-5")
+        traceStore.recordRunContext(runId, contextId)
+
+        // Survivor absorbed evidence from two losers. "shared" grounding was contributed by BOTH
+        // losers (an overlap), "exclusive-a" only by loserA, "exclusive-b" only by loserB.
+        val survivor = propositionRepository.save(
+            prop("survivor-5", "Survivor text", grounding = listOf("shared", "exclusive-a", "exclusive-b")),
+        )
+        propositionRepository.save(prop("loserA-5", "Loser A text", status = PropositionStatus.STALE))
+        propositionRepository.save(prop("loserB-5", "Loser B text", status = PropositionStatus.STALE))
+
+        val decision = CollectorDecision(
+            runId = "",
+            componentId = "comp-5",
+            survivorId = survivor.id,
+            action = "duplicate-merge",
+            retired = listOf(
+                RetiredProposition(
+                    propositionId = "loserA-5",
+                    priorStatus = PropositionStatus.ACTIVE,
+                    foldedGrounding = listOf("shared", "exclusive-a"),
+                ),
+                RetiredProposition(
+                    propositionId = "loserB-5",
+                    priorStatus = PropositionStatus.ACTIVE,
+                    foldedGrounding = listOf("shared", "exclusive-b"),
+                ),
+            ),
+        )
+        traceStore.recordDecision(runId, decision)
+
+        val result = undoSingleCollapse(
+            traceQuery = traceStore,
+            propositions = propositionRepository,
+            survivorId = survivor.id,
+            retiredId = "loserA-5",
+        )
+
+        assertTrue(result != null)
+        assertEquals(PropositionStatus.ACTIVE, result!!.restored.status)
+
+        val restoredA = propositionRepository.findById("loserA-5")
+        assertEquals(PropositionStatus.ACTIVE, restoredA?.status)
+
+        // exclusive-a is gone; shared stays because loserB (still retired) also contributed it;
+        // exclusive-b is untouched since it was never loserA's to begin with.
+        val updatedSurvivor = propositionRepository.findById(survivor.id)
+        assertEquals(setOf("shared", "exclusive-b"), updatedSurvivor?.grounding?.toSet())
+
+        // loserB is untouched — still STALE, not restored.
+        val loserB = propositionRepository.findById("loserB-5")
+        assertEquals(PropositionStatus.STALE, loserB?.status)
     }
 }

@@ -319,6 +319,33 @@ data class Proposition(
     }
 
     /**
+     * Create a copy with exactly [groundingToRemove], [provenanceRefsToRemove] and
+     * [sourceIdsToRemove] taken out of this proposition's evidence — the inverse of
+     * [absorbEvidence] for one loser's contribution. Provenance entries are matched by
+     * [com.embabel.dice.provenance.SourceLocator.key], the same identity [absorbEvidence]'s
+     * caller uses to record a loser's folded refs (see `RetiredProposition.foldedProvenanceRefs`).
+     *
+     * Callers subtracting one collapsed member's evidence from a survivor that absorbed several
+     * members must first drop any ref another still-retired member also contributed, or this
+     * would strip evidence that member still needs. This method does the removal only — that
+     * "still needed by someone else" check belongs to the caller, which has visibility across
+     * all retired members of the collapse.
+     */
+    fun withoutFoldedEvidence(
+        groundingToRemove: List<String>,
+        provenanceRefsToRemove: List<String>,
+        sourceIdsToRemove: List<String>,
+    ): Proposition {
+        val provenanceRefSet = provenanceRefsToRemove.toSet()
+        return copy(
+            grounding = grounding - groundingToRemove.toSet(),
+            provenanceEntries = provenanceEntries.filterNot { it.locator.key() in provenanceRefSet },
+            sourceIds = sourceIds - sourceIdsToRemove.toSet(),
+            metadataRevised = Instant.now(),
+        )
+    }
+
+    /**
      * Create a copy with an additional (or replaced) metadata entry.
      *
      * Administrative change: touches only [metadataRevised] and deliberately
