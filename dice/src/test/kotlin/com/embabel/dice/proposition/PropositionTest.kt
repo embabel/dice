@@ -499,6 +499,73 @@ class PropositionTest {
             assertTrue(before < 0.9)
         }
 
+        // --- access refreshes the DECAYING decay anchor ---
+
+        @Test
+        fun `effectiveConfidenceAt anchors on lastAccessed when it is more recent than contentRevised`() {
+            val old = oldInstant
+            val prop = Proposition(
+                contextId = testContextId,
+                text = "used but old fact",
+                mentions = emptyList(),
+                confidence = 0.9,
+                decay = 0.5,
+                contentRevised = old,
+                metadataRevised = old,
+                lastAccessed = old,
+            )
+            val staleValue = prop.effectiveConfidenceAt(Instant.now())
+
+            val justAccessed = prop.copy(lastAccessed = Instant.now())
+            val refreshedValue = justAccessed.effectiveConfidenceAt(Instant.now())
+
+            assertTrue(refreshedValue > staleValue, "a recent access must raise effective confidence above the stale value")
+            assertEquals(
+                prop.confidence, refreshedValue, 1e-9,
+                "with lastAccessed == asOf the decay factor is 1.0, so effective confidence equals raw confidence",
+            )
+        }
+
+        @Test
+        fun `effectiveConfidenceAt still anchors on contentRevised when it is the more recent of the two`() {
+            // A content edit after the last access should anchor on the (more recent) content edit,
+            // not stay pinned to the older access.
+            val olderAccess = oldInstant.minus(Duration.ofDays(10))
+            val recentContentRevision = oldInstant
+            val prop = Proposition(
+                contextId = testContextId,
+                text = "recently edited fact",
+                mentions = emptyList(),
+                confidence = 0.9,
+                decay = 0.5,
+                contentRevised = recentContentRevision,
+                lastAccessed = olderAccess,
+            )
+            val expected = 0.9 * Math.exp(
+                -0.5 * 2.0 * Duration.between(recentContentRevision, Instant.now()).toDays().toDouble(),
+            )
+            assertEquals(expected, prop.effectiveConfidenceAt(Instant.now()), 1e-6)
+        }
+
+        @Test
+        fun `effectiveConfidenceAt does not anchor on lastAccessed for a DATED window`() {
+            // The DATED branches (validFrom set) must be unaffected by lastAccessed — only the
+            // DECAYING branch (no temporal window) reinforces on access.
+            val validFrom = oldInstant
+            val prop = Proposition(
+                contextId = testContextId,
+                text = "dated fact",
+                mentions = emptyList(),
+                confidence = 0.8,
+                decay = 0.5,
+                contentRevised = oldInstant,
+                lastAccessed = Instant.now(), // recently "accessed" — must not matter for a DATED fact
+                temporal = TemporalMetadata(observedAt = oldInstant, validFrom = validFrom),
+            )
+            val expected = 0.8 * Math.exp(-0.5 * 2.0 * Duration.between(validFrom, Instant.now()).toDays().toDouble())
+            assertEquals(expected, prop.effectiveConfidenceAt(Instant.now()), 1e-6)
+        }
+
         // --- create() seeds both timestamps from legacy revised ---
 
         @Test
