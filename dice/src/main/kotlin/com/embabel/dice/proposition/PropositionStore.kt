@@ -74,6 +74,7 @@ internal fun PropositionQuery.matchesFilters(
     if (revisedBefore != null && prop.lastTouched > revisedBefore) return false
     if (accessedAfter != null && prop.lastAccessed < accessedAfter) return false
     if (accessedBefore != null && prop.lastAccessed > accessedBefore) return false
+    if (minConfidence != null && prop.confidence < minConfidence) return false
     minEffectiveConfidence?.let { threshold ->
         if (prop.effectiveConfidenceAt(asOf, decayK) < threshold) return false
     }
@@ -173,6 +174,22 @@ interface PropositionStore {
      * Get the total count of propositions.
      */
     fun count(): Int
+
+    /**
+     * Refresh [Proposition.lastAccessed] to now for [ids] — the read-side reinforcement that lets a
+     * DECAYING proposition's decay anchor (see [Proposition.effectiveConfidenceAt]) track actual use
+     * rather than only content edits. Best-effort and silent about unknown ids (a stale eager id that
+     * has since been deleted is not an error).
+     *
+     * Callers should scope this to genuine reads that matter (e.g. eager memory surfaced to an LLM),
+     * not every internal query, to keep write amplification bounded. The default touches each id via
+     * [findById] + [save]; a backend that can push this down (e.g. a single batch `SET` statement)
+     * should override.
+     */
+    fun touchAccessed(ids: Collection<String>) {
+        val now = java.time.Instant.now()
+        ids.forEach { id -> findById(id)?.let { save(it.copy(lastAccessed = now)) } }
+    }
 
     /**
      * Count the propositions matching [query]. The default materialises [query]'s results and counts

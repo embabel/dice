@@ -63,6 +63,11 @@ data class PropositionQuery(
     val accessedAfter: Instant? = null,
     val accessedBefore: Instant? = null,
 
+    // Raw confidence filter — "was this ever reliable?", independent of decay/age. Membership
+    // should generally be gated on this, not on the decayed value below: a stable, high-confidence
+    // fact stays resident even once it has decayed; decay is a ranking signal, not an eviction one.
+    val minConfidence: Double? = null,
+
     // Confidence filters (with decay)
     val minEffectiveConfidence: Double? = null,
     val effectiveConfidenceAsOf: Instant? = null,
@@ -193,6 +198,14 @@ data class PropositionQuery(
      */
     fun revisedSince(duration: Duration): PropositionQuery =
         copy(revisedAfter = Instant.now().minus(duration))
+
+    /**
+     * Filter on raw (un-decayed) confidence — "was this ever reliable?". Use this for membership /
+     * eager-inclusion gates; use [withMinEffectiveConfidence] (or [orderedByEffectiveConfidence]) for
+     * ranking, so decay lowers a fact's position without evicting it.
+     */
+    fun withMinConfidence(threshold: Double): PropositionQuery =
+        copy(minConfidence = threshold)
 
     fun withMinEffectiveConfidence(threshold: Double): PropositionQuery =
         copy(minEffectiveConfidence = threshold)

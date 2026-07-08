@@ -365,7 +365,9 @@ class MemoryTest {
             assertEquals("jazz", requestSlot.captured.query)
             assertEquals(5, requestSlot.captured.topK)
             assertEquals(contextId, querySlot.captured.contextId)
-            assertEquals(0.7, querySlot.captured.minEffectiveConfidence)
+            // The floor gates membership on RAW confidence (decay ranks, never excludes) — see
+            // Memory.baseQuery().
+            assertEquals(0.7, querySlot.captured.minConfidence)
         }
 
         @Test

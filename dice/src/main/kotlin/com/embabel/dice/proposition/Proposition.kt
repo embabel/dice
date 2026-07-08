@@ -107,7 +107,11 @@ data class Proposition(
     val contentRevised: Instant = Instant.now(),
     val metadataRevised: Instant = Instant.now(),
     val pinned: Boolean = false,
-    val lastAccessed: Instant = Instant.now(),
+    // Defaults to contentRevised, not a fresh "now" — an untouched proposition hasn't been
+    // accessed since its content was last set, so the DECAYING decay anchor (max of the two,
+    // see effectiveConfidenceAt) starts equal to contentRevised instead of masking age with a
+    // spuriously fresh access time.
+    val lastAccessed: Instant = contentRevised,
     val status: PropositionStatus = PropositionStatus.ACTIVE,
     val level: Int = 0,
     val sourceIds: List<String> = emptyList(),
@@ -175,7 +179,9 @@ data class Proposition(
             grounding: List<String>,
             created: Instant,
             revised: Instant,
-            lastAccessed: Instant = Instant.now(),
+            // Defaults to revised (== contentRevised below), matching the primary constructor's
+            // default — see the comment there.
+            lastAccessed: Instant = revised,
             status: PropositionStatus,
             level: Int = 0,
             sourceIds: List<String> = emptyList(),
@@ -356,9 +362,11 @@ data class Proposition(
             return confidence * decayFactor(from = validFrom, to = asOf, k = k)
         }
 
-        // DECAYING — no valid window: confidence fades from the last content revision
-        // (the decay anchor).
-        return confidence * decayFactor(from = contentRevised, to = asOf, k = k)
+        // DECAYING — no valid window: confidence fades from the last content revision (the decay
+        // anchor), but using the fact refreshes it too — anchor on whichever is more recent, content
+        // edit or access, so a used memory keeps earning its keep instead of fading purely from age.
+        val anchor = maxOf(contentRevised, lastAccessed)
+        return confidence * decayFactor(from = anchor, to = asOf, k = k)
     }
 
     private fun decayFactor(from: Instant, to: Instant, k: Double): Double {

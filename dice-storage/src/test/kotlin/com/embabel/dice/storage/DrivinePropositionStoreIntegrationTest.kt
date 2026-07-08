@@ -101,6 +101,9 @@ class DrivinePropositionStoreIntegrationTest {
         metadata: Map<String, Any> = emptyMap(),
         temporal: TemporalMetadata? = null,
         provenance: List<ProvenanceEntry> = emptyList(),
+        // Defaults to contentRevised, matching Proposition's own default — an untouched fact hasn't
+        // been accessed since its content was set.
+        lastAccessed: Instant = contentRevised,
     ): Proposition = Proposition(
         contextId = ContextId(context),
         text = text,
@@ -118,6 +121,7 @@ class DrivinePropositionStoreIntegrationTest {
         metadata = metadata,
         temporal = temporal,
         provenanceEntries = provenance,
+        lastAccessed = lastAccessed,
     )
 
     /** A proposition mentioning several entities (the single-`entityId` [prop] can't express this). */
@@ -877,5 +881,122 @@ class DrivinePropositionStoreIntegrationTest {
                 "both nodes persist — a deliberate, logged duplicate, not a silently dropped update",
             )
         }
+    }
+
+    // ========================================================================
+    // D8: raw-confidence floor (membership) vs effective confidence (ranking)
+    // ========================================================================
+
+    /**
+     * The eager memory path (Memory.baseQuery()) filters membership on RAW confidence and only ever
+     * uses the decayed value for ranking. A stable, high-raw-confidence fact must stay in the eager
+     * set even once age has decayed it well below the floor — genuinely low-raw-confidence facts are
+     * still filtered.
+     */
+    @Test
+    fun `raw confidence floor keeps a decayed but reliable fact, effective confidence only ranks it`() {
+        // Stable ACTIVE fact: high raw confidence, but old + moderate decay drags effective confidence
+        // below the default 0.5 floor.
+        val stableButDecayed = repository.save(
+            prop(
+                "the subject is passionate about a stable hobby",
+                confidence = 0.99,
+                decay = 0.14,
+                contentRevised = Instant.now().minus(Duration.ofDays(7)),
+            ),
+        )
+        assertTrue(
+            stableButDecayed.effectiveConfidenceAt(Instant.now()) < 0.5,
+            "precondition: decay must have pushed effective confidence below the floor",
+        )
+        // A fresh, high-confidence fact — should always be included.
+        val fresh = repository.save(prop("a fresh fact", confidence = 0.95, decay = 0.0))
+        // A genuinely-unreliable fact — low RAW confidence must still be excluded by the floor.
+        val unreliable = repository.save(prop("an unreliable guess", confidence = 0.3, decay = 0.0))
+
+        // Mirrors Memory.baseQuery(): raw-confidence floor for membership, ACTIVE only.
+        val eagerQuery = PropositionQuery
+            .forContextId(ContextId("ctx"))
+            .withMinConfidence(0.5)
+            .withStatuses(setOf(PropositionStatus.ACTIVE))
+
+        val included = repository.query(eagerQuery).map { it.id }.toSet()
+
+        assertTrue(stableButDecayed.id in included, "a stable, high-raw-confidence fact must survive decay-driven exclusion")
+        assertTrue(fresh.id in included, "a fresh high-confidence fact must be included")
+        assertFalse(unreliable.id in included, "a genuinely low-raw-confidence fact must still be filtered")
+
+        // Decay still ranks: ordered by effective confidence, the decayed fact must sort behind the
+        // fresher one even though both are members.
+        val ranked = repository.query(eagerQuery.orderedByEffectiveConfidence()).map { it.id }
+        assertTrue(
+            ranked.indexOf(fresh.id) < ranked.indexOf(stableButDecayed.id),
+            "decay must demote the stable fact's rank even though it stays a member: ranked=$ranked",
+        )
+
+        // Sanity: the OLD behavior (filtering membership by decayed effective confidence) would have
+        // wrongly excluded the stable fact — this is the bug this fix closes.
+        val oldStyleQuery = PropositionQuery
+            .forContextId(ContextId("ctx"))
+            .withMinEffectiveConfidence(0.5)
+            .withStatuses(setOf(PropositionStatus.ACTIVE))
+        val oldStyleIncluded = repository.query(oldStyleQuery).map { it.id }.toSet()
+        assertFalse(
+            stableButDecayed.id in oldStyleIncluded,
+            "sanity check: the old minEffectiveConfidence filter would have excluded the stable fact",
+        )
+    }
+
+    // ========================================================================
+    // D8: reinforce on access — touchAccessed refreshes the decay anchor
+    // ========================================================================
+
+    /** [DrivinePropositionRepository.touchAccessed] writes lastAccessed in a single batch statement. */
+    @Test
+    fun `touchAccessed refreshes lastAccessed for the given ids, ignoring unknown ones`() {
+        val old = Instant.now().minus(Duration.ofDays(30))
+        val a = repository.save(prop("fact a", contentRevised = old, lastAccessed = old))
+        val b = repository.save(prop("fact b", contentRevised = old, lastAccessed = old))
+        val untouched = repository.save(prop("fact c", contentRevised = old, lastAccessed = old))
+
+        repository.touchAccessed(listOf(a.id, b.id, "no-such-id"))
+
+        val reloadedA = repository.findById(a.id)!!
+        val reloadedB = repository.findById(b.id)!!
+        val reloadedC = repository.findById(untouched.id)!!
+
+        assertTrue(reloadedA.lastAccessed.isAfter(old), "touched proposition a must have a refreshed lastAccessed")
+        assertTrue(reloadedB.lastAccessed.isAfter(old), "touched proposition b must have a refreshed lastAccessed")
+        assertEquals(old, reloadedC.lastAccessed, "an untouched proposition's lastAccessed must be unchanged")
+    }
+
+    /** Access refreshes decay: a touched DECAYING proposition's effective confidence recovers. */
+    @Test
+    fun `touchAccessed refreshes decay for a DECAYING proposition`() {
+        val old = Instant.now().minus(Duration.ofDays(30))
+        val saved = repository.save(
+            prop("frequently used but old fact", confidence = 0.9, decay = 0.5, contentRevised = old, lastAccessed = old),
+        )
+        val staleEffective = saved.effectiveConfidenceAt(Instant.now())
+        assertTrue(staleEffective < saved.confidence, "precondition: the proposition must have decayed")
+
+        repository.touchAccessed(listOf(saved.id))
+
+        val reloaded = repository.findById(saved.id)!!
+        val refreshedEffective = reloaded.effectiveConfidenceAt(Instant.now())
+        assertTrue(
+            refreshedEffective > staleEffective,
+            "a fresh access must raise effective confidence above the stale value: stale=$staleEffective refreshed=$refreshedEffective",
+        )
+    }
+
+    @Test
+    fun `touchAccessed with empty ids is a no-op`() {
+        val old = Instant.now().minus(Duration.ofDays(30))
+        val saved = repository.save(prop("fact", contentRevised = old, lastAccessed = old))
+
+        repository.touchAccessed(emptyList())
+
+        assertEquals(old, repository.findById(saved.id)!!.lastAccessed)
     }
 }
