@@ -252,7 +252,14 @@ class DrivinePropositionRepository(
 
     @Transactional(readOnly = true)
     override fun findAll(): List<Proposition> =
-        graphObjectManager.loadAll<PropositionView>().map(PropositionGraphMapper::toProposition)
+        graphObjectManager.loadAll<PropositionView> {
+            // Only hydrate real DICE propositions. A foreign or half-written `:Proposition` node
+            // (label collision, or a stub missing `contextId`) fails Drivine hydration of the WHOLE
+            // query because `contextId` is non-nullable — which otherwise 500s every full scan
+            // (decay sweep, re-embed). Every proposition this store writes has a `contextId`, so this
+            // guard excludes only non-propositions; it matches `findByContextId`'s implicit assumption.
+            where { proposition.contextId.isNotNull() }
+        }.map(PropositionGraphMapper::toProposition)
 
     @Transactional(readOnly = true)
     override fun findByEntity(entityIdentifier: RetrievableIdentifier): List<Proposition> =
@@ -315,7 +322,9 @@ class DrivinePropositionRepository(
     @Transactional(readOnly = true)
     override fun findAll(withProvenance: Boolean): List<Proposition> =
         if (!withProvenance) findAll()
-        else graphObjectManager.loadAll<PropositionWithProvenanceView>().map(PropositionGraphMapper::toProposition)
+        else graphObjectManager.loadAll<PropositionWithProvenanceView> {
+            where { proposition.contextId.isNotNull() } // skip malformed/foreign :Proposition nodes (see findAll)
+        }.map(PropositionGraphMapper::toProposition)
 
     /**
      * The materialised `effectiveConfidence` (default k = 2.0, as of the last sweep) only matches a
@@ -652,7 +661,9 @@ class DrivinePropositionRepository(
     @Transactional
     override fun reembedAll(): Int {
         logger.info("reembedAll start: model={} dim={}", embeddingService.name, embeddingService.dimensions)
-        val specs = graphObjectManager.loadAll<PropositionView>().mapNotNull { view ->
+        val specs = graphObjectManager.loadAll<PropositionView> {
+            where { proposition.contextId.isNotNull() } // skip malformed/foreign :Proposition nodes (see findAll)
+        }.mapNotNull { view ->
             view.proposition.text.takeIf { it.isNotBlank() }?.let { text ->
                 QuerySpecification
                     .withStatement("MATCH (p:Proposition {id: \$id}) SET p.embedding = \$embedding")
