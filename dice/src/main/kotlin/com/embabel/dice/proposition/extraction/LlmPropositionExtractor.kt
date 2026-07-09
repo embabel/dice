@@ -69,13 +69,15 @@ enum class ExtractionPerspective(val description: String) {
      * more enum values here.
      */
     NON_USER_RELATIONSHIPS(
-        "Extract facts stated by any speaker in the text. ADDITIONALLY, when the text " +
-            "explicitly states a relationship between two non-user entities that matches " +
-            "one of the relationship types defined in the schema (for example a " +
-            "correspondent's own employer drawn from their message body or email " +
-            "signature) — extract it as a proposition and emit BOTH the SUBJECT and " +
-            "OBJECT mentions, even when the workspace user is not a participant in that " +
-            "relationship. Key a person by their NAME, never by an email address.",
+        """
+        Extract facts stated by any speaker in the text. ADDITIONALLY, when the text
+        explicitly states a relationship between two non-user entities that matches
+        one of the relationship types defined in the schema (for example a
+        correspondent's own employer drawn from their message body or email
+        signature) — extract it as a proposition and emit BOTH the SUBJECT and
+        OBJECT mentions, even when the workspace user is not a participant in that
+        relationship. Key a person by their NAME, never by an email address.
+        """.trimIndent().replace("\n", " "),
     ),
 }
 

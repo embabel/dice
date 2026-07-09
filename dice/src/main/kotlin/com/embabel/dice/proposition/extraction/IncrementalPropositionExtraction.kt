@@ -266,8 +266,12 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     ): SourceAnalysisContext {
         val aliases = try {
             currentUserAliasesProvider(user)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            logger.warn("[buildContext] currentUserAliasesProvider interrupted for {}", sourceId, e)
+            emptyList()
         } catch (e: Exception) {
-            logger.warn("[buildContext] currentUserAliasesProvider threw for {}: {}", sourceId, e.message)
+            logger.warn("[buildContext] currentUserAliasesProvider threw for {}", sourceId, e)
             emptyList()
         }
         val currentUser = KnownEntity.asCurrentUser(user, aliases)
@@ -275,8 +279,12 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             extraKnownEntitiesProvider(user, sourceId)
                 .filter { it.id != user.id }
                 .map { KnownEntity.of(it).withRole("Candidate entity for this source") }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            logger.warn("[buildContext] extraKnownEntitiesProvider interrupted for {}", sourceId, e)
+            emptyList()
         } catch (e: Exception) {
-            logger.warn("[buildContext] extraKnownEntitiesProvider threw for {}: {}", sourceId, e.message)
+            logger.warn("[buildContext] extraKnownEntitiesProvider threw for {}", sourceId, e)
             emptyList()
         }
         val allKnown = listOf(currentUser) + extras
