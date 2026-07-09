@@ -21,7 +21,9 @@ import com.embabel.agent.rag.model.SimpleNamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.dice.common.ExistingEntity
+import com.embabel.dice.common.KnownEntity
 import com.embabel.dice.common.NewEntity
+import com.embabel.dice.common.ReferenceOnlyEntity
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.resolver.searcher.AgenticCandidateSearcher
@@ -332,6 +334,84 @@ class EscalatingEntityResolverTest {
 
             // Compressor should have been called (though no LLM call in this case)
             // The compressor is only invoked when LLM is needed
+        }
+    }
+
+    @Nested
+    inner class AliasAwareCurrentUserBinding {
+        // Behaviour guard for the alias-aware current-user binding fix.
+        // Root cause: the current user was keyed only to its primary
+        // name, so an alt-name mention ("Ben Hallstrom" vs the user's
+        // "Ben Blossom") missed the known-entity short-circuit and the
+        // escalating resolver bound it to a pre-existing external Person.
+
+        private val externalPerson = SimpleNamedEntityData(
+            id = "ext-person-1",
+            name = "Ben Hallstrom",
+            description = "External person carrying the user's alternate name",
+            labels = setOf("Person"),
+            properties = emptyMap(),
+        )
+
+        private val currentUser = SimpleNamedEntityData(
+            id = "user-1",
+            name = "Ben Blossom",
+            description = "The current user",
+            labels = setOf("AssistantUser", "Person"),
+            properties = emptyMap(),
+        )
+
+        // Stand-in for the real escalating chain: it would (wrongly) bind
+        // the alt-name mention to the external Person node.
+        private val escalatingToExternal = EscalatingEntityResolver(
+            searchers = listOf(
+                object : CandidateSearcher {
+                    override fun search(suggested: SuggestedEntity, schema: DataDictionary): SearchResult =
+                        SearchResult.confident(externalPerson)
+                },
+            ),
+        )
+
+        @Test
+        fun `without aliases the alt-name mention wrongly binds to the external person`() {
+            // Documents the root cause: keyed only to the primary name,
+            // "Ben Hallstrom" escalates and binds to the external Person.
+            val resolver = KnownEntityResolver.withKnownEntities(
+                listOf(KnownEntity.asCurrentUser(currentUser)),
+                escalatingToExternal,
+            )
+
+            val result = resolver.resolve(
+                suggestedEntities(suggestedEntity("Ben Hallstrom", labels = listOf("Person"))),
+                schema,
+            )
+
+            assertEquals("ext-person-1", result.resolutions.single().recommended?.id)
+        }
+
+        @Test
+        fun `alias mention of the current user binds to the user not an external person`() {
+            // The fix: threading the user's alias name-forms makes the
+            // known-entity resolver short-circuit BEFORE escalation, so
+            // the alt-name mention binds to the AssistantUser survivor
+            // and the external Person is never reached.
+            val resolver = KnownEntityResolver.withKnownEntities(
+                listOf(KnownEntity.asCurrentUser(currentUser, listOf("Ben Hallstrom"))),
+                escalatingToExternal,
+            )
+
+            val result = resolver.resolve(
+                suggestedEntities(suggestedEntity("Ben Hallstrom", labels = listOf("Person"))),
+                schema,
+            )
+
+            val resolution = result.resolutions.single()
+            assertEquals("user-1", resolution.recommended?.id)
+            assertNotEquals("ext-person-1", resolution.recommended?.id)
+            assertTrue(
+                resolution is ReferenceOnlyEntity || resolution is ExistingEntity,
+                "Expected a known-entity binding to the user, got $resolution",
+            )
         }
     }
 

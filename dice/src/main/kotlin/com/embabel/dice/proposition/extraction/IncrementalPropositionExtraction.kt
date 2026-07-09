@@ -90,6 +90,17 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * to opt in.
      */
     private val groundingWiringService: com.embabel.dice.projection.grounding.GroundingWiringService? = null,
+    /**
+     * Alternate NAME forms for the current user (nicknames, former
+     * names) — NOT alternate email addresses. Called with the event's
+     * user; the returned aliases are threaded into the current-user
+     * [KnownEntity] so the [KnownEntityResolver] binds an alt-name chunk
+     * mention (e.g. "Tom" for "Thomas") to the user instead of letting
+     * it escalate to a heuristic match that mints a separate external
+     * Person. Defaults to a no-op returning no aliases, so existing
+     * consumers see no behaviour change.
+     */
+    private val currentUserAliasesProvider: (NamedEntity) -> List<String> = { _ -> emptyList() },
 ) {
     private val analyzer: IncrementalAnalyzer<Message, ChunkPropositionResult> =
         PropositionIncrementalAnalyzer(
@@ -162,6 +173,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      *   e.g. a chat-recovery answer synthesised from `email:<threadId>` and a
      *   connected-service record can attribute back to both. Empty (default)
      *   preserves prior behaviour.
+     * @param perspective optional per-call extraction perspective. `null` (default)
+     *   leaves the extractor's own perspective in force — zero behaviour change.
+     *   A caller can pass e.g. [ExtractionPerspective.NON_USER_RELATIONSHIPS] to
+     *   opt this one source into mining non-user relationships.
      */
     @JvmOverloads
     open fun rememberText(
@@ -169,8 +184,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         sourceId: String,
         user: NamedEntity,
         additionalGrounding: List<String> = emptyList(),
+        perspective: ExtractionPerspective? = null,
     ) {
-        val context = buildContext(user, sourceId)
+        val context = buildContext(user, sourceId, perspective)
         val result = propositionPipeline.processOnce(
             text, sourceId, context, additionalGrounding = additionalGrounding,
         )
@@ -243,14 +259,32 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         }
     }
 
-    private fun buildContext(user: NamedEntity, sourceId: String = ""): SourceAnalysisContext {
-        val currentUser = KnownEntity.asCurrentUser(user)
+    private fun buildContext(
+        user: NamedEntity,
+        sourceId: String = "",
+        perspective: ExtractionPerspective? = null,
+    ): SourceAnalysisContext {
+        val aliases = try {
+            currentUserAliasesProvider(user)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            logger.warn("[buildContext] currentUserAliasesProvider interrupted for {}", sourceId, e)
+            emptyList()
+        } catch (e: Exception) {
+            logger.warn("[buildContext] currentUserAliasesProvider threw for {}", sourceId, e)
+            emptyList()
+        }
+        val currentUser = KnownEntity.asCurrentUser(user, aliases)
         val extras = try {
             extraKnownEntitiesProvider(user, sourceId)
                 .filter { it.id != user.id }
                 .map { KnownEntity.of(it).withRole("Candidate entity for this source") }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            logger.warn("[buildContext] extraKnownEntitiesProvider interrupted for {}", sourceId, e)
+            emptyList()
         } catch (e: Exception) {
-            logger.warn("[buildContext] extraKnownEntitiesProvider threw for {}: {}", sourceId, e.message)
+            logger.warn("[buildContext] extraKnownEntitiesProvider threw for {}", sourceId, e)
             emptyList()
         }
         val allKnown = listOf(currentUser) + extras
@@ -267,6 +301,12 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         val extra = promptVariablesProvider.apply(user)
         if (extra.isNotEmpty()) {
             ctx = ctx.withPromptVariables(extra)
+        }
+        // Per-call perspective (e.g. NON_USER_RELATIONSHIPS) overrides the
+        // extractor instance default only when explicitly supplied. The event
+        // path never passes one, so its behaviour is unchanged.
+        if (perspective != null) {
+            ctx = ctx.withPerspective(perspective)
         }
         return ctx
     }
