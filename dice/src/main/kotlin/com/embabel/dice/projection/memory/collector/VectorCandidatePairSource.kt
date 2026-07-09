@@ -1,0 +1,67 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.dice.projection.memory.collector
+
+import com.embabel.agent.core.ContextId
+import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
+import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.spi.CandidatePair
+import com.embabel.dice.spi.CandidatePairSource
+
+/**
+ * Proposes candidate pairs from the repository's own vector clustering, the same recall path
+ * [com.embabel.dice.projection.memory.DuplicateCollectorStrategy] uses today.
+ *
+ * Runs [PropositionRepository.findClusters] and turns every anchor/member edge into a
+ * [CandidatePair] carrying the cluster's cosine as [CandidatePair.proposalScore], so a
+ * [VectorSignalScorer] downstream can reuse it instead of re-embedding. Only pairs where both
+ * sides are in the runner's candidate snapshot are proposed — a cluster member outside that
+ * snapshot is silently dropped, mirroring the `byId` filter in `DuplicateCollectorStrategy`.
+ *
+ * @property similarityThreshold cosine floor handed to [PropositionRepository.findClusters].
+ *   Defaults to 0.7, matching the dice default so recall is consistent out of the box.
+ * @property topK maximum similar members considered per cluster seed, passed straight through.
+ */
+class VectorCandidatePairSource(
+    private val repository: PropositionRepository,
+    private val similarityThreshold: Double = 0.7,
+    private val topK: Int = 10,
+) : CandidatePairSource {
+
+    override fun propose(candidates: List<Proposition>, contextId: ContextId): List<CandidatePair> {
+        val byId = candidates.associateBy { it.id }
+        val clusters = repository.findClusters(
+            similarityThreshold = similarityThreshold,
+            topK = topK,
+            query = PropositionQuery.forContextId(contextId).withStatus(PropositionStatus.ACTIVE),
+        )
+
+        // Re-derive and dedupe defensively rather than trust findClusters' own canonicalization.
+        return clusters
+            .flatMap { cluster ->
+                val anchor = byId[cluster.anchor.id] ?: return@flatMap emptyList()
+                cluster.similar.mapNotNull { result ->
+                    val member = byId[result.match.id] ?: return@mapNotNull null
+                    if (anchor.id == member.id) return@mapNotNull null
+                    val (first, second) = if (anchor.id <= member.id) anchor to member else member to anchor
+                    CandidatePair(anchor = first, member = second, proposalScore = result.score)
+                }
+            }
+            .distinctBy { it.anchor.id to it.member.id }
+    }
+}

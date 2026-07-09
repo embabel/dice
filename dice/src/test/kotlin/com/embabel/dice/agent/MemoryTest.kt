@@ -54,6 +54,22 @@ class MemoryTest {
     fun setup() {
         repository = mockk(relaxed = true)
         projector = mockk(relaxed = true)
+        // count(query) and keywordOverlap(...) have interface defaults expressed over query(); a
+        // relaxed mock returns stub values for them instead of running those defaults, so route them
+        // back through the query() the tests configure.
+        every { repository.count(any<PropositionQuery>()) } answers { repository.query(firstArg()).size }
+        every { repository.keywordOverlap(any(), any(), any()) } answers {
+            val base = firstArg<PropositionQuery>()
+            val tokens = secondArg<List<String>>()
+            val limit = thirdArg<Int>()
+            if (tokens.isEmpty() || limit <= 0) emptyList()
+            else repository.query(base.orderedByEffectiveConfidence())
+                .map { p -> p to tokens.count { t -> p.text.contains(t, ignoreCase = true) } }
+                .filter { it.second > 0 }
+                .sortedByDescending { it.second }
+                .map { it.first }
+                .take(limit)
+        }
     }
 
     @Nested
@@ -349,7 +365,9 @@ class MemoryTest {
             assertEquals("jazz", requestSlot.captured.query)
             assertEquals(5, requestSlot.captured.topK)
             assertEquals(contextId, querySlot.captured.contextId)
-            assertEquals(0.7, querySlot.captured.minEffectiveConfidence)
+            // The floor gates membership on RAW confidence (decay ranks, never excludes) — see
+            // Memory.baseQuery().
+            assertEquals(0.7, querySlot.captured.minConfidence)
         }
 
         @Test

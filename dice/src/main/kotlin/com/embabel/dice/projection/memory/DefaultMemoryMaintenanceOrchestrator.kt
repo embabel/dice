@@ -20,6 +20,7 @@ import com.embabel.dice.operations.abstraction.PropositionAbstractor
 import com.embabel.dice.operations.consolidation.AbstractionPass
 import com.embabel.dice.operations.consolidation.ConsolidationPassResult
 import com.embabel.dice.operations.consolidation.SessionConsolidationPass
+import com.embabel.dice.proposition.DecayManager
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
@@ -57,6 +58,10 @@ private val logger = LoggerFactory.getLogger("com.embabel.dice.projection.memory
  * @param abstractionTargetCount How many abstractions to generate per group.
  * @param retireBelow Hard-delete propositions whose effective confidence falls below this; null disables retirement.
  * @param retireDecayK Decay-rate multiplier used when computing effective confidence for retirement.
+ * @param decayManager Optional; refreshes the store's materialised effective-confidence column right
+ *   before retirement so the pushed-down below-threshold filter reads fresh values (see [retire]).
+ *   Null for backends that compute effective confidence live (the in-memory store), where there is
+ *   no column to refresh.
  * @param collector Optional mark-and-sweep collector run as the final stage; null disables it.
  */
 data class DefaultMemoryMaintenanceOrchestrator(
@@ -67,6 +72,7 @@ data class DefaultMemoryMaintenanceOrchestrator(
     private val abstractionTargetCount: Int = 3,
     private val retireBelow: Double? = null,
     private val retireDecayK: Double = 2.0,
+    private val decayManager: DecayManager? = null,
     private val collector: CollectorRunner? = null,
 ) : MemoryMaintenanceOrchestrator {
 
@@ -207,12 +213,24 @@ data class DefaultMemoryMaintenanceOrchestrator(
     private fun retire(contextId: ContextId): List<Proposition> {
         val threshold = retireBelow ?: return emptyList()
 
-        val active = repository.query(
-            PropositionQuery.Companion.forContextId(contextId)
-                .withStatus(PropositionStatus.ACTIVE)
-        )
+        // At the default k the pushed filter reads the store's materialised effectiveConfidence column,
+        // which nothing else in maintain() refreshes — so a proposition that decayed below the threshold
+        // since the last sweep would be skipped, diverging from the always-live in-memory backend. Refresh
+        // the column first (a cheap Cypher sweep on the graph backend, a no-op in memory). A non-default k
+        // routes through live decay and doesn't read the column, so this refresh is only load-bearing for
+        // the default-k path — but it's cheap and correct either way.
+        decayManager?.materialize(contextId)
 
-        val toRetire = active.filter { it.effectiveConfidence(retireDecayK) < threshold }
+        // Push the below-threshold confidence filter into the store. When retireDecayK is the store's
+        // default, the store filters on its materialised effectiveConfidence column; a non-default k
+        // routes through the live-decay path (context + status pushed down, only the decay comparison
+        // done in memory) — either way we don't load the whole ACTIVE set to filter it here.
+        val toRetire = repository.query(
+            PropositionQuery.forContextId(contextId)
+                .withStatus(PropositionStatus.ACTIVE)
+                .withBelowEffectiveConfidence(threshold)
+                .withDecayK(retireDecayK)
+        )
 
         for (prop in toRetire) {
             repository.delete(prop.id)
@@ -238,6 +256,10 @@ data class DefaultMemoryMaintenanceOrchestrator(
 
     fun withRetireDecayK(k: Double): DefaultMemoryMaintenanceOrchestrator =
         copy(retireDecayK = k)
+
+    /** Attach the decay manager whose sweep refreshes the materialised column before retirement runs. */
+    fun withDecayManager(decayManager: DecayManager): DefaultMemoryMaintenanceOrchestrator =
+        copy(decayManager = decayManager)
 
     fun withCollector(collector: CollectorRunner): DefaultMemoryMaintenanceOrchestrator =
         copy(collector = collector)

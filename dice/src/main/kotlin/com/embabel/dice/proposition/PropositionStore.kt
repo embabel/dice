@@ -74,8 +74,12 @@ internal fun PropositionQuery.matchesFilters(
     if (revisedBefore != null && prop.lastTouched > revisedBefore) return false
     if (accessedAfter != null && prop.lastAccessed < accessedAfter) return false
     if (accessedBefore != null && prop.lastAccessed > accessedBefore) return false
+    if (minConfidence != null && prop.confidence < minConfidence) return false
     minEffectiveConfidence?.let { threshold ->
         if (prop.effectiveConfidenceAt(asOf, decayK) < threshold) return false
+    }
+    belowEffectiveConfidence?.let { threshold ->
+        if (prop.effectiveConfidenceAt(asOf, decayK) >= threshold) return false
     }
     if (minImportance != null && prop.importance < minImportance) return false
     if (minReinforceCount != null && prop.reinforceCount < minReinforceCount) return false
@@ -170,6 +174,51 @@ interface PropositionStore {
      * Get the total count of propositions.
      */
     fun count(): Int
+
+    /**
+     * Refresh [Proposition.lastAccessed] to now for [ids] — the read-side reinforcement that lets a
+     * DECAYING proposition's decay anchor (see [Proposition.effectiveConfidenceAt]) track actual use
+     * rather than only content edits. Best-effort and silent about unknown ids (a stale eager id that
+     * has since been deleted is not an error).
+     *
+     * Callers should scope this to genuine reads that matter (e.g. eager memory surfaced to an LLM),
+     * not every internal query, to keep write amplification bounded. The default touches each id via
+     * [findById] + [save]; a backend that can push this down (e.g. a single batch `SET` statement)
+     * should override.
+     */
+    fun touchAccessed(ids: Collection<String>) {
+        val now = java.time.Instant.now()
+        ids.forEach { id -> findById(id)?.let { save(it.copy(lastAccessed = now)) } }
+    }
+
+    /**
+     * Count the propositions matching [query]. The default materialises [query]'s results and counts
+     * them; a backend that can count server-side (e.g. the graph store) overrides to avoid loading the
+     * rows just to size them.
+     */
+    fun count(query: PropositionQuery): Int = query(query).size
+
+    /**
+     * Find propositions in [base]'s scope whose text contains at least one of [tokens]
+     * (case-insensitive), ranked by how many distinct tokens each contains (descending), ties broken
+     * by [base]'s ordering. At most [limit] results; empty [tokens] or non-positive [limit] returns
+     * nothing.
+     *
+     * There is no full-text index here, so this is CONTAINS-based, not lexically ranked. The default
+     * applies [base]'s structured filters through [query] (ordered by effective confidence so ties are
+     * stable) and does the token overlap in memory; a backend with server-side text matching pushes
+     * the overlap down. The overlap filter runs before [limit] so a keyword hit isn't lost to a
+     * confidence-ordered cut-off.
+     */
+    fun keywordOverlap(base: PropositionQuery, tokens: List<String>, limit: Int): List<Proposition> {
+        if (tokens.isEmpty() || limit <= 0) return emptyList()
+        return query(base.orderedByEffectiveConfidence())
+            .map { prop -> prop to tokens.count { t -> prop.text.contains(t, ignoreCase = true) } }
+            .filter { it.second > 0 }
+            .sortedByDescending { it.second }
+            .map { it.first }
+            .take(limit)
+    }
 
     // ========================================================================
     // Pinning — "must retain" propositions that resist eviction and decay

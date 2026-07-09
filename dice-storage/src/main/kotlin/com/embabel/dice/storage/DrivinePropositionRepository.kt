@@ -27,9 +27,14 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionQuery.OrderBy
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.GraphQueryCapable
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStoreType
 import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.query.graph.GraphNeighborhood
+import com.embabel.dice.query.graph.GraphPath
+import com.embabel.dice.query.graph.PropositionLineage
+import com.embabel.dice.query.graph.RelatedEntity
 import com.embabel.dice.storage.model.*
 import org.drivine.manager.*
 import org.drivine.query.CypherStatement
@@ -57,7 +62,8 @@ import java.time.Instant
  *   interface default's vector query per candidate.
  * - Detached re-saves with changed mentions may leave orphan Mention nodes (load-then-save avoids it).
  */
-open class DrivinePropositionRepository(
+@Transactional
+class DrivinePropositionRepository(
     private val graphObjectManager: GraphObjectManager,
     private val persistenceManager: PersistenceManager,
     private val embeddingService: EmbeddingService,
@@ -67,7 +73,7 @@ open class DrivinePropositionRepository(
      * [findClusters] Cypher. Defaults to the canonical [VECTOR_INDEX]; overridable only for tests.
      */
     private val vectorIndexName: String = VECTOR_INDEX,
-) : PropositionRepository {
+) : PropositionRepository, GraphQueryCapable {
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
 
@@ -93,6 +99,11 @@ open class DrivinePropositionRepository(
      * on the same stripe cannot read pre-commit and slip a duplicate past the existence check.
      *
      * Propositions with blank text have nothing to dedup on and are persisted directly.
+     *
+     * An update to an id already stored always writes to that id — it never redirects to a same-text
+     * sibling. If a foreign sibling turns out to be ACTIVE too (only reachable without the
+     * `(contextId, text)` constraint), that's a live duplicate this method won't silently create by
+     * redirecting, but won't collapse either — it logs a WARN naming both ids for the dedup sweep.
      */
     override fun save(proposition: Proposition): Proposition {
         val text = proposition.text
@@ -116,18 +127,42 @@ open class DrivinePropositionRepository(
     private fun findOrPersist(proposition: Proposition, contextId: String, text: String): Proposition {
         val existingId = findDuplicateId(contextId, text, proposition.id)
         val existing = existingId?.let(::findById)
-        return if (existing != null) {
+        val isUpdate = existsById(proposition.id)
+        // A same-text sibling only collapses a brand-new insert (parallel writers minting one fact as
+        // two ids). An in-place update — reinforce, status change, dedup fold — must write to its own
+        // node, never redirect to the sibling and drop the update. The (contextId, text) constraint
+        // normally makes a foreign sibling impossible, so this only bites when it's absent; genuine
+        // inserts skip it.
+        return if (existing != null && !isUpdate) {
             logger.debug(
                 "Dedup: proposition already present as {} in context {} — reusing: '{}'",
                 existingId, contextId, text,
             )
             existing
         } else {
+            // An update lands on its own node even when a same-text sibling exists. If that sibling is
+            // also ACTIVE, this mints a second live copy of the same fact (only reachable without the
+            // (contextId, text) constraint) — we still write to the caller's id, but flag the pair so
+            // the dedup sweep or an operator can collapse them. A non-ACTIVE sibling stays quiet.
+            if (existing != null && existing.status == PropositionStatus.ACTIVE &&
+                proposition.status == PropositionStatus.ACTIVE
+            ) {
+                logger.warn(
+                    "Update to proposition {} in context {} leaves an ACTIVE same-text sibling {} unmerged — " +
+                        "dedup sweep should collapse them: '{}'",
+                    proposition.id, contextId, existingId, text,
+                )
+            }
             doPersist(proposition)
         }
     }
 
-    /** Best-effort detection of a Neo4j uniqueness-constraint violation anywhere in the cause chain. */
+    /**
+     * Best-effort detection of a Neo4j uniqueness-constraint violation anywhere in the cause chain.
+     * Matches on message substrings, since which form (error code vs. prose) shows up in
+     * `getMessage()` isn't guaranteed across driver versions. [findOrPersist] pre-checks for a
+     * same-text sibling before writing, so this is just the cross-instance-race backstop now.
+     */
     private fun isUniquenessViolation(error: Throwable?): Boolean {
         var t: Throwable? = error
         while (t != null) {
@@ -199,6 +234,15 @@ open class DrivinePropositionRepository(
                 .transform(String::class.java)
         )
 
+    /** True if a proposition with this exact id is already stored, so a [save] is an update, not an insert. */
+    private fun existsById(id: String): Boolean =
+        persistenceManager.maybeGetOne(
+            QuerySpecification
+                .withStatement("MATCH (p:Proposition {id: \$id}) RETURN p.id AS id LIMIT 1")
+                .bind(mapOf("id" to id))
+                .transform(String::class.java)
+        ) != null
+
     private fun lockFor(contextId: String, text: String): Any =
         dedupLocks[Math.floorMod("$contextId $text".hashCode(), DEDUP_STRIPES)]
 
@@ -239,6 +283,16 @@ open class DrivinePropositionRepository(
         graphObjectManager.loadAll<PropositionView> { where { proposition.grounding hasItem chunkId } }
             .map(PropositionGraphMapper::toProposition)
 
+    /**
+     * Abstractions of a proposition, pushed down: the default in [GraphTraversalCapable] scans the
+     * whole store, so match on the stored `sourceIds` list directly — `WHERE $propositionId IN
+     * p.sourceIds`, the same shape as [findByGrounding].
+     */
+    @Transactional(readOnly = true)
+    override fun findAbstractionsOf(propositionId: String): List<Proposition> =
+        graphObjectManager.loadAll<PropositionView> { where { proposition.sourceIds hasItem propositionId } }
+            .map(PropositionGraphMapper::toProposition)
+
     @Transactional(readOnly = true)
     override fun query(query: PropositionQuery): List<Proposition> {
         val liveDecay = needsLiveDecay(query)
@@ -271,7 +325,8 @@ open class DrivinePropositionRepository(
      */
     private fun needsLiveDecay(query: PropositionQuery): Boolean =
         (query.decayK != DEFAULT_DECAY_K || query.effectiveConfidenceAsOf != null) &&
-            (query.minEffectiveConfidence != null || query.orderBy == OrderBy.EFFECTIVE_CONFIDENCE_DESC)
+            (query.minEffectiveConfidence != null || query.belowEffectiveConfidence != null ||
+                query.orderBy == OrderBy.EFFECTIVE_CONFIDENCE_DESC)
 
     /**
      * Push every *non-decay* filter into the DB, then apply `effectiveConfidenceAt(asOf, decayK)` as the
@@ -289,6 +344,9 @@ open class DrivinePropositionRepository(
         var seq = candidates.asSequence()
         query.minEffectiveConfidence?.let { threshold ->
             seq = seq.filter { it.effectiveConfidenceAt(asOf, query.decayK) >= threshold }
+        }
+        query.belowEffectiveConfidence?.let { threshold ->
+            seq = seq.filter { it.effectiveConfidenceAt(asOf, query.decayK) < threshold }
         }
         val ordered = if (query.orderBy == OrderBy.EFFECTIVE_CONFIDENCE_DESC) {
             seq.sortedByDescending { it.effectiveConfidenceAt(asOf, query.decayK) }
@@ -323,9 +381,13 @@ open class DrivinePropositionRepository(
         query.revisedBefore?.let { proposition.lastTouched lte it }
         query.accessedAfter?.let { proposition.lastAccessed gte it }
         query.accessedBefore?.let { proposition.lastAccessed lte it }
+        query.minConfidence?.let { proposition.confidence gte it }
         query.minImportance?.let { proposition.importance gte it }
         query.minReinforceCount?.let { proposition.reinforceCount gte it }
-        if (includeEffectiveConfidence) query.minEffectiveConfidence?.let { proposition.effectiveConfidence gte it }
+        if (includeEffectiveConfidence) {
+            query.minEffectiveConfidence?.let { proposition.effectiveConfidence gte it }
+            query.belowEffectiveConfidence?.let { proposition.effectiveConfidence lt it }
+        }
         query.minTrustScore?.let { threshold ->
             // Fail-open, matching the in-memory backend's passesMinTrust: an unscored proposition (no
             // cached trust property) passes the gate, so the predicate is "missing OR >= threshold".
@@ -358,11 +420,12 @@ open class DrivinePropositionRepository(
         textSimilaritySearchRequest: TextSimilaritySearchRequest,
     ): List<SimilarityResult<Proposition>> {
         val vector = embeddingService.embed(textSimilaritySearchRequest.query).toList()
-        val threshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }
+        val rawThreshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }
+        val engineThreshold = rawThreshold?.let(::toEngineScore)
         val results = graphObjectManager
-            .loadNearest<PropositionView>(vector, textSimilaritySearchRequest.topK, threshold)
-            .map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = it.score) }
-        logger.debug("findSimilarWithScores: {} hit(s) (topK={}, threshold={})", results.size, textSimilaritySearchRequest.topK, threshold)
+            .loadNearest<PropositionView>(vector, textSimilaritySearchRequest.topK, engineThreshold)
+            .map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = toRawCosine(it.score)) }
+        logger.debug("findSimilarWithScores: {} hit(s) (topK={}, threshold={})", results.size, textSimilaritySearchRequest.topK, rawThreshold)
         return results
     }
 
@@ -377,20 +440,26 @@ open class DrivinePropositionRepository(
             return super<PropositionRepository>.findSimilarWithScores(textSimilaritySearchRequest, query)
         }
         val vector = embeddingService.embed(textSimilaritySearchRequest.query).toList()
-        val threshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }
+        val threshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }?.let(::toEngineScore)
         return graphObjectManager.loadNearest<PropositionView>(
             vector,
             textSimilaritySearchRequest.topK,
             threshold,
         ) {
             where { applyFilters(query, includeEffectiveConfidence = true) }
-        }.map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = it.score) }
+        }.map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = toRawCosine(it.score)) }
     }
 
     /**
      * Single correlated statement: select candidates DB-side via [query], then within that set run
      * the vector index once per seed using the seed's own embedding, keeping `seed.id < m.id` so each
      * pair appears once. No N+1 round trips; membership and dedup stay server-side.
+     *
+     * [similarityThreshold] is raw cosine — a candidate pair is admitted at cosine >= threshold, same
+     * scale as [findSimilarWithScores]. Older deployments that tuned a threshold against Neo4j's raw
+     * `(1 + cosine) / 2` index score (before this method converted back to cosine) admitted down to
+     * cosine `2*t - 1` for a stored `t`; that threshold now means something stricter and should be
+     * retuned.
      */
     @Transactional(readOnly = true)
     override fun findClusters(
@@ -403,6 +472,9 @@ open class DrivinePropositionRepository(
         val byId = candidates.associateBy { it.id }
         val ids = candidates.map { it.id }
 
+        // A COSINE index scores as (1 + cosine) / 2 (see toRawCosine below); the `cosine` binding here
+        // converts back to raw cosine so the gate and the returned score are both cosine, as the
+        // in-memory store returns. COSINE-only: a EUCLIDEAN index normalizes differently.
         @Suppress("UNCHECKED_CAST")
         val rows = persistenceManager.query(
             QuerySpecification
@@ -411,8 +483,9 @@ open class DrivinePropositionRepository(
                     UNWIND ${'$'}ids AS sid
                     MATCH (seed:Proposition {id: sid}) WHERE seed.embedding IS NOT NULL
                     CALL db.index.vector.queryNodes('$vectorIndexName', ${'$'}k, seed.embedding) YIELD node AS m, score
-                    WHERE m.id IN ${'$'}ids AND sid < m.id AND score >= ${'$'}threshold
-                    RETURN { anchorId: sid, otherId: m.id, score: score } AS row
+                    WITH sid, m, 2.0 * score - 1.0 AS cosine
+                    WHERE m.id IN ${'$'}ids AND sid < m.id AND cosine >= ${'$'}threshold
+                    RETURN { anchorId: sid, otherId: m.id, score: cosine } AS row
                     """.trimIndent()
                 )
                 .bind(mapOf("ids" to ids, "k" to topK + 1, "threshold" to similarityThreshold))
@@ -440,6 +513,22 @@ open class DrivinePropositionRepository(
         return clusters
     }
 
+    /**
+     * A Neo4j COSINE vector index reports `(1 + cosine) / 2`, not raw cosine — this converts an
+     * engine score back to the raw cosine every score in this repository's public API uses (matching
+     * the in-memory store). Paired with [toEngineScore]. COSINE-only: a EUCLIDEAN index normalizes
+     * differently.
+     */
+    private fun toRawCosine(engineScore: Double): Double = 2.0 * engineScore - 1.0
+
+    /**
+     * Converts a raw-cosine similarity threshold to the engine-normalized scale Drivine's
+     * `loadNearest` gates on, so a caller-supplied threshold (always raw cosine here) means the same
+     * thing whether it's applied by us (as in [findClusters]) or by the index itself (as in
+     * [findSimilarWithScores]). Inverse of [toRawCosine].
+     */
+    private fun toEngineScore(rawCosineThreshold: Double): Double = (1.0 + rawCosineThreshold) / 2.0
+
     /** DELETE_ORPHAN (not DELETE_ALL) so shared `:Source` nodes survive unless this was their last reference. */
     @Transactional
     override fun delete(id: String): Boolean =
@@ -447,6 +536,108 @@ open class DrivinePropositionRepository(
 
     @Transactional(readOnly = true)
     override fun count(): Int = graphObjectManager.count<PropositionView>().toInt()
+
+    /**
+     * Batch `SET` in one round trip instead of the SPI default's per-id find-then-save. Runs in its
+     * own [Propagation.REQUIRES_NEW] transaction: callers commonly invoke this from inside a
+     * `readOnly = true` query transaction (e.g. Memory's eager load), which cannot itself take a write.
+     * Empty [ids] is a no-op — no need to open a transaction for nothing.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    override fun touchAccessed(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        persistenceManager.execute(
+            QuerySpecification
+                .withStatement("MATCH (p:Proposition) WHERE p.id IN \$ids SET p.lastAccessed = \$now")
+                .bind(mapOf("ids" to ids.distinct(), "now" to Instant.now())),
+        )
+    }
+
+    /**
+     * Filtered count pushed into the DB: same `where` block as [query], counted server-side instead
+     * of materialising and sizing the rows. Non-default decay can't push onto the materialised
+     * `effectiveConfidence` column, so that case falls back to counting [query]'s live-decay result.
+     *
+     * A [PropositionQuery.limit] caps the count, mirroring the SPI default (`query(query).size`) and
+     * the in-memory store, which both size a limit-truncated result — a server-side `count()` would
+     * otherwise count every match and ignore the cap.
+     */
+    @Transactional(readOnly = true)
+    override fun count(query: PropositionQuery): Int {
+        if (needsLiveDecay(query)) return query(query).size
+        val counted = graphObjectManager.count<PropositionView> {
+            where { applyFilters(query, includeEffectiveConfidence = true) }
+        }.toInt()
+        return query.limit?.let { minOf(it, counted) } ?: counted
+    }
+
+    /**
+     * Case-insensitive keyword-overlap probe pushed into the DB. The typed DSL has no
+     * case-insensitive `CONTAINS` and no list-comprehension, and there's no full-text index (see
+     * [luceneSyntaxNotes]), so this drops to hand-written Cypher: `size([t IN $tokens WHERE
+     * toLower(p.text) CONTAINS t]) > 0`, ordered by that overlap then effective confidence. Only the
+     * structured filters this statement understands are handled; a [base] carrying anything else
+     * (entity, level, temporal, non-default decay, …) falls back to the portable default, which still
+     * pushes [base]'s filters through [query].
+     */
+    @Transactional(readOnly = true)
+    override fun keywordOverlap(base: PropositionQuery, tokens: List<String>, limit: Int): List<Proposition> {
+        if (tokens.isEmpty() || limit <= 0) return emptyList()
+        if (!keywordPushable(base)) return super.keywordOverlap(base, tokens, limit)
+
+        val lowered = tokens.map { it.lowercase() }.distinct()
+        val conds = listOfNotNull(
+            base.contextId?.let { "p.contextId = \$contextId" },
+            base.statuses?.takeIf { it.isNotEmpty() }?.let { "p.status IN \$statuses" },
+            base.minEffectiveConfidence?.let { "p.effectiveConfidence >= \$minEc" },
+            base.minImportance?.let { "p.importance >= \$minImp" }
+        )
+        val params = buildMap {
+            put("tokens", lowered)
+            put("limit", limit)
+            base.contextId?.let { put("contextId", it.value) }
+            base.statuses?.takeIf { it.isNotEmpty() }?.let { statuses ->
+                put("statuses", statuses.map { it.name })
+            }
+            base.minEffectiveConfidence?.let { put("minEc", it) }
+            base.minImportance?.let { put("minImp", it) }
+        }
+        val whereHead = if (conds.isEmpty()) "" else "WHERE " + conds.joinToString(" AND ")
+
+        // A single-column RETURN yields the raw column values (here proposition ids), not row maps.
+        @Suppress("UNCHECKED_CAST")
+        val ids = persistenceManager.query(
+            QuerySpecification.withStatement(
+                """
+                MATCH (p:Proposition)
+                $whereHead
+                WITH p, size([t IN ${'$'}tokens WHERE toLower(p.text) CONTAINS t]) AS overlap
+                WHERE overlap > 0
+                RETURN p.id AS id
+                ORDER BY overlap DESC, coalesce(p.effectiveConfidence, -1.0) DESC
+                LIMIT ${'$'}limit
+                """.trimIndent()
+            ).bind(params)
+        ) as List<String>
+
+        val byId = hydrate(ids)
+        return ids.mapNotNull { byId[it] }
+    }
+
+    /**
+     * True when [keywordOverlap]'s hand-written Cypher covers every filter [base] carries. It handles
+     * contextId, statuses, minEffectiveConfidence, and minImportance; anything else routes to the
+     * portable default so the result stays correct (just less optimal).
+     */
+    private fun keywordPushable(base: PropositionQuery): Boolean =
+        base.entityId == null && base.anyEntityIds == null && base.allEntityIds == null &&
+            base.minLevel == null && base.maxLevel == null &&
+            base.createdAfter == null && base.createdBefore == null &&
+            base.revisedAfter == null && base.revisedBefore == null &&
+            base.accessedAfter == null && base.accessedBefore == null &&
+            base.minReinforceCount == null && base.minTrustScore == null && base.pinned == null &&
+            base.minConfidence == null && base.belowEffectiveConfidence == null &&
+            base.effectiveConfidenceAsOf == null && base.decayK == DEFAULT_DECAY_K
 
     /**
      * Re-embed every proposition by writing a fresh vector onto each node. Lighter than the
@@ -506,6 +697,162 @@ open class DrivinePropositionRepository(
      * `orderBy { }` DSL can't express coalesce, so add the order expression straight to the builder —
      * the in-scope context parameter, mirroring the generated property accessors.
      */
+    // ========================================================================
+    // GraphQueryCapable — entity-axis graph queries pushed down to Cypher
+    // ========================================================================
+
+    /**
+     * This backend confines every entity-axis walk to a supplied context in its own Cypher (a
+     * `p.contextId = $ctx` predicate on each hop), so the portable facade routes context-scoped
+     * queries straight down here instead of falling back to the proposition-edge path.
+     */
+    override val honorsContextFilter: Boolean get() = true
+
+    @Transactional(readOnly = true)
+    override fun neighborhood(entityId: String, depth: Int): GraphNeighborhood =
+        neighborhood(entityId, depth, null as ContextId?)
+
+    /**
+     * Native entity neighbourhood: [GraphProjectionCypher.neighborhood] walks the entity projection
+     * in Neo4j and hands back each reachable entity, its shortest hop distance, and the proposition
+     * ids on a shortest final hop into it. We only hydrate those `via` propositions (via the lean
+     * view) — the traversal itself never leaves the database. A non-null [contextId] confines the
+     * walk to that context (every hop's proposition must match); null is unscoped. Called directly
+     * (bypassing the facade's own ceiling), this bounds the walk at [GraphProjectionCypher.MAX_DEPTH].
+     */
+    @Transactional(readOnly = true)
+    override fun neighborhood(entityId: String, depth: Int, contextId: ContextId?): GraphNeighborhood =
+        neighborhoodNative(entityId, depth, contextId, GraphProjectionCypher.MAX_DEPTH)
+
+    /**
+     * Same walk as above, but bounded by the caller's own [maxDepth] ceiling instead of the store's
+     * hard cap — this is the overload [com.embabel.dice.query.graph.GraphQuery] actually calls, so a
+     * facade configured with a smaller (or larger) ceiling than [GraphProjectionCypher.MAX_DEPTH] gets
+     * a walk that honors it, clamped at that hard cap.
+     */
+    @Transactional(readOnly = true)
+    override fun neighborhood(entityId: String, depth: Int, contextId: ContextId?, maxDepth: Int): GraphNeighborhood =
+        neighborhoodNative(entityId, depth, contextId, clampToNativeCeiling(maxDepth))
+
+    private fun neighborhoodNative(entityId: String, depth: Int, contextId: ContextId?, ceiling: Int): GraphNeighborhood {
+        val bound = depth.coerceIn(1, ceiling)
+        val params = mutableMapOf<String, Any>("origin" to entityId)
+        contextId?.let { params["ctx"] = it.value }
+        @Suppress("UNCHECKED_CAST")
+        val rows = persistenceManager.query(
+            QuerySpecification.withStatement(GraphProjectionCypher.neighborhood(bound, contextId))
+                .bind(params) as QuerySpecification<Any>,
+        ).filterIsInstance<Map<*, *>>()
+
+        val byId = hydrate(rows.flatMap { it["viaIds"].asStringList() })
+        val neighbours = rows.map { row ->
+            RelatedEntity(
+                entityId = row["entityId"] as String,
+                via = row["viaIds"].asStringList().distinct().mapNotNull { byId[it] },
+                distance = (row["distance"] as Number).toInt(),
+            )
+        }
+        return GraphNeighborhood(entityId = entityId, neighbours = neighbours)
+    }
+
+    @Transactional(readOnly = true)
+    override fun pathBetween(entityIdA: String, entityIdB: String): List<GraphPath> =
+        pathBetween(entityIdA, entityIdB, null as ContextId?)
+
+    /**
+     * Native shortest path: [GraphProjectionCypher.pathBetween] returns the shortest entity sequence
+     * (up to [GraphProjectionCypher.MAX_DEPTH] hops) and the connecting proposition ids; empty when
+     * the two entities are unreachable. Same-entity is the trivial one-node path, as in the portable
+     * facade. A non-null [contextId] confines every hop to that context; null is unscoped. Called
+     * directly (bypassing the facade's own ceiling), this bounds the walk at
+     * [GraphProjectionCypher.MAX_DEPTH].
+     */
+    @Transactional(readOnly = true)
+    override fun pathBetween(entityIdA: String, entityIdB: String, contextId: ContextId?): List<GraphPath> =
+        pathBetweenNative(entityIdA, entityIdB, contextId, GraphProjectionCypher.MAX_DEPTH)
+
+    /**
+     * Same walk as above, but bounded by the caller's own [maxDepth] ceiling instead of the store's
+     * hard cap — this is the overload [com.embabel.dice.query.graph.GraphQuery] actually calls, so a
+     * facade configured with a smaller (or larger) ceiling than [GraphProjectionCypher.MAX_DEPTH] gets
+     * a walk that honors it, clamped at that hard cap.
+     */
+    @Transactional(readOnly = true)
+    override fun pathBetween(entityIdA: String, entityIdB: String, contextId: ContextId?, maxDepth: Int): List<GraphPath> =
+        pathBetweenNative(entityIdA, entityIdB, contextId, clampToNativeCeiling(maxDepth))
+
+    private fun pathBetweenNative(entityIdA: String, entityIdB: String, contextId: ContextId?, ceiling: Int): List<GraphPath> {
+        if (entityIdA == entityIdB) return listOf(GraphPath(entityIds = listOf(entityIdA), edges = emptyList()))
+        val params = mutableMapOf<String, Any>("a" to entityIdA, "b" to entityIdB)
+        contextId?.let { params["ctx"] = it.value }
+        @Suppress("UNCHECKED_CAST")
+        val row = persistenceManager.query(
+            QuerySpecification.withStatement(GraphProjectionCypher.pathBetween(ceiling, contextId))
+                .bind(params) as QuerySpecification<Any>,
+        ).filterIsInstance<Map<*, *>>().firstOrNull() ?: return emptyList()
+
+        val edgeIds = row["edgeIds"].asStringList()
+        val byId = hydrate(edgeIds)
+        return listOf(
+            GraphPath(
+                entityIds = row["entityIds"].asStringList(),
+                edges = edgeIds.mapNotNull { byId[it] },
+            ),
+        )
+    }
+
+    /**
+     * Clamp a caller-supplied depth ceiling to this store's hard cap, warning when the caller asked
+     * for more than the walk can give. A silent truncation here is exactly the bug this clamp exists
+     * to avoid, so it logs instead of quietly dropping hops.
+     */
+    private fun clampToNativeCeiling(requestedMaxDepth: Int): Int {
+        if (requestedMaxDepth > GraphProjectionCypher.MAX_DEPTH) {
+            logger.warn(
+                "Requested maxDepth {} exceeds native graph query ceiling {}; clamping to the ceiling",
+                requestedMaxDepth,
+                GraphProjectionCypher.MAX_DEPTH,
+            )
+        }
+        return GraphProjectionCypher.clampDepth(requestedMaxDepth)
+    }
+
+    @Transactional(readOnly = true)
+    override fun whyExplain(propositionId: String): PropositionLineage? =
+        whyExplain(propositionId, null)
+
+    /**
+     * Native lineage: read the proposition's own durable fields (provenance, grounding, reinforcement,
+     * status, temporal) and resolve its abstraction sources via [findSources]. A non-null [contextId]
+     * treats a proposition in another context as absent (null), matching the portable facade's scoped
+     * lineage. Null when no such proposition exists.
+     */
+    @Transactional(readOnly = true)
+    override fun whyExplain(propositionId: String, contextId: ContextId?): PropositionLineage? {
+        val prop = findById(propositionId) ?: return null
+        if (contextId != null && prop.contextId != contextId) return null
+        return PropositionLineage(
+            proposition = prop,
+            provenanceEntries = prop.provenanceEntries,
+            groundingChunkIds = prop.grounding,
+            sources = findSources(prop),
+            reinforceCount = prop.reinforceCount,
+            status = prop.status,
+            temporal = prop.temporal,
+        )
+    }
+
+    /** Load the given proposition ids through the lean view, mapped and keyed by id. */
+    private fun hydrate(ids: List<String>): Map<String, Proposition> {
+        val distinct = ids.distinct()
+        if (distinct.isEmpty()) return emptyMap()
+        return graphObjectManager.loadAll<PropositionView> { where { proposition.id inList distinct } }
+            .associate { it.proposition.id to PropositionGraphMapper.toProposition(it) }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun Any?.asStringList(): List<String> = (this as? List<String>) ?: emptyList()
+
     context(builder: OrderBuilder<PropositionViewQueryDsl>)
     private fun orderByEffectiveConfidenceDescNullsLast() {
         builder(OrderSpec("coalesce(proposition.effectiveConfidence, -1.0)", OrderDirection.DESC))

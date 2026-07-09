@@ -69,6 +69,20 @@ class MemoryMaintenanceOrchestratorTest {
         every { repository.query(any()) } returns emptyList()
     }
 
+    /**
+     * Stub [repository] to return [candidates] filtered by the query's below-effective-confidence
+     * bound, standing in for the store's pushed-down filter. Queries without that bound (the
+     * consolidation / abstraction stages) get the full list, as before.
+     */
+    private fun answerBelowConfidence(candidates: List<Proposition>) {
+        every { repository.query(any()) } answers {
+            val q = firstArg<PropositionQuery>()
+            candidates.filter { p ->
+                q.belowEffectiveConfidence?.let { p.effectiveConfidenceAt(Instant.now(), q.decayK) < it } ?: true
+            }
+        }
+    }
+
     @Nested
     inner class BuilderTests {
 
@@ -595,7 +609,9 @@ class MemoryMaintenanceOrchestratorTest {
             val expiredProp = proposition("old fact", confidence = 0.5, decay = 0.5, revised = old)
             val freshProp = proposition("fresh fact", confidence = 0.9, decay = 0.01)
 
-            every { repository.query(any()) } returns listOf(expiredProp, freshProp)
+            // Retirement pushes the below-confidence filter into the store; simulate the store
+            // applying it so this stays an end-to-end check of the retirement stage.
+            answerBelowConfidence(listOf(expiredProp, freshProp))
 
             val orchestrator = MemoryMaintenanceOrchestrator
                 .withRepository(repository)
@@ -614,7 +630,7 @@ class MemoryMaintenanceOrchestratorTest {
             val old = Instant.now().minus(30, ChronoUnit.DAYS)
             val prop = proposition("moderate fact", confidence = 0.5, decay = 0.3, revised = old)
 
-            every { repository.query(any()) } returns listOf(prop)
+            answerBelowConfidence(listOf(prop))
 
             // With very high K, more propositions decay below threshold
             val orchestrator = MemoryMaintenanceOrchestrator
@@ -630,10 +646,42 @@ class MemoryMaintenanceOrchestratorTest {
         }
 
         @Test
+        fun `materializes the decay column before the pushed retirement filter, so a freshly-decayed proposition is retired`() {
+            val old = Instant.now().minus(365, ChronoUnit.DAYS)
+            val expired = proposition("old fact", confidence = 0.5, decay = 0.5, revised = old)
+            val decayManager = mockk<DecayManager>(relaxed = true)
+
+            // Model a stale materialised column: the pushed below-confidence filter only sees the
+            // proposition as below-threshold AFTER materialize() has refreshed the column. If retire()
+            // queried before materializing, the query would return empty and nothing would be retired.
+            var materialized = false
+            every { decayManager.materialize(contextId) } answers { materialized = true }
+            every { repository.query(any()) } answers {
+                val q = firstArg<PropositionQuery>()
+                if (q.belowEffectiveConfidence != null && materialized) listOf(expired) else emptyList()
+            }
+
+            val orchestrator = MemoryMaintenanceOrchestrator
+                .withRepository(repository)
+                .withConsolidator(consolidator)
+                .withDecayManager(decayManager)
+                .withRetireBelow(0.3)
+
+            val result = orchestrator.maintain(contextId)
+
+            verifyOrder {
+                decayManager.materialize(contextId)
+                repository.query(match { it.belowEffectiveConfidence != null })
+            }
+            assertEquals(listOf(expired), result.retired)
+            verify { repository.delete(expired.id) }
+        }
+
+        @Test
         fun `does not retire propositions above threshold`() {
             val freshProp = proposition("fresh fact", confidence = 0.9, decay = 0.01)
 
-            every { repository.query(any()) } returns listOf(freshProp)
+            answerBelowConfidence(listOf(freshProp))
 
             val orchestrator = MemoryMaintenanceOrchestrator
                 .withRepository(repository)

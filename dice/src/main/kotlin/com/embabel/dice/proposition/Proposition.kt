@@ -45,15 +45,9 @@ enum class PropositionStatus {
     /**
      * Effective confidence has decayed below the staleness threshold.
      *
-     * STALE propositions are excluded from standard retrieval but are preserved
-     * for inspection and potential revival; staleness does NOT imply contradicting
-     * evidence (use [CONTRADICTED] for that). Re-reinforcement can lift a STALE
-     * proposition back to [ACTIVE].
-     *
-     * Migration note: this constant is newly introduced. Any future exhaustive
-     * `when (status)` over [PropositionStatus] must add a `STALE` branch. The
-     * library currently has no exhaustive `when` over this enum, so the addition
-     * is source-compatible today.
+     * Excluded from standard retrieval but preserved for inspection and potential revival.
+     * Staleness does NOT imply contradicting evidence (use [CONTRADICTED] for that), and
+     * re-reinforcement can lift a STALE proposition back to [ACTIVE].
      */
     @ApiStatus.Experimental
     STALE
@@ -113,7 +107,11 @@ data class Proposition(
     val contentRevised: Instant = Instant.now(),
     val metadataRevised: Instant = Instant.now(),
     val pinned: Boolean = false,
-    val lastAccessed: Instant = Instant.now(),
+    // Defaults to contentRevised, not a fresh "now" — an untouched proposition hasn't been
+    // accessed since its content was last set, so the DECAYING decay anchor (max of the two,
+    // see effectiveConfidenceAt) starts equal to contentRevised instead of masking age with a
+    // spuriously fresh access time.
+    val lastAccessed: Instant = contentRevised,
     val status: PropositionStatus = PropositionStatus.ACTIVE,
     val level: Int = 0,
     val sourceIds: List<String> = emptyList(),
@@ -143,12 +141,11 @@ data class Proposition(
     val revised: Instant get() = contentRevised
 
     /**
-     * The most recent update of any kind — the later of [contentRevised] and
-     * [metadataRevised]. Use this for "last touched / recently updated" recency
-     * queries and ordering, where an administrative touch (status change, pin,
-     * re-grounding) must still count as activity. Distinct from [contentRevised],
-     * which is the decay anchor and deliberately ignores administrative touches.
-     * Body-level getter: excluded from `copy()`/`equals`/`hashCode`.
+     * The most recent update of any kind — the later of [contentRevised] and [metadataRevised].
+     * Use for "last touched / recently updated" ordering, where an administrative touch (status
+     * change, pin, re-grounding) should still count as activity. Distinct from [contentRevised],
+     * the decay anchor, which deliberately ignores administrative touches. Body-level getter:
+     * excluded from `copy()`/`equals`/`hashCode`.
      */
     val lastTouched: Instant get() = maxOf(contentRevised, metadataRevised)
 
@@ -182,7 +179,9 @@ data class Proposition(
             grounding: List<String>,
             created: Instant,
             revised: Instant,
-            lastAccessed: Instant = Instant.now(),
+            // Defaults to revised (== contentRevised below), matching the primary constructor's
+            // default — see the comment there.
+            lastAccessed: Instant = revised,
             status: PropositionStatus,
             level: Int = 0,
             sourceIds: List<String> = emptyList(),
@@ -295,6 +294,58 @@ data class Proposition(
         copy(provenanceEntries = entries.distinct(), metadataRevised = Instant.now())
 
     /**
+     * Fold another proposition's evidence onto this one: grounding, provenance entries, and
+     * source ids, all appended and deduplicated. Bumps [reinforceCount] by one — treating the
+     * absorbed proposition as a single fresh confirmation, not `+ other.reinforceCount` (which
+     * would double-count whatever it had already been reinforced by).
+     *
+     * Idempotent: if [other]'s grounding, provenance, and source ids are already all present
+     * here, this is a repeat of an already-applied absorption (e.g. a rerun after the other side
+     * of a two-step merge failed to save), so the [reinforceCount] bump is skipped.
+     *
+     * @param other the proposition whose evidence is being folded into this one
+     * @return a copy of this proposition carrying the union of both propositions' evidence
+     */
+    fun absorbEvidence(other: Proposition): Proposition {
+        val alreadyContained = grounding.containsAll(other.grounding) &&
+            provenanceEntries.containsAll(other.provenanceEntries) &&
+            sourceIds.containsAll(other.sourceIds)
+        return withGrounding(other.grounding)
+            .withProvenanceEntries(other.provenanceEntries)
+            .copy(
+                sourceIds = (sourceIds + other.sourceIds).distinct(),
+                reinforceCount = if (alreadyContained) reinforceCount else reinforceCount + 1,
+            )
+    }
+
+    /**
+     * Create a copy with exactly [groundingToRemove], [provenanceRefsToRemove] and
+     * [sourceIdsToRemove] taken out of this proposition's evidence — the inverse of
+     * [absorbEvidence] for one loser's contribution. Provenance entries are matched by
+     * [com.embabel.dice.provenance.SourceLocator.key], the same identity [absorbEvidence]'s
+     * caller uses to record a loser's folded refs (see `RetiredProposition.foldedProvenanceRefs`).
+     *
+     * Callers subtracting one collapsed member's evidence from a survivor that absorbed several
+     * members must first drop any ref another still-retired member also contributed, or this
+     * would strip evidence that member still needs. This method does the removal only — that
+     * "still needed by someone else" check belongs to the caller, which has visibility across
+     * all retired members of the collapse.
+     */
+    fun withoutFoldedEvidence(
+        groundingToRemove: List<String>,
+        provenanceRefsToRemove: List<String>,
+        sourceIdsToRemove: List<String>,
+    ): Proposition {
+        val provenanceRefSet = provenanceRefsToRemove.toSet()
+        return copy(
+            grounding = grounding - groundingToRemove.toSet(),
+            provenanceEntries = provenanceEntries.filterNot { it.locator.key() in provenanceRefSet },
+            sourceIds = sourceIds - sourceIdsToRemove.toSet(),
+            metadataRevised = Instant.now(),
+        )
+    }
+
+    /**
      * Create a copy with an additional (or replaced) metadata entry.
      *
      * Administrative change: touches only [metadataRevised] and deliberately
@@ -338,9 +389,11 @@ data class Proposition(
             return confidence * decayFactor(from = validFrom, to = asOf, k = k)
         }
 
-        // DECAYING — no valid window: confidence fades from the last content revision
-        // (the decay anchor).
-        return confidence * decayFactor(from = contentRevised, to = asOf, k = k)
+        // DECAYING — no valid window: confidence fades from the last content revision (the decay
+        // anchor), but using the fact refreshes it too — anchor on whichever is more recent, content
+        // edit or access, so a used memory keeps earning its keep instead of fading purely from age.
+        val anchor = maxOf(contentRevised, lastAccessed)
+        return confidence * decayFactor(from = anchor, to = asOf, k = k)
     }
 
     private fun decayFactor(from: Instant, to: Instant, k: Double): Double {

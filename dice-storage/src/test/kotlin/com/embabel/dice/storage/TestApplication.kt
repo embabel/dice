@@ -114,6 +114,14 @@ open class TestApplication {
     ): DrivineCollectorRecordStore = DrivineCollectorRecordStore(persistenceManager)
 
     @Bean
+    open fun collectorTraceSchema(): SchemaCatalog = SchemaCatalog.of(CollectorTraceSchema.specs())
+
+    @Bean
+    open fun collectorTraceStore(
+        persistenceManager: PersistenceManager,
+    ): DrivineCollectorTraceStore = DrivineCollectorTraceStore(persistenceManager)
+
+    @Bean
     open fun decayManager(
         repository: DrivinePropositionRepository,
         persistenceManager: PersistenceManager,

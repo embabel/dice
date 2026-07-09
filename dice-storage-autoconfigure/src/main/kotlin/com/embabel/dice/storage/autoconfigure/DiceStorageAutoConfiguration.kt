@@ -66,7 +66,7 @@ import org.springframework.transaction.PlatformTransactionManager
  */
 @AutoConfiguration
 @EnableConfigurationProperties(DiceStoreProperties::class)
-open class DiceStorageAutoConfiguration {
+class DiceStorageAutoConfiguration {
 
     private val logger = LoggerFactory.getLogger(DiceStorageAutoConfiguration::class.java)
 
@@ -76,7 +76,7 @@ open class DiceStorageAutoConfiguration {
     @ConditionalOnBean(Ai::class)
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
     @ConditionalOnMissingBean(PropositionRepository::class)
-    open fun drivinePropositionRepository(
+    fun drivinePropositionRepository(
         graphObjectManager: GraphObjectManager,
         persistenceManager: PersistenceManager,
         ai: Ai,
@@ -94,7 +94,7 @@ open class DiceStorageAutoConfiguration {
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
     @ConditionalOnMissingBean(ChunkHistoryStore::class)
-    open fun drivineChunkHistoryStore(
+    fun drivineChunkHistoryStore(
         graphObjectManager: GraphObjectManager,
         persistenceManager: PersistenceManager,
     ): ChunkHistoryStore = DrivineChunkHistoryStore(graphObjectManager, persistenceManager)
@@ -103,7 +103,7 @@ open class DiceStorageAutoConfiguration {
     @ConditionalOnBean(PropositionRepository::class)
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
     @ConditionalOnMissingBean(DecayManager::class)
-    open fun graphDecayManager(
+    fun graphDecayManager(
         repository: PropositionRepository,
         persistenceManager: PersistenceManager,
     ): DecayManager = GraphDecayManager(repository, persistenceManager)
@@ -111,20 +111,20 @@ open class DiceStorageAutoConfiguration {
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
     @ConditionalOnMissingBean(ProjectionRecordStore::class)
-    open fun drivineProjectionRecordStore(
+    fun drivineProjectionRecordStore(
         persistenceManager: PersistenceManager,
     ): ProjectionRecordStore = DrivineProjectionRecordStore(persistenceManager)
 
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
     @ConditionalOnMissingBean(CollectorRecordStore::class)
-    open fun drivineCollectorRecordStore(
+    fun drivineCollectorRecordStore(
         persistenceManager: PersistenceManager,
     ): CollectorRecordStore = DrivineCollectorRecordStore(persistenceManager)
 
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
-    open fun lineageRecordSchema(): SchemaCatalog = SchemaCatalog.of(
+    fun lineageRecordSchema(): SchemaCatalog = SchemaCatalog.of(
         // Natural keys back the MERGE upserts: a replayed record updates in place, not duplicates.
         UniquenessConstraintSpec(label = "ProjectionRecord", properties = listOf("propositionId", "runId", "target")),
         UniquenessConstraintSpec(label = "CollectorRecord", properties = listOf("propositionId", "runId")),
@@ -137,7 +137,7 @@ open class DiceStorageAutoConfiguration {
     @Bean
     @ConditionalOnBean(Ai::class)
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
-    open fun propositionConstraintSchema(): SchemaCatalog = SchemaCatalog.of(
+    fun propositionConstraintSchema(): SchemaCatalog = SchemaCatalog.of(
         UniquenessConstraintSpec(label = "Proposition", property = "id"),
         UniquenessConstraintSpec(label = "Mention", property = "id"),
         UniquenessConstraintSpec(label = "ProcessedChunk", property = "id"),
@@ -163,7 +163,7 @@ open class DiceStorageAutoConfiguration {
         havingValue = "true",
         matchIfMissing = true,
     )
-    open fun propositionVectorIndexSchema(ai: Ai): SchemaCatalog {
+    fun propositionVectorIndexSchema(ai: Ai): SchemaCatalog {
         val embeddingService = ai.withDefaultEmbeddingService()
         val spec = propositionVectorIndexSpec(embeddingService.dimensions)
         logger.info("Registering proposition vector index schema: {} (model={})", spec, embeddingService.name)
@@ -189,27 +189,27 @@ open class DiceStorageAutoConfiguration {
     @Bean
     @ConditionalOnBean(Ai::class)
     @ConditionalOnMissingBean(PropositionRepository::class)
-    open fun inMemoryPropositionRepository(ai: Ai): PropositionRepository {
+    fun inMemoryPropositionRepository(ai: Ai): PropositionRepository {
         logger.info("Wiring in-memory proposition store")
         return InMemoryPropositionRepository(ai.withDefaultEmbeddingService())
     }
 
     @Bean
     @ConditionalOnMissingBean(ChunkHistoryStore::class)
-    open fun inMemoryChunkHistoryStore(): ChunkHistoryStore = InMemoryChunkHistoryStore()
+    fun inMemoryChunkHistoryStore(): ChunkHistoryStore = InMemoryChunkHistoryStore()
 
     @Bean
     @ConditionalOnMissingBean(ProjectionRecordStore::class)
-    open fun inMemoryProjectionRecordStore(): ProjectionRecordStore = InMemoryProjectionRecordStore()
+    fun inMemoryProjectionRecordStore(): ProjectionRecordStore = InMemoryProjectionRecordStore()
 
     @Bean
     @ConditionalOnMissingBean(CollectorRecordStore::class)
-    open fun inMemoryCollectorRecordStore(): CollectorRecordStore = InMemoryCollectorRecordStore()
+    fun inMemoryCollectorRecordStore(): CollectorRecordStore = InMemoryCollectorRecordStore()
 
     @Bean
     @ConditionalOnBean(PropositionRepository::class)
     @ConditionalOnMissingBean(DecayManager::class)
-    open fun inMemoryDecayManager(repository: PropositionRepository): DecayManager =
+    fun inMemoryDecayManager(repository: PropositionRepository): DecayManager =
         InMemoryDecayManager(repository)
 }
 
@@ -227,14 +227,14 @@ open class DiceStorageAutoConfiguration {
 )
 @EnableConfigurationProperties(DiceStoreProperties::class)
 @EnableScheduling
-open class DiceDecaySchedulingConfiguration(
+class DiceDecaySchedulingConfiguration(
     private val decayManager: ObjectProvider<DecayManager>,
     private val properties: DiceStoreProperties,
 ) {
     private val logger = LoggerFactory.getLogger(DiceDecaySchedulingConfiguration::class.java)
 
     @Scheduled(fixedDelayString = "\${embabel.dice.store.decay.interval-ms:3600000}")
-    open fun tick() {
+    fun tick() {
         val manager = decayManager.ifAvailable ?: return
         val result = manager.tick(
             DecaySweepConfig(

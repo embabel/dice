@@ -63,6 +63,11 @@ data class PropositionQuery(
     val accessedAfter: Instant? = null,
     val accessedBefore: Instant? = null,
 
+    // Raw confidence filter — "was this ever reliable?", independent of decay/age. Membership
+    // should generally be gated on this, not on the decayed value below: a stable, high-confidence
+    // fact stays resident even once it has decayed; decay is a ranking signal, not an eviction one.
+    val minConfidence: Double? = null,
+
     // Confidence filters (with decay)
     val minEffectiveConfidence: Double? = null,
     val effectiveConfidenceAsOf: Instant? = null,
@@ -83,6 +88,11 @@ data class PropositionQuery(
     // Ordering and limits
     val orderBy: OrderBy = OrderBy.NONE,
     val limit: Int? = null,
+
+    // Upper confidence bound: keep only propositions whose effective confidence is STRICTLY below
+    // this (mirrors [minEffectiveConfidence]'s >= as a strict <). Decays with the same [decayK] /
+    // [effectiveConfidenceAsOf]. Appended after [limit] so existing positional call sites are unaffected.
+    val belowEffectiveConfidence: Double? = null,
 ) {
 
     /**
@@ -189,8 +199,20 @@ data class PropositionQuery(
     fun revisedSince(duration: Duration): PropositionQuery =
         copy(revisedAfter = Instant.now().minus(duration))
 
+    /**
+     * Filter on raw (un-decayed) confidence — "was this ever reliable?". Use this for membership /
+     * eager-inclusion gates; use [withMinEffectiveConfidence] (or [orderedByEffectiveConfidence]) for
+     * ranking, so decay lowers a fact's position without evicting it.
+     */
+    fun withMinConfidence(threshold: Double): PropositionQuery =
+        copy(minConfidence = threshold)
+
     fun withMinEffectiveConfidence(threshold: Double): PropositionQuery =
         copy(minEffectiveConfidence = threshold)
+
+    /** Keep only propositions whose effective confidence is strictly below [threshold]. */
+    fun withBelowEffectiveConfidence(threshold: Double): PropositionQuery =
+        copy(belowEffectiveConfidence = threshold)
 
     fun withEffectiveConfidenceAsOf(asOf: Instant): PropositionQuery =
         copy(effectiveConfidenceAsOf = asOf)
