@@ -18,6 +18,8 @@ package com.embabel.dice.pipeline
 import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.ContentHasher
 import com.embabel.dice.common.DiceEventListener
+import com.embabel.dice.common.NewEntity
+import com.embabel.dice.common.VetoedEntity
 import com.embabel.dice.common.ExtractionBatchCompleted
 import com.embabel.dice.common.PropositionContradicted
 import com.embabel.dice.common.PropositionDiscovered
@@ -224,7 +226,32 @@ class PropositionPipeline private constructor(
 
         // Step 3: Resolve entities using existing resolver (wrapped with known entities)
         val resolver = KnownEntityResolver.withKnownEntities(context.knownEntities, context.entityResolver)
-        val resolutions = resolver.resolve(suggestedEntities, context.schema)
+        val rawResolutions = resolver.resolve(suggestedEntities, context.schema)
+        // Minting gate: unless this analysis opted in (SourceAnalysisContext.mintNewEntities),
+        // a mention the resolver could not match is VETOED, not minted — the mention stays
+        // unresolved (no resolvedId), so no phantom entity node is persisted and no edge can
+        // be projected to one. Matches to EXISTING entities are unaffected.
+        val resolutions = if (context.mintNewEntities) {
+            // Stamp caller-supplied base properties (ownership/scoping) onto every
+            // minted entity; stamped values win over extractor-supplied keys.
+            if (context.mintedEntityProperties.isEmpty()) rawResolutions else rawResolutions.copy(
+                resolutions = rawResolutions.resolutions.map { r ->
+                    if (r is NewEntity) NewEntity(
+                        r.suggested.copy(properties = r.suggested.properties + context.mintedEntityProperties),
+                    ) else r
+                },
+            )
+        } else rawResolutions.copy(
+            resolutions = rawResolutions.resolutions.map { r ->
+                if (r is NewEntity) VetoedEntity(r.suggested) else r
+            },
+        )
+        if (!context.mintNewEntities) {
+            val wouldMint = rawResolutions.resolutions.count { it is NewEntity }
+            if (wouldMint > 0) {
+                logger.debug("Minting disabled for this analysis: vetoed {} unmatched mention(s)", wouldMint)
+            }
+        }
         logger.debug("Resolved {} entities", resolutions.resolutions.size)
 
         // Step 4: Apply resolutions to create final propositions, each stamped with provenance

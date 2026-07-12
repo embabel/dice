@@ -35,6 +35,12 @@ import com.embabel.dice.proposition.extraction.ExtractionPerspective
  * @param sourceLocator optional pointer to where this run's material lives. When set, the pipeline
  * stamps it onto every extracted proposition's provenance, so a caller that knows the real source
  * (a file, a URI, a connector record) gets richer grounding than the content-hash fallback.
+ * @param mintNewEntities whether a mention the resolver could NOT match to an existing entity may
+ * be persisted as a NEW entity node. Default FALSE: unresolved mentions stay unresolved (the
+ * proposition is still persisted; its mention simply carries no resolvedId), so extraction never
+ * creates phantom "mentioned in proposition" nodes for things the graph doesn't know — a term the
+ * user merely asked about must not become an entity. Opt in per ingestion for sources whose
+ * mentions deserve nodes.
  */
 data class SourceAnalysisContext @JvmOverloads constructor(
     val schema: DataDictionary,
@@ -45,6 +51,15 @@ data class SourceAnalysisContext @JvmOverloads constructor(
     val promptVariables: Map<String, Any> = emptyMap(),
     val sourceLocator: SourceLocator? = null,
     val perspective: ExtractionPerspective? = null,
+    val mintNewEntities: Boolean = false,
+    /**
+     * Base properties stamped onto every entity MINTED by this analysis (no-op
+     * when [mintNewEntities] is false). The caller knows things the pipeline
+     * does not — e.g. ownership/scoping properties a multi-tenant deployment
+     * requires on new nodes for them to be visible to scoped queries. Stamped
+     * values win over extractor-supplied properties of the same key.
+     */
+    val mintedEntityProperties: Map<String, Any> = emptyMap(),
 ) {
 
     companion object {
@@ -111,6 +126,20 @@ data class SourceAnalysisContext @JvmOverloads constructor(
      */
     fun withSourceLocator(sourceLocator: SourceLocator): SourceAnalysisContext =
         copy(sourceLocator = sourceLocator)
+
+    /**
+     * Returns a copy allowing (or forbidding) this analysis to persist NEW entities
+     * for mentions the resolver could not match. See [mintNewEntities].
+     */
+    fun withMintNewEntities(mintNewEntities: Boolean): SourceAnalysisContext =
+        copy(mintNewEntities = mintNewEntities)
+
+    /**
+     * Returns a copy whose minted entities carry the given base [properties]
+     * (e.g. ownership/scoping fields). See [mintedEntityProperties].
+     */
+    fun withMintedEntityProperties(properties: Map<String, Any>): SourceAnalysisContext =
+        copy(mintedEntityProperties = properties)
 
     /**
      * Builder step: has context ID, needs entity resolver.

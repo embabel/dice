@@ -216,6 +216,7 @@ class PropositionPipelineTest {
             schema = schema,
             entityResolver = AlwaysCreateEntityResolver,
             contextId = testContextId,
+            mintNewEntities = true,
             sourceLocator = locator,
         )
 
@@ -294,6 +295,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
                 sourceLocator = newLocator,
             )
             val chunk = Chunk(id = "chunk-merge", text = "mentions:Alice,Bob", metadata = emptyMap(), parentId = "")
@@ -323,6 +325,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -353,6 +356,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -380,6 +384,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -408,6 +413,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -437,6 +443,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -479,6 +486,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -529,6 +537,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = prePopulatedResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -575,6 +584,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = prePopulatedResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -621,6 +631,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -663,6 +674,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = prePopulatedResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -687,6 +699,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(emptyList(), context)
@@ -707,6 +720,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             // Process individual chunks separately (not through process())
@@ -743,6 +757,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -825,6 +840,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -857,6 +873,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -898,6 +915,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = prePopulatedResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -934,6 +952,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(emptyList(), context)
@@ -962,6 +981,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -989,6 +1009,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val chunkResult = pipeline.processChunk(chunk, context)
@@ -1027,6 +1048,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -1058,6 +1080,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -1099,6 +1122,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -1131,6 +1155,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -1163,6 +1188,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -1266,6 +1292,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.processOnce(
@@ -1289,6 +1316,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val first = pipeline.processOnce(
@@ -1317,6 +1345,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             // Without history store, same text can be processed multiple times
@@ -1345,6 +1374,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             pipeline.processOnce(
@@ -1371,11 +1401,13 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = ContextId("context-a"),
+                mintNewEntities = true,
             )
             val contextB = SourceAnalysisContext(
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = ContextId("context-b"),
+                mintNewEntities = true,
             )
 
             assertNotNull(
@@ -1444,6 +1476,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -1467,6 +1500,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -1498,6 +1532,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -1523,6 +1558,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = AlwaysCreateEntityResolver,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             val result = pipeline.process(chunks, context)
@@ -1557,6 +1593,7 @@ class PropositionPipelineTest {
             schema = schema,
             entityResolver = AlwaysCreateEntityResolver,
             contextId = testContextId,
+            mintNewEntities = true,
         )
 
         private fun strategies(): List<ExtractionExecutionStrategy> = listOf(
@@ -1613,6 +1650,7 @@ class PropositionPipelineTest {
                 schema = schema,
                 entityResolver = resolverThatThrowsOnBoom,
                 contextId = testContextId,
+                mintNewEntities = true,
             )
 
             for (strategy in strategies()) {

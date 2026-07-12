@@ -101,6 +101,21 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * consumers see no behaviour change.
      */
     private val currentUserAliasesProvider: (NamedEntity) -> List<String> = { _ -> emptyList() },
+    /**
+     * Instance default for [SourceAnalysisContext.mintNewEntities], applied to
+     * every analysis this extractor runs (the event path has no per-call hook;
+     * [rememberText] callers can override per call). FALSE by default: a
+     * mention the resolver cannot match to an existing entity stays unresolved
+     * instead of minting a phantom node.
+     */
+    private val mintNewEntitiesDefault: Boolean = false,
+    /**
+     * Base properties stamped onto entities minted for [user]'s analyses —
+     * e.g. ownership/scoping fields a multi-tenant deployment requires on new
+     * nodes. Only consulted when minting is enabled for the analysis. See
+     * [SourceAnalysisContext.mintedEntityProperties].
+     */
+    private val mintedEntityPropertiesProvider: (NamedEntity) -> Map<String, Any> = { _ -> emptyMap() },
 ) {
     private val analyzer: IncrementalAnalyzer<Message, ChunkPropositionResult> =
         PropositionIncrementalAnalyzer(
@@ -177,6 +192,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      *   leaves the extractor's own perspective in force — zero behaviour change.
      *   A caller can pass e.g. [ExtractionPerspective.NON_USER_RELATIONSHIPS] to
      *   opt this one source into mining non-user relationships.
+     * @param mintNewEntities per-call override for whether unmatched mentions may
+     *   be persisted as NEW entities. `null` (default) uses the extractor
+     *   instance's default; see [SourceAnalysisContext.mintNewEntities].
      */
     @JvmOverloads
     open fun rememberText(
@@ -185,8 +203,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         user: NamedEntity,
         additionalGrounding: List<String> = emptyList(),
         perspective: ExtractionPerspective? = null,
+        mintNewEntities: Boolean? = null,
     ) {
-        val context = buildContext(user, sourceId, perspective)
+        val context = buildContext(user, sourceId, perspective, mintNewEntities)
         val result = propositionPipeline.processOnce(
             text, sourceId, context, additionalGrounding = additionalGrounding,
         )
@@ -263,6 +282,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         user: NamedEntity,
         sourceId: String = "",
         perspective: ExtractionPerspective? = null,
+        mintNewEntities: Boolean? = null,
     ): SourceAnalysisContext {
         val aliases = try {
             currentUserAliasesProvider(user)
@@ -307,6 +327,20 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         // path never passes one, so its behaviour is unchanged.
         if (perspective != null) {
             ctx = ctx.withPerspective(perspective)
+        }
+        // Per-call override wins; otherwise the instance default applies (the
+        // event path always uses the instance default).
+        ctx = ctx.withMintNewEntities(mintNewEntities ?: mintNewEntitiesDefault)
+        if (ctx.mintNewEntities) {
+            val stamped = try {
+                mintedEntityPropertiesProvider(user)
+            } catch (e: Exception) {
+                logger.warn("mintedEntityPropertiesProvider failed for {}: {}", user.name, e.message)
+                emptyMap()
+            }
+            if (stamped.isNotEmpty()) {
+                ctx = ctx.withMintedEntityProperties(stamped)
+            }
         }
         return ctx
     }
