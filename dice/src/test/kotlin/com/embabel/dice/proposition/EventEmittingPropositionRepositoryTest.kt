@@ -95,6 +95,32 @@ class EventEmittingPropositionRepositoryTest {
     }
 
     @Test
+    fun `saveIfAbsent emits one PropositionPersisted when it actually inserts`() {
+        val delegate = RecordingRepository()
+        val recording = RecordingDiceEventListener()
+        val repo = EventEmittingPropositionRepository(delegate, recording)
+
+        val returned = repo.saveIfAbsent(proposition("Jim is an expert in GOAP"))!!
+
+        val emitted = recording.eventsOfType<PropositionPersisted>()
+        assertEquals(1, emitted.size, "an actual insert emits one PropositionPersisted")
+        assertSame(returned, emitted.first().proposition, "event carries the inserted instance")
+    }
+
+    @Test
+    fun `saveIfAbsent emits nothing when the id already exists`() {
+        val delegate = RecordingRepository()
+        val recording = RecordingDiceEventListener()
+        val repo = EventEmittingPropositionRepository(delegate, recording)
+
+        val first = repo.saveIfAbsent(proposition("Jim is an expert in GOAP"))!!
+        val again = repo.saveIfAbsent(first.copy(text = "changed"))
+
+        assertEquals(null, again, "a skip returns null")
+        assertEquals(1, recording.eventsOfType<PropositionPersisted>().size, "the skip persists nothing, so emits nothing")
+    }
+
+    @Test
     fun `save persists before it emits (ordering)`() {
         val delegate = RecordingRepository()
         // Listener asserts the delegate has already recorded the save by emit time.

@@ -64,6 +64,14 @@ class InMemoryPropositionRepository(
         return proposition
     }
 
+    override fun saveIfAbsent(proposition: Proposition): Proposition? {
+        // putIfAbsent is atomic on the ConcurrentHashMap: only the first writer for a given id wins,
+        // so concurrent callers can't both slip a copy past the existence check.
+        if (propositions.putIfAbsent(proposition.id, proposition) != null) return null
+        embeddingService?.let { embeddings[proposition.id] = it.embed(proposition.text) }
+        return proposition
+    }
+
     override fun findById(id: String): Proposition? = propositions[id]
 
     override fun findByEntity(entityIdentifier: RetrievableIdentifier): List<Proposition> =

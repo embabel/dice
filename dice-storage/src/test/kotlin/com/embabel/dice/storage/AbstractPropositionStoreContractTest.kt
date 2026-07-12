@@ -22,6 +22,8 @@ import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionQuery.OrderBy
 import com.embabel.dice.proposition.PropositionStore
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import java.time.Instant
 
@@ -58,6 +60,23 @@ abstract class AbstractPropositionStoreContractTest {
         metadataRevised = metadataRevised,
         metadata = trustScore?.let { mapOf(DiceMetadataKeys.TRUST_SCORE to it) } ?: emptyMap(),
     )
+
+    // ---- saveIfAbsent: insert-once by id, identical across backends ----
+
+    @Test
+    fun `saveIfAbsent stores a new proposition and then skips the same id without overwriting`() {
+        val store = store()
+        val first = store.saveIfAbsent(prop("first write"))
+        // Absent → stored and returned.
+        assertNotNull(first)
+        assertEquals(1, store.count())
+
+        // Same id, different content → must not overwrite, must return null.
+        val again = store.saveIfAbsent(first!!.copy(text = "second write"))
+        assertNull(again)
+        assertEquals(1, store.count())
+        assertEquals("first write", store.findById(first.id)!!.text)
+    }
 
     // ---- minTrustScore: honoured identically, and fail-open for unscored propositions ----
 

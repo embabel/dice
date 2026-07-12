@@ -106,6 +106,23 @@ class EventEmittingPropositionRepository(
     }
 
     /**
+     * Atomic insert-once that still reports the persistence boundary. Forwards to the delegate's
+     * [PropositionStore.saveIfAbsent] so its atomic insert-once guarantee is preserved — the default
+     * interface version would read-then-write through this decorator and lose it — and emits a single
+     * [PropositionPersisted] only when a write actually happened. A skip (id already present) persists
+     * nothing and so emits nothing. The write is always a fresh insert, never a status change.
+     *
+     * @param proposition The proposition to persist if absent.
+     * @return the saved proposition, or null if one with the same id already existed.
+     */
+    override fun saveIfAbsent(proposition: Proposition): Proposition? {
+        val saved = delegate.saveIfAbsent(proposition) ?: return null
+        logger.debug("Emitting PropositionPersisted for {}", saved.id.take(8))
+        listener.onEvent(PropositionPersisted(saved))
+        return saved
+    }
+
+    /**
      * Persists each proposition through this decorator's own [save], emitting one event per
      * proposition. Explicitly overridden — not delegated — because the default interface
      * `saveAll` forwards to `delegate.saveAll`, which bypasses this decorator's [save].
