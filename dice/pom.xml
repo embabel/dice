@@ -143,6 +143,35 @@
             <scope>test</scope>
         </dependency>
 
+        <!--
+            Test-only: lets the candidate-searcher tests parse a built query with the
+            real Lucene classic QueryParser, so we're proving the query is actually
+            parseable rather than trusting our own escaping logic. Not a main-scope
+            dependency — dice doesn't otherwise talk to Lucene directly, it goes
+            through Neo4j's fulltext procedure, which does its own Lucene parsing
+            internally. Version matches embabel-agent-rag-lucene's.
+        -->
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-core</artifactId>
+            <version>9.11.1</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-analysis-common</artifactId>
+            <version>9.11.1</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-queryparser</artifactId>
+            <version>9.11.1</version>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <build>

@@ -58,7 +58,7 @@ class FuzzyNameCandidateSearcher(
             val labelFilter = EntityFilter.hasAnyLabel(suggested.labels.toSet())
             val results = repository.textSearch(
                 TextSimilaritySearchRequest(
-                    query = suggested.name,
+                    query = luceneEscape(suggested.name),
                     similarityThreshold = similarityThreshold,
                     topK = topK,
                 ),
