@@ -612,6 +612,60 @@ class PropositionPipelineTest {
     }
 
     @Nested
+    inner class MintingGateInvariantTests {
+
+        /**
+         * With minting disabled, an unmatched mention is vetoed rather than minted (see the
+         * comment in `resolveStage`). The cross-chunk `InMemoryEntityResolver` used by `process()`
+         * doesn't know about that gate, though: it remembers every entity it's asked to resolve,
+         * regardless of whether the pipeline actually commits to creating it. A repeat mention in a
+         * later chunk was hitting that memory and coming back as `ExistingEntity` pointing at an id
+         * that was never minted (because the first mention got vetoed) and will never exist in any
+         * repository - so `updatedEntities()` produced ids that `persist()` could never find.
+         */
+        @Test
+        fun `repeated mention across chunks never resolves to ExistingEntity when minting is disabled`() {
+            val extractor = MockPropositionExtractor()
+            val pipeline = PropositionPipeline.withExtractor(extractor)
+
+            val chunks = listOf(
+                Chunk(id = "chunk-1", text = "mentions:Alice", metadata = emptyMap(), parentId = ""),
+                Chunk(id = "chunk-2", text = "mentions:Alice", metadata = emptyMap(), parentId = ""),
+            )
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+                mintNewEntities = false,
+            )
+
+            val result = pipeline.process(chunks, context)
+
+            // Minting is disabled, so nothing was ever committed to being created.
+            assertEquals(0, result.newEntities().size, "minting is disabled: nothing should be minted")
+
+            // Therefore nothing can legitimately be "existing" either - there is no row anywhere
+            // for any resolution to point at.
+            assertEquals(
+                0,
+                result.updatedEntities().size,
+                "no entity was ever minted, so none should resolve as ExistingEntity: ${result.updatedEntities()}",
+            )
+
+            // Direct invariant on the resolution types themselves: AlwaysCreateEntityResolver never
+            // finds a match, so every resolution must be NewEntity (then vetoed) - never ExistingEntity.
+            val resolutionTypeNames = result.chunkResults
+                .filterIsInstance<ChunkPropositionResult.Success>()
+                .flatMap { it.entityResolutions.resolutions }
+                .map { it::class.simpleName }
+            assertTrue(
+                resolutionTypeNames.none { it == "ExistingEntity" },
+                "no suggestion should ever resolve to ExistingEntity here: $resolutionTypeNames",
+            )
+        }
+    }
+
+    @Nested
     inner class EntityDeduplicationTests {
 
         @Test
