@@ -449,9 +449,20 @@ class PropositionPipeline private constructor(
 
         // Wrap the resolver with InMemoryEntityResolver for cross-chunk entity resolution.
         // Order: user's resolver first (for pre-existing entities), then in-memory (for this run's entities)
-        val crossChunkResolver = ChainedEntityResolver(
-            listOf(context.entityResolver, InMemoryEntityResolver())
-        )
+        //
+        // Only do this when minting is actually enabled. InMemoryEntityResolver remembers every
+        // entity it's asked to resolve so a later chunk's mention comes back as ExistingEntity
+        // rather than minting a duplicate - but that memory only makes sense if the entity it
+        // remembers is actually going to be created. When minting is disabled, resolveStage vetoes
+        // every NewEntity instead of minting it, so nothing the in-memory resolver remembers will
+        // ever exist in any repository. Wrapping the resolver anyway would let a later chunk's
+        // mention resolve to ExistingEntity pointing at an id that was never created and will never
+        // be found - the entity equivalent of a dangling pointer.
+        val crossChunkResolver = if (context.mintNewEntities) {
+            ChainedEntityResolver(listOf(context.entityResolver, InMemoryEntityResolver()))
+        } else {
+            context.entityResolver
+        }
         val crossChunkContext = context.copy(entityResolver = crossChunkResolver)
 
         // Extraction stage — resolver-free extraction, dispatched via the execution strategy (parallelizable).
