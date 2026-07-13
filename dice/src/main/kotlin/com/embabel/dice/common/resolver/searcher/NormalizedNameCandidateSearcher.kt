@@ -58,7 +58,7 @@ class NormalizedNameCandidateSearcher(
             val labelFilter = EntityFilter.hasAnyLabel(suggested.labels.toSet())
             val results = repository.textSearch(
                 TextSimilaritySearchRequest(
-                    query = normalizedSuggested,
+                    query = luceneEscape(normalizedSuggested),
                     similarityThreshold = similarityThreshold,
                     topK = topK,
                 ),

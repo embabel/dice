@@ -45,7 +45,7 @@ class ByExactNameCandidateSearcher(
         suggested: SuggestedEntity,
         schema: DataDictionary,
     ): SearchResult {
-        val exactQuery = "\"${suggested.name}\""
+        val exactQuery = luceneExactPhraseQuery(suggested.name)
 
         return try {
             val labelFilter = EntityFilter.hasAnyLabel(suggested.labels.toSet())
