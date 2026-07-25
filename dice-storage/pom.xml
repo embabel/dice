@@ -5,7 +5,7 @@
     <parent>
         <groupId>com.embabel.dice</groupId>
         <artifactId>dice-parent</artifactId>
-        <version>0.1.1-SNAPSHOT</version>
+        <version>0.2.0-SNAPSHOT</version>
     </parent>
     <artifactId>dice-storage</artifactId>
     <packaging>jar</packaging>
@@ -20,6 +20,8 @@
             so depending on dice-core / embabel-agent is fine.
         -->
         <kotlin.version>2.2.0</kotlin.version>
+        <!-- Gradle wrapper for the KSP codegen step; overridden to gradlew.bat on Windows (see profiles) -->
+        <gradlew.executable>${project.basedir}/codegen-gradle/gradlew</gradlew.executable>
     </properties>
 
     <dependencies>
@@ -107,7 +109,7 @@
                             <goal>exec</goal>
                         </goals>
                         <configuration>
-                            <executable>${project.basedir}/codegen-gradle/gradlew</executable>
+                            <executable>${gradlew.executable}</executable>
                             <workingDirectory>${project.basedir}/codegen-gradle</workingDirectory>
                             <arguments>
                                 <argument>kspKotlin</argument>
@@ -153,24 +155,7 @@
                         <!-- allow the 2.2 compiler to read 2.1.10 metadata from dice-core / embabel-agent -->
                         <arg>-Xskip-metadata-version-check</arg>
                     </args>
-                    <!--
-                      Re-declare the all-open (spring) plugin. This module overrides the plugin's
-                      <configuration> to add the <args> above, which drops the compilerPlugins the
-                      build parent sets by default. Without it the @Transactional Drivine*Store /
-                      repository classes stay final and Spring can't create their CGLIB proxies
-                      ("Cannot subclass final class ...").
-                    -->
-                    <compilerPlugins>
-                        <plugin>spring</plugin>
-                    </compilerPlugins>
                 </configuration>
-                <dependencies>
-                    <dependency>
-                        <groupId>org.jetbrains.kotlin</groupId>
-                        <artifactId>kotlin-maven-allopen</artifactId>
-                        <version>${kotlin.version}</version>
-                    </dependency>
-                </dependencies>
                 <executions>
                     <execution>
                         <id>compile</id>
@@ -201,5 +186,20 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- On Windows the exec plugin must invoke gradlew.bat (the Unix gradlew script errors with CreateProcess 193) -->
+        <profile>
+            <id>windows-codegen</id>
+            <activation>
+                <os>
+                    <family>windows</family>
+                </os>
+            </activation>
+            <properties>
+                <gradlew.executable>${project.basedir}/codegen-gradle/gradlew.bat</gradlew.executable>
+            </properties>
+        </profile>
+    </profiles>
 
 </project>
