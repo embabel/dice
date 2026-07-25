@@ -155,7 +155,24 @@
                         <!-- allow the 2.2 compiler to read 2.1.10 metadata from dice-core / embabel-agent -->
                         <arg>-Xskip-metadata-version-check</arg>
                     </args>
+                    <!--
+                      Re-declare the all-open (spring) plugin defensively. The build parent's
+                      pluginManagement declares it and Maven's config merge currently preserves it
+                      through this module's <configuration> override, but if that ever changes the
+                      @Transactional Drivine*Store / repository classes would stay final and Spring
+                      couldn't create their CGLIB proxies ("Cannot subclass final class ...").
+                    -->
+                    <compilerPlugins>
+                        <plugin>spring</plugin>
+                    </compilerPlugins>
                 </configuration>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.jetbrains.kotlin</groupId>
+                        <artifactId>kotlin-maven-allopen</artifactId>
+                        <version>${kotlin.version}</version>
+                    </dependency>
+                </dependencies>
                 <executions>
                     <execution>
                         <id>compile</id>
