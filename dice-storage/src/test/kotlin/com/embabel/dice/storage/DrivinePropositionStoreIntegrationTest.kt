@@ -28,6 +28,7 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.SourceRevisionRef
 import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.temporal.TemporalMetadata
 import org.junit.jupiter.api.AfterEach
@@ -46,6 +47,9 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.transaction.PlatformTransactionManager
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Integration tests for the graph storage stack against a Neo4j testcontainer (provided by Drivine's
@@ -136,6 +140,62 @@ class DrivinePropositionStoreIntegrationTest {
     private fun nodeCount(label: String): Long = persistenceManager.getOne(
         QuerySpecification.withStatement("MATCH (n:$label) RETURN count(n) AS c").transform(Long::class.java),
     )
+
+    private fun revisionEvidence(
+        locator: UriLocator,
+        revision: String?,
+        chunkId: String = "chunk",
+        contentHash: String = "hash",
+    ): ProvenanceEntry =
+        ProvenanceEntry(
+            locator = locator,
+            chunkId = chunkId,
+            startOffset = 1,
+            endOffset = 4,
+            contentHash = contentHash,
+            sourceRevision = revision,
+        )
+
+    private fun edgeCount(propositionId: String): Long =
+        persistenceManager.getOne(
+            QuerySpecification
+                .withStatement(
+                    "MATCH (:Proposition {id: \$propositionId})-[r:DERIVED_FROM]->() RETURN count(r) AS c",
+                )
+                .bind(mapOf("propositionId" to propositionId))
+                .transform(Long::class.java),
+        )
+
+    private fun seedLegacyEdge(propositionId: String, entry: ProvenanceEntry) {
+        val locator = entry.locator as UriLocator
+        persistenceManager.execute(
+            QuerySpecification
+                .withStatement(
+                    """
+                    MATCH (p:Proposition {id: ${'$'}propositionId})
+                    MERGE (s:Source {key: ${'$'}sourceKey})
+                    SET s.kind = 'uri', s.uri = ${'$'}sourceUri, s.display = ${'$'}sourceDisplay
+                    CREATE (p)-[r:DERIVED_FROM]->(s)
+                    SET r.chunkId = ${'$'}chunkId,
+                        r.startOffset = ${'$'}startOffset,
+                        r.endOffset = ${'$'}endOffset,
+                        r.contentHash = ${'$'}contentHash
+                    """.trimIndent(),
+                )
+                .bind(
+                    mapOf(
+                        "propositionId" to propositionId,
+                        "sourceKey" to locator.key(),
+                        "sourceUri" to locator.uri,
+                        "sourceDisplay" to locator.display,
+                        "chunkId" to entry.chunkId,
+                        "startOffset" to entry.startOffset,
+                        "endOffset" to entry.endOffset,
+                        "contentHash" to entry.contentHash,
+                    ),
+                ),
+        )
+    }
 
     @Test
     fun `save round-trips all persisted fields`() {
@@ -292,6 +352,218 @@ class DrivinePropositionStoreIntegrationTest {
             QuerySpecification.withStatement("MATCH (s:Source) RETURN count(s) AS c").transform(Long::class.java),
         )
         assertEquals(1L, sourceCount)
+    }
+
+    @Test
+    fun `parallel source revisions persist as distinct edges and hydrate through every full read`() {
+        val locator = UriLocator("https://example.com/revisioned")
+        val revisionOne = revisionEvidence(locator, "r1")
+        val revisionTwo = revisionOne.copy(sourceRevision = "r2")
+        val saved = repository.save(prop("revisioned fact", provenance = listOf(revisionOne, revisionTwo)))
+
+        val sourceCount = persistenceManager.getOne(
+            QuerySpecification
+                .withStatement("MATCH (s:Source {key: \$sourceKey}) RETURN count(s) AS c")
+                .bind(mapOf("sourceKey" to locator.key()))
+                .transform(Long::class.java),
+        )
+        val edgeCount = persistenceManager.getOne(
+            QuerySpecification
+                .withStatement(
+                    "MATCH (:Proposition {id: \$id})-[r:DERIVED_FROM]->(:Source {key: \$sourceKey}) " +
+                        "RETURN count(r) AS c",
+                )
+                .bind(mapOf("id" to saved.id, "sourceKey" to locator.key()))
+                .transform(Long::class.java),
+        )
+
+        assertEquals(1L, sourceCount, "parallel revisions share one Source node")
+        assertEquals(2L, edgeCount, "parallel revisions require two DERIVED_FROM relationships")
+        val expected = setOf(revisionOne, revisionTwo)
+        assertEquals(expected, repository.findById(saved.id)!!.provenanceEntries.toSet())
+        assertEquals(
+            expected,
+            repository.query(PropositionQuery.forContextId(ContextId("ctx")), withProvenance = true)
+                .single { it.id == saved.id }.provenanceEntries.toSet(),
+        )
+        assertEquals(
+            expected,
+            repository.findAll(withProvenance = true).single { it.id == saved.id }.provenanceEntries.toSet(),
+        )
+    }
+
+    @Test
+    fun `repeated and concurrent writes of one revision remain one relationship`() {
+        val locator = UriLocator("https://example.com/idempotent")
+        val revisionOne = revisionEvidence(locator, "r1")
+        val saved = repository.save(prop("idempotent evidence", provenance = listOf(revisionOne)))
+        repository.save(saved)
+
+        val firstRepository = DrivinePropositionRepository(
+            graphObjectManager, persistenceManager, embeddingService, transactionManager,
+        )
+        val secondRepository = DrivinePropositionRepository(
+            graphObjectManager, persistenceManager, embeddingService, transactionManager,
+        )
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val writes = listOf(firstRepository, secondRepository).map { candidate ->
+                executor.submit {
+                    start.await(10, TimeUnit.SECONDS)
+                    candidate.save(saved)
+                }
+            }
+            start.countDown()
+            writes.forEach { it.get(30, TimeUnit.SECONDS) }
+        } finally {
+            executor.shutdownNow()
+        }
+
+        assertEquals(1L, edgeCount(saved.id))
+        assertEquals(listOf(revisionOne), repository.findById(saved.id)!!.provenanceEntries)
+    }
+
+    @Test
+    fun `ordinary exact-text dedup unions incoming source revisions into the winner`() {
+        val locator = UriLocator("https://example.com/ordinary-dedup")
+        val revisionOne = revisionEvidence(locator, "r1")
+        val revisionTwo = revisionEvidence(locator, "r2")
+        val winner = repository.save(prop("same extracted fact", provenance = listOf(revisionOne)))
+
+        val deduplicated = repository.save(prop("same extracted fact", provenance = listOf(revisionTwo)))
+
+        assertEquals(winner.id, deduplicated.id)
+        assertEquals(1, repository.count())
+        assertEquals(setOf(revisionOne, revisionTwo), repository.findById(winner.id)!!.provenanceEntries.toSet())
+        assertEquals(2L, edgeCount(winner.id))
+    }
+
+    @Test
+    fun `cross-instance uniqueness recovery unions evidence and is retry safe`() {
+        val locator = UriLocator("https://example.com/race-dedup")
+        val revisionOne = revisionEvidence(locator, "r1")
+        val revisionTwo = revisionEvidence(locator, "r2")
+        val first = prop("cross-instance fact", provenance = listOf(revisionOne))
+        val second = prop("cross-instance fact", provenance = listOf(revisionTwo))
+        val barrier = CountDownLatch(2)
+        val awaitBothInserts = {
+            barrier.countDown()
+            assertTrue(barrier.await(10, TimeUnit.SECONDS), "both repositories must reach the insert race")
+        }
+        val firstRepository = DrivinePropositionRepository(
+            graphObjectManager, persistenceManager, embeddingService, transactionManager,
+        ).also { it.beforeDedupInsert = awaitBothInserts }
+        val secondRepository = DrivinePropositionRepository(
+            graphObjectManager, persistenceManager, embeddingService, transactionManager,
+        ).also { it.beforeDedupInsert = awaitBothInserts }
+        val executor = Executors.newFixedThreadPool(2)
+        val winners = try {
+            listOf(
+                executor.submit<Proposition> { firstRepository.save(first) },
+                executor.submit<Proposition> { secondRepository.save(second) },
+            ).map { it.get(30, TimeUnit.SECONDS) }
+        } finally {
+            executor.shutdownNow()
+        }
+
+        assertEquals(1, winners.map { it.id }.toSet().size, "both writers must return the database winner")
+        val winnerId = winners.map { it.id }.distinct().single()
+        assertEquals(setOf(revisionOne, revisionTwo), repository.findById(winnerId)!!.provenanceEntries.toSet())
+        assertEquals(2L, edgeCount(winnerId))
+
+        secondRepository.beforeDedupInsert = null
+        secondRepository.save(second)
+        assertEquals(2L, edgeCount(winnerId), "retrying recovered evidence must remain idempotent")
+    }
+
+    @Test
+    fun `legacy unkeyed revisionless evidence is adopted exactly while revisioned writes stay separate`() {
+        val locator = UriLocator("https://example.com/legacy")
+        val revisionless = revisionEvidence(locator, null)
+        val revisionOne = revisionEvidence(locator, "r1")
+        val adoptTarget = repository.save(prop("adopt legacy"))
+        seedLegacyEdge(adoptTarget.id, revisionless)
+
+        assertEquals(listOf(revisionless), repository.findById(adoptTarget.id)!!.provenanceEntries)
+        repository.save(adoptTarget.withProvenanceEntries(listOf(revisionless)))
+        assertEquals(1L, edgeCount(adoptTarget.id), "the exact revisionless legacy edge is adopted in place")
+        val adoptedKeys = persistenceManager.getOne(
+            QuerySpecification
+                .withStatement(
+                    "MATCH (:Proposition {id: \$id})-[r:DERIVED_FROM]->() " +
+                        "RETURN count(r.entryKey) AS c",
+                )
+                .bind(mapOf("id" to adoptTarget.id))
+                .transform(Long::class.java),
+        )
+        assertEquals(1L, adoptedKeys)
+
+        val revisionedTarget = repository.save(prop("keep legacy separate"))
+        seedLegacyEdge(revisionedTarget.id, revisionless)
+        repository.save(revisionedTarget.withProvenanceEntries(listOf(revisionOne)))
+
+        assertEquals(2L, edgeCount(revisionedTarget.id), "a revisioned write must not adopt an unkeyed edge")
+        assertEquals(
+            setOf(revisionless, revisionOne),
+            repository.findById(revisionedTarget.id)!!.provenanceEntries.toSet(),
+        )
+    }
+
+    @Test
+    fun `authoritative provenance replace removes omitted edges and only globally orphaned sources`() {
+        val sharedLocator = UriLocator("https://example.com/shared-replace")
+        val exclusiveLocator = UriLocator("https://example.com/exclusive-replace")
+        val keep = revisionEvidence(sharedLocator, "r1", chunkId = "keep")
+        val omittedParallel = revisionEvidence(sharedLocator, "r2", chunkId = "omit-parallel")
+        val omittedExclusive = revisionEvidence(exclusiveLocator, "r1", chunkId = "omit-exclusive")
+        val subject = repository.save(
+            prop("replace subject", provenance = listOf(keep, omittedParallel, omittedExclusive)),
+        )
+        val other = repository.save(
+            prop("shared source remains", provenance = listOf(revisionEvidence(sharedLocator, "other"))),
+        )
+
+        repository.setProvenance(subject.id, listOf(keep))
+
+        assertEquals(listOf(keep), repository.findById(subject.id)!!.provenanceEntries)
+        assertEquals(1L, edgeCount(subject.id))
+        assertEquals(1L, edgeCount(other.id), "replace must not disturb another proposition's edge")
+        val sourceKeys = persistenceManager.query(
+            QuerySpecification.withStatement("MATCH (s:Source) RETURN s.key AS key"),
+        ).toSet()
+        assertEquals(setOf(sharedLocator.key()), sourceKeys, "only the globally orphaned source is pruned")
+    }
+
+    @Test
+    fun `source queries push down by context and distinguish exact and revisionless evidence`() {
+        val locator = UriLocator("https://example.com/query-source")
+        val revisionless = repository.save(
+            prop("revisionless ctx-a", context = "ctx-a", provenance = listOf(revisionEvidence(locator, null))),
+        )
+        val revisionOne = repository.save(
+            prop("r1 ctx-a", context = "ctx-a", provenance = listOf(revisionEvidence(locator, "r1"))),
+        )
+        val revisionTwo = repository.save(
+            prop("r2 ctx-a", context = "ctx-a", provenance = listOf(revisionEvidence(locator, "r2"))),
+        )
+        repository.save(
+            prop("r1 ctx-b", context = "ctx-b", provenance = listOf(revisionEvidence(locator, "r1"))),
+        )
+        val context = ContextId("ctx-a")
+
+        assertEquals(
+            setOf(revisionless.id, revisionOne.id, revisionTwo.id),
+            repository.findBySourceKey(context, locator.key()).map { it.id }.toSet(),
+        )
+        assertEquals(
+            listOf(revisionOne.id),
+            repository.findBySourceRevision(context, SourceRevisionRef(locator.key(), "r1")).map { it.id },
+        )
+        assertEquals(
+            listOf(revisionless.id),
+            repository.findRevisionlessBySourceLocator(context, locator).map { it.id },
+        )
     }
 
     @Test

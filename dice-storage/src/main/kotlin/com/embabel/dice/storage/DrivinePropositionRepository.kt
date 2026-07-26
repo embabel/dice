@@ -30,7 +30,13 @@ import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.GraphQueryCapable
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStoreType
+import com.embabel.dice.provenance.ConnectorRef
+import com.embabel.dice.provenance.ContentAddressedLocator
+import com.embabel.dice.provenance.FileLocator
 import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
+import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.query.graph.GraphNeighborhood
 import com.embabel.dice.query.graph.GraphPath
 import com.embabel.dice.query.graph.PropositionLineage
@@ -87,6 +93,10 @@ class DrivinePropositionRepository(
      */
     private val dedupLocks: Array<Any> = Array(DEDUP_STRIPES) { Any() }
 
+    /** Integration-test seam for forcing the cross-repository uniqueness-recovery race. */
+    @Volatile
+    internal var beforeDedupInsert: (() -> Unit)? = null
+
     override val storeType: PropositionStoreType get() = PropositionStoreType.STORED
 
     override val luceneSyntaxNotes: String get() = "no lucene support"
@@ -119,7 +129,7 @@ class DrivinePropositionRepository(
                 // Cross-instance race: another writer inserted the same (contextId, text) and the DB
                 // (contextId, text) uniqueness constraint rejected ours. The dupe now exists — reuse it.
                 logger.debug("Dedup constraint hit for context {} — reusing existing: '{}'", contextId, text)
-                txTemplate.execute { findDuplicateId(contextId, text, proposition.id)?.let(::findById) } ?: throw e
+                txTemplate.execute { recoverDuplicate(proposition, contextId, text) } ?: throw e
             }
         }
     }
@@ -138,7 +148,8 @@ class DrivinePropositionRepository(
                 "Dedup: proposition already present as {} in context {} — reusing: '{}'",
                 existingId, contextId, text,
             )
-            existing
+            appendProvenance(existing.id, proposition.provenanceEntries)
+            findById(existing.id) ?: existing
         } else {
             // An update lands on its own node even when a same-text sibling exists. If that sibling is
             // also ACTIVE, this mints a second live copy of the same fact (only reachable without the
@@ -153,8 +164,19 @@ class DrivinePropositionRepository(
                     proposition.id, contextId, existingId, text,
                 )
             }
+            if (!isUpdate) beforeDedupInsert?.invoke()
             doPersist(proposition)
         }
+    }
+
+    /**
+     * Re-find the winning proposition after a cross-instance uniqueness race and union the losing
+     * writer's evidence into it. The raw relationship MERGE makes retries harmless.
+     */
+    private fun recoverDuplicate(proposition: Proposition, contextId: String, text: String): Proposition? {
+        val winnerId = findDuplicateId(contextId, text, proposition.id) ?: return null
+        appendProvenance(winnerId, proposition.provenanceEntries)
+        return findById(winnerId)
     }
 
     /**
@@ -178,24 +200,18 @@ class DrivinePropositionRepository(
     /**
      * Persist node, mentions, and (append-only) provenance.
      *
-     * Two writes with deliberately different cascades — Drivine applies one cascade per `save`:
+     * Two writes with deliberately different ownership:
      * - **Node + mentions** via the lean [PropositionView] with `DELETE_ORPHAN`: authoritative, so a
      *   changed mention set is reconciled and stale Mention nodes are cleaned. Provenance is *not* in
      *   this view, so existing `DERIVED_FROM` edges are left intact.
-     * - **Provenance** via [PropositionWithProvenanceView] with `PRESERVE`: additive — edges are merged,
-     *   never deleted, and idempotent by the shared `:Source` key. So the all-in-one save never drops
-     *   evidence it didn't load (the lean query/findAll paths, the decay sweep). Authoritative
-     *   replacement/removal is the job of [setProvenance] / [clearProvenance].
+     * - **Provenance** via raw Cypher keyed by the full evidence tuple: additive, idempotent, and able
+     *   to preserve parallel revisions that Drivine 0.0.58's relationship-fragment merge collapses.
+     *   Authoritative replacement/removal is the job of [setProvenance] / [clearProvenance].
      */
     private fun doPersist(proposition: Proposition): Proposition {
         val embedding = embeddingFor(proposition)
         graphObjectManager.save(PropositionGraphMapper.toView(proposition, embedding), CascadeType.DELETE_ORPHAN)
-        if (proposition.provenanceEntries.isNotEmpty()) {
-            graphObjectManager.save(
-                PropositionGraphMapper.toProvenanceView(proposition, embedding),
-                CascadeType.PRESERVE,
-            )
-        }
+        appendProvenance(proposition.id, proposition.provenanceEntries)
         return proposition
     }
 
@@ -203,19 +219,169 @@ class DrivinePropositionRepository(
         proposition.text.takeIf { it.isNotBlank() }?.let { embeddingService.embed(it).toList() }
 
     /**
-     * Authoritative provenance replace (unlike the append-only [save]): save the provenance view with
-     * `DELETE_ORPHAN`, so `DERIVED_FROM` edges — and any thereby-orphaned `:Source` nodes — not in
-     * [entries] are removed. [clearProvenance] funnels here with an empty list.
+     * Authoritative provenance replace (unlike the append-only [save]). Desired evidence is upserted
+     * first, omitted edges are deleted by their storage identity, and only globally unreferenced
+     * Source nodes are pruned. [clearProvenance] funnels here with an empty list.
      */
     @Transactional
     override fun setProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? {
         val updated = (findById(propositionId) ?: return null).withProvenance(entries)
-        graphObjectManager.save(
-            PropositionGraphMapper.toProvenanceView(updated, embeddingFor(updated)),
-            CascadeType.DELETE_ORPHAN,
-        )
+        graphObjectManager.save(PropositionGraphMapper.toView(updated, embeddingFor(updated)), CascadeType.DELETE_ORPHAN)
+        replaceProvenance(propositionId, entries)
         return updated
     }
+
+    /**
+     * Append evidence without routing relationship identity through Drivine. `entryKey` is computed
+     * by the shared graph mapper and is always non-null before it reaches MERGE.
+     */
+    private fun appendProvenance(propositionId: String, entries: List<ProvenanceEntry>) {
+        val derived = entries.map(::toDerivedFrom)
+        derived.forEach { edge ->
+            val entryKey = requireNotNull(edge.entryKey) { "Provenance entryKey must be computed before persistence" }
+            val params = provenanceParameters(propositionId, entryKey, edge)
+            if (edge.sourceRevision == null && adoptExactLegacyEdge(params)) return@forEach
+            persistenceManager.execute(
+                QuerySpecification.withStatement(
+                    """
+                    MATCH (p:Proposition {id: ${'$'}propositionId})
+                    MERGE (s:Source {key: ${'$'}sourceKey})
+                    SET s.kind = ${'$'}sourceKind,
+                        s.display = ${'$'}sourceDisplay,
+                        s.uri = ${'$'}sourceUri,
+                        s.path = ${'$'}sourcePath,
+                        s.contentHash = ${'$'}sourceContentHash,
+                        s.connectorId = ${'$'}connectorId,
+                        s.externalId = ${'$'}externalId
+                    MERGE (p)-[r:DERIVED_FROM {entryKey: ${'$'}entryKey}]->(s)
+                    SET r.sourceRevision = ${'$'}sourceRevision,
+                        r.chunkId = ${'$'}chunkId,
+                        r.startOffset = ${'$'}startOffset,
+                        r.endOffset = ${'$'}endOffset,
+                        r.contentHash = ${'$'}contentHash
+                    """.trimIndent()
+                ).bind(params),
+            )
+        }
+    }
+
+    /**
+     * A pre-revision edge may be adopted only by an exactly equal revisionless entry. Revisioned
+     * evidence deliberately cannot claim legacy state.
+     */
+    private fun adoptExactLegacyEdge(params: Map<String, Any?>): Boolean {
+        val adopted = persistenceManager.maybeGetOne(
+            QuerySpecification.withStatement(
+                """
+                MATCH (p:Proposition {id: ${'$'}propositionId})-[r:DERIVED_FROM]->(s:Source {key: ${'$'}sourceKey})
+                WHERE r.entryKey IS NULL
+                  AND r.sourceRevision IS NULL
+                  AND ((r.chunkId IS NULL AND ${'$'}chunkId IS NULL) OR r.chunkId = ${'$'}chunkId)
+                  AND ((r.startOffset IS NULL AND ${'$'}startOffset IS NULL) OR r.startOffset = ${'$'}startOffset)
+                  AND ((r.endOffset IS NULL AND ${'$'}endOffset IS NULL) OR r.endOffset = ${'$'}endOffset)
+                  AND ((r.contentHash IS NULL AND ${'$'}contentHash IS NULL) OR r.contentHash = ${'$'}contentHash)
+                WITH r LIMIT 1
+                SET r.entryKey = ${'$'}entryKey
+                RETURN count(r) AS adopted
+                """.trimIndent()
+            ).bind(params).transform(Long::class.java)
+        ) ?: 0L
+        return adopted > 0
+    }
+
+    private fun replaceProvenance(propositionId: String, entries: List<ProvenanceEntry>) {
+        appendProvenance(propositionId, entries)
+        val entryKeys = entries.map(::storageEntryKey)
+        persistenceManager.execute(
+            QuerySpecification.withStatement(
+                """
+                MATCH (p:Proposition {id: ${'$'}propositionId})-[r:DERIVED_FROM]->()
+                WHERE r.entryKey IS NULL OR NOT r.entryKey IN ${'$'}entryKeys
+                DELETE r
+                """.trimIndent()
+            ).bind(mapOf("propositionId" to propositionId, "entryKeys" to entryKeys)),
+        )
+        persistenceManager.execute(
+            QuerySpecification.withStatement(
+                """
+                MATCH (s:Source)
+                WHERE NOT (s)<-[:DERIVED_FROM]-()
+                DELETE s
+                """.trimIndent()
+            ),
+        )
+    }
+
+    private fun provenanceParameters(
+        propositionId: String,
+        entryKey: String,
+        edge: DerivedFrom,
+    ): Map<String, Any?> = mapOf(
+        "propositionId" to propositionId,
+        "entryKey" to entryKey,
+        "sourceKey" to edge.source.key,
+        "sourceKind" to edge.source.kind,
+        "sourceDisplay" to edge.source.display,
+        "sourceUri" to edge.source.uri,
+        "sourcePath" to edge.source.path,
+        "sourceContentHash" to edge.source.contentHash,
+        "connectorId" to edge.source.connectorId,
+        "externalId" to edge.source.externalId,
+        "sourceRevision" to edge.sourceRevision,
+        "chunkId" to edge.chunkId,
+        "startOffset" to edge.startOffset,
+        "endOffset" to edge.endOffset,
+        "contentHash" to edge.contentHash,
+    )
+
+    private fun toDerivedFrom(entry: ProvenanceEntry): DerivedFrom =
+        DerivedFrom(
+            chunkId = entry.chunkId,
+            startOffset = entry.startOffset,
+            endOffset = entry.endOffset,
+            contentHash = entry.contentHash,
+            sourceRevision = entry.sourceRevision,
+            entryKey = storageEntryKey(entry),
+            source = when (val locator = entry.locator) {
+                is UriLocator -> SourceNode(
+                    key = locator.key(),
+                    kind = "uri",
+                    display = locator.display,
+                    uri = locator.uri,
+                )
+                is FileLocator -> SourceNode(
+                    key = locator.key(),
+                    kind = "file",
+                    display = locator.display,
+                    path = locator.path,
+                )
+                is ContentAddressedLocator -> SourceNode(
+                    key = locator.key(),
+                    kind = "content",
+                    display = locator.display,
+                    contentHash = locator.contentHash,
+                )
+                is ConnectorRef -> SourceNode(
+                    key = locator.key(),
+                    kind = "connector",
+                    display = locator.display,
+                    connectorId = locator.connectorId,
+                    externalId = locator.externalId,
+                )
+            },
+        )
+
+    private fun storageEntryKey(entry: ProvenanceEntry): String =
+        listOf(
+            entry.locator.key(),
+            entry.sourceRevision,
+            entry.chunkId,
+            entry.startOffset?.toString(),
+            entry.endOffset?.toString(),
+            entry.contentHash,
+        ).joinToString(separator = "") { value ->
+            if (value == null) "-1:" else "${value.length}:$value"
+        }
 
     /**
      * Id of an existing proposition with the same `contextId` and exact `text` (excluding the
@@ -248,7 +414,9 @@ class DrivinePropositionRepository(
 
     @Transactional(readOnly = true)
     override fun findById(id: String): Proposition? =
-        graphObjectManager.load<PropositionWithProvenanceView>(id)?.let(PropositionGraphMapper::toProposition)
+        graphObjectManager.load<PropositionView>(id)
+            ?.let(PropositionGraphMapper::toProposition)
+            ?.let { withRawProvenance(listOf(it)).single() }
 
     @Transactional(readOnly = true)
     override fun findAll(): List<Proposition> =
@@ -286,6 +454,54 @@ class DrivinePropositionRepository(
         }.map(PropositionGraphMapper::toProposition)
 
     @Transactional(readOnly = true)
+    override fun findBySourceKey(contextId: ContextId, sourceKey: String): List<Proposition> =
+        findBySource(
+            """
+            MATCH (p:Proposition {contextId: ${'$'}contextId})-[r:DERIVED_FROM]->(s:Source {key: ${'$'}sourceKey})
+            RETURN DISTINCT p.id AS id
+            """.trimIndent(),
+            mapOf("contextId" to contextId.value, "sourceKey" to sourceKey),
+        )
+
+    @Transactional(readOnly = true)
+    override fun findBySourceRevision(contextId: ContextId, ref: SourceRevisionRef): List<Proposition> =
+        findBySource(
+            """
+            MATCH (p:Proposition {contextId: ${'$'}contextId})-[r:DERIVED_FROM]->(s:Source {key: ${'$'}sourceKey})
+            WHERE r.sourceRevision = ${'$'}sourceRevision
+            RETURN DISTINCT p.id AS id
+            """.trimIndent(),
+            mapOf(
+                "contextId" to contextId.value,
+                "sourceKey" to ref.sourceKey,
+                "sourceRevision" to ref.sourceRevision,
+            ),
+        )
+
+    @Transactional(readOnly = true)
+    override fun findRevisionlessBySourceLocator(
+        contextId: ContextId,
+        locator: SourceLocator,
+    ): List<Proposition> =
+        findBySource(
+            """
+            MATCH (p:Proposition {contextId: ${'$'}contextId})-[r:DERIVED_FROM]->(s:Source {key: ${'$'}sourceKey})
+            WHERE r.sourceRevision IS NULL
+            RETURN DISTINCT p.id AS id
+            """.trimIndent(),
+            mapOf("contextId" to contextId.value, "sourceKey" to locator.key()),
+        )
+
+    @Suppress("UNCHECKED_CAST")
+    private fun findBySource(statement: String, params: Map<String, Any>): List<Proposition> {
+        val ids = persistenceManager.query(
+            QuerySpecification.withStatement(statement).bind(params)
+        ) as List<String>
+        val byId = hydrate(ids)
+        return withRawProvenance(ids.distinct().mapNotNull { byId[it] })
+    }
+
+    @Transactional(readOnly = true)
     override fun findByGrounding(chunkId: String): List<Proposition> =
         graphObjectManager.loadAll<PropositionView> { where { proposition.grounding hasItem chunkId } }
             .map(PropositionGraphMapper::toProposition)
@@ -321,10 +537,7 @@ class DrivinePropositionRepository(
 
     @Transactional(readOnly = true)
     override fun findAll(withProvenance: Boolean): List<Proposition> =
-        if (!withProvenance) findAll()
-        else graphObjectManager.loadAll<PropositionWithProvenanceView> {
-            where { proposition.contextId.isNotNull() } // skip malformed/foreign :Proposition nodes (see findAll)
-        }.map(PropositionGraphMapper::toProposition)
+        if (!withProvenance) findAll() else withRawProvenance(findAll())
 
     /**
      * The materialised `effectiveConfidence` (default k = 2.0, as of the last sweep) only matches a
@@ -366,14 +579,70 @@ class DrivinePropositionRepository(
         return query.limit?.let { list.take(it) } ?: list
     }
 
-    /** Re-load a lean result set's ids through the provenance view (one batch query), preserving order. */
+    /** Add raw provenance to a lean result set in one batch query, preserving order. */
     private fun enrichWithProvenance(lean: List<Proposition>): List<Proposition> {
-        if (lean.isEmpty()) return lean
-        val ids = lean.map { it.id }
-        val byId = graphObjectManager.loadAll<PropositionWithProvenanceView> { where { proposition.id inList ids } }
-            .associate { it.proposition.id to PropositionGraphMapper.toProposition(it) }
-        return lean.map { byId[it.id] ?: it }
+        return withRawProvenance(lean)
     }
+
+    /**
+     * Raw fallback for full reads. Drivine 0.0.58 collapses relationship fragments by endpoint/type,
+     * so only Cypher rows preserve every parallel revision relationship.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun withRawProvenance(lean: List<Proposition>): List<Proposition> {
+        if (lean.isEmpty()) return lean
+        val rows = persistenceManager.query(
+            QuerySpecification.withStatement(
+                """
+                MATCH (p:Proposition)-[r:DERIVED_FROM]->(s:Source)
+                WHERE p.id IN ${'$'}ids
+                RETURN {
+                    propositionId: p.id,
+                    chunkId: r.chunkId,
+                    startOffset: r.startOffset,
+                    endOffset: r.endOffset,
+                    contentHash: r.contentHash,
+                    sourceRevision: r.sourceRevision,
+                    sourceKey: s.key,
+                    sourceKind: s.kind,
+                    sourceDisplay: s.display,
+                    sourceUri: s.uri,
+                    sourcePath: s.path,
+                    sourceContentHash: s.contentHash,
+                    connectorId: s.connectorId,
+                    externalId: s.externalId
+                } AS row
+                """.trimIndent()
+            ).bind(mapOf("ids" to lean.map { it.id }))
+        ) as List<Map<String, Any?>>
+        val byId = rows.groupBy { it["propositionId"] as String }
+        return lean.map { proposition ->
+            proposition.copy(provenanceEntries = byId[proposition.id].orEmpty().map(::toProvenanceEntry))
+        }
+    }
+
+    private fun toProvenanceEntry(row: Map<String, Any?>): ProvenanceEntry =
+        ProvenanceEntry(
+            locator = when (val kind = row["sourceKind"] as String) {
+                "uri" -> UriLocator(row["sourceUri"] as String, row["sourceDisplay"] as? String)
+                "file" -> FileLocator(row["sourcePath"] as String, row["sourceDisplay"] as? String)
+                "content" -> ContentAddressedLocator(
+                    row["sourceContentHash"] as String,
+                    row["sourceDisplay"] as? String,
+                )
+                "connector" -> ConnectorRef(
+                    row["connectorId"] as String,
+                    row["externalId"] as String,
+                    row["sourceDisplay"] as? String,
+                )
+                else -> error("Unknown source locator kind: $kind")
+            },
+            chunkId = row["chunkId"] as? String,
+            startOffset = (row["startOffset"] as? Number)?.toInt(),
+            endOffset = (row["endOffset"] as? Number)?.toInt(),
+            contentHash = row["contentHash"] as? String,
+            sourceRevision = row["sourceRevision"] as? String,
+        )
 
     /** Shared `where { }` filter block (PropositionView DSL); reused by query and the filtered-vector path. */
     context(builder: WhereBuilder<PropositionViewQueryDsl>)
