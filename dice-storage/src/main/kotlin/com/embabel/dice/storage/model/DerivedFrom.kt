@@ -28,5 +28,7 @@ data class DerivedFrom(
     val startOffset: Int? = null,
     val endOffset: Int? = null,
     val contentHash: String? = null,
+    val sourceRevision: String? = null,
+    val entryKey: String? = null,
     val source: SourceNode,
 )

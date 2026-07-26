@@ -174,6 +174,8 @@ object PropositionGraphMapper {
             startOffset = e.startOffset,
             endOffset = e.endOffset,
             contentHash = e.contentHash,
+            sourceRevision = e.sourceRevision,
+            entryKey = storageEntryKey(e),
             source = toSourceNode(e.locator),
         )
 
@@ -184,7 +186,24 @@ object PropositionGraphMapper {
             startOffset = df.startOffset,
             endOffset = df.endOffset,
             contentHash = df.contentHash,
+            sourceRevision = df.sourceRevision,
         )
+
+    /**
+     * Relationship identity is a storage concern. Length framing keeps null, empty, and values
+     * containing delimiters distinct without coupling graph persistence to domain identity types.
+     */
+    private fun storageEntryKey(e: ProvenanceEntry): String =
+        listOf(
+            e.locator.key(),
+            e.sourceRevision,
+            e.chunkId,
+            e.startOffset?.toString(),
+            e.endOffset?.toString(),
+            e.contentHash,
+        ).joinToString(separator = "") { value ->
+            if (value == null) "-1:" else "${value.length}:$value"
+        }
 
     private fun toSourceNode(loc: SourceLocator): SourceNode =
         SourceNode(
