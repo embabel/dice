@@ -99,6 +99,9 @@ data class CollectorDecision(
 /**
  * One proposition that was folded into a survivor, and what a merging sweep would carry over
  * from it (grounding, provenance and source ids) so the fold can be undone.
+ *
+ * @property foldedProvenanceRefs Versioned opaque evidence keys. Older persisted traces can
+ *   contain raw locator keys; interpret both forms only through the provenance evidence codec.
  */
 data class RetiredProposition(
     val propositionId: String,
