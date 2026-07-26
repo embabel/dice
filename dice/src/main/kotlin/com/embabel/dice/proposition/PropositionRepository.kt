@@ -15,12 +15,15 @@
  */
 package com.embabel.dice.proposition
 
+import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.model.Retrievable
 import com.embabel.agent.rag.service.CoreSearchOperations
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.util.loggerFor
 import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
 
 /**
  * The full proposition repository: combines the base persistence port with every opt-in
@@ -72,6 +75,75 @@ interface PropositionRepository :
      * delegates to the lean [findAll] — fine for backends that always carry provenance (e.g. in-memory).
      */
     fun findAll(withProvenance: Boolean): List<Proposition> = findAll()
+
+    // ========================================================================
+    // Source provenance queries
+    //
+    // Defaults stay context-scoped and inspect loaded provenance in memory. Backends whose normal
+    // context reads omit or abbreviate provenance must override the typed methods and execute the
+    // predicates against their authoritative provenance representation.
+    // ========================================================================
+
+    /**
+     * Find propositions in [contextId] with evidence from any revision of [sourceKey].
+     *
+     * Both revisioned and revisionless evidence matches when its locator key equals [sourceKey].
+     * Backends with lean provenance reads must override this typed method.
+     */
+    fun findBySourceKey(contextId: ContextId, sourceKey: String): List<Proposition> =
+        findByContextId(contextId).filter { proposition ->
+            proposition.provenanceEntries.any { it.locator.key() == sourceKey }
+        }
+
+    /**
+     * Java-friendly bridge to [findBySourceKey].
+     */
+    fun findBySourceKey(contextIdValue: String, sourceKey: String): List<Proposition> =
+        findBySourceKey(ContextId(contextIdValue), sourceKey)
+
+    /**
+     * Find propositions in [contextId] with evidence from exactly [ref]'s source key and revision.
+     *
+     * Backends with lean provenance reads must override this typed method.
+     */
+    fun findBySourceRevision(contextId: ContextId, ref: SourceRevisionRef): List<Proposition> =
+        findByContextId(contextId).filter { proposition ->
+            proposition.provenanceEntries.any {
+                it.locator.key() == ref.sourceKey && it.sourceRevision == ref.sourceRevision
+            }
+        }
+
+    /**
+     * Java-friendly bridge to [findBySourceRevision].
+     */
+    fun findBySourceRevision(contextIdValue: String, ref: SourceRevisionRef): List<Proposition> =
+        findBySourceRevision(ContextId(contextIdValue), ref)
+
+    /**
+     * Find propositions in [contextId] with revisionless evidence whose locator key equals
+     * [locator]'s key.
+     *
+     * Evidence carrying any revision does not match. Backends with lean provenance reads must
+     * override this typed method.
+     */
+    fun findRevisionlessBySourceLocator(
+        contextId: ContextId,
+        locator: SourceLocator,
+    ): List<Proposition> =
+        findByContextId(contextId).filter { proposition ->
+            proposition.provenanceEntries.any {
+                it.locator.key() == locator.key() && it.sourceRevision == null
+            }
+        }
+
+    /**
+     * Java-friendly bridge to [findRevisionlessBySourceLocator].
+     */
+    fun findRevisionlessBySourceLocator(
+        contextIdValue: String,
+        locator: SourceLocator,
+    ): List<Proposition> =
+        findRevisionlessBySourceLocator(ContextId(contextIdValue), locator)
 
     // ========================================================================
     // Administrative operations - bulk re-embed and coarse deletion

@@ -20,6 +20,9 @@ import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.DiceEventListener
+import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
+import com.embabel.dice.provenance.UriLocator
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
@@ -48,7 +51,7 @@ class PropositionRepositoryDelegationTest {
      * findByContextIdValue to their default implementations, which is exactly the
      * recursion site under test.
      */
-    private inner class MinimalRepository : PropositionRepository {
+    private open inner class MinimalRepository : PropositionRepository {
         private val store = mutableMapOf<String, Proposition>()
         fun seed(p: Proposition) { store[p.id] = p }
 
@@ -63,6 +66,41 @@ class PropositionRepositoryDelegationTest {
         override fun findAll(): List<Proposition> = store.values.toList()
         override fun delete(id: String): Boolean = store.remove(id) != null
         override fun count(): Int = store.size
+    }
+
+    private inner class TypedSourceOverrideRepository : MinimalRepository() {
+        val sourceKeyResult = listOf(proposition(contextId, "source-key"))
+        val sourceRevisionResult = listOf(proposition(contextId, "source-revision"))
+        val revisionlessResult = listOf(proposition(contextId, "revisionless"))
+
+        var sourceKeyCalls = 0
+        var sourceRevisionCalls = 0
+        var revisionlessCalls = 0
+        val receivedContexts = mutableListOf<ContextId>()
+
+        override fun findBySourceKey(contextId: ContextId, sourceKey: String): List<Proposition> {
+            sourceKeyCalls++
+            receivedContexts += contextId
+            return sourceKeyResult
+        }
+
+        override fun findBySourceRevision(
+            contextId: ContextId,
+            ref: SourceRevisionRef,
+        ): List<Proposition> {
+            sourceRevisionCalls++
+            receivedContexts += contextId
+            return sourceRevisionResult
+        }
+
+        override fun findRevisionlessBySourceLocator(
+            contextId: ContextId,
+            locator: SourceLocator,
+        ): List<Proposition> {
+            revisionlessCalls++
+            receivedContexts += contextId
+            return revisionlessResult
+        }
     }
 
     @Test
@@ -96,5 +134,30 @@ class PropositionRepositoryDelegationTest {
         val expected = delegate.findAll().filter { it.contextId.value == contextId.value }
         assertEquals(expected.toSet(), result.toSet())
         assertEquals(1, result.size)
+    }
+
+    @Test
+    fun `string source bridges dispatch once to typed overrides`() {
+        val repository = TypedSourceOverrideRepository()
+        val locator = UriLocator("https://example.com/source")
+        val ref = SourceRevisionRef(sourceKey = locator.key(), sourceRevision = "rev-1")
+
+        assertEquals(
+            repository.sourceKeyResult,
+            repository.findBySourceKey(contextId.value, locator.key()),
+        )
+        assertEquals(
+            repository.sourceRevisionResult,
+            repository.findBySourceRevision(contextId.value, ref),
+        )
+        assertEquals(
+            repository.revisionlessResult,
+            repository.findRevisionlessBySourceLocator(contextId.value, locator),
+        )
+
+        assertEquals(1, repository.sourceKeyCalls)
+        assertEquals(1, repository.sourceRevisionCalls)
+        assertEquals(1, repository.revisionlessCalls)
+        assertEquals(listOf(contextId, contextId, contextId), repository.receivedContexts)
     }
 }
