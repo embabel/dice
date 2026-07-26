@@ -49,6 +49,7 @@ import org.drivine.query.QuerySpecification
 import org.drivine.query.dsl.*
 import org.slf4j.LoggerFactory
 import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
@@ -83,7 +84,7 @@ class DrivinePropositionRepository(
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
 
-    /** Runs the dedup find-then-insert as one programmatic transaction (see [save]). */
+    /** Owns each dedup attempt or recovery transaction while [save] suspends proxy transactions. */
     private val txTemplate = TransactionTemplate(transactionManager)
 
     /**
@@ -114,7 +115,12 @@ class DrivinePropositionRepository(
      * sibling. If a foreign sibling turns out to be ACTIVE too (only reachable without the
      * `(contextId, text)` constraint), that's a live duplicate this method won't silently create by
      * redirecting, but won't collapse either — it logs a WARN naming both ids for the dedup sweep.
+     *
+     * `NOT_SUPPORTED` is intentional: the programmatic transactions above own the attempted insert
+     * and, after a uniqueness rollback, the independent recovery. A class-level REQUIRED transaction
+     * would leave recovery joined to the failed attempt's rollback-only transaction.
      */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     override fun save(proposition: Proposition): Proposition {
         val text = proposition.text
         if (text.isBlank()) {
