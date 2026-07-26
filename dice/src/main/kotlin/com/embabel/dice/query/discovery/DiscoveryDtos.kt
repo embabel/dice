@@ -20,9 +20,11 @@ import com.embabel.dice.projection.lineage.ProjectionRecord
 import com.embabel.dice.projection.memory.CollectorRunResult
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.query.graph.GraphNeighborhood
 import com.embabel.dice.query.graph.GraphPath
 import com.embabel.dice.query.graph.PropositionLineage
+import com.fasterxml.jackson.annotation.JsonInclude
 
 /**
  * Outward-facing discovery DTOs — the trust boundary between domain internals and external callers.
@@ -133,6 +135,31 @@ data class NeighborhoodDto(
 }
 
 /**
+ * Primitive-only provenance attached to a discovery explanation.
+ */
+@JsonInclude(JsonInclude.Include.NON_NULL)
+data class DiscoveryProvenanceDto(
+    val locator: String,
+    val sourceRevision: String? = null,
+    val chunkId: String? = null,
+    val startOffset: Int? = null,
+    val endOffset: Int? = null,
+    val contentHash: String? = null,
+) {
+    companion object {
+        @JvmStatic
+        fun from(entry: ProvenanceEntry): DiscoveryProvenanceDto = DiscoveryProvenanceDto(
+            locator = entry.locator.key(),
+            sourceRevision = entry.sourceRevision,
+            chunkId = entry.chunkId,
+            startOffset = entry.startOffset,
+            endOffset = entry.endOffset,
+            contentHash = entry.contentHash,
+        )
+    }
+}
+
+/**
  * A leak-free lineage summary — the "why" behind a stored fact.
  *
  * @property propositionId the explained proposition's id
@@ -141,6 +168,7 @@ data class NeighborhoodDto(
  * @property reinforceCount how many times the proposition has been reinforced
  * @property groundingChunkIds the grounding chunk ids as opaque strings
  * @property sourceSummaries the source proposition statements this one was abstracted from
+ * @property provenance the proposition's ordered source evidence
  */
 data class LineageDto(
     val propositionId: String,
@@ -149,6 +177,7 @@ data class LineageDto(
     val reinforceCount: Int,
     val groundingChunkIds: List<String>,
     val sourceSummaries: List<String>,
+    val provenance: List<DiscoveryProvenanceDto> = emptyList(),
 ) {
     companion object {
         @JvmStatic
@@ -159,6 +188,7 @@ data class LineageDto(
             reinforceCount = lineage.reinforceCount,
             groundingChunkIds = lineage.groundingChunkIds,
             sourceSummaries = lineage.sources.map { it.text },
+            provenance = lineage.proposition.provenanceEntries.map { DiscoveryProvenanceDto.from(it) },
         )
     }
 }
