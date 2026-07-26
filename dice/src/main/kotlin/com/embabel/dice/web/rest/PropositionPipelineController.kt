@@ -33,6 +33,13 @@ import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.revision.RevisionResult
+import com.embabel.dice.provenance.ConnectorRef
+import com.embabel.dice.provenance.ContentAddressedLocator
+import com.embabel.dice.provenance.FileLocator
+import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
+import com.embabel.dice.provenance.UriLocator
+import com.fasterxml.jackson.core.JsonProcessingException
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
@@ -91,12 +98,24 @@ class PropositionPipelineController(
             return ResponseEntity.badRequest().build()
         }
 
+        val sourceProvenance = try {
+            resolveSourceProvenance(request.sourceLocator, request.sourceRevision)
+        } catch (e: IllegalArgumentException) {
+            logger.warn("Rejecting extract request for context {}: {}", contextId, e.message)
+            return ResponseEntity.badRequest().build()
+        }
+        val context = buildContext(
+            contextId = contextId,
+            knownEntityDtos = request.knownEntities,
+            schemaName = request.schemaName,
+            sourceLocator = sourceProvenance.first,
+            sourceRevision = sourceProvenance.second,
+        )
+
         val chunk = Chunk.create(
             text = request.text,
             parentId = request.sourceId ?: "api-request",
         )
-
-        val context = buildContext(contextId, request.knownEntities, request.schemaName)
         val result = propositionPipeline.processChunk(chunk, context)
 
         // Persist what revision says to keep — both the freshly extracted propositions and any
@@ -122,9 +141,21 @@ class PropositionPipelineController(
         @RequestPart("sourceId", required = false) sourceId: String?,
         @RequestPart("knownEntities", required = false) knownEntitiesJson: String?,
         @RequestPart("schemaName", required = false) schemaName: String?,
+        @RequestPart("sourceLocator", required = false) sourceLocatorJson: String?,
+        @RequestPart("sourceRevision", required = false) sourceRevision: String?,
     ): ResponseEntity<FileExtractResponse> {
         val filename = file.originalFilename ?: "uploaded-file"
         logger.info("Extracting propositions from file '{}' for context: {}", filename, contextId)
+
+        val sourceProvenance = try {
+            resolveSourceProvenance(parseSourceLocator(sourceLocatorJson), sourceRevision)
+        } catch (e: JsonProcessingException) {
+            logger.warn("Rejecting file extract request for context {}: invalid sourceLocator JSON", contextId)
+            return ResponseEntity.badRequest().build()
+        } catch (e: IllegalArgumentException) {
+            logger.warn("Rejecting file extract request for context {}: {}", contextId, e.message)
+            return ResponseEntity.badRequest().build()
+        }
 
         // Parse file content using Tika
         val document = file.inputStream.use { inputStream ->
@@ -155,7 +186,13 @@ class PropositionPipelineController(
         // the whole upload), shares entity identity across chunks, and is the only path that honors
         // the configured extraction execution strategy (Serial/Parallel/Batched). processChunk(), by
         // contrast, propagates failures and runs one chunk in isolation.
-        val context = buildContext(contextId, parseKnownEntities(knownEntitiesJson), schemaName)
+        val context = buildContext(
+            contextId = contextId,
+            knownEntityDtos = parseKnownEntities(knownEntitiesJson),
+            schemaName = schemaName,
+            sourceLocator = sourceProvenance.first,
+            sourceRevision = sourceProvenance.second,
+        )
         val processResult = propositionPipeline.process(chunks, context)
         val chunkResults = processResult.chunkResults
 
@@ -238,10 +275,29 @@ class PropositionPipelineController(
     private fun parseKnownEntities(json: String?): List<KnownEntityDto> =
         if (json.isNullOrBlank()) emptyList() else objectMapper.readValue(json)
 
+    private fun parseSourceLocator(json: String?): SourceLocatorInputDto? =
+        if (json.isNullOrBlank()) null else objectMapper.readValue(json)
+
+    private fun resolveSourceProvenance(
+        sourceLocatorInput: SourceLocatorInputDto?,
+        revision: String?,
+    ): Pair<SourceLocator?, SourceRevisionRef?> {
+        require(sourceLocatorInput != null || revision == null) {
+            "sourceRevision requires sourceLocator"
+        }
+        val sourceLocator = sourceLocatorInput?.toSourceLocator()
+        val sourceRevision = revision?.let {
+            SourceRevisionRef(sourceLocator!!.key(), it)
+        }
+        return sourceLocator to sourceRevision
+    }
+
     private fun buildContext(
         contextId: String,
         knownEntityDtos: List<KnownEntityDto>,
         schemaName: String? = null,
+        sourceLocator: SourceLocator? = null,
+        sourceRevision: SourceRevisionRef? = null,
     ): SourceAnalysisContext {
         val knownEntities = knownEntityDtos.map { dto ->
             val entity = SimpleNamedEntityData(
@@ -256,12 +312,20 @@ class PropositionPipelineController(
 
         val schema = schemaRegistry.getOrDefault(schemaName)
 
-        return SourceAnalysisContext(
+        var context = SourceAnalysisContext(
             schema = schema,
             entityResolver = entityResolver,
             contextId = ContextId(contextId),
             knownEntities = knownEntities,
         )
+
+        if (sourceLocator != null) {
+            context = context.withSourceLocator(sourceLocator)
+        }
+        if (sourceRevision != null) {
+            context = context.withSourceRevision(sourceRevision)
+        }
+        return context
     }
 
     private fun buildExtractResponse(
@@ -329,5 +393,32 @@ class PropositionPipelineController(
             ),
             revision = revisionSummary,
         )
+    }
+
+    private fun SourceLocatorInputDto.toSourceLocator(): SourceLocator {
+        require(value.isNotBlank()) { "sourceLocator.value must not be blank" }
+        return when (kind) {
+            "uri" -> {
+                require(connectorId == null) { "uri sourceLocator must not set connectorId" }
+                UriLocator(value, display)
+            }
+
+            "file" -> {
+                require(connectorId == null) { "file sourceLocator must not set connectorId" }
+                FileLocator(value, display)
+            }
+
+            "content" -> {
+                require(connectorId == null) { "content sourceLocator must not set connectorId" }
+                ContentAddressedLocator(value, display)
+            }
+
+            "connector" -> {
+                require(!connectorId.isNullOrBlank()) { "connector sourceLocator requires connectorId" }
+                ConnectorRef(connectorId, value, display)
+            }
+
+            else -> throw IllegalArgumentException("Unsupported sourceLocator.kind: $kind")
+        }
     }
 }
