@@ -26,6 +26,8 @@ import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.UriLocator
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.KotlinModule
@@ -142,6 +144,70 @@ class DiscoveryControllerTest {
     }
 
     @Test
+    fun `GET why includes empty provenance`() {
+        repository.save(proposition(id = "empty-provenance"))
+
+        mockMvc.perform(get("/api/v1/contexts/$contextId/discovery/why/empty-provenance"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.provenance").isArray)
+            .andExpect(jsonPath("$.provenance.length()").value(0))
+    }
+
+    @Test
+    fun `GET why includes revisionless provenance and omits null scalars`() {
+        val locator = UriLocator("https://example.com/revisionless")
+        repository.save(
+            proposition(
+                id = "revisionless",
+                provenance = listOf(
+                    ProvenanceEntry(
+                        locator = locator,
+                        chunkId = "chunk-0",
+                        startOffset = 2,
+                        endOffset = 8,
+                        contentHash = "hash-0",
+                    ),
+                ),
+            ),
+        )
+
+        mockMvc.perform(get("/api/v1/contexts/$contextId/discovery/why/revisionless"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.provenance[0].locator").value(locator.key()))
+            .andExpect(jsonPath("$.provenance[0].chunkId").value("chunk-0"))
+            .andExpect(jsonPath("$.provenance[0].startOffset").value(2))
+            .andExpect(jsonPath("$.provenance[0].endOffset").value(8))
+            .andExpect(jsonPath("$.provenance[0].contentHash").value("hash-0"))
+            .andExpect(jsonPath("$.provenance[0].sourceRevision").doesNotExist())
+    }
+
+    @Test
+    fun `GET why includes r1 and r2 provenance in order`() {
+        val locator = UriLocator("https://example.com/revisioned")
+        repository.save(
+            proposition(
+                id = "revisioned",
+                provenance = listOf(
+                    ProvenanceEntry(locator = locator, sourceRevision = "r1"),
+                    ProvenanceEntry(locator = locator, sourceRevision = "r2"),
+                ),
+            ),
+        )
+
+        mockMvc.perform(get("/api/v1/contexts/$contextId/discovery/why/revisioned"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.provenance.length()").value(2))
+            .andExpect(jsonPath("$.provenance[0].locator").value(locator.key()))
+            .andExpect(jsonPath("$.provenance[0].sourceRevision").value("r1"))
+            .andExpect(jsonPath("$.provenance[0].chunkId").doesNotExist())
+            .andExpect(jsonPath("$.provenance[0].startOffset").doesNotExist())
+            .andExpect(jsonPath("$.provenance[0].endOffset").doesNotExist())
+            .andExpect(jsonPath("$.provenance[0].contentHash").doesNotExist())
+            .andExpect(jsonPath("$.provenance[1].locator").value(locator.key()))
+            .andExpect(jsonPath("$.provenance[1].sourceRevision").value("r2"))
+    }
+
+    @Test
     fun `GET projection-health returns a per-target summary`() {
         mockMvc.perform(get("/api/v1/contexts/$contextId/discovery/projection-health"))
             .andExpect(status().isOk)
@@ -254,4 +320,17 @@ class DiscoveryControllerTest {
         }
         if (fqn in forbiddenExact) offenders.add("$owner -> $fqn (domain/graph/store type)")
     }
+
+    private fun proposition(
+        id: String,
+        provenance: List<ProvenanceEntry> = emptyList(),
+    ): Proposition =
+        Proposition(
+            id = id,
+            contextId = ContextId(contextId),
+            text = "Fact $id",
+            mentions = emptyList(),
+            confidence = 0.9,
+            provenanceEntries = provenance,
+        )
 }

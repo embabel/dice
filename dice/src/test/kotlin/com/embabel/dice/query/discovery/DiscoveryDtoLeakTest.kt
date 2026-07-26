@@ -39,6 +39,7 @@ class DiscoveryDtoLeakTest {
         EntityMentionSummaryDto::class,
         PathDto::class,
         NeighborhoodDto::class,
+        DiscoveryProvenanceDto::class,
         LineageDto::class,
         ProjectionHealthDto::class,
         TargetHealthDto::class,
@@ -58,6 +59,7 @@ class DiscoveryDtoLeakTest {
         // Any raw proposition-package type (e.g. the PropositionStatus enum) must be projected to a
         // primitive in a DTO, never exposed directly. DTOs surface enum names as Strings.
         "com.embabel.dice.proposition",
+        "com.embabel.dice.provenance",
     )
 
     private val forbiddenExactFqns = listOf(
@@ -90,6 +92,23 @@ class DiscoveryDtoLeakTest {
         rootDtos.forEach { walk(it, visited, mutableListOf(), it.simpleName ?: "?") }
         assertTrue(visited.containsAll(rootDtos), "expected every root DTO to be scanned")
         assertEquals(5, RetrievalMode.entries.size, "RetrievalMode must expose exactly five modes")
+    }
+
+    @Test
+    fun `discovery provenance has the exact primitive shape`() {
+        assertEquals(
+            mapOf(
+                "locator" to "kotlin.String",
+                "sourceRevision" to "kotlin.String?",
+                "chunkId" to "kotlin.String?",
+                "startOffset" to "kotlin.Int?",
+                "endOffset" to "kotlin.Int?",
+                "contentHash" to "kotlin.String?",
+            ),
+            DiscoveryProvenanceDto::class.memberProperties.associate {
+                it.name to it.returnType.toString()
+            },
+        )
     }
 
     private fun walk(
