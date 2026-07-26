@@ -38,13 +38,24 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.drivine.connection.DataSourceMap
 import org.drivine.manager.CascadeType
 import org.drivine.manager.GraphObjectManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
+import org.neo4j.driver.AuthTokens
+import org.neo4j.driver.GraphDatabase
+import org.neo4j.driver.SessionConfig
+import org.neo4j.driver.summary.Plan
+import org.springframework.aop.framework.Advised
+import org.springframework.aop.framework.ProxyFactory
+import org.springframework.aop.support.AopUtils
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.annotation.EnableTransactionManagement
+import org.springframework.transaction.interceptor.TransactionInterceptor
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
@@ -56,7 +67,7 @@ import java.util.concurrent.TimeUnit
  * test support). Not `@Transactional`: dedup commits via its own [org.springframework.transaction.support.TransactionTemplate],
  * so isolation is by explicit `clearAll()` per test rather than rollback.
  */
-@SpringBootTest(classes = [TestApplication::class])
+@SpringBootTest(classes = [TestApplication::class, TransactionProxyTestConfiguration::class])
 class DrivinePropositionStoreIntegrationTest {
 
     @Autowired
@@ -79,6 +90,9 @@ class DrivinePropositionStoreIntegrationTest {
 
     @Autowired
     private lateinit var transactionManager: PlatformTransactionManager
+
+    @Autowired
+    private lateinit var dataSourceMap: DataSourceMap
 
     @AfterEach
     fun cleanUp() {
@@ -196,6 +210,57 @@ class DrivinePropositionStoreIntegrationTest {
                 ),
         )
     }
+
+    /**
+     * A second repository target with the same transaction advisor as the actual Spring bean.
+     * Separate targets model two application instances (and therefore two lock stripes), while both
+     * calls still pass through the production annotation-driven transaction interceptor.
+     */
+    private fun newTransactionProxiedRepository(): DrivinePropositionRepository {
+        val actualBean = repository as Advised
+        val transactionAdvisor = actualBean.advisors.single { it.advice is TransactionInterceptor }
+        val proxyFactory = ProxyFactory(
+            DrivinePropositionRepository(
+                graphObjectManager,
+                persistenceManager,
+                embeddingService,
+                transactionManager,
+            ),
+        )
+        proxyFactory.setProxyTargetClass(true)
+        proxyFactory.addAdvisor(transactionAdvisor)
+        return proxyFactory.proxy as DrivinePropositionRepository
+    }
+
+    private fun explainSourceQuery(
+        name: String,
+        statement: String,
+        parameters: Map<String, Any>,
+    ): String {
+        val dataSource = dataSourceMap.dataSources.getValue("neo")
+        val uri = "${dataSource.protocol ?: "bolt"}://${dataSource.host}:${dataSource.port ?: 7687}"
+        val auth = dataSource.userName?.let { AuthTokens.basic(it, dataSource.password.orEmpty()) }
+            ?: AuthTokens.none()
+        return GraphDatabase.driver(uri, auth).use { driver ->
+            val sessionConfig = dataSource.databaseName?.let(SessionConfig::forDatabase)
+                ?: SessionConfig.defaultConfig()
+            driver.session(sessionConfig).use { session ->
+                val plan = session.run("EXPLAIN\n$statement", parameters).consume().plan()
+                renderPlan(plan).also { println("SOURCE_QUERY_EXPLAIN[$name]\n$it") }
+            }
+        }
+    }
+
+    private fun renderPlan(plan: Plan, depth: Int = 0): String = buildString {
+        append("  ".repeat(depth))
+        append(plan.operatorType())
+        if (plan.arguments().isNotEmpty()) {
+            append(' ')
+            append(plan.arguments())
+        }
+        appendLine()
+        plan.children().forEach { append(renderPlan(it, depth + 1)) }
+    }.trimEnd()
 
     @Test
     fun `save round-trips all persisted fields`() {
@@ -440,7 +505,7 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     @Test
-    fun `cross-instance uniqueness recovery unions evidence and is retry safe`() {
+    fun `Spring proxied cross-instance uniqueness recovery commits evidence and is retry safe`() {
         val locator = UriLocator("https://example.com/race-dedup")
         val revisionOne = revisionEvidence(locator, "r1")
         val revisionTwo = revisionEvidence(locator, "r2")
@@ -451,30 +516,33 @@ class DrivinePropositionStoreIntegrationTest {
             barrier.countDown()
             assertTrue(barrier.await(10, TimeUnit.SECONDS), "both repositories must reach the insert race")
         }
-        val firstRepository = DrivinePropositionRepository(
-            graphObjectManager, persistenceManager, embeddingService, transactionManager,
-        ).also { it.beforeDedupInsert = awaitBothInserts }
-        val secondRepository = DrivinePropositionRepository(
-            graphObjectManager, persistenceManager, embeddingService, transactionManager,
-        ).also { it.beforeDedupInsert = awaitBothInserts }
+        val firstRepository = repository
+        val secondRepository = newTransactionProxiedRepository()
+        assertTrue(AopUtils.isAopProxy(firstRepository), "the primary writer must be the actual Spring proxy")
+        assertTrue(AopUtils.isAopProxy(secondRepository), "the sibling writer must carry the transaction advisor")
+        firstRepository.beforeDedupInsert = awaitBothInserts
+        secondRepository.beforeDedupInsert = awaitBothInserts
         val executor = Executors.newFixedThreadPool(2)
-        val winners = try {
-            listOf(
+        try {
+            val winners = listOf(
                 executor.submit<Proposition> { firstRepository.save(first) },
                 executor.submit<Proposition> { secondRepository.save(second) },
             ).map { it.get(30, TimeUnit.SECONDS) }
+
+            assertEquals(1, winners.map { it.id }.toSet().size, "both writers must return the database winner")
+            val winnerId = winners.map { it.id }.distinct().single()
+            assertEquals(setOf(revisionOne, revisionTwo), repository.findById(winnerId)!!.provenanceEntries.toSet())
+            assertEquals(2L, edgeCount(winnerId), "the losing proxy's recovery transaction must commit evidence")
+
+            firstRepository.beforeDedupInsert = null
+            secondRepository.beforeDedupInsert = null
+            secondRepository.save(second)
+            assertEquals(2L, edgeCount(winnerId), "retrying recovered evidence must remain idempotent")
         } finally {
+            firstRepository.beforeDedupInsert = null
+            secondRepository.beforeDedupInsert = null
             executor.shutdownNow()
         }
-
-        assertEquals(1, winners.map { it.id }.toSet().size, "both writers must return the database winner")
-        val winnerId = winners.map { it.id }.distinct().single()
-        assertEquals(setOf(revisionOne, revisionTwo), repository.findById(winnerId)!!.provenanceEntries.toSet())
-        assertEquals(2L, edgeCount(winnerId))
-
-        secondRepository.beforeDedupInsert = null
-        secondRepository.save(second)
-        assertEquals(2L, edgeCount(winnerId), "retrying recovered evidence must remain idempotent")
     }
 
     @Test
@@ -564,6 +632,65 @@ class DrivinePropositionStoreIntegrationTest {
             listOf(revisionless.id),
             repository.findRevisionlessBySourceLocator(context, locator).map { it.id },
         )
+    }
+
+    @Test
+    fun `source query shapes have parameterized index-backed Neo4j plans`() {
+        val locator = UriLocator("https://example.com/explain-source")
+        repository.save(
+            prop(
+                "explain revisionless",
+                context = "ctx-explain",
+                provenance = listOf(revisionEvidence(locator, null)),
+            ),
+        )
+        repository.save(
+            prop(
+                "explain r1",
+                context = "ctx-explain",
+                provenance = listOf(revisionEvidence(locator, "r1")),
+            ),
+        )
+        val commonParameters = mapOf<String, Any>(
+            "contextId" to "ctx-explain",
+            "sourceKey" to locator.key(),
+        )
+        val plans = mapOf(
+            "source-key" to explainSourceQuery(
+                "source-key",
+                """
+                MATCH (p:Proposition {contextId: ${'$'}contextId})-[r:DERIVED_FROM]->(s:Source {key: ${'$'}sourceKey})
+                RETURN DISTINCT p.id AS id
+                """.trimIndent(),
+                commonParameters,
+            ),
+            "source-revision" to explainSourceQuery(
+                "source-revision",
+                """
+                MATCH (p:Proposition {contextId: ${'$'}contextId})-[r:DERIVED_FROM]->(s:Source {key: ${'$'}sourceKey})
+                WHERE r.sourceRevision = ${'$'}sourceRevision
+                RETURN DISTINCT p.id AS id
+                """.trimIndent(),
+                commonParameters + ("sourceRevision" to "r1"),
+            ),
+            "revisionless-source" to explainSourceQuery(
+                "revisionless-source",
+                """
+                MATCH (p:Proposition {contextId: ${'$'}contextId})-[r:DERIVED_FROM]->(s:Source {key: ${'$'}sourceKey})
+                WHERE r.sourceRevision IS NULL
+                RETURN DISTINCT p.id AS id
+                """.trimIndent(),
+                commonParameters,
+            ),
+        )
+
+        plans.forEach { (name, plan) ->
+            assertTrue(plan.isNotBlank(), "$name EXPLAIN must return a plan")
+            assertTrue(
+                plan.contains("IndexSeek"),
+                "$name should use an existing node index rather than requiring relationship DDL:\n$plan",
+            )
+        }
     }
 
     @Test
@@ -1272,3 +1399,7 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals(old, repository.findById(saved.id)!!.lastAccessed)
     }
 }
+
+@TestConfiguration(proxyBeanMethods = false)
+@EnableTransactionManagement(proxyTargetClass = true)
+open class TransactionProxyTestConfiguration
