@@ -18,6 +18,8 @@ package com.embabel.dice.common
 import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.chat.Message
 import com.embabel.dice.incremental.IncrementalSource
+import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
 import org.springframework.context.ApplicationEvent
 
 /**
@@ -31,4 +33,8 @@ abstract class SourceAnalysisRequestEvent(
 ) : ApplicationEvent(source) {
 
     abstract fun incrementalSource(): IncrementalSource<Message>
+
+    open fun sourceLocator(): SourceLocator? = null
+
+    open fun sourceRevision(): SourceRevisionRef? = null
 }
