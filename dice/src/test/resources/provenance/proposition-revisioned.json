@@ -1,0 +1,49 @@
+{
+  "id": "revisioned",
+  "contextId": "ctx-json",
+  "text": "A revisioned proposition",
+  "mentions": [],
+  "confidence": 0.8,
+  "decay": 0.0,
+  "importance": 0.5,
+  "reasoning": null,
+  "grounding": [],
+  "created": "2026-01-02T00:00:00Z",
+  "contentRevised": "2026-01-02T00:00:00Z",
+  "metadataRevised": "2026-01-02T00:00:00Z",
+  "pinned": false,
+  "lastAccessed": "2026-01-02T00:00:00Z",
+  "status": "ACTIVE",
+  "level": 0,
+  "sourceIds": [],
+  "reinforceCount": 0,
+  "metadata": {},
+  "uri": null,
+  "temporal": null,
+  "provenanceEntries": [
+    {
+      "locator": {
+        "kind": "uri",
+        "uri": "https://example.com/revisioned",
+        "display": "Revisioned source"
+      },
+      "chunkId": "chunk-r1",
+      "startOffset": 2,
+      "endOffset": 12,
+      "contentHash": "hash-r1",
+      "sourceRevision": "r1"
+    },
+    {
+      "locator": {
+        "kind": "uri",
+        "uri": "https://example.com/revisioned",
+        "display": "Revisioned source"
+      },
+      "chunkId": "chunk-literal-null",
+      "startOffset": 13,
+      "endOffset": 25,
+      "contentHash": "hash-null",
+      "sourceRevision": "null"
+    }
+  ]
+}

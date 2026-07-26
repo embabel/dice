@@ -1,0 +1,36 @@
+{
+  "id": "revisionless",
+  "contextId": "ctx-json",
+  "text": "A revisionless proposition",
+  "mentions": [],
+  "confidence": 0.75,
+  "decay": 0.0,
+  "importance": 0.5,
+  "reasoning": null,
+  "grounding": [],
+  "created": "2026-01-01T00:00:00Z",
+  "contentRevised": "2026-01-01T00:00:00Z",
+  "metadataRevised": "2026-01-01T00:00:00Z",
+  "pinned": false,
+  "lastAccessed": "2026-01-01T00:00:00Z",
+  "status": "ACTIVE",
+  "level": 0,
+  "sourceIds": [],
+  "reinforceCount": 0,
+  "metadata": {},
+  "uri": null,
+  "temporal": null,
+  "provenanceEntries": [
+    {
+      "locator": {
+        "kind": "uri",
+        "uri": "https://example.com/legacy",
+        "display": "Legacy source"
+      },
+      "chunkId": "chunk-legacy",
+      "startOffset": 0,
+      "endOffset": 10,
+      "contentHash": "hash-legacy"
+    }
+  ]
+}
