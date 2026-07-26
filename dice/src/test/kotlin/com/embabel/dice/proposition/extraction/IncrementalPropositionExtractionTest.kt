@@ -41,8 +41,10 @@ import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.doNothing
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.spy
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.verifyNoInteractions
 import org.mockito.kotlin.whenever
@@ -53,7 +55,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class IncrementalPropositionExtractionTest {
 
     @Test
-    fun `legacy and provenance aware JVM descriptors coexist`() {
+    fun `legacy and source aware JVM descriptors are exact`() {
         val rememberTextParameters = IncrementalPropositionExtraction::class.java.declaredMethods
             .filter { it.name == "rememberText" && !it.isSynthetic }
             .map { it.parameterTypes.toList() }
@@ -62,46 +64,53 @@ class IncrementalPropositionExtractionTest {
             .filter { it.name == "rememberFile" && !it.isSynthetic }
             .map { it.parameterTypes.toList() }
             .toSet()
+        val rememberTextFromSourceParameters = IncrementalPropositionExtraction::class.java.declaredMethods
+            .filter { it.name == "rememberTextFromSource" && !it.isSynthetic }
+            .map { it.parameterTypes.toList() }
+            .toSet()
+        val rememberFileFromSourceParameters = IncrementalPropositionExtraction::class.java.declaredMethods
+            .filter { it.name == "rememberFileFromSource" && !it.isSynthetic }
+            .map { it.parameterTypes.toList() }
+            .toSet()
 
         val legacyTextPrefix = listOf(
             String::class.java,
             String::class.java,
             NamedEntity::class.java,
         )
-        assertTrue(rememberTextParameters.contains(legacyTextPrefix))
-        assertTrue(rememberTextParameters.contains(legacyTextPrefix + List::class.java))
-        assertTrue(
-            rememberTextParameters.contains(
+        assertEquals(
+            setOf(
+                legacyTextPrefix,
+                legacyTextPrefix + List::class.java,
                 legacyTextPrefix + listOf(List::class.java, ExtractionPerspective::class.java),
-            ),
-        )
-        assertTrue(
-            rememberTextParameters.contains(
                 legacyTextPrefix + listOf(
                     List::class.java,
                     ExtractionPerspective::class.java,
                     Boolean::class.javaObjectType,
                 ),
             ),
+            rememberTextParameters,
         )
 
-        val provenanceTextPrefix = legacyTextPrefix + SourceLocator::class.java
-        assertTrue(rememberTextParameters.contains(provenanceTextPrefix))
-        assertTrue(rememberTextParameters.contains(provenanceTextPrefix + SourceRevisionRef::class.java))
-        assertTrue(
-            rememberTextParameters.contains(
-                provenanceTextPrefix + listOf(SourceRevisionRef::class.java, List::class.java),
-            ),
-        )
-        assertTrue(
-            rememberTextParameters.contains(
-                provenanceTextPrefix + listOf(
+        val sourceTextPrefix = legacyTextPrefix + SourceLocator::class.java
+        assertEquals(
+            setOf(
+                sourceTextPrefix,
+                sourceTextPrefix + SourceRevisionRef::class.java,
+                sourceTextPrefix + listOf(SourceRevisionRef::class.java, List::class.java),
+                sourceTextPrefix + listOf(
+                    SourceRevisionRef::class.java,
+                    List::class.java,
+                    ExtractionPerspective::class.java,
+                ),
+                sourceTextPrefix + listOf(
                     SourceRevisionRef::class.java,
                     List::class.java,
                     ExtractionPerspective::class.java,
                     Boolean::class.javaObjectType,
                 ),
             ),
+            rememberTextFromSourceParameters,
         )
 
         val legacyFile = listOf(
@@ -109,17 +118,18 @@ class IncrementalPropositionExtractionTest {
             String::class.java,
             NamedEntity::class.java,
         )
-        assertTrue(rememberFileParameters.contains(legacyFile))
-        assertTrue(rememberFileParameters.contains(legacyFile + SourceLocator::class.java))
-        assertTrue(
-            rememberFileParameters.contains(
+        assertEquals(setOf(legacyFile), rememberFileParameters)
+        assertEquals(
+            setOf(
+                legacyFile + SourceLocator::class.java,
                 legacyFile + listOf(SourceLocator::class.java, SourceRevisionRef::class.java),
             ),
+            rememberFileFromSourceParameters,
         )
     }
 
     @Test
-    fun `new text overload retains exact typed and untyped inputs`() {
+    fun `new text entry point retains exact typed and untyped inputs`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val user = user()
@@ -128,7 +138,7 @@ class IncrementalPropositionExtractionTest {
         val perspective = mock<ExtractionPerspective>()
         val grounding = listOf("record:one", "record:two")
 
-        extraction.rememberText(
+        extraction.rememberTextFromSource(
             text = "source text",
             sourceId = "caller:source:r7",
             user = user,
@@ -171,7 +181,7 @@ class IncrementalPropositionExtractionTest {
         val locator = UriLocator("https://example.com/source")
 
         assertThrows(IllegalArgumentException::class.java) {
-            extraction.rememberText(
+            extraction.rememberTextFromSource(
                 text = "source text",
                 sourceId = "exact-source",
                 user = user(),
@@ -207,13 +217,13 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
-    fun `provenance aware file retains remember source id and typed provenance`() {
+    fun `source aware file retains remember source id and typed provenance`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val locator = UriLocator("file:///notes/example.txt")
         val revision = SourceRevisionRef(locator.key(), "file-r2")
 
-        extraction.rememberFile(
+        extraction.rememberFileFromSource(
             inputStream = ByteArrayInputStream("file source text".toByteArray()),
             filename = "example.txt",
             user = user(),
@@ -232,6 +242,139 @@ class IncrementalPropositionExtractionTest {
         )
         assertSame(locator, contextCaptor.firstValue.sourceLocator)
         assertSame(revision, contextCaptor.firstValue.sourceRevision)
+    }
+
+    @Test
+    fun `legacy generic Mockito shaped call sites remain uniquely resolvable`() {
+        val extraction = mock<IncrementalPropositionExtraction>()
+        val user = user()
+        val four = GenericMatcherValues("four", "source-4", user, emptyList<String>())
+        val five = GenericMatcherValues("five", "source-5", user, emptyList<String>(), null)
+        val six = GenericMatcherValues("six", "source-6", user, emptyList<String>(), null, null)
+
+        extraction.rememberText(four.any(), four.any(), four.any(), four.any())
+        extraction.rememberText(five.any(), five.any(), five.any(), five.any(), five.any())
+        extraction.rememberText(six.any(), six.any(), six.any(), six.any(), six.any(), six.any())
+
+        verify(extraction).rememberText("four", "source-4", user, emptyList(), null, null)
+        verify(extraction).rememberText("five", "source-5", user, emptyList(), null, null)
+        verify(extraction).rememberText("six", "source-6", user, emptyList(), null, null)
+    }
+
+    @Test
+    fun `Kotlin callable references and named calls distinguish legacy and source entry points`() {
+        val extraction = mock<IncrementalPropositionExtraction>()
+        val user = user()
+        val locator = UriLocator("https://example.com/callable")
+        val revision = SourceRevisionRef(locator.key(), "callable-r1")
+        val legacyText:
+            (String, String, NamedEntity, List<String>, ExtractionPerspective?, Boolean?) -> Unit =
+            extraction::rememberText
+        val sourceText:
+            (
+                String,
+                String,
+                NamedEntity,
+                SourceLocator,
+                SourceRevisionRef?,
+                List<String>,
+                ExtractionPerspective?,
+                Boolean?,
+            ) -> Unit = extraction::rememberTextFromSource
+        val legacyFile: (InputStream, String, NamedEntity) -> Unit = extraction::rememberFile
+        val sourceFile:
+            (InputStream, String, NamedEntity, SourceLocator, SourceRevisionRef?) -> Unit =
+            extraction::rememberFileFromSource
+
+        legacyText("callable legacy", "callable-legacy", user, emptyList(), null, null)
+        sourceText("callable source", "callable-source", user, locator, revision, emptyList(), null, null)
+        legacyFile(ByteArrayInputStream(byteArrayOf()), "callable-legacy.txt", user)
+        sourceFile(ByteArrayInputStream(byteArrayOf()), "callable-source.txt", user, locator, revision)
+        extraction.rememberText(text = "named legacy", sourceId = "named-legacy", user = user)
+        extraction.rememberTextFromSource(
+            text = "named source",
+            sourceId = "named-source",
+            user = user,
+            sourceLocator = locator,
+        )
+        extraction.rememberFile(
+            inputStream = ByteArrayInputStream(byteArrayOf()),
+            filename = "named-legacy.txt",
+            user = user,
+        )
+        extraction.rememberFileFromSource(
+            inputStream = ByteArrayInputStream(byteArrayOf()),
+            filename = "named-source.txt",
+            user = user,
+            sourceLocator = locator,
+        )
+
+        verify(extraction).rememberText("callable legacy", "callable-legacy", user, emptyList(), null, null)
+        verify(extraction).rememberTextFromSource(
+            "callable source",
+            "callable-source",
+            user,
+            locator,
+            revision,
+            emptyList(),
+            null,
+            null,
+        )
+        verify(extraction).rememberText("named legacy", "named-legacy", user)
+        verify(extraction).rememberTextFromSource("named source", "named-source", user, locator)
+    }
+
+    @Test
+    fun `legacy and source file entry points dispatch through their open text entry points`() {
+        val pipeline = pipelineReturningNoResult()
+        val extraction = spy(extraction(pipeline))
+        val user = user()
+        val locator = UriLocator("file:///notes/dispatch.txt")
+        val revision = SourceRevisionRef(locator.key(), "dispatch-r1")
+        doNothing().whenever(extraction).rememberText(
+            any(),
+            any(),
+            any(),
+            any(),
+            anyOrNull(),
+            anyOrNull(),
+        )
+        doNothing().whenever(extraction).rememberTextFromSource(
+            any(),
+            any(),
+            any(),
+            any(),
+            anyOrNull(),
+            any(),
+            anyOrNull(),
+            anyOrNull(),
+        )
+
+        extraction.rememberFile(
+            ByteArrayInputStream("legacy dispatch".toByteArray()),
+            "legacy-dispatch.txt",
+            user,
+        )
+        extraction.rememberFileFromSource(
+            ByteArrayInputStream("source dispatch".toByteArray()),
+            "source-dispatch.txt",
+            user,
+            locator,
+            revision,
+        )
+
+        verify(extraction).rememberText("legacy dispatch", "remember:legacy-dispatch.txt", user)
+        verify(extraction).rememberTextFromSource(
+            "source dispatch",
+            "remember:source-dispatch.txt",
+            user,
+            locator,
+            revision,
+            emptyList(),
+            null,
+            null,
+        )
+        verifyNoInteractions(pipeline)
     }
 
     @Test
@@ -322,5 +465,17 @@ class IncrementalPropositionExtractionTest {
             eq(grounding),
         )
         return contextCaptor.firstValue
+    }
+
+    /**
+     * Matches Mockito's no-argument generic matcher signature while returning real values,
+     * so the test executes Kotlin default-argument bridges without entering Mockito matcher state.
+     */
+    private class GenericMatcherValues(vararg values: Any?) {
+        private val values = values.toList()
+        private var index = 0
+
+        @Suppress("UNCHECKED_CAST")
+        fun <T> any(): T = values[index++] as T
     }
 }
