@@ -341,6 +341,7 @@ class PropositionPipeline private constructor(
             locator = context.sourceLocator ?: ContentAddressedLocator(contentHash),
             chunkId = chunk.id,
             contentHash = contentHash,
+            sourceRevision = context.sourceRevision?.sourceRevision,
         )
         return propositions.map { it.withProvenanceEntries(listOf(entry)) }
     }
