@@ -20,6 +20,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.model.Retrievable
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import com.embabel.dice.temporal.TemporalMetadata
 import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
@@ -321,9 +322,9 @@ data class Proposition(
     /**
      * Create a copy with exactly [groundingToRemove], [provenanceRefsToRemove] and
      * [sourceIdsToRemove] taken out of this proposition's evidence — the inverse of
-     * [absorbEvidence] for one loser's contribution. Provenance entries are matched by
-     * [com.embabel.dice.provenance.SourceLocator.key], the same identity [absorbEvidence]'s
-     * caller uses to record a loser's folded refs (see `RetiredProposition.foldedProvenanceRefs`).
+     * [absorbEvidence] for one loser's contribution. Provenance refs use the shared evidence-key
+     * contract so current refs identify one full entry while legacy locator refs match only
+     * revisionless evidence.
      *
      * Callers subtracting one collapsed member's evidence from a survivor that absorbed several
      * members must first drop any ref another still-retired member also contributed, or this
@@ -339,7 +340,9 @@ data class Proposition(
         val provenanceRefSet = provenanceRefsToRemove.toSet()
         return copy(
             grounding = grounding - groundingToRemove.toSet(),
-            provenanceEntries = provenanceEntries.filterNot { it.locator.key() in provenanceRefSet },
+            provenanceEntries = provenanceEntries.filterNot { entry ->
+                provenanceRefSet.any { ProvenanceEvidenceKey.matches(entry, it) }
+            },
             sourceIds = sourceIds - sourceIdsToRemove.toSet(),
             metadataRevised = Instant.now(),
         )
