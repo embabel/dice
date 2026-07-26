@@ -18,6 +18,7 @@ package com.embabel.dice.common
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
 import com.embabel.dice.proposition.extraction.ExtractionPerspective
 
 /**
@@ -35,6 +36,8 @@ import com.embabel.dice.proposition.extraction.ExtractionPerspective
  * @param sourceLocator optional pointer to where this run's material lives. When set, the pipeline
  * stamps it onto every extracted proposition's provenance, so a caller that knows the real source
  * (a file, a URI, a connector record) gets richer grounding than the content-hash fallback.
+ * @param sourceRevision optional validated revision of [sourceLocator]. The locator is required and
+ * its source key must match before analysis can begin.
  * @param mintNewEntities whether a mention the resolver could NOT match to an existing entity may
  * be persisted as a NEW entity node. Default FALSE: unresolved mentions stay unresolved (the
  * proposition is still persisted; its mention simply carries no resolvedId), so extraction never
@@ -60,7 +63,19 @@ data class SourceAnalysisContext @JvmOverloads constructor(
      * values win over extractor-supplied properties of the same key.
      */
     val mintedEntityProperties: Map<String, Any> = emptyMap(),
+    val sourceRevision: SourceRevisionRef? = null,
 ) {
+
+    init {
+        sourceRevision?.let { revision ->
+            val locator = requireNotNull(sourceLocator) {
+                "sourceLocator is required when sourceRevision is set"
+            }
+            require(revision.sourceKey == locator.key()) {
+                "sourceRevision source key must match sourceLocator source key"
+            }
+        }
+    }
 
     companion object {
         /**
@@ -126,6 +141,12 @@ data class SourceAnalysisContext @JvmOverloads constructor(
      */
     fun withSourceLocator(sourceLocator: SourceLocator): SourceAnalysisContext =
         copy(sourceLocator = sourceLocator)
+
+    /**
+     * Returns a copy carrying a validated revision of this context's source.
+     */
+    fun withSourceRevision(sourceRevision: SourceRevisionRef): SourceAnalysisContext =
+        copy(sourceRevision = sourceRevision)
 
     /**
      * Returns a copy allowing (or forbidding) this analysis to persist NEW entities
