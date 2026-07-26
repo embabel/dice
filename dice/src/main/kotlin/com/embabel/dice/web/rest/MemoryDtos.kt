@@ -43,6 +43,15 @@ data class ExtractRequest(
     val knownEntities: List<KnownEntityDto> = emptyList(),
     val schemaName: String? = null,
     val options: ExtractOptions = ExtractOptions(),
+    val sourceLocator: SourceLocatorInputDto? = null,
+    val sourceRevision: String? = null,
+)
+
+data class SourceLocatorInputDto(
+    val kind: String,
+    val value: String,
+    val connectorId: String? = null,
+    val display: String? = null,
 )
 
 data class ExtractOptions(
@@ -232,6 +241,7 @@ data class EntityMentionDto(
  * @property startOffset character offset where the supporting span begins, when known
  * @property endOffset character offset where the supporting span ends, when known
  * @property contentHash hash of the source content, when known
+ * @property sourceRevision opaque revision token for this source, when known
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 data class ProvenanceEntryDto(
@@ -241,6 +251,7 @@ data class ProvenanceEntryDto(
     val startOffset: Int?,
     val endOffset: Int?,
     val contentHash: String?,
+    val sourceRevision: String? = null,
 ) {
     companion object {
         fun from(entry: ProvenanceEntry): ProvenanceEntryDto = ProvenanceEntryDto(
@@ -250,6 +261,7 @@ data class ProvenanceEntryDto(
             startOffset = entry.startOffset,
             endOffset = entry.endOffset,
             contentHash = entry.contentHash,
+            sourceRevision = entry.sourceRevision,
         )
     }
 }
