@@ -34,6 +34,8 @@ import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.projection.graph.GraphProjectionService
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
 import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Async
@@ -162,7 +164,32 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * Extract propositions from a file via Tika and persist them.
      * Requires `embabel-agent-rag-tika` on the classpath.
      */
-    open fun rememberFile(inputStream: InputStream, filename: String, user: NamedEntity) {
+    open fun rememberFile(inputStream: InputStream, filename: String, user: NamedEntity) =
+        rememberFileInternal(inputStream, filename, user)
+
+    /**
+     * Extract propositions from a file and ground them in the caller's typed source.
+     *
+     * A non-null [sourceRevision] is a host assertion that the locator's revision covers
+     * the full extracted file aggregate. DICE cannot infer aggregate revision coverage.
+     */
+    @JvmOverloads
+    open fun rememberFile(
+        inputStream: InputStream,
+        filename: String,
+        user: NamedEntity,
+        sourceLocator: SourceLocator,
+        sourceRevision: SourceRevisionRef? = null,
+    ) =
+        rememberFileInternal(inputStream, filename, user, sourceLocator, sourceRevision)
+
+    private fun rememberFileInternal(
+        inputStream: InputStream,
+        filename: String,
+        user: NamedEntity,
+        sourceLocator: SourceLocator? = null,
+        sourceRevision: SourceRevisionRef? = null,
+    ) {
         try {
             val reader = com.embabel.agent.rag.ingestion.TikaHierarchicalContentReader()
             val document = reader.parseContent(inputStream, "remember://$filename")
@@ -173,7 +200,13 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 return
             }
 
-            rememberText(text, "remember:$filename", user)
+            rememberTextInternal(
+                text = text,
+                sourceId = "remember:$filename",
+                user = user,
+                sourceLocator = sourceLocator,
+                sourceRevision = sourceRevision,
+            )
         } catch (e: Exception) {
             logger.warn("Failed to learn file: {}", filename, e)
         }
@@ -204,8 +237,64 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         additionalGrounding: List<String> = emptyList(),
         perspective: ExtractionPerspective? = null,
         mintNewEntities: Boolean? = null,
+    ) =
+        rememberTextInternal(
+            text = text,
+            sourceId = sourceId,
+            user = user,
+            additionalGrounding = additionalGrounding,
+            perspective = perspective,
+            mintNewEntities = mintNewEntities,
+        )
+
+    /**
+     * Extract propositions from raw text and ground them in the caller's typed source.
+     *
+     * [sourceId] remains the exact caller-supplied chunk/grounding identifier. A non-null
+     * [sourceRevision] is a host assertion that [sourceLocator]'s revision covers the full
+     * text aggregate; DICE cannot derive revision coverage from untyped identifiers or
+     * [additionalGrounding].
+     */
+    @JvmOverloads
+    open fun rememberText(
+        text: String,
+        sourceId: String,
+        user: NamedEntity,
+        sourceLocator: SourceLocator,
+        sourceRevision: SourceRevisionRef? = null,
+        additionalGrounding: List<String> = emptyList(),
+        perspective: ExtractionPerspective? = null,
+        mintNewEntities: Boolean? = null,
+    ) =
+        rememberTextInternal(
+            text = text,
+            sourceId = sourceId,
+            user = user,
+            sourceLocator = sourceLocator,
+            sourceRevision = sourceRevision,
+            additionalGrounding = additionalGrounding,
+            perspective = perspective,
+            mintNewEntities = mintNewEntities,
+        )
+
+    private fun rememberTextInternal(
+        text: String,
+        sourceId: String,
+        user: NamedEntity,
+        sourceLocator: SourceLocator? = null,
+        sourceRevision: SourceRevisionRef? = null,
+        additionalGrounding: List<String> = emptyList(),
+        perspective: ExtractionPerspective? = null,
+        mintNewEntities: Boolean? = null,
     ) {
-        val context = buildContext(user, sourceId, perspective, mintNewEntities)
+        val context = buildContext(
+            user = user,
+            sourceId = sourceId,
+            perspective = perspective,
+            mintNewEntities = mintNewEntities,
+            sourceLocator = sourceLocator,
+            sourceRevision = sourceRevision,
+        )
         val result = propositionPipeline.processOnce(
             text, sourceId, context, additionalGrounding = additionalGrounding,
         )
@@ -252,7 +341,12 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 return
             }
 
-            val context = buildContext(event.user, source.id)
+            val context = buildContext(
+                user = event.user,
+                sourceId = source.id,
+                sourceLocator = event.sourceLocator(),
+                sourceRevision = event.sourceRevision(),
+            )
             logger.info(
                 "Context relations count: {}, injected relations count: {}",
                 context.relations.size(), relations.size(),
@@ -283,6 +377,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         sourceId: String = "",
         perspective: ExtractionPerspective? = null,
         mintNewEntities: Boolean? = null,
+        sourceLocator: SourceLocator? = null,
+        sourceRevision: SourceRevisionRef? = null,
     ): SourceAnalysisContext {
         val aliases = try {
             currentUserAliasesProvider(user)
@@ -341,6 +437,12 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             if (stamped.isNotEmpty()) {
                 ctx = ctx.withMintedEntityProperties(stamped)
             }
+        }
+        if (sourceLocator != null) {
+            ctx = ctx.withSourceLocator(sourceLocator)
+        }
+        if (sourceRevision != null) {
+            ctx = ctx.withSourceRevision(sourceRevision)
         }
         return ctx
     }
