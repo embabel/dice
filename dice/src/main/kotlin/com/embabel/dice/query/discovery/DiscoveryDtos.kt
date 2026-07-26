@@ -188,7 +188,7 @@ data class LineageDto(
             reinforceCount = lineage.reinforceCount,
             groundingChunkIds = lineage.groundingChunkIds,
             sourceSummaries = lineage.sources.map { it.text },
-            provenance = lineage.proposition.provenanceEntries.map { DiscoveryProvenanceDto.from(it) },
+            provenance = lineage.provenanceEntries.map { DiscoveryProvenanceDto.from(it) },
         )
     }
 }
