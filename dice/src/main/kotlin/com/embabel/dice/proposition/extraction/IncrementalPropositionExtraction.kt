@@ -165,7 +165,13 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * Requires `embabel-agent-rag-tika` on the classpath.
      */
     open fun rememberFile(inputStream: InputStream, filename: String, user: NamedEntity) =
-        rememberFileInternal(inputStream, filename, user)
+        withRememberedFileText(inputStream, filename) { text ->
+            rememberText(
+                text = text,
+                sourceId = "remember:$filename",
+                user = user,
+            )
+        }
 
     /**
      * Extract propositions from a file and ground them in the caller's typed source.
@@ -174,21 +180,27 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * the full extracted file aggregate. DICE cannot infer aggregate revision coverage.
      */
     @JvmOverloads
-    open fun rememberFile(
+    open fun rememberFileFromSource(
         inputStream: InputStream,
         filename: String,
         user: NamedEntity,
         sourceLocator: SourceLocator,
         sourceRevision: SourceRevisionRef? = null,
-    ) =
-        rememberFileInternal(inputStream, filename, user, sourceLocator, sourceRevision)
+    ): Unit =
+        withRememberedFileText(inputStream, filename) { text ->
+            rememberTextFromSource(
+                text = text,
+                sourceId = "remember:$filename",
+                user = user,
+                sourceLocator = sourceLocator,
+                sourceRevision = sourceRevision,
+            )
+        }
 
-    private fun rememberFileInternal(
+    private fun withRememberedFileText(
         inputStream: InputStream,
         filename: String,
-        user: NamedEntity,
-        sourceLocator: SourceLocator? = null,
-        sourceRevision: SourceRevisionRef? = null,
+        remember: (String) -> Unit,
     ) {
         try {
             val reader = com.embabel.agent.rag.ingestion.TikaHierarchicalContentReader()
@@ -200,13 +212,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 return
             }
 
-            rememberTextInternal(
-                text = text,
-                sourceId = "remember:$filename",
-                user = user,
-                sourceLocator = sourceLocator,
-                sourceRevision = sourceRevision,
-            )
+            remember(text)
         } catch (e: Exception) {
             logger.warn("Failed to learn file: {}", filename, e)
         }
@@ -256,7 +262,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * [additionalGrounding].
      */
     @JvmOverloads
-    open fun rememberText(
+    open fun rememberTextFromSource(
         text: String,
         sourceId: String,
         user: NamedEntity,
@@ -265,7 +271,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         additionalGrounding: List<String> = emptyList(),
         perspective: ExtractionPerspective? = null,
         mintNewEntities: Boolean? = null,
-    ) =
+    ): Unit =
         rememberTextInternal(
             text = text,
             sourceId = sourceId,

@@ -34,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class SourceRevisionJavaInteropTest {
 
@@ -60,7 +61,7 @@ class SourceRevisionJavaInteropTest {
     }
 
     @Test
-    void retainsEveryLegacyRememberDescriptorAndAddsRevisionAwareDescriptors() throws Exception {
+    void retainsEveryLegacyRememberDescriptorAndAddsDistinctSourceDescriptors() throws Exception {
         Class<?>[][] legacyTextParameters = {
                 {String.class, String.class, NamedEntity.class},
                 {String.class, String.class, NamedEntity.class, List.class},
@@ -72,7 +73,7 @@ class SourceRevisionJavaInteropTest {
             IncrementalPropositionExtraction.class.getMethod("rememberText", parameters);
         }
 
-        Class<?>[][] revisionAwareTextParameters = {
+        Class<?>[][] sourceAwareTextParameters = {
                 {String.class, String.class, NamedEntity.class, SourceLocator.class},
                 {String.class, String.class, NamedEntity.class, SourceLocator.class, SourceRevisionRef.class},
                 {String.class, String.class, NamedEntity.class, SourceLocator.class, SourceRevisionRef.class,
@@ -82,9 +83,19 @@ class SourceRevisionJavaInteropTest {
                 {String.class, String.class, NamedEntity.class, SourceLocator.class, SourceRevisionRef.class,
                         List.class, ExtractionPerspective.class, Boolean.class},
         };
-        for (Class<?>[] parameters : revisionAwareTextParameters) {
-            IncrementalPropositionExtraction.class.getMethod("rememberText", parameters);
+        for (Class<?>[] parameters : sourceAwareTextParameters) {
+            IncrementalPropositionExtraction.class.getMethod("rememberTextFromSource", parameters);
         }
+        assertThrows(
+                NoSuchMethodException.class,
+                () -> IncrementalPropositionExtraction.class.getMethod(
+                        "rememberText",
+                        String.class,
+                        String.class,
+                        NamedEntity.class,
+                        SourceLocator.class
+                )
+        );
 
         IncrementalPropositionExtraction.class.getMethod(
                 "rememberFile",
@@ -93,19 +104,29 @@ class SourceRevisionJavaInteropTest {
                 NamedEntity.class
         );
         IncrementalPropositionExtraction.class.getMethod(
-                "rememberFile",
+                "rememberFileFromSource",
                 InputStream.class,
                 String.class,
                 NamedEntity.class,
                 SourceLocator.class
         );
         IncrementalPropositionExtraction.class.getMethod(
-                "rememberFile",
+                "rememberFileFromSource",
                 InputStream.class,
                 String.class,
                 NamedEntity.class,
                 SourceLocator.class,
                 SourceRevisionRef.class
+        );
+        assertThrows(
+                NoSuchMethodException.class,
+                () -> IncrementalPropositionExtraction.class.getMethod(
+                        "rememberFile",
+                        InputStream.class,
+                        String.class,
+                        NamedEntity.class,
+                        SourceLocator.class
+                )
         );
     }
 
@@ -146,16 +167,23 @@ class SourceRevisionJavaInteropTest {
             SourceRevisionRef revision
     ) {
         extraction.rememberFile(input, "legacy.txt", user);
-        extraction.rememberFile(input, "revisioned.txt", user, locator, revision);
+        extraction.rememberFileFromSource(input, "source.txt", user, locator);
+        extraction.rememberFileFromSource(input, "revisioned.txt", user, locator, revision);
         extraction.rememberText("legacy", "legacy-id", user);
         extraction.rememberText("legacy", "legacy-id", user, List.of());
         extraction.rememberText("legacy", "legacy-id", user, List.of(), null);
         extraction.rememberText("legacy", "legacy-id", user, List.of(), null, null);
-        extraction.rememberText("revisioned", "revisioned-id", user, locator);
-        extraction.rememberText("revisioned", "revisioned-id", user, locator, revision);
-        extraction.rememberText("revisioned", "revisioned-id", user, locator, revision, List.of());
-        extraction.rememberText("revisioned", "revisioned-id", user, locator, revision, List.of(), null);
-        extraction.rememberText("revisioned", "revisioned-id", user, locator, revision, List.of(), null, null);
+        extraction.rememberTextFromSource("revisioned", "revisioned-id", user, locator);
+        extraction.rememberTextFromSource("revisioned", "revisioned-id", user, locator, revision);
+        extraction.rememberTextFromSource(
+                "revisioned", "revisioned-id", user, locator, revision, List.of()
+        );
+        extraction.rememberTextFromSource(
+                "revisioned", "revisioned-id", user, locator, revision, List.of(), null
+        );
+        extraction.rememberTextFromSource(
+                "revisioned", "revisioned-id", user, locator, revision, List.of(), null, null
+        );
     }
 
     private static final class LegacyJavaEvent extends SourceAnalysisRequestEvent {
