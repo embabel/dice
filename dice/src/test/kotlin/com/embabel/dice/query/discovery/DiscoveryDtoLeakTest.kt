@@ -15,6 +15,11 @@
  */
 package com.embabel.dice.query.discovery
 
+import com.embabel.agent.core.ContextId
+import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.UriLocator
+import com.embabel.dice.query.graph.PropositionLineage
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -108,6 +113,36 @@ class DiscoveryDtoLeakTest {
             DiscoveryProvenanceDto::class.memberProperties.associate {
                 it.name to it.returnType.toString()
             },
+        )
+    }
+
+    @Test
+    fun `lineage mapper uses authoritative ordered evidence instead of nested proposition evidence`() {
+        val locator = UriLocator("https://example.com/authoritative")
+        val nestedProposition = Proposition(
+            id = "lean-proposition",
+            contextId = ContextId("ctx-discovery"),
+            text = "Lean proposition",
+            mentions = emptyList(),
+            confidence = 0.9,
+            provenanceEntries = emptyList(),
+        )
+        val lineage = PropositionLineage(
+            proposition = nestedProposition,
+            groundingChunkIds = emptyList(),
+            sources = emptyList(),
+            reinforceCount = 0,
+            status = nestedProposition.status,
+            temporal = null,
+            provenanceEntries = listOf(
+                ProvenanceEntry(locator = locator, sourceRevision = "r1"),
+                ProvenanceEntry(locator = locator, sourceRevision = "r2"),
+            ),
+        )
+
+        assertEquals(
+            listOf("r1", "r2"),
+            LineageDto.from(lineage).provenance.map { it.sourceRevision },
         )
     }
 
