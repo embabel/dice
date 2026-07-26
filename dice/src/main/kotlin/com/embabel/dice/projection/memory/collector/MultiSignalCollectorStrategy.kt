@@ -19,6 +19,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.projection.memory.RunAwareCollectorStrategy
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import com.embabel.dice.spi.CandidatePair
 import com.embabel.dice.spi.CandidatePairSource
 import com.embabel.dice.spi.CollectorCandidateEdge
@@ -306,14 +307,18 @@ class MultiSignalCollectorStrategy(
             // pre-merge (common for near-duplicates from the same source) must not be recorded as
             // "folded", or undo would later strip evidence the survivor held independently.
             val survivorGrounding = survivor.grounding.toSet()
-            val survivorProvenanceRefs = survivor.provenanceEntries.map { it.locator.key() }.toSet()
+            val survivorProvenanceRefs = survivor.provenanceEntries
+                .map(ProvenanceEvidenceKey::encode)
+                .toSet()
             val survivorSourceIds = survivor.sourceIds.toSet()
             val retired = losers.map { loser ->
                 RetiredProposition(
                     propositionId = loser.id,
                     priorStatus = loser.status,
                     foldedGrounding = loser.grounding - survivorGrounding,
-                    foldedProvenanceRefs = loser.provenanceEntries.map { it.locator.key() } - survivorProvenanceRefs,
+                    foldedProvenanceRefs = loser.provenanceEntries
+                        .map(ProvenanceEvidenceKey::encode)
+                        .distinct() - survivorProvenanceRefs,
                     foldedSourceIds = loser.sourceIds - survivorSourceIds,
                 )
             }
