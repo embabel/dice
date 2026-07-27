@@ -116,6 +116,9 @@
                                 <argument>--no-daemon</argument>
                                 <argument>--console=plain</argument>
                                 <argument>--quiet</argument>
+                                <!-- Pass the pom's Drivine version through so the KSP DSL is generated
+                                     against the same Drivine it is then compiled against. -->
+                                <argument>-PdrivineVersion=${drivine.version}</argument>
                             </arguments>
                         </configuration>
                     </execution>

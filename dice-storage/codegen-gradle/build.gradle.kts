@@ -27,7 +27,11 @@ plugins {
 group = "com.embabel.dice.storage"
 version = "0.1.1-SNAPSHOT"
 
-val drivineVersion = "0.0.57"
+// Comes from the Maven build via -PdrivineVersion (see the exec-maven-plugin in dice-storage/pom.xml),
+// so the pom is the single source of truth and the KSP DSL is generated against the *same* Drivine it
+// is later compiled against. This was previously hardcoded and had already drifted from the pom
+// (0.0.57 here vs 0.0.58 there). The fallback keeps a standalone `./gradlew kspKotlin` working.
+val drivineVersion = (findProperty("drivineVersion") as String?) ?: "0.0.73"
 
 repositories {
     mavenCentral()

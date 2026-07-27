@@ -40,7 +40,7 @@
             to Kotlin 2.2.21+.
         -->
         <tuprolog.version>1.0.4</tuprolog.version>
-        <drivine.version>0.0.58</drivine.version>
+        <drivine.version>0.0.73</drivine.version>
         <!--
             Docker Engine API version the Testcontainers docker-java client talks. The client's
             default is below the engine minimum, which disables container-backed tests; pin it here
