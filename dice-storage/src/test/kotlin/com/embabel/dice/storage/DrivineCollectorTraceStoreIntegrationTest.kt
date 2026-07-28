@@ -104,6 +104,7 @@ class DrivineCollectorTraceStoreIntegrationTest {
                 foldedGrounding = listOf("g1", "g2"),
                 foldedProvenanceRefs = listOf("prov-1"),
                 foldedSourceIds = listOf("src-1", "src-2"),
+                foldedProvenanceEvidenceKeys = listOf("evidence-1"),
             ),
         ),
     )
@@ -139,6 +140,7 @@ class DrivineCollectorTraceStoreIntegrationTest {
         assertEquals(listOf("g1", "g2"), retired.foldedGrounding)
         assertEquals(listOf("prov-1"), retired.foldedProvenanceRefs)
         assertEquals(listOf("src-1", "src-2"), retired.foldedSourceIds)
+        assertEquals(listOf("evidence-1"), retired.foldedProvenanceEvidenceKeys)
     }
 
     @Test

@@ -35,6 +35,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -56,6 +57,7 @@ import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.annotation.EnableTransactionManagement
 import org.springframework.transaction.interceptor.TransactionInterceptor
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
@@ -64,8 +66,9 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Integration tests for the graph storage stack against a Neo4j testcontainer (provided by Drivine's
- * test support). Not `@Transactional`: dedup commits via its own [org.springframework.transaction.support.TransactionTemplate],
- * so isolation is by explicit `clearAll()` per test rather than rollback.
+ * test support). Not `@Transactional`: standalone dedup commits via its own
+ * [org.springframework.transaction.support.TransactionTemplate], so isolation is by explicit
+ * `clearAll()` per test rather than an ambient test rollback.
  */
 @SpringBootTest(classes = [TestApplication::class, TransactionProxyTestConfiguration::class])
 class DrivinePropositionStoreIntegrationTest {
@@ -502,6 +505,18 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals(1, repository.count())
         assertEquals(setOf(revisionOne, revisionTwo), repository.findById(winner.id)!!.provenanceEntries.toSet())
         assertEquals(2L, edgeCount(winner.id))
+    }
+
+    @Test
+    fun `caller rollback undoes a completed save`() {
+        val proposition = prop("transactional save")
+        TransactionTemplate(transactionManager).executeWithoutResult { status ->
+            repository.save(proposition)
+            assertNotNull(repository.findById(proposition.id), "save must be visible inside the caller transaction")
+            status.setRollbackOnly()
+        }
+
+        assertNull(repository.findById(proposition.id), "caller rollback must remove the saved proposition")
     }
 
     @Test

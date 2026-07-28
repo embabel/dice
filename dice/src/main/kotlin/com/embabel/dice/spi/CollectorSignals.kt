@@ -19,6 +19,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
+import com.fasterxml.jackson.annotation.JsonIgnore
 
 /**
  * One proposed pair of propositions worth scoring.
@@ -100,15 +101,19 @@ data class CollectorDecision(
  * One proposition that was folded into a survivor, and what a merging sweep would carry over
  * from it (grounding, provenance and source ids) so the fold can be undone.
  *
- * @property foldedProvenanceRefs Versioned opaque evidence keys. Older persisted traces can
- *   contain raw locator keys; interpret both forms only through the provenance evidence codec.
+ * @property foldedProvenanceRefs Stable locator keys retained for compatibility with trace
+ *   consumers that display or compare source references.
+ * @property foldedProvenanceEvidenceKeys Opaque full-evidence identities used for precise undo.
+ *   Empty on traces written before revision-aware evidence identity was introduced.
  */
-data class RetiredProposition(
+data class RetiredProposition @JvmOverloads constructor(
     val propositionId: String,
     val priorStatus: PropositionStatus,
     val foldedGrounding: List<String> = emptyList(),
     val foldedProvenanceRefs: List<String> = emptyList(),
     val foldedSourceIds: List<String> = emptyList(),
+    @get:JsonIgnore
+    val foldedProvenanceEvidenceKeys: List<String> = emptyList(),
 )
 
 /**
@@ -199,14 +204,15 @@ fun undoSingleCollapse(
     // even though we're subtracting retirement's copy of it.
     val others = decision.retired.filter { it.propositionId != retiredId }
     val stillNeededGrounding = others.flatMap { it.foldedGrounding }.toSet()
-    val stillNeededProvenanceRefs = others.flatMap { it.foldedProvenanceRefs }.toSet()
+    val stillNeededProvenanceRefs = others.flatMap { it.provenanceEvidenceKeysForUndo() }.toSet()
     val stillNeededSourceIds = others.flatMap { it.foldedSourceIds }.toSet()
 
     val survivor = propositions.findById(survivorId) ?: return null
     val updatedSurvivor = propositions.save(
         survivor.withoutFoldedEvidence(
             groundingToRemove = retirement.foldedGrounding.filterNot { it in stillNeededGrounding },
-            provenanceRefsToRemove = retirement.foldedProvenanceRefs.filterNot { it in stillNeededProvenanceRefs },
+            provenanceRefsToRemove = retirement.provenanceEvidenceKeysForUndo()
+                .filterNot { it in stillNeededProvenanceRefs },
             sourceIdsToRemove = retirement.foldedSourceIds.filterNot { it in stillNeededSourceIds },
         ),
     )
@@ -216,6 +222,14 @@ fun undoSingleCollapse(
 
     return CollapseUndoResult(survivor = updatedSurvivor, restored = restored)
 }
+
+/**
+ * New traces carry exact evidence identities separately from their stable, human-readable source
+ * references. Falling back to the old field keeps both locator-only legacy traces and traces from
+ * the short-lived versioned-ref format readable.
+ */
+private fun RetiredProposition.provenanceEvidenceKeysForUndo(): List<String> =
+    foldedProvenanceEvidenceKeys.ifEmpty { foldedProvenanceRefs }
 
 /**
  * Groups proposition ids into connected components from scored, non-vetoed edges.

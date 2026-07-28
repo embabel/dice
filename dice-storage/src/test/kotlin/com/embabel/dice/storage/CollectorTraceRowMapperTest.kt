@@ -35,6 +35,7 @@ class CollectorTraceRowMapperTest {
             foldedGrounding = listOf("g1", "g2"),
             foldedProvenanceRefs = listOf("prov-1"),
             foldedSourceIds = listOf("src-1", "src-2"),
+            foldedProvenanceEvidenceKeys = listOf("evidence-1"),
         )
 
         val bindMap = CollectorDecisionRowMapper.retiredBindMap("run-1", mockDecision(), retired)
@@ -45,6 +46,23 @@ class CollectorTraceRowMapperTest {
         assertEquals(listOf("g1", "g2"), roundTripped.foldedGrounding)
         assertEquals(listOf("prov-1"), roundTripped.foldedProvenanceRefs)
         assertEquals(listOf("src-1", "src-2"), roundTripped.foldedSourceIds)
+        assertEquals(listOf("evidence-1"), roundTripped.foldedProvenanceEvidenceKeys)
+    }
+
+    @Test
+    fun `legacy retired row without evidence keys remains readable`() {
+        val legacyRow = mapOf(
+            "propositionId" to "prop-1",
+            "priorStatus" to "ACTIVE",
+            "foldedGrounding" to emptyList<String>(),
+            "foldedProvenanceRefs" to listOf("uri:https://example.com/source"),
+            "foldedSourceIds" to emptyList<String>(),
+        )
+
+        val retired = CollectorDecisionRowMapper.retiredFromRow(legacyRow)
+
+        assertEquals(listOf("uri:https://example.com/source"), retired.foldedProvenanceRefs)
+        assertEquals(emptyList<String>(), retired.foldedProvenanceEvidenceKeys)
     }
 
     @Test

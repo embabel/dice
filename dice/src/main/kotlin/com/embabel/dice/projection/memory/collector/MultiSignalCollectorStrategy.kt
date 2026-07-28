@@ -308,6 +308,9 @@ class MultiSignalCollectorStrategy(
             // "folded", or undo would later strip evidence the survivor held independently.
             val survivorGrounding = survivor.grounding.toSet()
             val survivorProvenanceRefs = survivor.provenanceEntries
+                .map { it.locator.key() }
+                .toSet()
+            val survivorProvenanceEvidenceKeys = survivor.provenanceEntries
                 .map(ProvenanceEvidenceKey::encode)
                 .toSet()
             val survivorSourceIds = survivor.sourceIds.toSet()
@@ -317,8 +320,11 @@ class MultiSignalCollectorStrategy(
                     priorStatus = loser.status,
                     foldedGrounding = loser.grounding - survivorGrounding,
                     foldedProvenanceRefs = loser.provenanceEntries
-                        .map(ProvenanceEvidenceKey::encode)
+                        .map { it.locator.key() }
                         .distinct() - survivorProvenanceRefs,
+                    foldedProvenanceEvidenceKeys = loser.provenanceEntries
+                        .map(ProvenanceEvidenceKey::encode)
+                        .distinct() - survivorProvenanceEvidenceKeys,
                     foldedSourceIds = loser.sourceIds - survivorSourceIds,
                 )
             }
