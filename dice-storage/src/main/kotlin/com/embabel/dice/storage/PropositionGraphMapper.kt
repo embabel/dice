@@ -175,7 +175,7 @@ object PropositionGraphMapper {
             endOffset = e.endOffset,
             contentHash = e.contentHash,
             sourceRevision = e.sourceRevision,
-            entryKey = storageEntryKey(e),
+            entryKey = provenanceStorageEntryKey(e),
             source = toSourceNode(e.locator),
         )
 
@@ -188,22 +188,6 @@ object PropositionGraphMapper {
             contentHash = df.contentHash,
             sourceRevision = df.sourceRevision,
         )
-
-    /**
-     * Relationship identity is a storage concern. Length framing keeps null, empty, and values
-     * containing delimiters distinct without coupling graph persistence to domain identity types.
-     */
-    private fun storageEntryKey(e: ProvenanceEntry): String =
-        listOf(
-            e.locator.key(),
-            e.sourceRevision,
-            e.chunkId,
-            e.startOffset?.toString(),
-            e.endOffset?.toString(),
-            e.contentHash,
-        ).joinToString(separator = "") { value ->
-            if (value == null) "-1:" else "${value.length}:$value"
-        }
 
     private fun toSourceNode(loc: SourceLocator): SourceNode =
         SourceNode(
@@ -247,3 +231,21 @@ object PropositionGraphMapper {
         )
     }
 }
+
+/**
+ * Canonical graph relationship identity for provenance.
+ *
+ * Length framing keeps null, empty, and delimiter-containing values distinct without coupling
+ * graph persistence to the domain's public evidence-key format.
+ */
+internal fun provenanceStorageEntryKey(entry: ProvenanceEntry): String =
+    listOf(
+        entry.locator.key(),
+        entry.sourceRevision,
+        entry.chunkId,
+        entry.startOffset?.toString(),
+        entry.endOffset?.toString(),
+        entry.contentHash,
+    ).joinToString(separator = "") { value ->
+        if (value == null) "-1:" else "${value.length}:$value"
+    }

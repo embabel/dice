@@ -117,6 +117,7 @@ object CollectorDecisionRowMapper {
         "foldedGrounding" to retired.foldedGrounding,
         "foldedProvenanceRefs" to retired.foldedProvenanceRefs,
         "foldedSourceIds" to retired.foldedSourceIds,
+        "foldedProvenanceEvidenceKeys" to retired.foldedProvenanceEvidenceKeys,
     )
 
     fun fromRow(row: Map<*, *>, retired: List<RetiredProposition>): CollectorDecision = CollectorDecision(
@@ -133,6 +134,7 @@ object CollectorDecisionRowMapper {
         foldedGrounding = row.stringList("foldedGrounding"),
         foldedProvenanceRefs = row.stringList("foldedProvenanceRefs"),
         foldedSourceIds = row.stringList("foldedSourceIds"),
+        foldedProvenanceEvidenceKeys = row.stringList("foldedProvenanceEvidenceKeys"),
     )
 }
 

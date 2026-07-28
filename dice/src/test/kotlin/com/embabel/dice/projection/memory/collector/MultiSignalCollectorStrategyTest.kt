@@ -228,8 +228,12 @@ class MultiSignalCollectorStrategyTest {
             ProvenanceEvidenceKey.encode(revisionOne) != ProvenanceEvidenceKey.encode(revisionTwo)
         )
         assertEquals(
-            listOf(ProvenanceEvidenceKey.encode(revisionTwo)),
+            emptyList<String>(),
             retired.foldedProvenanceRefs,
+        )
+        assertEquals(
+            listOf(ProvenanceEvidenceKey.encode(revisionTwo)),
+            retired.foldedProvenanceEvidenceKeys,
         )
     }
 

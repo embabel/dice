@@ -25,6 +25,11 @@ import com.embabel.dice.provenance.ContentAddressedLocator;
 import com.embabel.dice.provenance.ProvenanceEntry;
 import com.embabel.dice.provenance.SourceLocator;
 import com.embabel.dice.provenance.SourceRevisionRef;
+import com.embabel.dice.query.discovery.LineageDto;
+import com.embabel.dice.spi.RetiredProposition;
+import com.embabel.dice.web.rest.ExtractOptions;
+import com.embabel.dice.web.rest.ExtractRequest;
+import com.embabel.dice.web.rest.ProvenanceEntryDto;
 import org.junit.jupiter.api.Test;
 
 import java.io.InputStream;
@@ -57,6 +62,37 @@ class SourceRevisionJavaInteropTest {
                 Integer.class,
                 String.class,
                 String.class
+        );
+
+        ExtractRequest.class.getConstructor(
+                String.class,
+                String.class,
+                List.class,
+                String.class,
+                ExtractOptions.class
+        );
+        ProvenanceEntryDto.class.getConstructor(
+                String.class,
+                String.class,
+                String.class,
+                Integer.class,
+                Integer.class,
+                String.class
+        );
+        LineageDto.class.getConstructor(
+                String.class,
+                String.class,
+                String.class,
+                int.class,
+                List.class,
+                List.class
+        );
+        RetiredProposition.class.getConstructor(
+                String.class,
+                com.embabel.dice.proposition.PropositionStatus.class,
+                List.class,
+                List.class,
+                List.class
         );
     }
 

@@ -37,7 +37,7 @@ import java.time.Instant
  * @param schemaName Optional schema name for extraction. Uses default if not specified.
  * @param options Extraction options
  */
-data class ExtractRequest(
+data class ExtractRequest @JvmOverloads constructor(
     val text: String,
     val sourceId: String? = null,
     val knownEntities: List<KnownEntityDto> = emptyList(),
@@ -244,7 +244,7 @@ data class EntityMentionDto(
  * @property sourceRevision opaque revision token for this source, when known
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
-data class ProvenanceEntryDto(
+data class ProvenanceEntryDto @JvmOverloads constructor(
     val locator: String,
     val display: String?,
     val chunkId: String?,

@@ -170,7 +170,7 @@ data class DiscoveryProvenanceDto(
  * @property sourceSummaries the source proposition statements this one was abstracted from
  * @property provenance the proposition's ordered source evidence
  */
-data class LineageDto(
+data class LineageDto @JvmOverloads constructor(
     val propositionId: String,
     val text: String,
     val status: String,

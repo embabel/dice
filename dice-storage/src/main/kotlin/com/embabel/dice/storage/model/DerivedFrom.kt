@@ -23,12 +23,12 @@ import org.drivine.annotation.RelationshipFragment
  * the shared node. Together they reconstitute a dice `ProvenanceEntry`.
  */
 @RelationshipFragment
-data class DerivedFrom(
+data class DerivedFrom @JvmOverloads constructor(
     val chunkId: String? = null,
     val startOffset: Int? = null,
     val endOffset: Int? = null,
     val contentHash: String? = null,
+    val source: SourceNode,
     val sourceRevision: String? = null,
     val entryKey: String? = null,
-    val source: SourceNode,
 )

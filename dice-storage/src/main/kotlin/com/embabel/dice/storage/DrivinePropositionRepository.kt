@@ -51,6 +51,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
 
@@ -84,7 +85,7 @@ class DrivinePropositionRepository(
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
 
-    /** Owns each dedup attempt or recovery transaction while [save] suspends proxy transactions. */
+    /** Owns each standalone dedup attempt or recovery transaction. */
     private val txTemplate = TransactionTemplate(transactionManager)
 
     /**
@@ -116,12 +117,34 @@ class DrivinePropositionRepository(
      * `(contextId, text)` constraint), that's a live duplicate this method won't silently create by
      * redirecting, but won't collapse either — it logs a WARN naming both ids for the dedup sweep.
      *
-     * `NOT_SUPPORTED` is intentional: the programmatic transactions above own the attempted insert
-     * and, after a uniqueness rollback, the independent recovery. A class-level REQUIRED transaction
-     * would leave recovery joined to the failed attempt's rollback-only transaction.
+     * An active caller transaction remains authoritative: [save] joins it, and a caller rollback
+     * rolls back the save. Without one, the programmatic transactions own the attempted insert and,
+     * after a cross-instance uniqueness rollback, the independent recovery. This preserves the
+     * repository's historical transaction boundary while still making standalone concurrent
+     * extraction retry-safe.
      */
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @Transactional(propagation = Propagation.SUPPORTS)
     override fun save(proposition: Proposition): Proposition {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            return saveInCallerTransaction(proposition)
+        }
+        return saveInOwnedTransaction(proposition)
+    }
+
+    private fun saveInCallerTransaction(proposition: Proposition): Proposition {
+        val text = proposition.text
+        if (text.isBlank()) {
+            return doPersist(proposition)
+        }
+        val contextId = proposition.contextId.value
+        return synchronized(lockFor(contextId, text)) {
+            // A database uniqueness race aborts the caller's transaction. Recovery cannot safely
+            // run until that transaction has rolled back, so preserve atomicity and propagate it.
+            findOrPersist(proposition, contextId, text)
+        }
+    }
+
+    private fun saveInOwnedTransaction(proposition: Proposition): Proposition {
         val text = proposition.text
         if (text.isBlank()) {
             return txTemplate.execute { doPersist(proposition) }!!
@@ -211,7 +234,7 @@ class DrivinePropositionRepository(
      *   changed mention set is reconciled and stale Mention nodes are cleaned. Provenance is *not* in
      *   this view, so existing `DERIVED_FROM` edges are left intact.
      * - **Provenance** via raw Cypher keyed by the full evidence tuple: additive, idempotent, and able
-     *   to preserve parallel revisions that Drivine 0.0.58's relationship-fragment merge collapses.
+     *   to preserve parallel revisions that relationship-fragment mapping otherwise collapses.
      *   Authoritative replacement/removal is the job of [setProvenance] / [clearProvenance].
      */
     private fun doPersist(proposition: Proposition): Proposition {
@@ -297,7 +320,7 @@ class DrivinePropositionRepository(
 
     private fun replaceProvenance(propositionId: String, entries: List<ProvenanceEntry>) {
         appendProvenance(propositionId, entries)
-        val entryKeys = entries.map(::storageEntryKey)
+        val entryKeys = entries.map(::provenanceStorageEntryKey)
         persistenceManager.execute(
             QuerySpecification.withStatement(
                 """
@@ -347,7 +370,7 @@ class DrivinePropositionRepository(
             endOffset = entry.endOffset,
             contentHash = entry.contentHash,
             sourceRevision = entry.sourceRevision,
-            entryKey = storageEntryKey(entry),
+            entryKey = provenanceStorageEntryKey(entry),
             source = when (val locator = entry.locator) {
                 is UriLocator -> SourceNode(
                     key = locator.key(),
@@ -376,18 +399,6 @@ class DrivinePropositionRepository(
                 )
             },
         )
-
-    private fun storageEntryKey(entry: ProvenanceEntry): String =
-        listOf(
-            entry.locator.key(),
-            entry.sourceRevision,
-            entry.chunkId,
-            entry.startOffset?.toString(),
-            entry.endOffset?.toString(),
-            entry.contentHash,
-        ).joinToString(separator = "") { value ->
-            if (value == null) "-1:" else "${value.length}:$value"
-        }
 
     /**
      * Id of an existing proposition with the same `contextId` and exact `text` (excluding the
@@ -591,8 +602,8 @@ class DrivinePropositionRepository(
     }
 
     /**
-     * Raw fallback for full reads. Drivine 0.0.58 collapses relationship fragments by endpoint/type,
-     * so only Cypher rows preserve every parallel revision relationship.
+     * Raw fallback for full reads. Relationship fragments are mapped by endpoint/type, so raw Cypher
+     * rows preserve every parallel revision relationship.
      */
     @Suppress("UNCHECKED_CAST")
     private fun withRawProvenance(lean: List<Proposition>): List<Proposition> {

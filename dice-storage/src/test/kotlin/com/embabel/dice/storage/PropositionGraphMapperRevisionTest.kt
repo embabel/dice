@@ -20,6 +20,7 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.storage.model.DerivedFrom
+import com.embabel.dice.storage.model.SourceNode
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.junit.jupiter.api.Test
 import java.time.Instant
@@ -30,6 +31,17 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class PropositionGraphMapperRevisionTest {
+
+    @Test
+    fun `DerivedFrom retains its legacy Java constructor descriptor`() {
+        DerivedFrom::class.java.getConstructor(
+            String::class.java,
+            Integer::class.java,
+            Integer::class.java,
+            String::class.java,
+            SourceNode::class.java,
+        )
+    }
 
     @Test
     fun `revisionless and revisioned evidence round trips without duplicating source identity`() {

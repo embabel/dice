@@ -100,6 +100,10 @@ interface PropositionStore {
 
     /**
      * Save a proposition. If a proposition with the same ID exists, it will be replaced.
+     *
+     * Transaction-aware implementations participate in an active caller transaction, so a caller
+     * rollback also rolls back a completed save. Implementations may own a transaction when no
+     * caller transaction exists.
      */
     fun save(proposition: Proposition): Proposition
 
