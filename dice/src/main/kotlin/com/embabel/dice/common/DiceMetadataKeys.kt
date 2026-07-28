@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.common
 
+import org.jetbrains.annotations.ApiStatus
+
 /**
  * Well-known metadata keys used by DICE for values cached on a proposition's metadata map.
  *
@@ -40,6 +42,20 @@ object DiceMetadataKeys {
      * propositions were extracted under an older schema version.
      */
     const val METAMODEL_VERSION = "dice.metamodel.version"
+
+    /**
+     * Identifier of the caller-authored taxonomy category assigned to a proposition.
+     */
+    @ApiStatus.Experimental
+    const val TAXONOMY_NODE = "dice.taxonomy.node"
+
+    /**
+     * Version of the taxonomy content used to assign [TAXONOMY_NODE].
+     *
+     * This is independent of [METAMODEL_VERSION], which describes the extraction shape.
+     */
+    @ApiStatus.Experimental
+    const val TAXONOMY_VERSION = "dice.taxonomy.version"
 
     /**
      * Human-readable reason a proposition was quarantined due to schema drift.
