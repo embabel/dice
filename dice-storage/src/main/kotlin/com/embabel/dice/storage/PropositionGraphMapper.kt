@@ -168,7 +168,7 @@ object PropositionGraphMapper {
 
     // ---- Provenance: ProvenanceEntry <-> (DERIVED_FROM edge + shared Source node) ----
 
-    private fun toDerivedFrom(e: ProvenanceEntry): DerivedFrom =
+    internal fun toDerivedFrom(e: ProvenanceEntry): DerivedFrom =
         DerivedFrom(
             chunkId = e.chunkId,
             startOffset = e.startOffset,
@@ -179,7 +179,7 @@ object PropositionGraphMapper {
             source = toSourceNode(e.locator),
         )
 
-    private fun toProvenanceEntry(df: DerivedFrom): ProvenanceEntry =
+    internal fun toProvenanceEntry(df: DerivedFrom): ProvenanceEntry =
         ProvenanceEntry(
             locator = toLocator(df.source),
             chunkId = df.chunkId,

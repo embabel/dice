@@ -186,7 +186,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         user: NamedEntity,
         sourceLocator: SourceLocator,
         sourceRevision: SourceRevisionRef? = null,
-    ): Unit =
+    ): Unit {
+        require(sourceRevision == null || sourceRevision.sourceKey == sourceLocator.key()) {
+            "sourceRevision source key must match sourceLocator source key"
+        }
         withRememberedFileText(inputStream, filename) { text ->
             rememberTextFromSource(
                 text = text,
@@ -196,6 +199,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 sourceRevision = sourceRevision,
             )
         }
+    }
 
     private fun withRememberedFileText(
         inputStream: InputStream,

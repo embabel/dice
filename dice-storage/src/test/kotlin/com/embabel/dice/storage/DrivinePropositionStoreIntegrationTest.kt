@@ -27,6 +27,7 @@ import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.provenance.ConnectorRef
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.SourceRevisionRef
 import com.embabel.dice.provenance.UriLocator
@@ -423,6 +424,35 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     @Test
+    fun `colliding connector tuples cannot overwrite a shared source`() {
+        val originalLocator = ConnectorRef("a:b", "c")
+        val collidingLocator = ConnectorRef("a", "b:c")
+        assertEquals(originalLocator.key(), collidingLocator.key())
+        val original = repository.save(
+            prop(
+                text = "original connector fact",
+                context = "ctx-a",
+                provenance = listOf(ProvenanceEntry(originalLocator)),
+            ),
+        )
+
+        assertThrows<IllegalArgumentException> {
+            repository.save(
+                prop(
+                    text = "colliding connector fact",
+                    context = "ctx-b",
+                    provenance = listOf(ProvenanceEntry(collidingLocator)),
+                ),
+            )
+        }
+
+        assertEquals(
+            originalLocator,
+            repository.findById(original.id)?.provenanceEntries?.single()?.locator,
+        )
+    }
+
+    @Test
     fun `parallel source revisions persist as distinct edges and hydrate through every full read`() {
         val locator = UriLocator("https://example.com/revisioned")
         val revisionOne = revisionEvidence(locator, "r1")
@@ -497,14 +527,35 @@ class DrivinePropositionStoreIntegrationTest {
         val locator = UriLocator("https://example.com/ordinary-dedup")
         val revisionOne = revisionEvidence(locator, "r1")
         val revisionTwo = revisionEvidence(locator, "r2")
-        val winner = repository.save(prop("same extracted fact", provenance = listOf(revisionOne)))
+        val initialRevision = Instant.now().minusSeconds(60)
+        val winner = repository.save(
+            prop(
+                "same extracted fact",
+                contentRevised = initialRevision,
+                metadataRevised = initialRevision,
+                provenance = listOf(revisionOne),
+            ),
+        )
 
         val deduplicated = repository.save(prop("same extracted fact", provenance = listOf(revisionTwo)))
 
         assertEquals(winner.id, deduplicated.id)
         assertEquals(1, repository.count())
-        assertEquals(setOf(revisionOne, revisionTwo), repository.findById(winner.id)!!.provenanceEntries.toSet())
+        val revisedWinner = repository.findById(winner.id)!!
+        assertEquals(setOf(revisionOne, revisionTwo), revisedWinner.provenanceEntries.toSet())
         assertEquals(2L, edgeCount(winner.id))
+        assertTrue(revisedWinner.metadataRevised > initialRevision)
+        assertEquals(
+            listOf(revisedWinner.id),
+            repository.query(
+                PropositionQuery.forContextId(revisedWinner.contextId)
+                    .withRevisedAfter(initialRevision.plusSeconds(1)),
+            ).map { it.id },
+        )
+
+        val revisedAt = revisedWinner.metadataRevised
+        repository.save(prop("same extracted fact", provenance = listOf(revisionTwo)))
+        assertEquals(revisedAt, repository.findById(winner.id)!!.metadataRevised)
     }
 
     @Test
@@ -591,6 +642,17 @@ class DrivinePropositionStoreIntegrationTest {
             setOf(revisionless, revisionOne),
             repository.findById(revisionedTarget.id)!!.provenanceEntries.toSet(),
         )
+
+        val nonExactTarget = repository.save(prop("keep non-exact legacy separate"))
+        val differentRevisionless = revisionless.copy(chunkId = "different-chunk")
+        seedLegacyEdge(nonExactTarget.id, revisionless)
+        repository.save(nonExactTarget.withProvenanceEntries(listOf(differentRevisionless)))
+
+        assertEquals(2L, edgeCount(nonExactTarget.id), "a non-exact revisionless write must not adopt the legacy edge")
+        assertEquals(
+            setOf(revisionless, differentRevisionless),
+            repository.findById(nonExactTarget.id)!!.provenanceEntries.toSet(),
+        )
     }
 
     @Test
@@ -673,28 +735,17 @@ class DrivinePropositionStoreIntegrationTest {
         val plans = mapOf(
             "source-key" to explainSourceQuery(
                 "source-key",
-                """
-                MATCH (p:Proposition {contextId: ${'$'}contextId})-[r:DERIVED_FROM]->(s:Source {key: ${'$'}sourceKey})
-                RETURN DISTINCT p.id AS id
-                """.trimIndent(),
+                SourceProvenanceQueryStatements.bySourceKey,
                 commonParameters,
             ),
             "source-revision" to explainSourceQuery(
                 "source-revision",
-                """
-                MATCH (p:Proposition {contextId: ${'$'}contextId})-[r:DERIVED_FROM]->(s:Source {key: ${'$'}sourceKey})
-                WHERE r.sourceRevision = ${'$'}sourceRevision
-                RETURN DISTINCT p.id AS id
-                """.trimIndent(),
+                SourceProvenanceQueryStatements.bySourceRevision,
                 commonParameters + ("sourceRevision" to "r1"),
             ),
             "revisionless-source" to explainSourceQuery(
                 "revisionless-source",
-                """
-                MATCH (p:Proposition {contextId: ${'$'}contextId})-[r:DERIVED_FROM]->(s:Source {key: ${'$'}sourceKey})
-                WHERE r.sourceRevision IS NULL
-                RETURN DISTINCT p.id AS id
-                """.trimIndent(),
+                SourceProvenanceQueryStatements.revisionlessBySourceKey,
                 commonParameters,
             ),
         )

@@ -29,6 +29,7 @@ import com.embabel.dice.common.KnownEntity
 import com.embabel.dice.common.NewEntity
 import com.embabel.dice.common.SchemaRegistry
 import com.embabel.dice.common.SourceAnalysisContext
+import com.embabel.dice.common.support.Sha256ContentHasher
 import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.proposition.PropositionRepository
@@ -112,9 +113,13 @@ class PropositionPipelineController(
             sourceRevision = sourceProvenance.second,
         )
 
-        val chunk = Chunk.create(
-            text = request.text,
-            parentId = request.sourceId ?: "api-request",
+        val chunk = revisionStableChunk(
+            chunk = Chunk.create(
+                text = request.text,
+                parentId = request.sourceId ?: "api-request",
+            ),
+            sourceRevision = sourceProvenance.second,
+            ordinal = 0,
         )
         val result = propositionPipeline.processChunk(chunk, context)
 
@@ -165,7 +170,11 @@ class PropositionPipelineController(
         logger.info("Parsed document '{}' with {} sections", document.title, document.leaves().count())
 
         // Chunk the document
-        val chunks = contentChunker.chunk(document).toList()
+        val chunks = contentChunker.chunk(document)
+            .mapIndexed { ordinal, chunk ->
+                revisionStableChunk(chunk, sourceProvenance.second, ordinal)
+            }
+            .toList()
         logger.info("Created {} chunks from document", chunks.size)
 
         if (chunks.isEmpty()) {
@@ -292,6 +301,27 @@ class PropositionPipelineController(
         return sourceLocator to sourceRevision
     }
 
+    private fun revisionStableChunk(
+        chunk: Chunk,
+        sourceRevision: SourceRevisionRef?,
+        ordinal: Int,
+    ): Chunk {
+        if (sourceRevision == null) return chunk
+        val identityMaterial = listOf(
+            sourceRevision.sourceKey,
+            sourceRevision.sourceRevision,
+            ordinal.toString(),
+            chunk.text,
+        ).joinToString(separator = "") { value -> "${value.length}:$value" }
+        return Chunk.create(
+            id = "source-revision:${Sha256ContentHasher.hash(identityMaterial)}",
+            text = chunk.text,
+            urtext = chunk.urtext,
+            parentId = chunk.parentId,
+            metadata = chunk.metadata,
+        )
+    }
+
     private fun buildContext(
         contextId: String,
         knownEntityDtos: List<KnownEntityDto>,
@@ -415,6 +445,9 @@ class PropositionPipelineController(
 
             "connector" -> {
                 require(!connectorId.isNullOrBlank()) { "connector sourceLocator requires connectorId" }
+                require(':' !in connectorId) {
+                    "connector sourceLocator connectorId must not contain ':'"
+                }
                 ConnectorRef(connectorId, value, display)
             }
 

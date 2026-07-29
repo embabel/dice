@@ -17,6 +17,7 @@ package com.embabel.dice.spi
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
 import com.fasterxml.jackson.annotation.JsonIgnore
@@ -208,14 +209,21 @@ fun undoSingleCollapse(
     val stillNeededSourceIds = others.flatMap { it.foldedSourceIds }.toSet()
 
     val survivor = propositions.findById(survivorId) ?: return null
-    val updatedSurvivor = propositions.save(
-        survivor.withoutFoldedEvidence(
-            groundingToRemove = retirement.foldedGrounding.filterNot { it in stillNeededGrounding },
-            provenanceRefsToRemove = retirement.provenanceEvidenceKeysForUndo()
-                .filterNot { it in stillNeededProvenanceRefs },
-            sourceIdsToRemove = retirement.foldedSourceIds.filterNot { it in stillNeededSourceIds },
-        ),
+    val survivorWithoutFoldedEvidence = survivor.withoutFoldedEvidence(
+        groundingToRemove = retirement.foldedGrounding.filterNot { it in stillNeededGrounding },
+        provenanceRefsToRemove = retirement.provenanceEvidenceKeysForUndo()
+            .filterNot { it in stillNeededProvenanceRefs },
+        sourceIdsToRemove = retirement.foldedSourceIds.filterNot { it in stillNeededSourceIds },
     )
+    val savedSurvivor = propositions.save(survivorWithoutFoldedEvidence)
+    val updatedSurvivor = if (propositions is PropositionRepository) {
+        propositions.setProvenance(
+            survivorWithoutFoldedEvidence.id,
+            survivorWithoutFoldedEvidence.provenanceEntries,
+        ) ?: savedSurvivor
+    } else {
+        savedSurvivor
+    }
 
     val retiredProposition = propositions.findById(retiredId) ?: return null
     val restored = propositions.save(retiredProposition.withStatus(retirement.priorStatus))

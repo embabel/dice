@@ -193,6 +193,24 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
+    fun `mismatched file provenance fails before parsing or pipeline invocation`() {
+        val pipeline = pipelineReturningNoResult()
+        val extraction = extraction(pipeline)
+        val locator = UriLocator("file:///notes/example.txt")
+
+        assertThrows(IllegalArgumentException::class.java) {
+            extraction.rememberFileFromSource(
+                inputStream = ByteArrayInputStream("file source text".toByteArray()),
+                filename = "example.txt",
+                user = user(),
+                sourceLocator = locator,
+                sourceRevision = SourceRevisionRef("different-key", "r1"),
+            )
+        }
+        verifyNoInteractions(pipeline)
+    }
+
+    @Test
     fun `legacy file retains remember source id without typed provenance`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
