@@ -237,6 +237,94 @@ class DrivinePropositionStoreIntegrationTest {
         return proxyFactory.proxy as DrivinePropositionRepository
     }
 
+    private data class CapturedSourceQuery(
+        val statement: String,
+        val parameters: Map<String, Any>,
+    )
+
+    private open class SourceQueryCapturingRepository(
+        graphObjectManager: GraphObjectManager,
+        persistenceManager: PersistenceManager,
+        embeddingService: EmbeddingService,
+        transactionManager: PlatformTransactionManager,
+    ) : DrivinePropositionRepository(
+        graphObjectManager,
+        persistenceManager,
+        embeddingService,
+        transactionManager,
+    ) {
+        val capturedSourceQueries = mutableListOf<CapturedSourceQuery>()
+
+        override fun executeSourceQuery(statement: String, params: Map<String, Any>): List<Proposition> {
+            capturedSourceQueries += CapturedSourceQuery(statement, params.toMap())
+            return super.executeSourceQuery(statement, params)
+        }
+    }
+
+    /**
+     * Adversarial double for proving the coupling test goes red when a public source query stops
+     * executing its exact-revision statement and instead filters the all-version result in memory.
+     */
+    private class PortableRevisionFallbackRepository(
+        graphObjectManager: GraphObjectManager,
+        persistenceManager: PersistenceManager,
+        embeddingService: EmbeddingService,
+        transactionManager: PlatformTransactionManager,
+    ) : SourceQueryCapturingRepository(
+        graphObjectManager,
+        persistenceManager,
+        embeddingService,
+        transactionManager,
+    ) {
+        override fun findBySourceRevision(contextId: ContextId, ref: SourceRevisionRef): List<Proposition> =
+            findBySourceKey(contextId, ref.sourceKey).filter { proposition ->
+                proposition.provenanceEntries.any { entry ->
+                    entry.locator.key() == ref.sourceKey && entry.sourceRevision == ref.sourceRevision
+                }
+            }
+    }
+
+    private fun newSourceQueryCapturingRepository(): SourceQueryCapturingRepository =
+        SourceQueryCapturingRepository(
+            graphObjectManager,
+            persistenceManager,
+            embeddingService,
+            transactionManager,
+        )
+
+    private fun newPortableRevisionFallbackRepository(): PortableRevisionFallbackRepository =
+        PortableRevisionFallbackRepository(
+            graphObjectManager,
+            persistenceManager,
+            embeddingService,
+            transactionManager,
+        )
+
+    private fun captureAndExplainSourceQuery(
+        name: String,
+        capturingRepository: SourceQueryCapturingRepository,
+        expectedParameters: Map<String, Any>,
+        invocation: (DrivinePropositionRepository) -> List<Proposition>,
+    ): String {
+        capturingRepository.capturedSourceQueries.clear()
+        val results = invocation(capturingRepository)
+        assertTrue(results.isNotEmpty(), "$name invocation must return seeded evidence")
+        assertEquals(
+            1,
+            capturingRepository.capturedSourceQueries.size,
+            "$name invocation must execute exactly one production source query",
+        )
+        val captured = capturingRepository.capturedSourceQueries.single()
+        assertTrue(captured.statement.isNotBlank(), "$name invocation must capture a non-blank production statement")
+        assertTrue(captured.parameters.isNotEmpty(), "$name invocation must capture non-empty production bindings")
+        assertEquals(
+            expectedParameters,
+            captured.parameters,
+            "$name invocation must bind exactly the parameters valid for its production statement",
+        )
+        return explainSourceQuery(name, captured.statement, captured.parameters)
+    }
+
     private fun explainSourceQuery(
         name: String,
         statement: String,
@@ -795,7 +883,7 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     @Test
-    fun `source query shapes have parameterized index-backed Neo4j plans`() {
+    fun `public source queries execute their captured parameterized tenant-first Neo4j plans`() {
         val locator = UriLocator("https://example.com/explain-source")
         repository.save(
             prop(
@@ -815,31 +903,67 @@ class DrivinePropositionStoreIntegrationTest {
             "contextId" to "ctx-explain",
             "sourceKey" to locator.key(),
         )
+        val capturingRepository = newSourceQueryCapturingRepository()
         val plans = mapOf(
-            "source-key" to explainSourceQuery(
+            "source-key" to captureAndExplainSourceQuery(
                 "source-key",
-                SourceProvenanceQueryStatements.bySourceKey,
+                capturingRepository,
                 commonParameters,
-            ),
-            "source-revision" to explainSourceQuery(
+            ) { it.findBySourceKey(ContextId("ctx-explain"), locator.key()) },
+            "source-revision" to captureAndExplainSourceQuery(
                 "source-revision",
-                SourceProvenanceQueryStatements.bySourceRevision,
+                capturingRepository,
                 commonParameters + ("sourceRevision" to "r1"),
-            ),
-            "revisionless-source" to explainSourceQuery(
+            ) { it.findBySourceRevision(ContextId("ctx-explain"), SourceRevisionRef(locator.key(), "r1")) },
+            "revisionless-source" to captureAndExplainSourceQuery(
                 "revisionless-source",
-                SourceProvenanceQueryStatements.revisionlessBySourceKey,
+                capturingRepository,
                 commonParameters,
-            ),
+            ) { it.findRevisionlessBySourceLocator(ContextId("ctx-explain"), locator) },
         )
 
         plans.forEach { (name, plan) ->
             assertTrue(plan.isNotBlank(), "$name EXPLAIN must return a plan")
             assertTrue(
-                plan.contains("IndexSeek"),
-                "$name should use an existing node index rather than requiring relationship DDL:\n$plan",
+                plan.lineSequence().any { it.contains("IndexSeek") && it.contains("contextId") },
+                "$name should seek the tenant contextId index before graph expansion:\n$plan",
             )
         }
+    }
+
+    @Test
+    fun `source plan coupling detects a portable exact-revision fallback`() {
+        val locator = UriLocator("https://example.com/explain-fallback")
+        repository.save(
+            prop(
+                "fallback r1",
+                context = "ctx-explain-fallback",
+                provenance = listOf(revisionEvidence(locator, "r1")),
+            ),
+        )
+        val fallbackRepository = newPortableRevisionFallbackRepository()
+        val red = assertThrows<AssertionError> {
+            captureAndExplainSourceQuery(
+                "source-revision-fallback",
+                fallbackRepository,
+                mapOf(
+                    "contextId" to "ctx-explain-fallback",
+                    "sourceKey" to locator.key(),
+                    "sourceRevision" to "r1",
+                ),
+            ) {
+                it.findBySourceRevision(
+                    ContextId("ctx-explain-fallback"),
+                    SourceRevisionRef(locator.key(), "r1"),
+                )
+            }
+        }
+
+        assertTrue(
+            red.message.orEmpty().contains("bind exactly the parameters"),
+            "red evidence must identify that the portable fallback did not execute the exact-revision binding",
+        )
+        println("SOURCE_QUERY_COUPLING_RED[source-revision-fallback]\n${red.message}")
     }
 
     @Test
