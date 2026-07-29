@@ -221,13 +221,15 @@ class DrivinePropositionStoreIntegrationTest {
      * Separate targets model two application instances (and therefore two lock stripes), while both
      * calls still pass through the production annotation-driven transaction interceptor.
      */
-    private fun newTransactionProxiedRepository(): DrivinePropositionRepository {
+    private fun newTransactionProxiedRepository(
+        repositoryPersistenceManager: PersistenceManager = persistenceManager,
+    ): DrivinePropositionRepository {
         val actualBean = repository as Advised
         val transactionAdvisor = actualBean.advisors.single { it.advice is TransactionInterceptor }
         val proxyFactory = ProxyFactory(
             DrivinePropositionRepository(
                 graphObjectManager,
-                persistenceManager,
+                repositoryPersistenceManager,
                 embeddingService,
                 transactionManager,
             ),
@@ -237,91 +239,58 @@ class DrivinePropositionStoreIntegrationTest {
         return proxyFactory.proxy as DrivinePropositionRepository
     }
 
+    private class DedupLookupBarrierPersistenceManager(
+        private val delegate: PersistenceManager,
+        private val barrier: CountDownLatch,
+    ) : PersistenceManager by delegate {
+
+        override fun <T : Any> maybeGetOne(spec: QuerySpecification<T>): T? {
+            val result = delegate.maybeGetOne(spec)
+            if (result == null && spec.parameters.keys == setOf("contextId", "text", "excludeId")) {
+                barrier.countDown()
+                assertTrue(barrier.await(10, TimeUnit.SECONDS), "both repositories must observe no duplicate")
+            }
+            return result
+        }
+    }
+
     private data class CapturedSourceQuery(
         val statement: String,
         val parameters: Map<String, Any>,
     )
 
-    private open class SourceQueryCapturingRepository(
-        graphObjectManager: GraphObjectManager,
-        persistenceManager: PersistenceManager,
-        embeddingService: EmbeddingService,
-        transactionManager: PlatformTransactionManager,
-    ) : DrivinePropositionRepository(
-        graphObjectManager,
-        persistenceManager,
-        embeddingService,
-        transactionManager,
-    ) {
-        val capturedSourceQueries = mutableListOf<CapturedSourceQuery>()
+    private class SourceQueryCapturingPersistenceManager(
+        private val delegate: PersistenceManager,
+    ) : PersistenceManager by delegate {
 
-        override fun executeSourceQuery(statement: String, params: Map<String, Any>): List<Proposition> {
-            capturedSourceQueries += CapturedSourceQuery(statement, params.toMap())
-            return super.executeSourceQuery(statement, params)
+        val captured = mutableListOf<CapturedSourceQuery>()
+
+        override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
+            if (spec.parameters.keys.containsAll(setOf("contextId", "sourceKey"))) {
+                @Suppress("UNCHECKED_CAST")
+                captured += CapturedSourceQuery(
+                    requireNotNull(spec.statement).text,
+                    spec.parameters.toMap() as Map<String, Any>,
+                )
+            }
+            return delegate.query(spec)
         }
     }
 
-    /**
-     * Adversarial double for proving the coupling test goes red when a public source query stops
-     * executing its exact-revision statement and instead filters the all-version result in memory.
-     */
-    private class PortableRevisionFallbackRepository(
-        graphObjectManager: GraphObjectManager,
-        persistenceManager: PersistenceManager,
-        embeddingService: EmbeddingService,
-        transactionManager: PlatformTransactionManager,
-    ) : SourceQueryCapturingRepository(
-        graphObjectManager,
-        persistenceManager,
-        embeddingService,
-        transactionManager,
-    ) {
-        override fun findBySourceRevision(contextId: ContextId, ref: SourceRevisionRef): List<Proposition> =
-            findBySourceKey(contextId, ref.sourceKey).filter { proposition ->
-                proposition.provenanceEntries.any { entry ->
-                    entry.locator.key() == ref.sourceKey && entry.sourceRevision == ref.sourceRevision
-                }
-            }
-    }
-
-    private fun newSourceQueryCapturingRepository(): SourceQueryCapturingRepository =
-        SourceQueryCapturingRepository(
-            graphObjectManager,
-            persistenceManager,
-            embeddingService,
-            transactionManager,
-        )
-
-    private fun newPortableRevisionFallbackRepository(): PortableRevisionFallbackRepository =
-        PortableRevisionFallbackRepository(
-            graphObjectManager,
-            persistenceManager,
-            embeddingService,
-            transactionManager,
-        )
-
     private fun captureAndExplainSourceQuery(
         name: String,
-        capturingRepository: SourceQueryCapturingRepository,
+        expectedStatement: String,
         expectedParameters: Map<String, Any>,
         invocation: (DrivinePropositionRepository) -> List<Proposition>,
     ): String {
-        capturingRepository.capturedSourceQueries.clear()
+        val capturingPersistenceManager = SourceQueryCapturingPersistenceManager(persistenceManager)
+        val capturingRepository = newTransactionProxiedRepository(capturingPersistenceManager)
         val results = invocation(capturingRepository)
         assertTrue(results.isNotEmpty(), "$name invocation must return seeded evidence")
-        assertEquals(
-            1,
-            capturingRepository.capturedSourceQueries.size,
-            "$name invocation must execute exactly one production source query",
-        )
-        val captured = capturingRepository.capturedSourceQueries.single()
-        assertTrue(captured.statement.isNotBlank(), "$name invocation must capture a non-blank production statement")
-        assertTrue(captured.parameters.isNotEmpty(), "$name invocation must capture non-empty production bindings")
-        assertEquals(
-            expectedParameters,
-            captured.parameters,
-            "$name invocation must bind exactly the parameters valid for its production statement",
-        )
+        assertEquals(1, capturingPersistenceManager.captured.size, "$name must execute one source query")
+        val captured = capturingPersistenceManager.captured.single()
+        assertEquals(expectedStatement, captured.statement, "$name must execute its production statement")
+        assertEquals(expectedParameters, captured.parameters, "$name must bind its production parameters")
         return explainSourceQuery(name, captured.statement, captured.parameters)
     }
 
@@ -692,16 +661,14 @@ class DrivinePropositionStoreIntegrationTest {
         val first = prop("cross-instance fact", provenance = listOf(revisionOne))
         val second = prop("cross-instance fact", provenance = listOf(revisionTwo))
         val barrier = CountDownLatch(2)
-        val awaitBothInserts = {
-            barrier.countDown()
-            assertTrue(barrier.await(10, TimeUnit.SECONDS), "both repositories must reach the insert race")
-        }
-        val firstRepository = repository
-        val secondRepository = newTransactionProxiedRepository()
+        val firstRepository = newTransactionProxiedRepository(
+            DedupLookupBarrierPersistenceManager(persistenceManager, barrier),
+        )
+        val secondRepository = newTransactionProxiedRepository(
+            DedupLookupBarrierPersistenceManager(persistenceManager, barrier),
+        )
         assertTrue(AopUtils.isAopProxy(firstRepository), "the primary writer must be the actual Spring proxy")
         assertTrue(AopUtils.isAopProxy(secondRepository), "the sibling writer must carry the transaction advisor")
-        firstRepository.beforeDedupInsert = awaitBothInserts
-        secondRepository.beforeDedupInsert = awaitBothInserts
         val executor = Executors.newFixedThreadPool(2)
         try {
             val winners = listOf(
@@ -714,13 +681,9 @@ class DrivinePropositionStoreIntegrationTest {
             assertEquals(setOf(revisionOne, revisionTwo), repository.findById(winnerId)!!.provenanceEntries.toSet())
             assertEquals(2L, edgeCount(winnerId), "the losing proxy's recovery transaction must commit evidence")
 
-            firstRepository.beforeDedupInsert = null
-            secondRepository.beforeDedupInsert = null
             secondRepository.save(second)
             assertEquals(2L, edgeCount(winnerId), "retrying recovered evidence must remain idempotent")
         } finally {
-            firstRepository.beforeDedupInsert = null
-            secondRepository.beforeDedupInsert = null
             executor.shutdownNow()
         }
     }
@@ -739,14 +702,12 @@ class DrivinePropositionStoreIntegrationTest {
             provenance = listOf(ProvenanceEntry(collidingLocator)),
         )
         val barrier = CountDownLatch(2)
-        val awaitBothInserts = {
-            barrier.countDown()
-            assertTrue(barrier.await(10, TimeUnit.SECONDS), "both repositories must reach the insert race")
-        }
-        val firstRepository = repository
-        val secondRepository = newTransactionProxiedRepository()
-        firstRepository.beforeDedupInsert = awaitBothInserts
-        secondRepository.beforeDedupInsert = awaitBothInserts
+        val firstRepository = newTransactionProxiedRepository(
+            DedupLookupBarrierPersistenceManager(persistenceManager, barrier),
+        )
+        val secondRepository = newTransactionProxiedRepository(
+            DedupLookupBarrierPersistenceManager(persistenceManager, barrier),
+        )
         val executor = Executors.newFixedThreadPool(2)
         try {
             val outcomes = listOf(
@@ -776,8 +737,6 @@ class DrivinePropositionStoreIntegrationTest {
             )
             assertEquals(1L, edgeCount(winner.id))
         } finally {
-            firstRepository.beforeDedupInsert = null
-            secondRepository.beforeDedupInsert = null
             executor.shutdownNow()
         }
     }
@@ -883,7 +842,7 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     @Test
-    fun `public source queries execute their captured parameterized tenant-first Neo4j plans`() {
+    fun `public source queries execute their parameterized tenant-first Neo4j plans`() {
         val locator = UriLocator("https://example.com/explain-source")
         repository.save(
             prop(
@@ -903,21 +862,20 @@ class DrivinePropositionStoreIntegrationTest {
             "contextId" to "ctx-explain",
             "sourceKey" to locator.key(),
         )
-        val capturingRepository = newSourceQueryCapturingRepository()
         val plans = mapOf(
             "source-key" to captureAndExplainSourceQuery(
                 "source-key",
-                capturingRepository,
+                SourceProvenanceQueryStatements.bySourceKey,
                 commonParameters,
             ) { it.findBySourceKey(ContextId("ctx-explain"), locator.key()) },
             "source-revision" to captureAndExplainSourceQuery(
                 "source-revision",
-                capturingRepository,
+                SourceProvenanceQueryStatements.bySourceRevision,
                 commonParameters + ("sourceRevision" to "r1"),
             ) { it.findBySourceRevision(ContextId("ctx-explain"), SourceRevisionRef(locator.key(), "r1")) },
             "revisionless-source" to captureAndExplainSourceQuery(
                 "revisionless-source",
-                capturingRepository,
+                SourceProvenanceQueryStatements.revisionlessBySourceKey,
                 commonParameters,
             ) { it.findRevisionlessBySourceLocator(ContextId("ctx-explain"), locator) },
         )
@@ -929,41 +887,6 @@ class DrivinePropositionStoreIntegrationTest {
                 "$name should seek the tenant contextId index before graph expansion:\n$plan",
             )
         }
-    }
-
-    @Test
-    fun `source plan coupling detects a portable exact-revision fallback`() {
-        val locator = UriLocator("https://example.com/explain-fallback")
-        repository.save(
-            prop(
-                "fallback r1",
-                context = "ctx-explain-fallback",
-                provenance = listOf(revisionEvidence(locator, "r1")),
-            ),
-        )
-        val fallbackRepository = newPortableRevisionFallbackRepository()
-        val red = assertThrows<AssertionError> {
-            captureAndExplainSourceQuery(
-                "source-revision-fallback",
-                fallbackRepository,
-                mapOf(
-                    "contextId" to "ctx-explain-fallback",
-                    "sourceKey" to locator.key(),
-                    "sourceRevision" to "r1",
-                ),
-            ) {
-                it.findBySourceRevision(
-                    ContextId("ctx-explain-fallback"),
-                    SourceRevisionRef(locator.key(), "r1"),
-                )
-            }
-        }
-
-        assertTrue(
-            red.message.orEmpty().contains("bind exactly the parameters"),
-            "red evidence must identify that the portable fallback did not execute the exact-revision binding",
-        )
-        println("SOURCE_QUERY_COUPLING_RED[source-revision-fallback]\n${red.message}")
     }
 
     @Test
