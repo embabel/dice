@@ -20,6 +20,7 @@ import com.embabel.dice.projection.memory.collector.CollectorRunContext
 import com.embabel.dice.projection.memory.collector.CollectorSurvivorPolicy
 import com.embabel.dice.projection.memory.collector.MultiSignalCollectorStrategy
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.UriLocator
@@ -58,6 +59,29 @@ class DrivineCollectorTraceStoreIntegrationTest {
 
     @Autowired
     private lateinit var propositionRepository: DrivinePropositionRepository
+
+    private class RecordingPropositionRepository(
+        private val delegate: PropositionRepository,
+    ) : PropositionRepository by delegate {
+
+        var saveCalls = 0
+            private set
+        var setProvenanceCalls = 0
+            private set
+
+        override fun save(proposition: Proposition): Proposition {
+            saveCalls++
+            return delegate.save(proposition)
+        }
+
+        override fun setProvenance(
+            propositionId: String,
+            entries: List<ProvenanceEntry>,
+        ): Proposition? {
+            setProvenanceCalls++
+            return delegate.setProvenance(propositionId, entries)
+        }
+    }
 
     @AfterEach
     fun cleanUp() {
@@ -223,6 +247,68 @@ class DrivineCollectorTraceStoreIntegrationTest {
 
         assertNull(traceStore.findRetirement("S4")) // survivor id, not a retired member
         assertNull(traceStore.findRetirement("unknown"))
+    }
+
+    @Test
+    fun `undoSingleCollapse does not write when the retired proposition is missing`() {
+        val runId = "run-missing-retired"
+        val survivor = propositionRepository.save(prop("survivor-missing-retired", "Survivor remains"))
+        traceStore.recordRunContext(runId, survivor.contextId)
+        traceStore.recordDecision(
+            runId,
+            decisionFor(
+                componentId = "comp-missing-retired",
+                survivorId = survivor.id,
+                retiredId = "missing-retired",
+            ),
+        )
+        val before = propositionRepository.findAll().sortedBy { it.id }
+        val recordingRepository = RecordingPropositionRepository(propositionRepository)
+
+        val result = undoSingleCollapse(
+            traceQuery = traceStore,
+            propositions = recordingRepository,
+            survivorId = survivor.id,
+            retiredId = "missing-retired",
+        )
+
+        val after = propositionRepository.findAll().sortedBy { it.id }
+        assertNull(result)
+        assertEquals(before, after)
+        assertEquals(0, recordingRepository.saveCalls)
+        assertEquals(0, recordingRepository.setProvenanceCalls)
+    }
+
+    @Test
+    fun `undoSingleCollapse does not write when the survivor proposition is missing`() {
+        val runId = "run-missing-survivor"
+        val retired = propositionRepository.save(
+            prop("retired-missing-survivor", "Retired remains", status = PropositionStatus.STALE),
+        )
+        traceStore.recordRunContext(runId, retired.contextId)
+        traceStore.recordDecision(
+            runId,
+            decisionFor(
+                componentId = "comp-missing-survivor",
+                survivorId = "missing-survivor",
+                retiredId = retired.id,
+            ),
+        )
+        val before = propositionRepository.findAll().sortedBy { it.id }
+        val recordingRepository = RecordingPropositionRepository(propositionRepository)
+
+        val result = undoSingleCollapse(
+            traceQuery = traceStore,
+            propositions = recordingRepository,
+            survivorId = "missing-survivor",
+            retiredId = retired.id,
+        )
+
+        val after = propositionRepository.findAll().sortedBy { it.id }
+        assertNull(result)
+        assertEquals(before, after)
+        assertEquals(0, recordingRepository.saveCalls)
+        assertEquals(0, recordingRepository.setProvenanceCalls)
     }
 
     @Test
