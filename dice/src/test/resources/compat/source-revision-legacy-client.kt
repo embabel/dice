@@ -1,9 +1,10 @@
 /*
  * Compiled against the unmodified origin/main dice jar, then run with the candidate jar.
  *
- * LINKED proves an unchanged JVM descriptor. NoSuchMethodError on the old Kotlin synthetic
- * default-constructor and copy descriptors is expected and outside the approved source/JSON/Java
- * compatibility boundary; this client deliberately records, rather than broadens, that boundary.
+ * LINKED proves an unchanged approved JVM constructor descriptor. Both constructor probes use
+ * fully specified arguments so this fixture makes no claim about Kotlin's synthetic default
+ * constructor ABI. NoSuchMethodError on the old copy descriptors is expected and deliberately
+ * records, rather than broadens, the approved source/JSON/Java compatibility boundary.
  */
 package com.embabel.dice.compat
 
@@ -21,8 +22,8 @@ fun main() {
     val provenance = probe("ProvenanceEntry.constructor.full") {
         ProvenanceEntry(locator, "chunk", 0, 5, "hash")
     }
-    probe("ProvenanceEntry.constructor.defaults") {
-        ProvenanceEntry(locator)
+    probe("ProvenanceEntry.constructor.nullable") {
+        ProvenanceEntry(locator, null, null, null, null)
     }
     provenance?.let { entry ->
         probe("ProvenanceEntry.copy.direct") {
@@ -47,11 +48,18 @@ fun main() {
             emptyMap(),
         )
     }
-    probe("SourceAnalysisContext.constructor.defaults") {
+    probe("SourceAnalysisContext.constructor.alternate") {
         SourceAnalysisContext(
             DataDictionary.fromClasses("legacy-client-defaults"),
             AlwaysCreateEntityResolver,
             ContextId("legacy-client-defaults"),
+            emptyList(),
+            Relations.empty(),
+            emptyMap(),
+            null,
+            null,
+            false,
+            emptyMap(),
         )
     }
     context?.let { analysisContext ->
