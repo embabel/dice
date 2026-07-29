@@ -41,6 +41,8 @@ import com.fasterxml.jackson.module.kotlin.KotlinModule
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
@@ -247,12 +249,61 @@ class PropositionPipelineControllerTest {
     }
 
     @Test
+    fun `POST extract assigns replay-stable chunk identity within a source revision`() {
+        val observedChunkIds = mutableListOf<String>()
+        every {
+            propositionPipeline.processChunk(any(), any())
+        } answers {
+            val chunk = firstArg<Chunk>()
+            observedChunkIds += chunk.id
+            ChunkPropositionResult.Success(
+                chunkId = chunk.id,
+                suggestedPropositions = SuggestedPropositions(
+                    chunkId = chunk.id,
+                    propositions = emptyList(),
+                ),
+                entityResolutions = Resolutions(
+                    chunkIds = setOf(chunk.id),
+                    resolutions = emptyList(),
+                ),
+                propositions = emptyList(),
+                revisionResults = emptyList(),
+            )
+        }
+
+        fun extract(revision: String) {
+            mockMvc.perform(
+                post("/api/v1/contexts/test-context/extract")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        """
+                        {
+                            "text": "Stable fact",
+                            "sourceId": "logical-source",
+                            "sourceLocator": {"kind":"uri","value":"https://example.com/source"},
+                            "sourceRevision": "$revision"
+                        }
+                        """.trimIndent()
+                    )
+            ).andExpect(status().isOk)
+        }
+
+        extract("r1")
+        extract("r1")
+        extract("r2")
+
+        assertEquals(observedChunkIds[0], observedChunkIds[1])
+        assertNotEquals(observedChunkIds[0], observedChunkIds[2])
+    }
+
+    @Test
     fun `POST extract rejects invalid locator unions and revision without locator before pipeline`() {
         val invalidRequests = listOf(
             """{"text":"fact","sourceRevision":"r1"}""",
             """{"text":"fact","sourceLocator":{"kind":"unknown","value":"x"}}""",
             """{"text":"fact","sourceLocator":{"kind":"uri","value":"https://example.com","connectorId":"gmail"}}""",
             """{"text":"fact","sourceLocator":{"kind":"connector","value":"message-42"}}""",
+            """{"text":"fact","sourceLocator":{"kind":"connector","value":"c","connectorId":"a:b"}}""",
         )
 
         invalidRequests.forEach { requestBody ->
@@ -540,10 +591,13 @@ class PropositionPipelineControllerTest {
         every { chunker.chunk(any()) } returns listOf(
             Chunk.create(text = "mail content", parentId = "legacy-source"),
         )
+        val processedChunkIds = mutableListOf<List<String>>()
         every {
             propositionPipeline.process(any(), match { it.sourceRevision != null })
-        } returns
-                PropositionResults(chunkResults = emptyList(), allPropositions = emptyList())
+        } answers {
+            processedChunkIds += firstArg<List<Chunk>>().map { it.id }
+            PropositionResults(chunkResults = emptyList(), allPropositions = emptyList())
+        }
 
         val fileController = PropositionPipelineController(
             propositionPipeline = propositionPipeline,
@@ -561,7 +615,7 @@ class PropositionPipelineControllerTest {
             )
             .build()
 
-        mvc.perform(
+        fun revisionedRequest() =
             multipart("/api/v1/contexts/$contextId/extract/file")
                 .file(MockMultipartFile("file", "mail.txt", "text/plain", "content".toByteArray()))
                 .file(MockMultipartFile("sourceId", "", "text/plain", "legacy-source".toByteArray()))
@@ -581,9 +635,13 @@ class PropositionPipelineControllerTest {
                         sourceRevision.toByteArray(),
                     )
                 )
-        ).andExpect(status().isOk)
 
-        verify(exactly = 1) {
+        repeat(2) {
+            mvc.perform(revisionedRequest()).andExpect(status().isOk)
+        }
+
+        assertEquals(processedChunkIds[0], processedChunkIds[1])
+        verify(exactly = 2) {
             propositionPipeline.process(
                 match { chunks -> chunks.all { it.parentId == "legacy-source" } },
                 match {

@@ -21,6 +21,8 @@ import com.embabel.dice.projection.memory.collector.CollectorSurvivorPolicy
 import com.embabel.dice.projection.memory.collector.MultiSignalCollectorStrategy
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.spi.CandidatePair
 import com.embabel.dice.spi.CandidatePairSource
 import com.embabel.dice.spi.CollectorCandidateEdge
@@ -70,6 +72,7 @@ class DrivineCollectorTraceStoreIntegrationTest {
         text: String,
         status: PropositionStatus = PropositionStatus.ACTIVE,
         grounding: List<String> = emptyList(),
+        provenance: List<ProvenanceEntry> = emptyList(),
     ) = Proposition(
         id = id,
         contextId = ContextId("ctx-undo"),
@@ -78,6 +81,7 @@ class DrivineCollectorTraceStoreIntegrationTest {
         confidence = 0.9,
         status = status,
         grounding = grounding,
+        provenanceEntries = provenance,
     )
 
     private fun edge(anchorId: String, memberId: String, vetoed: Boolean = false, score: Double = 0.9) = CollectorCandidateEdge(
@@ -340,5 +344,60 @@ class DrivineCollectorTraceStoreIntegrationTest {
         // (a) the survivor keeps "shared" — it owned that ref before the merge.
         // (b) the survivor loses "loser-exclusive" — that one really did come from the loser.
         assertEquals(setOf("shared"), updatedSurvivor?.grounding?.toSet())
+    }
+
+    @Test
+    fun `collector undo removes only the folded revision from persistent provenance`() {
+        val runId = "run-revision-undo"
+        val contextId = ContextId("ctx-revision-undo")
+        val locator = UriLocator("https://example.com/revision-undo")
+        val revisionOne = ProvenanceEntry(locator = locator, sourceRevision = "r1")
+        val revisionTwo = ProvenanceEntry(locator = locator, sourceRevision = "r2")
+        val survivor = propositionRepository.save(
+            prop(
+                id = "survivor-revision",
+                text = "Acme signed the agreement",
+                provenance = listOf(revisionOne),
+            ),
+        )
+        val loser = propositionRepository.save(
+            prop(
+                id = "loser-revision",
+                text = "Acme signed an agreement",
+                provenance = listOf(revisionOne, revisionTwo),
+            ),
+        )
+        val strategy = MultiSignalCollectorStrategy(
+            pairSources = listOf(
+                CandidatePairSource {
+                        candidates, _ ->
+                    listOf(CandidatePair(anchor = candidates[0], member = candidates[1]))
+                },
+            ),
+            scorers = listOf(
+                CollectorSignalScorer { _, _ -> CollectorSignalScore(signal = "fixed", score = 1.0) },
+            ),
+            componentsFinder = InMemoryConnectedComponentsFinder(),
+            traceStore = traceStore,
+            survivorPolicy = CollectorSurvivorPolicy { members -> members.single { it.id == survivor.id } },
+            matchThreshold = 0.5,
+        )
+
+        strategy.mark(listOf(survivor, loser), propositionRepository, CollectorRunContext(runId, contextId))
+        propositionRepository.save(
+            propositionRepository.findById(survivor.id)!!.absorbEvidence(loser),
+        )
+
+        undoSingleCollapse(
+            traceQuery = traceStore,
+            propositions = propositionRepository,
+            survivorId = survivor.id,
+            retiredId = loser.id,
+        )
+
+        assertEquals(
+            listOf(revisionOne),
+            propositionRepository.findById(survivor.id)?.provenanceEntries,
+        )
     }
 }
