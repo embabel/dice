@@ -61,7 +61,7 @@ internal object SourceProvenanceQueryStatements {
     // seek the tenant prefix before expanding provenance relationships.
     val bySourceKey = """
         MATCH (p:Proposition {contextId: ${'$'}contextId})
-        USING INDEX p:Proposition(contextId, text)
+        USING INDEX SEEK p:Proposition(contextId, text)
         WHERE p.text >= '' AND EXISTS {
             MATCH (p)-[:DERIVED_FROM]->(:Source {key: ${'$'}sourceKey})
         }
@@ -70,7 +70,7 @@ internal object SourceProvenanceQueryStatements {
 
     val bySourceRevision = """
         MATCH (p:Proposition {contextId: ${'$'}contextId})
-        USING INDEX p:Proposition(contextId, text)
+        USING INDEX SEEK p:Proposition(contextId, text)
         WHERE p.text >= '' AND EXISTS {
             MATCH (p)-[r:DERIVED_FROM]->(:Source {key: ${'$'}sourceKey})
             WHERE r.sourceRevision = ${'$'}sourceRevision
@@ -80,7 +80,7 @@ internal object SourceProvenanceQueryStatements {
 
     val revisionlessBySourceKey = """
         MATCH (p:Proposition {contextId: ${'$'}contextId})
-        USING INDEX p:Proposition(contextId, text)
+        USING INDEX SEEK p:Proposition(contextId, text)
         WHERE p.text >= '' AND EXISTS {
             MATCH (p)-[r:DERIVED_FROM]->(:Source {key: ${'$'}sourceKey})
             WHERE r.sourceRevision IS NULL
@@ -128,10 +128,6 @@ class DrivinePropositionRepository(
      * same monitor and the find-then-insert is effectively atomic within this JVM.
      */
     private val dedupLocks: Array<Any> = Array(DEDUP_STRIPES) { Any() }
-
-    /** Integration-test seam for forcing the cross-repository uniqueness-recovery race. */
-    @Volatile
-    internal var beforeDedupInsert: (() -> Unit)? = null
 
     override val storeType: PropositionStoreType get() = PropositionStoreType.STORED
 
@@ -226,7 +222,6 @@ class DrivinePropositionRepository(
                     proposition.id, contextId, existingId, text,
                 )
             }
-            if (!isUpdate) beforeDedupInsert?.invoke()
             doPersist(proposition)
         }
     }
@@ -551,13 +546,8 @@ class DrivinePropositionRepository(
             mapOf("contextId" to contextId.value, "sourceKey" to locator.key()),
         )
 
-    /**
-     * The single construction and execution path for source queries. Internal overridability lets
-     * integration tests observe the immutable statement/parameter pair selected by a real public
-     * invocation without adding mutable callbacks to the production repository.
-     */
     @Suppress("UNCHECKED_CAST")
-    internal open fun executeSourceQuery(statement: String, params: Map<String, Any>): List<Proposition> {
+    private fun executeSourceQuery(statement: String, params: Map<String, Any>): List<Proposition> {
         val ids = persistenceManager.query(
             QuerySpecification.withStatement(statement).bind(params)
         ) as List<String>
