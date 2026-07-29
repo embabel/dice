@@ -17,7 +17,7 @@ import com.embabel.dice.provenance.ContentAddressedLocator
 import com.embabel.dice.provenance.ProvenanceEntry
 
 fun main() {
-    val locator = ContentAddressedLocator("legacy-client")
+    val locator = ContentAddressedLocator("legacy-client", null)
 
     val provenance = probe("ProvenanceEntry.constructor.full") {
         ProvenanceEntry(locator, "chunk", 0, 5, "hash")
