@@ -20,6 +20,7 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.NewEntity
 import com.embabel.dice.common.Resolutions
+import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.common.support.InMemorySchemaRegistry
@@ -249,12 +250,18 @@ class PropositionPipelineControllerTest {
     }
 
     @Test
-    fun `POST extract assigns replay-stable chunk identity within a source revision`() {
+    fun `POST extract replay persists one grounded provenance row per source revision`() {
         val observedChunkIds = mutableListOf<String>()
         every {
             propositionPipeline.processChunk(any(), any())
         } answers {
             val chunk = firstArg<Chunk>()
+            val context = secondArg<SourceAnalysisContext>()
+            val provenanceEntry = ProvenanceEntry(
+                locator = requireNotNull(context.sourceLocator),
+                chunkId = chunk.id,
+                sourceRevision = context.sourceRevision?.sourceRevision,
+            )
             observedChunkIds += chunk.id
             ChunkPropositionResult.Success(
                 chunkId = chunk.id,
@@ -266,7 +273,17 @@ class PropositionPipelineControllerTest {
                     chunkIds = setOf(chunk.id),
                     resolutions = emptyList(),
                 ),
-                propositions = emptyList(),
+                propositions = listOf(
+                    Proposition(
+                        id = "fact-${chunk.id}",
+                        contextId = context.contextId,
+                        text = "Stable fact",
+                        mentions = emptyList(),
+                        confidence = 0.9,
+                        grounding = listOf(chunk.id),
+                        provenanceEntries = listOf(provenanceEntry),
+                    ),
+                ),
                 revisionResults = emptyList(),
             )
         }
@@ -294,6 +311,20 @@ class PropositionPipelineControllerTest {
 
         assertEquals(observedChunkIds[0], observedChunkIds[1])
         assertNotEquals(observedChunkIds[0], observedChunkIds[2])
+
+        assertEquals(2, propositionRepository.count())
+        val persistedR1 = requireNotNull(
+            propositionRepository.findById("fact-${observedChunkIds[0]}"),
+        )
+        val persistedR2 = requireNotNull(
+            propositionRepository.findById("fact-${observedChunkIds[2]}"),
+        )
+        assertEquals(1, persistedR1.grounding.size)
+        assertEquals(1, persistedR1.provenanceEntries.size)
+        assertEquals("r1", persistedR1.provenanceEntries.single().sourceRevision)
+        assertEquals(1, persistedR2.grounding.size)
+        assertEquals(1, persistedR2.provenanceEntries.size)
+        assertEquals("r2", persistedR2.provenanceEntries.single().sourceRevision)
     }
 
     @Test
