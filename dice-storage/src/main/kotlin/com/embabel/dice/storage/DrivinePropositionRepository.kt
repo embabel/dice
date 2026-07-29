@@ -56,21 +56,36 @@ import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
 
 internal object SourceProvenanceQueryStatements {
+    // The existing uniqueness index is composite `(contextId, text)`. Every repository proposition
+    // has non-null text, so the empty-string lower bound preserves membership while letting Neo4j
+    // seek the tenant prefix before expanding provenance relationships.
     val bySourceKey = """
-        MATCH (p:Proposition {contextId: ${'$'}contextId})-[r:DERIVED_FROM]->(s:Source {key: ${'$'}sourceKey})
-        RETURN DISTINCT p.id AS id
+        MATCH (p:Proposition {contextId: ${'$'}contextId})
+        USING INDEX p:Proposition(contextId, text)
+        WHERE p.text >= '' AND EXISTS {
+            MATCH (p)-[:DERIVED_FROM]->(:Source {key: ${'$'}sourceKey})
+        }
+        RETURN p.id AS id
     """.trimIndent()
 
     val bySourceRevision = """
-        MATCH (p:Proposition {contextId: ${'$'}contextId})-[r:DERIVED_FROM]->(s:Source {key: ${'$'}sourceKey})
-        WHERE r.sourceRevision = ${'$'}sourceRevision
-        RETURN DISTINCT p.id AS id
+        MATCH (p:Proposition {contextId: ${'$'}contextId})
+        USING INDEX p:Proposition(contextId, text)
+        WHERE p.text >= '' AND EXISTS {
+            MATCH (p)-[r:DERIVED_FROM]->(:Source {key: ${'$'}sourceKey})
+            WHERE r.sourceRevision = ${'$'}sourceRevision
+        }
+        RETURN p.id AS id
     """.trimIndent()
 
     val revisionlessBySourceKey = """
-        MATCH (p:Proposition {contextId: ${'$'}contextId})-[r:DERIVED_FROM]->(s:Source {key: ${'$'}sourceKey})
-        WHERE r.sourceRevision IS NULL
-        RETURN DISTINCT p.id AS id
+        MATCH (p:Proposition {contextId: ${'$'}contextId})
+        USING INDEX p:Proposition(contextId, text)
+        WHERE p.text >= '' AND EXISTS {
+            MATCH (p)-[r:DERIVED_FROM]->(:Source {key: ${'$'}sourceKey})
+            WHERE r.sourceRevision IS NULL
+        }
+        RETURN p.id AS id
     """.trimIndent()
 }
 
@@ -510,14 +525,14 @@ class DrivinePropositionRepository(
 
     @Transactional(readOnly = true)
     override fun findBySourceKey(contextId: ContextId, sourceKey: String): List<Proposition> =
-        findBySource(
+        executeSourceQuery(
             SourceProvenanceQueryStatements.bySourceKey,
             mapOf("contextId" to contextId.value, "sourceKey" to sourceKey),
         )
 
     @Transactional(readOnly = true)
     override fun findBySourceRevision(contextId: ContextId, ref: SourceRevisionRef): List<Proposition> =
-        findBySource(
+        executeSourceQuery(
             SourceProvenanceQueryStatements.bySourceRevision,
             mapOf(
                 "contextId" to contextId.value,
@@ -531,13 +546,18 @@ class DrivinePropositionRepository(
         contextId: ContextId,
         locator: SourceLocator,
     ): List<Proposition> =
-        findBySource(
+        executeSourceQuery(
             SourceProvenanceQueryStatements.revisionlessBySourceKey,
             mapOf("contextId" to contextId.value, "sourceKey" to locator.key()),
         )
 
+    /**
+     * The single construction and execution path for source queries. Internal overridability lets
+     * integration tests observe the immutable statement/parameter pair selected by a real public
+     * invocation without adding mutable callbacks to the production repository.
+     */
     @Suppress("UNCHECKED_CAST")
-    private fun findBySource(statement: String, params: Map<String, Any>): List<Proposition> {
+    internal open fun executeSourceQuery(statement: String, params: Map<String, Any>): List<Proposition> {
         val ids = persistenceManager.query(
             QuerySpecification.withStatement(statement).bind(params)
         ) as List<String>
