@@ -30,6 +30,10 @@
             <groupId>com.embabel.dice</groupId>
             <artifactId>dice</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice-report</artifactId>
+        </dependency>
 
         <!-- Embabel agent types referenced by the repository/mapper (SimilarityResult, Cluster, etc.) -->
         <dependency>
