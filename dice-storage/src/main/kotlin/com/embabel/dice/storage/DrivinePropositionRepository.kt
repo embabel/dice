@@ -234,12 +234,24 @@ class DrivinePropositionRepository(
         winner: Proposition,
         incomingEntries: List<ProvenanceEntry>,
     ): Proposition {
+        ensureCompatibleSources(winner.id, incomingEntries)
         val knownEntries = winner.provenanceEntries.toHashSet()
         val novelEntries = incomingEntries.filterNot(knownEntries::contains)
         if (novelEntries.isEmpty()) return winner
         val revisedWinner = winner.withProvenanceEntries(novelEntries)
         doPersist(revisedWinner)
         return findById(winner.id) ?: revisedWinner
+    }
+
+    /**
+     * Storage identity equality deliberately uses canonical source keys, so validate the structural
+     * locator identity before an exact replay can take the no-op path.
+     */
+    private fun ensureCompatibleSources(propositionId: String, entries: List<ProvenanceEntry>) {
+        entries.map(PropositionGraphMapper::toDerivedFrom).forEach { edge ->
+            val entryKey = requireNotNull(edge.entryKey) { "Provenance entryKey must be computed before persistence" }
+            ensureCompatibleSource(edge.source, provenanceParameters(propositionId, entryKey, edge))
+        }
     }
 
     /**

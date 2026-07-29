@@ -29,6 +29,7 @@ import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.provenance.ConnectorRef
 import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.SourceLocator
 import com.embabel.dice.provenance.SourceRevisionRef
 import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.temporal.TemporalMetadata
@@ -160,7 +161,7 @@ class DrivinePropositionStoreIntegrationTest {
     )
 
     private fun revisionEvidence(
-        locator: UriLocator,
+        locator: SourceLocator,
         revision: String?,
         chunkId: String = "chunk",
         contentHash: String = "hash",
@@ -524,7 +525,7 @@ class DrivinePropositionStoreIntegrationTest {
 
     @Test
     fun `ordinary exact-text dedup unions incoming source revisions into the winner`() {
-        val locator = UriLocator("https://example.com/ordinary-dedup")
+        val locator = ConnectorRef("ordinary-dedup", "source")
         val revisionOne = revisionEvidence(locator, "r1")
         val revisionTwo = revisionEvidence(locator, "r2")
         val initialRevision = Instant.now().minusSeconds(60)
@@ -559,6 +560,31 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     @Test
+    fun `ordinary exact-text dedup rejects a colliding connector source and preserves its winner`() {
+        val originalLocator = ConnectorRef("a:b", "c")
+        val collidingLocator = ConnectorRef("a", "b:c")
+        assertEquals(originalLocator.key(), collidingLocator.key())
+        val originalEntry = ProvenanceEntry(originalLocator)
+        val winner = repository.save(prop("same collision-prone fact", provenance = listOf(originalEntry)))
+
+        assertThrows<IllegalArgumentException> {
+            repository.save(
+                prop(
+                    "same collision-prone fact",
+                    provenance = listOf(ProvenanceEntry(collidingLocator)),
+                ),
+            )
+        }
+
+        assertEquals(1, repository.count())
+        assertEquals(
+            listOf(originalEntry),
+            repository.findById(winner.id)?.provenanceEntries,
+            "a rejected dedup collision must leave the stored winner unchanged",
+        )
+    }
+
+    @Test
     fun `caller rollback undoes a completed save`() {
         val proposition = prop("transactional save")
         TransactionTemplate(transactionManager).executeWithoutResult { status ->
@@ -572,7 +598,7 @@ class DrivinePropositionStoreIntegrationTest {
 
     @Test
     fun `Spring proxied cross-instance uniqueness recovery commits evidence and is retry safe`() {
-        val locator = UriLocator("https://example.com/race-dedup")
+        val locator = ConnectorRef("race-dedup", "source")
         val revisionOne = revisionEvidence(locator, "r1")
         val revisionTwo = revisionEvidence(locator, "r2")
         val first = prop("cross-instance fact", provenance = listOf(revisionOne))
@@ -604,6 +630,63 @@ class DrivinePropositionStoreIntegrationTest {
             secondRepository.beforeDedupInsert = null
             secondRepository.save(second)
             assertEquals(2L, edgeCount(winnerId), "retrying recovered evidence must remain idempotent")
+        } finally {
+            firstRepository.beforeDedupInsert = null
+            secondRepository.beforeDedupInsert = null
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `cross-instance uniqueness recovery rejects a colliding connector source and preserves its winner`() {
+        val originalLocator = ConnectorRef("a:b", "c")
+        val collidingLocator = ConnectorRef("a", "b:c")
+        assertEquals(originalLocator.key(), collidingLocator.key())
+        val first = prop(
+            "cross-instance collision-prone fact",
+            provenance = listOf(ProvenanceEntry(originalLocator)),
+        )
+        val second = prop(
+            "cross-instance collision-prone fact",
+            provenance = listOf(ProvenanceEntry(collidingLocator)),
+        )
+        val barrier = CountDownLatch(2)
+        val awaitBothInserts = {
+            barrier.countDown()
+            assertTrue(barrier.await(10, TimeUnit.SECONDS), "both repositories must reach the insert race")
+        }
+        val firstRepository = repository
+        val secondRepository = newTransactionProxiedRepository()
+        firstRepository.beforeDedupInsert = awaitBothInserts
+        secondRepository.beforeDedupInsert = awaitBothInserts
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val outcomes = listOf(
+                executor.submit<Proposition> { firstRepository.save(first) },
+                executor.submit<Proposition> { secondRepository.save(second) },
+            ).map { future ->
+                runCatching { future.get(30, TimeUnit.SECONDS) }
+            }
+
+            assertEquals(1, outcomes.count { it.isSuccess }, "exactly one structurally valid writer must win")
+            assertEquals(1, outcomes.count { it.isFailure }, "the colliding writer's recovery must fail")
+            val collision = outcomes.single { it.isFailure }.exceptionOrNull()!!
+            assertTrue(
+                generateSequence(collision) { it.cause }.any {
+                    it is IllegalArgumentException && it.message?.contains("Source key collision") == true
+                },
+                "the losing recovery must report the structural Source key collision",
+            )
+
+            val winner = outcomes.single { it.isSuccess }.getOrThrow()
+            val storedWinner = repository.findById(winner.id)!!
+            assertEquals(1, repository.count())
+            assertEquals(
+                winner.provenanceEntries,
+                storedWinner.provenanceEntries,
+                "a rejected recovery collision must leave the database winner unchanged",
+            )
+            assertEquals(1L, edgeCount(winner.id))
         } finally {
             firstRepository.beforeDedupInsert = null
             secondRepository.beforeDedupInsert = null
