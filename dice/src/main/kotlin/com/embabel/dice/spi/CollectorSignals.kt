@@ -200,6 +200,8 @@ fun undoSingleCollapse(
         "Proposition $retiredId was retired into survivor ${decision.survivorId}, not $survivorId"
     }
     val retirement = decision.retired.firstOrNull { it.propositionId == retiredId } ?: return null
+    val survivor = propositions.findById(survivorId) ?: return null
+    val retiredProposition = propositions.findById(retiredId) ?: return null
 
     // Other members of this same collapse: whatever they also folded must stay on the survivor
     // even though we're subtracting retirement's copy of it.
@@ -208,7 +210,6 @@ fun undoSingleCollapse(
     val stillNeededProvenanceRefs = others.flatMap { it.provenanceEvidenceKeysForUndo() }.toSet()
     val stillNeededSourceIds = others.flatMap { it.foldedSourceIds }.toSet()
 
-    val survivor = propositions.findById(survivorId) ?: return null
     val survivorWithoutFoldedEvidence = survivor.withoutFoldedEvidence(
         groundingToRemove = retirement.foldedGrounding.filterNot { it in stillNeededGrounding },
         provenanceRefsToRemove = retirement.provenanceEvidenceKeysForUndo()
@@ -225,7 +226,6 @@ fun undoSingleCollapse(
         savedSurvivor
     }
 
-    val retiredProposition = propositions.findById(retiredId) ?: return null
     val restored = propositions.save(retiredProposition.withStatus(retirement.priorStatus))
 
     return CollapseUndoResult(survivor = updatedSurvivor, restored = restored)
