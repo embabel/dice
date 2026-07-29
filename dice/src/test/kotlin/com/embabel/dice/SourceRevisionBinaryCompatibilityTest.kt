@@ -167,9 +167,9 @@ class SourceRevisionBinaryCompatibilityTest {
     private companion object {
         const val PINNED_BASE_SHA = "c769d9c479d3e90c5c23c88343c79bd31e70a78f"
         const val FIXTURE_SOURCE_SHA256 =
-            "e79637cdef1428bc7be5239c19caa18e3b4b1fe191baa8b6c5723bb9a814dc76"
+            "8a2ce95b81d59303d5361db85e60074249652f73f4d6890c89499d940a29e524"
         const val FIXTURE_JAR_SHA256 =
-            "25d25191e7eb46e7e99bf10c02c5b4a4d7c3f7b511a7cbcf6c8c1b442c86590a"
+            "505cb11891a051f69cefe70e3a0862e29e66e78df864cae2aac2a9c2eddf08a2"
         const val FIXTURE_SOURCE = "compat/source-revision-legacy-client.kt"
         const val FIXTURE_JAR = "compat/source-revision-legacy-client.jar"
         const val CLIENT_MAIN_CLASS = "com.embabel.dice.compat.Source_revision_legacy_clientKt"
