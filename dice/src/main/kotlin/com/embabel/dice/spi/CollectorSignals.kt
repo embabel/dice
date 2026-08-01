@@ -17,7 +17,6 @@ package com.embabel.dice.spi
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.Proposition
-import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
 import com.fasterxml.jackson.annotation.JsonIgnore
@@ -217,14 +216,10 @@ fun undoSingleCollapse(
         sourceIdsToRemove = retirement.foldedSourceIds.filterNot { it in stillNeededSourceIds },
     )
     val savedSurvivor = propositions.save(survivorWithoutFoldedEvidence)
-    val updatedSurvivor = if (propositions is PropositionRepository) {
-        propositions.setProvenance(
-            survivorWithoutFoldedEvidence.id,
-            survivorWithoutFoldedEvidence.provenanceEntries,
-        ) ?: savedSurvivor
-    } else {
-        savedSurvivor
-    }
+    val updatedSurvivor = propositions.setProvenance(
+        survivorWithoutFoldedEvidence.id,
+        survivorWithoutFoldedEvidence.provenanceEntries,
+    ) ?: savedSurvivor
 
     val restored = propositions.save(retiredProposition.withStatus(retirement.priorStatus))
 
