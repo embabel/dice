@@ -103,6 +103,24 @@ class OntologicalSemanticLinkDiscovererTest {
     }
 
     @Test
+    fun `stale adjacency does not suppress a candidate grounded in active evidence`() {
+        val roboticsEvidence = proposition("robotics-evidence", "A", categoryId = "robotics")
+        val biotechEvidence = proposition("biotech-evidence", "B", categoryId = "biotech")
+        val staleDirect = proposition(
+            "stale-direct",
+            "A",
+            "B",
+            status = PropositionStatus.STALE,
+        )
+
+        val links = OntologicalSemanticLinkDiscoverer(taxonomy)
+            .discover(listOf(roboticsEvidence, biotechEvidence, staleDirect))
+
+        assertEquals(1, links.size)
+        assertEquals(listOf("biotech-evidence", "robotics-evidence"), links.single().sourcePropositionIds)
+    }
+
+    @Test
     fun `does not emit when the shared ancestor is beyond the configured bound`() {
         val roboticsEvidence = proposition("robotics-evidence", "A", categoryId = "robotics")
         val biotechEvidence = proposition("biotech-evidence", "B", categoryId = "biotech")

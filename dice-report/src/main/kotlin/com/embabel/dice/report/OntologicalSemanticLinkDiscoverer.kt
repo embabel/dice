@@ -52,15 +52,18 @@ class OntologicalSemanticLinkDiscoverer(
         )
 
         val categoryEvidence = categoryEvidence(active)
-        val (directPairs, neighbours) = adjacency(propositions)
+        val neighbours = adjacency(active)
         val entities = categoryEvidence.keys.sorted()
         val links = mutableListOf<SemanticLink>()
 
         for (i in entities.indices) {
             for (j in i + 1 until entities.size) {
-                val (a, b) = canonical(entities[i], entities[j])
-                if ((a to b) in directPairs) continue
-                if (neighbours[a].orEmpty().intersect(neighbours[b].orEmpty()).isNotEmpty()) continue
+                val a = entities[i]
+                val b = entities[j]
+                val aNeighbours = neighbours[a].orEmpty()
+                val bNeighbours = neighbours[b].orEmpty()
+                if (b in aNeighbours) continue
+                if (aNeighbours.any { it in bNeighbours }) continue
 
                 val connection = bestConnection(
                     categoryEvidence.getValue(a),
@@ -111,21 +114,18 @@ class OntologicalSemanticLinkDiscoverer(
 
     private fun adjacency(
         propositions: List<Proposition>,
-    ): Pair<Set<Pair<String, String>>, Map<String, Set<String>>> {
-        val directPairs = linkedSetOf<Pair<String, String>>()
+    ): Map<String, Set<String>> {
         val neighbours = linkedMapOf<String, MutableSet<String>>()
         for (proposition in propositions) {
             val ids = proposition.mentions.mapNotNull { it.resolvedId }.distinct()
             for (i in ids.indices) {
                 for (j in i + 1 until ids.size) {
-                    val (a, b) = canonical(ids[i], ids[j])
-                    directPairs += a to b
-                    neighbours.getOrPut(a) { linkedSetOf() }.add(b)
-                    neighbours.getOrPut(b) { linkedSetOf() }.add(a)
+                    neighbours.getOrPut(ids[i]) { linkedSetOf() }.add(ids[j])
+                    neighbours.getOrPut(ids[j]) { linkedSetOf() }.add(ids[i])
                 }
             }
         }
-        return directPairs to neighbours
+        return neighbours
     }
 
     private fun bestConnection(
@@ -155,9 +155,6 @@ class OntologicalSemanticLinkDiscoverer(
                 { it.categoryB },
             ),
         )
-
-    private fun canonical(x: String, y: String): Pair<String, String> =
-        if (x <= y) x to y else y to x
 
     private data class AncestryConnection(
         val categoryA: String,
