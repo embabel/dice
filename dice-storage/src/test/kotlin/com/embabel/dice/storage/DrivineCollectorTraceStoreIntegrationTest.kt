@@ -21,6 +21,7 @@ import com.embabel.dice.projection.memory.collector.CollectorSurvivorPolicy
 import com.embabel.dice.projection.memory.collector.MultiSignalCollectorStrategy
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.UriLocator
@@ -82,6 +83,10 @@ class DrivineCollectorTraceStoreIntegrationTest {
             return delegate.setProvenance(propositionId, entries)
         }
     }
+
+    private class BaseStoreView(
+        delegate: PropositionRepository,
+    ) : PropositionStore by delegate
 
     @AfterEach
     fun cleanUp() {
@@ -483,6 +488,62 @@ class DrivineCollectorTraceStoreIntegrationTest {
 
         assertEquals(
             listOf(revisionOne),
+            propositionRepository.findById(survivor.id)?.provenanceEntries,
+        )
+    }
+
+    @Test
+    fun `collector undo removes folded provenance through a base store decorator`() {
+        val runId = "run-base-store-undo"
+        val contextId = ContextId("ctx-base-store-undo")
+        val survivorEvidence = ProvenanceEntry(
+            locator = UriLocator("https://example.com/base-store-undo/keep"),
+        )
+        val foldedEvidence = ProvenanceEntry(
+            locator = UriLocator("https://example.com/base-store-undo/remove"),
+        )
+        val survivor = propositionRepository.save(
+            prop(
+                id = "survivor-base-store",
+                text = "Acme signed the agreement",
+                provenance = listOf(survivorEvidence, foldedEvidence),
+            ),
+        )
+        propositionRepository.save(
+            prop(
+                id = "retired-base-store",
+                text = "Acme signed an agreement",
+                status = PropositionStatus.STALE,
+                provenance = listOf(foldedEvidence),
+            ),
+        )
+        traceStore.recordRunContext(runId, contextId)
+        traceStore.recordDecision(
+            runId,
+            CollectorDecision(
+                runId = runId,
+                componentId = "component-base-store",
+                survivorId = survivor.id,
+                action = "duplicate-merge",
+                retired = listOf(
+                    RetiredProposition(
+                        propositionId = "retired-base-store",
+                        priorStatus = PropositionStatus.ACTIVE,
+                        foldedProvenanceRefs = listOf(foldedEvidence.locator.key()),
+                    ),
+                ),
+            ),
+        )
+
+        undoSingleCollapse(
+            traceQuery = traceStore,
+            propositions = BaseStoreView(propositionRepository),
+            survivorId = survivor.id,
+            retiredId = "retired-base-store",
+        )
+
+        assertEquals(
+            listOf(survivorEvidence),
             propositionRepository.findById(survivor.id)?.provenanceEntries,
         )
     }
