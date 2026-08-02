@@ -19,14 +19,13 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
-import com.fasterxml.jackson.databind.DeserializationFeature
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
-import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import tools.jackson.databind.DeserializationFeature
+import tools.jackson.databind.ObjectMapper
+import tools.jackson.module.kotlin.jacksonMapperBuilder
 
 /**
  * The gate-decision events are declared on a `@JsonTypeInfo(use = CLASS)` interface, which is the
@@ -40,10 +39,9 @@ class GateDiceEventSerializationTest {
     // (the @JsonTypeInfo discriminator on the DiceEvent interface) without coupling to the
     // nested Proposition type's own serialization shape, which carries a derived getter
     // (contextIdValue) that has no matching constructor parameter.
-    private val mapper: ObjectMapper = ObjectMapper()
-        .registerKotlinModule()
-        .registerModule(JavaTimeModule())
-        .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+    private val mapper: ObjectMapper = jacksonMapperBuilder()
+        .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+        .build()
 
     private fun proposition(): Proposition = Proposition(
         contextId = ContextId("ctx"),

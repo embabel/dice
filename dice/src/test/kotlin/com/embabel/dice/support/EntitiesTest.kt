@@ -16,7 +16,7 @@
 package com.embabel.dice.support
 
 import com.embabel.dice.text2graph.support.Entities
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import tools.jackson.module.kotlin.jacksonObjectMapper
 import org.junit.jupiter.api.Test
 
 class EntitiesTest {
