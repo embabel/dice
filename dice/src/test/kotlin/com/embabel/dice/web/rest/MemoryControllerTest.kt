@@ -19,23 +19,19 @@ import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
-import com.embabel.dice.proposition.EntityMention
-import com.embabel.dice.proposition.MentionRole
-import com.embabel.dice.proposition.Proposition
-import com.embabel.dice.proposition.PropositionRepository
-import com.embabel.dice.proposition.PropositionStatus
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
-import com.fasterxml.jackson.module.kotlin.KotlinModule
+import com.embabel.dice.proposition.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.*
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
+import tools.jackson.databind.json.JsonMapper
+import tools.jackson.module.kotlin.kotlinModule
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -89,22 +85,23 @@ class MemoryControllerTest {
 
     private lateinit var mockMvc: MockMvc
     private lateinit var propositionRepository: TestPropositionRepository
-    private lateinit var objectMapper: ObjectMapper
+    private lateinit var objectMapper: JsonMapper
 
     @BeforeEach
     fun setUp() {
         propositionRepository = TestPropositionRepository()
 
-        objectMapper = ObjectMapper()
-            .registerModule(KotlinModule.Builder().build())
-            .registerModule(JavaTimeModule())
+        objectMapper = JsonMapper.builder()
+            .addModule(kotlinModule())
+            .findAndAddModules()
+            .build()
 
         val controller = MemoryController(
             propositionRepository = propositionRepository,
         )
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
-            .setMessageConverters(MappingJackson2HttpMessageConverter(objectMapper))
+            .setMessageConverters(JacksonJsonHttpMessageConverter(objectMapper))
             .build()
     }
 
