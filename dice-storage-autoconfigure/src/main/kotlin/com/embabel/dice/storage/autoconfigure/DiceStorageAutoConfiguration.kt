@@ -16,6 +16,7 @@
 package com.embabel.dice.storage.autoconfigure
 
 import com.embabel.agent.api.common.Ai
+import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.spi.DecayStatusPolicy
 import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore
@@ -81,15 +82,31 @@ class DiceStorageAutoConfiguration {
         persistenceManager: PersistenceManager,
         ai: Ai,
         transactionManager: PlatformTransactionManager,
+        embeddingServices: ObjectProvider<EmbeddingService>,
     ): PropositionRepository {
         logger.info(
             "Wiring graph proposition store (Drivine/Neo4j), vector index '{}'",
             DrivinePropositionRepository.VECTOR_INDEX,
         )
         return DrivinePropositionRepository(
-            graphObjectManager, persistenceManager, ai.withDefaultEmbeddingService(), transactionManager,
+            graphObjectManager, persistenceManager, embeddingService(ai, embeddingServices), transactionManager,
         )
     }
+
+    /**
+     * The application's own [EmbeddingService] bean where there is an unambiguous one
+     * (a `@Primary` bean counts), otherwise the platform default.
+     *
+     * Preferring the bean matters for a host that can start with NO embedding model
+     * configured — one whose provider key arrives at first run rather than at boot.
+     * Such a host registers an embedding service that reports its own absence and can be
+     * switched on later, whereas `ai.withDefaultEmbeddingService()` resolves the default
+     * eagerly and throws when no model is registered, taking the context down with it.
+     * [DrivinePropositionRepository] only touches the service when it actually embeds, so
+     * an absent-tolerant one is safe to hold.
+     */
+    private fun embeddingService(ai: Ai, embeddingServices: ObjectProvider<EmbeddingService>): EmbeddingService =
+        embeddingServices.getIfUnique() ?: ai.withDefaultEmbeddingService()
 
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
@@ -163,9 +180,26 @@ class DiceStorageAutoConfiguration {
         havingValue = "true",
         matchIfMissing = true,
     )
-    fun propositionVectorIndexSchema(ai: Ai): SchemaCatalog {
-        val embeddingService = ai.withDefaultEmbeddingService()
-        val spec = propositionVectorIndexSpec(embeddingService.dimensions)
+    fun propositionVectorIndexSchema(
+        ai: Ai,
+        embeddingServices: ObjectProvider<EmbeddingService>,
+    ): SchemaCatalog {
+        // A vector index is created AT the embedding model's dimension, so with no model
+        // there is no dimension to create it at. Register nothing rather than guess: an
+        // index at the wrong dimension is worse than none, because writes to it succeed.
+        // The catalog is rebuilt on the next boot, by which time a model configured at
+        // first run is registered.
+        val embeddingService = runCatching { embeddingService(ai, embeddingServices) }
+            .getOrElse {
+                logger.warn("Skipping proposition vector index schema: no embedding model ({})", it.message)
+                return SchemaCatalog.of()
+            }
+        val dimensions = runCatching { embeddingService.dimensions }
+            .getOrElse {
+                logger.warn("Skipping proposition vector index schema: no embedding model ({})", it.message)
+                return SchemaCatalog.of()
+            }
+        val spec = propositionVectorIndexSpec(dimensions)
         logger.info("Registering proposition vector index schema: {} (model={})", spec, embeddingService.name)
         return SchemaCatalog.of(spec).withVersion(embeddingService.name)
     }
