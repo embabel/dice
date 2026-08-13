@@ -55,7 +55,8 @@ you need.
 
 - [retrieval-and-discovery.md](retrieval-and-discovery.md) — how propositions come back out:
   vector search, graph walks, temporal windows, trust filtering at read time, and surfacing
-  connections nobody explicitly queried for.
+  connections nobody explicitly queried for. Ends with why the embedding model is a latency
+  decision on the retrieval side, and what a hosted one costs per interactive turn.
 - [oracle-and-query.md](oracle-and-query.md) — the layer above retrieval: turning a
   natural-language question into an answer, not just a bag of relevant propositions.
 

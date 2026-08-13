@@ -357,3 +357,59 @@ The store capabilities behind the retrieval modes, the authority resolver behind
 filtering, the link discoverer, and the rationale generator are all pluggable. The defaults are
 conservative and honest — degrade rather than guess, treat unknown provenance as low trust, report
 evidence rather than a ranking — and a deployment swaps in sharper judgment where it needs it.
+
+## The embedding model is a latency decision, not just a quality one
+
+Every vector retrieval embeds the query text before it can search. When the query is a user's
+message and the answer is needed to build a prompt, that embedding call sits directly on the
+critical path: nothing can be sent to the model until the retrieval returns.
+
+With a hosted embedding model, that is a network round trip per retrieval. Measured in a
+deployment using `text-embedding-3-small` against a store of ~3000 propositions:
+
+| | |
+|---|---|
+| embed + vector search | **300–355ms** (occasional ~1.3s outlier) |
+| propositions returned for a greeting | **0** |
+| projection + provenance | ~0ms |
+
+Two things are worth reading carefully there. The cost is almost entirely the embedding round
+trip, not the vector search — the graph side is fast, and with no hits there is nothing to
+project. And the retrieval was *correct*: a greeting genuinely matches no propositions. The
+expense is not in retrieving; it is in **finding out that there is nothing to retrieve**, which is
+a cost paid on every turn regardless of whether the query has any use for memory.
+
+This is a bad trade in an interactive loop. A third of a second is the difference between a reply
+that starts arriving conversationally and one that reads as broken — sharply so for voice, where a
+pause has none of the "it's thinking" affordance that a typing indicator gives.
+
+### A local embedding model is usually the right answer here
+
+For retrieval-side embedding, a local model (ONNX, via `embabel-agent-onnx` or equivalent) turns
+that 300ms round trip into single-digit milliseconds, with no change to the retrieval semantics
+and no quality tradeoff worth the latency it buys back. The asymmetry is what makes this easy:
+
+- **Ingestion-side embedding is throughput-bound and off the critical path.** It happens in
+  batches, in the background, and nobody is waiting. A hosted model's quality is worth having.
+- **Retrieval-side embedding is latency-bound and on the critical path.** One short string, needed
+  now, blocking a user. This is where local wins.
+
+Nothing in the retrieval design assumes the two use the same model — the embedding service is
+injected. But note the constraint from [durable storage](durable-storage.md): query and stored
+vectors must come from the same model and dimension, so "local for retrieval, hosted for
+ingestion" only works if it is the *same* model served locally, not a different one.
+
+### What does not fix it
+
+Worth recording, because both are the intuitive first answers and neither survives measurement:
+
+- **Making retrieval async or parallel.** The result is required to build the prompt, so it is on
+  the critical path by construction. Parallelising helps only if there is other work of similar
+  duration to overlap with, and in the measured case there was ~80ms of it against a 330ms
+  retrieval.
+- **Bounding it with a deadline.** It caps the worst case, but makes prompt content depend on
+  timing — the same question can retrieve memory or not depending on network jitter. That trades
+  determinism, and any eval suite covering memory-dependent behaviour, for latency.
+
+The honest options are to make the hop cheap or not take it: a local model, or not retrieving
+eagerly at all and letting the caller retrieve on demand when the question warrants it.
