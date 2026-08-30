@@ -159,21 +159,20 @@ open class TestApplication {
     ): GraphDecayManager = GraphDecayManager(repository, persistenceManager)
 
     /**
-     * Both MERGEs the version store performs need their key to be unique, because a MERGE is
-     * race-free only then. Without the first, concurrent saves of one version all miss the match,
-     * all create, and the history fills with duplicates. Without the second, a schema can end up
-     * with two counter nodes handing out the same sequence numbers.
+     * Every MERGE the governance stores perform needs its key to be unique, because a MERGE is
+     * race-free only then. Without that, concurrent saves of one record all miss the match, all
+     * create, and the history fills with duplicates. That covers the version node, the drift-report
+     * node, and both counter nodes; a schema with two counter nodes hands out the same sequence
+     * numbers twice.
      *
-     * The third backs the sequence itself: it makes two versions of one schema sharing a position
-     * impossible to store, so a lost counter update fails with a constraint violation the caller
-     * can retry. `DrivineMetamodelVersionStoreIntegrationTest` pins all three.
+     * The two `sequence` constraints back the ordering. They make two records of one schema sharing
+     * a position impossible to store, so a lost counter update fails with a constraint violation the
+     * caller can retry. `DrivineMetamodelVersionStoreIntegrationTest` and
+     * `DrivineDriftReportStoreIntegrationTest` pin them. The list lives in [MetamodelSchema], which
+     * keeps the constraints and the label list the observed-schema source excludes in one place.
      */
     @Bean
-    open fun metamodelSchema(): SchemaCatalog = SchemaCatalog.of(
-        UniquenessConstraintSpec(label = "MetamodelVersion", properties = listOf("schemaName", "contentHash")),
-        UniquenessConstraintSpec(label = "MetamodelSchemaCounter", property = "schemaName"),
-        UniquenessConstraintSpec(label = "MetamodelVersion", properties = listOf("schemaName", "sequence")),
-    )
+    open fun metamodelSchema(): SchemaCatalog = SchemaCatalog.of(MetamodelSchema.specs())
 
     @Bean
     open fun metamodelClock(): PinnableClock = PinnableClock()
@@ -183,4 +182,19 @@ open class TestApplication {
         persistenceManager: PersistenceManager,
         clock: PinnableClock,
     ): DrivineMetamodelVersionStore = DrivineMetamodelVersionStore(persistenceManager, clock)
+
+    @Bean
+    open fun driftReportStore(
+        persistenceManager: PersistenceManager,
+    ): DrivineDriftReportStore = DrivineDriftReportStore(persistenceManager)
+
+    /**
+     * On the system clock, not [PinnableClock]. An observation's capture instant is half of a drift
+     * report's identity, so two checks sharing one really are the same record — pinning here by
+     * default would silently collapse consecutive checks into a single report.
+     */
+    @Bean
+    open fun observedSchemaSource(
+        persistenceManager: PersistenceManager,
+    ): DrivineObservedSchemaSource = DrivineObservedSchemaSource(persistenceManager)
 }

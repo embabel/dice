@@ -16,6 +16,8 @@
 package com.embabel.dice.storage
 
 import com.embabel.agent.core.Cardinality
+import com.embabel.agent.core.ContextId
+import com.embabel.dice.metamodel.DriftReport
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.PropertySignature
 import com.fasterxml.jackson.core.type.TypeReference
@@ -102,13 +104,113 @@ object MetamodelVersionRowMapper {
             entityTypeLabels = deserializeMapOfLabelSets(row.str("entityTypeLabels")),
             entityTypeProperties = deserializeMapOfSignatureSets(row.str("entityTypeProperties")),
             relationshipNames = deserializeList(row.str("relationshipNames")),
-            entityTypeAliases = deserializeAliasMap(row.optionalStr("entityTypeAliases")),
+            entityTypeAliases = deserializeAliasMap(row.strOrNull("entityTypeAliases")),
         )
         require(version.contentHash == storedHash) {
             "MetamodelVersion '${version.schemaName}' fails its integrity check: stored contentHash " +
                 "$storedHash, but the persisted structural fields hash to ${version.contentHash}"
         }
         return version
+    }
+}
+
+/**
+ * Translate drift reports to and from the property maps the Neo4j graph store reads and writes.
+ *
+ * Neo4j properties are scalars and flat arrays, while a report's drifted type sets are collections,
+ * so both sets are serialized to JSON strings. JSON also handles names containing pipes, tabs,
+ * newlines and quotes, which these names routinely do: they come out of LLM extraction. Both sets
+ * are written sorted, so re-saving one observation writes byte-identical JSON and the MERGE is a
+ * no-op. Nothing reads the order back; the sets are read into a `Set`.
+ *
+ * The capture instant is written three ways. `capturedAt` is the ISO-8601 string and is half the
+ * natural key, so it is what round trips. `capturedAtEpochSecond` and `capturedAtNano` let the
+ * database sort and range-filter on the instant at full precision. Epoch milliseconds, which a
+ * version stamp uses, truncate: two reports captured 500µs apart would compare equal, leaving
+ * "newest first" arbitrary between them, and a `since` bound falling inside a millisecond would
+ * sweep in reports captured just before it. Sorting on the ISO string has its own failure —
+ * `Instant.toString()` writes no fraction on a whole second and `'Z'` outranks `'.'`, so
+ * `12:00:00Z` sorts after `12:00:00.500Z`.
+ *
+ * A fourth property, `contextKey`, encodes the report's scope; see [GLOBAL_CONTEXT_KEY].
+ *
+ * Reads are strict: a property this mapper wrote must be present when it is read again. `contextId`
+ * is the one exception, because its absence is how a global report is encoded. A node missing
+ * anything else is corrupt, so the accessor throws and the store's surrounding guard skips the row
+ * with a warning.
+ */
+object DriftReportRowMapper {
+
+    /**
+     * The stand-in `contextKey` a global (unscoped) report carries.
+     *
+     * A nullable `contextId` can't go into a MERGE key directly: Cypher property-map equality
+     * against a literal `null` matches nothing, including a node that has no such property, so a
+     * global report would take the CREATE branch on every retry and duplicate. `contextKey` is
+     * never null, so MERGE can key on it and a global report is as idempotent as a scoped one.
+     */
+    const val GLOBAL_CONTEXT_KEY: String = "global"
+
+    /** The prefix every real context's key carries. */
+    private const val CONTEXT_KEY_PREFIX = "ctx:"
+
+    /**
+     * The MERGE key a report's scope contributes: `global`, or `ctx:` followed by the context id.
+     *
+     * The prefix is what makes the encoding injective. `ContextId` accepts any non-blank string, so
+     * encoding scope as the bare context id with a sentinel standing in for global lets a caller
+     * name a context after the sentinel. A global report and that context's report would then share
+     * a MERGE key, land on one node, and each save would rewrite the other's scope, surfacing a
+     * context-scoped finding as whole-graph drift or the reverse. With the prefix the two spaces are
+     * disjoint: `global` carries no `ctx:` prefix, so no context id can produce it, and
+     * `ContextId("global")` maps to `ctx:global`.
+     */
+    fun contextKeyFor(contextId: ContextId?): String =
+        contextId?.let { CONTEXT_KEY_PREFIX + it.value } ?: GLOBAL_CONTEXT_KEY
+
+    /**
+     * Bind values for a write. The natural key is
+     * `(schemaName, versionHash, capturedAt, contextKey)`.
+     */
+    fun bindMap(report: DriftReport): Map<String, Any?> = mapOf(
+        "schemaName" to report.schemaName,
+        "versionHash" to report.versionHash,
+        "capturedAt" to report.capturedAt.toString(),
+        "capturedAtEpochSecond" to report.capturedAt.epochSecond,
+        "capturedAtNano" to report.capturedAt.nano,
+        "driftedEntityTypes" to serializeList(report.driftedEntityTypes.sorted()),
+        "driftedRelationshipTypes" to serializeList(report.driftedRelationshipTypes.sorted()),
+        "contextKey" to contextKeyFor(report.contextId),
+        // Null for a global report, which leaves the node with no `contextId` property at all. The
+        // store's global read matches on that absence.
+        "contextId" to report.contextId?.value,
+    )
+
+    /**
+     * Rebuild a [DriftReport] from a returned node's property map, checking on the way that the two
+     * halves of its scope still agree.
+     *
+     * The scope is stored twice: as `contextId`, absent when global, and as the never-null
+     * `contextKey` the natural key merges on. Reads and writes use different halves — a scoped read
+     * matches `contextId`, a save merges on `contextKey`. A node where the two disagree would answer
+     * to one scope when read and another when re-saved, so the row is refused.
+     */
+    fun fromRow(row: Map<*, *>): DriftReport {
+        val contextId = row.strOrNull("contextId")?.let { ContextId(it) }
+        val storedKey = row.str("contextKey")
+        require(storedKey == contextKeyFor(contextId)) {
+            "MetamodelDriftReport for '${row.strOrNull("schemaName")}' fails its scope check: it is stored " +
+                "under contextKey '$storedKey' but reads back as " +
+                "${contextId?.let { "context '${it.value}'" } ?: "a global report"}"
+        }
+        return DriftReport(
+            schemaName = row.str("schemaName"),
+            versionHash = row.str("versionHash"),
+            driftedEntityTypes = deserializeSet(row.str("driftedEntityTypes")),
+            driftedRelationshipTypes = deserializeSet(row.str("driftedRelationshipTypes")),
+            capturedAt = Instant.parse(row.str("capturedAt")),
+            contextId = contextId,
+        )
     }
 }
 
@@ -121,6 +223,14 @@ private fun deserializeList(serialized: String): List<String> =
     objectMapper.readValue(
         serialized,
         objectMapper.typeFactory.constructCollectionType(List::class.java, String::class.java)
+    )
+
+/** Deserialize a JSON string back to a set — what a drift report's drifted type collections are. */
+private fun deserializeSet(serialized: String): Set<String> =
+    if (serialized.isEmpty()) emptySet()
+    else objectMapper.readValue(
+        serialized,
+        objectMapper.typeFactory.constructCollectionType(Set::class.java, String::class.java)
     )
 
 /**
@@ -270,7 +380,8 @@ private fun Map<*, *>.str(key: String): String =
     requireNotNull(this[key]) { "required property '$key' is missing from the stored node" }.toString()
 
 /**
- * Read a property that may legitimately not be there, where absent means the stamp declared nothing
- * to put in it. Only the alias map is read this way; everything else goes through [str].
+ * Read a property whose absence is itself meaningful, rather than a fault: a stamp that declared
+ * no aliases, or a drift report whose check covered the whole graph and so wrote no `contextId`.
+ * Everything else goes through [str].
  */
-private fun Map<*, *>.optionalStr(key: String): String? = this[key]?.toString()
+private fun Map<*, *>.strOrNull(key: String): String? = this[key]?.toString()
