@@ -43,17 +43,28 @@ import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
 import org.springframework.transaction.PlatformTransactionManager
 import java.time.Duration
 import java.time.Instant
 
 /**
- * Integration tests for the graph storage stack against a Neo4j testcontainer (provided by Drivine's
- * test support). Not `@Transactional`: dedup commits via its own [org.springframework.transaction.support.TransactionTemplate],
- * so isolation is by explicit `clearAll()` per test rather than rollback.
+ * Integration tests for the graph storage stack against a Neo4j testcontainer. Not `@Transactional`:
+ * dedup commits via its own [org.springframework.transaction.support.TransactionTemplate], so
+ * isolation is by explicit `clearAll()` per test rather than rollback.
+ *
+ * Runs against [Neo4jTestContainer], not Drivine's own built-in testcontainer -- see that class
+ * for why.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivinePropositionStoreIntegrationTest {
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
+    }
 
     @Autowired
     private lateinit var repository: DrivinePropositionRepository

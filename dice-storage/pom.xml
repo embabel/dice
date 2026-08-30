@@ -31,6 +31,12 @@
             <artifactId>dice</artifactId>
         </dependency>
 
+        <!-- Dice metamodel: the MetamodelVersionStore contract and the MetamodelVersion stamp it persists -->
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice-metamodel</artifactId>
+        </dependency>
+
         <!-- Embabel agent types referenced by the repository/mapper (SimilarityResult, Cluster, etc.) -->
         <dependency>
             <groupId>com.embabel.agent</groupId>

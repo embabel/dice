@@ -31,6 +31,10 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.EnableAspectJAutoProxy
 import org.springframework.transaction.PlatformTransactionManager
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 import kotlin.random.Random
 
 /**
@@ -47,6 +51,35 @@ class FakeEmbeddingService(override val dimensions: Int = 16) : EmbeddingService
         FloatArray(dimensions) { i -> Random(text.hashCode().toLong() * 1_000_003L + i).nextDouble(-1.0, 1.0).toFloat() }
 
     override fun embed(texts: List<String>): List<FloatArray> = texts.map(::embed)
+}
+
+/**
+ * A clock a test can pin to an instant of its choosing. Left alone it just reads the system clock,
+ * so anything that doesn't care about the exact save instant behaves exactly as it would in
+ * production. Pin it and [DrivineMetamodelVersionStore.saveVersion] stamps the version at that
+ * instant instead — which is the only way to place two saves at deliberately chosen timestamps
+ * rather than at whatever the wall clock said, and so the only way to test that ordering is
+ * chronological.
+ */
+class PinnableClock : Clock() {
+
+    @Volatile
+    private var pinned: Instant? = null
+
+    fun pin(instant: Instant) {
+        pinned = instant
+    }
+
+    fun unpin() {
+        pinned = null
+    }
+
+    override fun instant(): Instant = pinned ?: Instant.now()
+
+    override fun getZone(): ZoneId = ZoneOffset.UTC
+
+    /** There is only one of these and its zone never matters — it only ever produces instants. */
+    override fun withZone(zone: ZoneId): Clock = this
 }
 
 /**
@@ -126,4 +159,31 @@ open class TestApplication {
         repository: DrivinePropositionRepository,
         persistenceManager: PersistenceManager,
     ): GraphDecayManager = GraphDecayManager(repository, persistenceManager)
+
+    /**
+     * Both MERGEs the version store performs need their key to be unique, because a MERGE is only
+     * race-free when it is. Without the first, concurrent saves of one version all miss the match,
+     * all create, and the history fills with duplicates. Without the second, a schema can end up
+     * with two counter nodes handing out the same sequence numbers.
+     *
+     * The third is the safety net under the sequence itself: it makes two versions of one schema
+     * sharing a position impossible to store, so if the counter increment ever lost an update the
+     * write would fail loudly rather than quietly scrambling the order.
+     * `DrivineMetamodelVersionStoreIntegrationTest` pins all three.
+     */
+    @Bean
+    open fun metamodelSchema(): SchemaCatalog = SchemaCatalog.of(
+        UniquenessConstraintSpec(label = "MetamodelVersion", properties = listOf("schemaName", "contentHash")),
+        UniquenessConstraintSpec(label = "MetamodelSchemaCounter", property = "schemaName"),
+        UniquenessConstraintSpec(label = "MetamodelVersion", properties = listOf("schemaName", "sequence")),
+    )
+
+    @Bean
+    open fun metamodelClock(): PinnableClock = PinnableClock()
+
+    @Bean
+    open fun metamodelVersionStore(
+        persistenceManager: PersistenceManager,
+        clock: PinnableClock,
+    ): DrivineMetamodelVersionStore = DrivineMetamodelVersionStore(persistenceManager, clock)
 }

@@ -45,3 +45,25 @@ and the consumer PRs that deliver it).
   metadata key is removed; lineage answers per-proposition attribution.
   **Compatibility: breaking.** The key is no longer available; code holding it
   must migrate to extraction-run queries.
+- `DiceMetadataKeys.METAMODEL_VERSION` metadata key and stamping contract.
+  Propositions can carry the declared schema version hash under this key to
+  record which schema governed their extraction. The key is defined here with
+  its contract; production wiring that stamps propositions at persistence time
+  lands in a follow-up slice after the extraction-run stack merges.
+  **Compatibility: additive.** New metadata key only; no existing API or code
+  touched.
+- Drivine/Neo4j-backed `MetamodelVersionStore` in `dice-storage`
+  (`DrivineMetamodelVersionStore`): stamps persist as `(:MetamodelVersion)` nodes,
+  MERGEd on the natural key `(schemaName, contentHash)` so a re-stamp updates in
+  place instead of duplicating. `latestVersion`, `versionHistory` and `findVersion`
+  all resolve in Cypher. History is ordered by a persisted per-schema sequence, taken
+  off a `(:MetamodelSchemaCounter)` node in the same statement that creates the version,
+  so ordering is true logical write order rather than a wall clock that ties within a
+  millisecond and can run backwards under NTP correction or failover; `savedAt` and
+  `savedAtEpochMillis` remain as informational metadata. An idempotent re-save neither
+  bumps the counter nor reassigns a sequence. Concurrent saves of one version leave
+  exactly one node. Hosts must declare three uniqueness constraints:
+  `MetamodelVersion(schemaName, contentHash)`, `MetamodelSchemaCounter(schemaName)`, and
+  `MetamodelVersion(schemaName, sequence)`.
+  **Compatibility: additive.** New class and a new `dice-storage` → `dice-metamodel`
+  module dependency; no existing API touched.

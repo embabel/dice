@@ -12,11 +12,11 @@ DICE is a multi-module Maven build. Each module's intent, and what it's allowed 
 | Module | Intent |
 |---|---|
 | `dice` | The core: proposition model, pipeline, gates, projection interfaces, query facades, agent tools, REST controllers. In-memory implementations only — no database driver. |
-| `dice-storage` | The durable Neo4j backend: `Drivine`-based repository, graph/Prolog/lineage projectors, schema and index bootstrap. Depends on `dice`. |
+| `dice-storage` | The durable Neo4j backend: `Drivine`-based repository, graph/Prolog/lineage projectors, schema and index bootstrap, `MetamodelVersionStore` persistence. Depends on `dice` and `dice-metamodel`. |
 | `dice-storage-autoconfigure` | Spring Boot autoconfiguration that wires `dice-storage`'s beans (repository, projectors, trust scorer) into a host application. Depends on `dice-storage`. |
 | `dice-ingestion` | Content-hash dedup ledger and source adapters that sit in front of `PropositionPipeline`, so the same artifact is never extracted twice concurrently. Depends on `dice`. |
 | `dice-report` | Rationale and structured report generation over propositions and their lineage. Depends on `dice`. |
-| `dice-metamodel` | Schema versioning: content-hash stamps over the governed part of a `DataDictionary`, the declared-schema seam, and the version store contract. Pure JVM. Depends on no other DICE module. |
+| `dice-metamodel` | Schema versioning: content-hash stamps over the governed part of a `DataDictionary`, the declared-schema seam, and the version store contract. Pure JVM. Depends on no other DICE module. `dice-storage` implements its store contract. |
 | `dice-integration-tests` | End-to-end tests exercising the real Neo4j backend and full pipeline across module boundaries. Depends on `dice`, `dice-ingestion`, `dice-report` (and transitively `dice-storage`). Not shipped. |
 
 ```mermaid
@@ -30,6 +30,7 @@ flowchart TB
     itest["dice-integration-tests"]
 
     storage --> dice
+    storage --> metamodel
     autoconf --> storage
     ingestion --> dice
     report --> dice
@@ -39,11 +40,11 @@ flowchart TB
 ```
 
 `dice` never depends on any other DICE module — it's the leaf of the graph, so every other module
-can be added or removed without touching core logic. `dice-metamodel` is a second leaf with no
-edges: it stamps a schema, and depends only on Embabel's agent core types.
-`dice-storage-autoconfigure` is the only module that knows about Spring
-Boot autoconfiguration; plain `dice-storage` stays framework-neutral so it can be wired by hand
-outside Spring Boot.
+can be added or removed without touching core logic. `dice-metamodel` stamps a schema, and depends
+only on Embabel's agent core types. One DICE module depends on it: `dice-storage`, which implements
+its `MetamodelVersionStore` against Neo4j. `dice-storage-autoconfigure` is the only module that
+knows about Spring Boot autoconfiguration; plain `dice-storage` stays framework-neutral so it can
+be wired by hand outside Spring Boot.
 
 ### Subsystem design docs
 

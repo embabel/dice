@@ -40,6 +40,8 @@ import org.junit.jupiter.api.Test
 import org.drivine.manager.PersistenceManager
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
 import java.time.Instant
 
 /**
@@ -52,9 +54,18 @@ import java.time.Instant
  * exists (which propositions land on a `via` or on a shortest path when parallel edges / ties are
  * present), we assert each returned edge is *valid* rather than object-identical — both engines are
  * free to pick a different but correct edge.
+ *
+ * Runs against [Neo4jTestContainer], not Drivine's own built-in testcontainer -- see that class
+ * for why.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivineGraphQueryParityIntegrationTest {
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
+    }
 
     @Autowired
     private lateinit var repository: DrivinePropositionRepository
