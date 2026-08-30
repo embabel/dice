@@ -77,6 +77,9 @@ you need.
   property-signature changes where a property keeps its name but changes type or cardinality,
   and the two comparisons it supports, declared against declared and declared against a live
   graph.
+- [metamodel-drift.md](metamodel-drift.md) — checking a live graph against a declared schema: the
+  runner's declare, stamp, observe, diff, report sequence, the bounds on every read of the drift
+  log, and quarantine, which marks affected propositions stale rather than deleting them.
 
 ## Modules
 
@@ -90,6 +93,6 @@ dependency map. Quick pointer to where each is documented:
 | `dice-storage-autoconfigure` | [durable-storage.md](durable-storage.md) |
 | `dice-ingestion` | [ingestion.md](ingestion.md) |
 | `dice-report` | [report.md](report.md) |
-| `dice-metamodel` | [metamodel-versioning.md](metamodel-versioning.md), [metamodel-diff.md](metamodel-diff.md) |
+| `dice-metamodel` | [metamodel-versioning.md](metamodel-versioning.md), [metamodel-diff.md](metamodel-diff.md), [metamodel-drift.md](metamodel-drift.md) |
 | `dice-integration-tests` | not separately documented — exercises the above end-to-end |
 </content>

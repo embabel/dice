@@ -344,7 +344,12 @@ has no Spring wiring, so it's an ordinary constructor call until the autoconfigu
 
 Diffing is the comparison half of the middle tier described in
 [metamodel-versioning.md](metamodel-versioning.md#the-tiers-ahead). The other half acts on the
-result: a drift check that sequences observe, declare, diff, record; a store for the reports it
-produces, so a drift seen last week is still answerable; and quarantine, which marks propositions
-stale when a change strands them rather than deleting them. Those land in the next slices, on top of
-these contracts.
+result, and has landed on top of these contracts in [metamodel-drift.md](metamodel-drift.md):
+`DriftCheckRunner` sequences declare, stamp, observe, diff, record; `DriftReportStore` keeps the
+reports, so a drift seen last week is still answerable; and `DriftQuarantinePolicy` marks stranded
+propositions stale rather than deleting them.
+
+The drift note is also where a change gets judged. A `PropertySignatureChanged` here states that
+`age` went from `string` to `integer`; the quarantine policy decides whether that can strand data.
+Any type change can, as can a cardinality that shrinks; a cardinality that widens holds everything
+it held before.

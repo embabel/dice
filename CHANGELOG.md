@@ -172,3 +172,29 @@ and the consumer PRs that deliver it).
   own labels are derived on demand and reach no hash. The behavioral part is the fix itself — for
   a host declaring fully qualified type names, a drift check that reported such a type in both
   buckets at once reports it in neither. A host whose declared names hold no dots sees no change.
+- Drift checking and quarantine contracts in `dice-metamodel`, plus the default runner.
+  `DriftCheckRunner` sequences one check — declare → stamp → observe → diff → report → optionally
+  quarantine — and is dry-run by default: `run()` persists a `DriftReport` and touches no
+  proposition. `DefaultDriftCheckRunner` stamps the declared version into the
+  `MetamodelVersionStore` on every run *before* writing the report, so a report's `versionHash`
+  always resolves through `findVersion`; the write upserts on `(schemaName, contentHash)`, so an
+  unchanged schema costs one idempotent write. `DriftReportStore` is the durable log, separate from
+  the version store because stamps and reports have different volumes and lifetimes. Every read on
+  it is **bounded** — `driftReports`, `globalDriftReports` and `driftReportsInContext` each take a
+  `limit` and an optional `since`, and none has a default body, because filtering a limited page
+  down to one scope in memory applies the limit before the filter and can report zero drift while
+  plenty sits in the store. Quarantine is non-destructive and idempotent: `DriftQuarantinePolicy`
+  returns `QuarantineDecision`s (`Conforming` / `Quarantined` / `AlreadyQuarantined`) as immutable
+  `STALE` copies carrying a reason under `dice.metamodel.quarantine.reason`, and the caller
+  persists them. The shipped `MentionTypeDriftQuarantinePolicy` fires only on lossy changes —
+  a removed type, a type that lost labels or properties, or a property whose signature narrowed
+  (type changed, value ↔ reference, or cardinality shrank along `ONE` ⊂ `OPTIONAL` ⊂ `SET` ⊂
+  `LIST`) — never on additive ones. An inherited label observed in the graph is declared, not
+  drift, so it never quarantines. A `ContextId` scopes the observation, the candidate propositions
+  and the persisted report alike, so a mis-declared schema in one context cannot reach another's
+  data. Still no Drivine implementation and no Spring wiring; both arrive in later slices.
+  **Compatibility: additive.** New types in an existing module; no existing API touched. One
+  dependency-graph change: `dice-metamodel` now depends on `dice` (core), because quarantine works
+  on the proposition model — anything depending on `dice-metamodel` alone now pulls `dice` in
+  transitively. `dice-metamodel` is no longer a leaf module, and `embabel-agent-rag-core` joins
+  `embabel-agent-api` as a `provided` dependency it expects the host to supply.

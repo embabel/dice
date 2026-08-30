@@ -413,16 +413,23 @@ Versioning is the first of three escalating tiers, shipped in that order.
 
 **Stamp and observe** is this slice: identity and history.
 
-**Detect and report** is underway. The comparison half has landed, in
+**Detect and report** has landed on top of it, in two halves. The comparison is in
 [metamodel-diff.md](metamodel-diff.md): `MetamodelDiffer` compares two declared stamps and reports
 a typed change list, and `DeclaredObservedDiffer` compares a declaration against an
-`ObservedSchema` snapshot of a live graph. Still to come on this tier: a drift check that sequences
-observe, declare, diff, and a store for the reports it produces.
+`ObservedSchema` snapshot of a live graph. Acting on the result is in
+[metamodel-drift.md](metamodel-drift.md): `DriftCheckRunner` sequences declare, stamp, observe,
+diff, record, and `DriftReportStore` keeps the reports, so a drift seen last week is still
+answerable.
 
-**Quarantine** is last: acting on a lossy change by marking affected propositions stale rather than
-deleting them.
+**Quarantine** is last, and opt-in: it acts on a lossy change by marking affected propositions
+stale rather than deleting them.
 
 Each tier builds on the one below it, and each is useful on its own. You can stamp for a year
 without detecting, and detect for a year without quarantining. Rejecting undeclared types at write
-time is not on the list yet: extraction is LLM-driven, a type nobody declared is often a real
+time is still not on the list: extraction is LLM-driven, a type nobody declared is often a real
 finding, and discarding it is the one thing that can't be undone later.
+
+The drift tier leans on `findVersion` from here, which turns a stored report's `versionHash` back
+into a schema shape. So the drift runner stamps the declared version on every run, before it writes
+the report. `saveVersion` upserts on `(schemaName, contentHash)`, so an unchanged schema costs one
+idempotent write, and no report can name a hash nothing recorded.

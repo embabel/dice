@@ -10,13 +10,23 @@
     <artifactId>dice-metamodel</artifactId>
     <packaging>jar</packaging>
     <name>Dice Metamodel</name>
-    <description>Schema versioning for DICE knowledge graphs: content-hash stamping, the declared-schema contract, and the version store contract</description>
+    <description>Schema governance for DICE knowledge graphs: content-hash stamping, the declared-schema contract, diffing, drift checking, and non-destructive quarantine</description>
 
     <dependencies>
         <!--
-            Embabel agent core types (DataDictionary, DomainType); provided, supplied by the
-            consuming app. This module deliberately does not depend on dice core — it stamps a
-            schema and nothing more, so it never touches the Proposition model.
+            Dice core: Proposition, PropositionStatus, PropositionRepository, DiceMetadataKeys.
+            Needed since quarantine landed — deciding a proposition is stranded and marking it
+            STALE means touching the proposition model, so the module can no longer be a leaf.
+            Anyone depending on dice-metamodel alone now pulls dice in transitively.
+        -->
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice</artifactId>
+        </dependency>
+
+        <!--
+            Embabel agent core types (DataDictionary, DomainType, ContextId); provided, supplied by
+            the consuming app.
         -->
         <dependency>
             <groupId>com.embabel.agent</groupId>
@@ -32,6 +42,19 @@
             <groupId>org.jetbrains</groupId>
             <artifactId>annotations</artifactId>
             <scope>provided</scope>
+        </dependency>
+
+        <!-- Retrievable, a supertype of Proposition, lives in rag-core and isn't transitive from dice -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-rag-core</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Logging only -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
         </dependency>
 
         <!-- Test -->
