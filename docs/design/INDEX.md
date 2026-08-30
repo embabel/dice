@@ -70,10 +70,13 @@ you need.
   layers, gated by an API-key filter.
 - [report.md](report.md) — `dice-report`'s pure projectors that turn queried propositions into
   human-facing artifacts: structured breakdowns, discovered links, LLM-generated rationale.
+- [metamodel-governance.md](metamodel-governance.md) — versioning the declared schema, detecting
+  drift between what a `DataDictionary` declares and what the live graph contains, and
+  quarantining propositions that reference undeclared types.
 
 ## Modules
 
-DICE ships as six Maven modules; [architecture.md](architecture.md#module-map) has the full
+DICE ships as seven Maven modules; [architecture.md](architecture.md#module-map) has the full
 dependency map. Quick pointer to where each is documented:
 
 | Module | Documented in |
@@ -81,6 +84,7 @@ dependency map. Quick pointer to where each is documented:
 | `dice` (core) | most notes above — propositions, pipeline, projections, hygiene, retrieval |
 | `dice-storage` | [durable-storage.md](durable-storage.md), [graph-projection.md](graph-projection.md), [prolog-projection.md](prolog-projection.md) |
 | `dice-storage-autoconfigure` | [durable-storage.md](durable-storage.md) |
+| `dice-metamodel` | [metamodel-governance.md](metamodel-governance.md) |
 | `dice-ingestion` | [ingestion.md](ingestion.md) |
 | `dice-report` | [report.md](report.md) |
 | `dice-integration-tests` | not separately documented — exercises the above end-to-end |

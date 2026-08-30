@@ -1,0 +1,146 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.dice.metamodel.support
+
+import com.embabel.agent.core.ContextId
+import com.embabel.dice.metamodel.DeclaredObservedDiffer
+import com.embabel.dice.metamodel.DeclaredSchemaSource
+import com.embabel.dice.metamodel.DriftCheckResult
+import com.embabel.dice.metamodel.DriftCheckRunner
+import com.embabel.dice.metamodel.DriftQuarantinePolicy
+import com.embabel.dice.metamodel.DriftReport
+import com.embabel.dice.metamodel.MetamodelChange
+import com.embabel.dice.metamodel.MetamodelDiff
+import com.embabel.dice.metamodel.MetamodelStore
+import com.embabel.dice.metamodel.MetamodelVersion
+import com.embabel.dice.metamodel.ObservedSchemaSource
+import com.embabel.dice.proposition.PropositionRepository
+import org.slf4j.LoggerFactory
+
+/**
+ * Default [DriftCheckRunner]. Stateless and safe to call repeatedly or concurrently for different
+ * schemas; concurrent checks of the *same* schema aren't corrupting (each is a distinct, fully
+ * captured snapshot) but are wasteful — serialize at the scheduling layer if that matters.
+ *
+ * @param observedSchemaSource Snapshots what the live graph actually contains.
+ * @param declaredSchemaSource Supplies the schema as declared.
+ * @param differ Compares the declared schema against the observed one.
+ * @param store Durable store for the persisted [DriftReport] (and, separately, schema version
+ *   history — this runner only writes reports, not versions).
+ * @param quarantinePolicy Decides which drift-affected propositions to quarantine. Only consulted
+ *   on a live (non-dry) run with entity-type drift; this runner never reimplements its decision,
+ *   only feeds it a diff and persists what it decides.
+ * @param propositionRepository Read the candidate propositions from, and save quarantine decisions to.
+ */
+class DefaultDriftCheckRunner(
+    private val observedSchemaSource: ObservedSchemaSource,
+    private val declaredSchemaSource: DeclaredSchemaSource,
+    private val differ: DeclaredObservedDiffer,
+    private val store: MetamodelStore,
+    private val quarantinePolicy: DriftQuarantinePolicy,
+    private val propositionRepository: PropositionRepository,
+) : DriftCheckRunner {
+
+    private val logger = LoggerFactory.getLogger(DefaultDriftCheckRunner::class.java)
+
+    override fun run(dryRun: Boolean, contextId: ContextId?): DriftCheckResult {
+        val observed = observedSchemaSource.observe(contextId)
+        val declared = declaredSchemaSource.declare()
+
+        val diff = differ.diffAgainstObserved(
+            declared = declared.version,
+            declaredRelationshipTypeNames = declared.relationshipTypeNames,
+            observed = observed,
+        )
+
+        val report = DriftReport(
+            schemaName = declared.version.schemaName,
+            versionHash = declared.version.contentHash,
+            driftedEntityTypes = diff.driftedEntityTypes,
+            driftedRelationshipTypes = diff.driftedRelationshipTypes,
+            capturedAt = observed.capturedAt,
+            contextId = contextId,
+        )
+        // Persisted unconditionally: a zero-drift check is itself a fact worth having on record,
+        // not just a no-op.
+        store.saveDriftReport(report)
+
+        val quarantinedCount = if (!dryRun && diff.driftedEntityTypes.isNotEmpty()) {
+            quarantineDriftedEntityTypes(declared.version, diff.driftedEntityTypes, contextId)
+        } else {
+            0
+        }
+
+        logger.info(
+            "Drift check for '{}' complete (dryRun={}, contextId={}): {} drifted entity type(s), {} drifted " +
+                "relationship type(s), {} quarantined",
+            declared.version.schemaName,
+            dryRun,
+            contextId?.value,
+            diff.driftedEntityTypes.size,
+            diff.driftedRelationshipTypes.size,
+            quarantinedCount,
+        )
+
+        return DriftCheckResult(
+            dryRun = dryRun,
+            schemaName = declared.version.schemaName,
+            driftedEntityTypes = diff.driftedEntityTypes,
+            driftedRelationshipTypes = diff.driftedRelationshipTypes,
+            quarantinedCount = quarantinedCount,
+            report = report,
+            contextId = contextId,
+        )
+    }
+
+    /**
+     * Delegates to [quarantinePolicy] and persists whatever it decides to quarantine.
+     *
+     * [DriftQuarantinePolicy.evaluate] takes a [MetamodelDiff] (a comparison between two *declared*
+     * versions) keyed off [MetamodelDiff.removedEntityTypes], but what we have here is a
+     * [DeclaredObservedDiff] (declared vs. a live observation) — a different comparison entirely.
+     * The two agree on the part that matters to the policy, though: a mention whose type is no
+     * longer recognized by the declared schema is orphaned either way, whether that's because the
+     * type was removed from a newer declared version or because the graph holds a type that was
+     * never declared at all. So we synthesize a [MetamodelDiff] whose only content is
+     * [MetamodelChange.EntityTypeRemoved] for each drifted entity type, and hand that to the real
+     * policy rather than re-deciding quarantine here. Both `fromVersion` and `toVersion` point at
+     * the same declared version — there was no "old declared vs. new declared" transition, so
+     * they're only there to give the policy's human-readable reason string something to name.
+     */
+    private fun quarantineDriftedEntityTypes(
+        declaredVersion: MetamodelVersion,
+        driftedEntityTypes: Set<String>,
+        contextId: ContextId?,
+    ): Int {
+        val syntheticDiff = MetamodelDiff(
+            fromVersion = declaredVersion,
+            toVersion = declaredVersion,
+            changes = driftedEntityTypes.sorted().map { MetamodelChange.EntityTypeRemoved(it) },
+        )
+        // Scoped to one context, this is the whole blast radius: a proposition in another context
+        // is never a candidate, so it can never be quarantined by this run no matter what its
+        // mentions reference.
+        val propositions = if (contextId != null) {
+            propositionRepository.findByContextId(contextId)
+        } else {
+            propositionRepository.findAll()
+        }
+        val result = quarantinePolicy.evaluate(syntheticDiff, propositions)
+        result.quarantined.forEach { decision -> propositionRepository.save(decision.proposition) }
+        return result.quarantined.size
+    }
+}

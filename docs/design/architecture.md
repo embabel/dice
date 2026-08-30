@@ -16,6 +16,7 @@ DICE is a multi-module Maven build. Each module's intent, and what it's allowed 
 | `dice-storage-autoconfigure` | Spring Boot autoconfiguration that wires `dice-storage`'s beans (repository, projectors, trust scorer) into a host application. Depends on `dice-storage`. |
 | `dice-ingestion` | Content-hash dedup ledger and source adapters that sit in front of `PropositionPipeline`, so the same artifact is never extracted twice concurrently. Depends on `dice`. |
 | `dice-report` | Rationale and structured report generation over propositions and their lineage. Depends on `dice`. |
+| `dice-metamodel` | Schema governance contracts: `MetamodelVersion` stamping, declared-vs-observed diffing, drift reports, quarantine policy. Pure JVM — no database driver, no Spring wiring. Depends on `dice`. |
 | `dice-integration-tests` | End-to-end tests exercising the real Neo4j backend and full pipeline across module boundaries. Depends on `dice`, `dice-ingestion`, `dice-report` (and transitively `dice-storage`). Not shipped. |
 
 ```mermaid
@@ -25,9 +26,11 @@ flowchart TB
     autoconf["dice-storage-autoconfigure<br/>(Spring Boot wiring)"]
     ingestion["dice-ingestion<br/>(dedup ledger)"]
     report["dice-report<br/>(rationale/reports)"]
+    metamodel["dice-metamodel<br/>(schema governance)"]
     itest["dice-integration-tests"]
 
     storage --> dice
+    metamodel --> dice
     autoconf --> storage
     ingestion --> dice
     report --> dice
