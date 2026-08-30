@@ -92,6 +92,123 @@ class MetamodelVersionTest {
         }
 
         @Test
+        fun `constructor takes an immutable snapshot of caller-owned collections`() {
+            val typeNames = mutableListOf("A")
+            val labels = mutableMapOf<String, Set<String>>("A" to mutableSetOf("A"))
+            val properties = mutableMapOf<String, Set<String>>("A" to mutableSetOf("name"))
+            val relationships = mutableListOf("A-[KNOWS]->A")
+            val version = MetamodelVersion(
+                schemaName = "s",
+                entityTypeNames = typeNames,
+                entityTypeLabels = labels,
+                entityTypeProperties = properties,
+                relationshipNames = relationships,
+            )
+            val originalHash = version.contentHash
+
+            typeNames += "B"
+            (labels.getValue("A") as MutableSet<String>) += "Agent"
+            labels["B"] = mutableSetOf("B")
+            (properties.getValue("A") as MutableSet<String>) += "email"
+            relationships += "A-[LIKES]->B"
+
+            assertEquals(listOf("A"), version.entityTypeNames)
+            assertEquals(mapOf("A" to setOf("A")), version.entityTypeLabels)
+            assertEquals(mapOf("A" to setOf("name")), version.entityTypeProperties)
+            assertEquals(listOf("A-[KNOWS]->A"), version.relationshipNames)
+            assertEquals(originalHash, version.contentHash)
+            assertThrows(UnsupportedOperationException::class.java) {
+                (version.entityTypeNames as MutableList<String>) += "B"
+            }
+            assertThrows(UnsupportedOperationException::class.java) {
+                (version.entityTypeLabels.getValue("A") as MutableSet<String>) += "Agent"
+            }
+        }
+
+        @Test
+        fun `constructor rejects shape maps for absent entity types`() {
+            val error = assertThrows(IllegalArgumentException::class.java) {
+                MetamodelVersion(
+                    schemaName = "s",
+                    entityTypeNames = listOf("A"),
+                    entityTypeLabels = mapOf("A" to setOf("A"), "B" to setOf("B")),
+                    entityTypeProperties = mapOf("A" to emptySet()),
+                    relationshipNames = emptyList(),
+                )
+            }
+
+            assertTrue(error.message.orEmpty().contains("entityTypeLabels"))
+        }
+
+        @Test
+        fun `copy requires labels and properties to remain aligned with entity type names`() {
+            val version = MetamodelVersion(
+                schemaName = "s",
+                entityTypeNames = listOf("A", "B"),
+                entityTypeLabels = mapOf("A" to setOf("A"), "B" to setOf("B")),
+                entityTypeProperties = mapOf("A" to emptySet(), "B" to emptySet()),
+                relationshipNames = emptyList(),
+            )
+
+            assertThrows(IllegalArgumentException::class.java) {
+                version.copy(entityTypeNames = listOf("A"))
+            }
+            val aligned = version.copy(
+                entityTypeNames = listOf("A"),
+                entityTypeLabels = mapOf("A" to setOf("A")),
+                entityTypeProperties = mapOf("A" to emptySet()),
+            )
+            assertEquals(listOf("A"), aligned.entityTypeNames)
+        }
+
+        @Test
+        fun `value semantics match the former data class contract`() {
+            val one = MetamodelVersion(
+                schemaName = "s",
+                entityTypeNames = listOf("B", "A"),
+                entityTypeLabels = mapOf("A" to setOf("A"), "B" to setOf("B")),
+                entityTypeProperties = mapOf("A" to emptySet(), "B" to setOf("name")),
+                relationshipNames = listOf("B-[KNOWS]->A"),
+            )
+            val two = MetamodelVersion(
+                schemaName = "s",
+                entityTypeNames = listOf("A", "B"),
+                entityTypeLabels = mapOf("B" to setOf("B"), "A" to setOf("A")),
+                entityTypeProperties = mapOf("B" to setOf("name"), "A" to emptySet()),
+                relationshipNames = listOf("B-[KNOWS]->A"),
+            )
+
+            assertEquals(one, two)
+            assertEquals(one.hashCode(), two.hashCode())
+            assertEquals(one, one.copy())
+            assertEquals("s", one.component1())
+            assertEquals(listOf("A", "B"), one.component2())
+            assertTrue(one.toString().startsWith("MetamodelVersion(schemaName=s"))
+        }
+
+        @Test
+        fun `constructor sorting does not deduplicate persisted hash input`() {
+            val duplicated = MetamodelVersion(
+                schemaName = "s",
+                entityTypeNames = listOf("A", "A"),
+                entityTypeLabels = mapOf("A" to setOf("A")),
+                entityTypeProperties = mapOf("A" to emptySet()),
+                relationshipNames = listOf("A-[KNOWS]->A", "A-[KNOWS]->A"),
+            )
+            val single = MetamodelVersion(
+                schemaName = "s",
+                entityTypeNames = listOf("A"),
+                entityTypeLabels = mapOf("A" to setOf("A")),
+                entityTypeProperties = mapOf("A" to emptySet()),
+                relationshipNames = listOf("A-[KNOWS]->A"),
+            )
+
+            assertEquals(listOf("A", "A"), duplicated.entityTypeNames)
+            assertEquals(2, duplicated.relationshipNames.size)
+            assertNotEquals(single.contentHash, duplicated.contentHash)
+        }
+
+        @Test
         fun `same types under different schema names produce the same hash`() {
             // contentHash covers structural content only; the schema name is excluded so that
             // dev/prod variants of the same schema compare as equal.

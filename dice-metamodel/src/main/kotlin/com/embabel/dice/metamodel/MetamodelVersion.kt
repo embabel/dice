@@ -17,6 +17,7 @@ package com.embabel.dice.metamodel
 
 import com.embabel.agent.core.DataDictionary
 import java.security.MessageDigest
+import java.util.Collections
 
 /**
  * An immutable stamp that captures the identity and structural content of a
@@ -45,16 +46,36 @@ import java.security.MessageDigest
  *   are equal regardless of how they are named. Stable across JVM restarts; any change — even
  *   labels or properties on a type whose name is preserved — produces a different hash.
  */
-data class MetamodelVersion(
-    val schemaName: String,
-    val entityTypeNames: List<String>,
-    val entityTypeLabels: Map<String, Set<String>>,
-    val entityTypeProperties: Map<String, Set<String>>,
-    val relationshipNames: List<String>,
+class MetamodelVersion(
+    schemaName: String,
+    entityTypeNames: List<String>,
+    entityTypeLabels: Map<String, Set<String>>,
+    entityTypeProperties: Map<String, Set<String>>,
+    relationshipNames: List<String>,
 ) {
 
+    val schemaName: String = schemaName
+
+    val entityTypeNames: List<String> = immutableList(entityTypeNames.sorted())
+
+    val entityTypeLabels: Map<String, Set<String>> = immutableNestedSetMap(entityTypeLabels)
+
+    val entityTypeProperties: Map<String, Set<String>> = immutableNestedSetMap(entityTypeProperties)
+
+    val relationshipNames: List<String> = immutableList(relationshipNames.sorted())
+
     val contentHash: String =
-        fingerprint(entityTypeNames, entityTypeLabels, entityTypeProperties, relationshipNames)
+        fingerprint(this.entityTypeNames, this.entityTypeLabels, this.entityTypeProperties, this.relationshipNames)
+
+    init {
+        val entityTypeNameSet = this.entityTypeNames.toHashSet()
+        require(this.entityTypeLabels.keys.all { it in entityTypeNameSet }) {
+            "entityTypeLabels contains a type absent from entityTypeNames"
+        }
+        require(this.entityTypeProperties.keys.all { it in entityTypeNameSet }) {
+            "entityTypeProperties contains a type absent from entityTypeNames"
+        }
+    }
 
     /**
      * Returns `true` when this version and [other] have the same structural content —
@@ -63,7 +84,68 @@ data class MetamodelVersion(
      */
     fun hasSameContentAs(other: MetamodelVersion): Boolean = contentHash == other.contentHash
 
+    /**
+     * Return another immutable stamp, recomputing [contentHash] from the supplied structure.
+     *
+     * @throws IllegalArgumentException if a label or property map contains a key absent from
+     *   [entityTypeNames].
+     */
+    fun copy(
+        schemaName: String = this.schemaName,
+        entityTypeNames: List<String> = this.entityTypeNames,
+        entityTypeLabels: Map<String, Set<String>> = this.entityTypeLabels,
+        entityTypeProperties: Map<String, Set<String>> = this.entityTypeProperties,
+        relationshipNames: List<String> = this.relationshipNames,
+    ): MetamodelVersion = MetamodelVersion(
+        schemaName = schemaName,
+        entityTypeNames = entityTypeNames,
+        entityTypeLabels = entityTypeLabels,
+        entityTypeProperties = entityTypeProperties,
+        relationshipNames = relationshipNames,
+    )
+
+    operator fun component1(): String = schemaName
+
+    operator fun component2(): List<String> = entityTypeNames
+
+    operator fun component3(): Map<String, Set<String>> = entityTypeLabels
+
+    operator fun component4(): Map<String, Set<String>> = entityTypeProperties
+
+    operator fun component5(): List<String> = relationshipNames
+
+    override fun equals(other: Any?): Boolean =
+        this === other ||
+            other is MetamodelVersion &&
+            schemaName == other.schemaName &&
+            entityTypeNames == other.entityTypeNames &&
+            entityTypeLabels == other.entityTypeLabels &&
+            entityTypeProperties == other.entityTypeProperties &&
+            relationshipNames == other.relationshipNames
+
+    override fun hashCode(): Int {
+        var result = schemaName.hashCode()
+        result = 31 * result + entityTypeNames.hashCode()
+        result = 31 * result + entityTypeLabels.hashCode()
+        result = 31 * result + entityTypeProperties.hashCode()
+        result = 31 * result + relationshipNames.hashCode()
+        return result
+    }
+
+    override fun toString(): String =
+        "MetamodelVersion(schemaName=$schemaName, entityTypeNames=$entityTypeNames, " +
+            "entityTypeLabels=$entityTypeLabels, entityTypeProperties=$entityTypeProperties, " +
+            "relationshipNames=$relationshipNames)"
+
     companion object {
+
+        private fun <T> immutableList(values: Collection<T>): List<T> =
+            Collections.unmodifiableList(values.toList())
+
+        private fun immutableNestedSetMap(values: Map<String, Set<String>>): Map<String, Set<String>> =
+            Collections.unmodifiableMap(
+                values.mapValues { (_, entries) -> Collections.unmodifiableSet(entries.toSet()) }
+            )
 
         /** Append [token] length-prefixed (`<len>:<token>`) so concatenation can't be ambiguous. */
         private fun StringBuilder.appendSized(token: String) {
@@ -95,9 +177,8 @@ data class MetamodelVersion(
             // Schema name is deliberately excluded: two structurally identical schemas must produce
             // the same hash even when named differently (e.g. dev vs prod environments).
             val hashInput = buildString {
-                val sortedTypeNames = entityTypeNames.sorted()
-                append("types:").append(sortedTypeNames.size).append('|')
-                sortedTypeNames.forEach { name ->
+                append("types:").append(entityTypeNames.size).append('|')
+                entityTypeNames.forEach { name ->
                     appendSized(name)
                     val labels = entityTypeLabels[name].orEmpty().sorted()
                     append("labels:").append(labels.size).append('|')
@@ -106,9 +187,8 @@ data class MetamodelVersion(
                     append("props:").append(props.size).append('|')
                     props.forEach { appendSized(it) }
                 }
-                val sortedRelationshipNames = relationshipNames.sorted()
-                append("rels:").append(sortedRelationshipNames.size).append('|')
-                sortedRelationshipNames.forEach { appendSized(it) }
+                append("rels:").append(relationshipNames.size).append('|')
+                relationshipNames.forEach { appendSized(it) }
             }
 
             val digest = MessageDigest.getInstance("SHA-256")

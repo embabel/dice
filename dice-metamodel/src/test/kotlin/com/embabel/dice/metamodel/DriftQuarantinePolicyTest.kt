@@ -312,6 +312,23 @@ class DriftQuarantinePolicyTest {
             assertEquals(0, result.quarantined.size)
             assertEquals(2, result.total)
         }
+
+        @Test
+        fun `already-quarantined proposition stays out of conforming bucket when diff is non-lossy`() {
+            val lossyDiff = differ.diff(schemaWith("Person", "RemovedType"), schemaWith("Person"))
+            val stale = policy.evaluate(
+                lossyDiff,
+                listOf(proposition("entity with removed type", "RemovedType")),
+            ).quarantined.single().proposition
+
+            val additiveDiff = differ.diff(schemaWith("Person"), schemaWith("Person", "Company"))
+            val result = policy.evaluate(additiveDiff, listOf(stale))
+
+            assertEquals(0, result.conforming.size)
+            assertEquals(0, result.quarantined.size)
+            assertEquals(1, result.alreadyQuarantined.size)
+            assertEquals(stale, result.alreadyQuarantined.single().proposition)
+        }
     }
 
     @Nested

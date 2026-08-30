@@ -139,6 +139,10 @@ MERGE key, what `hasSameContentAs` compares, and what every drift report records
 a caller could supply it, two schemas with different types could claim the same hash, compare equal,
 and overwrite each other in storage.
 
+The public constructor snapshots its collections and rejects label/property map keys that are not
+present in `entityTypeNames`. Its `copy` method enforces the same invariant, so removing a type also
+means removing that type's label and property entries in the same call.
+
 **Every name, label, and property is length-prefixed** (`<len>:<token>`) before hashing, and each set
 is preceded by its size. These names come from free-text and LLM extraction; they routinely contain
 `;`, `[`, `=`, and spaces. A delimiter-joined encoding would let `["a;b"]` and `["a", "b"]` produce
@@ -273,7 +277,8 @@ beats gone. Two properties make the sweep safe to run as routine maintenance:
   come back as `QuarantineDecision.AlreadyQuarantined`, a third outcome alongside conforming and
   newly quarantined, so a caller counting conforming propositions isn't counting stale ones too.
 
-A diff with no lossy change short-circuits — every proposition comes back conforming.
+A diff with no lossy change short-circuits — every proposition except those already quarantined
+comes back conforming; previously quarantined propositions remain in their dedicated outcome.
 
 ## Scoping a check to one context
 

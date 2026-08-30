@@ -62,8 +62,24 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
 
         if (removedTypes.isEmpty() && lossyModified.isEmpty()) {
             // Fast path: no lossy change means no proposition can be affected.
-            val conforming = propositions.map { QuarantineDecision.Conforming(it) }
-            return QuarantineResult(conforming = conforming, quarantined = emptyList())
+            // Preserve the third outcome even here: a proposition quarantined by an earlier sweep
+            // is still stale, so reporting it as conforming would corrupt health counts.
+            val conforming = mutableListOf<QuarantineDecision.Conforming>()
+            val alreadyQuarantined = mutableListOf<QuarantineDecision.AlreadyQuarantined>()
+            propositions.forEach { proposition ->
+                val priorDecision = alreadyQuarantinedDecision(proposition)
+                if (priorDecision != null) {
+                    alreadyQuarantined += priorDecision
+                } else {
+                    conforming += QuarantineDecision.Conforming(proposition)
+                }
+            }
+            logSummary(conforming.size, alreadyQuarantined.size, 0, removedTypes, lossyModified.keys)
+            return QuarantineResult(
+                conforming = conforming,
+                quarantined = emptyList(),
+                alreadyQuarantined = alreadyQuarantined,
+            )
         }
 
         val conforming = mutableListOf<QuarantineDecision.Conforming>()
@@ -77,17 +93,13 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
             // Skip propositions that were already quarantined by a previous drift sweep so we
             // don't overwrite their original quarantine reason. The caller can force a re-sweep
             // by clearing the QUARANTINE_REASON metadata before passing propositions here.
-            if (proposition.status == PropositionStatus.STALE
-                && proposition.metadata.containsKey(DiceMetadataKeys.QUARANTINE_REASON)
-            ) {
+            val priorDecision = alreadyQuarantinedDecision(proposition)
+            if (priorDecision != null) {
                 logger.debug(
                     "Leaving already-quarantined proposition (id={}) untouched; original reason preserved",
                     proposition.id,
                 )
-                alreadyQuarantined += QuarantineDecision.AlreadyQuarantined(
-                    proposition = proposition,
-                    originalReason = proposition.metadata[DiceMetadataKeys.QUARANTINE_REASON] as? String,
-                )
+                alreadyQuarantined += priorDecision
                 continue
             }
 
@@ -124,9 +136,7 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
             }
         }
 
-        logger.info(
-            "Drift quarantine sweep complete: {} conforming, {} already quarantined from a prior sweep, " +
-                "{} newly quarantined (removed types: {}, lossy-modified types: {})",
+        logSummary(
             conforming.size,
             alreadyQuarantined.size,
             quarantined.size,
@@ -138,6 +148,38 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
             conforming = conforming,
             quarantined = quarantined,
             alreadyQuarantined = alreadyQuarantined,
+        )
+    }
+
+    private fun alreadyQuarantinedDecision(
+        proposition: Proposition,
+    ): QuarantineDecision.AlreadyQuarantined? =
+        if (proposition.status == PropositionStatus.STALE &&
+            proposition.metadata.containsKey(DiceMetadataKeys.QUARANTINE_REASON)
+        ) {
+            QuarantineDecision.AlreadyQuarantined(
+                proposition = proposition,
+                originalReason = proposition.metadata[DiceMetadataKeys.QUARANTINE_REASON] as? String,
+            )
+        } else {
+            null
+        }
+
+    private fun logSummary(
+        conformingCount: Int,
+        alreadyQuarantinedCount: Int,
+        quarantinedCount: Int,
+        removedTypes: Set<String>,
+        lossyModifiedTypes: Set<String>,
+    ) {
+        logger.info(
+            "Drift quarantine sweep complete: {} conforming, {} already quarantined from a prior sweep, " +
+                "{} newly quarantined (removed types: {}, lossy-modified types: {})",
+            conformingCount,
+            alreadyQuarantinedCount,
+            quarantinedCount,
+            removedTypes,
+            lossyModifiedTypes,
         )
     }
 
