@@ -1,3 +1,4 @@
 com.embabel.dice.storage.autoconfigure.DiceStorageAutoConfiguration
 com.embabel.dice.storage.autoconfigure.DiceDecaySchedulingConfiguration
 com.embabel.dice.storage.autoconfigure.CollectorAutoConfiguration
+com.embabel.dice.storage.autoconfigure.MetamodelAutoConfiguration

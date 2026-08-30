@@ -13,7 +13,7 @@ DICE is a multi-module Maven build. Each module's intent, and what it's allowed 
 |---|---|
 | `dice` | The core: proposition model, pipeline, gates, projection interfaces, query facades, agent tools, REST controllers. In-memory implementations only — no database driver. |
 | `dice-storage` | The durable Neo4j backend: `Drivine`-based repository, graph/Prolog/lineage projectors, schema and index bootstrap, and the governance persistence side: `MetamodelVersionStore`, the `DriftReportStore` drift log, and the `ObservedSchemaSource` that asks the live graph what it holds, excluding dice's own bookkeeping labels and edges so governance doesn't observe itself. Depends on `dice` and `dice-metamodel`. |
-| `dice-storage-autoconfigure` | Spring Boot autoconfiguration that wires `dice-storage`'s beans (repository, projectors, trust scorer) into a host application. Depends on `dice-storage`. |
+| `dice-storage-autoconfigure` | Spring Boot autoconfiguration that wires `dice-storage`'s beans (repository, projectors, trust scorer) into a host application, plus the schema-governance loop: version store, drift log, observed-schema source, differ, quarantine policy and drift runner. That loop is wired only when the application supplies a `DeclaredSchemaSource` bean, and its escalation tier is one property, `off` / `observe` / `quarantine`, defaulting to `observe`. See [metamodel-wiring.md](metamodel-wiring.md). Depends on `dice-storage`. |
 | `dice-ingestion` | Content-hash dedup ledger and source adapters that sit in front of `PropositionPipeline`, so the same artifact is never extracted twice concurrently. Depends on `dice`. |
 | `dice-report` | Rationale and structured report generation over propositions and their lineage. Depends on `dice`. |
 | `dice-metamodel` | Schema governance: content-hash stamps over the governed part of a `DataDictionary`, the declared-schema contract, the version and drift-report store contracts, diffing, drift checking, and non-destructive quarantine. A leaf over `embabel-agent-api`, with no dependency on `dice`; `dice-storage` implements its store contracts. |
@@ -300,3 +300,4 @@ and `CollectorRecord` MERGE on their natural keys so replayed writes are idempot
 | REST surface | `dice/web/rest/DiscoveryController.kt` |
 | Events | `dice/common/` (event types), `EventEmittingPropositionRepository` |
 | Spring Boot wiring | `dice-storage-autoconfigure/DiceStorageAutoConfiguration.kt` |
+| Schema-governance wiring | `dice-storage-autoconfigure/MetamodelAutoConfiguration.kt` |

@@ -8,7 +8,7 @@ Drivine/Neo4j implementations). The *why* behind these decisions is in
 
 ## What's here
 
-Two files, both under `com.embabel.dice.storage.autoconfigure`:
+Under `com.embabel.dice.storage.autoconfigure`:
 
 - **`DiceStorageAutoConfiguration`** — declares the store beans for both backends: `PropositionRepository`,
   `ChunkHistoryStore`, `DecayManager`, `ProjectionRecordStore`, `CollectorRecordStore`, and the
@@ -16,6 +16,13 @@ Two files, both under `com.embabel.dice.storage.autoconfigure`:
   the separate auto-config that schedules the decay tick.
 - **`DiceStoreProperties`** — `@ConfigurationProperties(prefix = "embabel.dice.store")`: the `type`
   switch plus nested `decay` and `vector-index` blocks.
+- **`MetamodelAutoConfiguration`** — the opt-in wiring for schema governance. Activates only when the
+  host declares a `DeclaredSchemaSource` bean (no declared schema, no metamodel beans at all); every
+  default is `@ConditionalOnMissingBean`, so consumer-supplied implementations always win. See
+  [`docs/design/metamodel-wiring.md`](../docs/design/metamodel-wiring.md).
+- **`MetamodelProperties`** — `@ConfigurationProperties(prefix = "embabel.dice.metamodel")`: the
+  `enabled` kill switch and `drift.mode` escalation tier (`off` | `observe` | `quarantine`;
+  quarantine is never a default).
 
 ## How backend selection works
 

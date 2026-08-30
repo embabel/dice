@@ -23,6 +23,16 @@
             <artifactId>dice-storage</artifactId>
         </dependency>
 
+        <!--
+          Governance contracts (DeclaredSchemaSource, DriftCheckRunner, the differ and policy
+          defaults) that MetamodelAutoConfiguration wires. Reachable through dice-storage, but
+          declared here because this module imports the types directly.
+        -->
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice-metamodel</artifactId>
+        </dependency>
+
         <!-- Ai / EmbeddingService for backend + vector-index sizing -->
         <dependency>
             <groupId>com.embabel.agent</groupId>
@@ -104,6 +114,21 @@
             <groupId>org.mockito.kotlin</groupId>
             <artifactId>mockito-kotlin</artifactId>
             <version>5.4.0</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+          Test: the metamodel autoconfiguration IT drives the whole governance loop against a real
+          Neo4j. Drivine's test support wires transactions; Neo4jTestContainer supplies the database.
+        -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>neo4j</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

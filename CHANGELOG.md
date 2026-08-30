@@ -548,3 +548,20 @@ and the consumer PRs that deliver it).
     committed independently and stayed committed whatever happened next. Which exceptions trigger
     that rollback follows Spring's defaults: a `RuntimeException` or an `Error` rolls back and a
     checked exception commits, and custom rollback rules can override either behaviour.
+- Spring Boot auto-configuration for schema governance: `MetamodelAutoConfiguration` in
+  `dice-storage-autoconfigure`. It registers only when the application supplies a
+  `DeclaredSchemaSource` bean, and then wires the whole loop against the existing Drivine
+  `PersistenceManager`: version store, drift-report store, observed-schema source, differ,
+  quarantine policy, drift runner, and a `SchemaCatalog` carrying the six metamodel uniqueness
+  constraints. Every wired collaborator is `@ConditionalOnMissingBean`, so an application that
+  defines its own keeps it. Settings live under `embabel.dice.metamodel`: `enabled=false` removes
+  the beans in one environment without deleting the declared-schema bean, and `drift.mode` is
+  `off`, `observe` or `quarantine`, defaulting to `observe`. Under `observe` the registered runner
+  is an `ObserveOnlyDriftCheckRunner`, which downgrades `run(dryRun = false)` to a dry run, logs
+  the downgrade, and returns a report with `dryRun = true`. Under `quarantine` the runner is
+  `DefaultDriftCheckRunner` and a live run moves stranded propositions to `STALE`. Nothing runs on
+  a schedule; a caller decides when a check happens. `DrivineObservedSchemaSource` also excludes
+  Drivine's own `_DrivineSchema` inventory label by shape.
+  **Compatibility: additive.** An application with no `DeclaredSchemaSource` bean sees no behavior
+  change. One with one needs the six metamodel constraints, which the module's `SchemaCatalog`
+  bean supplies, and a `PersistenceManager` and `PropositionStore` on the context.
