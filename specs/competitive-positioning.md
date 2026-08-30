@@ -1,198 +1,434 @@
-# DICE Competitive Positioning
+# DICE competitive positioning
 
-Based on deep analysis of Zep/Graphiti, Mem0, LangChain/LangMem, Google Vertex AI Memory Bank, AWS Bedrock AgentCore Memory, Microsoft Foundry Agent Service, and Neo4j Agent Memory.
+Where DICE sits against the agent-memory field (Zep/Graphiti, Mem0, Letta, Cognee, Hindsight,
+LangMem, and the three hyperscaler memory services), and against the enterprise data-governance
+tooling whose vocabulary we should be borrowing rather than inventing.
 
-## DICE Strengths
+Two halves. The first is the claim we lead with and the evidence behind it. The second is the
+per-competitor detail — kept because it's still the fastest way to answer "how do we compare on X".
 
-| Capability | DICE Implementation | Competitors |
-|---|---|---|
-| Batch classification | N propositions in 1 LLM call via `classifyBatch()` | Zep: sequential per-edge. Mem0: sequential per-fact. LangMem: sequential tool calls. |
-| Auto-merge fast path | Embedding score >= 0.95 skips LLM entirely | Zep: text-identical fast path only (no similarity threshold). Others: none. |
-| Outcome-dependent decay | Contradicted +0.15, merged *0.7, reinforced *0.85 | Zep: binary temporal invalidation. Mem0: hard delete. LangMem: none. |
-| Canonical text dedup | Cheap string match before vector search | Zep: similar for identical edge text but only after vector search. |
-| 5-way classification | IDENTICAL/SIMILAR/CONTRADICTORY/UNRELATED/GENERALIZES with edge-case guidance + few-shot | Mem0: only ADD/UPDATE/DELETE/NONE. LangMem: insert/update/delete tool calls. |
-| JVM native | Only JVM-based memory system | All competitors are Python (Zep also Go). |
-| Confidence + decay model | Per-proposition confidence with exponential time decay from GUM paper | Zep: no decay. Mem0: no confidence model. LangMem: asks for p(x) in prompts but no decay math. |
-| Extraction quality | SNR-maximizing, confidence-qualified with hedging detection, role-aware (USER/AGENT/ALL), schema-bound | Comparable to LangMem prompts; better than Zep/Mem0. |
-| Reinforcement frequency | `reinforceCount` tracks merge/reinforce frequency, queryable via `PropositionQuery` | Mem0: `mentions` counter on graph nodes. Zep/LangMem: none. Google/AWS/Microsoft: none. |
-| Entity resolution | Fuzzy name, vector, exact name, partial name, agentic candidate searchers; LLM disambiguation | Zep: Neo4j entity nodes. Mem0: graph nodes. Google/AWS/Microsoft: none — flat fact strings. |
-| Abstraction hierarchy | Multi-level propositions (level 0 = raw, level 1+ = synthesized) with source tracking | None of the competitors support multi-level abstraction. |
-| Contradiction retention | Both propositions retained with reduced confidence | Zep: temporal invalidation. Mem0/Google/AWS/Microsoft: hard delete. LangMem: none. |
-| Portability | Embeddable JVM library, no cloud dependency | Google: GCP only. AWS: AWS only. Microsoft: Azure only. Zep: Neo4j required. Mem0: self-hosted or cloud. LangMem: Python/LangGraph. |
+Surveyed mid-2026. Competitor surfaces move fast and several of them publish roadmap blogs as if
+they were release notes, so re-verify anything here before it goes into a bakeoff or a deck.
 
-## vs Zep/Graphiti
+## Delivery status: read this before quoting anything below
+
+The governance story is **direction, not shipped surface**. `dice-metamodel` — `MetamodelVersion`,
+`GovernedTypeSelector`, `DeclaredSchema`/`DeclaredSchemaSource`, `MetamodelVersionStore` — is an
+unmerged PR train. Detection and quarantine are designed and not built. Everywhere below, a
+metamodel or drift capability is marked **(in delivery)** or **(planned)**, and those markers are
+load-bearing: this doc is for positioning conversations, and a present-tense claim about an unmerged
+module is the exact thing that collapses in an eval. Say "this is where we're going and here's the
+design" — that's still a differentiated answer, because nobody else is going there at all.
+
+What *is* shipped and can be claimed flatly: the proposition model with confidence and decay,
+multi-strategy entity resolution, source provenance (`ProvenanceEntry`), collector decision traces
+(`CollectorTraceStore`), the conflict-detection SPI, and the pluggable store family.
+
+## The claim
+
+**DICE is the agent-memory substrate with schema governance an enterprise data team will
+recognise.**
+
+Every serious competitor has solved *extraction* and most have solved *entity resolution*. None of
+them has solved *governance of the schema that extraction runs against* — and none of them has it on
+a public roadmap. Across Zep/Graphiti, Mem0, Letta, Cognee and Hindsight, not one ships, and DICE is
+building:
+
+- governed metamodel versioning — a schema identity you can write down, store, and compare later
+  **(in delivery)**;
+- provenance from a stored claim back to the source text it came from **(shipped)**, and a
+  correlatable trace of the extraction run that produced it **(planned — see below)**;
+- drift quarantine as a first-class state, distinct from delete **(planned)**;
+- conflict resolution behind an explicit, pluggable SPI rather than an opaque LLM call **(shipped)**,
+  with versioned and audited policies **(planned)**.
+
+That is a category gap, not a feature gap. The systems that treat memory as a datastore have
+skipped the layer that every enterprise data platform grew in its second year. Our advantage is that
+we're building it deliberately; it is not yet an advantage we can demo end to end.
+
+## What the competition actually has
+
+Differentiation that lies dies in the first eval. Stated straight, and generously:
+
+| System | What it genuinely has |
+|---|---|
+| **Zep / Graphiti** | Bi-temporal edges (`valid_from`/`valid_until` plus ingestion time), cross-session entity dedup, Leiden community clustering with summaries, custom entity types via Pydantic, five reranking strategies, SOC 2 on the managed offering. The strongest temporal model in the field. |
+| **Mem0** | Very fast single-pass ingestion (v3, April 2026, dropped the UPDATE/DELETE phases to cut latency), hybrid semantic + BM25 + entity-match retrieval, graph memory across Neo4j/Memgraph/Neptune/Kuzu, full SQLite change history, mentions counting. |
+| **Letta (MemGPT)** | Agent-managed context with archival memory in Postgres/pgvector; the agent itself decides what to promote and how to resolve conflicts, via tool calls. Honest about being unstructured. |
+| **Cognee** | The closest thing to declared schema in the field: LLM extraction into RDF triples with Pydantic validation, auto-generated ontology, and a custom-schema override. Shape validation, not versioning. |
+| **Hindsight** | Structured facts into a knowledge graph with real entity resolution ("Alice" vs "my coworker Alice") and quality that compounds across sessions. |
+| **LangMem** | Excellent extraction prompts — confidence-qualified, surprise-prioritised, SNR-shaped — plus gradient-style prompt optimisation and dilated-window retrieval. |
+| **Google / AWS / Microsoft** | Fully managed, zero-infrastructure, IAM-scoped, framework-integrated. Flat fact strings underneath. |
+
+Two of these are ahead of us on things we care about. Zep's bi-temporal model is better than our
+system timestamps. Cognee's Pydantic validation is a real declared-shape check at write time. Say so.
+
+## Where the governance line falls
+
+| Capability | Zep | Mem0 | Letta | Cognee | Hindsight | DICE |
+|---|---|---|---|---|---|---|
+| Schema versioning | — | — | — | Pydantic override, unversioned | — | Content-hashed `MetamodelVersion` (in delivery) |
+| Type hierarchy / ontology | Implicit (clustering) | — | — | RDF/RDFS, auto-generated | — | Declared `DataDictionary`, per-type governed (in delivery) |
+| Source provenance | Bi-temporal timestamps only | — | — | — | — | `ProvenanceEntry` edges, append-only (shipped) |
+| Extraction-run trace | — | — | — | — | — | Planned (no run identifier today — issue #67) |
+| Collector decision audit | — | Full SQLite change history | — | — | — | `CollectorTraceStore` (shipped) |
+| Contradiction handling | Temporal windows, manual | ADD-only (sidesteps it) | Manual, agent-driven | Unclear | Unclear | `ConflictDetector` SPI, both claims retained (shipped) |
+| Versioned / audited conflict policy | — | — | — | — | — | Planned |
+| Drift detection (declared vs observed) | — | — | — | — | — | Planned (tier 2) |
+| Drift quarantine | — | — | — | — | — | Planned (tier 3) |
+
+Four honest caveats. Zep and Cognee may have unpublished lineage APIs; this table is built from
+public docs. Mem0's change history is genuinely better than anything we have for "what changed and
+who changed it" — it is only weaker on *what schema it was valid under*. Our audit story is two
+separate mechanisms, not one chain: `ProvenanceEntry` links a proposition to the source chunks it
+came from, and `CollectorTraceStore` records why a collapse or merge decision was made. Neither
+carries an extraction-run identifier, so there is no end-to-end "this claim came from that run under
+that schema" trace today — that's planned work (issue #67), and the metamodel stamp is the piece
+that would complete it. And the whole tier ladder — set out in `docs/design/metamodel-versioning.md`,
+which lands with the `dice-metamodel` module — is designed, with only tier 1 in delivery.
+
+Claim the architecture, not the checkbox.
+
+## Identity semantics: content-addressed, not sequential
+
+Confluent Schema Registry and AWS Glue both assign **sequential** version identity — Confluent a
+global immutable integer schema ID plus a per-subject version number, Glue a per-schema version
+number plus an opaque version ID. Registration is a stateful event: the same schema posted twice
+gets one ID and one version because the registry remembers, not because the identity is derived from
+the content.
+
+DICE derives identity from the content. That design is in delivery, not merged, so the whole of this
+section is a statement of direction. `MetamodelVersion.contentHash` is a SHA-256 over the structural
+fields — sorted type names, per-type labels and properties, sorted relationship descriptors — with
+every token length-prefixed so `["a;b"]` can't collide with `["a", "b"]`. Three consequences worth
+stating in any comparison:
+
+- **Registration is idempotent by construction.** `saveVersion` upserts on `(schemaName,
+  contentHash)`; a re-save lands on identical content by definition. No sequence counter to get out
+  of step across environments.
+- **Schema is data.** A dev and a prod schema of identical shape hash identically, so they compare
+  directly. The registries can't do that — same schema, different subject, different version number.
+- **Stamps are portable.** A proposition carries `dice.metamodel.version` as metadata, so the schema
+  a claim was extracted under travels with the claim rather than living in a registry it must be
+  looked up in.
+
+The second divergence is **granularity**. Both registries configure compatibility **per subject**,
+flat: one mode for the whole schema. DICE governs **per type**, via `GovernedTypeSelector`. That's
+not a stylistic difference — it's what lets one domain be closed-world where it matters (`Person`,
+`Company`) and open-world everywhere else, so an exploratory type LLM extraction just invented
+doesn't churn the version history.
+
+**Adopt their vocabulary where it fits.** BACKWARD / FORWARD / FULL, and the transitive variants,
+are well-understood terms for what a compatibility check means, and our detect tier should use them
+rather than coining synonyms. Glue's *checkpoint* — a selectable reference point to compare against,
+rather than "previous version" or "all versions" — is more expressive than transitive-yes/no and is
+the right model if governed types ever get release windows.
+
+**Name the divergence.** Both registries **hard-reject** an incompatible registration: HTTP 409, no
+warn mode, no soft landing. DICE does not, and won't. Extraction is LLM-driven; a type nobody
+declared is often a real finding. Rejecting at write time is the one decision that can't be undone
+later.
+
+## Opt-in and drift: observe, never auto-mutate
+
+The migration and ORM world has already run this experiment, and the developer verdict is
+unambiguous.
+
+**Loved:**
+
+- **`liquibase diff` / `diff-changelog`** — compares declared (reference) against observed (target)
+  and *generates* the changesets that would close the gap. It reports; a human decides whether to
+  apply or mark as run.
+- **`flyway validate`** — checksums applied migrations against local ones and fails loudly on
+  mismatch. Explicitly bound to a build phase, not fired automatically on every deploy.
+- **Hibernate `hbm2ddl.auto=validate`** — check only, fail on mismatch, change nothing. And
+  `hbm2ddl.auto=none` as the shipped default: no schema management unless you asked for it.
+- **`@Version` per entity** — versioning is an annotation you put on the entities you chose. Nothing
+  is versioned by inference.
+
+**Hated:** `hbm2ddl.auto=update`. Uncontrolled schema evolution at startup, silently creating
+columns and leaving zombies behind when a `@Column(name=...)` changes. A production anti-pattern in
+every guide that mentions it.
+
+DICE's stance follows directly, and it's a one-line elevator pitch: **liquibase diff for knowledge
+graphs.** Observe and quarantine, never auto-mutate. That's the design; here is what it commits us
+to, tier by tier:
+
+- Nothing is versioned unless an application supplies a `DeclaredSchemaSource` (in delivery). No
+  declared schema, no versioning — the Hibernate `none` default, not the `update` one.
+- Governance is per governed type via `GovernedTypeSelector` (in delivery), the `@Version` model
+  rather than a global switch.
+- The detect tier (planned) will report the declared-vs-observed gap. It will not close it. Closing
+  it stays a human act, the way Liquibase generates changesets rather than applying them.
+- The quarantine tier (planned) marks affected propositions stale. Stale is reversible; delete is
+  not.
+
+The failure mode to watch, straight from the same brief: **opt-in fatigue**. All three tools require
+explicit configuration, teams ship with defaults, and later regret having no drift visibility. Our
+answer isn't to turn governance on by default — it's to make the on-switch a one-bean decision and to
+lead every governance doc page with the gate.
+
+## Escalation vocabulary: say what the data team says
+
+OpenMetadata, DataHub, Great Expectations, Soda and the Open Data Contract Standard have converged on
+one vocabulary. Use it verbatim. Every term we coin instead is a term a buyer has to translate.
+
+| Term | Their meaning | Ours | Status |
+|---|---|---|---|
+| **Drift** | Structural or statistical divergence over time | Declared metamodel vs what the graph actually holds | Planned |
+| **Contract** | Declared structure + quality + ownership | `DeclaredSchema` — the governed types and their shape | In delivery |
+| **Assertion** | A comparison check fired on change | The declared-vs-observed comparison in the detect tier | Planned |
+| **Policy** | Enforcement rule, configurable strictness | `SchemaAdherence` (STRICT/DEFAULT/RELAXED) shipped; `ConflictDetector` SPI shipped; versioned policy planned | Mixed |
+| **Incident** | Raised on assertion failure, routed to an owner | `DriftReport` — the record a detection produces | Planned |
+| **Quarantine** | Invalid records split off; the valid stream continues | Affected propositions marked stale, not deleted | Planned |
+
+The escalation ladder they all implement is **observe → alert → block**. DICE's three tiers are
+designed to map onto it directly:
+
+| DICE tier | Their stage | What happens | Status |
+|---|---|---|---|
+| Stamp and observe | Observe | Schema gets an identity; propositions carry the stamp. No opinions. | In delivery |
+| Detect and report | Alert | Compare declaration against declaration, and declaration against live graph. Emit a `DriftReport`. | Planned |
+| Quarantine | Block (soft) | Mark affected propositions stale. The valid set stays queryable; the suspect set is excluded and recoverable. | Planned |
+
+The diagram below is the target flow, not current behaviour.
+
+```mermaid
+flowchart LR
+    W["extraction writes"] --> Q{"governed type?"}
+    Q -->|"no (open-world)"| ACC["accepted, unstamped"]
+    Q -->|yes| ST["stamped with contentHash"]
+    ST --> D{"declared vs observed"}
+    D -->|conforms| VALID["valid set — queryable"]
+    D -->|"diverges"| DR["DriftReport"]
+    DR --> QU["quarantined — marked stale,<br/>excluded from reads, reversible"]
+    QU -.->|"human review"| VALID
+```
+
+Note the shape of the split: the pipeline **continues**. Quarantine is a valid/invalid partition, not
+a halt — exactly the hybrid default the Spark/Soda world settled on. Fail-fast is what you escalate
+to when quality drops below a threshold, not what you do on the first bad record.
+
+Two decisions this vocabulary forces on us, both still open:
+
+- **Is quarantine a metadata flag or physical routing?** Enterprise tools do both and neither is
+  canonical. DICE's stale-marking is a flag; whether reads exclude by default is the real question.
+- **Do we route incidents?** Their incident model assumes metadata ownership drives notification.
+  DICE has events; it has no owner model. `DriftReport` without a routing story is a log line.
+
+## Graph-native convergence: Neo4j GRAPH TYPE
+
+Neo4j's GRAPH TYPE (preview, 2025) declares a schema once in Cypher DDL and enforces it at write
+time, with SET/ADD/ALTER/DROP lifecycle commands and an Open variant that requires declared fields
+while tolerating extras. TypeDB does the same thing more strictly: nothing can be written that
+doesn't conform, and `redefine` checks existing instances before a migration commits.
+
+**Read this as validation, not threat.** The store vendors are independently concluding that a
+property graph needs a declared schema coupled to enforcement. That's the direction we're already
+walking. The differentiation is *where the governance sits*.
+
+DICE governs **above the store** — that's the architectural bet, with tier 1 in delivery and the
+rest designed:
+
+- **Per context, not per database.** Governance scopes to a `contextId`, so one deployment can hold
+  a governed tenant and an exploratory one. GRAPH TYPE is a property of the graph.
+- **Open-world by default.** GRAPH TYPE and TypeDB reject the undeclared. DICE tolerates it — an
+  exploratory type is a finding, and per-type governance is what makes that safe rather than sloppy.
+  Today's `SchemaAdherence` already takes this side of the trade at extraction time.
+- **Quarantine rather than reject** (planned). Write-time enforcement means a non-conforming
+  extraction is lost. Ours would be stored, flagged, and reviewable.
+- **Survives a backend swap.** DICE's schema lives in `SchemaRegistry`/`DataDictionary`, not in the
+  database. In-memory, Neo4j, or something later — the governance story is the same one. Adopting
+  GRAPH TYPE would rewrite it.
+
+The honest cost of governing above the store: our schema is application-enforced, so it *can* drift
+if some entry point skips validation. Neo4j's cannot. That's a real trade, and the detect tier is
+planned precisely because we took the flexible side of it — which also means that until that tier
+lands, the drift it's meant to catch is undetected rather than prevented.
+
+**SHACL validation reports are the prior art for `DriftReport`.** SHACL is the only standardised
+violation-report format in this space: a conformance flag at the root, one result node per violation,
+each carrying the focus node, the failed constraint, severity, and a human-readable message. Copy the
+shape. Don't copy the serialisation — SHACL reports are RDF graphs, which would make every consumer
+of a `DriftReport` parse RDF. PG-Schema and ProGS are the property-graph analogues and are worth
+watching, but neither has a canonical report format to borrow.
+
+## What we copy, what we reject, what only we do
+
+| | Copy | Reject | Only us |
+|---|---|---|---|
+| **Schema registries** (Confluent, Glue) | BACKWARD/FORWARD/FULL vocabulary; Glue's checkpoint idea; idempotent registration | Sequential version IDs; flat per-subject compatibility; hard-reject on incompatible registration | Content-addressed identity; per-type governed selection; the stamp travelling with the data |
+| **Migration & ORM** (Liquibase, Flyway, Hibernate) | Declared-vs-observed diff that reports rather than applies; validate-mode; per-entity `@Version` opt-in | `hbm2ddl.auto=update` auto-mutation; anything that changes a schema at startup | Drift detection over LLM-extracted knowledge, where the "observed" side is a graph nobody wrote by hand |
+| **Data governance** (DataHub, Soda, ODCS) | drift / contract / assertion / policy / incident / quarantine, verbatim; observe→alert→block; valid/invalid split | Blocking at the producer boundary as a default; contract YAML as the primary authoring surface | Governance over probabilistic extraction — confidence-weighted claims, not rows |
+| **Graph schema** (Neo4j GRAPH TYPE, TypeDB, SHACL) | SHACL's validation-report structure; GRAPH TYPE's Open variant semantics | Write-time rejection; RDF as a wire format; store-coupled schema declaration | Governance that works per context, tolerates open-world types, and survives a backend swap |
+| **Agent memory** (Zep, Mem0, Cognee, LangMem) | Zep's bi-temporal model (GAP-4B); Mem0's integer re-indexing and change history; LangMem's extraction prompts; Cognee's declared-shape validation | ADD-only ingestion; hard delete on contradiction; opaque LLM consolidation | Source provenance and collector traces (shipped); governed metamodel versioning (in delivery); drift quarantine and versioned conflict policy (planned) — nobody else has any of the four, shipped or roadmapped |
+
+## Per-competitor detail
+
+### vs Zep/Graphiti
 
 | Dimension | DICE | Zep | Edge |
 |---|---|---|---|
 | Ingestion speed | Batch classify + auto-merge + canonical dedup | Sequential only ("must be awaited") | **DICE** |
 | Classification nuance | 5-way with edge cases + few-shot | Duplicate vs contradicted (binary) | **DICE** |
 | Confidence model | Exponential decay + outcome-dependent adjustment + reinforceCount | No decay, no confidence scoring | **DICE** |
-| Extraction quality | SNR, confidence-qualified, role-aware, schema-bound | Custom ontology via Pydantic, entity validation | Tie |
+| Extraction quality | SNR, confidence-qualified, role-aware, schema-bound | Custom entity types via Pydantic, entity validation | Tie |
 | Temporal model | System timestamps only (created/revised) | Bi-temporal (valid_at/invalid_at/expired_at) | **Zep** |
 | Graph structure | Propositions + entity mentions, no graph DB required | Full knowledge graph in Neo4j with community detection | **Zep** |
 | Retrieval | Vector similarity + canonical match | Cosine + BM25 + BFS + 5 rerankers | **Zep** |
+| Schema governance | Content-hashed metamodel versions, per-type opt-in (in delivery) | None — entity types are code, not versioned artifacts | **DICE**, on direction |
 | Infrastructure weight | Embeddable, JVM-native, no external deps | Requires Neo4j + embedding service + LLM | **DICE** |
 
-**Their moat**: Bi-temporal fact model, custom ontology via Pydantic, 5 reranking strategies, community subgraph summaries, Neo4j-backed graph traversal.
+**Their moat**: bi-temporal fact model, custom entity types via Pydantic, five reranking strategies,
+community subgraph summaries, Neo4j-backed traversal.
 
-**Their weakness**: Sequential-only ingestion ("episodes must be added sequentially and awaited"), Python/Go only, heavy infrastructure (Neo4j required), no batch classification.
+**Their weakness**: sequential-only ingestion, Python/Go only, heavy infrastructure, no schema
+versioning. Their audit story is SOC 2 on the managed service — an org-level control, not a
+data-lineage API.
 
-**Attack angle**: DICE is embeddable — no Neo4j dependency. Batch pipeline is faster for high-throughput ingestion. Position as "memory for JVM agents" vs their "memory infrastructure platform." Bi-temporal model (GAP-4B) closes their biggest technical advantage.
+**Attack angle**: embeddable, no Neo4j requirement, faster at high-throughput ingestion. Governance
+is the clean differentiator; the temporal gap (GAP-4B) is the thing to close before claiming parity.
 
-## vs Mem0
+### vs Mem0
 
 | Dimension | DICE | Mem0 | Edge |
 |---|---|---|---|
-| Classification | 5-way taxonomy with edge-case guidance | 4-op (ADD/UPDATE/DELETE/NONE) | **DICE** |
-| Dedup pipeline | Canonical + auto-merge + batch LLM | Sequential per-fact, top-5 candidates | **DICE** |
-| Frequency signal | `reinforceCount` on propositions, queryable | `mentions` counter on graph nodes/edges | Tie |
-| Confidence model | Decay + outcome adjustment + qualification at extraction | None — no confidence scores | **DICE** |
+| Classification | 5-way taxonomy with edge-case guidance | v3 is ADD-only; supersession and contradiction aren't expressible | **DICE** |
+| Dedup pipeline | Canonical + auto-merge + batch LLM | Entity linking at retrieval time, not at write | **DICE** |
+| Ingestion latency | Batch LLM call per chunk | Single-pass, deliberately minimal | **Mem0** |
+| Confidence model | Decay + outcome adjustment + qualification at extraction | None | **DICE** |
 | ID safety | Integer re-indexing prevents hallucination | Integer re-indexing prevents hallucination | Tie |
-| Role-aware extraction | `ExtractionPerspective` enum (ALL/USER/AGENT) | Separate user vs agent prompts with penalty framing | Tie |
-| Graph memory | No graph DB | Neo4j/Memgraph/Neptune/Kuzu | **Mem0** |
-| Audit trail | Grounding chain + reinforceCount | Full SQLite history (old/new/event/actor) | **Mem0** |
+| Graph memory | Entity mentions + Neo4j projection | Neo4j/Memgraph/Neptune/Kuzu | **Mem0** |
+| Audit trail | Source provenance + collector decision traces, no run-level trace | Full SQLite history (old/new/event/actor) | **Mem0** |
+| Schema governance | Governed metamodel versions (in delivery) | None | **DICE**, on direction |
 
-**Their moat**: Graph memory with Neo4j/Memgraph/Neptune/Kuzu, vision support, procedural memory for agent traces, mentions counting.
+**Their moat**: graph memory across four stores, vision, procedural memory for agent traces, a real
+change history, and the lowest ingestion latency in the field.
 
-**Their weakness**: Coarse 4-operation model (ADD/UPDATE/DELETE/NONE) — no SIMILAR/GENERALIZES distinction. Sequential per-fact processing. Graph memory is a separate bolted-on pipeline.
+**Their weakness**: v3 traded expressiveness for speed. ADD-only means contradictions accumulate
+unresolved; there is no supersession semantics to appeal to.
 
-**Attack angle**: DICE's 5-way classification preserves nuance that Mem0's 4-op model loses. Unified revision pipeline vs their split vector+graph paths. ID hallucination prevention (GAP-6) adopts their best defensive technique.
+**Attack angle**: their change history is genuinely good and ours should be at least as queryable.
+Where we win is that their history records *what changed*, not *what schema it was valid under*.
 
-## vs LangChain/LangMem
+### vs Cognee
+
+| Dimension | DICE | Cognee | Edge |
+|---|---|---|---|
+| Declared shape | `DataDictionary` + `SchemaAdherence` (STRICT/DEFAULT/RELAXED), shipped | Pydantic models, optionally overriding an auto-generated ontology | Tie |
+| Schema versioning | Content-hashed, stored, comparable (in delivery) | None — validation is per-run | **DICE**, on direction |
+| Ontology | Declared types and relationships | RDF/RDFS triples, auto-generated from the corpus | **Cognee** |
+| Validation failure handling | Adherence policy; non-conforming extraction retained and flaggable | Pydantic rejects the shape; no error feedback loop | **DICE** |
+| Provenance | `ProvenanceEntry` edges to source chunks | Not documented | **DICE** |
+
+**Their moat**: the only competitor with a real declared-schema check at write time, and
+auto-generated ontology lowers the setup cost a lot.
+
+**Their weakness**: shape validation without versioning. Change the Pydantic model and nothing tells
+you what previously-stored data no longer conforms — which is the exact problem the detect tier
+exists to solve.
+
+**Attack angle**: closest competitor conceptually, and the one worth watching. Pydantic validation is
+a good idea we should match at the extraction boundary.
+
+### vs Letta (MemGPT) and Hindsight
+
+Letta declines to have a schema at all: core memory managed by the LLM, archival memory as
+pgvector passages, conflicts resolved by the agent through tool calls. Consolidation is agent-driven,
+not governed. Nothing to compare on governance; the honest comparison is philosophical — Letta trusts
+the agent, DICE trusts the substrate.
+
+Hindsight structures facts into a graph with entity resolution good enough to link "Alice" to "my
+coworker Alice", and improves across sessions. Smaller product surface than the incumbents, no
+documented temporal invalidation or contradiction framework. Worth re-checking; the entity-resolution
+quality is the part that could matter.
+
+### vs LangChain/LangMem
 
 | Dimension | DICE | LangMem | Edge |
 |---|---|---|---|
-| Extraction prompts | SNR, confidence-qualified, role-aware, few-shot | Confidence-qualified, surprise-prioritized, SNR | Tie |
-| Dedup/classification | Structured 5-way pipeline with fast paths | LLM tool calls (insert/update/delete), no structured classification | **DICE** |
+| Extraction prompts | SNR, confidence-qualified, role-aware, few-shot | Confidence-qualified, surprise-prioritised, SNR | Tie |
+| Dedup/classification | Structured 5-way pipeline with fast paths | LLM tool calls (insert/update/delete) | **DICE** |
 | Batch processing | N propositions in 1 LLM call | Sequential tool calls | **DICE** |
-| Prompt optimization | Not applicable | Gradient-based prompt evolution | **LangMem** |
+| Prompt optimisation | Not applicable | Gradient-based prompt evolution | **LangMem** |
 | Retrieval | Vector similarity | Dilated windows + LLM-generated queries | **LangMem** |
 | Graph memory | Entity mentions on propositions | Commented-out prototype | **DICE** |
 | Background processing | Synchronous pipeline | Debounced async reflection | **LangMem** |
-| Ecosystem | JVM/Spring native | Python/LangGraph locked | Depends on stack |
 
-**Their moat**: Excellent extraction prompts, prompt optimization via gradient analogy, debounced background reflection, dilated windows retrieval.
+**Attack angle**: great prompts, weak infrastructure. We've taken the prompt ideas; the pipeline
+mechanics are ours.
 
-**Their weakness**: Graph memory is literally commented-out code. No structured dedup pipeline — relies on LLM tool calls for consolidation. Tightly coupled to LangGraph ecosystem.
+### vs the managed services (Google, AWS, Microsoft)
 
-**Attack angle**: LangMem has great prompts but weak infrastructure. DICE's explicit classification taxonomy + fast paths + batch processing is more reliable at scale. We've adopted their best prompt ideas and combined them with our superior pipeline mechanics.
+All three converge on the same shape: a flat fact string, opaque LLM consolidation, hard delete on
+contradiction, no entity model, no confidence, no provenance, and full vendor lock-in — traded
+against zero infrastructure and native IAM.
 
-## vs Google Vertex AI Memory Bank
+| Dimension | DICE | Google Memory Bank | AWS AgentCore | Microsoft Foundry |
+|---|---|---|---|---|
+| Data model | Structured `Proposition` | Flat `fact` string | Flat `{"fact": "..."}` | Flat memory "items" |
+| Memory types | `KnowledgeType` classifier | Managed + custom topics | Strategy-scoped | Profile + chat summary only |
+| Confidence/decay | Decay + outcome adjustment | None | None | None |
+| Entity resolution | Multi-strategy + LLM disambiguation | None | None | None |
+| Contradiction | Both retained, reduced confidence | Old deleted | New entry, no detection | Old value discarded |
+| Provenance | `ProvenanceEntry` to source chunks | None | None | None |
+| Governance | Metamodel versioning (in delivery), drift (planned) | None | None | None |
+| Managed | Self-hosted | Fully managed | Fully managed | Fully managed |
+| Scale limits | Application-determined | Not published | Not published | 100 scopes, 10K memories/scope |
 
-| Dimension | DICE | Google Memory Bank | Edge |
-|---|---|---|---|
-| Data model | Rich `Proposition` with entity mentions, confidence, decay, grounding, reinforceCount | Flat `fact` string with no structured sub-components | **DICE** |
-| Confidence/decay | Exponential decay from GUM paper, outcome-dependent adjustment | None — facts are binary (exist or deleted) | **DICE** |
-| Entity resolution | Multi-strategy entity resolution with LLM disambiguation | None — no entity model | **DICE** |
-| Classification nuance | 5-way (IDENTICAL/SIMILAR/CONTRADICTORY/UNRELATED/GENERALIZES) | 3-outcome (CREATED/UPDATED/DELETED), opaque LLM consolidation | **DICE** |
-| Abstraction | Multi-level hierarchy with source tracking | None — all facts at same level | **DICE** |
-| Contradiction handling | Both retained with reduced confidence | Contradicting memory deleted — history lost | **DICE** |
-| Dedup transparency | Configurable thresholds + LLM classification | Opaque LLM-based consolidation, no control over merge logic | **DICE** |
-| Graph projection | Entity mentions map to Neo4j relationships, Prolog facts | None | **DICE** |
-| Managed service | No — self-hosted | Fully managed, zero infrastructure | **Google** |
-| Multimodal | Text only | Images, video, audio extraction | **Google** |
-| Topic-based extraction | Schema hints + extraction guidance | Managed + custom topics with per-topic filtering | **Google** |
-| TTL | Threshold-based retirement via decay | Granular TTL (create, generate-created, generate-updated) | **Google** |
-| Retrieval | Vector similarity + canonical match + entity-based queries | Euclidean distance similarity + regex/metadata filtering | **DICE** |
+**Attack angle**: all three validate the category and none of them is a competitor for a team that
+cares what happens to knowledge over time. The interesting question these raise isn't technical, it's
+whether DICE eventually wants a managed offering — the embeddable library model is a strength today.
 
-**Their moat**: Fully managed GCP service with zero infrastructure overhead, multimodal extraction (images/video/audio), topic-based extraction with managed topics, built-in TTL, IAM-scoped access control, ADK integration with PreloadMemoryTool.
-
-**Their weakness**: Flat fact model with no entity resolution, no confidence or decay, no abstraction hierarchy, no reinforcement counting, opaque consolidation logic, `CreateMemory` bypasses dedup entirely, top_k defaults to 3, GCP vendor lock-in.
-
-**Attack angle**: Memory Bank solves "I don't want to build memory infrastructure" but trades away all the expressiveness that makes memory useful at scale. DICE's proposition model carries structured metadata (confidence, decay, entity mentions, grounding, reinforceCount) enabling richer consolidation, retrieval, and reasoning. For teams that need more than flat fact storage — entity-centric queries, confidence-weighted retrieval, graph projection — DICE is fundamentally more capable.
-
-## vs AWS Bedrock AgentCore Memory
-
-| Dimension | DICE | AWS AgentCore Memory | Edge |
-|---|---|---|---|
-| Data model | Rich `Proposition` with entity mentions, confidence, decay, grounding, reinforceCount | Flat `fact` string (`{"fact": "..."}`) with rigid output schema | **DICE** |
-| Confidence/decay | Exponential decay + outcome-dependent adjustment | None — no confidence field on memory records | **DICE** |
-| Entity resolution | Multi-strategy resolution with LLM disambiguation | None — facts are flat text strings, no entity linking | **DICE** |
-| Classification nuance | 5-way taxonomy with edge-case guidance | 3-op consolidation (AddMemory/UpdateMemory/SkipMemory) | **DICE** |
-| Contradiction handling | Both retained with reduced confidence | AddMemory creates new entry (contradictions not explicitly detected) | **DICE** |
-| Provenance | Grounding chain links propositions to source chunks | None — no link back to source text | **DICE** |
-| Dedup transparency | Configurable thresholds + deterministic fast paths + LLM classification | LLM-based only — non-deterministic, expensive per consolidation | **DICE** |
-| Knowledge types | Explicit `KnowledgeType` enum (SEMANTIC/EPISODIC/PROCEDURAL/WORKING) with classifier | Implicit via strategy choice (semantic/preference/summary/episodic) | Tie |
-| Managed service | No — self-hosted | Fully managed with control plane + data plane | **AWS** |
-| Strategy tiers | N/A | Built-in, built-in with overrides, self-managed — three customization levels | **AWS** |
-| Episodic memory | Propositions with EPISODIC knowledge type | Automatic episode detection with cross-episode reflection | **AWS** |
-| Session management | Application-managed | Built-in session/actor model with branching | **AWS** |
-| Framework integrations | JVM/Spring native | LangChain, LangGraph, AutoGen, Strands out of the box | **AWS** |
-| Retrieval | Vector similarity + canonical match + entity-based + composable PropositionQuery | Cosine similarity only on flat text with metadata filters | **DICE** |
-| Sync extraction | Synchronous pipeline | Async-only with `time.sleep(60)` in examples | **DICE** |
-
-**Their moat**: Fully managed AWS service with three strategy tiers (built-in → override → self-managed), episodic strategy with automatic episode detection and cross-episode reflection, session/actor model with branching, CDK/IaC support, framework integrations (LangChain/AutoGen/Strands).
-
-**Their weakness**: Flat `{"fact": "..."}` model with no entity resolution. No confidence/decay — all memories equally weighted. No provenance tracking. LLM-dependent deduplication is expensive and non-deterministic. Built-in schema is rigid and non-editable. Async-only extraction means stored information isn't immediately available. Deep AWS vendor lock-in (IAM, S3, SNS, KMS, Lambda).
-
-**Attack angle**: AgentCore Memory is a reasonable managed service for simple preference/fact storage in chatbots. But for systems that need structured knowledge with entity resolution, confidence-weighted decaying memory, provenance tracking, deterministic deduplication, and multi-strategy retrieval, DICE's proposition model is fundamentally more expressive. Both Google and AWS validate that agent memory is a critical capability — DICE provides it without vendor lock-in and with far richer knowledge representation.
-
-## vs Microsoft Foundry Agent Service
-
-| Dimension | DICE | Microsoft Foundry | Edge |
-|---|---|---|---|
-| Data model | Rich `Proposition` with entity mentions, confidence, decay, grounding, reinforceCount | Flat memory "items" — no structured sub-components | **DICE** |
-| Memory types | Unified proposition model with `KnowledgeType` classifier (SEMANTIC/EPISODIC/PROCEDURAL/WORKING) | Two types only: user profile (static preferences) and chat summary (distilled conversation) | **DICE** |
-| Confidence/decay | Exponential decay + outcome-dependent adjustment | None — memories are binary (exist or removed) | **DICE** |
-| Entity resolution | Multi-strategy resolution with LLM disambiguation | None — no entity model | **DICE** |
-| Classification nuance | 5-way (IDENTICAL/SIMILAR/CONTRADICTORY/UNRELATED/GENERALIZES) | Opaque LLM-based consolidation, no user-visible classification taxonomy | **DICE** |
-| Contradiction handling | Both retained with reduced confidence | "Conflicting facts are resolved" — old value discarded | **DICE** |
-| Abstraction | Multi-level hierarchy with source tracking | None — all memories at same level | **DICE** |
-| Graph projection | Entity mentions map to Neo4j relationships, Prolog facts | None | **DICE** |
-| Dedup transparency | Configurable thresholds + deterministic fast paths + LLM classification | Opaque LLM-based consolidation, "behavior can vary by memory type and may change during preview" | **DICE** |
-| Retrieval | Vector similarity + canonical match + entity-based + composable PropositionQuery | Memory search (details opaque), scope-based filtering | **DICE** |
-| Managed service | No — self-hosted | Fully managed Azure service, zero infrastructure | **Microsoft** |
-| Integration model | JVM/Spring native, embeddable library | Memory search tool auto-attached to prompt agents, or low-level Memory Store APIs | **Microsoft** |
-| Scale limits | Application-determined | 100 scopes/store, 10K memories/scope, 1K req/min | **DICE** |
-
-**Their moat**: Fully managed Azure service with zero infrastructure overhead, two-method access (agent tool for simple use, APIs for advanced), integration with Azure AI Content Safety for prompt injection detection, built-in scope-based multi-tenancy.
-
-**Their weakness**: Simplest memory model of any competitor — only two memory types (user profile + chat summary), no entity resolution, no confidence or decay, no abstraction hierarchy, no reinforcement counting, opaque consolidation logic that "may change during preview," hard 10K memory limit per scope, Azure vendor lock-in.
-
-**Attack angle**: Foundry's memory is the thinnest of the managed offerings — even simpler than Google Memory Bank or AWS AgentCore. It's adequate for remembering user preferences across chatbot sessions, but lacks the structured knowledge representation needed for serious agent memory. DICE's proposition model, entity resolution, confidence decay, and composable queries operate in a fundamentally different capability tier. Microsoft validates the market need but their implementation is a minimal viable feature, not a memory system.
-
-## vs Neo4j Agent Memory
+### vs Neo4j Agent Memory
 
 | Dimension | DICE | Neo4j Agent Memory | Edge |
 |---|---|---|---|
-| Classification nuance | 5-way with edge cases + few-shot | No explicit classification taxonomy — entity resolution handles dedup | **DICE** |
-| Batch processing | N propositions in 1 LLM call | Sequential extraction through cascade stages | **DICE** |
-| Confidence/decay | Exponential decay + outcome-dependent adjustment + reinforceCount | No decay model — entities are binary (exist or merged) | **DICE** |
-| Contradiction handling | Both retained with reduced confidence | Entities merged or left distinct — no contradiction retention | **DICE** |
-| Abstraction hierarchy | Multi-level propositions with source tracking | Flat — all entities/facts at same level | **DICE** |
-| Extraction pipeline | Single LLM call, SNR-maximizing | spaCy → GLiNER → LLM cascade with 5 merge strategies | **Neo4j** |
-| Graph structure | Propositions + entity mentions, Neo4j as projection | Full native Neo4j knowledge graph with POLE+O ontology | **Neo4j** |
-| Temporal model | System timestamps only | Facts with valid_from/valid_until + geospatial queries | **Neo4j** |
-| Reasoning traces | Not applicable | Trace → Step → ToolCall hierarchy with aggregated tool stats | **Neo4j** |
-| Retrieval | Vector similarity + canonical match + entity-based + composable query | Hybrid vector + graph traversal (up to 3 hops) | **Neo4j** |
-| Framework integrations | JVM/Spring native | 9 frameworks (LangChain, LlamaIndex, CrewAI, etc.) + MCP server | **Neo4j** |
-| Infrastructure weight | Embeddable JVM library, no external deps | Requires Neo4j 5.11+ plus spaCy/GLiNER models | **DICE** |
-| Observability | Application-managed | OpenTelemetry + Opik built-in | **Neo4j** |
+| Classification nuance | 5-way with edge cases + few-shot | No taxonomy — entity resolution handles dedup | **DICE** |
+| Batch processing | N propositions in 1 LLM call | Sequential cascade stages | **DICE** |
+| Confidence/decay | Decay + outcome adjustment + reinforceCount | None | **DICE** |
+| Contradiction | Both retained with reduced confidence | Merged or left distinct | **DICE** |
+| Extraction pipeline | Single LLM call, SNR-maximising | spaCy → GLiNER → LLM cascade | **Neo4j** |
+| Graph structure | Propositions + mentions, Neo4j as projection | Native graph with POLE+O ontology | **Neo4j** |
+| Temporal model | System timestamps only | valid_from/valid_until + geospatial | **Neo4j** |
+| Retrieval | Vector + canonical + entity + composable query | Hybrid vector + up to 3-hop traversal | **Neo4j** |
+| Schema enforcement | Application-layer, per context; quarantine planned | Heading toward store-level GRAPH TYPE enforcement | Different bets |
+| Infrastructure weight | Embeddable, no external deps | Neo4j 5.11+ plus spaCy/GLiNER models | **DICE** |
 
-**Their moat**: Native Neo4j graph with multi-hop traversal and POLE+O ontology, multi-stage extraction cascade (spaCy → GLiNER → LLM) for cost/quality tradeoffs, reasoning memory with tool call statistics, 9 framework adapters + MCP server, geospatial and temporal fact queries, entity enrichment via Wikipedia/Diffbot.
+**Attack angle**: the most architecturally serious competitor, and the one whose direction most
+validates ours. The competition is proposition-centric versus entity-centric: DICE manages the
+*lifecycle* of claims, they build a graph of entities. Their store-level schema bet (GRAPH TYPE) and
+our substrate-level bet are the interesting divergence — theirs is stronger inside Neo4j, ours is the
+only one that survives leaving it.
 
-**Their weakness**: Neo4j 5.11+ hard dependency (significant infrastructure commitment). No classification taxonomy — entities merge or stay distinct with no SIMILAR/CONTRADICTORY/GENERALIZES nuance. No confidence decay — everything equally weighted forever. No abstraction hierarchy. No batch classification. No contradiction retention. Python only. Experimental Labs project with no SLAs.
-
-**Attack angle**: Neo4j Agent Memory is the most architecturally sophisticated competitor — both systems take knowledge representation seriously. But the competition is proposition-centric (DICE) vs entity-centric (Neo4j). DICE manages the **lifecycle** of knowledge claims — how they evolve, conflict, reinforce, and decay. Neo4j builds a **static graph** of entities and relationships. DICE's 5-way classification, confidence decay, and abstraction hierarchy address the harder problem of knowledge evolution. And DICE is embeddable with no infrastructure requirements — it already projects to Neo4j when graph structure is needed, without requiring it.
-
-## Key Remaining Gaps
+## Key remaining gaps
 
 | Gap | Blocks us against | Impact |
 |---|---|---|
 | ~~ID hallucination prevention (GAP-6)~~ | ~~Mem0~~ | ~~DONE — integer re-indexing~~ |
-| Surprise-prioritized retention (GAP-2) | LangMem | Novel facts don't get durable treatment |
+| Detect tier (declared vs observed) | The whole governance claim | Tier 1 is still in delivery; the claim needs tier 2 |
+| Quarantine tier | Nobody, yet — but it's the headline | Claim stays architectural until it lands |
+| Bi-temporal model (GAP-4B) | Zep, Neo4j | No point-in-time queries or temporal contradiction resolution |
 | Temporal anchoring (GAP-4A) | Zep | Relative dates stored as literal text |
-| Bi-temporal model (GAP-4B) | Zep | No point-in-time queries or temporal contradiction resolution |
+| Surprise-prioritised retention (GAP-2) | LangMem | Novel facts don't get durable treatment |
+| Incident routing for `DriftReport` | DataHub, Soda | A drift report nobody is notified about is a log line |
 
-## Not Worth Chasing
+## Not worth chasing
 
-- **Zep's 5-reranker retrieval**: Deep feature tied to Neo4j graph traversal. Better to invest in bi-temporal model.
-- **LangMem's prompt optimization**: Gradient-based prompt evolution is interesting but orthogonal to memory quality. DICE's pipeline mechanics matter more.
-- **Mem0's graph memory**: DICE already has entity mentions + Neo4j projection via the graph projector. Adding a separate graph memory pipeline would duplicate effort.
-- **Google's multimodal extraction**: Interesting for image/video-heavy use cases but orthogonal to memory quality. Can be added later if needed — the proposition model is format-agnostic.
-- **AWS's episodic reflection**: Cross-episode insight generation is valuable but DICE's abstraction pipeline already synthesizes higher-level insights from proposition groups. Different mechanism, similar outcome.
-- **Microsoft's user profile/chat summary model**: The simplest memory system of any competitor — just two flat memory types. Even less capable than Google or AWS.
-- **Neo4j Agent Memory's POLE+O ontology**: Domain-specific entity subtypes (Person → Suspect/Witness/Victim) are useful for law enforcement/intelligence domains but add complexity for general-purpose memory. DICE's proposition model is domain-agnostic by design.
-- **Neo4j Agent Memory's reasoning traces**: Capturing tool call statistics and decision workflows is interesting but orthogonal to memory quality. Could be added as a projection type if needed.
-- **Neo4j Agent Memory's multi-stage extraction cascade**: Their spaCy → GLiNER → LLM pipeline is cost-effective but adds operational complexity (model downloads, dependency management). DICE's single LLM call is simpler; the cost savings don't justify the complexity for proposition extraction.
-- **Managed service hosting**: Google, AWS, Microsoft, and Neo4j all validate that agent memory is a product category. DICE's value is in the richness of its knowledge model, not in being a managed service. The embeddable library model is a strength, not a gap.
+- **Zep's 5-reranker retrieval** — deep feature tied to Neo4j traversal. Bi-temporal is the better
+  investment.
+- **LangMem's prompt optimisation** — interesting, orthogonal to memory quality.
+- **Mem0's separate graph pipeline** — we already have entity mentions plus Neo4j projection.
+- **Google's multimodal extraction** — the proposition model is format-agnostic; add later if a use
+  case demands it.
+- **AWS's episodic reflection** — our abstraction pipeline already synthesises across propositions.
+- **Neo4j's POLE+O ontology** — domain-specific subtypes; the proposition model is domain-agnostic by
+  design.
+- **Neo4j's spaCy → GLiNER → LLM cascade** — cost-effective, operationally heavy (model downloads,
+  dependency management). Not worth it for proposition extraction.
+- **Contract YAML as the authoring surface** — ODCS is a good spec, but DICE's declared schema is
+  already a JVM type an application owns. A second YAML dialect would be two sources of truth.
+- **Write-time rejection of undeclared types** — the one governance move that destroys information
+  irreversibly. Quarantine is strictly better for an LLM-driven substrate.
+- **Managed hosting** — every hyperscaler validates the category; none of them makes the embeddable
+  model less valuable.
