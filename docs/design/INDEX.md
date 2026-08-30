@@ -73,6 +73,10 @@ you need.
 - [metamodel-versioning.md](metamodel-versioning.md) — stamping a schema with a content hash so it
   can be compared later: per-type governance, the declared-schema opt-in seam, and the version
   store's accumulating history.
+- [metamodel-diff.md](metamodel-diff.md) — comparing stamps: the change taxonomy, including
+  property-signature changes where a property keeps its name but changes type or cardinality,
+  and the two comparisons it supports, declared against declared and declared against a live
+  graph.
 
 ## Modules
 
@@ -86,6 +90,6 @@ dependency map. Quick pointer to where each is documented:
 | `dice-storage-autoconfigure` | [durable-storage.md](durable-storage.md) |
 | `dice-ingestion` | [ingestion.md](ingestion.md) |
 | `dice-report` | [report.md](report.md) |
-| `dice-metamodel` | [metamodel-versioning.md](metamodel-versioning.md) |
+| `dice-metamodel` | [metamodel-versioning.md](metamodel-versioning.md), [metamodel-diff.md](metamodel-diff.md) |
 | `dice-integration-tests` | not separately documented — exercises the above end-to-end |
 </content>
