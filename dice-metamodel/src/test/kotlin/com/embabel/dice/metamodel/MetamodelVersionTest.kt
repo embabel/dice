@@ -172,6 +172,51 @@ class MetamodelVersionTest {
                 MetamodelVersion.from(renamed).contentHash,
             )
         }
+
+        @Test
+        fun `an alias-free declaration still hashes to the digest pinned before aliases existed`() {
+            // The literal below was produced by the encoding as it stood before PropertySignature
+            // carried aliases and MetamodelVersion carried entityTypeAliases. Alias blocks are
+            // written only when they hold something, so a schema declaring no former names has to
+            // render the same bytes and keep every hash already recorded against it. All four ways
+            // of saying "no aliases" have to land on it.
+            val pinned = "0a5b5b62c125d8ade5bcd2af5b03e0ec5bcaaf5b0799b7cfe8c16be6e723de00"
+
+            assertEquals(pinned, MetamodelVersion.from(goldenSchema()).contentHash)
+            assertEquals(pinned, MetamodelVersion.from(goldenSchema(), GovernedTypeSelector.ALL).contentHash)
+            assertEquals(
+                pinned,
+                MetamodelVersion.from(goldenSchema(), GovernedTypeSelector.ALL, SchemaAliases.NONE).contentHash,
+            )
+            assertEquals(
+                pinned,
+                MetamodelVersion.from(
+                    goldenSchema(),
+                    GovernedTypeSelector.ALL,
+                    SchemaAliases(typeAliases = emptyMap(), propertyAliases = emptyMap()),
+                ).contentHash,
+            )
+        }
+
+        @Test
+        fun `rebuilding the golden stamp through the public constructor hashes to the same literal`() {
+            // The storage mapper reconstructs a stamp field by field rather than from a dictionary.
+            // Passing an explicitly empty alias map and no provenance has to reproduce the pinned
+            // digest, or a row written before aliases existed could never be read back.
+            val fromDictionary = MetamodelVersion.from(goldenSchema())
+            val rebuilt = MetamodelVersion(
+                schemaName = fromDictionary.schemaName,
+                entityTypeNames = fromDictionary.entityTypeNames,
+                entityTypeLabels = fromDictionary.entityTypeLabels,
+                entityTypeProperties = fromDictionary.entityTypeProperties,
+                relationshipNames = fromDictionary.relationshipNames,
+                entityTypeAliases = emptyMap(),
+            )
+            assertEquals(
+                "0a5b5b62c125d8ade5bcd2af5b03e0ec5bcaaf5b0799b7cfe8c16be6e723de00",
+                rebuilt.contentHash,
+            )
+        }
     }
 
     @Nested
@@ -806,6 +851,668 @@ class MetamodelVersionTest {
                 governed,
             )
             assertEquals("my-schema", version.schemaName)
+        }
+    }
+
+    @Nested
+    inner class Aliases {
+
+        private fun personWith(vararg properties: PropertyDefinition): DataDictionary =
+            DataDictionary.fromDomainTypes(
+                "test",
+                listOf(DynamicType(name = "Person", ownProperties = properties.toList())),
+            )
+
+        private fun stamp(dictionary: DataDictionary, aliases: SchemaAliases): MetamodelVersion =
+            MetamodelVersion.from(dictionary, GovernedTypeSelector.ALL, aliases)
+
+        @Test
+        fun `a declared property alias lands on the signature`() {
+            val version = stamp(
+                personWith(ValuePropertyDefinition("emailAddress")),
+                SchemaAliases(propertyAliases = mapOf("Person" to mapOf("emailAddress" to setOf("email")))),
+            )
+
+            assertEquals(
+                setOf(
+                    PropertySignature(
+                        "emailAddress",
+                        PropertySignature.Kind.VALUE,
+                        "string",
+                        Cardinality.ONE,
+                        setOf("email"),
+                    ),
+                ),
+                version.entityTypeProperties["Person"],
+            )
+        }
+
+        @Test
+        fun `declaring a property alias changes the hash`() {
+            val plain = stamp(personWith(ValuePropertyDefinition("emailAddress")), SchemaAliases.NONE)
+            val aliased = stamp(
+                personWith(ValuePropertyDefinition("emailAddress")),
+                SchemaAliases(propertyAliases = mapOf("Person" to mapOf("emailAddress" to setOf("email")))),
+            )
+
+            assertNotEquals(plain.contentHash, aliased.contentHash)
+            assertFalse(plain.hasSameContentAs(aliased))
+        }
+
+        @Test
+        fun `the order aliases are declared in does not affect the hash`() {
+            val forwards = stamp(
+                personWith(ValuePropertyDefinition("emailAddress")),
+                SchemaAliases(
+                    propertyAliases = mapOf("Person" to mapOf("emailAddress" to linkedSetOf("email", "contact"))),
+                ),
+            )
+            val backwards = stamp(
+                personWith(ValuePropertyDefinition("emailAddress")),
+                SchemaAliases(
+                    propertyAliases = mapOf("Person" to mapOf("emailAddress" to linkedSetOf("contact", "email"))),
+                ),
+            )
+
+            assertEquals(forwards.contentHash, backwards.contentHash)
+        }
+
+        @Test
+        fun `different alias sets on one property hash differently`() {
+            val one = stamp(
+                personWith(ValuePropertyDefinition("emailAddress")),
+                SchemaAliases(propertyAliases = mapOf("Person" to mapOf("emailAddress" to setOf("email")))),
+            )
+            val two = stamp(
+                personWith(ValuePropertyDefinition("emailAddress")),
+                SchemaAliases(propertyAliases = mapOf("Person" to mapOf("emailAddress" to setOf("email", "contact")))),
+            )
+
+            assertNotEquals(one.contentHash, two.contentHash)
+        }
+
+        @Test
+        fun `an alias containing the block delimiter does not collide with a split set`() {
+            // Same reasoning as the property-name case: alias entries are length-prefixed, so
+            // ["a;b"] and ["a", "b"] can't serialise to the same bytes.
+            val joined = stamp(
+                personWith(ValuePropertyDefinition("emailAddress")),
+                SchemaAliases(propertyAliases = mapOf("Person" to mapOf("emailAddress" to setOf("a;b")))),
+            )
+            val split = stamp(
+                personWith(ValuePropertyDefinition("emailAddress")),
+                SchemaAliases(propertyAliases = mapOf("Person" to mapOf("emailAddress" to setOf("a", "b")))),
+            )
+
+            assertNotEquals(joined.contentHash, split.contentHash)
+        }
+
+        @Test
+        fun `an alias for a property the type doesn't have changes nothing`() {
+            val plain = stamp(personWith(ValuePropertyDefinition("age")), SchemaAliases.NONE)
+            val stale = stamp(
+                personWith(ValuePropertyDefinition("age")),
+                SchemaAliases(propertyAliases = mapOf("Person" to mapOf("retired" to setOf("gone")))),
+            )
+
+            assertEquals(plain.contentHash, stale.contentHash)
+        }
+
+        @Test
+        fun `an alias equal to the property's own name is kept and hashed`() {
+            // It matches nothing at diff time — nothing looks data up by property name — so it is
+            // inert there. It is still part of the signature, so it moves the hash.
+            val plain = stamp(personWith(ValuePropertyDefinition("age")), SchemaAliases.NONE)
+            val selfAliased = stamp(
+                personWith(ValuePropertyDefinition("age")),
+                SchemaAliases(propertyAliases = mapOf("Person" to mapOf("age" to setOf("age")))),
+            )
+
+            assertEquals(setOf("age"), selfAliased.entityTypeProperties["Person"]!!.single().aliases)
+            assertNotEquals(plain.contentHash, selfAliased.contentHash)
+        }
+
+        @Test
+        fun `a declared type alias is carried and changes the hash`() {
+            val plain = stamp(personWith(), SchemaAliases.NONE)
+            val aliased = stamp(personWith(), SchemaAliases(typeAliases = mapOf("Person" to setOf("Human"))))
+
+            assertEquals(mapOf("Person" to setOf("Human")), aliased.entityTypeAliases)
+            assertEquals(emptyMap<String, Set<String>>(), plain.entityTypeAliases)
+            assertNotEquals(plain.contentHash, aliased.contentHash)
+        }
+
+        @Test
+        fun `type alias order does not affect the hash`() {
+            val forwards = stamp(personWith(), SchemaAliases(typeAliases = mapOf("Person" to linkedSetOf("Human", "Actor"))))
+            val backwards = stamp(personWith(), SchemaAliases(typeAliases = mapOf("Person" to linkedSetOf("Actor", "Human"))))
+
+            assertEquals(forwards.contentHash, backwards.contentHash)
+        }
+
+        @Test
+        fun `a type alias and a property alias of the same name hash differently`() {
+            // The two blocks carry different tags and sit in different places, so declaring "old"
+            // as a former type name is a different schema from declaring it as a former property
+            // name.
+            val asTypeAlias = stamp(
+                personWith(ValuePropertyDefinition("age")),
+                SchemaAliases(typeAliases = mapOf("Person" to setOf("old"))),
+            )
+            val asPropertyAlias = stamp(
+                personWith(ValuePropertyDefinition("age")),
+                SchemaAliases(propertyAliases = mapOf("Person" to mapOf("age" to setOf("old")))),
+            )
+
+            assertNotEquals(asTypeAlias.contentHash, asPropertyAlias.contentHash)
+        }
+
+        @Test
+        fun `aliases accumulate across successive renames`() {
+            val version = stamp(
+                DataDictionary.fromDomainTypes("test", listOf(DynamicType("C"))),
+                SchemaAliases(typeAliases = mapOf("C" to setOf("A", "B"))),
+            )
+
+            assertEquals(setOf("A", "B"), version.entityTypeAliases["C"])
+        }
+
+        @Test
+        fun `a type may list its own name, which is what a rename and back leaves behind`() {
+            // A renamed to B and back to A accumulates {A, B}, so the alias set holds the current
+            // name. The reuse guard is about other types' names.
+            val version = stamp(
+                DataDictionary.fromDomainTypes("test", listOf(DynamicType("A"))),
+                SchemaAliases(typeAliases = mapOf("A" to setOf("A", "B"))),
+            )
+
+            assertEquals(setOf("A", "B"), version.entityTypeAliases["A"])
+        }
+
+        @Test
+        fun `aliases for an ungoverned type are dropped`() {
+            // Everything else about an ungoverned type is invisible to the stamp; aliases follow.
+            val dictionary = DataDictionary.fromDomainTypes(
+                "test",
+                listOf(
+                    DynamicType("Person"),
+                    DynamicType(name = "Sighting", ownProperties = listOf(ValuePropertyDefinition("seenAt"))),
+                ),
+            )
+            val governed = GovernedTypeSelector { it.name == "Person" }
+
+            val plain = MetamodelVersion.from(dictionary, governed)
+            val aliased = MetamodelVersion.from(
+                dictionary,
+                governed,
+                SchemaAliases(
+                    typeAliases = mapOf("Sighting" to setOf("Observation")),
+                    propertyAliases = mapOf("Sighting" to mapOf("seenAt" to setOf("spottedAt"))),
+                ),
+            )
+
+            assertEquals(emptyMap<String, Set<String>>(), aliased.entityTypeAliases)
+            assertEquals(plain.contentHash, aliased.contentHash)
+        }
+
+        @Test
+        fun `an explicitly empty alias set is dropped rather than hashed`() {
+            val plain = stamp(personWith(ValuePropertyDefinition("age")), SchemaAliases.NONE)
+            val declaredEmpty = stamp(
+                personWith(ValuePropertyDefinition("age")),
+                SchemaAliases(
+                    typeAliases = mapOf("Person" to emptySet()),
+                    propertyAliases = mapOf("Person" to mapOf("age" to emptySet())),
+                ),
+            )
+
+            assertEquals(emptyMap<String, Set<String>>(), declaredEmpty.entityTypeAliases)
+            assertEquals(plain.contentHash, declaredEmpty.contentHash)
+        }
+    }
+
+    @Nested
+    inner class SignatureOrdering {
+
+        private fun signature(name: String, aliases: Set<String> = emptySet()): PropertySignature =
+            PropertySignature(name, PropertySignature.Kind.VALUE, "string", Cardinality.ONE, aliases)
+
+        @Test
+        fun `aliases break ties only after name, kind, type and cardinality`() {
+            val aliasedAge = signature("age", setOf("zzz"))
+            val plainEmail = signature("email")
+
+            // The name still decides, whatever the aliases say.
+            assertTrue(aliasedAge < plainEmail)
+
+            val aliasedString = PropertySignature(
+                "age", PropertySignature.Kind.VALUE, "string", Cardinality.ONE, setOf("zzz"),
+            )
+            val plainInteger = PropertySignature(
+                "age", PropertySignature.Kind.VALUE, "integer", Cardinality.ONE,
+            )
+            assertTrue(plainInteger < aliasedString)
+        }
+
+        @Test
+        fun `signatures differing only in aliases sort deterministically`() {
+            val none = signature("age")
+            val one = signature("age", setOf("b"))
+            val two = signature("age", setOf("a1", "b"))
+
+            assertTrue(none < two)
+            assertTrue(two < one)
+            assertEquals(listOf(none, two, one), listOf(one, none, two).sorted())
+            assertEquals(listOf(none, two, one), listOf(two, one, none).sorted())
+        }
+
+        @Test
+        fun `alias order inside the set does not change the ordering`() {
+            val forwards = signature("age", linkedSetOf("a", "b"))
+            val backwards = signature("age", linkedSetOf("b", "a"))
+
+            assertEquals(0, forwards.compareTo(backwards))
+        }
+    }
+
+    @Nested
+    inner class AliasGuards {
+
+        private fun personTwice(vararg propertyTypes: String): DataDictionary =
+            DataDictionary.fromDomainTypes(
+                "test",
+                propertyTypes.map { propertyType ->
+                    DynamicType(
+                        name = "Person",
+                        ownProperties = listOf(ValuePropertyDefinition("age", type = propertyType)),
+                    )
+                },
+            )
+
+        @Test
+        fun `type aliases keyed by a type that is not listed are rejected`() {
+            val thrown = assertThrows<IllegalArgumentException> {
+                MetamodelVersion(
+                    schemaName = "test",
+                    entityTypeNames = listOf("Person"),
+                    entityTypeLabels = emptyMap(),
+                    entityTypeProperties = emptyMap(),
+                    relationshipNames = emptyList(),
+                    entityTypeAliases = mapOf("Ghost" to setOf("Spectre")),
+                )
+            }
+            assertTrue(thrown.message!!.contains("entityTypeAliases"), thrown.message)
+            assertTrue(thrown.message!!.contains("Ghost"), thrown.message)
+        }
+
+        @Test
+        fun `an empty type alias set is rejected`() {
+            // An entry with no former names in it hashes differently from having no entry at all,
+            // while meaning the same thing, so two stamps of one schema could land on two keys.
+            val thrown = assertThrows<IllegalArgumentException> {
+                MetamodelVersion(
+                    schemaName = "test",
+                    entityTypeNames = listOf("Person"),
+                    entityTypeLabels = emptyMap(),
+                    entityTypeProperties = emptyMap(),
+                    relationshipNames = emptyList(),
+                    entityTypeAliases = mapOf("Person" to emptySet()),
+                )
+            }
+            assertTrue(thrown.message!!.contains("empty alias sets"), thrown.message)
+            assertTrue(thrown.message!!.contains("Person"), thrown.message)
+        }
+
+        @Test
+        fun `a declared type name in another type's alias set is rejected by the constructor`() {
+            val thrown = assertThrows<IllegalArgumentException> {
+                MetamodelVersion(
+                    schemaName = "test",
+                    entityTypeNames = listOf("Human", "Person"),
+                    entityTypeLabels = emptyMap(),
+                    entityTypeProperties = emptyMap(),
+                    relationshipNames = emptyList(),
+                    entityTypeAliases = mapOf("Human" to setOf("Person")),
+                )
+            }
+            assertTrue(thrown.message!!.contains("Human"), thrown.message)
+            assertTrue(thrown.message!!.contains("Person"), thrown.message)
+            assertTrue(thrown.message!!.contains("Retire the alias"), thrown.message)
+        }
+
+        @Test
+        fun `a declared type name in another type's alias set is rejected at the stamping seam`() {
+            val dictionary = DataDictionary.fromDomainTypes(
+                "test",
+                listOf(DynamicType("Human"), DynamicType("Person")),
+            )
+
+            val thrown = assertThrows<IllegalArgumentException> {
+                MetamodelVersion.from(
+                    dictionary,
+                    GovernedTypeSelector.ALL,
+                    SchemaAliases(typeAliases = mapOf("Human" to setOf("Person"))),
+                )
+            }
+            assertTrue(thrown.message!!.contains("Person"), thrown.message)
+        }
+
+        @Test
+        fun `reusing the name of an ungoverned type is allowed, because the stamp never sees it`() {
+            val dictionary = DataDictionary.fromDomainTypes(
+                "test",
+                listOf(DynamicType("Human"), DynamicType("Person")),
+            )
+
+            val version = MetamodelVersion.from(
+                dictionary,
+                GovernedTypeSelector { it.name == "Human" },
+                SchemaAliases(typeAliases = mapOf("Human" to setOf("Person"))),
+            )
+            assertEquals(setOf("Person"), version.entityTypeAliases["Human"])
+        }
+
+        @Test
+        fun `aliases on a property name with more than one signature are rejected by the constructor`() {
+            val thrown = assertThrows<IllegalArgumentException> {
+                MetamodelVersion(
+                    schemaName = "test",
+                    entityTypeNames = listOf("Person"),
+                    entityTypeLabels = emptyMap(),
+                    entityTypeProperties = mapOf(
+                        "Person" to setOf(
+                            PropertySignature(
+                                "age", PropertySignature.Kind.VALUE, "string", Cardinality.ONE, setOf("years"),
+                            ),
+                            PropertySignature(
+                                "age", PropertySignature.Kind.VALUE, "integer", Cardinality.ONE, setOf("years"),
+                            ),
+                        ),
+                    ),
+                    relationshipNames = emptyList(),
+                )
+            }
+            assertTrue(thrown.message!!.contains("age"), thrown.message)
+            assertTrue(thrown.message!!.contains("years"), thrown.message)
+            assertTrue(thrown.message!!.contains("Retire the alias"), thrown.message)
+        }
+
+        @Test
+        fun `aliases on a property name with more than one signature are rejected at the stamping seam`() {
+            // Two same-named Person declarations each carry their own `age`, so the union holds two
+            // signatures for one name and an old name can't say which it meant.
+            val thrown = assertThrows<IllegalArgumentException> {
+                MetamodelVersion.from(
+                    personTwice("string", "integer"),
+                    GovernedTypeSelector.ALL,
+                    SchemaAliases(propertyAliases = mapOf("Person" to mapOf("age" to setOf("years")))),
+                )
+            }
+            assertTrue(thrown.message!!.contains("age"), thrown.message)
+            assertTrue(thrown.message!!.contains("years"), thrown.message)
+        }
+
+        @Test
+        fun `a duplicated property name with no aliases declared is fine`() {
+            val version = MetamodelVersion.from(personTwice("string", "integer"))
+            assertEquals(2, version.entityTypeProperties["Person"]!!.size)
+        }
+
+        @Test
+        fun `aliases on a single-signature property survive a duplicate elsewhere on the type`() {
+            val dictionary = DataDictionary.fromDomainTypes(
+                "test",
+                listOf(
+                    DynamicType(
+                        name = "Person",
+                        ownProperties = listOf(
+                            ValuePropertyDefinition("age", type = "string"),
+                            ValuePropertyDefinition("emailAddress"),
+                        ),
+                    ),
+                    DynamicType(
+                        name = "Person",
+                        ownProperties = listOf(ValuePropertyDefinition("age", type = "integer")),
+                    ),
+                ),
+            )
+
+            val version = MetamodelVersion.from(
+                dictionary,
+                GovernedTypeSelector.ALL,
+                SchemaAliases(propertyAliases = mapOf("Person" to mapOf("emailAddress" to setOf("email")))),
+            )
+
+            assertEquals(
+                setOf("email"),
+                version.entityTypeProperties["Person"]!!.single { it.name == "emailAddress" }.aliases,
+            )
+        }
+    }
+
+    @Nested
+    inner class Provenance {
+
+        /** One fixed schema, stamped with whatever provenance a test wants on it. */
+        private fun personStamp(
+            origin: StampProvenance? = null,
+            lastStamped: StampProvenance? = null,
+        ): MetamodelVersion = MetamodelVersion(
+            schemaName = "test",
+            entityTypeNames = listOf("Person"),
+            entityTypeLabels = mapOf("Person" to setOf("Person")),
+            entityTypeProperties = mapOf("Person" to emptySet()),
+            relationshipNames = emptyList(),
+            entityTypeAliases = emptyMap(),
+            origin = origin,
+            lastStamped = lastStamped,
+        )
+
+        @Test
+        fun `provenance defaults to absent`() {
+            val version = MetamodelVersion.from(
+                DataDictionary.fromDomainTypes("test", listOf(DynamicType("Person"))),
+            )
+            assertNull(version.origin)
+            assertNull(version.lastStamped)
+        }
+
+        @Test
+        fun `provenance is carried`() {
+            val version = personStamp(
+                origin = StampProvenance("deploy-pipeline", "release-1"),
+                lastStamped = StampProvenance("operator", "manual-recheck"),
+            )
+
+            assertEquals(StampProvenance("deploy-pipeline", "release-1"), version.origin)
+            assertEquals(StampProvenance("operator", "manual-recheck"), version.lastStamped)
+        }
+
+        @Test
+        fun `provenance never reaches the content hash`() {
+            // Two stamps of one schema taken for different reasons are the same schema, and the
+            // hash is the store's natural key.
+            val bare = personStamp()
+            val attributed = personStamp(
+                origin = StampProvenance("deploy-pipeline", "release-1"),
+                lastStamped = StampProvenance("operator", "manual-recheck"),
+            )
+
+            assertEquals(bare.contentHash, attributed.contentHash)
+            assertTrue(bare.hasSameContentAs(attributed))
+        }
+
+        @Test
+        fun `provenance is not part of equality`() {
+            val bare = personStamp()
+            val attributed = personStamp(origin = StampProvenance("deploy-pipeline", "release-1"))
+
+            assertEquals(bare, attributed)
+            assertEquals(bare.hashCode(), attributed.hashCode())
+        }
+
+        @Test
+        fun `both fields are optional`() {
+            assertNull(StampProvenance().actor)
+            assertNull(StampProvenance().trigger)
+            assertEquals("ci", StampProvenance("ci").actor)
+            assertNull(StampProvenance("ci").trigger)
+        }
+
+        @Test
+        fun `an actor at the cap is accepted and one over it is rejected`() {
+            assertEquals(
+                StampProvenance.MAX_LENGTH,
+                StampProvenance(actor = "a".repeat(StampProvenance.MAX_LENGTH)).actor!!.length,
+            )
+
+            val thrown = assertThrows<IllegalArgumentException> {
+                StampProvenance(actor = "a".repeat(StampProvenance.MAX_LENGTH + 1))
+            }
+            assertTrue(thrown.message!!.contains("actor"), thrown.message)
+        }
+
+        @Test
+        fun `a trigger at the cap is accepted and one over it is rejected`() {
+            assertEquals(
+                StampProvenance.MAX_LENGTH,
+                StampProvenance(trigger = "t".repeat(StampProvenance.MAX_LENGTH)).trigger!!.length,
+            )
+
+            val thrown = assertThrows<IllegalArgumentException> {
+                StampProvenance(trigger = "t".repeat(StampProvenance.MAX_LENGTH + 1))
+            }
+            assertTrue(thrown.message!!.contains("trigger"), thrown.message)
+        }
+    }
+
+    @Nested
+    inner class AliasImmutability {
+
+        @Test
+        fun `the alias collections a stamp hands back cannot be mutated`() {
+            val version = MetamodelVersion.from(
+                DataDictionary.fromDomainTypes(
+                    "test",
+                    listOf(DynamicType(name = "Person", ownProperties = listOf(ValuePropertyDefinition("age")))),
+                ),
+                GovernedTypeSelector.ALL,
+                SchemaAliases(
+                    typeAliases = mapOf("Person" to setOf("Human")),
+                    propertyAliases = mapOf("Person" to mapOf("age" to setOf("years"))),
+                ),
+            )
+
+            @Suppress("UNCHECKED_CAST")
+            assertThrows<UnsupportedOperationException> {
+                (version.entityTypeAliases as MutableMap<String, Set<String>>).remove("Person")
+            }
+
+            @Suppress("UNCHECKED_CAST")
+            assertThrows<UnsupportedOperationException> {
+                (version.entityTypeAliases["Person"] as MutableSet<String>).add("Sneaky")
+            }
+
+            @Suppress("UNCHECKED_CAST")
+            assertThrows<UnsupportedOperationException> {
+                (version.entityTypeProperties["Person"]!!.single().aliases as MutableSet<String>).add("Sneaky")
+            }
+        }
+
+        @Test
+        fun `mutating the alias sets the caller passed in does not change the stamp`() {
+            val typeAliases = mutableSetOf("Human")
+            val signatureAliases = mutableSetOf("years")
+            val version = MetamodelVersion(
+                schemaName = "test",
+                entityTypeNames = listOf("Person"),
+                entityTypeLabels = emptyMap(),
+                entityTypeProperties = mapOf(
+                    "Person" to setOf(
+                        PropertySignature(
+                            "age", PropertySignature.Kind.VALUE, "string", Cardinality.ONE, signatureAliases,
+                        ),
+                    ),
+                ),
+                relationshipNames = emptyList(),
+                entityTypeAliases = mapOf("Person" to typeAliases),
+            )
+            val hashAtConstruction = version.contentHash
+
+            typeAliases.add("Actor")
+            signatureAliases.add("yearsOld")
+
+            assertEquals(setOf("Human"), version.entityTypeAliases["Person"])
+            assertEquals(setOf("years"), version.entityTypeProperties["Person"]!!.single().aliases)
+            assertEquals(hashAtConstruction, version.contentHash)
+        }
+
+        @Test
+        fun `filling in an alias set that was empty at construction does not change the stamp`() {
+            // The empty case is the dangerous one. A signature built with an empty mutable set that
+            // the stamp stored by reference would change its own hashCode when the caller added an
+            // alias, leaving it unfindable in the hash-based set holding it and disagreeing with a
+            // contentHash computed while it looked alias-free.
+            val aliases = mutableSetOf<String>()
+            val signature = PropertySignature(
+                "age", PropertySignature.Kind.VALUE, "string", Cardinality.ONE, aliases,
+            )
+            val version = MetamodelVersion(
+                schemaName = "test",
+                entityTypeNames = listOf("Person"),
+                entityTypeLabels = emptyMap(),
+                entityTypeProperties = mapOf("Person" to setOf(signature)),
+                relationshipNames = emptyList(),
+            )
+            val hashAtConstruction = version.contentHash
+
+            aliases.add("years")
+
+            val stored = version.entityTypeProperties["Person"]!!
+            assertEquals(emptySet<String>(), stored.single().aliases)
+            assertEquals(hashAtConstruction, version.contentHash)
+
+            // The signature is still findable under the identity it was hashed with, so nothing has
+            // shifted position in the set that holds it.
+            assertTrue(
+                stored.contains(
+                    PropertySignature("age", PropertySignature.Kind.VALUE, "string", Cardinality.ONE)
+                ),
+            )
+
+            // And the stamp still hashes as the alias-free schema it was built from.
+            val neverAliased = MetamodelVersion(
+                schemaName = "test",
+                entityTypeNames = listOf("Person"),
+                entityTypeLabels = emptyMap(),
+                entityTypeProperties = mapOf(
+                    "Person" to setOf(
+                        PropertySignature("age", PropertySignature.Kind.VALUE, "string", Cardinality.ONE)
+                    ),
+                ),
+                relationshipNames = emptyList(),
+            )
+            assertEquals(neverAliased.contentHash, version.contentHash)
+        }
+
+        @Test
+        fun `an initially empty alias set is replaced by an immutable one`() {
+            val signature = PropertySignature(
+                "age", PropertySignature.Kind.VALUE, "string", Cardinality.ONE, mutableSetOf(),
+            )
+            val version = MetamodelVersion(
+                schemaName = "test",
+                entityTypeNames = listOf("Person"),
+                entityTypeLabels = emptyMap(),
+                entityTypeProperties = mapOf("Person" to setOf(signature)),
+                relationshipNames = emptyList(),
+            )
+
+            @Suppress("UNCHECKED_CAST")
+            assertThrows<UnsupportedOperationException> {
+                (version.entityTypeProperties["Person"]!!.single().aliases as MutableSet<String>)
+                    .add("Sneaky")
+            }
         }
     }
 }

@@ -35,7 +35,12 @@
     <build>
         <plugins>
             <plugin>
-                <!-- Default interface methods available for Java consumers -->
+                <!--
+                    Default interface methods available for Java consumers. The test-compile
+                    execution also picks up src/test/java, where MetamodelJavaCompatTest calls the
+                    JVM constructor and factory descriptors a compiled Java consumer is linked
+                    against.
+                -->
                 <groupId>org.jetbrains.kotlin</groupId>
                 <artifactId>kotlin-maven-plugin</artifactId>
                 <configuration>
@@ -43,6 +48,34 @@
                         <arg>-Xjvm-default=all</arg>
                     </args>
                 </configuration>
+                <executions>
+                    <execution>
+                        <id>compile</id>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                        <configuration>
+                            <sourceDirs>
+                                <source>src/main/java</source>
+                                <source>src/main/kotlin</source>
+                            </sourceDirs>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>test-compile</id>
+                        <phase>test-compile</phase>
+                        <goals>
+                            <goal>test-compile</goal>
+                        </goals>
+                        <configuration>
+                            <sourceDirs>
+                                <source>src/test/java</source>
+                                <source>src/test/kotlin</source>
+                            </sourceDirs>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

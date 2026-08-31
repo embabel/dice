@@ -39,12 +39,21 @@ import java.util.Objects
  * @property type The value type (`string`, `integer`, ...), or the target type's name for a
  *   reference. Empty when [kind] is [Kind.UNKNOWN].
  * @property cardinality How many values the property holds: optional, one, a list, or a set.
+ * @property aliases Names this property used to go by, so a rename pairs up instead of reading as a
+ *   removal and an addition. Declared through [SchemaAliases] and empty unless someone declared
+ *   them. Part of the signature, so an alias-only edit moves [MetamodelVersion.contentHash].
+ *   Held as handed in, including a mutable set: a `data class` component can't be normalised on the
+ *   way through, since a constructor `val` takes no initialiser and the generated `copy` calls that
+ *   same constructor. [MetamodelVersion] therefore copies the set into an immutable one when it
+ *   takes a signature, and a signature that never reaches a stamp keeps whatever set it was built
+ *   with. Experimental: shape may change before 1.0.
  */
-data class PropertySignature(
+data class PropertySignature @JvmOverloads constructor(
     val name: String,
     val kind: Kind,
     val type: String,
     val cardinality: Cardinality,
+    val aliases: Set<String> = emptySet(),
 ) : Comparable<PropertySignature> {
 
     /** Whether a property holds a value of its own or points at another type in the schema. */
@@ -66,8 +75,24 @@ data class PropertySignature(
 
     companion object {
 
-        /** Total order used to canonicalise a property set before hashing. */
+        /**
+         * Total order used to canonicalise a property set before hashing. Aliases come last, so a
+         * set holding two signatures that differ only in their aliases still sorts the same way
+         * every time.
+         */
         private val ORDER = compareBy<PropertySignature>({ it.name }, { it.kind }, { it.type }, { it.cardinality })
+            .thenComparator { left, right -> compareAliases(left.aliases, right.aliases) }
+
+        /** Compare two alias sets as sorted lists: element by element, then by size. */
+        private fun compareAliases(left: Set<String>, right: Set<String>): Int {
+            val sortedLeft = left.sorted()
+            val sortedRight = right.sorted()
+            for (i in 0 until minOf(sortedLeft.size, sortedRight.size)) {
+                val comparison = sortedLeft[i].compareTo(sortedRight[i])
+                if (comparison != 0) return comparison
+            }
+            return sortedLeft.size.compareTo(sortedRight.size)
+        }
 
         /**
          * Read the structural signature off a property definition.
@@ -86,6 +111,51 @@ data class PropertySignature(
             else ->
                 PropertySignature(property.name, Kind.UNKNOWN, "", property.cardinality)
         }
+    }
+}
+
+/**
+ * Who or what caused a stamp to be taken.
+ *
+ * Both fields are opaque strings the host supplies and DICE never interprets. `actor` is whoever
+ * asked — a deploy pipeline, an operator, a scheduled job. `trigger` is what prompted it, and is
+ * where an extraction-run reference lands once that exists; keeping it a plain string means this
+ * module gains no dependency on the run model.
+ *
+ * Provenance never reaches [MetamodelVersion.contentHash] and never affects equality. It is
+ * informational: two stamps of the same schema taken for different reasons are the same schema.
+ * Hashing it would give one schema as many content hashes as it had causes, and the store keys on
+ * that hash.
+ *
+ * Both fields are capped at [MAX_LENGTH] **characters**, counted as `String.length` (UTF-16 code
+ * units). They land in a database column, and an unbounded host-supplied string is how a stamp
+ * write starts failing at the driver. A storage backend sizing a column has to size it in bytes: a
+ * 256-character value can reach 1024 bytes in UTF-8, and more once surrogate pairs are involved, so
+ * the column needs headroom rather than a matching 256.
+ *
+ * Experimental: shape may change before 1.0.
+ *
+ * @property actor Who asked for the stamp. Null when the host didn't say.
+ * @property trigger What prompted it. Null when the host didn't say.
+ */
+data class StampProvenance @JvmOverloads constructor(
+    val actor: String? = null,
+    val trigger: String? = null,
+) {
+
+    init {
+        require(actor == null || actor.length <= MAX_LENGTH) {
+            "actor is ${actor!!.length} characters; the cap is $MAX_LENGTH."
+        }
+        require(trigger == null || trigger.length <= MAX_LENGTH) {
+            "trigger is ${trigger!!.length} characters; the cap is $MAX_LENGTH."
+        }
+    }
+
+    companion object {
+
+        /** Longest an [actor] or [trigger] may be, in characters. */
+        const val MAX_LENGTH: Int = 256
     }
 }
 
@@ -118,18 +188,30 @@ data class PropertySignature(
  *   or cardinality moves [contentHash].
  * @property relationshipNames Rendered `From-[name]->To` descriptors for the relationships the
  *   governed types declare, sorted and deduplicated.
+ * @property entityTypeAliases Names each entity type used to go by, keyed by its current name, so a
+ *   type rename pairs up instead of reading as a type vanishing and another appearing. Declared
+ *   through [SchemaAliases] and empty unless someone declared them. Hashed, so an alias-only edit
+ *   moves [contentHash]. Experimental: shape may change before 1.0.
+ * @property origin Who or what caused this schema to be stamped for the first time. Informational,
+ *   never hashed. Experimental: shape may change before 1.0.
+ * @property lastStamped Who or what caused the most recent stamp of this schema. Informational,
+ *   never hashed. Experimental: shape may change before 1.0.
  * @property contentHash SHA-256 hex digest of the schema's entity types, label sets, property
- *   signatures, and allowed relationships, derived from the four fields above. The schema name is
- *   excluded so that two structurally identical schemas are equal regardless of how they are named.
- *   Stable across JVM restarts. Any structural change produces a different hash, including a
- *   property's type changing on a type whose name is unchanged.
+ *   signatures, type aliases, and allowed relationships. The schema name is excluded so that two
+ *   structurally identical schemas are equal regardless of how they are named, and provenance is
+ *   excluded because the cause of a stamp doesn't change the schema it stamps. Stable across JVM
+ *   restarts. Any structural change produces a different hash, including a property's type changing
+ *   on a type whose name is unchanged.
  */
-class MetamodelVersion(
+class MetamodelVersion @JvmOverloads constructor(
     schemaName: String,
     entityTypeNames: List<String>,
     entityTypeLabels: Map<String, Set<String>>,
     entityTypeProperties: Map<String, Set<PropertySignature>>,
     relationshipNames: List<String>,
+    entityTypeAliases: Map<String, Set<String>> = emptyMap(),
+    val origin: StampProvenance? = null,
+    val lastStamped: StampProvenance? = null,
 ) {
 
     val schemaName: String = schemaName
@@ -138,9 +220,12 @@ class MetamodelVersion(
 
     val entityTypeLabels: Map<String, Set<String>> = immutableCopy(entityTypeLabels)
 
-    val entityTypeProperties: Map<String, Set<PropertySignature>> = immutableCopy(entityTypeProperties)
+    val entityTypeProperties: Map<String, Set<PropertySignature>> =
+        immutableCopy(entityTypeProperties.mapValues { (_, signatures) -> signatures.map(::withImmutableAliases).toSet() })
 
     val relationshipNames: List<String> = immutableCopy(relationshipNames.distinct().sorted())
+
+    val entityTypeAliases: Map<String, Set<String>> = immutableCopy(entityTypeAliases)
 
     init {
         // Only types named in entityTypeNames are walked when hashing, so a map entry keyed by
@@ -158,6 +243,22 @@ class MetamodelVersion(
             "entityTypeProperties is keyed by types missing from entityTypeNames: ${strayPropertyKeys.sorted()}. " +
                 "Properties for a type that isn't listed never reach contentHash."
         }
+        val strayAliasKeys = this.entityTypeAliases.keys - known
+        require(strayAliasKeys.isEmpty()) {
+            "entityTypeAliases is keyed by types missing from entityTypeNames: ${strayAliasKeys.sorted()}. " +
+                "Aliases for a type that isn't listed never reach contentHash."
+        }
+
+        // An entry mapping a type to no former names at all hashes differently from having no entry,
+        // while saying the same thing, so two stamps of one schema could land on different keys.
+        val emptyAliasKeys = this.entityTypeAliases.filterValues { it.isEmpty() }.keys
+        require(emptyAliasKeys.isEmpty()) {
+            "entityTypeAliases holds empty alias sets for: ${emptyAliasKeys.sorted()}. " +
+                "Drop the entry instead; it means the same thing and hashes the same as the types around it."
+        }
+
+        requireNoTypeAliasReuse(known, this.entityTypeAliases)
+        requireNoAliasesOnDuplicateNames(this.entityTypeProperties)
     }
 
     val contentHash: String = fingerprint()
@@ -185,10 +286,15 @@ class MetamodelVersion(
         // hash identically and hide a lossy schema change.
         // The schema name is excluded, so two structurally identical schemas produce the same hash
         // even when named differently (e.g. dev vs prod environments).
+        // Alias blocks are written only when there is something in them, so a schema that declares
+        // no former names renders exactly the bytes this encoding produced before aliases existed
+        // and keeps every hash already recorded against it. Each block is `<tag>:<count>|` followed
+        // by length-prefixed entries in sorted order, which is what the rest of the encoding does.
         val hashInput = buildString {
             append("types:").append(entityTypeNames.size).append('|')
             entityTypeNames.forEach { name ->
                 appendSized(name)
+                appendAliasBlock("typealiases", entityTypeAliases[name].orEmpty())
                 val labels = entityTypeLabels[name].orEmpty().sorted()
                 append("labels:").append(labels.size).append('|')
                 labels.forEach { appendSized(it) }
@@ -199,6 +305,7 @@ class MetamodelVersion(
                     appendSized(property.kind.name)
                     appendSized(property.type)
                     appendSized(property.cardinality.name)
+                    appendAliasBlock("aliases", property.aliases)
                 }
             }
             append("rels:").append(relationshipNames.size).append('|')
@@ -210,6 +317,11 @@ class MetamodelVersion(
         return hashBytes.joinToString("") { "%02x".format(it) }
     }
 
+    /**
+     * Structural equality. Provenance is left out for the same reason it is left out of
+     * [contentHash]: it records why a stamp was taken, and two stamps of one schema taken for
+     * different reasons are still one schema.
+     */
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is MetamodelVersion) return false
@@ -217,22 +329,40 @@ class MetamodelVersion(
             entityTypeNames == other.entityTypeNames &&
             entityTypeLabels == other.entityTypeLabels &&
             entityTypeProperties == other.entityTypeProperties &&
-            relationshipNames == other.relationshipNames
+            relationshipNames == other.relationshipNames &&
+            entityTypeAliases == other.entityTypeAliases
     }
 
-    override fun hashCode(): Int =
-        Objects.hash(schemaName, entityTypeNames, entityTypeLabels, entityTypeProperties, relationshipNames)
+    override fun hashCode(): Int = Objects.hash(
+        schemaName,
+        entityTypeNames,
+        entityTypeLabels,
+        entityTypeProperties,
+        relationshipNames,
+        entityTypeAliases,
+    )
 
     override fun toString(): String =
         "MetamodelVersion(schemaName=$schemaName, contentHash=$contentHash, " +
             "entityTypeNames=$entityTypeNames, entityTypeLabels=$entityTypeLabels, " +
-            "entityTypeProperties=$entityTypeProperties, relationshipNames=$relationshipNames)"
+            "entityTypeProperties=$entityTypeProperties, relationshipNames=$relationshipNames, " +
+            "entityTypeAliases=$entityTypeAliases, origin=$origin, lastStamped=$lastStamped)"
 
     companion object {
 
         /** Append [token] length-prefixed (`<len>:<token>`) so concatenation can't be ambiguous. */
         private fun StringBuilder.appendSized(token: String) {
             append(token.length).append(':').append(token)
+        }
+
+        /**
+         * Append `<tag>:<count>|` and the sorted, length-prefixed [aliases], writing nothing at all
+         * when there are none.
+         */
+        private fun StringBuilder.appendAliasBlock(tag: String, aliases: Set<String>) {
+            if (aliases.isEmpty()) return
+            append(tag).append(':').append(aliases.size).append('|')
+            aliases.sorted().forEach { appendSized(it) }
         }
 
         /** Copy [values] into a JVM-immutable list, which a Java caller can't mutate via a getter. */
@@ -243,6 +373,67 @@ class MetamodelVersion(
             java.util.Map.copyOf(values.mapValues { (_, set) -> java.util.Set.copyOf(set) })
 
         /**
+         * Re-wrap a signature's alias set as a JVM-immutable one. The signature is a data class, so
+         * its alias set arrives however the caller built it; a caller who kept a mutable set and
+         * added to it afterwards would leave the stamp disagreeing with its own precomputed hash.
+         *
+         * The copy is unconditional. An empty set is the dangerous case, not the safe one: a caller
+         * holding an empty `mutableSetOf` can add to it after the stamp is built, which moves the
+         * signature's own `hashCode` while it sits in a hash-based set and leaves it unfindable in
+         * the collection that contains it. `Set.copyOf` of an empty set is a shared singleton, so
+         * skipping it buys nothing.
+         */
+        private fun withImmutableAliases(signature: PropertySignature): PropertySignature =
+            signature.copy(aliases = java.util.Set.copyOf(signature.aliases))
+
+        /**
+         * Reject a declared type name showing up in another type's alias set.
+         *
+         * One name would then belong to two types at once: the live type that carries it, and the
+         * renamed type that still claims it as a former name. Nothing downstream can tell which of
+         * the two a piece of data under that name belongs to. Reusing a retired name means first
+         * deleting the alias that still claims it.
+         */
+        private fun requireNoTypeAliasReuse(
+            declaredTypeNames: Set<String>,
+            entityTypeAliases: Map<String, Set<String>>,
+        ) {
+            entityTypeAliases.forEach { (typeName, aliases) ->
+                val reused = (aliases - typeName).filter { it in declaredTypeNames }.sorted()
+                require(reused.isEmpty()) {
+                    "Entity type '$typeName' declares alias(es) $reused, and those name types the " +
+                        "schema still declares. Retire the alias before reusing the name."
+                }
+            }
+        }
+
+        /**
+         * Reject aliases on a property name a type holds more than one signature for.
+         *
+         * Two same-named domain types can each declare `age` with a different shape, and the union
+         * keeps both signatures. A comparison has no way to say which of the two an old name refers
+         * to, so the declaration is refused and the name compares as a removal plus an addition.
+         */
+        private fun requireNoAliasesOnDuplicateNames(
+            entityTypeProperties: Map<String, Set<PropertySignature>>,
+        ) {
+            entityTypeProperties.forEach { (typeName, signatures) ->
+                signatures
+                    .groupBy { it.name }
+                    .filterValues { withName -> withName.size > 1 }
+                    .forEach { (propertyName, withName) ->
+                        val declared = withName.flatMap { it.aliases }.distinct().sorted()
+                        require(declared.isEmpty()) {
+                            "Property '$propertyName' on entity type '$typeName' has " +
+                                "${withName.size} signatures and declares alias(es) $declared. " +
+                                "Retire the alias: a name with more than one signature can't say " +
+                                "which one an old name meant."
+                        }
+                    }
+            }
+        }
+
+        /**
          * Create a [MetamodelVersion] stamp covering every type in [dataDictionary], which is the
          * right stamp for a domain that is closed-world throughout.
          *
@@ -251,7 +442,7 @@ class MetamodelVersion(
          */
         @JvmStatic
         fun from(dataDictionary: DataDictionary): MetamodelVersion =
-            from(dataDictionary, GovernedTypeSelector.ALL)
+            from(dataDictionary, GovernedTypeSelector.ALL, SchemaAliases.NONE)
 
         /**
          * Create a [MetamodelVersion] stamp covering only the types [selector] governs.
@@ -275,7 +466,40 @@ class MetamodelVersion(
          * @return An immutable version stamp covering the governed subset.
          */
         @JvmStatic
-        fun from(dataDictionary: DataDictionary, selector: GovernedTypeSelector): MetamodelVersion {
+        fun from(dataDictionary: DataDictionary, selector: GovernedTypeSelector): MetamodelVersion =
+            from(dataDictionary, selector, SchemaAliases.NONE)
+
+        /**
+         * Create a [MetamodelVersion] stamp covering the types [selector] governs, carrying the
+         * former names [aliases] declares for them.
+         *
+         * The upstream `PropertyDefinition` has nowhere to hold a former name, so aliases are
+         * declared alongside the dictionary and applied while the stamp is built: each signature
+         * picks up the former names declared for its property, and the type-level map is carried
+         * through for the governed types. Aliases declared for a type the selector doesn't govern
+         * are dropped, the same way everything else about an ungoverned type is.
+         *
+         * [aliases] has no default, and the two shorter overloads are separate functions rather
+         * than defaulted parameters on this one. A default here would fold all three into one
+         * function whose synthetic `from$default` descriptor replaced the shipped one, which is a
+         * link error for any caller already compiled against it.
+         *
+         * @param dataDictionary The schema to stamp.
+         * @param selector Which of its types are under governance. [GovernedTypeSelector.ALL]
+         *   governs all of them.
+         * @param aliases Former names for the schema's types and properties. [SchemaAliases.NONE]
+         *   declares none. Experimental: shape may change before 1.0.
+         * @return An immutable version stamp covering the governed subset.
+         * @throws IllegalArgumentException when a declared type name appears in another type's
+         *   alias set, or when aliases are declared for a property name the governed types hold
+         *   more than one signature for.
+         */
+        @JvmStatic
+        fun from(
+            dataDictionary: DataDictionary,
+            selector: GovernedTypeSelector,
+            aliases: SchemaAliases,
+        ): MetamodelVersion {
             val governedTypes = dataDictionary.domainTypes.filter { selector.governs(it) }
 
             // A DataDictionary can legally hold two domain types that share a name but differ in
@@ -287,9 +511,21 @@ class MetamodelVersion(
                 .groupBy { it.name }
                 .mapValues { (_, types) -> types.flatMap { it.labels }.toSet() }
 
+            // Decorating inside this loop is the only place it can happen: the stamp is immutable
+            // and hashes at construction. Every signature sharing a property name picks up the same
+            // declared alias set, so decoration can neither create nor collapse a duplicate, and
+            // the constructor's duplicate-name guard sees exactly the duplicates the union holds.
             val entityTypeProperties = governedTypes
                 .groupBy { it.name }
-                .mapValues { (_, types) -> types.flatMap { type -> type.properties.map(PropertySignature::of) }.toSet() }
+                .mapValues { (typeName, types) ->
+                    types.flatMap { type ->
+                        type.properties.map { property ->
+                            val signature = PropertySignature.of(property)
+                            val declared = aliases.propertyAliasesFor(typeName, signature.name)
+                            if (declared.isEmpty()) signature else signature.copy(aliases = declared)
+                        }
+                    }.toSet()
+                }
 
             // Splitting one type into two same-named declarations, or merging two back into one,
             // can render the same relationship descriptor twice. It is the same schema either way,
@@ -298,12 +534,21 @@ class MetamodelVersion(
                 .filter { selector.governs(it.from) }
                 .map { rel -> "${rel.from.name}-[${rel.name}]->${rel.to.name}" }
 
+            val governedNames = governedTypes.map { it.name }.toSet()
+            val entityTypeAliases = aliases.typeAliases.filterKeys { it in governedNames }
+
+            // The two refusals run here as well as in the constructor so a declaration that can't
+            // be stamped fails at the seam that wrote it, naming the alias to retire.
+            requireNoTypeAliasReuse(governedNames, entityTypeAliases)
+            requireNoAliasesOnDuplicateNames(entityTypeProperties)
+
             return MetamodelVersion(
                 schemaName = dataDictionary.name,
                 entityTypeNames = governedTypes.map { it.name },
                 entityTypeLabels = entityTypeLabels,
                 entityTypeProperties = entityTypeProperties,
                 relationshipNames = relationshipNames,
+                entityTypeAliases = entityTypeAliases,
             )
         }
 

@@ -69,8 +69,37 @@ class DeclaredSchema(
         fun from(
             dataDictionary: DataDictionary,
             selector: GovernedTypeSelector = GovernedTypeSelector.ALL,
+        ): DeclaredSchema = from(dataDictionary, selector, SchemaAliases.NONE)
+
+        /**
+         * Declare the governed part of [dataDictionary], carrying the former names [aliases]
+         * declares for its types and properties.
+         *
+         * This is how a rename gets recorded as one. The stamp carries the former names, and a
+         * later comparison pairs the old name with the new one rather than reading the change as a
+         * type or property disappearing.
+         *
+         * [aliases] has no default, and the shorter form above stays a separate function. Adding a
+         * third defaulted parameter to it would replace its synthetic `from$default` descriptor
+         * with a wider one, which is a link error for any caller already compiled against it.
+         *
+         * @param dataDictionary The schema to declare.
+         * @param selector Which types are under governance. [GovernedTypeSelector.ALL] governs all
+         *   of them.
+         * @param aliases Former names for the schema's types and properties. [SchemaAliases.NONE]
+         *   declares none. Experimental: shape may change before 1.0.
+         * @return The declaration.
+         * @throws IllegalArgumentException when a declared type name appears in another type's
+         *   alias set, or when aliases are declared for a property name the governed types hold
+         *   more than one signature for.
+         */
+        @JvmStatic
+        fun from(
+            dataDictionary: DataDictionary,
+            selector: GovernedTypeSelector,
+            aliases: SchemaAliases,
         ): DeclaredSchema = DeclaredSchema(
-            version = MetamodelVersion.from(dataDictionary, selector),
+            version = MetamodelVersion.from(dataDictionary, selector, aliases),
             relationshipTypeNames = MetamodelVersion.governedRelationshipTypeNames(dataDictionary, selector),
         )
     }

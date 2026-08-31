@@ -13,8 +13,10 @@ the stamp is about, and keeping the stamps so history is answerable. Comparing t
 stamp against a live graph, comes later — see [the tiers ahead](#the-tiers-ahead).
 
 The types live in `dice-metamodel`, a small pure-JVM module: `MetamodelVersion`,
-`GovernedTypeSelector`, `DeclaredSchema`/`DeclaredSchemaSource`, and the `MetamodelVersionStore`
-contract. It depends on Embabel's agent core types and nothing else.
+`GovernedTypeSelector`, `DeclaredSchema`/`DeclaredSchemaSource`, `SchemaAliases`, `StampProvenance`,
+and the `MetamodelVersionStore` contract. It depends on Embabel's agent core types and nothing else.
+`SchemaAliases`, `StampProvenance`, and the alias fields on `PropertySignature` and
+`MetamodelVersion` are experimental; their shape may change before 1.0.
 
 ## Declare, stamp, store
 
@@ -74,9 +76,26 @@ routinely contain `;`, `[`, `=`, and spaces. A delimiter-joined encoding would l
 Length-prefixing makes the encoding unambiguous, so distinct content always yields a distinct hash.
 
 The hashed form is `types:<n>|` followed, for each type name in sorted order, by the length-prefixed
-name, then `labels:<n>|` and its sorted labels, then `props:<n>|` and its sorted signatures — each
-signature contributing name, kind, type, and cardinality as four length-prefixed tokens. Then
-`rels:<n>|` and the sorted relationship descriptors. The schema name appears nowhere.
+name, an optional `typealiases:<n>|` block, then `labels:<n>|` and its sorted labels, then
+`props:<n>|` and its sorted signatures — each signature contributing name, kind, type, and
+cardinality as four length-prefixed tokens, followed by an optional `aliases:<n>|` block. Then
+`rels:<n>|` and the sorted relationship descriptors. The schema name appears nowhere, and neither
+does stamp provenance.
+
+The two alias blocks are written only when they hold something, which is what lets aliases be added
+to a shipped encoding at all. A schema that declares no former names renders exactly the bytes this
+encoding produced before aliases existed, so every hash already recorded against it still resolves.
+`MetamodelVersionTest` pins that. One test asserts the golden digest for the same dictionary stamped
+four ways: `from(dictionary)`, `from(dictionary, GovernedTypeSelector.ALL)`, the same with an
+explicit `SchemaAliases.NONE`, and the same with an explicitly empty
+`SchemaAliases(emptyMap(), emptyMap())`. A second asserts it for a stamp rebuilt field by field
+through the public constructor with an empty alias map, which is the path a storage mapper takes.
+
+The block shape is the one the rest of the encoding already uses: `<tag>:<count>|` and then
+length-prefixed entries in sorted order. Position keeps the two tags apart — the type block sits
+between a type's name and its labels, the property block after a signature's fourth token — so
+declaring `old` as a former type name and declaring it as a former property name are different
+digests.
 
 Two things about the input. A `DataDictionary` can legally hold two domain types sharing a name but
 differing in shape, so `from` unions their labels and properties per name. Keeping only the last
@@ -85,7 +104,8 @@ The same split can render one relationship descriptor twice, so the constructor 
 deduplicates the type and relationship lists: declaring a type once or splitting it in two is the
 same schema, and has to be the same hash.
 
-The constructor is strict about the rest, too. It copies every collection into a JVM-immutable one.
+The constructor is strict about the rest, too. It copies every collection into a JVM-immutable one,
+down to the alias set inside each property signature, which arrives however the caller built it.
 Kotlin's read-only view is a compile-time promise that a Java caller sees straight through, so it
 wouldn't stop anything being reshaped out from under the precomputed hash. The constructor also
 rejects a label or property map keyed by a type missing from `entityTypeNames`: only listed types
@@ -154,6 +174,146 @@ Versioning starts here: with no declared schema, nothing is stamped. The Spring 
 in a later slice activates only when a `DeclaredSchemaSource` bean is present, so an application
 that hasn't decided what it governs is left alone.
 
+## Declared renames
+
+Renaming a type or a property is the change a content hash reads worst. `email` becoming
+`emailAddress` is one property with a new spelling, and a stamp comparison sees a removal and an
+addition, which is the same shape as deleting a property and inventing an unrelated one. A declared
+alias says what the name used to be, so the comparison can pair the two.
+
+Iceberg and Delta hold identity in stable field ids assigned when a column is created, leaving the
+name as a label over an identity the format already carries. DICE has no id to assign. Its types
+come from LLM extraction against a `DataDictionary` an application edits, and the upstream
+`PropertyDefinition` has nowhere to put an id even if DICE minted one. The adapted form is the
+former name itself, declared at the moment the rename is made:
+
+```kotlin
+DeclaredSchema.from(
+    dataDictionary,
+    governed,
+    SchemaAliases(
+        typeAliases = mapOf("Organisation" to setOf("Company")),
+        propertyAliases = mapOf("Person" to mapOf("emailAddress" to setOf("email"))),
+    ),
+)
+```
+
+Types get the mechanism as well as properties because a type rename is the more destructive of the
+two: every proposition labelled with the old name and every referrer pointing at it move at once.
+
+Alias names are exact and case-sensitive. LLM extraction drifts on case, and folding `worksAt` into
+`worksat` here would pair two names nobody declared as the same one.
+
+Aliases accumulate. A type renamed `A` to `B` to `C` declares `{A, B}`, so a comparison across
+non-adjacent stamps still pairs. Retiring a name means deleting it from the declaration.
+
+`SchemaAliases` is a declaration-time input; the stamp carries the result. `MetamodelVersion.from`
+decorates each signature with the former names declared for its property, inside the per-type loop
+right after the signature is read, because the stamp is immutable and hashes at construction. Type
+aliases land in `entityTypeAliases`. Aliases declared for a type the selector doesn't govern are
+dropped, along with everything else about an ungoverned type.
+
+A property alias equal to the property's own name, or naming a property that still exists on both
+sides of a comparison, matches nothing: nothing looks data up by property name, so a stale property
+alias can mislead nothing. It stays part of the signature and moves the hash. A type alias naming
+another declared type is a different case, and the third guard below rejects it.
+
+Comparing two stamps is the next slice. Until it lands, an alias is a recorded intention that moves
+the hash and nothing more.
+
+### The four guards
+
+```mermaid
+flowchart TB
+    aliases["SchemaAliases<br/>typeAliases, propertyAliases"]
+    seam["MetamodelVersion.from / DeclaredSchema.from"]
+    ctor["MetamodelVersion constructor<br/>(also the storage reconstruction path)"]
+    g1{"alias keys all in<br/>entityTypeNames?"}
+    g2{"every alias set<br/>non-empty?"}
+    g3{"alias names another<br/>declared type?"}
+    g4{"aliases on a property name<br/>with two signatures?"}
+    stamp["Stamp: entityTypeAliases and<br/>PropertySignature.aliases, both hashed"]
+    reject["IllegalArgumentException<br/>naming the alias to retire"]
+
+    aliases --> seam
+    seam -->|"ungoverned keys dropped,<br/>signatures decorated"| ctor
+    ctor --> g1
+    g1 -->|no| reject
+    g1 -->|yes| g2
+    g2 -->|no| reject
+    g2 -->|yes| g3
+    g3 -->|yes| reject
+    g3 -->|no| g4
+    g4 -->|yes| reject
+    g4 -->|no| stamp
+```
+
+**Alias-map keys are a subset of `entityTypeNames`.** Only listed types are walked when hashing, so
+an entry keyed by anything else never reaches `contentHash`. This is the rule the label and property
+maps already follow.
+
+**Every alias set is non-empty.** An entry mapping a type to no former names hashes differently from
+having no entry at all while saying the same thing, so two stamps of one schema could land on two
+different natural keys. `SchemaAliases` drops empty sets on the way in, which keeps a harmless
+declaration from becoming an error at the seam.
+
+**No declared type name appears in another type's alias set.** This is the reuse collision. A schema
+renames `Company` to `Organisation`, keeps `{Company}` as the alias, and later declares a fresh
+`Company` for something unrelated. A live type now shares a retired name, and the comparison has two
+bad options: sweep the new `Company`'s data into the renamed type's quarantine matching, or treat
+the old label as declared forever and never report drift on it. Reusing a retired name therefore
+requires deleting the alias that still claims it first. A type listing its own name is fine — a
+rename to `B` and back to `A` accumulates `{A, B}` — because the guard is about other types' names.
+
+**No aliases on a property name a type holds more than one signature for.** Two same-named domain
+types can each declare `age` with a different shape, and the union keeps both signatures. An old
+name has no way to say which of the two it meant, so the declaration is refused.
+
+All four run in the `MetamodelVersion` constructor, so the public constructors and the storage
+mapper's reconstruction path are covered. The last two also run at `MetamodelVersion.from` and
+`DeclaredSchema.from`, which is where duplicates and reused names actually become visible, and where
+the message can name the alias to retire.
+
+### What the duplicate-name refusal costs
+
+A dictionary can legally evolve into duplicate-hood. Someone adds a second `Person` declaration
+carrying its own `age`, and a name that had one signature now has two. If an alias was standing on
+that name, every stamp and every drift check from that moment throws, with a message naming the
+alias to retire. That is a loud, conservative hard stop on a schema that was fine the day before.
+
+Retiring the alias clears the throw and costs the pairing. The name then diffs through the duplicate
+fallback as a removal plus an addition, the drift policy reads that as lossy, and an additive
+evolution earns a quarantine sweep. Both outcomes cost more than an ordinary signature change would,
+and both beat the only other option, which is guessing which of the two signatures the old name
+referred to.
+
+## Stamp provenance
+
+A stamp records who caused it, in two pairs: `origin` for the first stamp of a schema, `lastStamped`
+for the most recent. Each is a `StampProvenance(actor, trigger)` of two opaque host-supplied
+strings, capped at 256 characters because they land in a database column and an unbounded
+host-supplied string is how a stamp write starts failing at the driver. The cap counts characters,
+which is what `String.length` gives; a storage backend sizes its column in bytes, so 256 characters
+needs room for the 1024 bytes UTF-8 can take to encode them.
+
+A single pair would answer only the second question. The drift check that arrives in a later slice
+re-stamps on every boot and on a schedule, so one last-writer-wins field converges on whichever
+instance booted last, and the cause of the original stamp is gone within a deploy cycle. Keeping
+`origin` separate means the first cause survives every routine re-stamp.
+
+Snowflake's `SCHEMA_EVOLUTION_RECORD` is the same shape: the evolution event is recorded alongside
+the schema rather than folded into the schema's identity. Provenance is informational here for the
+same reason. Two stamps of one schema taken for different reasons are the same schema, and the hash
+is the store's natural key, so hashing the cause would give one schema as many identities as it had
+causes. It is excluded from `contentHash` and from equality.
+
+`trigger` is where an extraction-run reference lands once that exists. It stays a plain string, so
+this module gains no dependency on the run model.
+
+The persistence rules that keep those two pairs alive through routine re-saves belong to the storage
+slice: `origin` is first-write-wins, and `lastStamped` moves only when the incoming value is
+non-null, so a routine re-stamp carrying no provenance can never erase cause.
+
 ## History accumulates
 
 `MetamodelVersionStore` is a port with four operations: `saveVersion`, `latestVersion`,
@@ -165,6 +325,14 @@ still there.
 carries the content: the hash is derived from exactly the fields a re-save would overwrite, so
 anything landing on an existing key has identical content by construction. The interface doesn't
 promise append-only storage, and an implementation isn't expected to reject a re-save.
+
+This is where schema registries have already landed. AWS Glue Schema Registry and Confluent Schema
+Registry both identify a schema version by a fingerprint of its content and answer a re-registration
+of an identical schema with the existing version rather than a new one. Deriving identity from the
+content is what makes registration idempotent, and it is why a client that re-registers on every
+boot doesn't inflate the history. DICE keys on `(schemaName, contentHash)` for that reason, and an
+application stamping its declared schema on every start is exactly the client those registries are
+built for.
 
 `findVersion` resolves a recorded hash back to the schema shape it named. The default scans
 `versionHistory`, which is correct for any implementation but reads the whole history to answer a

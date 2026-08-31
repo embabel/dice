@@ -18,8 +18,10 @@ package com.embabel.dice.metamodel
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.core.DomainTypePropertyDefinition
 import com.embabel.agent.core.DynamicType
+import com.embabel.agent.core.ValuePropertyDefinition
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
 class DeclaredSchemaTest {
 
@@ -60,5 +62,66 @@ class DeclaredSchemaTest {
         val source = DeclaredSchemaSource { DeclaredSchema.from(dictionary()) }
 
         assertEquals(DeclaredSchema.from(dictionary()), source.declare())
+    }
+
+    @Test
+    fun `declaring no aliases matches declaring none explicitly`() {
+        assertEquals(
+            DeclaredSchema.from(dictionary()).version.contentHash,
+            DeclaredSchema.from(dictionary(), GovernedTypeSelector.ALL, SchemaAliases.NONE).version.contentHash,
+        )
+    }
+
+    @Test
+    fun `declared aliases reach the stamp`() {
+        val declared = DeclaredSchema.from(
+            dictionary(),
+            GovernedTypeSelector.ALL,
+            SchemaAliases(
+                typeAliases = mapOf("Person" to setOf("Human")),
+                propertyAliases = mapOf("Person" to mapOf("worksAt" to setOf("employer"))),
+            ),
+        )
+
+        assertEquals(setOf("Human"), declared.version.entityTypeAliases["Person"])
+        assertEquals(
+            setOf("employer"),
+            declared.version.entityTypeProperties["Person"]!!.single { it.name == "worksAt" }.aliases,
+        )
+        assertNotEquals(DeclaredSchema.from(dictionary()).version.contentHash, declared.version.contentHash)
+    }
+
+    @Test
+    fun `a type alias naming another declared type is refused`() {
+        val thrown = assertThrows<IllegalArgumentException> {
+            DeclaredSchema.from(
+                dictionary(),
+                GovernedTypeSelector.ALL,
+                SchemaAliases(typeAliases = mapOf("Person" to setOf("Company"))),
+            )
+        }
+        assertTrue(thrown.message!!.contains("Company"), thrown.message)
+    }
+
+    @Test
+    fun `aliases on a property name the merge holds two signatures for are refused`() {
+        // Two same-named Person declarations each carry their own `age`, so the union holds two
+        // signatures and an old name can't say which of them it meant.
+        val duplicated = DataDictionary.fromDomainTypes(
+            "app",
+            listOf(
+                DynamicType(name = "Person", ownProperties = listOf(ValuePropertyDefinition("age", type = "string"))),
+                DynamicType(name = "Person", ownProperties = listOf(ValuePropertyDefinition("age", type = "integer"))),
+            ),
+        )
+
+        val thrown = assertThrows<IllegalArgumentException> {
+            DeclaredSchema.from(
+                duplicated,
+                GovernedTypeSelector.ALL,
+                SchemaAliases(propertyAliases = mapOf("Person" to mapOf("age" to setOf("years")))),
+            )
+        }
+        assertTrue(thrown.message!!.contains("years"), thrown.message)
     }
 }
