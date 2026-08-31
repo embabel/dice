@@ -71,8 +71,8 @@ you need.
 - [report.md](report.md) — `dice-report`'s pure projectors that turn queried propositions into
   human-facing artifacts: structured breakdowns, discovered links, LLM-generated rationale.
 - [metamodel-versioning.md](metamodel-versioning.md) — stamping a schema with a content hash so it
-  can be compared later: per-type governance (you version what you declare), the declared-schema
-  opt-in seam, and the version store's accumulating history.
+  can be compared later: per-type governance, the declared-schema opt-in seam, and the version
+  store's accumulating history.
 
 ## Modules
 

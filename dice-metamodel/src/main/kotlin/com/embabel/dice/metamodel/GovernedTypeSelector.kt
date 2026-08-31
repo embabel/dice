@@ -20,23 +20,22 @@ import com.embabel.agent.core.DomainType
 /**
  * Decides which domain types a [MetamodelVersion] stamp covers.
  *
- * A DICE domain is rarely all one thing. Part of it is closed-world — the types you have committed
+ * A DICE domain is rarely all one thing. Part of it is closed-world: the types you have committed
  * to, whose shape you want to notice changing. The rest is open-world: exploratory types that
- * extraction proposes, that come and go, and that you would rather not have breaking a version
- * comparison every time an LLM invents one. Governance is therefore per type and opt-in, in the
- * spirit of Hibernate's `@Version`: you version what you declare, and nothing else.
+ * extraction proposes, that come and go, and that would otherwise break a version comparison every
+ * time an LLM invents one. Governance is therefore per type and opt-in, in the spirit of
+ * Hibernate's `@Version`.
  *
- * A selector is just a predicate over types, so the usual form is a lambda over names you already
- * hold:
+ * A selector is a predicate over types, so the usual form is a lambda over names you already hold:
  *
  * ```kotlin
  * val governed = setOf("Person", "Company")
  * val version = MetamodelVersion.from(dataDictionary, GovernedTypeSelector { it.name in governed })
  * ```
  *
- * Selecting a subset changes what the stamp is *about*, not how it is computed: adding an
- * ungoverned type to the dictionary leaves the content hash alone, while touching a governed one
- * changes it.
+ * Selecting a subset changes which types the stamp covers, and leaves the encoding alone. Adding an
+ * ungoverned type to the dictionary leaves the content hash as it was, while touching a governed
+ * one changes it.
  */
 fun interface GovernedTypeSelector {
 
@@ -49,7 +48,7 @@ fun interface GovernedTypeSelector {
     companion object {
 
         /**
-         * Governs every type in the dictionary — the whole-schema stamp, and what
+         * Governs every type in the dictionary. This is the whole-schema stamp, and what
          * [MetamodelVersion.from] uses when no selector is given.
          */
         @JvmField

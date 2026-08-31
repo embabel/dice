@@ -16,7 +16,7 @@ DICE is a multi-module Maven build. Each module's intent, and what it's allowed 
 | `dice-storage-autoconfigure` | Spring Boot autoconfiguration that wires `dice-storage`'s beans (repository, projectors, trust scorer) into a host application. Depends on `dice-storage`. |
 | `dice-ingestion` | Content-hash dedup ledger and source adapters that sit in front of `PropositionPipeline`, so the same artifact is never extracted twice concurrently. Depends on `dice`. |
 | `dice-report` | Rationale and structured report generation over propositions and their lineage. Depends on `dice`. |
-| `dice-metamodel` | Schema versioning: content-hash stamps over the governed part of a `DataDictionary`, the declared-schema seam, and the version store contract. Pure JVM — depends on no other DICE module. |
+| `dice-metamodel` | Schema versioning: content-hash stamps over the governed part of a `DataDictionary`, the declared-schema seam, and the version store contract. Pure JVM. Depends on no other DICE module. |
 | `dice-integration-tests` | End-to-end tests exercising the real Neo4j backend and full pipeline across module boundaries. Depends on `dice`, `dice-ingestion`, `dice-report` (and transitively `dice-storage`). Not shipped. |
 
 ```mermaid
@@ -39,9 +39,9 @@ flowchart TB
 ```
 
 `dice` never depends on any other DICE module — it's the leaf of the graph, so every other module
-can be added or removed without touching core logic. `dice-metamodel` is a second leaf, with no
-edge at all: it stamps a schema and never touches the proposition model, so it stands on Embabel's
-agent core types alone. `dice-storage-autoconfigure` is the only module that knows about Spring
+can be added or removed without touching core logic. `dice-metamodel` is a second leaf with no
+edges: it stamps a schema, and depends only on Embabel's agent core types.
+`dice-storage-autoconfigure` is the only module that knows about Spring
 Boot autoconfiguration; plain `dice-storage` stays framework-neutral so it can be wired by hand
 outside Spring Boot.
 

@@ -16,28 +16,27 @@
 package com.embabel.dice.metamodel
 
 /**
- * Durable store for metamodel version stamps. History is the point: keeping every stamp a schema
- * has ever had is what later lets you say when a shape changed and what knowledge was extracted
- * under which version. Implementations must preserve saved stamps exactly as recorded, including
- * set contents and ordering guarantees below.
+ * Durable store for metamodel version stamps. Keeping every stamp a schema has ever had is what
+ * later lets you say when a shape changed and what knowledge was extracted under which version.
+ * Implementations must preserve saved stamps exactly as recorded, including set contents and the
+ * ordering guarantees below.
  *
  * **What "save" means here.** [saveVersion] is an upsert on the natural key `(schemaName,
- * contentHash)`, not a blind append. Saving a stamp whose key already exists doesn't create a
- * second record: the existing one is matched and its non-key content is overwritten with what you
- * just passed. In practice that's idempotence rather than mutation, because the key carries the
- * content — the hash is derived from exactly the fields a re-save would overwrite, so anything
- * landing on an existing key has identical content by construction. Nothing is ever deleted, and
- * records with different keys always coexist, so history accumulates. Implementations are not
- * expected to reject a re-save.
+ * contentHash)`. Saving a stamp whose key already exists matches the existing record and
+ * overwrites its non-key content, so no second record appears. That is idempotence in practice,
+ * because the key carries the content: the hash is derived from exactly the fields a re-save would
+ * overwrite, so anything landing on an existing key has identical content by construction. Nothing
+ * is deleted, and records with different keys always coexist, so history accumulates.
+ * Implementations are not expected to reject a re-save.
  *
- * There is no delete, and no drift or diffing here. This contract covers stamping and recall only;
- * comparing a declaration against a live graph is a separate concern with its own store contract.
+ * This contract covers stamping and recall. Comparing a declaration against a live graph is a
+ * separate concern with its own store contract.
  */
 interface MetamodelVersionStore {
 
     /**
      * Save a version stamp, keyed on `(schemaName, contentHash)`. Saving the same version twice
-     * leaves one stored version, not two.
+     * leaves one stored version.
      *
      * @param version The version to save.
      */
@@ -47,8 +46,8 @@ interface MetamodelVersionStore {
      * Return the most recently saved version for the given schema name, or `null` if no versions
      * have been recorded.
      *
-     * "Most recent" is logical write order, not stamp content — re-saving an existing version does
-     * not make it the latest again, since the write matched a record that was already there.
+     * "Most recent" means logical write order. Re-saving an existing version does not make it the
+     * latest again, because the write matched a record that was already there.
      *
      * @param schemaName The schema to look up.
      * @return The latest [MetamodelVersion], or `null` if unknown.
@@ -66,12 +65,12 @@ interface MetamodelVersionStore {
     /**
      * Look up one exact stamp by its natural key.
      *
-     * This is how you resolve a recorded hash — the one a proposition carries as the version it was
-     * extracted under — back into the schema shape it stood for.
+     * Resolves a recorded hash, such as the one a proposition carries as the version it was
+     * extracted under, back into the schema shape it stood for.
      *
      * The default scans [versionHistory], which is correct for any implementation but reads the
-     * whole history to answer a keyed question. A backend that can push the lookup down (a database
-     * `MATCH` on the key rather than an in-memory `filter`) should override it.
+     * whole history to answer a keyed question. A backend that can push the lookup down to the
+     * database (a keyed `MATCH` rather than an in-memory `filter`) should override it.
      *
      * @param schemaName The schema the version belongs to.
      * @param contentHash The [MetamodelVersion.contentHash] to find.

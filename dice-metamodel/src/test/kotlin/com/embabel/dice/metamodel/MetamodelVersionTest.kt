@@ -77,8 +77,6 @@ class MetamodelVersionTest {
 
         @Test
         fun `a caller cannot supply the hash — it is always derived from the content`() {
-            // The whole point of deriving it: two versions that differ structurally can never claim
-            // the same hash, because there is no way to hand one in.
             val one = MetamodelVersion(
                 schemaName = "s",
                 entityTypeNames = listOf("A"),
@@ -99,8 +97,8 @@ class MetamodelVersionTest {
 
         @Test
         fun `same types under different schema names produce the same hash`() {
-            // contentHash covers structural content only; the schema name is excluded so that
-            // dev/prod variants of the same schema compare as equal.
+            // The schema name is excluded from contentHash, so dev and prod variants of one schema
+            // compare as equal.
             val a = MetamodelVersion.from(
                 DataDictionary.fromDomainTypes("schema-dev", listOf(DynamicType("Person")))
             )
@@ -153,14 +151,13 @@ class MetamodelVersionTest {
 
         @Test
         fun `golden vector — the digest of a fixed schema is pinned to a literal`() {
-            // This literal is the persisted hash format, deliberately frozen. contentHash is the
-            // store's natural key and what extracted data records as the version it was created
-            // under, so changing how the fingerprint is encoded orphans everything already saved
-            // against it. If you mean to change the format, change this literal in the same commit
-            // and plan the migration — do not "fix" the test by pasting in whatever the new code
-            // produces. This vector was last regenerated when property signatures (type and
-            // cardinality, not just the name) went into the encoding, before anything had been
-            // persisted against the old form.
+            // This literal pins the persisted hash format. contentHash is the store's natural key
+            // and what extracted data records as the version it was created under, so changing how
+            // the fingerprint is encoded orphans everything already saved against it. Changing the
+            // format means changing this literal in the same commit and planning the migration;
+            // don't "fix" the test by pasting in whatever the new code produces. This vector was
+            // last regenerated when property signatures (type and cardinality, not just the name)
+            // went into the encoding, before anything had been persisted against the old form.
             assertEquals(
                 "0a5b5b62c125d8ade5bcd2af5b03e0ec5bcaaf5b0799b7cfe8c16be6e723de00",
                 MetamodelVersion.from(goldenSchema()).contentHash,
@@ -249,9 +246,9 @@ class MetamodelVersionTest {
 
         @Test
         fun `splitting a type into two same-named declarations hashes like the merged one`() {
-            // A DataDictionary can hold two "Person" types that both declare worksAt. That renders
-            // the same descriptor twice, but it is the same schema as one Person declaring it once,
-            // so it has to be the same hash.
+            // A DataDictionary can hold two "Person" types that both declare worksAt, which renders
+            // the same descriptor twice. It is the same schema as one Person declaring it once, so
+            // it has to be the same hash.
             val company = DynamicType(name = "Company")
             val worksAt = DomainTypePropertyDefinition("worksAt", company)
             val merged = DataDictionary.fromDomainTypes(
@@ -399,7 +396,7 @@ class MetamodelVersionTest {
 
         @Test
         fun `the collections a stamp hands back cannot be mutated`() {
-            // Kotlin's read-only types are a compile-time promise only — a Java caller sees plain
+            // Kotlin's read-only types are a compile-time promise; a Java caller sees plain
             // java.util collections through the getters. These have to refuse at runtime, or a
             // caller could reshape a stamp out from under its own precomputed hash.
             val version = version()
@@ -468,7 +465,7 @@ class MetamodelVersionTest {
         @Test
         fun `labels keyed by a type that is not listed are rejected`() {
             // Only listed types are walked when hashing, so accepting this would let two stamps
-            // with different labels share a content hash — and the store's natural key with it.
+            // with different labels share a content hash, and the store's natural key with it.
             val thrown = assertThrows<IllegalArgumentException> {
                 MetamodelVersion(
                     schemaName = "test",
@@ -561,8 +558,8 @@ class MetamodelVersionTest {
         @Test
         fun `same-named types with different shapes are merged, not dropped`() {
             // A DataDictionary can hold two "Person" types with different shapes. The fingerprint
-            // must union both, never silently keep only the last — otherwise a label or property
-            // would disappear from the hash and its later removal would go undetected.
+            // unions both. Keeping only the last would drop a label or property from the hash, and
+            // its later removal would go undetected.
             val dict = DataDictionary.fromDomainTypes(
                 "test",
                 listOf(
@@ -584,7 +581,7 @@ class MetamodelVersionTest {
                 setOf("age", "email"),
                 version.entityTypeProperties["Person"]!!.map { it.name }.toSet(),
             )
-            // The name is deduped in the sorted name list, not repeated.
+            // The name is deduped in the sorted name list.
             assertEquals(listOf("Person"), version.entityTypeNames)
         }
     }
@@ -592,7 +589,7 @@ class MetamodelVersionTest {
     @Nested
     inner class Labels {
 
-        /** Same type name, but a different parent — so the label set differs while the name does not. */
+        /** Same type name with a different parent, so the label set differs while the name doesn't. */
         private fun personWithParent(parent: String): DataDictionary =
             DataDictionary.fromDomainTypes(
                 "test",
@@ -646,9 +643,9 @@ class MetamodelVersionTest {
 
         @Test
         fun `a property name containing the set delimiter does not collide with a split set`() {
-            // ["a;b"] and ["a", "b"] are genuinely different property sets. A delimiter-joined
-            // encoding would serialise both as "a;b;" and hash them identically, hiding a real
-            // (lossy) schema change. Length-prefixed encoding keeps them distinct.
+            // ["a;b"] and ["a", "b"] are different property sets. A delimiter-joined encoding would
+            // serialise both as "a;b;" and hash them identically, hiding a lossy schema change.
+            // Length-prefixed encoding keeps them distinct.
             val joined = MetamodelVersion.from(personWithProperties("a;b"))
             val split = MetamodelVersion.from(personWithProperties("a", "b"))
             assertNotEquals(joined.contentHash, split.contentHash)
@@ -676,8 +673,8 @@ class MetamodelVersionTest {
 
         @Test
         fun `adding an ungoverned type leaves the hash alone`() {
-            // The point of per-type governance: extraction proposing a new exploratory type is not
-            // a schema change, and must not fill the version history with stamps nobody chose.
+            // Per-type governance exists so that extraction proposing a new exploratory type
+            // doesn't fill the version history with stamps nobody chose.
             val before = dictionaryOf(DynamicType("Person"), DynamicType("Company"))
             val after = dictionaryOf(DynamicType("Person"), DynamicType("Company"), DynamicType("Sighting"))
 
@@ -700,7 +697,7 @@ class MetamodelVersionTest {
 
         @Test
         fun `reshaping an ungoverned type leaves the hash alone`() {
-            // Not just the type set: labels and properties on an ungoverned type are out too.
+            // Labels and properties on an ungoverned type are excluded along with its name.
             val plain = dictionaryOf(DynamicType("Person"), DynamicType("Sighting"))
             val reshaped = dictionaryOf(
                 DynamicType("Person"),
@@ -760,7 +757,7 @@ class MetamodelVersionTest {
         fun `a governed type's relationship to an ungoverned type stays in the stamp`() {
             // The relationship belongs to the type that declares it. Person saying it has a
             // `spotted` Sighting is part of Person's declared shape, whether or not Sighting is
-            // itself governed — and whether or not Sighting is even in the dictionary.
+            // itself governed, and whether or not Sighting is in the dictionary at all.
             val sighting = DynamicType("Sighting")
             val person = DynamicType(
                 name = "Person",
@@ -769,7 +766,7 @@ class MetamodelVersionTest {
 
             val version = MetamodelVersion.from(dictionaryOf(person, sighting), governed)
             assertEquals(listOf("Person-[spotted]->Sighting"), version.relationshipNames)
-            // Which means listing the ungoverned type in the dictionary changes nothing.
+            // Listing the ungoverned type in the dictionary therefore changes nothing.
             assertEquals(MetamodelVersion.from(dictionaryOf(person), governed).contentHash, version.contentHash)
         }
 

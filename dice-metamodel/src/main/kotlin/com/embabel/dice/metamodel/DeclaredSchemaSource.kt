@@ -22,11 +22,11 @@ import com.embabel.agent.core.DataDictionary
  *
  * The bare names travel alongside the stamp rather than being recovered from it, because
  * [MetamodelVersion.relationshipNames] holds rendered `From-[name]->To` descriptors and
- * reverse-parsing one is ambiguous — these names come from free-text and LLM extraction, and can
+ * reverse-parsing one is ambiguous: these names come from free-text and LLM extraction, and can
  * themselves contain a `-[...]->`-shaped substring. Whoever builds a declaration holds the
- * un-rendered names before anything was stamped, so it passes them straight through. Comparing
- * declared relationships against what a graph actually holds needs those bare names, and that
- * comparison is the next slice.
+ * un-rendered names before anything is stamped, so it passes them straight through. Comparing
+ * declared relationships against what a graph holds needs those bare names, and that comparison is
+ * the next slice.
  *
  * @property version The stamped declared schema.
  * @property relationshipTypeNames The bare relationship type names [version] allows.
@@ -36,7 +36,7 @@ class DeclaredSchema(
     relationshipTypeNames: Set<String>,
 ) {
 
-    /** Copied to a JVM-immutable set so the declaration can't drift from its stamped [version]. */
+    /** Copied into a JVM-immutable set so the declaration can't drift from its stamped [version]. */
     val relationshipTypeNames: Set<String> = java.util.Set.copyOf(relationshipTypeNames)
 
     override fun equals(other: Any?): Boolean =
@@ -56,7 +56,7 @@ class DeclaredSchema(
          * relationship names the same governed types declare.
          *
          * Use this rather than building the two halves separately. Picking a governed subset for
-         * the stamp but taking relationship names from the whole dictionary would declare
+         * the stamp while taking relationship names from the whole dictionary would declare
          * relationships the stamp never covered, and the mismatch would only surface much later,
          * as phantom disagreement in a drift check.
          *
@@ -79,15 +79,13 @@ class DeclaredSchema(
 /**
  * Supplies the schema an application has declared.
  *
- * This is the opt-in seam for the whole versioning story: no declared schema, no versioning.
- * Nothing here stamps anything on its own, and the Spring wiring that arrives in a later slice
- * activates only when a `DeclaredSchemaSource` bean is present. An application that hasn't decided
- * what it governs is left alone.
+ * This is the opt-in seam for versioning: with no declared schema, nothing is stamped. The Spring
+ * wiring that arrives in a later slice activates only when a `DeclaredSchemaSource` bean is
+ * present, so an application that hasn't decided what it governs is left alone.
  *
- * The module has no opinion on where a declared schema comes from — a consuming app implements this
- * over whatever it already uses to define its types (a `DataDictionary`, a config file, a
- * registry...) and wires it as a bean. There is no default implementation because there is no
- * default declared schema.
+ * A declared schema can come from anywhere. A consuming app implements this over whatever it
+ * already uses to define its types (a `DataDictionary`, a config file, a registry...) and wires it
+ * as a bean. There is no default implementation, because there is no default declared schema.
  */
 fun interface DeclaredSchemaSource {
 

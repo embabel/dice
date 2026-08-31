@@ -65,8 +65,8 @@ class MetamodelVersionStoreTest {
 
     @Test
     fun `findVersion is scoped to the schema name`() {
-        // Two schemas can hold structurally identical versions — the hash excludes the name — so
-        // the lookup has to match on both halves of the key, not just the hash.
+        // Two schemas can hold structurally identical versions, because the hash excludes the
+        // name, so the lookup has to match on both halves of the key.
         val store = InMemoryVersionStore()
         val mine = version("mine", "Person")
         store.saveVersion(mine)

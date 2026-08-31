@@ -46,8 +46,8 @@ class DeclaredSchemaTest {
     @Test
     fun `bare relationship names follow governance, so they can't disagree with the stamp`() {
         // `about` is declared by the ungoverned Sighting, so it is out of both halves. Taking the
-        // stamp from a subset but the names from the whole dictionary would declare a relationship
-        // the stamp never covered.
+        // stamp from a governed subset while taking the names from the whole dictionary would
+        // declare a relationship the stamp never covered.
         val declared = DeclaredSchema.from(dictionary(), GovernedTypeSelector { it.name in setOf("Person", "Company") })
 
         assertEquals(setOf("worksAt"), declared.relationshipTypeNames)
