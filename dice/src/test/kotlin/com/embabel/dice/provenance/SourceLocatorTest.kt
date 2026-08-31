@@ -45,6 +45,31 @@ class SourceLocatorTest {
     }
 
     @Test
+    fun `connector keys stay legacy-shaped when only the external id contains colons`() {
+        // Stored :Source nodes are keyed by this rendering, so it must not shift
+        // for any connector id without ':' or '\' — i.e. all realistic ones.
+        assertEquals(
+            "connector:slack:C123:1699999999.123456",
+            ConnectorRef("slack", "C123:1699999999.123456").key(),
+        )
+    }
+
+    @Test
+    fun `connector key escaping keeps structurally different refs distinct`() {
+        // Without escaping, both of these rendered "connector:a:b:c".
+        val colonInConnector = ConnectorRef("a:b", "c")
+        val colonInExternal = ConnectorRef("a", "b:c")
+        assertEquals("""connector:a\:b:c""", colonInConnector.key())
+        assertEquals("connector:a:b:c", colonInExternal.key())
+        assertNotEquals(colonInConnector, colonInExternal)
+        assertNotEquals(colonInConnector.hashCode(), colonInExternal.hashCode())
+
+        // Backslashes are doubled so an id ending in '\' can't fake an escape.
+        assertEquals("""connector:a\\:b:c""", ConnectorRef("""a\""", "b:c").key())
+        assertNotEquals(ConnectorRef("""a\""", "b:c"), colonInConnector)
+    }
+
+    @Test
     fun `display does not participate in identity`() {
         val a = UriLocator("https://example.com/doc", display = "Doc A")
         val b = UriLocator("https://example.com/doc", display = "Doc B")

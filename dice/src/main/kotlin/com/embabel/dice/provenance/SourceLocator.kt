@@ -51,9 +51,11 @@ sealed interface SourceLocator {
      * A stable, comparable key identifying this locator.
      *
      * Keys are prefixed by locator kind so that distinct kinds never collide
-     * (`uri:...`, `file:...`, `content:...`, `connector:...`). Use this for
-     * deduplication, indexing, and reference equality rather than the [display]
-     * label.
+     * (`uri:...`, `file:...`, `content:...`, `connector:...`), and distinct
+     * locators always render distinct keys — [ConnectorRef] escapes its
+     * connector id so free-text ids containing colons cannot blur the boundary
+     * between its two segments. Use this for deduplication, indexing, and
+     * reference equality rather than the [display] label.
      *
      * @return a stable key string for this locator
      */
@@ -142,6 +144,16 @@ data class ContentAddressedLocator @JvmOverloads constructor(
  * [externalId] within the system identified by [connectorId]. DICE only holds
  * the identifiers needed to ask the connector for the material later.
  *
+ * Both ids are free text, so the key escapes the connector id (`\` becomes `\\`,
+ * `:` becomes `\:`) to keep the boundary between the two segments unambiguous —
+ * otherwise `ConnectorRef("a:b", "c")` and `ConnectorRef("a", "b:c")` would both
+ * render `connector:a:b:c` and wrongly compare equal. The external id needs no
+ * escaping because it is the last segment. For any connector id without `:` or
+ * `\` — every realistic one — the key is byte-identical to the pre-escaping
+ * rendering, so existing stored `:Source` nodes keep their keys. A stored key
+ * whose connector id did contain those characters was ambiguous when written
+ * and cannot be re-keyed from the key alone; re-ingesting the source is the fix.
+ *
  * @property connectorId Identifier of the connector that owns the material
  *   (e.g. "slack", "notion", "gmail")
  * @property externalId Identifier of the material within that connector
@@ -158,10 +170,28 @@ data class ConnectorRef @JvmOverloads constructor(
         require(externalId.isNotBlank()) { "externalId must not be blank" }
     }
 
-    override fun key(): String = "connector:$connectorId:$externalId"
+    override fun key(): String = "connector:${escapeSegment(connectorId)}:$externalId"
 
     // Identity is [key]; [display] is presentation-only and excluded (see SourceLocator contract).
     override fun equals(other: Any?): Boolean = other is SourceLocator && other.key() == key()
 
     override fun hashCode(): Int = key().hashCode()
+
+    private companion object {
+
+        private fun escapeSegment(value: String): String {
+            if (value.none { it == ':' || it == '\\' }) {
+                return value
+            }
+            return buildString(value.length + 2) {
+                for (character in value) {
+                    when (character) {
+                        '\\' -> append("\\\\")
+                        ':' -> append("\\:")
+                        else -> append(character)
+                    }
+                }
+            }
+        }
+    }
 }
