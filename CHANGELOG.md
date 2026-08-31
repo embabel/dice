@@ -15,13 +15,11 @@ and the consumer PRs that deliver it).
   opt-in seam, and the `MetamodelVersionStore` contract. Pure JVM.
   **Compatibility: additive.** New module; no existing API touched.
 
-- Declared renames and stamp provenance in `dice-metamodel`. **EXPERIMENTAL**
-  (shape may change before 1.0): `SchemaAliases`, `StampProvenance`,
-  `PropertySignature.aliases`, `MetamodelVersion.entityTypeAliases`, and
-  `MetamodelVersion.origin`/`lastStamped`. A declaration states the names a type
-  or property used to go by, so a later comparison pairs a rename instead of
-  reading it as a removal and an addition; provenance records who caused the
-  first and the most recent stamp, and is never hashed.
+- Declared renames in `dice-metamodel`. **EXPERIMENTAL** (shape may change
+  before 1.0): `SchemaAliases`, `PropertySignature.aliases`, and
+  `MetamodelVersion.entityTypeAliases`. A declaration states the names a type or
+  property used to go by, so a later comparison pairs a rename instead of
+  reading it as a removal and an addition.
   **Compatibility: additive.** `contentHash` is unchanged for any schema that
   declares no aliases — the new hash blocks serialize only when non-empty, and
   the pinned golden digest is asserted unchanged, including for a stamp rebuilt
@@ -39,6 +37,3 @@ and the consumer PRs that deliver it).
   static form. The changed Kotlin synthetic constructor, `copy`, `copy$default`
   and `componentN` signatures on `PropertySignature` are the accepted boundary:
   Kotlin callers recompile, and no consumer holds a compiled reference to them.
-  `StampProvenance` caps `actor` and `trigger` at 256 **characters**
-  (`String.length`), so a storage backend sizing a column in bytes needs room
-  for the up-to-1024 UTF-8 bytes those characters can take.

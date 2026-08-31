@@ -115,51 +115,6 @@ data class PropertySignature @JvmOverloads constructor(
 }
 
 /**
- * Who or what caused a stamp to be taken.
- *
- * Both fields are opaque strings the host supplies and DICE never interprets. `actor` is whoever
- * asked — a deploy pipeline, an operator, a scheduled job. `trigger` is what prompted it, and is
- * where an extraction-run reference lands once that exists; keeping it a plain string means this
- * module gains no dependency on the run model.
- *
- * Provenance never reaches [MetamodelVersion.contentHash] and never affects equality. It is
- * informational: two stamps of the same schema taken for different reasons are the same schema.
- * Hashing it would give one schema as many content hashes as it had causes, and the store keys on
- * that hash.
- *
- * Both fields are capped at [MAX_LENGTH] **characters**, counted as `String.length` (UTF-16 code
- * units). They land in a database column, and an unbounded host-supplied string is how a stamp
- * write starts failing at the driver. A storage backend sizing a column has to size it in bytes: a
- * 256-character value can reach 1024 bytes in UTF-8, and more once surrogate pairs are involved, so
- * the column needs headroom rather than a matching 256.
- *
- * Experimental: shape may change before 1.0.
- *
- * @property actor Who asked for the stamp. Null when the host didn't say.
- * @property trigger What prompted it. Null when the host didn't say.
- */
-data class StampProvenance @JvmOverloads constructor(
-    val actor: String? = null,
-    val trigger: String? = null,
-) {
-
-    init {
-        require(actor == null || actor.length <= MAX_LENGTH) {
-            "actor is ${actor!!.length} characters; the cap is $MAX_LENGTH."
-        }
-        require(trigger == null || trigger.length <= MAX_LENGTH) {
-            "trigger is ${trigger!!.length} characters; the cap is $MAX_LENGTH."
-        }
-    }
-
-    companion object {
-
-        /** Longest an [actor] or [trigger] may be, in characters. */
-        const val MAX_LENGTH: Int = 256
-    }
-}
-
-/**
  * An immutable stamp that captures the identity and structural content of the governed part of a
  * [DataDictionary] at a point in time.
  *
@@ -192,14 +147,9 @@ data class StampProvenance @JvmOverloads constructor(
  *   type rename pairs up instead of reading as a type vanishing and another appearing. Declared
  *   through [SchemaAliases] and empty unless someone declared them. Hashed, so an alias-only edit
  *   moves [contentHash]. Experimental: shape may change before 1.0.
- * @property origin Who or what caused this schema to be stamped for the first time. Informational,
- *   never hashed. Experimental: shape may change before 1.0.
- * @property lastStamped Who or what caused the most recent stamp of this schema. Informational,
- *   never hashed. Experimental: shape may change before 1.0.
  * @property contentHash SHA-256 hex digest of the schema's entity types, label sets, property
  *   signatures, type aliases, and allowed relationships. The schema name is excluded so that two
- *   structurally identical schemas are equal regardless of how they are named, and provenance is
- *   excluded because the cause of a stamp doesn't change the schema it stamps. Stable across JVM
+ *   structurally identical schemas are equal regardless of how they are named. Stable across JVM
  *   restarts. Any structural change produces a different hash, including a property's type changing
  *   on a type whose name is unchanged.
  */
@@ -210,8 +160,6 @@ class MetamodelVersion @JvmOverloads constructor(
     entityTypeProperties: Map<String, Set<PropertySignature>>,
     relationshipNames: List<String>,
     entityTypeAliases: Map<String, Set<String>> = emptyMap(),
-    val origin: StampProvenance? = null,
-    val lastStamped: StampProvenance? = null,
 ) {
 
     val schemaName: String = schemaName
@@ -317,11 +265,7 @@ class MetamodelVersion @JvmOverloads constructor(
         return hashBytes.joinToString("") { "%02x".format(it) }
     }
 
-    /**
-     * Structural equality. Provenance is left out for the same reason it is left out of
-     * [contentHash]: it records why a stamp was taken, and two stamps of one schema taken for
-     * different reasons are still one schema.
-     */
+    /** Structural equality: same schema name, types, labels, property signatures, relationships, and aliases. */
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is MetamodelVersion) return false
@@ -346,7 +290,7 @@ class MetamodelVersion @JvmOverloads constructor(
         "MetamodelVersion(schemaName=$schemaName, contentHash=$contentHash, " +
             "entityTypeNames=$entityTypeNames, entityTypeLabels=$entityTypeLabels, " +
             "entityTypeProperties=$entityTypeProperties, relationshipNames=$relationshipNames, " +
-            "entityTypeAliases=$entityTypeAliases, origin=$origin, lastStamped=$lastStamped)"
+            "entityTypeAliases=$entityTypeAliases)"
 
     companion object {
 

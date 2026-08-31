@@ -28,17 +28,16 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Calls every entry point the way a Java consumer compiled against the previous release does.
  * <p>
- * Aliases and provenance were added as trailing parameters with defaults, so a Kotlin caller sees
- * no change. A Java caller sees whatever descriptors the compiler emitted, which is why
- * {@code @JvmOverloads} is on those constructors and factories: without it, adding a parameter
- * would delete the descriptor an already-compiled consumer is linked against, and the failure
- * would be a {@code NoSuchMethodError} at runtime rather than a compile error here.
+ * Aliases were added as trailing parameters with defaults, so a Kotlin caller sees no change. A
+ * Java caller sees whatever descriptors the compiler emitted, which is why {@code @JvmOverloads} is
+ * on those constructors and factories: without it, adding a parameter would delete the descriptor
+ * an already-compiled consumer is linked against, and the failure would be a
+ * {@code NoSuchMethodError} at runtime rather than a compile error here.
  */
 class MetamodelJavaCompatTest {
 
@@ -79,26 +78,19 @@ class MetamodelJavaCompatTest {
 
         assertEquals(List.of("Person"), version.getEntityTypeNames());
         assertEquals(Map.of(), version.getEntityTypeAliases());
-        assertNull(version.getOrigin());
-        assertNull(version.getLastStamped());
     }
 
     @Test
-    void theMetamodelVersionConstructorAlsoTakesAliasesAndProvenance() {
+    void theMetamodelVersionConstructorAlsoTakesAliases() {
         MetamodelVersion version = new MetamodelVersion(
                 "test",
                 List.of("Person"),
                 Map.of("Person", Set.of("Person")),
                 Map.of("Person", Set.of()),
                 List.of(),
-                Map.of("Person", Set.of("Human")),
-                new StampProvenance("deploy-pipeline", "release-1"),
-                new StampProvenance("operator", null));
+                Map.of("Person", Set.of("Human")));
 
         assertEquals(Set.of("Human"), version.getEntityTypeAliases().get("Person"));
-        assertEquals("deploy-pipeline", version.getOrigin().getActor());
-        assertEquals("operator", version.getLastStamped().getActor());
-        assertNull(version.getLastStamped().getTrigger());
     }
 
     @Test
@@ -140,11 +132,9 @@ class MetamodelJavaCompatTest {
     }
 
     @Test
-    void theNoArgumentAliasAndProvenanceConstructorsExist() {
+    void theNoArgumentAliasConstructorExists() {
         assertEquals(Map.of(), new SchemaAliases().getTypeAliases());
         assertEquals(Map.of(), SchemaAliases.NONE.getPropertyAliases());
-        assertNull(new StampProvenance().getActor());
-        assertEquals("ci", new StampProvenance("ci").getActor());
     }
 
     @Test

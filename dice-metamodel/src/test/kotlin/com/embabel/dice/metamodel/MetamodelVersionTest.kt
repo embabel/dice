@@ -201,8 +201,8 @@ class MetamodelVersionTest {
         @Test
         fun `rebuilding the golden stamp through the public constructor hashes to the same literal`() {
             // The storage mapper reconstructs a stamp field by field rather than from a dictionary.
-            // Passing an explicitly empty alias map and no provenance has to reproduce the pinned
-            // digest, or a row written before aliases existed could never be read back.
+            // Passing an explicitly empty alias map has to reproduce the pinned digest, or a row
+            // written before aliases existed could never be read back.
             val fromDictionary = MetamodelVersion.from(goldenSchema())
             val rebuilt = MetamodelVersion(
                 schemaName = fromDictionary.schemaName,
@@ -1287,102 +1287,6 @@ class MetamodelVersionTest {
                 setOf("email"),
                 version.entityTypeProperties["Person"]!!.single { it.name == "emailAddress" }.aliases,
             )
-        }
-    }
-
-    @Nested
-    inner class Provenance {
-
-        /** One fixed schema, stamped with whatever provenance a test wants on it. */
-        private fun personStamp(
-            origin: StampProvenance? = null,
-            lastStamped: StampProvenance? = null,
-        ): MetamodelVersion = MetamodelVersion(
-            schemaName = "test",
-            entityTypeNames = listOf("Person"),
-            entityTypeLabels = mapOf("Person" to setOf("Person")),
-            entityTypeProperties = mapOf("Person" to emptySet()),
-            relationshipNames = emptyList(),
-            entityTypeAliases = emptyMap(),
-            origin = origin,
-            lastStamped = lastStamped,
-        )
-
-        @Test
-        fun `provenance defaults to absent`() {
-            val version = MetamodelVersion.from(
-                DataDictionary.fromDomainTypes("test", listOf(DynamicType("Person"))),
-            )
-            assertNull(version.origin)
-            assertNull(version.lastStamped)
-        }
-
-        @Test
-        fun `provenance is carried`() {
-            val version = personStamp(
-                origin = StampProvenance("deploy-pipeline", "release-1"),
-                lastStamped = StampProvenance("operator", "manual-recheck"),
-            )
-
-            assertEquals(StampProvenance("deploy-pipeline", "release-1"), version.origin)
-            assertEquals(StampProvenance("operator", "manual-recheck"), version.lastStamped)
-        }
-
-        @Test
-        fun `provenance never reaches the content hash`() {
-            // Two stamps of one schema taken for different reasons are the same schema, and the
-            // hash is the store's natural key.
-            val bare = personStamp()
-            val attributed = personStamp(
-                origin = StampProvenance("deploy-pipeline", "release-1"),
-                lastStamped = StampProvenance("operator", "manual-recheck"),
-            )
-
-            assertEquals(bare.contentHash, attributed.contentHash)
-            assertTrue(bare.hasSameContentAs(attributed))
-        }
-
-        @Test
-        fun `provenance is not part of equality`() {
-            val bare = personStamp()
-            val attributed = personStamp(origin = StampProvenance("deploy-pipeline", "release-1"))
-
-            assertEquals(bare, attributed)
-            assertEquals(bare.hashCode(), attributed.hashCode())
-        }
-
-        @Test
-        fun `both fields are optional`() {
-            assertNull(StampProvenance().actor)
-            assertNull(StampProvenance().trigger)
-            assertEquals("ci", StampProvenance("ci").actor)
-            assertNull(StampProvenance("ci").trigger)
-        }
-
-        @Test
-        fun `an actor at the cap is accepted and one over it is rejected`() {
-            assertEquals(
-                StampProvenance.MAX_LENGTH,
-                StampProvenance(actor = "a".repeat(StampProvenance.MAX_LENGTH)).actor!!.length,
-            )
-
-            val thrown = assertThrows<IllegalArgumentException> {
-                StampProvenance(actor = "a".repeat(StampProvenance.MAX_LENGTH + 1))
-            }
-            assertTrue(thrown.message!!.contains("actor"), thrown.message)
-        }
-
-        @Test
-        fun `a trigger at the cap is accepted and one over it is rejected`() {
-            assertEquals(
-                StampProvenance.MAX_LENGTH,
-                StampProvenance(trigger = "t".repeat(StampProvenance.MAX_LENGTH)).trigger!!.length,
-            )
-
-            val thrown = assertThrows<IllegalArgumentException> {
-                StampProvenance(trigger = "t".repeat(StampProvenance.MAX_LENGTH + 1))
-            }
-            assertTrue(thrown.message!!.contains("trigger"), thrown.message)
         }
     }
 

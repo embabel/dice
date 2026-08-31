@@ -13,10 +13,10 @@ the stamp is about, and keeping the stamps so history is answerable. Comparing t
 stamp against a live graph, comes later — see [the tiers ahead](#the-tiers-ahead).
 
 The types live in `dice-metamodel`, a small pure-JVM module: `MetamodelVersion`,
-`GovernedTypeSelector`, `DeclaredSchema`/`DeclaredSchemaSource`, `SchemaAliases`, `StampProvenance`,
-and the `MetamodelVersionStore` contract. It depends on Embabel's agent core types and nothing else.
-`SchemaAliases`, `StampProvenance`, and the alias fields on `PropertySignature` and
-`MetamodelVersion` are experimental; their shape may change before 1.0.
+`GovernedTypeSelector`, `DeclaredSchema`/`DeclaredSchemaSource`, `SchemaAliases`, and the
+`MetamodelVersionStore` contract. It depends on Embabel's agent core types and nothing else.
+`SchemaAliases` and the alias fields on `PropertySignature` and `MetamodelVersion` are
+experimental; their shape may change before 1.0.
 
 ## Declare, stamp, store
 
@@ -79,8 +79,7 @@ The hashed form is `types:<n>|` followed, for each type name in sorted order, by
 name, an optional `typealiases:<n>|` block, then `labels:<n>|` and its sorted labels, then
 `props:<n>|` and its sorted signatures — each signature contributing name, kind, type, and
 cardinality as four length-prefixed tokens, followed by an optional `aliases:<n>|` block. Then
-`rels:<n>|` and the sorted relationship descriptors. The schema name appears nowhere, and neither
-does stamp provenance.
+`rels:<n>|` and the sorted relationship descriptors. The schema name appears nowhere.
 
 The two alias blocks are written only when they hold something, which is what lets aliases be added
 to a shipped encoding at all. A schema that declares no former names renders exactly the bytes this
@@ -287,32 +286,23 @@ evolution earns a quarantine sweep. Both outcomes cost more than an ordinary sig
 and both beat the only other option, which is guessing which of the two signatures the old name
 referred to.
 
-## Stamp provenance
+## Stamp provenance waits for a caller
 
-A stamp records who caused it, in two pairs: `origin` for the first stamp of a schema, `lastStamped`
-for the most recent. Each is a `StampProvenance(actor, trigger)` of two opaque host-supplied
-strings, capped at 256 characters because they land in a database column and an unbounded
-host-supplied string is how a stamp write starts failing at the driver. The cap counts characters,
-which is what `String.length` gives; a storage backend sizes its column in bytes, so 256 characters
-needs room for the 1024 bytes UTF-8 can take to encode them.
+A stamp says nothing about who or what caused it. That is deliberate for now. Recording the cause
+means fixing a type for it, deciding how long its strings may be, finding it somewhere to live in
+every backend, and settling what a re-save does to a value that is already there — a pile of
+commitments made on behalf of a caller that doesn't exist yet. Nothing in DICE stamps with a cause
+today: `MetamodelVersion.from` builds a stamp from a dictionary, and the drift check that arrives
+in a later slice re-stamps the
+declared schema without anything to attribute it to.
 
-A single pair would answer only the second question. The drift check that arrives in a later slice
-re-stamps on every boot and on a schedule, so one last-writer-wins field converges on whichever
-instance booted last, and the cause of the original stamp is gone within a deploy cycle. Keeping
-`origin` separate means the first cause survives every routine re-stamp.
+Provenance returns with the first stamping caller that records it. Whoever that caller is will
+settle the shape, which is a better basis for the decision than a guess made here.
 
-Snowflake's `SCHEMA_EVOLUTION_RECORD` is the same shape: the evolution event is recorded alongside
-the schema rather than folded into the schema's identity. Provenance is informational here for the
-same reason. Two stamps of one schema taken for different reasons are the same schema, and the hash
-is the store's natural key, so hashing the cause would give one schema as many identities as it had
-causes. It is excluded from `contentHash` and from equality.
-
-`trigger` is where an extraction-run reference lands once that exists. It stays a plain string, so
-this module gains no dependency on the run model.
-
-The persistence rules that keep those two pairs alive through routine re-saves belong to the storage
-slice: `origin` is first-write-wins, and `lastStamped` moves only when the incoming value is
-non-null, so a routine re-stamp carrying no provenance can never erase cause.
+Snowflake's `SCHEMA_EVOLUTION_RECORD` shows where it lands when it does arrive: the evolution event
+sits alongside the schema rather than inside the schema's identity. Two stamps of one schema taken
+for different reasons are the same schema, and the hash is the store's natural key, so hashing the
+cause would give one schema as many identities as it had causes.
 
 ## History accumulates
 
