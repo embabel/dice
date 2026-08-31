@@ -49,19 +49,8 @@ interface MetamodelVersionStore {
      * Save a version stamp, keyed on `(schemaName, contentHash)`. Saving the same version twice
      * leaves one stored version.
      *
-     * **Provenance survives routine re-saves.** [MetamodelVersion.origin] and
-     * [MetamodelVersion.lastStamped] are the two fields a re-save does not simply overwrite:
-     *
-     * - `origin` is first-write-wins. An implementation sets it only when the stored stamp has
-     *   none, so the cause of the first stamp stands however many times the schema is re-stamped.
-     * - `lastStamped` moves only when the incoming stamp carries a value.
-     * - A re-save whose provenance is null on both fields leaves both stored fields untouched.
-     *   That is what a scheduled drift check does on every pass, and the rule is what stops it
-     *   erasing the recorded cause or replacing it with its own identity.
-     *
-     * Neither field is hashed, so neither rule can move a stamp off its natural key. Everything
-     * else about a stored stamp is content the key already determines, so a re-save overwrites it
-     * with an identical value.
+     * Everything about a stored stamp is content the key already determines, so a re-save
+     * overwrites it with an identical value.
      *
      * Whatever an implementation records as the moment of the save keeps its existing value on a
      * re-save, along with the stamp's place in the write order: a re-saved old stamp does not

@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Test
  * backend is free to override with a keyed lookup. A store implementation gets its own tests
  * wherever it lives.
  *
- * The provenance rules [MetamodelVersionStore.saveVersion] states are checked by
+ * The upsert rules [MetamodelVersionStore.saveVersion] states are checked by
  * `AbstractMetamodelVersionStoreContractTest`, which runs the same suite against
  * [InMemoryMetamodelVersionStore] and the graph-backed store.
  */

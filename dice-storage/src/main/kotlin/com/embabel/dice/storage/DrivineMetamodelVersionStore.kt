@@ -48,19 +48,6 @@ import java.time.Clock
  * holds an old stamp at its original position. The in-memory reference implementation behaves the
  * same way.
  *
- * Stamp provenance is the one part of a version a re-save does not overwrite. `origin` is
- * first-write-wins: the stored value stands, and the incoming one is taken only when the node has
- * none. `lastStamped` moves only when the incoming stamp carries a value. A re-stamp supplying no
- * provenance therefore leaves both alone, which is what every routine drift-check re-stamp does, so
- * a scheduled check can neither erase the recorded cause nor replace it with its own identity.
- * `MetamodelVersion.origin` and `lastStamped` are not hashed, so neither rule can move a version
- * off its natural key.
- *
- * Both rules are conditional expressions inside the MERGE, so they hold under concurrency: nothing
- * reads the stored provenance in one statement and writes it back in another.
- * `InMemoryMetamodelVersionStore` applies the same two rules, and
- * `AbstractMetamodelVersionStoreContractTest` runs the same suite against both.
- *
  * Three uniqueness constraints are required, and the host declares them in a `SchemaCatalog` bean
  * (the module's `TestApplication` shows the shape):
  * - `UniquenessConstraintSpec("MetamodelVersion", listOf("schemaName", "contentHash"))` makes the
@@ -93,17 +80,6 @@ open class DrivineMetamodelVersionStore(
          * away, so the counter stays put and the existing sequence is kept; only the content is
          * refreshed.
          *
-         * The two provenance properties are set through `coalesce`, which is where the store's
-         * first-write-wins and update-only-when-supplied rules live:
-         * - `n.origin = coalesce(n.origin, $origin)` keeps whatever the node already holds. On a
-         *   create there is nothing to keep, so the incoming value lands; a `$origin` of null on a
-         *   node that has none is a set-to-null, which leaves no property behind.
-         * - `n.lastStamped = coalesce($lastStamped, n.lastStamped)` prefers the incoming value and
-         *   falls back to the stored one, so a null incoming value keeps what is there.
-         *
-         * Both are read and written inside one statement, so two concurrent saves can't interleave
-         * a read of the stored value with the write that replaces it.
-         *
          * `entityTypeAliases` binds null when the version declares no former names. Setting a
          * property to null removes it, so an alias-free stamp leaves a node with no such property,
          * which is what a writer from before aliases existed left.
@@ -129,9 +105,7 @@ open class DrivineMetamodelVersionStore(
                 n.entityTypeLabels      = ${'$'}entityTypeLabels,
                 n.entityTypeProperties  = ${'$'}entityTypeProperties,
                 n.relationshipNames     = ${'$'}relationshipNames,
-                n.entityTypeAliases     = ${'$'}entityTypeAliases,
-                n.origin                = coalesce(n.origin, ${'$'}origin),
-                n.lastStamped           = coalesce(${'$'}lastStamped, n.lastStamped)
+                n.entityTypeAliases     = ${'$'}entityTypeAliases
             WITH n
             WHERE n.sequence IS NULL
             MERGE (c:MetamodelSchemaCounter {schemaName: ${'$'}schemaName})

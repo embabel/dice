@@ -23,13 +23,11 @@ import com.embabel.agent.core.Cardinality
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.PropertySignature
 import com.embabel.dice.metamodel.PropertySignature.Kind
-import com.embabel.dice.metamodel.StampProvenance
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
-import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -608,90 +606,6 @@ class DrivineMetamodelVersionStoreIntegrationTest {
             }
     }
 
-    // ---- Stamp provenance on the node ----
-
-    @Test
-    fun `provenance persists and reads back`() {
-        val schemaName = "provenance-schema"
-        val cause = StampProvenance("deploy-pipeline", "release-42")
-
-        store.saveVersion(stampedBy(schemaName, "Person", origin = cause, lastStamped = cause))
-
-        val reloaded = store.latestVersion(schemaName)!!
-        assertEquals(cause, reloaded.origin)
-        assertEquals(cause, reloaded.lastStamped)
-    }
-
-    @Test
-    fun `a re-stamp carrying no provenance rewrites neither stored property`() {
-        // The routine case: DefaultDriftCheckRunner re-stamps on every pass and supplies nothing.
-        // Asserted on the raw properties as well as the reloaded stamp, because a store that wrote
-        // null over both would still read back as "no provenance" and look plausible.
-        val schemaName = "provenance-untouched-schema"
-        val cause = StampProvenance("operator", "first-stamp")
-        val stamp = stampedBy(schemaName, "Person", origin = cause, lastStamped = cause)
-        store.saveVersion(stamp)
-        val before = storedProvenanceProperties(schemaName, stamp)
-        assertEquals(
-            """{"actor":"operator","trigger":"first-stamp"}|{"actor":"operator","trigger":"first-stamp"}""",
-            before,
-            "precondition: both properties are on the node",
-        )
-
-        store.saveVersion(stampedBy(schemaName, "Person"))
-
-        assertEquals(before, storedProvenanceProperties(schemaName, stamp), "neither property may be rewritten")
-        val reloaded = store.latestVersion(schemaName)!!
-        assertEquals(cause, reloaded.origin)
-        assertEquals(cause, reloaded.lastStamped)
-    }
-
-    @Test
-    fun `a re-stamp carrying provenance keeps the stored origin and moves lastStamped`() {
-        val schemaName = "provenance-restamp-schema"
-        val first = StampProvenance("bootstrap", "first-boot")
-        val second = StampProvenance("operator", "manual-restamp")
-        val stamp = stampedBy(schemaName, "Person", origin = first, lastStamped = first)
-        store.saveVersion(stamp)
-
-        store.saveVersion(stampedBy(schemaName, "Person", origin = second, lastStamped = second))
-
-        assertEquals(
-            """{"actor":"bootstrap","trigger":"first-boot"}|{"actor":"operator","trigger":"manual-restamp"}""",
-            storedProvenanceProperties(schemaName, stamp),
-        )
-        val reloaded = store.latestVersion(schemaName)!!
-        assertEquals(first, reloaded.origin)
-        assertEquals(second, reloaded.lastStamped)
-    }
-
-    @Test
-    fun `a stamp with no provenance leaves no provenance properties on the node`() {
-        // What a node written before provenance existed looks like, produced by the current writer.
-        val schemaName = "provenance-absent-schema"
-        val stamp = stampedBy(schemaName, "Person")
-
-        store.saveVersion(stamp)
-
-        assertEquals("<absent>|<absent>", storedProvenanceProperties(schemaName, stamp))
-        val reloaded = store.latestVersion(schemaName)!!
-        assertNull(reloaded.origin)
-        assertNull(reloaded.lastStamped)
-    }
-
-    @Test
-    fun `a provenance whose fields are both unset survives as a provenance`() {
-        // Two scalar properties could not tell this apart from the test above; the JSON object can.
-        val schemaName = "provenance-empty-schema"
-
-        store.saveVersion(stampedBy(schemaName, "Person", origin = StampProvenance()))
-
-        val reloaded = store.latestVersion(schemaName)!!
-        assertNotNull(reloaded.origin, "an empty provenance must not read back as no provenance")
-        assertNull(reloaded.origin!!.actor)
-        assertNull(reloaded.origin!!.trigger)
-    }
-
     // ---- Aliases, and rows written before they existed ----
 
     @Test
@@ -777,9 +691,9 @@ class DrivineMetamodelVersionStoreIntegrationTest {
 
     @Test
     fun `a node written in the old four-field shape reads back through the new mapper`() {
-        // A stamp saved before aliases and provenance existed: property signatures with exactly
-        // four fields, and no entityTypeAliases, origin or lastStamped. Written straight through
-        // Cypher, so nothing in the current writer can quietly supply the missing properties.
+        // A stamp saved before aliases existed: property signatures with exactly four fields, and
+        // no entityTypeAliases. Written straight through Cypher, so nothing in the current writer
+        // can quietly supply the missing properties.
         val schemaName = "old-shape-schema"
         val expected = MetamodelVersion(
             schemaName = schemaName,
@@ -824,8 +738,6 @@ class DrivineMetamodelVersionStoreIntegrationTest {
         assertEquals(expected, reloaded, "an old-shape node must still read, and pass its integrity check")
         assertEquals(expected.contentHash, reloaded!!.contentHash)
         assertEquals(emptyMap<String, Set<String>>(), reloaded.entityTypeAliases)
-        assertNull(reloaded.origin)
-        assertNull(reloaded.lastStamped)
         assertTrue(
             reloaded.entityTypeProperties["Person"]!!.all { it.aliases.isEmpty() },
             "four-field signatures carry no former names",
@@ -836,7 +748,7 @@ class DrivineMetamodelVersionStoreIntegrationTest {
     fun `re-saving an old-shape node through the current writer leaves it in the old shape`() {
         // The upgrade path: an application that boots against a graph written by an older build
         // re-stamps its unchanged schema. The write lands on the existing node, and because the
-        // stamp declares no aliases and no provenance, none of the four new fields appears.
+        // stamp declares no aliases, neither of the two new fields appears.
         val schemaName = "old-shape-restamp-schema"
         val version = MetamodelVersion(
             schemaName = schemaName,
@@ -853,7 +765,6 @@ class DrivineMetamodelVersionStoreIntegrationTest {
 
         assertEquals(1, rawNodeCount())
         assertEquals("<absent>", storedProperty(schemaName, version, StoredProperty.ENTITY_TYPE_ALIASES))
-        assertEquals("<absent>|<absent>", storedProvenanceProperties(schemaName, version))
         assertEquals(
             """{"Person":[{"name":"name","kind":"VALUE","type":"string","cardinality":"ONE"}]}""",
             storedProperty(schemaName, version, StoredProperty.ENTITY_TYPE_PROPERTIES),
@@ -862,23 +773,6 @@ class DrivineMetamodelVersionStoreIntegrationTest {
     }
 
     // ---- helpers ----
-
-    /** A stamp of one entity type, carrying whatever provenance the test wants to record on it. */
-    private fun stampedBy(
-        schemaName: String,
-        typeName: String,
-        origin: StampProvenance? = null,
-        lastStamped: StampProvenance? = null,
-    ): MetamodelVersion = MetamodelVersion(
-        schemaName = schemaName,
-        entityTypeNames = listOf(typeName),
-        entityTypeLabels = emptyMap(),
-        entityTypeProperties = emptyMap(),
-        relationshipNames = emptyList(),
-        entityTypeAliases = emptyMap(),
-        origin = origin,
-        lastStamped = lastStamped,
-    )
 
     /** The stored properties a test can read back raw, each with the Cypher that returns it. */
     private enum class StoredProperty(val returnExpression: String) {
@@ -897,22 +791,6 @@ class DrivineMetamodelVersionStoreIntegrationTest {
                 """
                 MATCH (n:MetamodelVersion {schemaName: ${'$'}schemaName, contentHash: ${'$'}contentHash})
                 RETURN ${property.returnExpression} AS value
-                """.trimIndent(),
-            ).bind(mapOf("schemaName" to schemaName, "contentHash" to version.contentHash))
-                .transform(String::class.java),
-        )
-
-    /**
-     * Both provenance properties as one `origin|lastStamped` string, so a test can assert that a
-     * re-save left the stored bytes exactly as they were. `<absent>` stands for a property that
-     * isn't on the node.
-     */
-    private fun storedProvenanceProperties(schemaName: String, version: MetamodelVersion): String? =
-        persistenceManager.maybeGetOne(
-            QuerySpecification.withStatement(
-                """
-                MATCH (n:MetamodelVersion {schemaName: ${'$'}schemaName, contentHash: ${'$'}contentHash})
-                RETURN coalesce(n.origin, '<absent>') + '|' + coalesce(n.lastStamped, '<absent>') AS value
                 """.trimIndent(),
             ).bind(mapOf("schemaName" to schemaName, "contentHash" to version.contentHash))
                 .transform(String::class.java),

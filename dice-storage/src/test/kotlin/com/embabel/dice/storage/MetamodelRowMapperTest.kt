@@ -19,7 +19,6 @@ import com.embabel.agent.core.Cardinality
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.PropertySignature
 import com.embabel.dice.metamodel.PropertySignature.Kind
-import com.embabel.dice.metamodel.StampProvenance
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -72,19 +71,6 @@ class MetamodelRowMapperTest {
 
     private fun row(savedAtInstant: Instant = savedAt): MutableMap<String, Any?> =
         MetamodelVersionRowMapper.bindMap(version, savedAtInstant).toMutableMap()
-
-    /** [version] again, carrying provenance. The two are the same stamp: provenance isn't hashed. */
-    private fun withProvenance(origin: StampProvenance?, lastStamped: StampProvenance?): MetamodelVersion =
-        MetamodelVersion(
-            schemaName = version.schemaName,
-            entityTypeNames = version.entityTypeNames,
-            entityTypeLabels = version.entityTypeLabels,
-            entityTypeProperties = version.entityTypeProperties,
-            relationshipNames = version.relationshipNames,
-            entityTypeAliases = version.entityTypeAliases,
-            origin = origin,
-            lastStamped = lastStamped,
-        )
 
     @Test
     fun `a version round-trips through its own property map`() {
@@ -270,80 +256,15 @@ class MetamodelRowMapperTest {
         assertTrue(thrown.message!!.contains("Person"), thrown.message)
     }
 
-    // ---- Provenance ----
-
     @Test
-    fun `provenance round-trips, and a version carrying none binds neither property`() {
-        assertNull(row()["origin"])
-        assertNull(row()["lastStamped"])
-        assertNull(MetamodelVersionRowMapper.fromRow(row()).origin)
-        assertNull(MetamodelVersionRowMapper.fromRow(row()).lastStamped)
-
-        val stamped = withProvenance(StampProvenance("deploy", "release-1"), StampProvenance("operator", null))
-        val bound = MetamodelVersionRowMapper.bindMap(stamped, savedAt)
-
-        assertEquals("""{"actor":"deploy","trigger":"release-1"}""", bound["origin"])
-        assertEquals("""{"actor":"operator","trigger":null}""", bound["lastStamped"])
-
-        val reloaded = MetamodelVersionRowMapper.fromRow(bound)
-        assertEquals(StampProvenance("deploy", "release-1"), reloaded.origin)
-        assertEquals(StampProvenance("operator", null), reloaded.lastStamped)
-    }
-
-    @Test
-    fun `a provenance with neither field set stays distinguishable from no provenance`() {
-        // The reason provenance is stored as an object rather than as two scalar properties: two
-        // scalars would encode StampProvenance() and null identically.
-        val bound = MetamodelVersionRowMapper.bindMap(withProvenance(StampProvenance(), null), savedAt)
-
-        assertEquals("""{"actor":null,"trigger":null}""", bound["origin"])
-        assertEquals(StampProvenance(), MetamodelVersionRowMapper.fromRow(bound).origin)
-        assertNull(MetamodelVersionRowMapper.fromRow(bound).lastStamped)
-    }
-
-    @Test
-    fun `provenance stays out of the content hash, so a re-stamp lands on the same key`() {
-        val plain = MetamodelVersionRowMapper.bindMap(version, savedAt)
-        val stamped = MetamodelVersionRowMapper.bindMap(
-            withProvenance(StampProvenance("a", "b"), StampProvenance("c", "d")),
-            savedAt,
-        )
-
-        assertEquals(plain["contentHash"], stamped["contentHash"])
-    }
-
-    @Test
-    fun `a stored provenance that is not an object fails the read, naming the property`() {
-        val corrupt = row().apply { put("lastStamped", """"just-a-string"""") }
-
-        val thrown = assertThrows<IllegalArgumentException> { MetamodelVersionRowMapper.fromRow(corrupt) }
-        assertTrue(thrown.message!!.contains("lastStamped"), thrown.message)
-    }
-
-    @Test
-    fun `a stored provenance field that is not a string fails the read, naming both`() {
-        val corrupt = row().apply { put("origin", """{"actor":42,"trigger":null}""") }
-
-        val thrown = assertThrows<IllegalArgumentException> { MetamodelVersionRowMapper.fromRow(corrupt) }
-        assertTrue(thrown.message!!.contains("actor"), thrown.message)
-        assertTrue(thrown.message!!.contains("origin"), thrown.message)
-    }
-
-    @Test
-    fun `a row with no alias or provenance properties at all reads back as a stamp declaring none`() {
-        // A node written before any of the four existed. Removing the keys is the same thing the
-        // graph does when a property was never set.
-        val old = row().apply {
-            remove("entityTypeAliases")
-            remove("origin")
-            remove("lastStamped")
-        }
+    fun `a row with no alias property at all reads back as a stamp declaring none`() {
+        // A node written before aliases existed. Removing the key is the same thing the graph does
+        // when a property was never set.
+        val old = row().apply { remove("entityTypeAliases") }
 
         val reloaded = MetamodelVersionRowMapper.fromRow(old)
 
         assertEquals(version, reloaded)
         assertEquals(emptyMap<String, Set<String>>(), reloaded.entityTypeAliases)
-        assertNull(reloaded.origin)
-        assertNull(reloaded.lastStamped)
     }
 }

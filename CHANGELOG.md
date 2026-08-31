@@ -74,26 +74,12 @@ and the consumer PRs that deliver it).
   through raw Cypher and reads it back, one that round-trips a stamp carrying both
   alias kinds, and one that removes the stored alias map and asserts the integrity
   check rejects the row.
-  Stamp provenance persists too, and is the one part of a stamp a re-save does not
-  overwrite — **EXPERIMENTAL** (shape may change before 1.0): `origin` is
-  first-write-wins, set only when the stored row has none, and `lastStamped` moves
-  only when the incoming value is non-null. A re-stamp carrying no provenance leaves
-  both alone, which is what a scheduled drift check does on every pass, so a routine
-  check can neither erase the recorded cause nor replace it with its own identity.
-  Both rules are `coalesce` expressions inside the MERGE, so they hold under
-  concurrency without a read followed by a write. `savedAt` and `savedAtEpochMillis`
-  keep their existing behavior: set on create, untouched by a re-save. `origin` and
-  `lastStamped` are not hashed, so neither rule can move a stamp off its natural key.
-  Each is stored as a JSON object, which keeps a `StampProvenance()` with both fields
-  unset distinguishable from no provenance at all. `StampProvenance`'s 256-character
-  cap needs no column sizing here, since a Neo4j string property has no declared
-  width; a byte-sized backend still needs room for the up-to-1024 UTF-8 bytes.
-  `MetamodelVersionStore.saveVersion`'s KDoc now states both rules as contract, and
-  `dice-metamodel` gains `InMemoryMetamodelVersionStore`, the reference
-  implementation that applies them, promoted from a private class in that module's
-  own tests. `AbstractMetamodelVersionStoreContractTest` runs one suite against both
-  stores.
+  `savedAt` and `savedAtEpochMillis` keep their existing behavior: set on create,
+  untouched by a re-save. `dice-metamodel` gains `InMemoryMetamodelVersionStore`, the
+  reference implementation of the store contract, promoted from a private class in
+  that module's own tests. `AbstractMetamodelVersionStoreContractTest` runs one suite
+  against both stores.
   **Compatibility: additive.** New classes, and a new `dice-storage` → `dice-metamodel`
   module dependency; no existing API touched. Stored nodes stay readable: every
-  property that existed before keeps its name, meaning, and encoding, and the four
-  new ones are absent when nothing declares them.
+  property that existed before keeps its name, meaning, and encoding, and the two
+  new alias fields are absent when nothing declares them.

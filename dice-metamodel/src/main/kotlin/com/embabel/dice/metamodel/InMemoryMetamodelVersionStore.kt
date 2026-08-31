@@ -29,34 +29,19 @@ class InMemoryMetamodelVersionStore : MetamodelVersionStore {
     private val saved = mutableListOf<MetamodelVersion>()
 
     /**
-     * Upsert on `(schemaName, contentHash)`, applying the contract's two provenance rules: `origin`
-     * is kept once the stored stamp has one, and `lastStamped` moves only when [version] carries a
-     * value. A stamp that is already there keeps its place in the write order, so re-saving an old
-     * version doesn't make it the latest.
+     * Upsert on `(schemaName, contentHash)`. A stamp that is already there keeps its place in the
+     * write order, so re-saving an old version doesn't make it the latest; the incoming stamp
+     * replaces it in place.
      *
-     * Everything runs under the list's own lock, so two threads re-stamping one version can't
-     * interleave the read of the stored provenance with the write that replaces it.
+     * Everything runs under the list's own lock, so two threads saving the same version can't
+     * interleave the search for an existing stamp with the write that lands the new one.
      */
     override fun saveVersion(version: MetamodelVersion) {
         synchronized(saved) {
             val at = saved.indexOfFirst {
                 it.schemaName == version.schemaName && it.contentHash == version.contentHash
             }
-            if (at < 0) {
-                saved += version
-                return
-            }
-            val stored = saved[at]
-            saved[at] = MetamodelVersion(
-                schemaName = version.schemaName,
-                entityTypeNames = version.entityTypeNames,
-                entityTypeLabels = version.entityTypeLabels,
-                entityTypeProperties = version.entityTypeProperties,
-                relationshipNames = version.relationshipNames,
-                entityTypeAliases = version.entityTypeAliases,
-                origin = stored.origin ?: version.origin,
-                lastStamped = version.lastStamped ?: stored.lastStamped,
-            )
+            if (at < 0) saved += version else saved[at] = version
         }
     }
 

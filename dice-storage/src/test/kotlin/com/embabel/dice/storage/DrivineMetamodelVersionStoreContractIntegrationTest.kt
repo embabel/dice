@@ -27,8 +27,8 @@ import org.springframework.test.context.DynamicPropertySource
 /**
  * Runs the [AbstractMetamodelVersionStoreContractTest] suite against the Neo4j-backed
  * [DrivineMetamodelVersionStore] (testcontainer). This is the half that catches the graph backend
- * disagreeing with the in-memory reference on the provenance rules, which is easy to do: they live
- * in a Cypher `coalesce` there and in Kotlin here.
+ * disagreeing with the in-memory reference on the upsert rules, which is easy to do: they live in a
+ * Cypher `MERGE` there and in a list index here.
  *
  * Uses the shared [Neo4jTestContainer]; see that class for why Drivine's built-in testcontainer
  * is bypassed.
