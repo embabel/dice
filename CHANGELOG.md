@@ -501,3 +501,109 @@ and the consumer PRs that deliver it).
   slice's own code and tests used the parameter for anything, so there is nothing to migrate. When
   the reference does return it arrives as a field on `ExtractionRequest`, which is what the request
   object is for: the entry-point signatures will be the ones this entry describes.
+  slice's own code and tests used the parameter for anything, so there is nothing to migrate.
+  claimed for `SourceAnalysisContext`: two more fields rewrite `copy`, add two `componentN`
+  methods, and change the synthetic `$default` constructor, so Kotlin code compiled against an
+  earlier jar must be recompiled rather than swapped in — the same half of the boundary #64
+  declined, pinned here by a test asserting exactly one `copy` remains and that it takes thirteen
+  arguments. No stored data changes and no migration is required: nothing serializes a profile or a
+  run reference yet. Extraction, resolution, and revision ordering are behaviour-identical; a
+  profile changes what a run is attributed to, not what it does. `ExtractionContentProfileRef` and
+  `ExtractionRunRef` both carry `@ApiStatus.Experimental` and their shapes may still move while
+  #67 lands. A Kotlin `@RequiresOptIn` marker would make that enforceable at the call site rather
+  than advisory; DICE defines none today and the design note records it as an open question.
+
+- **EXPERIMENTAL.** The extraction run model in `dice` core — the value types DICE #67's store,
+  lineage and wiring slices build on. `ExtractionRun`, keyed by (`ContextId`, `ExtractionRunRef`)
+  through the new `ExtractionRunKey`, records the profile version in force, the ordered source
+  revisions it read, its lineage, prompt/schema/metamodel fingerprints, extractor/host/runtime
+  identity, requested model configuration, pseudonymous subject references, experiment and cohort
+  labels, status, timing, counts, invocation records, bounded sanitized failures, and an explicit
+  replay-fidelity value. Nothing stores one yet: the lifecycle state machine and the store contract
+  are the next slice, and no code constructs a run during extraction until the wiring slice.
+  **Requested and observed model facts are separate types, structurally.**
+  `ExtractionRequestedModelConfig` sits on the run header and holds what the host asked for —
+  portable fields only: model and role, temperature, top-p, top-k, max tokens, presence and
+  frequency penalties, thinking and selection fingerprints, and a timeout. There is no provider
+  extension object, no settings blob and no free map, because that is where credentials, system
+  prompts and whole SDK request bodies get persisted by accident; a provider-specific knob folds
+  into one of the opaque fingerprints. What actually happened is an `ExtractionInvocationRecord`
+  per attempt, carrying the configured service, `ExtractionModelUsage`,
+  `ExtractionProviderResponseFacts`, timing and outcome. An invocation record has no field of the
+  requested type and the two share no property name — `requestedModel` versus `responseModel` — and
+  both are asserted by test, so nothing can present a setting as an observation. An absent observed
+  field stays absent: a run that asked for a model and got no model name back records null rather
+  than echoing the request. Ranges are validated where providers agree and left open where they do
+  not, so a temperature of 2.0 is accepted. **Invocation identity comes from the call plan.**
+  `ExtractionInvocationId` is (`invocationIndex`, `attempt`): the index is the call's ordinal in the
+  run's plan, allocated by `ExtractionInvocationRecord.plan(n)` before any request goes out, and the
+  attempt counts retries of that same call from 1. Completion order writes into identities that
+  already exist — there is no factory taking a position in a result list, `retry()` carries the
+  index forward and resets every observed field, `invocationsInPlanOrder()` reads the plan back out
+  of records stored in arrival order, and a run rejects two records sharing an identity. That makes
+  (`runId`, index, attempt) a deterministic child key for the store slices. **The root run
+  reference is denormalized.** `ExtractionRunLineage` carries the run, its parent, what it
+  supersedes, its pass index, and its root, following OpenLineage's `ParentRunFacet`, which also
+  ships a root alongside the immediate parent so consumers need not walk the chain. The root is
+  fixed at mint — a parentless run is its own root, a child takes its parent's root — and the
+  constructor rejects a parentless run whose root is another run, a child claiming to be its own
+  root, and self-parenting or self-supersession. Cycles longer than one need the other runs and stay
+  with the store that walks the chains. **Privacy is a contract with an enforced floor.**
+  `ExtractionActorRef`, `ExtractionRequestRef`, `ExtractionSessionRef`,
+  `ExtractionPersonalizationRef`, `ExtractionDeploymentRef`, `ExtractionExperimentRef` and
+  `ExtractionCohortRef` are all `ExtractionOpaqueRef`: host-minted tokens DICE compares and never
+  parses, bounded to 256 characters and restricted to `A-Z a-z 0-9 . _ : ~ -`, which rejects an
+  email address, a URL, a file path, a JSON fragment and a human name outright. The KDoc states what
+  that does not prove — a value type cannot tell a pseudonym from a username — rather than implying
+  a guarantee. A token's `toString` shows eight characters and a validation message never quotes the
+  value it rejected. `ExtractionFailure` is a classified `ExtractionFailureCode` plus a bounded
+  single-line detail; `fromThrowable`, the path DICE itself uses, never reads `Throwable.message`
+  and records exception class names down a bounded cycle-safe cause chain, because a provider quotes
+  the prompt back in its message. Tests extract from a fixture whose source text is known and assert
+  no fragment of it, no address shape, no link shape and no long digit run survives into a
+  field-by-field dump of a fully populated run. **Replay fidelity never claims exact replay.**
+  `ExtractionReplayFidelity` is `NONE`, `METADATA`, `APPROXIMATE`; the strongest value is still
+  approximate and `strongest()` returns it so appending a value cannot quietly strengthen the claim.
+  **`ExtractionRunStatus` ships the four values only** — `RUNNING`, `COMPLETED`, `FAILED`,
+  `CANCELLED` — with no transition rules, which belong to the store contract. `COMPLETED`'s meaning
+  is stated on the value: every product the run's request called for is durably persisted or
+  terminally disposed, written after persistence, so a run whose persistence never finished stays
+  `RUNNING`. The two MLflow states DICE does not have are deliberate: `SCHEDULED` has no writer
+  without a scheduler, and an externally killed run is `CANCELLED`, because stopping short of its
+  products is the same fact whichever side pressed stop. OpenTelemetry's GenAI attribute names are
+  not adopted: every `gen_ai.*` attribute is still at Development stability and the conventions
+  moved to a separate repository in June 2026, so pinning a stored schema to them buys interop now
+  and a migration later. **One cap rule**: every bound is a named constant on `ExtractionRunLimits`,
+  checked in the `init` block of the type that owns the value, and an over-long value is rejected
+  rather than truncated, because a shortened identifier is a different identifier. Identifiers cap
+  at 256 characters, source keys at 1024 (they come from `SourceLocator.key()` and can hold a long
+  URL), the one free-text failure detail at 512, and the three collections at 256 source revisions,
+  1024 invocation records and 64 failures. The failure detail is the single exception to rejection
+  and only on the way in: its factories clip it, the constructor still rejects. `SourceRevisionRef`
+  predates the rule and validates non-blank only, so `ExtractionRun` applies the bound where it
+  stores one; moving the check onto that type is follow-up work. `ContextId.value` is the one
+  string a run stores that the rule does not cover — `ContextId` is a DICE-wide type owned by the
+  agent framework — which matters because the tenant is half of `ExtractionRunKey`, so the store
+  key is bounded on one side only. Two bounds are enforced away from the field they protect:
+  `plan(count)` checks the invocation limit against the count before allocating anything, so a
+  chunk-derived plan size cannot exhaust memory on its way to being rejected, and a run rejects a
+  failure whose `invocation` names an identity it holds no record of, because a dangling reference
+  reads as evidence about a call that nothing can join it to. A failure outside any model call
+  names no invocation and is always accepted. Timing on an invocation record is an observation and
+  may be absent on a terminal outcome: a `SUCCEEDED` attempt with no `startedAt` means the clock
+  was not recorded, and requiring one would push callers to invent a duration. Design note:
+  [docs/design/extraction-runs.md](docs/design/extraction-runs.md).
+  **Compatibility: additive, new types only.** Nothing existing changes. No existing class gains or
+  loses a member, no signature moves, no default changes, and no behaviour differs — this slice adds
+  types to `com.embabel.dice.proposition.extraction` and touches nothing that was already there.
+  Source, binary and Java compatibility are therefore all unaffected, and the scoped Kotlin ABI
+  boundary the Wave A and B slices declared does not apply because no existing data class gained a
+  field. No stored data changes and no migration is required: nothing serializes a run yet, and the
+  first thing that will is the store slice. `ExtractionRun` is a plain class rather than a data
+  class, so it publishes no `copy` or `componentN` to be compatible with later — deliberate, since a
+  data class cannot defensively copy its collection parameters and a seventeen-field generated
+  surface would pin an ABI while #67 is still moving; equality and hash are hand-written and a test
+  varies each of the seventeen components in turn. Every type carries `@ApiStatus.Experimental`,
+  asserted by a test that reads the class files because the annotation has class retention, and the
+  shapes may still move while the remaining #67 slices land. The `@RequiresOptIn` question #66
+  raised is unchanged and still open.

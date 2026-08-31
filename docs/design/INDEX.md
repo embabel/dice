@@ -25,6 +25,14 @@ you need.
   through extraction without DICE resolving it: why profile identity is opaque, why profile,
   perspective, schema and tenant stay independent, and why an extraction run reference shipped in
   review and was pulled back out until its consuming write exists. EXPERIMENTAL.
+  and a run reference through extraction without DICE resolving either: why profile identity is
+  opaque, why the run reference ships ahead of the run, and why profile, perspective, schema and
+  tenant stay independent. EXPERIMENTAL.
+- [extraction-runs.md](extraction-runs.md) — the durable record of one extraction execution: why
+  requested model configuration and observed provider facts are separate types, how invocation
+  identity comes from the call plan rather than completion order, the denormalized root run
+  reference, the privacy contract on opaque references and sanitized failures, and why replay
+  fidelity is never exact. EXPERIMENTAL.
 
 ## Propositions & lifecycle
 
