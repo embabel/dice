@@ -520,6 +520,13 @@ class DrivinePropositionRepository(
      * revisionless evidence for that source only, which is why the second predicate requires a null
      * `sourceRevision` — it also reaches edges written before `entryKey` existed. A ref carrying the
      * codec's prefix but an unknown version matches no stored key, so it removes nothing.
+     *
+     * @return the proposition as the deletion left it, or null when this store has no proposition
+     *   with that id. Both branches answer from a fresh read, so a deleted id
+     *   answers null whether or not any refs were named. Collector undo reads that null as the
+     *   survivor having been deleted while it was working and stops rather than writing, so the
+     *   meaning is load-bearing — `subtractProvenance answers null for a proposition that is not
+     *   there` pins it.
      */
     @Transactional
     override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? {

@@ -200,7 +200,18 @@ and the consumer PRs that deliver it).
   the survivor's writes and the member's restore; and an undo returns null having written nothing
   when a survivor or retired member no longer exists, when the collapse cannot be shown to have been
   applied into this survivor, when that collapse has already been undone, or when the member is not
-  currently retired — where it could previously have saved the reduced survivor first. An undo
+  currently retired — where it could previously have saved the reduced survivor first. A survivor
+  deleted between the undo's read of it and the subtraction is caught at the subtraction, which
+  answers null for a proposition the store no longer has: the undo ends there rather than saving
+  back the copy it read, which would recreate the deleted proposition with the folded evidence still
+  on it. The member stays retired, no stamp is written, and the null return says truthfully that no
+  restore happened. How much of the run that covers depends on the store: the graph backend's
+  override answers from a read taken after its one-statement delete, so its null is exact and only
+  the gap before the survivor's `save` stays open, while the read-modify-write default — on a store
+  inheriting `setProvenance`'s default too — can recreate the survivor inside its own subtraction
+  and can hand back a proposition its first read saw. A
+  deletion later than the store's last look is not detected, and the survivor is recreated by an
+  upserting `save`; the design note records the residual per path and what closing it would take. An undo
   interrupted after its stamp resumes by restoring the member only, without re-deriving evidence. `undoSingleCollapse` gains a trailing optional
   `CollectorRecordStore` parameter and `@JvmOverloads`, so the existing four-argument descriptor
   survives for both Kotlin and Java callers; the four-argument form keeps the weaker status-based

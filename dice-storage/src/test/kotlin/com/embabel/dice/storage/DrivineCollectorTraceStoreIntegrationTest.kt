@@ -503,7 +503,7 @@ class DrivineCollectorTraceStoreIntegrationTest {
     fun `undoing both members of a shared fold drains the survivor's edge back to pre-collapse`() {
         // Two losers folded the same revision onto the survivor. Only the last undo may take it,
         // and it must take the DERIVED_FROM edge with it — the whole point of routing evidence
-        // removal through setProvenance rather than save.
+        // removal through subtractProvenance rather than save.
         val runId = "run-shared-fold"
         val locator = UriLocator("https://example.com/shared-fold")
         val kept = ProvenanceEntry(locator = locator, sourceRevision = "r1")

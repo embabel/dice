@@ -214,7 +214,7 @@ flowchart TD
     E -->|"structural equality, all six fields"| DD["list dedup:<br/>withProvenanceEntries, withProvenance,<br/>absorbEvidence"]
     E -->|"ProvenanceEvidenceKey.encode"| K["opaque ref string<br/>dice-provenance:v1:..."]
     K --> T["recorded with the fold<br/>(collector trace)"]
-    T -->|"undo passes refs to<br/>Proposition.withoutFoldedEvidence"| M["ProvenanceEvidenceKey.matches"]
+    T -->|"undo passes refs to<br/>PropositionStore.subtractProvenance"| M["ProvenanceEvidenceKey.matches"]
     M --> Q{"carries the<br/>dice-provenance: prefix?"}
     Q -->|"yes, and it parses"| R1["remove the single entry<br/>whose six fields match"]
     Q -->|"yes, and it does not parse"| R2["match nothing;<br/>evidence is left alone"]
@@ -226,8 +226,10 @@ flowchart TD
 A collapse records what each loser actually added to the survivor, and names that evidence by its
 evidence key. `MultiSignalCollectorStrategy` encodes every entry on both sides and subtracts; what
 is left is the evidence the fold introduced. `RetiredProposition.foldedProvenanceEvidenceKeys`
-carries it, and `undoSingleCollapse` hands those refs to `Proposition.withoutFoldedEvidence`, where
-each one matches a single full entry.
+carries it, and `undoSingleCollapse` hands those refs to `PropositionStore.subtractProvenance`,
+where each one matches a single full entry. (`Proposition.withoutFoldedEvidence` still runs on the
+survivor for grounding and source ids, and is given no provenance refs — the store removes evidence
+now. **Subtracting evidence by name** below says why the move was needed.)
 
 Locator keys alone could not do this, and failed in two ways. A loser citing `r2` of a document the
 survivor already cites at `r1` shares its locator key with the survivor, so the recorded fold
@@ -252,15 +254,15 @@ trace, not a transport for one you intend to undo from.
 
 ### Undo goes through the store, and writes nothing on a broken collapse
 
-`undoSingleCollapse` takes evidence off the survivor with `PropositionStore.setProvenance`, the
-authoritative replace. Saving the reduced survivor is not enough on a persistent backend:
+`undoSingleCollapse` takes evidence off the survivor with `PropositionStore.subtractProvenance`,
+which names the refs to delete. Saving the reduced survivor is not enough on a persistent backend:
 `DrivinePropositionRepository.save` appends provenance and deletes no edge, so the folded rows would
-outlive the undo. The save still runs, carrying grounding and source ids, and `setProvenance`
-follows it with the evidence. Because `setProvenance` sits on the base store contract, a caller
-holding nothing richer than a `PropositionStore` reaches it without probing for a repository type at
-runtime — `undo removes folded evidence for a caller holding only the base store` pins that on the
-Drivine backend, and `CollectorUndoCapabilityTest` pins it against a store that models the
-append-only save.
+outlive the undo. The subtraction runs first and the save follows it, carrying grounding and source
+ids; **The order the writes go in** below says why that order is load-bearing in both directions.
+Because the operation sits on the base store contract, a caller holding nothing richer than a
+`PropositionStore` reaches it without probing for a repository type at runtime — `undo removes
+folded evidence for a caller holding only the base store` pins that on the Drivine backend, and
+`CollectorUndoCapabilityTest` pins it against a store that models the append-only save.
 
 Both participants are read before anything is written. A survivor whose retired member has since
 been deleted would otherwise end up with the member's evidence already subtracted and no member to
@@ -429,9 +431,57 @@ the same two forms the codec defines: a minted key is matched against the edge's
 bare locator key matches revisionless edges for that source only — which also reaches edges written
 before `entryKey` existed.
 
-`evidence added while a subtraction is in flight survives it on the graph backend` runs one scenario
-through both paths, injecting the concurrent write where each is vulnerable: the default loses the
-newcomer, the override keeps it.
+`evidence the subtraction does not name survives it on the graph backend` asserts the half that
+matters for production: the override keeps a newcomer added before the call, because its delete
+statement names what goes and touches nothing else. The add completes before the subtraction
+starts, so the test pins preservation rather than concurrent interleaving. Its other half does not currently demonstrate the default's data loss — Kotlin
+interface delegation forwards `subtractProvenance` to the delegate, so a decorator that overrides
+only `findById` never sees the subtraction and never injects anything. The default's window is
+stated in `PropositionStore.subtractProvenance`'s KDoc and is not pinned by a test today.
+
+A subtraction can also answer null, which is the store saying it holds no such proposition. Both
+implementations mean the same thing by it: one of the default's reads misses — the opening
+`findById`, or the delegated `setProvenance`'s own read when the refs matched — and the Drivine
+override's fresh `findById` misses, whether or not a delete statement ran before it. Undo reads that as the survivor
+having been deleted between its own read and this call, and stops there having written nothing.
+Continuing from the copy it read would save that copy back and recreate the proposition another
+writer deleted, folded evidence and all — the `save` that follows the subtraction is an upsert on
+every backend here. The member stays retired, no stamp is written, and the null the undo returns
+says truthfully that no restore happened. What becomes of a member left retired into a survivor that
+no longer exists is the caller's decision; undo does not guess at it. `a survivor deleted before the
+subtraction is not recreated by the undo` pins that, exercising the default's opening read — the
+in-memory store overrides neither `subtractProvenance` nor `setProvenance`, so the deletion lands
+before that read and the default answers null immediately. `subtractProvenance answers null for a proposition that is not there` pins
+the graph backend's half of the signal.
+
+**A deletion can still arrive too late to be seen**, and this is a residual rather than a fix. Where
+the window opens depends on the backend, because it depends on when the subtraction last looked.
+
+- **The Drivine override**: after its answer. It deletes the edges in one statement and reads once
+  afterwards, writing nothing to the proposition itself, so its null is exact and everything up to
+  that read is caught. The gap left is between that read and the survivor's `save`.
+- **The base contract's default**: earlier, and inside the subtraction. On a store inheriting both
+  defaults it reads, delegates to `setProvenance`, which reads again and saves — so a deletion
+  landing after that second read is undone by that save, and the survivor is recreated before undo
+  is handed anything to inspect; a store overriding `setProvenance` alone moves that last look to
+  wherever its own write reads. Its
+  other two exits return the proposition as the *first* read saw it: nothing to subtract, and
+  nothing matching. Both are reachable from undo — a fold that added no new evidence subtracts
+  nothing, and a retried undo matches nothing — so on those exits a deletion any time after that
+  first read goes unseen.
+
+What the resurrection leaves behind is the same in both cases: the survivor back without the folded
+evidence, the member restored, and — when the caller supplied a record store — the undo stamped
+done. The four-argument path writes no stamp, so there it is the survivor and the member only.
+
+The upsert is what does it. `PropositionStore.save` writes the proposition whether or not a row for
+it still exists, and nothing on the contract says "save only if it is still there". Closing the
+window needs a conditional write — a compare-and-set, or an existence-guarded save on the store
+contract that every backend then has to implement — and it would have to reach every save in the
+chain, including the one inside the default subtraction, rather than only undo's own. That is more
+than an amendment to this slice should take on. It belongs with the other untransactional residuals
+here: no transaction spans the undo's four writes, and a caller needing strict exclusion against
+concurrent deletion needs a boundary the SPI does not offer yet.
 
 ### The order the writes go in
 
@@ -728,7 +778,7 @@ Four slices, each green on its own, together equal to the reviewed
    revision, the delete cascade over parallel revisions, and the connector-collision and
    legacy-adoption cases around `:Source` identity.
 3. **Collector hardening** — the trace and undo half: a collapse records the evidence keys of what
-   it folded, undo subtracts them through `PropositionStore.setProvenance` and refuses to write
+   it folded, undo subtracts them through `PropositionStore.subtractProvenance` and refuses to write
    when a participant has gone, and `DrivineCollectorTraceStore` persists and reads the new field
    with rows written before it still readable.
 4. **Entry points** — `IncrementalPropositionExtraction`, pipeline wiring, the REST surface, and

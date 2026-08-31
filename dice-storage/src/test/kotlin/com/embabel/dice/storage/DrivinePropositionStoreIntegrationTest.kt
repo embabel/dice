@@ -1692,16 +1692,20 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     @Test
-    fun `evidence added while a subtraction is in flight survives it on the graph backend`() {
-        // The race the subtractive operation exists for, forced deterministically, run twice over
-        // the same scenario: once on the base contract's read-modify-write default, once on this
-        // backend's override.
+    fun `evidence the subtraction does not name survives it on the graph backend`() {
+        // The property the subtractive operation exists for: only named evidence goes. The second
+        // half is the one that carries weight — a newcomer added before the call survives the
+        // override because its one delete statement names what goes and touches nothing else. The
+        // add completes before the subtraction starts, so this pins preservation, not concurrent
+        // interleaving; evidence is only ever at risk when it lands after the read that determines
+        // the remainder, which no sequential schedule reaches.
         //
-        // The two halves inject the concurrent write at different moments, and that asymmetry is
-        // the finding rather than a flaw in the harness. The default has a read to race with, so
-        // `ConcurrentAddOnRead` lands the newcomer exactly there. The override issues one statement
-        // and reads nothing, so there is no interior moment to aim at — the newcomer goes in
-        // immediately before the call, which is the worst case available to it.
+        // The first half does NOT currently demonstrate the default losing that newcomer, and the
+        // comment here used to claim it did. Kotlin interface delegation generates a forwarder for
+        // `subtractProvenance`, so `ConcurrentAddOnRead` hands the call straight to the delegate and
+        // its overridden `findById` is never reached: nothing is injected, and the assertion below
+        // holds for the ordinary reason that the subtraction removed `folded`. Exercising the
+        // default needs a store that does not override it at all, which delegation cannot give.
         val locator = UriLocator("https://example.com/subtract/race")
         val original = evidence(locator, null)
         val folded = evidence(locator, "r1")
@@ -1716,7 +1720,8 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals(
             setOf(original),
             repository.findById(viaDefault.id)?.provenanceEntries?.toSet(),
-            "the read-modify-write default replaces away the entry that arrived after its read",
+            "the subtraction removes the folded entry; see the note above about what this half does " +
+                "not show",
         )
 
         val viaOverride = repository.save(
@@ -1734,10 +1739,13 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     /**
-     * Lands [concurrent] on [propositionId] the first time anything reads it, which is where a
-     * read-modify-write subtraction is vulnerable. Deliberately does not override
-     * `subtractProvenance`, so the base contract's default runs against this decorator and takes its
-     * read from the overridden [findById].
+     * Lands [concurrent] on [propositionId] the first time anything reads it through this
+     * decorator, which is where a read-modify-write subtraction would be vulnerable.
+     *
+     * It does not reach the subtraction, though: interface delegation forwards
+     * `subtractProvenance` to [delegate], so the default never runs against this decorator and
+     * [findById] here is not called during that path. Kept because the injection point is the right
+     * one and a harness that can invoke the default would use it unchanged.
      */
     private class ConcurrentAddOnRead(
         private val delegate: DrivinePropositionRepository,
@@ -1770,6 +1778,28 @@ class DrivinePropositionStoreIntegrationTest {
 
         assertEquals(listOf(revisioned), updated?.provenanceEntries)
         assertEquals(1L, edgeCount(saved.id))
+    }
+
+    @Test
+    fun `subtractProvenance answers null for a proposition that is not there`() {
+        // Undo leans on this: a null answer is how it learns the survivor was deleted after it read
+        // it, and it stops there instead of saving its copy back. The override holds no earlier
+        // read to fall back on: the empty-refs branch is nothing but a fresh read, and the matched
+        // branch reads again after its delete statement — this pins that both answer null, and
+        // for an id the store never held.
+        val locator = UriLocator("https://example.com/subtract/deleted")
+        val entry = evidence(locator, "r1")
+        val saved = repository.save(
+            prop("deleted before subtract", context = "ctx-subtract-deleted", provenance = listOf(entry)),
+        )
+        assertTrue(repository.delete(saved.id))
+
+        assertNull(repository.subtractProvenance(saved.id, listOf(ProvenanceEvidenceKey.encode(entry))))
+        assertNull(
+            repository.subtractProvenance(saved.id, emptyList()),
+            "the empty-refs shortcut has to answer the same way",
+        )
+        assertNull(repository.subtractProvenance("never-existed-at-all", listOf(locator.key())))
     }
 
     private fun sourceCount(sourceKey: String): Long =

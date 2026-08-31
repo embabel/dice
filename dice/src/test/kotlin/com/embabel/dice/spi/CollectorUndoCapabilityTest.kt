@@ -273,6 +273,46 @@ class CollectorUndoCapabilityTest {
     }
 
     @Test
+    fun `a survivor deleted before the subtraction is not recreated by the undo`() {
+        // The survivor is read once, up front. Another writer can delete it before the subtraction
+        // lands, and the store then answers null. Continuing from the copy read earlier would save
+        // that copy back and recreate a proposition somebody else deleted, folded evidence and all.
+        //
+        // Which branch this exercises, precisely: InMemoryPropositionRepository overrides neither
+        // `subtractProvenance` nor `setProvenance`, so the subtraction here is the base contract's
+        // default, and the deletion lands before its opening `findById`. That read misses and the default answers null on the spot.
+        // Deletions arriving later are a different matter on each store — the default can recreate
+        // the survivor inside its own read-modify-write, and either store's answer is followed by
+        // the undo's `save`, which upserts. The design note scopes both; neither is pinned here.
+        val store = InMemoryPropositionRepository()
+        val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
+        val survivor = store.save(
+            proposition("survivor-deleted-midway", listOf(revisionOne), text = "Acme signed the agreement"),
+        )
+        val loser = store.save(
+            proposition("loser-deleted-midway", listOf(revisionOne, revisionTwo), text = "Acme signed an agreement"),
+        )
+        val runId = sweep(store, trace, records, survivor.id)
+        assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
+
+        val racing = DeletingOnSubtract(store, deletes = survivor.id)
+        val result = undoSingleCollapse(trace, racing, survivor.id, loser.id, records)
+
+        assertNull(store.findById(survivor.id), "the deletion wins; the undo must not put the survivor back")
+        assertNull(result, "an undo that could not subtract anything must not report a survivor")
+        assertEquals(
+            PropositionStatus.STALE,
+            store.findById(loser.id)?.status,
+            "no restore was performed, so the member stays retired",
+        )
+        assertTrue(
+            records.findByProposition(loser.id).none { it.runId == runId && it.undoneAt != null },
+            "an undo that did nothing must not stamp itself as done",
+        )
+    }
+
+    @Test
     fun `a dry-run trace and an unrelated status transition do not authorize an undo`() {
         // The status proxy alone cannot tell a retirement from a decay sweep. With the run's audit
         // records in hand it does not have to: the run says it changed nothing.
@@ -936,6 +976,23 @@ class CollectorUndoCapabilityTest {
         }
     }
 
+    /**
+     * Another writer deleting a proposition inside the window the undo cannot see: after the undo
+     * read the survivor, before its subtraction reaches the store. Landing it on the call itself is
+     * the latest point the subtraction can still report the deletion, which is what the guard under
+     * test reads. A deletion arriving after that answer is a different, still-open race.
+     */
+    private class DeletingOnSubtract(
+        private val delegate: InMemoryPropositionRepository,
+        private val deletes: String,
+    ) : PropositionRepository by delegate {
+
+        override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? {
+            delegate.delete(deletes)
+            return delegate.subtractProvenance(propositionId, provenanceRefs)
+        }
+    }
+
     /** Stops the undo at one proposition's save, standing in for a crash before the restore. */
     private class FailingPropositionStore(
         private val delegate: InMemoryPropositionRepository,
@@ -967,6 +1024,11 @@ class CollectorUndoCapabilityTest {
         override fun setProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? {
             writes++
             return delegate.setProvenance(propositionId, entries)
+        }
+
+        override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? {
+            writes++
+            return delegate.subtractProvenance(propositionId, provenanceRefs)
         }
     }
 }
