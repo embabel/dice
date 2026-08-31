@@ -76,6 +76,11 @@ object CollectorRecordRowMapper {
         "at" to record.at.toString(),
         "previousStatus" to record.previousStatus?.name,
         "newStatus" to record.newStatus?.name,
+        // The survivor the sweep actually merged into, which the reason above cannot supply: one
+        // proposition can be marked a duplicate of several survivors and merged into only one.
+        "mergedIntoId" to record.mergedIntoId,
+        // Set once collapse undo has reversed the merge, so the row cannot authorize a second one.
+        "undoneAt" to record.undoneAt?.toString(),
     )
 
     /** Rebuild a [CollectorRecord], reconstructing the typed reason and the optional statuses. */
@@ -93,6 +98,9 @@ object CollectorRecordRowMapper {
         at = parseInstant(row.strOrNull("at")),
         previousStatus = row.statusOrNull("previousStatus"),
         newStatus = row.statusOrNull("newStatus"),
+        // Absent on rows written before this property existed, which read back as no merge.
+        mergedIntoId = row.strOrNull("mergedIntoId"),
+        undoneAt = row.strOrNull("undoneAt")?.let { parseInstant(it) },
     )
 }
 
