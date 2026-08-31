@@ -41,6 +41,20 @@ data class ExtractionRunKey(
 
     /** The tenant id as a plain string, for Java callers, since `ContextId` is a value class. */
     fun getContextIdValue(): String = contextId.value
+
+    companion object {
+
+        /**
+         * Java-friendly factory taking both halves as plain strings.
+         *
+         * `ContextId` is a Kotlin value class, so the constructor has a mangled JVM name. Every
+         * read on `ExtractionRunStore` keys on this type, so without a factory the store would be
+         * unreachable from Java.
+         */
+        @JvmStatic
+        fun of(contextIdValue: String, runId: String): ExtractionRunKey =
+            ExtractionRunKey(ContextId(contextIdValue), ExtractionRunRef(runId))
+    }
 }
 
 /**
@@ -81,7 +95,7 @@ data class ExtractionRunKey(
  * This is a plain class rather than a data class on purpose. A data class has to declare its
  * collection parameters as properties, which means the field is the caller's list and there is
  * nowhere to copy it; its generated `copy` and `componentN` methods would also pin an ABI across
- * seventeen fields while #67 is still moving. Equality and hash are written out over every
+ * eighteen fields while #67 is still moving. Equality and hash are written out over every
  * component instead.
  *
  * EXPERIMENTAL. The shape may still change while extraction runs (DICE #67) land.
@@ -103,6 +117,15 @@ data class ExtractionRunKey(
  * @property counts How much the run got through
  * @property invocations One record per attempt at each planned model call
  * @property failures Bounded record of what went wrong, in the failure vocabulary
+ * @property version The compare-and-set generation [ExtractionRunStore.save] checks this header
+ *   against. A run that has never been saved, and the run its first accepted save produces, both
+ *   carry 0 — the first save inserts the row, and there is no earlier generation for it to raise
+ *   past. A store rejects a first save naming any other value. Every later save [save] accepts that
+ *   actually changes the header raises it by one; a save whose content already matches what is
+ *   stored is accepted too, as a no-op replay, and leaves the generation exactly where it stood.
+ *   [ExtractionRunStore.recordInvocation] never changes it, since an invocation record writes a
+ *   child row of its own — and [ExtractionRunTransition.applyTo] carries whatever value the run
+ *   already has, because a terminal run takes no more saves and nothing compares its version again
  */
 @ApiStatus.Experimental
 class ExtractionRun @JvmOverloads constructor(
@@ -123,6 +146,7 @@ class ExtractionRun @JvmOverloads constructor(
     val counts: ExtractionRunCounts = ExtractionRunCounts(),
     invocations: List<ExtractionInvocationRecord> = emptyList(),
     failures: List<ExtractionFailure> = emptyList(),
+    val version: Long = 0,
 ) {
 
     /** Which revisions of which sources this run read, in order. */
@@ -138,6 +162,8 @@ class ExtractionRun @JvmOverloads constructor(
         Collections.unmodifiableList(ArrayList(failures))
 
     init {
+        require(version >= 0) { "version must not be negative, was $version" }
+
         require(finishedAt == null || !finishedAt.isBefore(startedAt)) {
             "finishedAt must not be before startedAt"
         }
@@ -233,7 +259,8 @@ class ExtractionRun @JvmOverloads constructor(
             replayFidelity == other.replayFidelity &&
             counts == other.counts &&
             invocations == other.invocations &&
-            failures == other.failures
+            failures == other.failures &&
+            version == other.version
     }
 
     override fun hashCode(): Int {
@@ -254,6 +281,7 @@ class ExtractionRun @JvmOverloads constructor(
         result = 31 * result + counts.hashCode()
         result = 31 * result + invocations.hashCode()
         result = 31 * result + failures.hashCode()
+        result = 31 * result + version.hashCode()
         return result
     }
 
@@ -267,7 +295,8 @@ class ExtractionRun @JvmOverloads constructor(
         "ExtractionRun(contextId=${contextId.value}, runId=${ref.runId}, rootRunId=${rootRef.runId}, " +
             "parentRunId=${parentRef?.runId}, pass=${lineage.passIndex}, status=$status, " +
             "startedAt=$startedAt, finishedAt=$finishedAt, sourceRevisions=${sourceRevisions.size}, " +
-            "invocations=${invocations.size}, failures=${failures.size}, replayFidelity=$replayFidelity)"
+            "invocations=${invocations.size}, failures=${failures.size}, replayFidelity=$replayFidelity, " +
+            "version=$version)"
 
     companion object {
 
@@ -297,6 +326,7 @@ class ExtractionRun @JvmOverloads constructor(
             counts: ExtractionRunCounts = ExtractionRunCounts(),
             invocations: List<ExtractionInvocationRecord> = emptyList(),
             failures: List<ExtractionFailure> = emptyList(),
+            version: Long = 0,
         ): ExtractionRun = ExtractionRun(
             contextId = ContextId(contextIdValue),
             lineage = lineage,
@@ -315,6 +345,7 @@ class ExtractionRun @JvmOverloads constructor(
             counts = counts,
             invocations = invocations,
             failures = failures,
+            version = version,
         )
     }
 }
