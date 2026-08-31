@@ -20,9 +20,12 @@ import com.embabel.dice.projection.lineage.ProjectionRecord
 import com.embabel.dice.projection.memory.CollectorRunResult
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import com.embabel.dice.query.graph.GraphNeighborhood
 import com.embabel.dice.query.graph.GraphPath
 import com.embabel.dice.query.graph.PropositionLineage
+import com.fasterxml.jackson.annotation.JsonInclude
 
 /**
  * Outward-facing discovery DTOs — the trust boundary between domain internals and external callers.
@@ -133,6 +136,42 @@ data class NeighborhoodDto(
 }
 
 /**
+ * Primitive-only provenance attached to a discovery explanation.
+ *
+ * The locator arrives as its stable key string rather than as a `SourceLocator`, so no domain
+ * type crosses the trust boundary. Null scalars drop out of the JSON, so a revisionless entry
+ * serializes the way it always did.
+ *
+ * @property locator stable key of the source reference
+ * @property sourceRevision the provider's opaque revision of that source, when known
+ * @property chunkId the chunk this proposition was extracted from, when known
+ * @property startOffset character offset where the supporting span begins, when known
+ * @property endOffset character offset where the supporting span ends, when known
+ * @property contentHash hash of the source content, when known
+ */
+@JsonInclude(JsonInclude.Include.NON_NULL)
+data class DiscoveryProvenanceDto(
+    val locator: String,
+    val sourceRevision: String? = null,
+    val chunkId: String? = null,
+    val startOffset: Int? = null,
+    val endOffset: Int? = null,
+    val contentHash: String? = null,
+) {
+    companion object {
+        @JvmStatic
+        fun from(entry: ProvenanceEntry): DiscoveryProvenanceDto = DiscoveryProvenanceDto(
+            locator = entry.locator.key(),
+            sourceRevision = entry.sourceRevision,
+            chunkId = entry.chunkId,
+            startOffset = entry.startOffset,
+            endOffset = entry.endOffset,
+            contentHash = entry.contentHash,
+        )
+    }
+}
+
+/**
  * A leak-free lineage summary — the "why" behind a stored fact.
  *
  * @property propositionId the explained proposition's id
@@ -141,14 +180,16 @@ data class NeighborhoodDto(
  * @property reinforceCount how many times the proposition has been reinforced
  * @property groundingChunkIds the grounding chunk ids as opaque strings
  * @property sourceSummaries the source proposition statements this one was abstracted from
+ * @property provenance the proposition's source evidence, ordered by evidence key
  */
-data class LineageDto(
+data class LineageDto @JvmOverloads constructor(
     val propositionId: String,
     val text: String,
     val status: String,
     val reinforceCount: Int,
     val groundingChunkIds: List<String>,
     val sourceSummaries: List<String>,
+    val provenance: List<DiscoveryProvenanceDto> = emptyList(),
 ) {
     companion object {
         @JvmStatic
@@ -159,6 +200,17 @@ data class LineageDto(
             reinforceCount = lineage.reinforceCount,
             groundingChunkIds = lineage.groundingChunkIds,
             sourceSummaries = lineage.sources.map { it.text },
+            // The lineage's own entries, not the nested proposition's: a lean read can hand back
+            // a proposition with no evidence on it while the lineage carries the full set.
+            //
+            // Sorted by evidence key, because the graph read returns edges in whatever order the
+            // planner produced and the same proposition would otherwise serialize its evidence in a
+            // different order run to run. The key is the durable identity of the entry, so the order
+            // is stable across backends and across reads, and it sorts a source's revisions among
+            // themselves once the locator prefix matches.
+            provenance = lineage.provenanceEntries
+                .sortedBy { ProvenanceEvidenceKey.encode(it) }
+                .map { DiscoveryProvenanceDto.from(it) },
         )
     }
 }

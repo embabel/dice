@@ -329,6 +329,10 @@ class PropositionPipeline private constructor(
      * text, which is always available and grounds the fact in the exact content it was read from.
      * Either way the entry also carries the chunk id and a content hash, so a consumer can trace a
      * proposition to its source without the source needing to be a stored entity first.
+     *
+     * When the caller also supplied a [SourceAnalysisContext.sourceRevision], its opaque revision
+     * string rides along on the entry. The context has already checked that the revision names this
+     * locator, so a fallback content-addressed locator never picks up somebody else's revision.
      */
     private fun stampProvenance(
         propositions: List<Proposition>,
@@ -341,6 +345,7 @@ class PropositionPipeline private constructor(
             locator = context.sourceLocator ?: ContentAddressedLocator(contentHash),
             chunkId = chunk.id,
             contentHash = contentHash,
+            sourceRevision = context.sourceRevision?.sourceRevision,
         )
         return propositions.map { it.withProvenanceEntries(listOf(entry)) }
     }

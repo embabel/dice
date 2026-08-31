@@ -20,10 +20,16 @@ import com.embabel.chat.Conversation
 import com.embabel.chat.Message
 import com.embabel.dice.incremental.ConversationSource
 import com.embabel.dice.incremental.IncrementalSource
+import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
 
 /**
  * Event published after a conversation exchange to trigger async proposition extraction.
  * Used by any application integrating the DICE memory pipeline.
+ *
+ * The three-argument constructor is the one that has always existed and carries no
+ * provenance. A publisher that has a typed source for the conversation — a thread in a
+ * chat system, a transcript file — uses the longer constructor to say so.
  */
 class ConversationAnalysisRequestEvent(
     source: Any,
@@ -31,6 +37,25 @@ class ConversationAnalysisRequestEvent(
     @JvmField val conversation: Conversation,
 ) : SourceAnalysisRequestEvent(source, user) {
 
+    private var eventSourceLocator: SourceLocator? = null
+
+    private var eventSourceRevision: SourceRevisionRef? = null
+
+    constructor(
+        source: Any,
+        user: NamedEntity,
+        conversation: Conversation,
+        sourceLocator: SourceLocator,
+        sourceRevision: SourceRevisionRef? = null,
+    ) : this(source, user, conversation) {
+        eventSourceLocator = sourceLocator
+        eventSourceRevision = sourceRevision
+    }
+
     override fun incrementalSource(): IncrementalSource<Message> =
         ConversationSource(conversation)
+
+    override fun sourceLocator(): SourceLocator? = eventSourceLocator
+
+    override fun sourceRevision(): SourceRevisionRef? = eventSourceRevision
 }
