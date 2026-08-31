@@ -20,6 +20,7 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef
 import com.embabel.dice.proposition.extraction.ExtractionPerspective
+import com.embabel.dice.proposition.extraction.ExtractionRunRef
 import com.embabel.dice.provenance.ContentAddressedLocator
 import com.embabel.dice.provenance.SourceRevisionRef
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -173,12 +174,16 @@ class ExtractionContextIndependenceTest {
             mintedEntityProperties = mapOf("owner" to "tenant-one"),
             sourceRevision = SourceRevisionRef(locator.key(), "r1"),
             profile = profiles[1],
+            currentRun = ExtractionRunRef("run-before"),
         )
 
         // Comparing against copy(...) is a statement about every component at once: the helper
         // differs from the receiver in exactly the one field it names.
         val profile = ExtractionContentProfileRef("legal-review", "v9")
         assertEquals(base.copy(profile = profile), base.withProfile(profile))
+
+        val run = ExtractionRunRef("run-after")
+        assertEquals(base.copy(currentRun = run), base.withCurrentRun(run))
 
         assertEquals(
             base.copy(perspective = ExtractionPerspective.ALL),
@@ -223,5 +228,29 @@ class ExtractionContextIndependenceTest {
                 profile = profile,
             )
         }
+    }
+
+    @Test
+    fun `profile and current run are independent of each other`() {
+        val profile = profiles[1]!!
+        val run = ExtractionRunRef("run-7")
+
+        val combinations = listOf(
+            null to null,
+            profile to null,
+            null to run,
+            profile to run,
+        ).map { (p, r) ->
+            SourceAnalysisContext(
+                schema = schemas[0],
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = tenants[0],
+                profile = p,
+                currentRun = r,
+            )
+        }
+
+        assertEquals(listOf(null, profile, null, profile), combinations.map { it.profile })
+        assertEquals(listOf(null, null, run, run), combinations.map { it.currentRun })
     }
 }

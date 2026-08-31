@@ -148,18 +148,10 @@ class ExtractionRun @JvmOverloads constructor(
         require(this.sourceRevisions.distinct().size == this.sourceRevisions.size) {
             "sourceRevisions must be distinct; a run reads each source revision once"
         }
-        // SourceRevisionRef predates the run model's cap rule and validates non-blank only, so the
-        // bound is applied where the run stores it. Moving it onto the type is a follow-up.
-        this.sourceRevisions.forEach { revision ->
-            require(revision.sourceKey.length <= ExtractionRunLimits.MAX_SOURCE_KEY_LENGTH) {
-                "sourceKey must be at most ${ExtractionRunLimits.MAX_SOURCE_KEY_LENGTH} characters, " +
-                    "was ${revision.sourceKey.length}"
-            }
-            require(revision.sourceRevision.length <= ExtractionRunLimits.MAX_IDENTIFIER_LENGTH) {
-                "sourceRevision must be at most ${ExtractionRunLimits.MAX_IDENTIFIER_LENGTH} characters, " +
-                    "was ${revision.sourceRevision.length}"
-            }
-        }
+        // sourceKey and sourceRevision carry no length check here. Their one bound lives on
+        // SourceRevisionRef, the type that owns those strings (docs/design/source-revisions.md),
+        // and a run accepts whatever that type accepts. Only what belongs to this type — how many
+        // revisions, and that they are distinct — is checked here.
 
         require(this.invocations.size <= ExtractionRunLimits.MAX_INVOCATIONS) {
             "a run may record at most ${ExtractionRunLimits.MAX_INVOCATIONS} invocation records, " +

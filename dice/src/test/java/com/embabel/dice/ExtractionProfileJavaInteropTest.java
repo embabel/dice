@@ -27,6 +27,7 @@ import com.embabel.dice.incremental.IncrementalSource;
 import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef;
 import com.embabel.dice.proposition.extraction.ExtractionPerspective;
 import com.embabel.dice.proposition.extraction.ExtractionRequest;
+import com.embabel.dice.proposition.extraction.ExtractionRunRef;
 import com.embabel.dice.proposition.extraction.IncrementalPropositionExtraction;
 import com.embabel.dice.provenance.ContentAddressedLocator;
 import com.embabel.dice.provenance.SourceLocator;
@@ -45,9 +46,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * Java's view of the profile contract, with and without a profile present. A profile travels on an
+ * Java's view of the profile and run contracts, with and without either present. Both travel on an
  * {@link ExtractionRequest}, so the remember entry points keep every descriptor a Java caller could
- * already have compiled against and each name gains exactly one more, taking the request.
+ * already have compiled against and each name gains exactly one more, taking the request. Adding
+ * the run reference added no descriptor at all — it is a field on the request.
  */
 class ExtractionProfileJavaInteropTest {
 
@@ -59,7 +61,7 @@ class ExtractionProfileJavaInteropTest {
     }
 
     @Test
-    void javaCallersBuildAndReadProfileValues() {
+    void javaCallersBuildAndReadProfileAndRunValues() {
         ExtractionContentProfileRef profile = new ExtractionContentProfileRef("house-style", "v1");
         assertEquals("house-style", profile.getName());
         assertEquals("v1", profile.getVersion());
@@ -69,19 +71,28 @@ class ExtractionProfileJavaInteropTest {
                 IllegalArgumentException.class,
                 () -> new ExtractionContentProfileRef(" ", "v1")
         );
+
+        ExtractionRunRef run = new ExtractionRunRef("run-1");
+        assertEquals("run-1", run.getRunId());
+        assertEquals(run, new ExtractionRunRef("run-1"));
+        assertThrows(IllegalArgumentException.class, () -> new ExtractionRunRef(""));
     }
 
     @Test
     void javaBuiltContextsCarryNoProfileUnlessAsked() {
         SourceAnalysisContext absent = context();
         assertNull(absent.getProfile());
+        assertNull(absent.getCurrentRun());
 
         ExtractionContentProfileRef profile = new ExtractionContentProfileRef("house-style", "v1");
-        SourceAnalysisContext present = absent.withProfile(profile);
+        ExtractionRunRef run = new ExtractionRunRef("run-1");
+        SourceAnalysisContext present = absent.withProfile(profile).withCurrentRun(run);
 
         assertSame(profile, present.getProfile());
+        assertSame(run, present.getCurrentRun());
         // The copy is a copy: the original is untouched.
         assertNull(absent.getProfile());
+        assertNull(absent.getCurrentRun());
     }
 
     @Test
@@ -110,8 +121,9 @@ class ExtractionProfileJavaInteropTest {
                 InputStream.class, String.class, NamedEntity.class, ExtractionRequest.class
         );
 
-        // A profile reaches extraction on the request, so no entry point takes one directly and
-        // none lands where a caller filling every legacy argument already is.
+        // A profile and a run both reach extraction on the request, so no entry point takes
+        // either one directly and neither lands where a caller filling every legacy argument
+        // already is.
         assertThrows(
                 NoSuchMethodException.class,
                 () -> IncrementalPropositionExtraction.class.getMethod(
@@ -131,35 +143,85 @@ class ExtractionProfileJavaInteropTest {
         assertThrows(
                 NoSuchMethodException.class,
                 () -> IncrementalPropositionExtraction.class.getMethod(
+                        "rememberText",
+                        String.class, String.class, NamedEntity.class, List.class,
+                        ExtractionPerspective.class, Boolean.class,
+                        ExtractionContentProfileRef.class, ExtractionRunRef.class
+                )
+        );
+        assertThrows(
+                NoSuchMethodException.class,
+                () -> IncrementalPropositionExtraction.class.getMethod(
                         "rememberFile",
                         InputStream.class, String.class, NamedEntity.class,
                         ExtractionContentProfileRef.class
                 )
         );
+        assertThrows(
+                NoSuchMethodException.class,
+                () -> IncrementalPropositionExtraction.class.getMethod(
+                        "rememberFile",
+                        InputStream.class, String.class, NamedEntity.class,
+                        ExtractionRunRef.class
+                )
+        );
+        assertThrows(
+                NoSuchMethodException.class,
+                () -> IncrementalPropositionExtraction.class.getMethod(
+                        "rememberFile",
+                        InputStream.class, String.class, NamedEntity.class,
+                        ExtractionContentProfileRef.class, ExtractionRunRef.class
+                )
+        );
+
+        // The `...FromSource` names are gone entirely: a typed source, its revision, the profile
+        // and the run all travel on the request, so there is nothing left for a second family of
+        // entry points to carry. No descriptor under either name survives, at any arity.
+        assertFalse(
+                java.util.Arrays.stream(IncrementalPropositionExtraction.class.getMethods())
+                        .anyMatch(method -> method.getName().endsWith("FromSource"))
+        );
     }
 
     @Test
-    void javaCallersBuildAndReadProfileBearingRequests() throws Exception {
+    void javaCallersBuildAndReadProfileAndRunBearingRequests() throws Exception {
         ExtractionContentProfileRef profile = new ExtractionContentProfileRef("house-style", "v1");
+        ExtractionRunRef run = new ExtractionRunRef("run-1");
         SourceLocator locator = new ContentAddressedLocator("java-profile-source");
         SourceRevisionRef revision = new SourceRevisionRef(locator.key(), "r1");
 
+        // `@JvmOverloads` publishes the shorter descriptors too, so a Java caller that compiled
+        // against the three-field request keeps compiling now the run field exists.
         ExtractionRequest.class.getConstructor(
                 SourceLocator.class, SourceRevisionRef.class, ExtractionContentProfileRef.class
         );
+        ExtractionRequest.class.getConstructor(
+                SourceLocator.class, SourceRevisionRef.class, ExtractionContentProfileRef.class,
+                ExtractionRunRef.class
+        );
 
-        // A profile needs no source of its own: the two dimensions stay independent on a request.
+        // A profile needs no source of its own: the dimensions stay independent on a request.
         ExtractionRequest profileOnly = new ExtractionRequest(null, null, profile);
         assertSame(profile, profileOnly.getProfile());
         assertNull(profileOnly.getSourceLocator());
+        assertNull(profileOnly.getCurrentRun());
 
-        ExtractionRequest everything = new ExtractionRequest(locator, revision, profile);
+        // Neither does a run.
+        ExtractionRequest runOnly = new ExtractionRequest(null, null, null, run);
+        assertSame(run, runOnly.getCurrentRun());
+        assertNull(runOnly.getSourceLocator());
+        assertNull(runOnly.getProfile());
+
+        ExtractionRequest everything = new ExtractionRequest(locator, revision, profile, run);
         assertSame(profile, everything.getProfile());
         assertSame(revision, everything.getSourceRevision());
+        assertSame(run, everything.getCurrentRun());
 
-        // The copy helper is a copy: the request it was called on is untouched.
+        // The copy helpers are copies: the request they were called on is untouched.
         assertSame(profile, ExtractionRequest.NONE.withProfile(profile).getProfile());
         assertNull(ExtractionRequest.NONE.getProfile());
+        assertSame(run, ExtractionRequest.NONE.withCurrentRun(run).getCurrentRun());
+        assertNull(ExtractionRequest.NONE.getCurrentRun());
     }
 
     @Test
@@ -168,10 +230,13 @@ class ExtractionProfileJavaInteropTest {
 
         LegacyJavaEvent legacy = new LegacyJavaEvent(this, user);
         assertNull(legacy.profile());
+        assertNull(legacy.currentRun());
 
         ExtractionContentProfileRef profile = new ExtractionContentProfileRef("house-style", "v1");
-        ProfileAwareJavaEvent profileAware = new ProfileAwareJavaEvent(this, user, profile);
+        ExtractionRunRef run = new ExtractionRunRef("run-1");
+        ProfileAwareJavaEvent profileAware = new ProfileAwareJavaEvent(this, user, profile, run);
         assertSame(profile, profileAware.profile());
+        assertSame(run, profileAware.currentRun());
         // A subclass that only knows about profiles still carries no source provenance.
         assertNull(profileAware.sourceLocator());
         assertNull(profileAware.sourceRevision());
@@ -196,37 +261,54 @@ class ExtractionProfileJavaInteropTest {
                 Object.class, NamedEntity.class, Conversation.class, SourceLocator.class,
                 SourceRevisionRef.class, ExtractionContentProfileRef.class
         );
+        ConversationAnalysisRequestEvent.class.getConstructor(
+                Object.class, NamedEntity.class, Conversation.class, SourceLocator.class,
+                SourceRevisionRef.class, ExtractionContentProfileRef.class, ExtractionRunRef.class
+        );
 
         NamedEntity user = org.mockito.Mockito.mock(NamedEntity.class);
         Conversation conversation = org.mockito.Mockito.mock(Conversation.class);
         SourceLocator locator = new ContentAddressedLocator("java-conversation");
         SourceRevisionRef revision = new SourceRevisionRef(locator.key(), "r1");
         ExtractionContentProfileRef profile = new ExtractionContentProfileRef("house-style", "v1");
+        ExtractionRunRef run = new ExtractionRunRef("run-1");
 
         ConversationAnalysisRequestEvent locatorOnly =
                 new ConversationAnalysisRequestEvent(this, user, conversation, locator);
         assertSame(locator, locatorOnly.sourceLocator());
         assertNull(locatorOnly.sourceRevision());
         assertNull(locatorOnly.profile());
+        assertNull(locatorOnly.currentRun());
 
         ConversationAnalysisRequestEvent legacy =
                 new ConversationAnalysisRequestEvent(this, user, conversation, locator, revision);
         assertSame(locator, legacy.sourceLocator());
         assertSame(revision, legacy.sourceRevision());
         assertNull(legacy.profile());
+        assertNull(legacy.currentRun());
 
+        // The 6-argument form a profile-aware Java caller already compiled against, unchanged: it
+        // still names a profile and now leaves the run defaulted.
         ConversationAnalysisRequestEvent profiled = new ConversationAnalysisRequestEvent(
                 this, user, conversation, locator, revision, profile
         );
         assertSame(profile, profiled.profile());
+        assertNull(profiled.currentRun());
 
-        // A profile without a typed source: the locator argument is nullable because the two
+        ConversationAnalysisRequestEvent profiledAndRun = new ConversationAnalysisRequestEvent(
+                this, user, conversation, locator, revision, profile, run
+        );
+        assertSame(profile, profiledAndRun.profile());
+        assertSame(run, profiledAndRun.currentRun());
+
+        // A profile and a run without a typed source: the locator argument is nullable because the
         // dimensions are independent.
         ConversationAnalysisRequestEvent profileOnly = new ConversationAnalysisRequestEvent(
-                this, user, conversation, null, null, profile
+                this, user, conversation, null, null, profile, run
         );
         assertNull(profileOnly.sourceLocator());
         assertSame(profile, profileOnly.profile());
+        assertSame(run, profileOnly.currentRun());
     }
 
     @Test
@@ -317,7 +399,8 @@ class ExtractionProfileJavaInteropTest {
             NamedEntity user,
             SourceLocator locator,
             SourceRevisionRef revision,
-            ExtractionContentProfileRef profile
+            ExtractionContentProfileRef profile,
+            ExtractionRunRef run
     ) {
         extraction.rememberText("legacy", "legacy-id", user);
         extraction.rememberText("legacy", "legacy-id", user, List.of(), null, null);
@@ -333,6 +416,31 @@ class ExtractionProfileJavaInteropTest {
         );
         extraction.rememberFile(
                 input, "source.txt", user, new ExtractionRequest(locator, revision, profile)
+        );
+        // A run travels the same way, on the same two entry points. Where the pre-request surface
+        // needed a `rememberTextFromSource` and a `rememberFileFromSource` to carry a typed source,
+        // the request carries the source, its revision, the profile and the run together.
+        extraction.rememberText(
+                "run", "run-id", user, List.of(), null, null,
+                new ExtractionRequest(null, null, null, run)
+        );
+        extraction.rememberFile(input, "run.txt", user, new ExtractionRequest(null, null, null, run));
+        extraction.rememberText(
+                "everything", "everything-id", user, List.of(), null, null,
+                new ExtractionRequest(locator, revision, profile, run)
+        );
+        extraction.rememberFile(
+                input, "everything.txt", user, new ExtractionRequest(locator, revision, profile, run)
+        );
+        // The same request assembled with the copy helpers, which is how a Java caller that starts
+        // from NONE builds one.
+        extraction.rememberText(
+                "built", "built-id", user, List.of(), null, null,
+                ExtractionRequest.NONE
+                        .withSourceLocator(locator)
+                        .withSourceRevision(revision)
+                        .withProfile(profile)
+                        .withCurrentRun(run)
         );
     }
 
@@ -351,14 +459,17 @@ class ExtractionProfileJavaInteropTest {
     private static final class ProfileAwareJavaEvent extends SourceAnalysisRequestEvent {
 
         private final ExtractionContentProfileRef profile;
+        private final ExtractionRunRef run;
 
         private ProfileAwareJavaEvent(
                 Object source,
                 NamedEntity user,
-                ExtractionContentProfileRef profile
+                ExtractionContentProfileRef profile,
+                ExtractionRunRef run
         ) {
             super(source, user);
             this.profile = profile;
+            this.run = run;
         }
 
         @Override
@@ -369,6 +480,11 @@ class ExtractionProfileJavaInteropTest {
         @Override
         public ExtractionContentProfileRef profile() {
             return profile;
+        }
+
+        @Override
+        public ExtractionRunRef currentRun() {
+            return run;
         }
     }
 }

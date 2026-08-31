@@ -22,8 +22,8 @@ import org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 import org.junit.jupiter.api.Test
 
 /**
- * What the new reference type promises: stable name-and-version identity for a profile, a
- * bounded string, and no interpretation of either component.
+ * What the two new reference types promise: stable name-and-version identity for a profile,
+ * an opaque id for a run, bounded strings, and no interpretation of either.
  */
 class ExtractionProfileContractTest {
 
@@ -86,5 +86,59 @@ class ExtractionProfileContractTest {
         assertThatIllegalArgumentException()
             .isThrownBy { ExtractionContentProfileRef(name, version + "v") }
             .withMessageContaining("version")
+    }
+
+    @Test
+    fun `run ref preserves an opaque id`() {
+        val ref = ExtractionRunRef("01J9Z0V1XQ:host/7#a")
+
+        assertThat(ref.runId).isEqualTo("01J9Z0V1XQ:host/7#a")
+        assertThat(objectMapper.readValue<ExtractionRunRef>(objectMapper.writeValueAsString(ref)))
+            .isEqualTo(ref)
+    }
+
+    @Test
+    fun `run identity is the id`() {
+        val run = ExtractionRunRef("run-1")
+        val same = ExtractionRunRef("run-1")
+        val other = ExtractionRunRef("run-2")
+
+        assertThat(run).isEqualTo(same)
+        assertThat(run.hashCode()).isEqualTo(same.hashCode())
+        assertThat(run).isNotEqualTo(other)
+    }
+
+    @Test
+    fun `run ref rejects a blank id`() {
+        assertThatIllegalArgumentException()
+            .isThrownBy { ExtractionRunRef("") }
+            .withMessageContaining("runId")
+        assertThatIllegalArgumentException()
+            .isThrownBy { ExtractionRunRef("   ") }
+            .withMessageContaining("runId")
+    }
+
+    @Test
+    fun `run ref accepts its length cap and rejects one character more`() {
+        val runId = "r".repeat(ExtractionRunRef.MAX_RUN_ID_LENGTH)
+
+        assertThat(ExtractionRunRef(runId).runId).hasSize(ExtractionRunRef.MAX_RUN_ID_LENGTH)
+        assertThatIllegalArgumentException()
+            .isThrownBy { ExtractionRunRef(runId + "r") }
+            .withMessageContaining("runId")
+    }
+
+    @Test
+    fun `the two references are unrelated types`() {
+        // Nothing converts one into the other and neither derives from the other. A profile says
+        // what extraction should do; a run says which execution this was.
+        assertThat(
+            ExtractionContentProfileRef::class.java.isAssignableFrom(ExtractionRunRef::class.java),
+        ).isFalse()
+        assertThat(
+            ExtractionRunRef::class.java.isAssignableFrom(ExtractionContentProfileRef::class.java),
+        ).isFalse()
+        assertThat(ExtractionContentProfileRef("run-1", "run-1"))
+            .isNotEqualTo(ExtractionRunRef("run-1"))
     }
 }

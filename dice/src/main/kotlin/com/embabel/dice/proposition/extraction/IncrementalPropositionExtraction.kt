@@ -178,7 +178,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
 
     /**
      * Extract propositions from a file via Tika, on the terms the [request] sets — the source it
-     * was read from, the revision of that source, the content profile it runs under.
+     * was read from, the revision of that source, the content profile it runs under, the
+     * extraction run it belongs to.
      *
      * A [request] that carries nothing hands straight back to the three-argument form, so a call
      * that looks like a pre-request call also dispatches like one.
@@ -274,7 +275,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
 
     /**
      * Extract propositions from raw text on the terms the [request] sets — the source it was read
-     * from, the revision of that source, the content profile it runs under.
+     * from, the revision of that source, the content profile it runs under, the extraction run it
+     * belongs to.
      *
      * Every other entry point funnels here, so this is the one method to override to see every
      * call. It is also where a new extraction dimension shows up: it arrives as a field on
@@ -356,6 +358,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                     sourceLocator = event.sourceLocator(),
                     sourceRevision = event.sourceRevision(),
                     profile = event.profile(),
+                    currentRun = event.currentRun(),
                 ),
             )
             logger.info(
@@ -452,9 +455,11 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         // context and the request always agree about a call.
         request.sourceLocator?.let { ctx = ctx.withSourceLocator(it) }
         request.sourceRevision?.let { ctx = ctx.withSourceRevision(it) }
-        // Carried, never consulted. Nothing downstream of here reads it — that is what "DICE
-        // holds profile identity and the host binds policy" means in code.
+        // Carried, never consulted. Nothing downstream of here reads either one — that is what
+        // "DICE holds profile identity and the host binds policy" means in code, and the run
+        // reference is identity only until the run store lands.
         request.profile?.let { ctx = ctx.withProfile(it) }
+        request.currentRun?.let { ctx = ctx.withCurrentRun(it) }
         return ctx
     }
 

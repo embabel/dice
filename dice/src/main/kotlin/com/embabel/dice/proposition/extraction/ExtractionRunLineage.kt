@@ -33,14 +33,27 @@ import org.jetbrains.annotations.ApiStatus
  * carries an optional `root` alongside the immediate parent, so consumers do not have to walk —
  * and deep pass-and-retry chains are exactly where walking hurts.
  *
- * The root only stays true if it is never recomputed later, so it is fixed at construction. Use
- * [root] and [childOf] and the arithmetic is done for you; the constructor rejects the
- * combinations that would make the field a lie.
+ * **[root] and [childOf] are the only public way to mint one.** The constructor is private, and
+ * `copy()` follows its visibility too (`@ConsistentCopyVisibility` on this class), so neither can
+ * hand a caller an independently-set root. [root] sets [rootRunRef] to the run's own ref, since it
+ * takes no parent at all; [childOf] derives it from the actual parent, the full
+ * [ExtractionRunLineage] it is handed, so the parent's own record supplies the root. Either way, a root
+ * that disagrees with the parent chain has no public constructor parameter to arrive through. A
+ * future store slice reconstructing a lineage from stored fields has to go through [childOf] with
+ * the parent's own lineage in hand, the same way; re-assembling `rootRunRef` and `parentRunRef`
+ * from separate columns is the shortcut this closes off.
  *
- * **What is checked here, and what is not.** The constructor rejects self-reference on both axes
- * and rejects a root that contradicts the presence of a parent. It cannot see a cycle of length
- * two or more, because a value type holds one run and cycle detection needs the other runs. The
- * store that walks these chains is where bounded, cycle-safe traversal lives.
+ * **This closes the public API, and nothing wider.** Kotlin reflection can still call the private
+ * constructor directly and hand it a root that contradicts the parent it names —
+ * `ExtractionRunLineageTest` demonstrates the call. Jackson's Kotlin module resolves a data class's
+ * primary constructor the same reflective way, so a deserializer reading this type from JSON would
+ * reach the same gap. Nothing serializes an `ExtractionRunLineage` today; this is a residual for
+ * whoever builds that wiring, unrelated to anything that exists yet.
+ *
+ * **What is checked here, and what is not.** The constructor rejects self-reference on both axes.
+ * It cannot see a cycle of length two or more, because a value type holds one run and cycle
+ * detection needs the other runs. The store that walks these chains is where bounded, cycle-safe
+ * traversal lives.
  *
  * EXPERIMENTAL. The shape may still change while extraction runs (DICE #67) land.
  *
@@ -52,7 +65,8 @@ import org.jetbrains.annotations.ApiStatus
  * @property passIndex Which pass over the material this is, counting from zero
  */
 @ApiStatus.Experimental
-data class ExtractionRunLineage @JvmOverloads constructor(
+@ConsistentCopyVisibility
+data class ExtractionRunLineage private constructor(
     val runRef: ExtractionRunRef,
     val rootRunRef: ExtractionRunRef,
     val parentRunRef: ExtractionRunRef? = null,
@@ -113,6 +127,39 @@ data class ExtractionRunLineage @JvmOverloads constructor(
             runRef = runRef,
             rootRunRef = parent.rootRunRef,
             parentRunRef = parent.runRef,
+            supersedesRunRef = supersedesRunRef,
+            passIndex = passIndex,
+        )
+
+        /**
+         * Rebuilds a lineage a store previously wrote, from the columns it wrote it to.
+         *
+         * [root] and [childOf] are the only ways to mint a new lineage, and they exist so a root
+         * cannot be stated independently of the parent it belongs to. A store reading a row back
+         * has the opposite problem: it holds five stored values and no parent lineage to derive
+         * anything from, and the values it holds are ones this type already accepted on the way in.
+         *
+         * The init guards still run, so a row that has become self-referential is rejected here.
+         * What this call trusts is the relationship between root and parent, and a backend is
+         * expected to have its own check on that: `DrivineExtractionRunStore` stores a lineage key
+         * and compares it with the key of what it just rebuilt, so a row edited underneath it fails
+         * to load, and never loads wrong.
+         *
+         * For store backends. Application code mints through [root] and [childOf].
+         */
+        @ApiStatus.Internal
+        @JvmStatic
+        @JvmOverloads
+        fun fromStoredFields(
+            runRef: ExtractionRunRef,
+            rootRunRef: ExtractionRunRef,
+            parentRunRef: ExtractionRunRef? = null,
+            supersedesRunRef: ExtractionRunRef? = null,
+            passIndex: Int = 0,
+        ): ExtractionRunLineage = ExtractionRunLineage(
+            runRef = runRef,
+            rootRunRef = rootRunRef,
+            parentRunRef = parentRunRef,
             supersedesRunRef = supersedesRunRef,
             passIndex = passIndex,
         )
