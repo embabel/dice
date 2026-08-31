@@ -345,9 +345,10 @@ class ExtractionRunContractTest {
             // failure whose invocation it has no record of.
             "invocations" to base.copyWith(invocations = base.invocations.drop(1)),
             "failures" to base.copyWith(failures = emptyList()),
+            "version" to base.copyWith(version = base.version + 1),
         )
 
-        assertThat(variants).hasSize(17)
+        assertThat(variants).hasSize(18)
         variants.forEach { (component, variant) ->
             assertThat(variant)
                 .describedAs("a run differing only in %s", component)
@@ -421,6 +422,7 @@ private fun ExtractionRun.copyWith(
     counts: ExtractionRunCounts = this.counts,
     invocations: List<ExtractionInvocationRecord> = this.invocations,
     failures: List<ExtractionFailure> = this.failures,
+    version: Long = this.version,
 ): ExtractionRun = ExtractionRun(
     contextId = contextId,
     lineage = lineage,
@@ -439,4 +441,5 @@ private fun ExtractionRun.copyWith(
     counts = counts,
     invocations = invocations,
     failures = failures,
+    version = version,
 )

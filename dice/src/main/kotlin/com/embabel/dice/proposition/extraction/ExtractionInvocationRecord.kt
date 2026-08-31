@@ -82,6 +82,11 @@ enum class ExtractionInvocationOutcome {
 
     /** The attempt was stopped before it produced anything. */
     CANCELLED,
+    ;
+
+    /** True for the three outcomes an attempt does not leave, same rule as [ExtractionRunStatus]. */
+    val isTerminal: Boolean
+        get() = this != IN_FLIGHT
 }
 
 /**

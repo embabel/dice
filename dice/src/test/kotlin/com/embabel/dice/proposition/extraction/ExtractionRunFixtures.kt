@@ -75,6 +75,40 @@ internal object ExtractionRunFixtures {
     )
 
     /**
+     * A running run with the two things the store's pages and chains key on — the lineage and the
+     * start time — under the caller's control.
+     */
+    fun runningRun(
+        contextId: ContextId = CONTEXT,
+        lineage: ExtractionRunLineage,
+        startedAt: Instant = STARTED_AT,
+        counts: ExtractionRunCounts = ExtractionRunCounts(),
+        invocations: List<ExtractionInvocationRecord> = emptyList(),
+    ): ExtractionRun = ExtractionRun(
+        contextId = contextId,
+        lineage = lineage,
+        status = ExtractionRunStatus.RUNNING,
+        startedAt = startedAt,
+        counts = counts,
+        invocations = invocations,
+    )
+
+    /** A root-lineage running run named by its run id, which is all most store tests need. */
+    fun runningRun(
+        runId: String,
+        contextId: ContextId = CONTEXT,
+        startedAt: Instant = STARTED_AT,
+    ): ExtractionRun = runningRun(
+        contextId = contextId,
+        lineage = ExtractionRunLineage.root(ExtractionRunRef(runId)),
+        startedAt = startedAt,
+    )
+
+    /** The key of a run in the default tenant. */
+    fun keyOf(runId: String, contextId: ContextId = CONTEXT): ExtractionRunKey =
+        ExtractionRunKey(contextId, ExtractionRunRef(runId))
+
+    /**
      * A run with every field populated, which is what the privacy assertions dump.
      *
      * Its failure is the one an extraction over [SOURCE_TEXT] would record: the provider threw the

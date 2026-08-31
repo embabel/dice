@@ -225,6 +225,14 @@ class ExtractionRunValueTypesTest {
             ExtractionDeploymentRef::class.java,
             ExtractionExperimentRef::class.java,
             ExtractionCohortRef::class.java,
+            ExtractionRunStore::class.java,
+            InMemoryExtractionRunStore::class.java,
+            ExtractionRunTransition::class.java,
+            ExtractionRunTransitionOutcome::class.java,
+            ExtractionRunTransitionResult::class.java,
+            ExtractionRunFingerprint::class.java,
+            ExtractionRunNotFoundException::class.java,
+            ExtractionRunConflictException::class.java,
         ).forEach { type ->
             assertThat(isMarkedExperimental(type))
                 .describedAs("%s is marked experimental", type.simpleName)
