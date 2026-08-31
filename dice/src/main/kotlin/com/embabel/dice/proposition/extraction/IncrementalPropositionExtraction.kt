@@ -163,15 +163,52 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     /**
      * Extract propositions from a file via Tika and persist them.
      * Requires `embabel-agent-rag-tika` on the classpath.
+     *
+     * This is the signature that existed before profiles, kept as its own declaration so it
+     * stays overridable — see the note on [rememberText].
      */
-    open fun rememberFile(inputStream: InputStream, filename: String, user: NamedEntity) =
+    open fun rememberFile(
+        inputStream: InputStream,
+        filename: String,
+        user: NamedEntity,
+    ) = withRememberedFileText(inputStream, filename) { text ->
+        // Deliberately the pre-profile text signature, not the wide one. This is the dispatch
+        // this method had before profiles existed, so a subclass that overrides only that
+        // signature still intercepts file ingestion the way it always did.
+        rememberText(text, "remember:$filename", user, emptyList(), null, null)
+    }
+
+    /**
+     * Extract propositions from a file via Tika, attributed to an extraction content profile
+     * and a run. EXPERIMENTAL; see [rememberText] for what the two references mean.
+     *
+     * With no references to carry this hands straight back to the three-argument form, so a
+     * call that looks like a pre-profile call also dispatches like one.
+     */
+    open fun rememberFile(
+        inputStream: InputStream,
+        filename: String,
+        user: NamedEntity,
+        profile: ExtractionContentProfileRef?,
+        currentRun: ExtractionRunRef?,
+    ) {
+        if (profile == null && currentRun == null) {
+            rememberFile(inputStream, filename, user)
+            return
+        }
         withRememberedFileText(inputStream, filename) { text ->
             rememberText(
-                text = text,
-                sourceId = "remember:$filename",
-                user = user,
+                text,
+                "remember:$filename",
+                user,
+                emptyList(),
+                null,
+                null,
+                profile,
+                currentRun,
             )
         }
+    }
 
     /**
      * Extract propositions from a file and ground them in the caller's typed source.
@@ -179,6 +216,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * Passing a [sourceRevision] asserts that the locator's revision covers the whole file, all
      * of it, as extracted here. DICE reads the file as one aggregate and has no way to work out
      * whether a provider's revision really spans it, so the host has to know that and say so.
+     *
+     * This is the signature that existed before profiles, kept as its own declaration so it
+     * stays overridable — see the note on [rememberText].
      */
     @JvmOverloads
     open fun rememberFileFromSource(
@@ -192,12 +232,56 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             "sourceRevision source key must match sourceLocator source key"
         }
         withRememberedFileText(inputStream, filename) { text ->
+            // The pre-profile text signature, for the same reason as [rememberFile].
             rememberTextFromSource(
-                text = text,
-                sourceId = "remember:$filename",
-                user = user,
-                sourceLocator = sourceLocator,
-                sourceRevision = sourceRevision,
+                text,
+                "remember:$filename",
+                user,
+                sourceLocator,
+                sourceRevision,
+                emptyList(),
+                null,
+                null,
+            )
+        }
+    }
+
+    /**
+     * Extract propositions from a file, ground them in the caller's typed source, and attribute
+     * them to an extraction content profile and a run. EXPERIMENTAL; see [rememberText] for what
+     * the two references mean. The profile is independent of the locator and the revision.
+     *
+     * With no references to carry this hands straight back to the five-argument form, so a call
+     * that looks like a pre-profile call also dispatches like one.
+     */
+    open fun rememberFileFromSource(
+        inputStream: InputStream,
+        filename: String,
+        user: NamedEntity,
+        sourceLocator: SourceLocator,
+        sourceRevision: SourceRevisionRef?,
+        profile: ExtractionContentProfileRef?,
+        currentRun: ExtractionRunRef?,
+    ) {
+        if (profile == null && currentRun == null) {
+            rememberFileFromSource(inputStream, filename, user, sourceLocator, sourceRevision)
+            return
+        }
+        require(sourceRevision == null || sourceRevision.sourceKey == sourceLocator.key()) {
+            "sourceRevision source key must match sourceLocator source key"
+        }
+        withRememberedFileText(inputStream, filename) { text ->
+            rememberTextFromSource(
+                text,
+                "remember:$filename",
+                user,
+                sourceLocator,
+                sourceRevision,
+                emptyList(),
+                null,
+                null,
+                profile,
+                currentRun,
             )
         }
     }
@@ -239,6 +323,15 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * @param mintNewEntities per-call override for whether unmatched mentions may
      *   be persisted as NEW entities. `null` (default) uses the extractor
      *   instance's default; see [SourceAnalysisContext.mintNewEntities].
+     *
+     * This is the signature that existed before profiles, and it stays its own declaration
+     * rather than growing two defaulted parameters. `@JvmOverloads` emits every reduced-arity
+     * overload as `final`, so folding the new arguments into this method would have turned the
+     * six-argument form — the one a subclass overrides — into a final bridge. Declaring the two
+     * shapes separately keeps both open. Unintercepted, every call lands on the eight-argument
+     * form below, so overriding that one sees everything; overriding this one sees everything a
+     * pre-profile subclass used to see, including file ingestion, which still routes through
+     * here rather than jumping to the wide form.
      */
     @JvmOverloads
     open fun rememberText(
@@ -248,6 +341,31 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         additionalGrounding: List<String> = emptyList(),
         perspective: ExtractionPerspective? = null,
         mintNewEntities: Boolean? = null,
+    ) = rememberText(text, sourceId, user, additionalGrounding, perspective, mintNewEntities, null, null)
+
+    /**
+     * Extract propositions from raw text, attributed to an extraction content profile and a run.
+     *
+     * Every other text entry point funnels here, so this is the one method to override to see
+     * every call.
+     *
+     * @param profile extraction content profile this call should be attributed to, or null.
+     *   EXPERIMENTAL. DICE puts it on the context and does nothing else with it: no provider,
+     *   model, or credential is selected from it, and extraction runs exactly as it would
+     *   without one.
+     * @param currentRun reference to the extraction run this call belongs to, or null.
+     *   EXPERIMENTAL. Identity only; nothing is stored under it until DICE #67 lands, and DICE
+     *   does not check that the run exists.
+     */
+    open fun rememberText(
+        text: String,
+        sourceId: String,
+        user: NamedEntity,
+        additionalGrounding: List<String>,
+        perspective: ExtractionPerspective?,
+        mintNewEntities: Boolean?,
+        profile: ExtractionContentProfileRef?,
+        currentRun: ExtractionRunRef?,
     ) =
         rememberTextInternal(
             text = text,
@@ -256,6 +374,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             additionalGrounding = additionalGrounding,
             perspective = perspective,
             mintNewEntities = mintNewEntities,
+            profile = profile,
+            currentRun = currentRun,
         )
 
     /**
@@ -269,6 +389,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * identifier. Passing a [sourceRevision] asserts that [sourceLocator]'s revision covers the
      * whole text. DICE cannot read revision coverage out of an untyped [sourceId] or out of
      * [additionalGrounding], so the host has to know that and say so.
+     *
+     * This is the signature that existed before profiles, kept as its own declaration so it
+     * stays overridable — see the note on [rememberText].
      */
     @JvmOverloads
     open fun rememberTextFromSource(
@@ -280,6 +403,36 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         additionalGrounding: List<String> = emptyList(),
         perspective: ExtractionPerspective? = null,
         mintNewEntities: Boolean? = null,
+    ) = rememberTextFromSource(
+        text,
+        sourceId,
+        user,
+        sourceLocator,
+        sourceRevision,
+        additionalGrounding,
+        perspective,
+        mintNewEntities,
+        null,
+        null,
+    )
+
+    /**
+     * Extract propositions from raw text, ground them in the caller's typed source, and
+     * attribute them to an extraction content profile and a run. EXPERIMENTAL; see
+     * [rememberText] for what the two references mean. A profile is independent of the locator
+     * and the revision — it says what extraction should do, they say what it is reading.
+     */
+    open fun rememberTextFromSource(
+        text: String,
+        sourceId: String,
+        user: NamedEntity,
+        sourceLocator: SourceLocator,
+        sourceRevision: SourceRevisionRef?,
+        additionalGrounding: List<String>,
+        perspective: ExtractionPerspective?,
+        mintNewEntities: Boolean?,
+        profile: ExtractionContentProfileRef?,
+        currentRun: ExtractionRunRef?,
     ) =
         rememberTextInternal(
             text = text,
@@ -290,6 +443,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             additionalGrounding = additionalGrounding,
             perspective = perspective,
             mintNewEntities = mintNewEntities,
+            profile = profile,
+            currentRun = currentRun,
         )
 
     private fun rememberTextInternal(
@@ -301,6 +456,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         additionalGrounding: List<String> = emptyList(),
         perspective: ExtractionPerspective? = null,
         mintNewEntities: Boolean? = null,
+        profile: ExtractionContentProfileRef? = null,
+        currentRun: ExtractionRunRef? = null,
     ) {
         val context = buildContext(
             user = user,
@@ -309,6 +466,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             mintNewEntities = mintNewEntities,
             sourceLocator = sourceLocator,
             sourceRevision = sourceRevision,
+            profile = profile,
+            currentRun = currentRun,
         )
         val result = propositionPipeline.processOnce(
             text, sourceId, context, additionalGrounding = additionalGrounding,
@@ -357,12 +516,15 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             }
 
             // The async path grounds propositions exactly the way rememberTextFromSource does:
-            // whatever provenance the event carries goes through the same buildContext call.
+            // whatever provenance, profile and run the event carries goes through the same
+            // buildContext call.
             val context = buildContext(
                 user = event.user,
                 sourceId = source.id,
                 sourceLocator = event.sourceLocator(),
                 sourceRevision = event.sourceRevision(),
+                profile = event.profile(),
+                currentRun = event.currentRun(),
             )
             logger.info(
                 "Context relations count: {}, injected relations count: {}",
@@ -396,6 +558,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         mintNewEntities: Boolean? = null,
         sourceLocator: SourceLocator? = null,
         sourceRevision: SourceRevisionRef? = null,
+        profile: ExtractionContentProfileRef? = null,
+        currentRun: ExtractionRunRef? = null,
     ): SourceAnalysisContext {
         val aliases = try {
             currentUserAliasesProvider(user)
@@ -460,6 +624,14 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         }
         if (sourceRevision != null) {
             ctx = ctx.withSourceRevision(sourceRevision)
+        }
+        // Carried, never consulted. Nothing downstream of here reads either one — that is what
+        // "DICE holds profile identity and the host binds policy" means in code.
+        if (profile != null) {
+            ctx = ctx.withProfile(profile)
+        }
+        if (currentRun != null) {
+            ctx = ctx.withCurrentRun(currentRun)
         }
         return ctx
     }
