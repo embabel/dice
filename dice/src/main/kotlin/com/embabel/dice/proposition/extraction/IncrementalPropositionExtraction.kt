@@ -34,6 +34,8 @@ import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.projection.graph.GraphProjectionService
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
 import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Async
@@ -162,7 +164,49 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * Extract propositions from a file via Tika and persist them.
      * Requires `embabel-agent-rag-tika` on the classpath.
      */
-    open fun rememberFile(inputStream: InputStream, filename: String, user: NamedEntity) {
+    open fun rememberFile(inputStream: InputStream, filename: String, user: NamedEntity) =
+        withRememberedFileText(inputStream, filename) { text ->
+            rememberText(
+                text = text,
+                sourceId = "remember:$filename",
+                user = user,
+            )
+        }
+
+    /**
+     * Extract propositions from a file and ground them in the caller's typed source.
+     *
+     * Passing a [sourceRevision] asserts that the locator's revision covers the whole file, all
+     * of it, as extracted here. DICE reads the file as one aggregate and has no way to work out
+     * whether a provider's revision really spans it, so the host has to know that and say so.
+     */
+    @JvmOverloads
+    open fun rememberFileFromSource(
+        inputStream: InputStream,
+        filename: String,
+        user: NamedEntity,
+        sourceLocator: SourceLocator,
+        sourceRevision: SourceRevisionRef? = null,
+    ) {
+        require(sourceRevision == null || sourceRevision.sourceKey == sourceLocator.key()) {
+            "sourceRevision source key must match sourceLocator source key"
+        }
+        withRememberedFileText(inputStream, filename) { text ->
+            rememberTextFromSource(
+                text = text,
+                sourceId = "remember:$filename",
+                user = user,
+                sourceLocator = sourceLocator,
+                sourceRevision = sourceRevision,
+            )
+        }
+    }
+
+    private fun withRememberedFileText(
+        inputStream: InputStream,
+        filename: String,
+        remember: (String) -> Unit,
+    ) {
         try {
             val reader = com.embabel.agent.rag.ingestion.TikaHierarchicalContentReader()
             val document = reader.parseContent(inputStream, "remember://$filename")
@@ -173,7 +217,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 return
             }
 
-            rememberText(text, "remember:$filename", user)
+            remember(text)
         } catch (e: Exception) {
             logger.warn("Failed to learn file: {}", filename, e)
         }
@@ -204,8 +248,68 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         additionalGrounding: List<String> = emptyList(),
         perspective: ExtractionPerspective? = null,
         mintNewEntities: Boolean? = null,
+    ) =
+        rememberTextInternal(
+            text = text,
+            sourceId = sourceId,
+            user = user,
+            additionalGrounding = additionalGrounding,
+            perspective = perspective,
+            mintNewEntities = mintNewEntities,
+        )
+
+    /**
+     * Extract propositions from raw text and ground them in the caller's typed source.
+     *
+     * A separate method rather than more optional arguments on [rememberText]: a locator is
+     * required here, so the two entry points have genuinely different contracts, and Kotlin and
+     * Java call sites both stay unambiguous.
+     *
+     * [sourceId] keeps its old meaning — the exact caller-supplied chunk and grounding
+     * identifier. Passing a [sourceRevision] asserts that [sourceLocator]'s revision covers the
+     * whole text. DICE cannot read revision coverage out of an untyped [sourceId] or out of
+     * [additionalGrounding], so the host has to know that and say so.
+     */
+    @JvmOverloads
+    open fun rememberTextFromSource(
+        text: String,
+        sourceId: String,
+        user: NamedEntity,
+        sourceLocator: SourceLocator,
+        sourceRevision: SourceRevisionRef? = null,
+        additionalGrounding: List<String> = emptyList(),
+        perspective: ExtractionPerspective? = null,
+        mintNewEntities: Boolean? = null,
+    ) =
+        rememberTextInternal(
+            text = text,
+            sourceId = sourceId,
+            user = user,
+            sourceLocator = sourceLocator,
+            sourceRevision = sourceRevision,
+            additionalGrounding = additionalGrounding,
+            perspective = perspective,
+            mintNewEntities = mintNewEntities,
+        )
+
+    private fun rememberTextInternal(
+        text: String,
+        sourceId: String,
+        user: NamedEntity,
+        sourceLocator: SourceLocator? = null,
+        sourceRevision: SourceRevisionRef? = null,
+        additionalGrounding: List<String> = emptyList(),
+        perspective: ExtractionPerspective? = null,
+        mintNewEntities: Boolean? = null,
     ) {
-        val context = buildContext(user, sourceId, perspective, mintNewEntities)
+        val context = buildContext(
+            user = user,
+            sourceId = sourceId,
+            perspective = perspective,
+            mintNewEntities = mintNewEntities,
+            sourceLocator = sourceLocator,
+            sourceRevision = sourceRevision,
+        )
         val result = propositionPipeline.processOnce(
             text, sourceId, context, additionalGrounding = additionalGrounding,
         )
@@ -252,7 +356,14 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 return
             }
 
-            val context = buildContext(event.user, source.id)
+            // The async path grounds propositions exactly the way rememberTextFromSource does:
+            // whatever provenance the event carries goes through the same buildContext call.
+            val context = buildContext(
+                user = event.user,
+                sourceId = source.id,
+                sourceLocator = event.sourceLocator(),
+                sourceRevision = event.sourceRevision(),
+            )
             logger.info(
                 "Context relations count: {}, injected relations count: {}",
                 context.relations.size(), relations.size(),
@@ -283,6 +394,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         sourceId: String = "",
         perspective: ExtractionPerspective? = null,
         mintNewEntities: Boolean? = null,
+        sourceLocator: SourceLocator? = null,
+        sourceRevision: SourceRevisionRef? = null,
     ): SourceAnalysisContext {
         val aliases = try {
             currentUserAliasesProvider(user)
@@ -341,6 +454,12 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             if (stamped.isNotEmpty()) {
                 ctx = ctx.withMintedEntityProperties(stamped)
             }
+        }
+        if (sourceLocator != null) {
+            ctx = ctx.withSourceLocator(sourceLocator)
+        }
+        if (sourceRevision != null) {
+            ctx = ctx.withSourceRevision(sourceRevision)
         }
         return ctx
     }

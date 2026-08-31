@@ -18,12 +18,20 @@ package com.embabel.dice.common
 import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.chat.Message
 import com.embabel.dice.incremental.IncrementalSource
+import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
 import org.springframework.context.ApplicationEvent
 
 /**
  * Base event for requesting proposition extraction from any incremental source.
  * The [user] is typed as [NamedEntity] so that any application's user type
  * (e.g., UrbotUser, Customer) can be used directly.
+ *
+ * A publisher that knows where its material came from can say so by overriding
+ * [sourceLocator] and [sourceRevision]. The extraction listener puts both onto the
+ * `SourceAnalysisContext` it builds, so the async path grounds propositions exactly
+ * the way a direct `rememberTextFromSource` call does. Both default to null, so an
+ * existing subclass carries no provenance and behaves as it always did.
  */
 abstract class SourceAnalysisRequestEvent(
     source: Any,
@@ -31,4 +39,16 @@ abstract class SourceAnalysisRequestEvent(
 ) : ApplicationEvent(source) {
 
     abstract fun incrementalSource(): IncrementalSource<Message>
+
+    /**
+     * Where this event's material lives, when the publisher knows.
+     */
+    open fun sourceLocator(): SourceLocator? = null
+
+    /**
+     * The revision of [sourceLocator] this event's material was read at, when the publisher
+     * knows. Its source key must match the locator's, and the listener checks that when it
+     * builds the context.
+     */
+    open fun sourceRevision(): SourceRevisionRef? = null
 }

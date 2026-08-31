@@ -29,10 +29,18 @@ import com.embabel.dice.common.KnownEntity
 import com.embabel.dice.common.NewEntity
 import com.embabel.dice.common.SchemaRegistry
 import com.embabel.dice.common.SourceAnalysisContext
+import com.embabel.dice.common.support.Sha256ContentHasher
 import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.revision.RevisionResult
+import com.embabel.dice.provenance.ConnectorRef
+import com.embabel.dice.provenance.ContentAddressedLocator
+import com.embabel.dice.provenance.FileLocator
+import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
+import com.embabel.dice.provenance.UriLocator
+import com.fasterxml.jackson.core.JsonProcessingException
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
@@ -91,12 +99,29 @@ class PropositionPipelineController(
             return ResponseEntity.badRequest().build()
         }
 
-        val chunk = Chunk.create(
-            text = request.text,
-            parentId = request.sourceId ?: "api-request",
+        val sourceProvenance = try {
+            resolveSourceProvenance(request.sourceLocator, request.sourceRevision)
+        } catch (e: IllegalArgumentException) {
+            logger.warn("Rejecting extract request for context {}: {}", contextId, e.message)
+            return ResponseEntity.badRequest().build()
+        }
+        val context = buildContext(
+            contextId = contextId,
+            knownEntityDtos = request.knownEntities,
+            schemaName = request.schemaName,
+            sourceLocator = sourceProvenance.first,
+            sourceRevision = sourceProvenance.second,
         )
 
-        val context = buildContext(contextId, request.knownEntities, request.schemaName)
+        val chunk = revisionStableChunk(
+            chunk = Chunk.create(
+                text = request.text,
+                parentId = request.sourceId ?: "api-request",
+            ),
+            contextId = contextId,
+            sourceRevision = sourceProvenance.second,
+            ordinal = 0,
+        )
         val result = propositionPipeline.processChunk(chunk, context)
 
         // Persist what revision says to keep — both the freshly extracted propositions and any
@@ -122,9 +147,21 @@ class PropositionPipelineController(
         @RequestPart("sourceId", required = false) sourceId: String?,
         @RequestPart("knownEntities", required = false) knownEntitiesJson: String?,
         @RequestPart("schemaName", required = false) schemaName: String?,
+        @RequestPart("sourceLocator", required = false) sourceLocatorJson: String?,
+        @RequestPart("sourceRevision", required = false) sourceRevision: String?,
     ): ResponseEntity<FileExtractResponse> {
         val filename = file.originalFilename ?: "uploaded-file"
         logger.info("Extracting propositions from file '{}' for context: {}", filename, contextId)
+
+        val sourceProvenance = try {
+            resolveSourceProvenance(parseSourceLocator(sourceLocatorJson), sourceRevision)
+        } catch (e: JsonProcessingException) {
+            logger.warn("Rejecting file extract request for context {}: invalid sourceLocator JSON", contextId)
+            return ResponseEntity.badRequest().build()
+        } catch (e: IllegalArgumentException) {
+            logger.warn("Rejecting file extract request for context {}: {}", contextId, e.message)
+            return ResponseEntity.badRequest().build()
+        }
 
         // Parse file content using Tika
         val document = file.inputStream.use { inputStream ->
@@ -134,7 +171,11 @@ class PropositionPipelineController(
         logger.info("Parsed document '{}' with {} sections", document.title, document.leaves().count())
 
         // Chunk the document
-        val chunks = contentChunker.chunk(document).toList()
+        val chunks = contentChunker.chunk(document)
+            .mapIndexed { ordinal, chunk ->
+                revisionStableChunk(chunk, contextId, sourceProvenance.second, ordinal)
+            }
+            .toList()
         logger.info("Created {} chunks from document", chunks.size)
 
         if (chunks.isEmpty()) {
@@ -155,7 +196,13 @@ class PropositionPipelineController(
         // the whole upload), shares entity identity across chunks, and is the only path that honors
         // the configured extraction execution strategy (Serial/Parallel/Batched). processChunk(), by
         // contrast, propagates failures and runs one chunk in isolation.
-        val context = buildContext(contextId, parseKnownEntities(knownEntitiesJson), schemaName)
+        val context = buildContext(
+            contextId = contextId,
+            knownEntityDtos = parseKnownEntities(knownEntitiesJson),
+            schemaName = schemaName,
+            sourceLocator = sourceProvenance.first,
+            sourceRevision = sourceProvenance.second,
+        )
         val processResult = propositionPipeline.process(chunks, context)
         val chunkResults = processResult.chunkResults
 
@@ -238,10 +285,76 @@ class PropositionPipelineController(
     private fun parseKnownEntities(json: String?): List<KnownEntityDto> =
         if (json.isNullOrBlank()) emptyList() else objectMapper.readValue(json)
 
+    private fun parseSourceLocator(json: String?): SourceLocatorInputDto? =
+        if (json.isNullOrBlank()) null else objectMapper.readValue(json)
+
+    /**
+     * Turns the request's locator and revision fields into the typed pair the context wants.
+     * A revision with no locator is rejected here rather than deeper in, so the caller gets a
+     * 400 before the pipeline or Tika is touched.
+     */
+    private fun resolveSourceProvenance(
+        sourceLocatorInput: SourceLocatorInputDto?,
+        revision: String?,
+    ): Pair<SourceLocator?, SourceRevisionRef?> {
+        require(sourceLocatorInput != null || revision == null) {
+            "sourceRevision requires sourceLocator"
+        }
+        val sourceLocator = sourceLocatorInput?.toSourceLocator()
+        val sourceRevision = revision?.let {
+            SourceRevisionRef(sourceLocator!!.key(), it)
+        }
+        return sourceLocator to sourceRevision
+    }
+
+    /**
+     * Gives a chunk an id derived from the tenant, the source revision, the chunk's position in the
+     * document, and its text, so re-posting the same revision produces the same chunk ids and grounds
+     * onto the same rows instead of accumulating a fresh set per replay. A different revision of the
+     * same source gets different ids, which is what keeps the two versions separately traceable.
+     *
+     * [contextId] is part of the identity because chunk ids are what grounding is looked up by, and
+     * `findByGrounding` is not context-scoped. Without the tenant in the hash, two contexts ingesting
+     * the same document at the same revision would mint the same chunk id and a grounding lookup in
+     * one context would reach the other's propositions.
+     *
+     * Without a revision the chunk keeps whatever id it arrived with — old requests are untouched.
+     * The identity material is length-framed so no combination of values can be re-split into a
+     * different one.
+     *
+     * The chunk text is in the identity, so the ids hold only as long as the chunker keeps producing
+     * the same chunks. Re-posting one revision after a chunker configuration change re-mints the ids
+     * and grounds onto fresh rows.
+     */
+    private fun revisionStableChunk(
+        chunk: Chunk,
+        contextId: String,
+        sourceRevision: SourceRevisionRef?,
+        ordinal: Int,
+    ): Chunk {
+        if (sourceRevision == null) return chunk
+        val identityMaterial = listOf(
+            contextId,
+            sourceRevision.sourceKey,
+            sourceRevision.sourceRevision,
+            ordinal.toString(),
+            chunk.text,
+        ).joinToString(separator = "") { value -> "${value.length}:$value" }
+        return Chunk.create(
+            id = "source-revision:${Sha256ContentHasher.hash(identityMaterial)}",
+            text = chunk.text,
+            urtext = chunk.urtext,
+            parentId = chunk.parentId,
+            metadata = chunk.metadata,
+        )
+    }
+
     private fun buildContext(
         contextId: String,
         knownEntityDtos: List<KnownEntityDto>,
         schemaName: String? = null,
+        sourceLocator: SourceLocator? = null,
+        sourceRevision: SourceRevisionRef? = null,
     ): SourceAnalysisContext {
         val knownEntities = knownEntityDtos.map { dto ->
             val entity = SimpleNamedEntityData(
@@ -256,12 +369,20 @@ class PropositionPipelineController(
 
         val schema = schemaRegistry.getOrDefault(schemaName)
 
-        return SourceAnalysisContext(
+        var context = SourceAnalysisContext(
             schema = schema,
             entityResolver = entityResolver,
             contextId = ContextId(contextId),
             knownEntities = knownEntities,
         )
+
+        if (sourceLocator != null) {
+            context = context.withSourceLocator(sourceLocator)
+        }
+        if (sourceRevision != null) {
+            context = context.withSourceRevision(sourceRevision)
+        }
+        return context
     }
 
     private fun buildExtractResponse(
@@ -329,5 +450,41 @@ class PropositionPipelineController(
             ),
             revision = revisionSummary,
         )
+    }
+
+    /**
+     * Builds the locator the request names, rejecting any field combination that would silently
+     * mean something else. `connectorId` belongs to `connector` locators alone, and it may not
+     * contain a colon: `ConnectorRef.key()` joins its parts on colons, so a colon inside one part
+     * could make two different connector records produce the same key.
+     */
+    private fun SourceLocatorInputDto.toSourceLocator(): SourceLocator {
+        require(value.isNotBlank()) { "sourceLocator.value must not be blank" }
+        return when (kind) {
+            "uri" -> {
+                require(connectorId == null) { "uri sourceLocator must not set connectorId" }
+                UriLocator(value, display)
+            }
+
+            "file" -> {
+                require(connectorId == null) { "file sourceLocator must not set connectorId" }
+                FileLocator(value, display)
+            }
+
+            "content" -> {
+                require(connectorId == null) { "content sourceLocator must not set connectorId" }
+                ContentAddressedLocator(value, display)
+            }
+
+            "connector" -> {
+                require(!connectorId.isNullOrBlank()) { "connector sourceLocator requires connectorId" }
+                require(':' !in connectorId) {
+                    "connector sourceLocator connectorId must not contain ':'"
+                }
+                ConnectorRef(connectorId, value, display)
+            }
+
+            else -> throw IllegalArgumentException("Unsupported sourceLocator.kind: $kind")
+        }
     }
 }

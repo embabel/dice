@@ -15,6 +15,12 @@
  */
 package com.embabel.dice.query.discovery
 
+import com.embabel.agent.core.ContextId
+import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.ProvenanceEvidenceKey
+import com.embabel.dice.provenance.UriLocator
+import com.embabel.dice.query.graph.PropositionLineage
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -39,6 +45,7 @@ class DiscoveryDtoLeakTest {
         EntityMentionSummaryDto::class,
         PathDto::class,
         NeighborhoodDto::class,
+        DiscoveryProvenanceDto::class,
         LineageDto::class,
         ProjectionHealthDto::class,
         TargetHealthDto::class,
@@ -58,6 +65,7 @@ class DiscoveryDtoLeakTest {
         // Any raw proposition-package type (e.g. the PropositionStatus enum) must be projected to a
         // primitive in a DTO, never exposed directly. DTOs surface enum names as Strings.
         "com.embabel.dice.proposition",
+        "com.embabel.dice.provenance",
     )
 
     private val forbiddenExactFqns = listOf(
@@ -90,6 +98,106 @@ class DiscoveryDtoLeakTest {
         rootDtos.forEach { walk(it, visited, mutableListOf(), it.simpleName ?: "?") }
         assertTrue(visited.containsAll(rootDtos), "expected every root DTO to be scanned")
         assertEquals(5, RetrievalMode.entries.size, "RetrievalMode must expose exactly five modes")
+    }
+
+    @Test
+    fun `discovery provenance has the exact primitive shape`() {
+        assertEquals(
+            mapOf(
+                "locator" to "kotlin.String",
+                "sourceRevision" to "kotlin.String?",
+                "chunkId" to "kotlin.String?",
+                "startOffset" to "kotlin.Int?",
+                "endOffset" to "kotlin.Int?",
+                "contentHash" to "kotlin.String?",
+            ),
+            DiscoveryProvenanceDto::class.memberProperties.associate {
+                it.name to it.returnType.toString()
+            },
+        )
+    }
+
+    @Test
+    fun `lineage mapper uses authoritative ordered evidence instead of nested proposition evidence`() {
+        val locator = UriLocator("https://example.com/authoritative")
+        val nestedProposition = Proposition(
+            id = "lean-proposition",
+            contextId = ContextId("ctx-discovery"),
+            text = "Lean proposition",
+            mentions = emptyList(),
+            confidence = 0.9,
+            provenanceEntries = emptyList(),
+        )
+        val lineage = PropositionLineage(
+            proposition = nestedProposition,
+            groundingChunkIds = emptyList(),
+            sources = emptyList(),
+            reinforceCount = 0,
+            status = nestedProposition.status,
+            temporal = null,
+            provenanceEntries = listOf(
+                ProvenanceEntry(locator = locator, sourceRevision = "r1"),
+                ProvenanceEntry(locator = locator, sourceRevision = "r2"),
+            ),
+        )
+
+        assertEquals(
+            listOf("r1", "r2"),
+            LineageDto.from(lineage).provenance.map { it.sourceRevision },
+        )
+    }
+
+    @Test
+    fun `lineage provenance order is the evidence-key order whatever the read returned`() {
+        val alpha = UriLocator("https://example.com/alpha")
+        val beta = UriLocator("https://example.com/beta")
+        // The order the graph read happens to produce. Nothing in Cypher pins it: the provenance
+        // read returns DERIVED_FROM edges in planner order, so the same proposition can hand back
+        // its evidence differently from one read to the next.
+        val asRead = listOf(
+            ProvenanceEntry(locator = beta, sourceRevision = "r2"),
+            ProvenanceEntry(locator = alpha, sourceRevision = "r2"),
+            ProvenanceEntry(locator = beta, sourceRevision = "r1"),
+            ProvenanceEntry(locator = alpha, sourceRevision = "r1"),
+        )
+
+        val expected = asRead
+            .sortedBy { ProvenanceEvidenceKey.encode(it) }
+            .map { it.locator.key() to it.sourceRevision }
+
+        assertEquals(
+            expected,
+            LineageDto.from(lineage(asRead)).provenance.map { it.locator to it.sourceRevision },
+        )
+        // The same set in a different arrival order serializes identically.
+        assertEquals(
+            LineageDto.from(lineage(asRead)).provenance,
+            LineageDto.from(lineage(asRead.reversed())).provenance,
+        )
+        assertEquals(
+            LineageDto.from(lineage(asRead)).provenance,
+            LineageDto.from(lineage(asRead.shuffled())).provenance,
+        )
+    }
+
+    private fun lineage(entries: List<ProvenanceEntry>): PropositionLineage {
+        val proposition = Proposition(
+            id = "ordered-proposition",
+            contextId = ContextId("ctx-discovery"),
+            text = "Ordered proposition",
+            mentions = emptyList(),
+            confidence = 0.9,
+            provenanceEntries = emptyList(),
+        )
+        return PropositionLineage(
+            proposition = proposition,
+            groundingChunkIds = emptyList(),
+            sources = emptyList(),
+            reinforceCount = 0,
+            status = proposition.status,
+            temporal = null,
+            provenanceEntries = entries,
+        )
     }
 
     private fun walk(
