@@ -24,6 +24,7 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.chat.Message
+import com.embabel.dice.common.ConversationAnalysisRequestEvent
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.Relations
 import com.embabel.dice.common.SourceAnalysisContext
@@ -83,8 +84,8 @@ class IncrementalPropositionExtractionTest {
             .map { it.parameterTypes.toList() }
             .toSet()
 
-        // Every descriptor that existed before profiles is still here, and the profile and run
-        // arguments only ever add one descriptor on the end of each name.
+        // Every descriptor that existed before profiles is still here, and the profile
+        // argument only ever adds one descriptor on the end of each name.
         val legacyTextPrefix = listOf(
             String::class.java,
             String::class.java,
@@ -95,9 +96,8 @@ class IncrementalPropositionExtractionTest {
             ExtractionPerspective::class.java,
             Boolean::class.javaObjectType,
         )
-        val profileAndRun = listOf(
+        val profileOnly = listOf(
             ExtractionContentProfileRef::class.java,
-            ExtractionRunRef::class.java,
         )
         assertEquals(
             setOf(
@@ -105,7 +105,7 @@ class IncrementalPropositionExtractionTest {
                 legacyTextPrefix + List::class.java,
                 legacyTextPrefix + listOf(List::class.java, ExtractionPerspective::class.java),
                 legacyTextFull,
-                legacyTextFull + profileAndRun,
+                legacyTextFull + profileOnly,
             ),
             rememberTextParameters,
         )
@@ -128,7 +128,7 @@ class IncrementalPropositionExtractionTest {
                     ExtractionPerspective::class.java,
                 ),
                 sourceTextFull,
-                sourceTextFull + profileAndRun,
+                sourceTextFull + profileOnly,
             ),
             rememberTextFromSourceParameters,
         )
@@ -139,7 +139,7 @@ class IncrementalPropositionExtractionTest {
             NamedEntity::class.java,
         )
         assertEquals(
-            setOf(legacyFile, legacyFile + profileAndRun),
+            setOf(legacyFile, legacyFile + profileOnly),
             rememberFileParameters,
         )
         val sourceFileFull =
@@ -148,24 +148,98 @@ class IncrementalPropositionExtractionTest {
             setOf(
                 legacyFile + SourceLocator::class.java,
                 sourceFileFull,
-                sourceFileFull + profileAndRun,
+                sourceFileFull + profileOnly,
             ),
             rememberFileFromSourceParameters,
         )
 
-        // A profile-aware call can never collapse onto a legacy one: a profile and a run always
-        // arrive together, on the end, and never at an arity a legacy caller already fills.
+        // A profile-aware call can never collapse onto a legacy one: a profile always arrives
+        // on the end, at an arity a legacy caller never fills.
         val everyRememberParameterList = rememberTextParameters + rememberFileParameters +
             rememberTextFromSourceParameters + rememberFileFromSourceParameters
         everyRememberParameterList.forEach { parameters ->
             val hasProfile = ExtractionContentProfileRef::class.java in parameters
-            val hasRun = ExtractionRunRef::class.java in parameters
-            assertEquals(hasProfile, hasRun, "profile and run must arrive together: $parameters")
             if (hasProfile) {
                 assertEquals(
-                    profileAndRun,
-                    parameters.takeLast(2),
-                    "profile and run must be the last two parameters: $parameters",
+                    profileOnly,
+                    parameters.takeLast(1),
+                    "profile must be the last parameter: $parameters",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `no entry point, context, constructor, or field anywhere carries a run reference`() {
+        // PR #94 review comment: buildContext accepted a currentRun and put it on the context.
+        // persistAndProject — the method that actually saves the extracted propositions — takes
+        // only a ChunkPropositionResult and never the context that would have carried it. No
+        // consuming write exists on this branch (the durable run store is DICE #67/#98/#99), so
+        // the fix removes the no-op parameter.
+        //
+        // persistAndProject has exactly one overload, and it is the one-argument shape: a second
+        // overload taking the context (a run reference's only possible route back in) would slip
+        // past a check that only confirms one particular arity exists.
+        val persistAndProjectOverloads = IncrementalPropositionExtraction::class.java
+            .declaredMethods.filter { it.name == "persistAndProject" }
+        assertEquals(1, persistAndProjectOverloads.size, "persistAndProject must have exactly one overload")
+        assertEquals(1, persistAndProjectOverloads.single().parameterCount)
+        assertEquals(
+            ChunkPropositionResult::class.java,
+            persistAndProjectOverloads.single().parameterTypes.single(),
+        )
+
+        // The type itself is gone from the classpath, so there is nothing left for a caller to
+        // depend on — not even a reference to it, let alone a call to a member of it.
+        assertThrows(ClassNotFoundException::class.java) {
+            Class.forName("com.embabel.dice.proposition.extraction.ExtractionRunRef")
+        }
+
+        // A run reference under another name (runRef, runId, AnalysisRunRef, ...) would satisfy a
+        // sweep that only recognizes "currentRun"/"extractionRun" literally, so this checks every
+        // declared member's name for "run" as a substring, not a fixed set of spellings. Verified
+        // before writing this: none of the four carriers has a legitimate declared method, field,
+        // or constructor parameter whose name contains "run" today, confirmed by a throwaway
+        // reflection dump run against the built classes, so this sweep starts from a clean
+        // baseline and any future match is either a reintroduced run reference or something that
+        // needs an explicit, named exclusion (there are none right now).
+        //
+        // Types are checked via the *generic* signature (genericType / genericReturnType /
+        // genericParameterTypes), not the erased Class. An erased check sees `List` for a field
+        // declared `List<AnalysisRunRef>` and would miss it; `Type.toString()` on a generic
+        // signature includes the type argument, so the same substring match catches a run
+        // reference hidden inside a collection or other generic wrapper. Confirmed empirically,
+        // same as the name sweep: zero matches on the current classes.
+        //
+        // Constructor parameters are checked by type only, not name. The JVM does not preserve
+        // real parameter names in these classes' compiled constructors (reflection reports them
+        // as arg0, arg1, ...), so a name-based check on a constructor parameter would silently
+        // never fire; claiming otherwise here would be the same overclaim this test exists to
+        // avoid making about other code.
+        val carriers = listOf(
+            IncrementalPropositionExtraction::class.java,
+            SourceAnalysisContext::class.java,
+            SourceAnalysisRequestEvent::class.java,
+            ConversationAnalysisRequestEvent::class.java,
+        )
+        val runInName = Regex("(?i)run")
+        fun suspectType(type: java.lang.reflect.Type) = runInName.containsMatchIn(type.toString())
+        carriers.forEach { type ->
+            type.declaredMethods.forEach { method ->
+                assertFalse(runInName.containsMatchIn(method.name), "${type.simpleName}.${method.name}: name mentions run")
+                assertFalse(
+                    method.genericParameterTypes.any(::suspectType) || suspectType(method.genericReturnType),
+                    "${type.simpleName}.${method.name}: a parameter or return type mentions run",
+                )
+            }
+            type.declaredFields.forEach { field ->
+                assertFalse(runInName.containsMatchIn(field.name), "${type.simpleName}.${field.name}: name mentions run")
+                assertFalse(suspectType(field.genericType), "${type.simpleName}.${field.name}: field type mentions run")
+            }
+            type.declaredConstructors.forEach { constructor ->
+                assertFalse(
+                    constructor.genericParameterTypes.any(::suspectType),
+                    "${type.simpleName} constructor $constructor: a parameter type mentions run",
                 )
             }
         }
@@ -173,12 +247,12 @@ class IncrementalPropositionExtractionTest {
 
     @Test
     fun `the entry point signatures that were overridable before profiles still are`() {
-        // @JvmOverloads emits every reduced-arity overload as final. Folding the two new
-        // arguments into the existing declarations would therefore have turned each method's
-        // pre-change maximum arity — the signature a subclass overrides — into a final bridge.
-        // Callers would not have noticed; a subclass would have stopped compiling, and one
-        // already compiled could fail verification at load. Each shape is its own declaration
-        // instead, and this is the assertion that keeps it that way.
+        // @JvmOverloads emits every reduced-arity overload as final. Folding the new argument
+        // into the existing declarations would therefore have turned each method's pre-change
+        // maximum arity — the signature a subclass overrides — into a final bridge. Callers
+        // would not have noticed; a subclass would have stopped compiling, and one already
+        // compiled could fail verification at load. Each shape is its own declaration instead,
+        // and this is the assertion that keeps it that way.
         val stillOpen = mapOf(
             "rememberText" to listOf(
                 String::class.java,
@@ -222,13 +296,12 @@ class IncrementalPropositionExtractionTest {
 
         // The new maximum-arity forms are the single override point every call funnels through,
         // so they have to be open too.
-        val profileAndRun = arrayOf(
+        val profileOnly = arrayOf(
             ExtractionContentProfileRef::class.java,
-            ExtractionRunRef::class.java,
         )
         stillOpen.forEach { (name, parameters) ->
             val method = IncrementalPropositionExtraction::class.java
-                .getMethod(name, *(parameters.toTypedArray() + profileAndRun))
+                .getMethod(name, *(parameters.toTypedArray() + profileOnly))
             assertFalse(
                 Modifier.isFinal(method.modifiers),
                 "the profile-aware $name must be overridable",
@@ -364,12 +437,11 @@ class IncrementalPropositionExtractionTest {
             "legacy.txt",
             user(),
         )
-        // A wide call carrying no references dispatches like the pre-profile call it resembles.
+        // A wide call carrying no reference dispatches like the pre-profile call it resembles.
         extraction.rememberFile(
             ByteArrayInputStream("legacy file text".toByteArray()),
             "wide-null.txt",
             user(),
-            null,
             null,
         )
         extraction.rememberFileFromSource(
@@ -385,7 +457,6 @@ class IncrementalPropositionExtractionTest {
             user(),
             locator,
             revision,
-            null,
             null,
         )
 
@@ -437,9 +508,8 @@ class IncrementalPropositionExtractionTest {
                 perspective: ExtractionPerspective?,
                 mintNewEntities: Boolean?,
                 profile: ExtractionContentProfileRef?,
-                currentRun: ExtractionRunRef?,
             ) {
-                seen += "wide:$sourceId:${profile?.name}:${currentRun?.runId}"
+                seen += "wide:$sourceId:${profile?.name}"
             }
         }
 
@@ -448,10 +518,9 @@ class IncrementalPropositionExtractionTest {
             "profiled.txt",
             user(),
             ExtractionContentProfileRef("house-style", "v1"),
-            ExtractionRunRef("run-1"),
         )
 
-        assertEquals(listOf("wide:remember:profiled.txt:house-style:run-1"), seen)
+        assertEquals(listOf("wide:remember:profiled.txt:house-style"), seen)
         verifyNoInteractions(pipeline)
     }
 
@@ -684,7 +753,6 @@ class IncrementalPropositionExtractionTest {
             anyOrNull(),
             anyOrNull(),
             anyOrNull(),
-            anyOrNull(),
         )
         doNothing().whenever(extraction).rememberTextFromSource(
             any(),
@@ -693,7 +761,6 @@ class IncrementalPropositionExtractionTest {
             any(),
             anyOrNull(),
             any(),
-            anyOrNull(),
             anyOrNull(),
             anyOrNull(),
             anyOrNull(),
@@ -722,7 +789,6 @@ class IncrementalPropositionExtractionTest {
             null,
             null,
             null,
-            null,
         )
         verify(extraction).rememberTextFromSource(
             "source dispatch",
@@ -731,7 +797,6 @@ class IncrementalPropositionExtractionTest {
             locator,
             revision,
             emptyList(),
-            null,
             null,
             null,
             null,
@@ -822,14 +887,13 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
-    fun `profile and run reach the context through both text entry points`() {
+    fun `profile reaches the context through both text entry points`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val user = user()
         val locator = UriLocator("https://example.com/profiled")
         val revision = SourceRevisionRef(locator.key(), "r1")
         val profile = ExtractionContentProfileRef("house-style", "v1")
-        val run = ExtractionRunRef("run-1")
 
         extraction.rememberText(
             text = "legacy text",
@@ -839,7 +903,6 @@ class IncrementalPropositionExtractionTest {
             perspective = null,
             mintNewEntities = null,
             profile = profile,
-            currentRun = run,
         )
         extraction.rememberTextFromSource(
             text = "source text",
@@ -851,35 +914,30 @@ class IncrementalPropositionExtractionTest {
             perspective = null,
             mintNewEntities = null,
             profile = profile,
-            currentRun = run,
         )
 
         val fromLegacy = capturedContext(pipeline, "legacy text", "legacy:profiled", emptyList())
         assertSame(profile, fromLegacy.profile)
-        assertSame(run, fromLegacy.currentRun)
         assertNull(fromLegacy.sourceLocator)
 
         val fromSource = capturedContext(pipeline, "source text", "source:profiled", emptyList())
         assertSame(profile, fromSource.profile)
-        assertSame(run, fromSource.currentRun)
         assertSame(revision, fromSource.sourceRevision)
     }
 
     @Test
-    fun `profile and run reach the context through both file entry points`() {
+    fun `profile reaches the context through both file entry points`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val user = user()
         val locator = UriLocator("file:///notes/profiled.txt")
         val profile = ExtractionContentProfileRef("house-style", "v1")
-        val run = ExtractionRunRef("run-1")
 
         extraction.rememberFile(
             inputStream = ByteArrayInputStream("legacy file text".toByteArray()),
             filename = "legacy-profiled.txt",
             user = user,
             profile = profile,
-            currentRun = run,
         )
         extraction.rememberFileFromSource(
             inputStream = ByteArrayInputStream("source file text".toByteArray()),
@@ -888,7 +946,6 @@ class IncrementalPropositionExtractionTest {
             sourceLocator = locator,
             sourceRevision = SourceRevisionRef(locator.key(), "r1"),
             profile = profile,
-            currentRun = run,
         )
         // Both file calls land on the profile-aware text entry point, so the two contexts the
         // pipeline sees are the proof that carriage survives the file hop.
@@ -904,12 +961,11 @@ class IncrementalPropositionExtractionTest {
         )
         contextCaptor.allValues.forEach { context ->
             assertSame(profile, context.profile)
-            assertSame(run, context.currentRun)
         }
     }
 
     @Test
-    fun `legacy calls carry no profile and no run`() {
+    fun `legacy calls carry no profile`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val user = user()
@@ -932,7 +988,6 @@ class IncrementalPropositionExtractionTest {
         )
         contextCaptor.allValues.forEach { context ->
             assertNull(context.profile)
-            assertNull(context.currentRun)
         }
     }
 
@@ -943,7 +998,6 @@ class IncrementalPropositionExtractionTest {
         val user = user()
         val grounding = listOf("record:one")
         val profile = ExtractionContentProfileRef("house-style", "v1")
-        val run = ExtractionRunRef("run-1")
 
         extraction.rememberText(
             text = "same text",
@@ -961,7 +1015,6 @@ class IncrementalPropositionExtractionTest {
             perspective = ExtractionPerspective.USER,
             mintNewEntities = true,
             profile = profile,
-            currentRun = run,
         )
 
         val contextCaptor = argumentCaptor<SourceAnalysisContext>()
@@ -975,48 +1028,40 @@ class IncrementalPropositionExtractionTest {
         )
         val (plain, profiled) = contextCaptor.allValues
 
-        // Comparing whole contexts is the point: they agree on every component but the two the
+        // Comparing whole contexts is the point: they agree on every component but the one the
         // second call set. The resolver is substituted because buildContext constructs a fresh
         // one per call by design, so it is never the same instance twice.
         assertEquals(
             plain,
-            profiled.copy(profile = null, currentRun = null, entityResolver = plain.entityResolver),
+            profiled.copy(profile = null, entityResolver = plain.entityResolver),
         )
         assertSame(profile, profiled.profile)
-        assertSame(run, profiled.currentRun)
     }
 
     @Test
-    fun `event profile and run reach the context observed by the pipeline`() {
+    fun `event profile reaches the context observed by the pipeline`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val source = mock<IncrementalSource<Message>>()
         whenever(source.id).thenReturn("event-source")
         whenever(source.size).thenReturn(1)
         val profile = ExtractionContentProfileRef("house-style", "v1")
-        val run = ExtractionRunRef("run-1")
         val profileCalls = AtomicInteger()
-        val runCalls = AtomicInteger()
         val event = object : SourceAnalysisRequestEvent(this, user()) {
             override fun incrementalSource(): IncrementalSource<Message> = source
 
             override fun profile(): ExtractionContentProfileRef =
                 profile.also { profileCalls.incrementAndGet() }
-
-            override fun currentRun(): ExtractionRunRef =
-                run.also { runCalls.incrementAndGet() }
         }
 
         extraction.extractPropositions(event)
 
-        // One read each: the async path builds one context through the same buildContext the
-        // direct calls use, so there is nowhere else for a second read to happen.
+        // One read: the async path builds one context through the same buildContext the direct
+        // calls use, so there is nowhere else for a second read to happen.
         assertEquals(1, profileCalls.get())
-        assertEquals(1, runCalls.get())
         val contextCaptor = argumentCaptor<SourceAnalysisContext>()
         verify(pipeline).processChunk(any(), contextCaptor.capture())
         assertSame(profile, contextCaptor.firstValue.profile)
-        assertSame(run, contextCaptor.firstValue.currentRun)
         assertNull(contextCaptor.firstValue.sourceLocator)
     }
 
