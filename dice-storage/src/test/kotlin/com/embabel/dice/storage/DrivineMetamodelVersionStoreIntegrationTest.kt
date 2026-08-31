@@ -23,11 +23,13 @@ import com.embabel.agent.core.Cardinality
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.PropertySignature
 import com.embabel.dice.metamodel.PropertySignature.Kind
+import com.embabel.dice.metamodel.StampProvenance
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -606,7 +608,315 @@ class DrivineMetamodelVersionStoreIntegrationTest {
             }
     }
 
+    // ---- Stamp provenance on the node ----
+
+    @Test
+    fun `provenance persists and reads back`() {
+        val schemaName = "provenance-schema"
+        val cause = StampProvenance("deploy-pipeline", "release-42")
+
+        store.saveVersion(stampedBy(schemaName, "Person", origin = cause, lastStamped = cause))
+
+        val reloaded = store.latestVersion(schemaName)!!
+        assertEquals(cause, reloaded.origin)
+        assertEquals(cause, reloaded.lastStamped)
+    }
+
+    @Test
+    fun `a re-stamp carrying no provenance rewrites neither stored property`() {
+        // The routine case: DefaultDriftCheckRunner re-stamps on every pass and supplies nothing.
+        // Asserted on the raw properties as well as the reloaded stamp, because a store that wrote
+        // null over both would still read back as "no provenance" and look plausible.
+        val schemaName = "provenance-untouched-schema"
+        val cause = StampProvenance("operator", "first-stamp")
+        val stamp = stampedBy(schemaName, "Person", origin = cause, lastStamped = cause)
+        store.saveVersion(stamp)
+        val before = storedProvenanceProperties(schemaName, stamp)
+        assertEquals(
+            """{"actor":"operator","trigger":"first-stamp"}|{"actor":"operator","trigger":"first-stamp"}""",
+            before,
+            "precondition: both properties are on the node",
+        )
+
+        store.saveVersion(stampedBy(schemaName, "Person"))
+
+        assertEquals(before, storedProvenanceProperties(schemaName, stamp), "neither property may be rewritten")
+        val reloaded = store.latestVersion(schemaName)!!
+        assertEquals(cause, reloaded.origin)
+        assertEquals(cause, reloaded.lastStamped)
+    }
+
+    @Test
+    fun `a re-stamp carrying provenance keeps the stored origin and moves lastStamped`() {
+        val schemaName = "provenance-restamp-schema"
+        val first = StampProvenance("bootstrap", "first-boot")
+        val second = StampProvenance("operator", "manual-restamp")
+        val stamp = stampedBy(schemaName, "Person", origin = first, lastStamped = first)
+        store.saveVersion(stamp)
+
+        store.saveVersion(stampedBy(schemaName, "Person", origin = second, lastStamped = second))
+
+        assertEquals(
+            """{"actor":"bootstrap","trigger":"first-boot"}|{"actor":"operator","trigger":"manual-restamp"}""",
+            storedProvenanceProperties(schemaName, stamp),
+        )
+        val reloaded = store.latestVersion(schemaName)!!
+        assertEquals(first, reloaded.origin)
+        assertEquals(second, reloaded.lastStamped)
+    }
+
+    @Test
+    fun `a stamp with no provenance leaves no provenance properties on the node`() {
+        // What a node written before provenance existed looks like, produced by the current writer.
+        val schemaName = "provenance-absent-schema"
+        val stamp = stampedBy(schemaName, "Person")
+
+        store.saveVersion(stamp)
+
+        assertEquals("<absent>|<absent>", storedProvenanceProperties(schemaName, stamp))
+        val reloaded = store.latestVersion(schemaName)!!
+        assertNull(reloaded.origin)
+        assertNull(reloaded.lastStamped)
+    }
+
+    @Test
+    fun `a provenance whose fields are both unset survives as a provenance`() {
+        // Two scalar properties could not tell this apart from the test above; the JSON object can.
+        val schemaName = "provenance-empty-schema"
+
+        store.saveVersion(stampedBy(schemaName, "Person", origin = StampProvenance()))
+
+        val reloaded = store.latestVersion(schemaName)!!
+        assertNotNull(reloaded.origin, "an empty provenance must not read back as no provenance")
+        assertNull(reloaded.origin!!.actor)
+        assertNull(reloaded.origin!!.trigger)
+    }
+
+    // ---- Aliases, and rows written before they existed ----
+
+    @Test
+    fun `a version carrying both kinds of alias round-trips with its integrity check passing`() {
+        val schemaName = "alias-round-trip-schema"
+        val version = MetamodelVersion(
+            schemaName = schemaName,
+            entityTypeNames = listOf("Organisation"),
+            entityTypeLabels = mapOf("Organisation" to setOf("Entity")),
+            entityTypeProperties = mapOf(
+                "Organisation" to setOf(
+                    PropertySignature("legalName", Kind.VALUE, "string", Cardinality.ONE, setOf("companyName", "name")),
+                    PropertySignature("staff", Kind.REFERENCE, "Person", Cardinality.SET),
+                ),
+            ),
+            relationshipNames = listOf("Organisation-[EMPLOYS]->Person"),
+            entityTypeAliases = mapOf("Organisation" to setOf("Company", "Firm")),
+        )
+
+        store.saveVersion(version)
+
+        // The mapper recomputes the hash from the persisted fields and throws on a mismatch, so a
+        // reloaded stamp at all is already proof that both alias kinds reached the node.
+        val reloaded = store.latestVersion(schemaName)!!
+        assertEquals(version, reloaded)
+        assertEquals(version.contentHash, reloaded.contentHash)
+        assertEquals(mapOf("Organisation" to setOf("Company", "Firm")), reloaded.entityTypeAliases)
+        assertEquals(
+            setOf("companyName", "name"),
+            reloaded.entityTypeProperties["Organisation"]!!.single { it.name == "legalName" }.aliases,
+        )
+        assertEquals(
+            emptySet<String>(),
+            reloaded.entityTypeProperties["Organisation"]!!.single { it.name == "staff" }.aliases,
+        )
+    }
+
+    @Test
+    fun `a type-aliased version whose alias map is missing from the node cannot be read back`() {
+        // Why the map has to be stored: it feeds the content hash, so a writer that dropped it
+        // would produce nodes that fail their own checksum and are unreadable for good. Removing
+        // the property is exactly what that bug would leave behind.
+        val schemaName = "alias-map-dropped-schema"
+        val version = MetamodelVersion(
+            schemaName = schemaName,
+            entityTypeNames = listOf("Organisation"),
+            entityTypeLabels = emptyMap(),
+            entityTypeProperties = emptyMap(),
+            relationshipNames = emptyList(),
+            entityTypeAliases = mapOf("Organisation" to setOf("Company")),
+        )
+        store.saveVersion(version)
+        assertEquals(version, store.latestVersion(schemaName), "precondition: it reads back while the map is stored")
+
+        persistenceManager.execute(
+            QuerySpecification.withStatement(
+                """
+                MATCH (n:MetamodelVersion {schemaName: ${'$'}schemaName})
+                REMOVE n.entityTypeAliases
+                """.trimIndent(),
+            ).bind(mapOf("schemaName" to schemaName)),
+        )
+
+        val (history, logged) = capturingStoreWarnings { store.versionHistory(schemaName) }
+
+        assertEquals(emptyList<MetamodelVersion>(), history)
+        assertTrue(logged.any { it.contains("fails its integrity check") }, "warnings were: $logged")
+    }
+
+    @Test
+    fun `an alias-free stamp leaves no entityTypeAliases property on the node`() {
+        // The other half of the same rule. A stamp declaring no former names has to store the
+        // properties the writer stored before aliases existed, so the two spellings of one schema
+        // are one node rather than two shapes on one key.
+        val schemaName = "alias-free-schema"
+        val version = MetamodelVersion(schemaName, listOf("Person"), emptyMap(), emptyMap(), emptyList())
+
+        store.saveVersion(version)
+
+        assertEquals("<absent>", storedProperty(schemaName, version, StoredProperty.ENTITY_TYPE_ALIASES))
+        assertEquals(emptyMap<String, Set<String>>(), store.latestVersion(schemaName)!!.entityTypeAliases)
+    }
+
+    @Test
+    fun `a node written in the old four-field shape reads back through the new mapper`() {
+        // A stamp saved before aliases and provenance existed: property signatures with exactly
+        // four fields, and no entityTypeAliases, origin or lastStamped. Written straight through
+        // Cypher, so nothing in the current writer can quietly supply the missing properties.
+        val schemaName = "old-shape-schema"
+        val expected = MetamodelVersion(
+            schemaName = schemaName,
+            entityTypeNames = listOf("Person"),
+            entityTypeLabels = mapOf("Person" to setOf("Agent")),
+            entityTypeProperties = mapOf(
+                "Person" to setOf(
+                    PropertySignature("age", Kind.VALUE, "integer", Cardinality.OPTIONAL),
+                    PropertySignature("name", Kind.VALUE, "string", Cardinality.ONE),
+                ),
+            ),
+            relationshipNames = listOf("Person-[WORKS_FOR]->Company"),
+        )
+        persistenceManager.execute(
+            QuerySpecification.withStatement(
+                """
+                CREATE (n:MetamodelVersion {
+                    schemaName:           ${'$'}schemaName,
+                    contentHash:          ${'$'}contentHash,
+                    entityTypeNames:      '["Person"]',
+                    entityTypeLabels:     '{"Person":["Agent"]}',
+                    entityTypeProperties: ${'$'}entityTypeProperties,
+                    relationshipNames:    '["Person-[WORKS_FOR]->Company"]',
+                    savedAt:              '2026-01-01T00:00:00Z',
+                    savedAtEpochMillis:   1767225600000,
+                    sequence:             1
+                })
+                """.trimIndent(),
+            ).bind(
+                mapOf(
+                    "schemaName" to schemaName,
+                    "contentHash" to expected.contentHash,
+                    "entityTypeProperties" to
+                        """{"Person":[{"name":"age","kind":"VALUE","type":"integer","cardinality":"OPTIONAL"},""" +
+                        """{"name":"name","kind":"VALUE","type":"string","cardinality":"ONE"}]}""",
+                ),
+            ),
+        )
+
+        val reloaded = store.latestVersion(schemaName)
+
+        assertEquals(expected, reloaded, "an old-shape node must still read, and pass its integrity check")
+        assertEquals(expected.contentHash, reloaded!!.contentHash)
+        assertEquals(emptyMap<String, Set<String>>(), reloaded.entityTypeAliases)
+        assertNull(reloaded.origin)
+        assertNull(reloaded.lastStamped)
+        assertTrue(
+            reloaded.entityTypeProperties["Person"]!!.all { it.aliases.isEmpty() },
+            "four-field signatures carry no former names",
+        )
+    }
+
+    @Test
+    fun `re-saving an old-shape node through the current writer leaves it in the old shape`() {
+        // The upgrade path: an application that boots against a graph written by an older build
+        // re-stamps its unchanged schema. The write lands on the existing node, and because the
+        // stamp declares no aliases and no provenance, none of the four new fields appears.
+        val schemaName = "old-shape-restamp-schema"
+        val version = MetamodelVersion(
+            schemaName = schemaName,
+            entityTypeNames = listOf("Person"),
+            entityTypeLabels = emptyMap(),
+            entityTypeProperties = mapOf(
+                "Person" to setOf(PropertySignature("name", Kind.VALUE, "string", Cardinality.ONE)),
+            ),
+            relationshipNames = emptyList(),
+        )
+        store.saveVersion(version)
+
+        store.saveVersion(version)
+
+        assertEquals(1, rawNodeCount())
+        assertEquals("<absent>", storedProperty(schemaName, version, StoredProperty.ENTITY_TYPE_ALIASES))
+        assertEquals("<absent>|<absent>", storedProvenanceProperties(schemaName, version))
+        assertEquals(
+            """{"Person":[{"name":"name","kind":"VALUE","type":"string","cardinality":"ONE"}]}""",
+            storedProperty(schemaName, version, StoredProperty.ENTITY_TYPE_PROPERTIES),
+            "a signature with no former names keeps its four fields",
+        )
+    }
+
     // ---- helpers ----
+
+    /** A stamp of one entity type, carrying whatever provenance the test wants to record on it. */
+    private fun stampedBy(
+        schemaName: String,
+        typeName: String,
+        origin: StampProvenance? = null,
+        lastStamped: StampProvenance? = null,
+    ): MetamodelVersion = MetamodelVersion(
+        schemaName = schemaName,
+        entityTypeNames = listOf(typeName),
+        entityTypeLabels = emptyMap(),
+        entityTypeProperties = emptyMap(),
+        relationshipNames = emptyList(),
+        entityTypeAliases = emptyMap(),
+        origin = origin,
+        lastStamped = lastStamped,
+    )
+
+    /** The stored properties a test can read back raw, each with the Cypher that returns it. */
+    private enum class StoredProperty(val returnExpression: String) {
+        ENTITY_TYPE_ALIASES("coalesce(n.entityTypeAliases, '<absent>')"),
+        ENTITY_TYPE_PROPERTIES("n.entityTypeProperties"),
+    }
+
+    /**
+     * Read one property straight off a version node, bypassing the mapper. `<absent>` stands for a
+     * property that isn't on the node, which is what a Cypher `SET` of null leaves behind and what
+     * these tests are checking for.
+     */
+    private fun storedProperty(schemaName: String, version: MetamodelVersion, property: StoredProperty): String? =
+        persistenceManager.maybeGetOne(
+            QuerySpecification.withStatement(
+                """
+                MATCH (n:MetamodelVersion {schemaName: ${'$'}schemaName, contentHash: ${'$'}contentHash})
+                RETURN ${property.returnExpression} AS value
+                """.trimIndent(),
+            ).bind(mapOf("schemaName" to schemaName, "contentHash" to version.contentHash))
+                .transform(String::class.java),
+        )
+
+    /**
+     * Both provenance properties as one `origin|lastStamped` string, so a test can assert that a
+     * re-save left the stored bytes exactly as they were. `<absent>` stands for a property that
+     * isn't on the node.
+     */
+    private fun storedProvenanceProperties(schemaName: String, version: MetamodelVersion): String? =
+        persistenceManager.maybeGetOne(
+            QuerySpecification.withStatement(
+                """
+                MATCH (n:MetamodelVersion {schemaName: ${'$'}schemaName, contentHash: ${'$'}contentHash})
+                RETURN coalesce(n.origin, '<absent>') + '|' + coalesce(n.lastStamped, '<absent>') AS value
+                """.trimIndent(),
+            ).bind(mapOf("schemaName" to schemaName, "contentHash" to version.contentHash))
+                .transform(String::class.java),
+        )
 
     /** Rewrite a version node's serialized entity type names, leaving its stored hash untouched. */
     private fun tamperWithEntityTypeNames(schemaName: String, serializedNames: String) {

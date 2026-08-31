@@ -63,5 +63,37 @@ and the consumer PRs that deliver it).
   of one version leave one node. Hosts must declare three uniqueness constraints:
   `MetamodelVersion(schemaName, contentHash)`, `MetamodelSchemaCounter(schemaName)`,
   and `MetamodelVersion(schemaName, sequence)`.
-  **Compatibility: additive.** New class, and a new `dice-storage` → `dice-metamodel`
-  module dependency; no existing API touched.
+  Declared aliases persist at both levels: the version-level `entityTypeAliases` map
+  as its own node property, and a property signature's former names as a fifth
+  `aliases` field inside the stored signature. Both are written only when they hold
+  something, so an alias-free stamp writes exactly the properties this mapper wrote
+  before aliases existed, and a node from that older build reads back as a stamp
+  declaring none. Aliases feed `contentHash`, and the mapper recomputes the hash from
+  the persisted fields, so a stamp that failed to store them would be unreadable for
+  good — pinned by an integration test that writes a row in the old four-field shape
+  through raw Cypher and reads it back, one that round-trips a stamp carrying both
+  alias kinds, and one that removes the stored alias map and asserts the integrity
+  check rejects the row.
+  Stamp provenance persists too, and is the one part of a stamp a re-save does not
+  overwrite — **EXPERIMENTAL** (shape may change before 1.0): `origin` is
+  first-write-wins, set only when the stored row has none, and `lastStamped` moves
+  only when the incoming value is non-null. A re-stamp carrying no provenance leaves
+  both alone, which is what a scheduled drift check does on every pass, so a routine
+  check can neither erase the recorded cause nor replace it with its own identity.
+  Both rules are `coalesce` expressions inside the MERGE, so they hold under
+  concurrency without a read followed by a write. `savedAt` and `savedAtEpochMillis`
+  keep their existing behavior: set on create, untouched by a re-save. `origin` and
+  `lastStamped` are not hashed, so neither rule can move a stamp off its natural key.
+  Each is stored as a JSON object, which keeps a `StampProvenance()` with both fields
+  unset distinguishable from no provenance at all. `StampProvenance`'s 256-character
+  cap needs no column sizing here, since a Neo4j string property has no declared
+  width; a byte-sized backend still needs room for the up-to-1024 UTF-8 bytes.
+  `MetamodelVersionStore.saveVersion`'s KDoc now states both rules as contract, and
+  `dice-metamodel` gains `InMemoryMetamodelVersionStore`, the reference
+  implementation that applies them, promoted from a private class in that module's
+  own tests. `AbstractMetamodelVersionStoreContractTest` runs one suite against both
+  stores.
+  **Compatibility: additive.** New classes, and a new `dice-storage` → `dice-metamodel`
+  module dependency; no existing API touched. Stored nodes stay readable: every
+  property that existed before keeps its name, meaning, and encoding, and the four
+  new ones are absent when nothing declares them.
