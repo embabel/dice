@@ -913,155 +913,132 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     /**
-     * A `:Source` node is global: one locator key is one node, shared by every context that cites it.
-     * Its `display` label used to be refreshed on every write, so whichever writer ran last owned the
-     * label everybody else read — one context's presentation leaking into all the others.
-     *
-     * Two writers, same locator key, different labels. The second writer's evidence must land in
-     * full while the first writer's label survives untouched.
+     * `ConnectorRef` used to join its two ids on a bare colon, so `("a:b", "c")` and `("a", "b:c")`
+     * rendered the same key. Without the store's source-identity guard, the second tenant's write
+     * would have silently squatted on the first's `:Source` node instead of getting its own —
+     * pre-escaping, the guard caught that mismatch and rejected the write instead. `SourceLocator.kt`
+     * now escapes the connector id, so this same tuple pair is the sharpest regression probe
+     * available: if the escaping ever breaks, a plain two-tenant save is where it would show up
+     * first, not just `SourceLocatorTest`.
      */
     @Test
-    fun `a second writer cannot repaint a shared Source display`() {
-        val uri = "https://example.com/shared-display"
-        val firstWriter = UriLocator(uri, display = "First writer label")
-        val secondWriter = UriLocator(uri, display = "Second writer label")
-        assertEquals(firstWriter.key(), secondWriter.key(), "the two writers name one shared Source")
-
-        val first = repository.save(
-            prop("first writer fact", context = "ctx-display-a", provenance = listOf(evidence(firstWriter, "r1"))),
-        )
-        val second = repository.save(
-            prop("second writer fact", context = "ctx-display-b", provenance = listOf(evidence(secondWriter, "r2"))),
-        )
-
-        assertEquals(
-            "First writer label",
-            storedSourceDisplay(firstWriter.key()),
-            "display is write-once: the first writer owns the shared label",
-        )
-     * The same collision on the plain save path: two structurally different connector locators, two
-     * tenants, two different texts, so no dedup is involved. The second write names a `:Source` that
-     * already exists under its key and disagrees with it, and must be rejected before it touches the
-     * shared node.
-     */
-    @Test
-    fun `colliding connector tuples cannot overwrite a shared source`() {
+    fun `structurally distinct connector tuples that used to collide keep separate sources`() {
         val original = ConnectorRef("a:b", "c")
-        val colliding = ConnectorRef("a", "b:c")
-        assertEquals(original.key(), colliding.key(), "the fixture depends on these keys colliding")
+        val formerlyColliding = ConnectorRef("a", "b:c")
+        assertNotEquals(
+            original.key(),
+            formerlyColliding.key(),
+            "these two tuples rendered one key before ConnectorRef escaped colons in the connector id " +
+                "— a regression here means the escaping broke",
+        )
         val stored = repository.save(
             prop("original connector fact", context = "ctx-a", provenance = listOf(ProvenanceEntry(original))),
         )
-
-        assertThrows<IllegalArgumentException> {
-            repository.save(
-                prop("colliding connector fact", context = "ctx-b", provenance = listOf(ProvenanceEntry(colliding))),
-            )
-        }
+        val second = repository.save(
+            prop(
+                "colliding connector fact",
+                context = "ctx-b",
+                provenance = listOf(ProvenanceEntry(formerlyColliding)),
+            ),
+        )
 
         assertEquals(
             original,
             repository.findById(stored.id)?.provenanceEntries?.single()?.locator,
-            "the shared source keeps the identity of whoever created it",
+            "the first tenant's source keeps its own identity",
         )
-        assertEquals(1, repository.count(), "the rejected write must leave no proposition behind")
+        assertEquals(
+            formerlyColliding,
+            repository.findById(second.id)?.provenanceEntries?.single()?.locator,
+            "the second tenant gets its own source rather than inheriting the first's",
+        )
+        assertEquals(2, repository.count(), "both writes must land as their own proposition")
+        assertEquals(setOf(original.key(), formerlyColliding.key()), storedSourceKeys())
     }
 
     /**
-     * A colliding locator arriving in the same batch as genuinely new evidence. The colliding entry
-     * compares equal to one the winner already holds, so the novelty check drops it — and it is then
-     * neither written nor, if only novel entries are checked, ever looked at. The save would report
-     * success while the second connector's evidence had been quietly counted as the first's.
+     * A tuple that used to collide, arriving in the same batch as genuinely new evidence. Before the
+     * escaping fix the once-colliding entry compared equal to one the winner already held, so —
+     * without the stored-vs-incoming check catching the mismatch first — the novelty check would have
+     * dropped it and the second connector's evidence would have been quietly counted as the first's.
+     * With the keys distinct, both the once-colliding entry and the plain novel one are recognised as
+     * new and both land on the winner.
      */
     @Test
-    fun `dedup rejects a colliding connector source arriving alongside novel evidence`() {
+    fun `dedup treats a source that used to collide as novel evidence alongside other novel evidence`() {
         val original = ConnectorRef("a:b", "c")
-        val colliding = ConnectorRef("a", "b:c")
+        val formerlyColliding = ConnectorRef("a", "b:c")
         val newSource = UriLocator("https://example.com/mixed-batch")
-        assertEquals(original.key(), colliding.key(), "the fixture depends on these keys colliding")
+        assertNotEquals(original.key(), formerlyColliding.key(), "the fixture used to depend on these keys colliding")
         val winner = repository.save(
             prop("mixed batch fact", context = "ctx-mixed", provenance = listOf(ProvenanceEntry(original))),
         )
-        assertTrue(
-            winner.provenanceEntries.contains(ProvenanceEntry(colliding)),
-            "and on the colliding entry counting as already held, which is what drops it from the novelty check",
+        assertFalse(
+            winner.provenanceEntries.contains(ProvenanceEntry(formerlyColliding)),
+            "the two tuples no longer compare equal, so the winner does not already hold this evidence",
         )
 
-        val thrown = assertThrows<Exception> {
-            repository.save(
-                prop(
-                    "mixed batch fact",
-                    context = "ctx-mixed",
-                    provenance = listOf(ProvenanceEntry(colliding), evidence(newSource, "r1")),
-                ),
-            )
-        }
-        assertTrue(
-            generateSequence(thrown as Throwable?) { it.cause }.any {
-                it is IllegalArgumentException && it.message?.contains("Source key collision") == true
-            },
-            "the batch must be rejected as a source key collision; got: $thrown",
+        val second = repository.save(
+            prop(
+                "mixed batch fact",
+                context = "ctx-mixed",
+                provenance = listOf(ProvenanceEntry(formerlyColliding), evidence(newSource, "r1")),
+            ),
+        )
+
+        assertEquals(1, repository.count(), "dedup still collapses onto one proposition")
+        assertEquals(winner.id, second.id)
+        val stored = repository.findById(winner.id)!!
+        assertEquals(
+            setOf(original.key(), formerlyColliding.key(), newSource.key()),
+            stored.provenanceEntries.map { it.locator.key() }.toSet(),
+            "the once-colliding connector locator and its uri sibling both land as novel evidence",
+        )
+        assertEquals(3L, edgeCount(winner.id))
+    }
+
+    /**
+     * Both tuples that used to collide in one write, naming sources that don't exist yet. Before the
+     * escaping fix nothing was stored to compare against, so a check that only reads the store
+     * beforehand would have seen two clean entries and let the second attach silently to the source
+     * the first created; the batch-internal preflight caught that by comparing entries against each
+     * other. With the keys distinct there is no batch-internal collision left to catch — the write
+     * creates two sources and keeps both.
+     */
+    @Test
+    fun `one write carrying two connector locators that used to collide keeps both`() {
+        val original = ConnectorRef("a:b", "c")
+        val formerlyColliding = ConnectorRef("a", "b:c")
+        assertNotEquals(original.key(), formerlyColliding.key(), "the fixture used to depend on these keys colliding")
+
+        val saved = repository.save(
+            prop(
+                "two once-colliding locators in one write",
+                context = "ctx-batch-collide",
+                provenance = listOf(ProvenanceEntry(original), ProvenanceEntry(formerlyColliding)),
+            ),
         )
 
         assertEquals(1, repository.count())
+        assertEquals(setOf(original.key(), formerlyColliding.key()), storedSourceKeys())
+        assertEquals(2L, edgeCount(saved.id))
         assertEquals(
-            listOf(ProvenanceEntry(original)),
-            repository.findById(winner.id)!!.provenanceEntries,
-            "the winner must be exactly as it was",
-        )
-        assertEquals(1L, edgeCount(winner.id))
-        assertEquals(
-            setOf(original.key()),
-            storedSourceKeys(),
-            "the batch's novel source must not survive a rejected write either",
+            setOf(original.key(), formerlyColliding.key()),
+            repository.findById(saved.id)!!.provenanceEntries.map { it.locator.key() }.toSet(),
         )
     }
 
     /**
-     * Both colliding locators in one write, naming a source that does not exist yet. Nothing is
-     * stored to compare against, so a check that only reads the store beforehand sees two clean
-     * entries and lets the second silently attach to the source the first creates.
+     * Two writers, each introducing one of the two tuples that used to collide, held at the
+     * source-identity preflight until both have read an empty store — the interleaving that used to
+     * matter because only the `MERGE` itself could tell the two apart. With the keys distinct there
+     * is nothing left for the `MERGE` to arbitrate: both writers get their own `:Source` node.
      */
     @Test
-    fun `one write carrying two colliding connector locators is rejected`() {
+    fun `concurrent writers introducing tuples that used to collide land on two distinct sources`() {
         val original = ConnectorRef("a:b", "c")
-        val colliding = ConnectorRef("a", "b:c")
-        assertEquals(original.key(), colliding.key(), "the fixture depends on these keys colliding")
-
-        val thrown = assertThrows<Exception> {
-            repository.save(
-                prop(
-                    "two colliding locators in one write",
-                    context = "ctx-batch-collide",
-                    provenance = listOf(ProvenanceEntry(original), ProvenanceEntry(colliding)),
-                ),
-            )
-        }
-        assertTrue(
-            generateSequence(thrown as Throwable?) { it.cause }.any {
-                it is IllegalArgumentException && it.message?.contains("Source key collision") == true
-            },
-            "the batch must be rejected as a source key collision; got: $thrown",
-        )
-
-        assertEquals(0, repository.count(), "the rejected write must leave no proposition behind")
-        assertEquals(emptySet<String>(), storedSourceKeys(), "and no half-created source")
-    }
-
-    /**
-     * Two writers introducing the same colliding source key at once, with neither able to see the
-     * other's work: the barrier holds both until each has finished reading the store and found
-     * nothing there. Only a check that runs under the `MERGE` can separate them, so this is the case a
-     * read-then-write preflight cannot cover on its own.
-     *
-     * Which writer wins is the database's business. What must hold is that one is rejected, one
-     * succeeds, and the stored source carries the winner's identity rather than a mixture.
-     */
-    @Test
-    fun `concurrent writers introducing one colliding source key cannot corrupt it`() {
-        val original = ConnectorRef("a:b", "c")
-        val colliding = ConnectorRef("a", "b:c")
-        assertEquals(original.key(), colliding.key(), "the fixture depends on these keys colliding")
+        val formerlyColliding = ConnectorRef("a", "b:c")
+        assertNotEquals(original.key(), formerlyColliding.key(), "the fixture used to depend on these keys colliding")
         val barrier = CountDownLatch(2)
         val firstRepository = newTransactionProxiedRepository(
             SourcePreflightBarrierPersistenceManager(persistenceManager, barrier),
@@ -1080,44 +1057,32 @@ class DrivinePropositionStoreIntegrationTest {
                 },
                 executor.submit<Proposition> {
                     secondRepository.save(
-                        prop("second new-source fact", context = "ctx-new-collide", provenance = listOf(ProvenanceEntry(colliding))),
+                        prop("second new-source fact", context = "ctx-new-collide", provenance = listOf(ProvenanceEntry(formerlyColliding))),
                     )
                 },
             ).map { future -> runCatching { future.get(30, TimeUnit.SECONDS) } }
 
-            assertEquals(1, outcomes.count { it.isSuccess }, "exactly one writer may create the shared source")
-            val failure = outcomes.single { it.isFailure }.exceptionOrNull()!!
-            assertTrue(
-                generateSequence(failure as Throwable?) { it.cause }.any {
-                    it is IllegalArgumentException && it.message?.contains("Source key collision") == true
-                },
-                "the losing writer must report the structural Source key collision; got: $failure",
-            )
-
-            val winner = outcomes.single { it.isSuccess }.getOrThrow()
-            val storedLocator = repository.findById(winner.id)!!.provenanceEntries.single().locator
-            assertEquals(
-                winner.provenanceEntries.single().locator,
-                storedLocator,
-                "the stored source must carry the identity of whoever created it",
-            )
-            assertEquals(setOf(original.key()), storedSourceKeys())
-            assertEquals(1, repository.count(), "the rejected writer must leave no proposition behind")
+            assertEquals(2, outcomes.count { it.isSuccess }, "neither key collides any more, so both writers must succeed")
+            val ids = outcomes.map { it.getOrThrow().id }
+            assertEquals(2, ids.toSet().size, "each writer must get its own proposition")
+            assertEquals(setOf(original.key(), formerlyColliding.key()), storedSourceKeys())
+            assertEquals(2, repository.count())
         } finally {
             executor.shutdownNow()
         }
     }
 
     /**
-     * A cross-instance race on the *recovery* path. Both writers pass the dedup lookup, one loses on
-     * the uniqueness constraint, and its recovery tries to union evidence whose locator collides with
-     * the winner's. Recovery must reject it and leave the winner as it found it.
+     * A cross-instance race on the *recovery* path, with each writer bringing one of the two tuples
+     * that used to collide. Before the escaping fix the loser's recovery would try to union evidence
+     * whose locator collided with the winner's and get rejected. With the keys distinct there is
+     * nothing to reject: recovery unions the loser's evidence onto the winner like any other race.
      */
     @Test
-    fun `cross-instance recovery rejects a colliding connector source and preserves its winner`() {
+    fun `cross-instance recovery unions tuples that used to collide onto the winner`() {
         val original = ConnectorRef("a:b", "c")
-        val colliding = ConnectorRef("a", "b:c")
-        assertEquals(original.key(), colliding.key(), "the fixture depends on these keys colliding")
+        val formerlyColliding = ConnectorRef("a", "b:c")
+        assertNotEquals(original.key(), formerlyColliding.key(), "the fixture used to depend on these keys colliding")
         val first = prop(
             "cross-instance collision-prone fact",
             context = "ctx-recover-collide",
@@ -1126,7 +1091,7 @@ class DrivinePropositionStoreIntegrationTest {
         val second = prop(
             "cross-instance collision-prone fact",
             context = "ctx-recover-collide",
-            provenance = listOf(ProvenanceEntry(colliding)),
+            provenance = listOf(ProvenanceEntry(formerlyColliding)),
         )
         val barrier = CountDownLatch(2)
         val firstRepository = newTransactionProxiedRepository(
@@ -1143,26 +1108,70 @@ class DrivinePropositionStoreIntegrationTest {
                 executor.submit<Proposition> { secondRepository.save(second) },
             ).map { future -> runCatching { future.get(30, TimeUnit.SECONDS) } }
 
-            assertEquals(1, outcomes.count { it.isSuccess }, "exactly one writer may win the race")
-            val failure = outcomes.single { it.isFailure }.exceptionOrNull()!!
-            assertTrue(
-                generateSequence(failure as Throwable?) { it.cause }.any {
-                    it is IllegalArgumentException && it.message?.contains("Source key collision") == true
-                },
-                "the losing recovery must report the structural Source key collision; got: $failure",
-            )
+            assertEquals(2, outcomes.count { it.isSuccess }, "recovery unions rather than rejects a now-distinct source")
+            val winners = outcomes.map { it.getOrThrow() }
+            assertEquals(1, winners.map { it.id }.toSet().size, "both writers must return the database winner")
+            val winnerId = winners.first().id
 
-            val winner = outcomes.single { it.isSuccess }.getOrThrow()
-            assertEquals(1, repository.count())
+            assertEquals(1, repository.count(), "the race still collapses onto one proposition")
+            val stored = repository.findById(winnerId)!!
             assertEquals(
-                winner.provenanceEntries,
-                repository.findById(winner.id)!!.provenanceEntries,
-                "a rejected recovery must leave the stored winner unchanged",
+                setOf(original.key(), formerlyColliding.key()),
+                stored.provenanceEntries.map { it.locator.key() }.toSet(),
+                "the loser's once-colliding evidence is unioned onto the winner rather than rejected",
             )
-            assertEquals(1L, edgeCount(winner.id))
+            assertEquals(2L, edgeCount(winnerId))
         } finally {
             executor.shutdownNow()
         }
+    }
+
+    /**
+     * `ConnectorRef` escaping only stops a *current* write from minting an ambiguous key — it does
+     * nothing for a `:Source` node a pre-escaping store already wrote. Before the fix, `("a:b", "c")`
+     * and `("a", "b:c")` both rendered `connector:a:b:c` (`SourceLocator.kt`'s KDoc documents this:
+     * such a key "was ambiguous when written and cannot be re-keyed from the key alone"), so an
+     * upgraded store can still hold a node under that key with `("a:b", "c")`'s identity. This seeds
+     * that legacy node directly, by raw Cypher rather than through the repository — the only way to
+     * get it into the graph without the escaping fix, since nothing on the current write path can
+     * mint an ambiguous key any more — then saves the *other* half of the old pair, which now renders
+     * the identical key. The batch-internal preflight has nothing to compare here (one entry, one
+     * write); it's the stored-vs-incoming check that has to catch this, and it does.
+     */
+    @Test
+    fun `a legacy ambiguous source key still rejects a structurally different connector write`() {
+        val legacyKey = "connector:a:b:c"
+        persistenceManager.execute(
+            QuerySpecification
+                .withStatement(
+                    "MERGE (s:Source {key: \$sourceKey}) " +
+                        "SET s.kind = 'connector', s.connectorId = \$connectorId, s.externalId = \$externalId",
+                )
+                .bind(mapOf("sourceKey" to legacyKey, "connectorId" to "a:b", "externalId" to "c")),
+        )
+        val formerlyColliding = ConnectorRef("a", "b:c")
+        assertEquals(
+            legacyKey,
+            formerlyColliding.key(),
+            "this write must land on exactly the legacy node's key for the guard to have anything to compare",
+        )
+
+        val thrown = assertThrows<Exception> {
+            repository.save(
+                prop(
+                    "structurally different from the legacy node",
+                    context = "ctx-legacy-collide",
+                    provenance = listOf(ProvenanceEntry(formerlyColliding)),
+                ),
+            )
+        }
+        assertTrue(
+            generateSequence(thrown as Throwable?) { it.cause }.any {
+                it is IllegalArgumentException && it.message?.contains("Source key collision") == true
+            },
+            "the write must report the structural Source key collision against the legacy node; got: $thrown",
+        )
+        assertEquals(0, repository.count(), "the rejected write must leave no proposition behind")
     }
 
     /**
@@ -1227,38 +1236,6 @@ class DrivinePropositionStoreIntegrationTest {
             1L,
             persistenceManager.getOne(
                 QuerySpecification
-                    .withStatement("MATCH (s:Source {key: \$sourceKey}) RETURN count(s) AS c")
-                    .bind(mapOf("sourceKey" to firstWriter.key()))
-                    .transform(Long::class.java),
-            ),
-            "both writers still share one Source node",
-        )
-
-        assertEquals(
-            listOf(first.id),
-            repository.findBySourceRevision(ContextId("ctx-display-a"), SourceRevisionRef(firstWriter.key(), "r1"))
-                .map { it.id },
-            "the first writer's evidence is queryable",
-        )
-        assertEquals(
-            listOf(second.id),
-            repository.findBySourceRevision(ContextId("ctx-display-b"), SourceRevisionRef(secondWriter.key(), "r2"))
-                .map { it.id },
-            "the second writer's evidence landed in full",
-        )
-        assertEquals("r2", repository.provenanceOf(second.id).single().sourceRevision)
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun storedSourceDisplay(sourceKey: String): String? =
-        (persistenceManager.query(
-            QuerySpecification
-                .withStatement("MATCH (s:Source {key: \$sourceKey}) RETURN {display: s.display} AS row")
-                .bind(mapOf("sourceKey" to sourceKey)),
-        ) as List<Map<String, Any?>>).single()["display"] as String?
-
-    private fun evidence(locator: UriLocator, revision: String?): ProvenanceEntry =
-        ProvenanceEntry(locator = locator, sourceRevision = revision)
                     .withStatement(
                         "MATCH (:Proposition {id: \$id})-[r:DERIVED_FROM]->() RETURN count(r.entryKey) AS c",
                     )
@@ -2223,4 +2200,66 @@ class DrivinePropositionStoreIntegrationTest {
 
         assertEquals(old, repository.findById(saved.id)!!.lastAccessed)
     }
+    /**
+     * A `:Source` node is global: one locator key is one node, shared by every context that cites it.
+     * Its `display` label used to be refreshed on every write, so whichever writer ran last owned the
+     * label everybody else read — one context's presentation leaking into all the others.
+     *
+     * Two writers, same locator key, different labels. The second writer's evidence must land in
+     * full while the first writer's label survives untouched.
+     */
+    @Test
+    fun `a second writer cannot repaint a shared Source display`() {
+        val uri = "https://example.com/shared-display"
+        val firstWriter = UriLocator(uri, display = "First writer label")
+        val secondWriter = UriLocator(uri, display = "Second writer label")
+        assertEquals(firstWriter.key(), secondWriter.key(), "the two writers name one shared Source")
+
+        val first = repository.save(
+            prop("first writer fact", context = "ctx-display-a", provenance = listOf(evidence(firstWriter, "r1"))),
+        )
+        val second = repository.save(
+            prop("second writer fact", context = "ctx-display-b", provenance = listOf(evidence(secondWriter, "r2"))),
+        )
+
+        assertEquals(
+            "First writer label",
+            storedSourceDisplay(firstWriter.key()),
+            "display is write-once: the first writer owns the shared label",
+        )
+        assertEquals(
+            1L,
+            persistenceManager.getOne(
+                QuerySpecification
+                    .withStatement("MATCH (s:Source {key: \$sourceKey}) RETURN count(s) AS c")
+                    .bind(mapOf("sourceKey" to firstWriter.key()))
+                    .transform(Long::class.java),
+            ),
+            "both writers still share one Source node",
+        )
+
+        assertEquals(
+            listOf(first.id),
+            repository.findBySourceRevision(ContextId("ctx-display-a"), SourceRevisionRef(firstWriter.key(), "r1"))
+                .map { it.id },
+            "the first writer's evidence is queryable",
+        )
+        assertEquals(
+            listOf(second.id),
+            repository.findBySourceRevision(ContextId("ctx-display-b"), SourceRevisionRef(secondWriter.key(), "r2"))
+                .map { it.id },
+            "the second writer's evidence landed in full",
+        )
+        assertEquals("r2", repository.provenanceOf(second.id).single().sourceRevision)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun storedSourceDisplay(sourceKey: String): String? =
+        (persistenceManager.query(
+            QuerySpecification
+                .withStatement("MATCH (s:Source {key: \$sourceKey}) RETURN {display: s.display} AS row")
+                .bind(mapOf("sourceKey" to sourceKey)),
+        ) as List<Map<String, Any?>>).single()["display"] as String?
+
+
 }

@@ -107,8 +107,16 @@ and the consumer PRs that deliver it).
   answering where it does not; `delete` takes every edge of a proposition citing one source at
   several revisions and prunes only the sources left with no citations; a repeated or concurrent
   write of one revision stays one relationship; a pre-`entryKey` edge is claimed only by an exactly
-  matching revisionless entry; and a colliding connector locator is rejected on the plain save,
-  in-process dedup, and race-recovery paths alike. Design note:
+  matching revisionless entry; and the source-identity guard rejects two structurally different
+  locators sharing one key, checked two ways — a preflight over one write's own batch, and a check of
+  whatever the `:Source` node already holds. `ConnectorRef` escaping its connector id
+  (`fix(provenance): escape connector ids so ConnectorRef keys are injective`, main) closed the
+  *batch-internal* half's trigger: the pair of tuples `dice-storage`'s tests used to exercise it with
+  now render distinct keys, so that half's coverage now pins distinct sources and coexisting evidence
+  instead of a rejection. The *stored-vs-incoming* half is not dead: a store that predates that fix
+  can still hold a `:Source` node keyed the old, ambiguous way, and a current write naming a
+  structurally different locator that renders the same key is rejected against it —
+  `dice-storage`'s coverage now seeds exactly that legacy shape and pins the rejection. Design note:
   [docs/design/source-revisions.md](docs/design/source-revisions.md).
   **Compatibility: additive.** `ProvenanceEvidenceKey` widens from `internal` to public, which adds
   API rather than removing it; the format it encodes is unchanged and already carried a `v1` version
