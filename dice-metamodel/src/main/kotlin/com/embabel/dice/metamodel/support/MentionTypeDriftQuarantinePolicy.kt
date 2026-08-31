@@ -32,33 +32,31 @@ import org.slf4j.LoggerFactory
  * names a type the schema change made **lossy**. Lossy means the change can strand data that was
  * already extracted:
  *
- * - the type was **removed** — nothing describes those mentions any more;
- * - the type kept its name but **lost** labels or whole properties;
- * - a property kept its name but its shape **narrowed** — its value type or reference target
- *   changed, it flipped between holding a value and pointing at another type, or its cardinality
- *   shrank (a list collapsing to a single value, an optional becoming required).
+ * - the type was **removed**, so nothing describes those mentions any more;
+ * - the type kept its name and **lost** labels or whole properties;
+ * - a property kept its name and its shape **narrowed**: its value type or reference target changed,
+ *   it flipped between holding a value and pointing at another type, or its cardinality shrank (a
+ *   list collapsing to a single value, an optional becoming required).
  *
- * Everything else is additive and never triggers quarantine: new types, new labels, new properties,
- * and cardinality moving the other way (a single value becoming a list holds everything it held
- * before). This is where the diff's deliberate refusal to judge gets resolved —
- * [MetamodelChange.PropertySignatureChanged] states that `age` went from `string` to `integer`, and
- * this policy is what decides that stranding is possible and the affected propositions should be
- * pulled out of normal use until a person looks.
+ * Additive changes never trigger quarantine: new types, new labels, new properties, and cardinality
+ * moving the other way, since a single value becoming a list still holds everything it held before.
+ * The diff itself makes no judgement. [MetamodelChange.PropertySignatureChanged] states that `age`
+ * went from `string` to `integer`, and this policy decides that stranding is possible and pulls the
+ * affected propositions out of normal use until a person looks.
  *
- * The conservative call on a type change is to treat *any* move as lossy, in either direction. We
- * know the declared type names moved; we don't know how the backend stored the values or whether
- * the new type can read the old ones, and guessing wrong in the permissive direction leaves
- * unreadable data looking healthy. Swap in a different policy if your storage makes some widenings
- * provably safe.
+ * A type change counts as lossy in either direction. We know the declared type names moved; we don't
+ * know how the backend stored the values or whether the new type can read the old ones, and guessing
+ * wrong in the permissive direction leaves unreadable data looking healthy. Swap in a different
+ * policy if your storage makes some widenings provably safe.
  *
- * Quarantining transitions the proposition to [PropositionStatus.STALE] and annotates it under
- * [DiceMetadataKeys.QUARANTINE_REASON]. Both produce an immutable copy — the original is never
+ * Quarantining moves the proposition to [PropositionStatus.STALE] and annotates it under
+ * [DiceMetadataKeys.QUARANTINE_REASON]. Both produce an immutable copy; the original is never
  * mutated, and persisting the copies is the caller's job.
  *
  * A proposition an earlier sweep already quarantined comes back as
- * [QuarantineDecision.AlreadyQuarantined], untouched: never re-flagged, original reason preserved,
- * and never counted as conforming. That holds whatever the diff in front of us looks like, an empty
- * one included — being already quarantined is a fact about the proposition, not about this check.
+ * [QuarantineDecision.AlreadyQuarantined], untouched, with its original reason preserved and outside
+ * the conforming bucket. That holds for any diff, an empty one included, because being already
+ * quarantined is a fact about the proposition.
  */
 class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
 
@@ -67,8 +65,8 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
     override fun evaluate(diff: MetamodelDiff, propositions: Iterable<Proposition>): QuarantineResult {
         val removedTypes = diff.removedEntityTypes
 
-        // Types whose name survived but which lost labels or whole properties. Also lossy: a
-        // mention may have relied on a label or property that is simply gone. Keyed by type name.
+        // Types whose name survived and which lost labels or whole properties. Also lossy, because
+        // a mention may have relied on a label or property that is now gone. Keyed by type name.
         val lossyModified = diff.modifiedEntityTypes
             .filter { it.removedLabels.isNotEmpty() || it.removedProperties.isNotEmpty() }
             .associateBy { it.typeName }
@@ -80,18 +78,15 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
             .groupBy { it.typeName }
 
         // There is deliberately no "nothing lossy, so everything conforms" shortcut here. Whether a
-        // proposition is already quarantined has nothing to do with the diff in front of us — it is
-        // a fact about the proposition — and a shortcut that skipped the check would report an
-        // earlier sweep's quarantined records as Conforming the moment a later check happened to
-        // find nothing new. Since drift checks run on a schedule and most of them find nothing, that
-        // is the common case, not the rare one: quarantined data would look healthy almost always.
-        // One code path, always classified.
+        // proposition is already quarantined is a fact about the proposition and doesn't depend on
+        // the diff, so a shortcut would report an earlier sweep's quarantined records as Conforming
+        // on any check that found nothing new. Drift checks run on a schedule and most runs find
+        // nothing, so that would be the common case. Every proposition goes down one code path.
 
         val conforming = mutableListOf<QuarantineDecision.Conforming>()
         val quarantined = mutableListOf<QuarantineDecision.Quarantined>()
         // Propositions left alone because a previous sweep already quarantined them. Their own
-        // bucket rather than folded into conforming: they aren't clean, and a caller reading
-        // conforming.size as a health number would be wrong about them.
+        // bucket rather than folded into conforming, so conforming.size counts only clean ones.
         val alreadyQuarantined = mutableListOf<QuarantineDecision.AlreadyQuarantined>()
 
         for (proposition in propositions) {
@@ -158,8 +153,8 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
 
     /**
      * Whether a proposition is one an earlier sweep already handled: `STALE` *and* carrying a
-     * quarantine reason. Both halves matter — a proposition made stale by ordinary decay carries no
-     * reason and is still a live candidate here.
+     * quarantine reason. Both halves matter, because a proposition made stale by ordinary decay
+     * carries no reason and is still a live candidate here.
      */
     private fun isAlreadyQuarantined(proposition: Proposition): Boolean =
         proposition.status == PropositionStatus.STALE &&
@@ -179,7 +174,7 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
             change.kindChanged ||
             breadth(change.after.cardinality) < breadth(change.before.cardinality)
 
-    /** How much a cardinality can hold, as a rank — bigger holds everything smaller can. */
+    /** How much a cardinality can hold, as a rank: bigger holds everything smaller can. */
     private fun breadth(cardinality: Cardinality): Int = when (cardinality) {
         Cardinality.ONE -> 0
         Cardinality.OPTIONAL -> 1
@@ -206,8 +201,8 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
                 losses += "label(s) [${change.removedLabels.sorted().joinToString(", ")}]"
             }
             if (change.removedProperties.isNotEmpty()) {
-                // Names, not full signatures: a reason is read by a person deciding whether to
-                // rescue the proposition, and a rendered PropertySignature buries the name in
+                // Names rather than full signatures: a person reads this reason to decide whether
+                // to rescue the proposition, and a rendered PropertySignature buries the name in
                 // constructor noise.
                 losses += "propert${if (change.removedPropertyNames.size == 1) "y" else "ies"} " +
                     "[${change.removedPropertyNames.sorted().joinToString(", ")}]"

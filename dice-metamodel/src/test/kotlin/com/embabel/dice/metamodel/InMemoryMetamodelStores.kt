@@ -26,7 +26,7 @@ internal class InMemoryMetamodelVersionStore : MetamodelVersionStore {
 
     private val versions = mutableListOf<MetamodelVersion>()
 
-    /** How many writes reached the store, idempotent ones included — lets a test see stamp order. */
+    /** How many writes reached the store, idempotent ones included, so a test can see stamp order. */
     var saveCount: Int = 0
         private set
 
@@ -50,8 +50,8 @@ internal class InMemoryMetamodelVersionStore : MetamodelVersionStore {
 /**
  * In-memory [DriftReportStore] for tests, and the reference reading of the bounded contract.
  *
- * The thing worth copying into a real backend is that each read applies its scope **before** its
- * limit. Filtering a limited page afterwards would let a schema whose recent history is mostly
+ * Each read applies its scope before its limit, which is the part a real backend has to copy.
+ * Filtering a limited page afterwards would let a schema whose recent history is mostly
  * context-scoped report zero global drift while plenty sat in the store, which is why the interface
  * has no default bodies for the three reads.
  */
@@ -60,8 +60,8 @@ internal class InMemoryDriftReportStore : DriftReportStore {
     private val reports = mutableListOf<DriftReport>()
 
     override fun saveDriftReport(report: DriftReport) {
-        // Upsert on the natural key: same schema, version, capture instant and context is the same
-        // observation, so it replaces rather than duplicating.
+        // Upsert on the natural key: the same schema, version, capture instant and context is the
+        // same observation, so it replaces rather than duplicating.
         val existing = reports.indexOfFirst {
             it.schemaName == report.schemaName &&
                 it.versionHash == report.versionHash &&

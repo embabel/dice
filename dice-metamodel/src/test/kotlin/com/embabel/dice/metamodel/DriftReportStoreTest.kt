@@ -24,9 +24,9 @@ import org.junit.jupiter.api.Test
 import java.time.Instant
 
 /**
- * Pins the [DriftReportStore] contract against [InMemoryDriftReportStore], which is the reference
- * reading of it. A Drivine-backed store lands in a later slice and has to answer these same
- * questions the same way — in Cypher rather than in memory, but with identical semantics.
+ * Pins the [DriftReportStore] contract against [InMemoryDriftReportStore], the reference reading of
+ * it. A Drivine-backed store lands in a later slice and has to answer these same questions the same
+ * way, in Cypher rather than in memory.
  */
 class DriftReportStoreTest {
 
@@ -112,9 +112,9 @@ class DriftReportStoreTest {
 
     @Test
     fun `scoping happens before limiting, not after`() {
-        // The failure this guards against: a store that reads a limited page and then filters it
-        // would answer "no global drift" here, because the newest three reports are all
-        // context-scoped and the one global report never survives to the filter.
+        // Guards against a store that reads a limited page and then filters it. Such a store would
+        // answer "no global drift" here, because the newest three reports are all context-scoped and
+        // the one global report never survives to the filter.
         val global = save(1)
         save(2, contextA)
         save(3, contextA)

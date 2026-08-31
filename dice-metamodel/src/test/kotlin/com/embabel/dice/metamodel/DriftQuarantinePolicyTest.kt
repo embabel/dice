@@ -351,10 +351,10 @@ class DriftQuarantinePolicyTest {
 
         @Test
         fun `an empty diff still reports an already-quarantined proposition as quarantined`() {
-            // The regression this guards: a "nothing lossy, so everything conforms" shortcut would
-            // skip the already-quarantined check entirely. Drift checks run on a schedule and most
-            // of them find nothing, so that shortcut is the common path — quarantined records would
-            // come back Conforming on almost every run and look healthy.
+            // Guards against a "nothing lossy, so everything conforms" shortcut, which would skip
+            // the already-quarantined check. Drift checks run on a schedule and most runs find
+            // nothing, so that path is the common one, and quarantined records would come back
+            // Conforming on almost every run.
             val lossyDiff = differ.diff(schemaWith("Person", "RemovedType"), schemaWith("Person"))
             val stale = policy
                 .evaluate(lossyDiff, listOf(proposition("entity with removed type", "RemovedType")))
@@ -413,8 +413,9 @@ class DriftQuarantinePolicyTest {
 
         @Test
         fun `a proposition made stale by something other than quarantine is still evaluated`() {
-            // STALE alone isn't enough to skip one — decay makes propositions stale too, and those
-            // carry no quarantine reason. Skipping on status alone would let drifted data through.
+            // STALE alone isn't enough to skip one, because decay also makes propositions stale and
+            // those carry no quarantine reason. Skipping on status alone would let drifted data
+            // through.
             val diff = differ.diff(schemaWith("Person", "RemovedType"), schemaWith("Person"))
             val staleByDecay = proposition("aged out", "RemovedType", status = PropositionStatus.STALE)
 

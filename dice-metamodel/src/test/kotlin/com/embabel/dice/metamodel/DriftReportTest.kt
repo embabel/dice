@@ -84,7 +84,7 @@ class DriftReportTest {
     @Test
     fun `the drifted type sets cannot be changed after the fact`() {
         // A record of a moment has to stay that record. The caller's set is copied in, and what
-        // comes back out refuses mutation rather than merely discouraging it.
+        // comes back out throws on mutation rather than relying on Kotlin's read-only view.
         val mutable = mutableSetOf("Ghost")
         val report = report(driftedEntityTypes = mutable)
 

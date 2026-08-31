@@ -36,9 +36,9 @@ import org.junit.jupiter.api.Test
 import java.time.Instant
 
 /**
- * [DefaultDriftCheckRunner] against fake sources and stores, but the *real*
- * [StructuralMetamodelDiffer] and [MentionTypeDriftQuarantinePolicy] — both covered on their own
- * elsewhere — so these tests exercise the actual delegation rather than a stand-in for it.
+ * [DefaultDriftCheckRunner] against fake sources and stores, with the real
+ * [StructuralMetamodelDiffer] and [MentionTypeDriftQuarantinePolicy], each covered on its own
+ * elsewhere. These tests exercise the actual delegation rather than a stand-in for it.
  */
 class DriftCheckRunnerTest {
 
@@ -75,8 +75,8 @@ class DriftCheckRunnerTest {
         relationshipNames = declaredRelationshipTypeNames.map { "Person-[$it]->Company" },
     )
 
-    // Typed as the base persistence port, not PropositionRepository: whatever a test passes in,
-    // the runner only ever gets store-and-retrieve out of it.
+    // Typed as the base persistence port rather than PropositionRepository, so whatever a test
+    // passes in, the runner only gets store-and-retrieve out of it.
     private fun buildRunner(store: PropositionStore = propositionStore): DriftCheckRunner {
         val declaredSchema = DeclaredSchema(
             version = declaredVersion(),
@@ -85,9 +85,9 @@ class DriftCheckRunnerTest {
         return DefaultDriftCheckRunner(
             declaredSchemaSource = DeclaredSchemaSource { declaredSchema },
             versionStore = versionStore,
-            // Each snapshot gets its own instant, a minute apart, the way real observations do. It
-            // matters: a report's natural key includes the capture instant, so two checks sharing
-            // one really are the same observation and collapse to a single record.
+            // Each snapshot gets its own instant, a minute apart, the way real observations do. A
+            // report's natural key includes the capture instant, so two checks sharing one count as
+            // the same observation and collapse to a single record.
             observedSchemaSource = object : ObservedSchemaSource {
                 private var observations = 0L
 
@@ -134,9 +134,9 @@ class DriftCheckRunnerTest {
 
     @Test
     fun `the stamp is written before the report, not after`() {
-        // The ordering is the whole point of stamping every run: a report written first would, for
-        // the length of that window and forever if the second write failed, name a version hash
-        // nothing had ever recorded.
+        // The ordering is why the stamp is written every run. A report written first would name a
+        // version hash nothing had recorded, for the length of that window, and permanently if the
+        // second write failed.
         val runner = buildRunner()
 
         runner.run(dryRun = true)
@@ -262,7 +262,7 @@ class DriftCheckRunnerTest {
     @Test
     fun `a plain store-and-retrieve backend can drive a live run`() {
         // The runner asks for the base persistence port, so a backend with no vector search, graph
-        // traversal or temporal query to offer is still allowed to check for drift.
+        // traversal or temporal query can still check for drift.
         observedEntityTypes = setOf("Person", "Company", "GhostType")
         val affected = propositionStore.save(proposition("a ghost was mentioned", "GhostType"))
         val bareStore: PropositionStore = RecordingPropositionStore(propositionStore)
@@ -276,7 +276,7 @@ class DriftCheckRunnerTest {
 
     @Test
     fun `a live run with only relationship drift never quarantines`() {
-        // Nothing a mention's type could ever match, so a live run must still touch nothing.
+        // Nothing a mention's type can match, so a live run must touch nothing.
         observedRelationshipTypeNames = setOf("WORKS_AT", "UNDECLARED_LINK")
         propositionStore.save(proposition("Alice works at Acme", "Person", "Company"))
         val runner = buildRunner()
@@ -294,8 +294,8 @@ class DriftCheckRunnerTest {
     @Test
     fun `an inherited label observed in the graph is not drift and never quarantines`() {
         // Declaring Person with parent Agent puts both labels on every Person node, so the graph
-        // reports Agent too. Comparing observed labels against type names alone would call Agent
-        // undeclared and quarantine perfectly good propositions on a schema nobody had touched.
+        // reports Agent too. Comparing observed labels against type names alone would report Agent
+        // as undeclared and quarantine sound propositions on a schema nobody had touched.
         declaredEntityTypes = listOf("Person")
         declaredEntityTypeLabels = mapOf("Person" to setOf("Person", "Agent"))
         observedEntityTypes = setOf("Person", "Agent", "GhostType")
@@ -338,8 +338,8 @@ class DriftCheckRunnerTest {
 
         val result = runner.run(dryRun = true)
 
-        // The declared names must reach the differ exactly as supplied — no splitting, trimming or
-        // delimiter parsing — so only the genuinely undeclared name shows up as drift.
+        // The declared names must reach the differ exactly as supplied, with no splitting, trimming
+        // or delimiter parsing, so only the undeclared name shows up as drift.
         assertEquals(setOf("UNDECLARED|ALSO\tDELIMITED"), result.driftedRelationshipTypes)
         assertEquals(setOf("UNDECLARED|ALSO\tDELIMITED"), savedReports().single().driftedRelationshipTypes)
     }
@@ -378,7 +378,7 @@ class DriftCheckRunnerTest {
 
     @Test
     fun `a scoped live run leaves another context's propositions completely alone`() {
-        // Both propositions mention the drifted type and a global run would quarantine both.
+        // Both propositions mention the drifted type, and a global run would quarantine both.
         // Scoping to one context must reach exactly one of them.
         observedEntityTypes = setOf("Person", "Company", "GhostType")
         val inScope = propositionStore.save(proposition("a ghost in context A", "GhostType"))
@@ -422,13 +422,13 @@ class DriftCheckRunnerTest {
     }
 
     /**
-     * Records which candidate-read the runner actually called, so a test can assert the scoped or
-     * global read path directly rather than inferring it from a side effect. Everything else is
-     * delegated unchanged.
+     * Records which candidate-read the runner called, so a test can assert the scoped or global read
+     * path directly rather than inferring it from a side effect. Everything else is delegated
+     * unchanged.
      *
-     * Deliberately a bare [PropositionStore] and not a `PropositionRepository`: passing one of these
-     * to the runner is what proves a plain store-and-retrieve backend, with no vector search or
-     * graph traversal to offer, can still drive a live drift check.
+     * A bare [PropositionStore] rather than a `PropositionRepository`: passing one of these to the
+     * runner is what shows a plain store-and-retrieve backend, with no vector search or graph
+     * traversal, can drive a live drift check.
      */
     private class RecordingPropositionStore(
         private val delegate: PropositionStore,
@@ -453,8 +453,8 @@ class DriftCheckRunnerTest {
 
     /**
      * An [InMemoryDriftReportStore] that also notes, at the moment each report is written, whether
-     * the version store could already resolve the hash that report carries. That is the stamp-first
-     * guarantee, observed at the only instant where it can actually be violated.
+     * the version store can already resolve the hash that report carries. That is the only instant
+     * at which the stamp-before-report ordering can be observed to hold or fail.
      */
     private class OrderRecordingDriftReportStore(
         private val versionStore: MetamodelVersionStore,

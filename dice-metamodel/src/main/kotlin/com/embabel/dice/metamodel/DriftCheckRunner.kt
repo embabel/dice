@@ -21,16 +21,15 @@ import java.util.Objects
 /**
  * What one [DriftCheckRunner.run] call found and did.
  *
- * The drift itself lives in [report] and is read back off it, rather than being copied into
- * fields here. Every run persists a report, so the two would otherwise be two copies of the same
- * answer — and the failure mode of two copies is that they disagree, leaving a caller who logged
- * the result and an operator who read the stored report looking at different type sets for the same
- * check. There is one set of drifted types per run, and it is the one that got written down.
+ * The drifted types are read off [report] rather than copied into fields here. Every run persists a
+ * report, so a copy would be a second version of the same answer, and two versions can disagree: a
+ * caller who logged the result and an operator who read the stored report would then see different
+ * type sets for the same check.
  *
  * @property dryRun Whether this was a preview. On a dry run the report is still persisted; no
  *   proposition is touched.
- * @property report The [DriftReport] this run saved. Every run saves one, including a clean one —
- *   "checked and found nothing" has to be as retrievable as "checked and found drift".
+ * @property report The [DriftReport] this run saved. Every run saves one, including a check that
+ *   found nothing.
  * @property quarantinedCount How many propositions this run newly quarantined. Always 0 on a dry
  *   run, and 0 whenever there was no entity-type drift.
  */
@@ -69,25 +68,24 @@ class DriftCheckResult(
 
 /**
  * Runs a drift check end to end: takes the declared schema, stamps it, snapshots what a live graph
- * actually holds, compares the two, writes the result down, and — only if you ask — quarantines the
- * propositions the drift stranded.
+ * holds, compares the two, writes the result down, and quarantines the propositions the drift
+ * stranded when asked to.
  *
- * Dry-run by default, and that default is the whole design stance. Observing and reporting is
- * useful on its own and can't hurt anything; changing proposition state is a separate decision
- * somebody has to make on purpose. Nothing here schedules itself either — a consuming application
- * decides when [run] is called, the same way it does for the collector.
+ * Dry-run by default. Observing and reporting changes nothing; moving propositions to `STALE` is a
+ * separate decision a caller opts into. Nothing here schedules itself, so a consuming application
+ * decides when [run] is called, as it does for the collector.
  *
  * The shorter [run] forms are real overloads with bodies rather than Kotlin default arguments,
  * because Java can't see a default argument: `runner.run()` has to exist as a method for a Java
  * caller to write it. Implementations override the two-argument form and get the other two free.
- * Those two shorter forms are also the whole Java surface — `ContextId` is a Kotlin value class, so
- * the two-argument form compiles to a mangled JVM name Java can't call.
+ * Those two shorter forms are also the whole Java surface, since `ContextId` is a Kotlin value class
+ * and the two-argument form compiles to a mangled JVM name Java can't call.
  */
 interface DriftCheckRunner {
 
     /**
-     * Declare, stamp, observe, diff, report — and, when [dryRun] is `false` and drift touched any
-     * entity type, quarantine.
+     * Declare, stamp, observe, diff, report, and quarantine when [dryRun] is `false` and drift
+     * touched an entity type.
      *
      * @param dryRun When `true`, the check runs and its [DriftReport] is persisted, but no
      *   proposition is touched. When `false`, propositions whose mentions reference a drifted
@@ -96,15 +94,13 @@ interface DriftCheckRunner {
      * @param contextId `null` means the check covers the whole graph. Non-null scopes everything
      *   the check touches to that one context: the observed snapshot, the candidate propositions
      *   read for quarantine, and the persisted [DriftReport]. A mis-declared schema in one context
-     *   can then only ever quarantine propositions in that same context — it has no way to reach
-     *   another one.
+     *   can only quarantine propositions in that same context.
      * @return What was found, and what was quarantined if this was a live run.
      */
     fun run(dryRun: Boolean, contextId: ContextId?): DriftCheckResult
 
     /**
-     * Run a dry check over the whole graph — the safe default. Nothing is quarantined; the report
-     * is still persisted.
+     * Run a dry check over the whole graph. Nothing is quarantined; the report is still persisted.
      *
      * @return What was found.
      */

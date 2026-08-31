@@ -23,14 +23,13 @@ import java.util.Objects
  * One drift check, written down: what a live graph held that nobody had declared, at one moment,
  * measured against one declared schema version.
  *
- * A report is a fact about a point in time, not a running total. Keeping every one of them is what
- * lets you answer "when did this start?" and "is it getting worse?" later — a single mutable
- * "current drift" field could only ever answer "right now", and would quietly lose the answer the
- * moment somebody fixed the schema.
+ * A report records one point in time. Keeping every one is what lets you answer "when did this
+ * start?" and "is it getting worse?" later; a single mutable "current drift" field could only answer
+ * "right now", and would lose the history the moment somebody fixed the schema.
  *
  * [versionHash] is the tie back to the schema this was judged against. A `DriftCheckRunner` stamps
  * the declared version into a [MetamodelVersionStore] before writing the report, so the hash always
- * resolves through [MetamodelVersionStore.findVersion] — you can pull a year-old report and still
+ * resolves through [MetamodelVersionStore.findVersion]. Pull a year-old report and you can still
  * recover the exact shape that was expected when it was taken.
  *
  * @property schemaName The declared schema's name at check time. Together with [versionHash] this
@@ -40,8 +39,8 @@ import java.util.Objects
  * @property driftedEntityTypes Entity type names (labels) the graph held but the schema never
  *   declared, sorted the way the diff produced them.
  * @property driftedRelationshipTypes Relationship type names observed with no matching declaration.
- * @property capturedAt When the observation was taken — the [ObservedSchema.capturedAt] of the
- *   snapshot it was computed from, not the time of the write.
+ * @property capturedAt When the observation was taken: the [ObservedSchema.capturedAt] of the
+ *   snapshot it was computed from, rather than the time of the write.
  * @property contextId The context the check was scoped to, or `null` when it covered the whole
  *   graph.
  */
@@ -54,11 +53,11 @@ class DriftReport @JvmOverloads constructor(
     val contextId: ContextId? = null,
 ) {
 
-    // Both sets are copied into genuinely immutable ones that keep the order they arrived in, and
-    // this is a plain class rather than a `data class`, for the same reason as everything else in
-    // this module: a record of a moment must not be reshapeable afterwards, Kotlin's read-only
-    // `Set` is a compile-time promise a Java caller sees straight through, and a generated `copy()`
-    // would hand its arguments to the fields and skip the copying entirely.
+    // Both sets are copied into JVM-immutable ones that keep the order they arrived in, and this
+    // is a plain class rather than a `data class`, for the same reason as the rest of this module:
+    // a record of a moment must not be reshapeable afterwards, Kotlin's read-only `Set` is a
+    // compile-time promise a Java caller sees straight through, and a generated `copy()` would hand
+    // its arguments to the fields and skip the copying.
 
     val driftedEntityTypes: Set<String> = immutableCopy(driftedEntityTypes)
 
@@ -99,44 +98,39 @@ class DriftReport @JvmOverloads constructor(
 }
 
 /**
- * Durable log of drift checks. Append-only in spirit: nothing is ever deleted, so the history of
- * what a graph looked like against what was declared accumulates and stays answerable.
+ * Durable log of drift checks. Nothing is ever deleted, so the history of what a graph held against
+ * what was declared accumulates and stays answerable.
  *
  * Kept apart from [MetamodelVersionStore] on purpose. Stamps and reports have different lifetimes
- * and very different volumes — a schema gets stamped when somebody changes it, while a scheduled
- * drift check writes a report every run whether it found anything or not. Folding both into one
- * interface would force any backend to serve both access patterns, and would make "I only want to
- * record versions" impossible to express.
+ * and volumes: a schema gets stamped when somebody changes it, while a scheduled drift check writes
+ * a report every run. Folding both into one interface would force any backend to serve both access
+ * patterns, and would make "I only want to record versions" impossible to express.
  *
- * **What "save" means here.** [saveDriftReport] is an upsert on the natural key `(schemaName,
- * versionHash, capturedAt, contextId)`. Two observations differing in any of those are separate
- * records; re-saving one with the same key overwrites its drifted type sets rather than adding a
- * duplicate.
+ * [saveDriftReport] is an upsert on the natural key `(schemaName, versionHash, capturedAt,
+ * contextId)`. Two observations differing in any of those are separate records; re-saving one with
+ * the same key overwrites its drifted type sets rather than adding a duplicate.
  *
  * ## Every read is bounded
  *
- * There is no "give me all of them". A drift log grows once per check per schema forever, so an
- * unbounded read is a query that works on a laptop and falls over in production after a month of
- * hourly checks — and the caller who wrote it had no way to know. Every read here therefore takes a
- * `limit`, and optionally a `since` instant to bound the window as well. Callers ask for a page;
- * they never ask for a table.
+ * There is no unbounded read. A drift log grows once per check per schema forever, so an unbounded
+ * query works on a laptop and falls over in production after a month of hourly checks. Every read
+ * here takes a `limit`, and optionally a `since` instant to bound the window.
  *
- * ## Three reads, no defaults
+ * ## Three reads, each explicit about scope
  *
- * The scope is explicit at the call site: [driftReports] is everything, [globalDriftReports] is
- * only unscoped whole-graph checks, and [driftReportsInContext] is one context's. Three names
- * rather than one method with a nullable context, because `driftReports(schema, null)` would have
- * quietly meant "the global ones" while `driftReports(schema)` meant "all of them" — the same
- * looking call with a different answer and nothing but the doc to tell them apart. Splitting them
- * also gives Java callers a way to reach the global reports at all: `ContextId` is a Kotlin value
- * class, so [driftReportsInContext] compiles to a mangled JVM name Java can't call, while the other
- * two stay callable.
+ * The scope is named at the call site: [driftReports] is everything, [globalDriftReports] is only
+ * unscoped whole-graph checks, and [driftReportsInContext] is one context's. Three names rather than
+ * one method with a nullable context, because `driftReports(schema, null)` would have meant "the
+ * global ones" while `driftReports(schema)` meant "all of them", two near-identical calls with
+ * different answers. Splitting them also gives Java callers a way to reach the global reports:
+ * `ContextId` is a Kotlin value class, so [driftReportsInContext] compiles to a mangled JVM name
+ * Java can't call, while the other two stay callable.
  *
- * None of the three has a default body, and that is the direct consequence of bounding the reads.
- * Filtering `driftReports(schema, limit)` down to the global ones in memory would return at most
- * `limit` rows *before* the filter, so a schema whose recent history is mostly context-scoped could
- * report zero global drift while plenty sat in the store — a wrong answer that looks like a right
- * one. The scope has to be pushed down into the query, so each implementation writes all three.
+ * None of the three has a default body, which follows from bounding the reads. Filtering
+ * `driftReports(schema, limit)` down to the global ones in memory would return at most `limit` rows
+ * *before* the filter, so a schema whose recent history is mostly context-scoped could report zero
+ * global drift while plenty sat in the store. The scope has to be pushed down into the query, so
+ * each implementation writes all three.
  */
 interface DriftReportStore {
 
@@ -148,8 +142,8 @@ interface DriftReportStore {
     fun saveDriftReport(report: DriftReport)
 
     /**
-     * Reports for a schema at any scope — global checks and every context's, mixed together —
-     * newest first by [DriftReport.capturedAt].
+     * Reports for a schema at any scope: global checks and every context's, mixed together, newest
+     * first by [DriftReport.capturedAt].
      *
      * @param schemaName The schema to look up.
      * @param limit The most reports to return. Must be positive.
@@ -162,8 +156,7 @@ interface DriftReportStore {
     /**
      * The same read with no time window.
      *
-     * A real overload with a body rather than a Kotlin default argument, so Java callers can write
-     * it too — Java cannot see a Kotlin default argument.
+     * A real overload with a body rather than a Kotlin default argument, which Java cannot see.
      *
      * @param schemaName The schema to look up.
      * @param limit The most reports to return. Must be positive.
@@ -173,8 +166,8 @@ interface DriftReportStore {
         driftReports(schemaName, limit, null)
 
     /**
-     * Reports from unscoped, whole-graph checks only — those whose [DriftReport.contextId] is
-     * `null`. A check scoped to a context is excluded no matter which context it was.
+     * Reports from unscoped, whole-graph checks only: those whose [DriftReport.contextId] is
+     * `null`. A check scoped to a context is excluded whichever context it was.
      *
      * @param schemaName The schema to look up.
      * @param limit The most reports to return. Must be positive.

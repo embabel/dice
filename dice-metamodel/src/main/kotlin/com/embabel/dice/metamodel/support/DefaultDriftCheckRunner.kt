@@ -32,25 +32,23 @@ import com.embabel.dice.proposition.PropositionStore
 import org.slf4j.LoggerFactory
 
 /**
- * The shipped [DriftCheckRunner]. It sequences the collaborators and decides nothing itself: the
- * comparison belongs to the differ, the quarantine call to the policy, and this class only makes
- * sure they happen in an order that leaves a coherent record behind.
+ * The shipped [DriftCheckRunner]. It sequences the collaborators and makes no decisions of its own:
+ * the comparison belongs to the differ and the quarantine call to the policy, and this class puts
+ * them in an order that leaves a coherent record behind.
  *
  * Stateless, so calling it repeatedly or for different schemas at once is fine. Two concurrent
- * checks of the *same* schema aren't corrupting — each captures its own complete snapshot — but
- * they are wasteful; serialize at the scheduling layer if that matters.
+ * checks of the same schema don't corrupt anything, since each captures its own complete snapshot,
+ * but they duplicate work; serialize at the scheduling layer if that matters.
  *
- * ## Stamp before you report
+ * ## The version is stamped before the report is written
  *
- * The declared version is saved to [versionStore] on **every** run, before the report is written.
- * That looks redundant, because a version that hasn't changed re-saves onto its own key and stores
- * nothing new. The point is the guarantee it buys: a [DriftReport] records the
- * [MetamodelVersion.contentHash] it was judged against, and that hash is only useful if it resolves
- * back to a real stamp through [MetamodelVersionStore.findVersion]. Stamping last, or only when the
- * schema moved, leaves the first check after a schema change pointing at a hash nothing has ever
- * recorded — the reports that matter most are exactly the ones that would dangle. Since
- * `saveVersion` upserts on `(schemaName, contentHash)`, paying for it every run costs one idempotent
- * write and removes the failure mode entirely.
+ * The declared version is saved to [versionStore] on every run, before the report is written, even
+ * when it hasn't changed and re-saves onto its own key. A [DriftReport] records the
+ * [MetamodelVersion.contentHash] it was judged against, and that hash is only useful when it
+ * resolves back to a real stamp through [MetamodelVersionStore.findVersion]. Stamping last, or only
+ * when the schema moved, would leave the first check after a schema change pointing at a hash
+ * nothing has recorded. `saveVersion` upserts on `(schemaName, contentHash)`, so doing it every run
+ * costs one idempotent write.
  *
  * @param declaredSchemaSource Supplies the schema as declared. Read first, so everything downstream
  *   is judged against one declaration.
@@ -58,14 +56,14 @@ import org.slf4j.LoggerFactory
  *   resolve.
  * @param observedSchemaSource Snapshots what the live graph actually contains.
  * @param differ Compares the declaration against the observation.
- * @param driftReportStore Durable log the report is written to — every run, drift or not.
+ * @param driftReportStore Durable log the report is written to, on every run.
  * @param quarantinePolicy Decides which stranded propositions to quarantine. Consulted only on a
- *   live run that found entity-type drift; this runner never reimplements the decision.
+ *   live run that found entity-type drift.
  * @param propositionStore Where candidate propositions are read from and quarantined copies are
- *   saved back to. The base persistence port, not `PropositionRepository`: a drift check only ever
- *   reads by context or in bulk and saves, so asking for vector search, graph traversal and
- *   temporal query alongside would shut a plain store-and-retrieve backend out of drift checking
- *   for capabilities it is never asked to use.
+ *   saved back to. The base persistence port rather than `PropositionRepository`: a drift check only
+ *   reads by context or in bulk and saves, so requiring vector search, graph traversal and temporal
+ *   query alongside would shut a plain store-and-retrieve backend out of drift checking for
+ *   capabilities it never uses.
  */
 class DefaultDriftCheckRunner(
     private val declaredSchemaSource: DeclaredSchemaSource,
@@ -82,8 +80,8 @@ class DefaultDriftCheckRunner(
     override fun run(dryRun: Boolean, contextId: ContextId?): DriftCheckResult {
         val declared = declaredSchemaSource.declare()
 
-        // Stamp first — see the class doc. This has to happen before the report is written, so the
-        // hash the report carries is already resolvable by the time anyone can read it.
+        // Before the report is written, so the hash the report carries is already resolvable by the
+        // time anyone can read it. See the class doc.
         versionStore.saveVersion(declared.version)
 
         val observed = observedSchemaSource.observe(contextId)
@@ -94,12 +92,12 @@ class DefaultDriftCheckRunner(
             versionHash = declared.version.contentHash,
             driftedEntityTypes = diff.driftedEntityTypes,
             driftedRelationshipTypes = diff.driftedRelationshipTypes,
-            // The instant the graph was looked at, not the instant this write happens: the report
-            // is a statement about the snapshot.
+            // The instant the graph was looked at, rather than the instant of this write: the
+            // report is a statement about the snapshot.
             capturedAt = observed.capturedAt,
             contextId = contextId,
         )
-        // Written unconditionally. A zero-drift check is a fact worth having on record, not a no-op.
+        // Written on every run, including checks that found nothing.
         driftReportStore.saveDriftReport(report)
 
         val quarantinedCount = if (!dryRun && diff.driftedEntityTypes.isNotEmpty()) {
@@ -125,16 +123,15 @@ class DefaultDriftCheckRunner(
     /**
      * Hand the drifted types to [quarantinePolicy] and persist whatever it flags.
      *
-     * The policy takes a [MetamodelDiff] — two *declared* versions compared — but what a drift check
-     * has is a declaration compared against a live observation, which is a different question. They
-     * agree on the part the policy cares about, though: a mention whose type the declared schema
-     * doesn't recognise is stranded either way, whether the type was dropped from a newer
-     * declaration or was never declared at all. So we synthesize the equivalent diff — nothing but a
-     * [MetamodelChange.EntityTypeRemoved] per drifted type — and let the real policy decide, rather
-     * than re-deciding quarantine here with a second, subtly different rule.
+     * The policy takes a [MetamodelDiff], which compares two declared versions, while a drift check
+     * has a declaration compared against a live observation. On the part the policy uses they agree:
+     * a mention whose type the declared schema doesn't recognise is stranded whether the type was
+     * dropped from a newer declaration or never declared at all. So this synthesizes the equivalent
+     * diff, one [MetamodelChange.EntityTypeRemoved] per drifted type, and lets the policy decide,
+     * instead of applying a second quarantine rule here.
      *
      * Both ends of the synthesized diff point at the same declared version. There was no old-to-new
-     * transition; the two sides are there only so the policy's reason string has something to name.
+     * transition; the two sides are there so the policy's reason string has something to name.
      */
     private fun quarantineDriftedEntityTypes(
         declaredVersion: MetamodelVersion,
@@ -146,8 +143,8 @@ class DefaultDriftCheckRunner(
             toVersion = declaredVersion,
             changes = driftedEntityTypes.sorted().map { MetamodelChange.EntityTypeRemoved(it) },
         )
-        // Scoping is the whole blast radius: a proposition in another context is never a candidate,
-        // so nothing this run does can reach it, whatever its mentions say.
+        // A proposition in another context is never a candidate, whatever its mentions say, so a
+        // scoped run cannot reach outside its context.
         val propositions = if (contextId != null) {
             propositionStore.findByContextId(contextId)
         } else {
