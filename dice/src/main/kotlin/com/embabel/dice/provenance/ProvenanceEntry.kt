@@ -33,6 +33,7 @@ package com.embabel.dice.provenance
  * @property endOffset Optional exclusive end character offset within the source/chunk
  * @property contentHash Optional hash of the source content. Comparing it against the
  *   source later can reveal that the source has since changed.
+ * @property sourceRevision Optional provider-defined opaque revision of the source
  */
 data class ProvenanceEntry @JvmOverloads constructor(
     val locator: SourceLocator,
@@ -40,6 +41,7 @@ data class ProvenanceEntry @JvmOverloads constructor(
     val startOffset: Int? = null,
     val endOffset: Int? = null,
     val contentHash: String? = null,
+    val sourceRevision: String? = null,
 ) {
 
     init {
@@ -48,5 +50,8 @@ data class ProvenanceEntry @JvmOverloads constructor(
         require(
             startOffset == null || endOffset == null || endOffset >= startOffset
         ) { "endOffset must be >= startOffset" }
+        require(sourceRevision == null || sourceRevision.isNotBlank()) {
+            "sourceRevision must not be blank"
+        }
     }
 }

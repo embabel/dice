@@ -40,11 +40,13 @@ import com.embabel.dice.temporal.TemporalMetadata
  * `metadata` rides along as a Drivine `@PropertyBag`.
  *
  * Two views over the same `:Proposition` node:
- * - [PropositionView] — lean (mentions only); the bulk/query/vector workhorse. [toProposition] from it
- *   returns a [Proposition] with **empty** `provenanceEntries` (provenance isn't projected).
- * - [PropositionWithProvenanceView] — adds `DERIVED_FROM` → shared [SourceNode]; used by `save` and
- *   `findById`. Sources are MERGEd by `SourceLocator.key()`, so a source cited by many propositions is
- *   one node.
+ * - [PropositionView] — lean (mentions only); the bulk/query/vector workhorse, and now the read side
+ *   of every path. [toProposition] from it returns a [Proposition] with **empty**
+ *   `provenanceEntries` (provenance isn't projected).
+ * - [PropositionWithProvenanceView] — adds `DERIVED_FROM` → shared [SourceNode]. Sources are MERGEd
+ *   by `SourceLocator.key()`, so a source cited by many propositions is one node. Its only remaining
+ *   use is the cascade in `DrivinePropositionRepository.delete`: provenance writes and reads both
+ *   moved to raw Cypher so parallel source revisions keep their own edges.
  *
  * The graph carries an `embedding` that is *not* part of [Proposition]; the repository owns it and
  * passes it in. `EntityMention.hints` is not yet persisted.
@@ -55,7 +57,13 @@ object PropositionGraphMapper {
     fun toView(p: Proposition, embedding: List<Float>? = null): PropositionView =
         PropositionView(proposition = nodeOf(p, embedding), mentions = mentionsOf(p))
 
-    /** Full view: mentions + provenance (`DERIVED_FROM` → shared [SourceNode]). */
+    /**
+     * Full view: mentions + provenance (`DERIVED_FROM` → shared [SourceNode]).
+     *
+     * No production caller left once provenance writes moved to raw Cypher. Kept for now because
+     * `delete` still cascades through the view it builds; slice 2 of the source-revision work decides
+     * whether both go.
+     */
     fun toProvenanceView(p: Proposition, embedding: List<Float>? = null): PropositionWithProvenanceView =
         PropositionWithProvenanceView(
             proposition = nodeOf(p, embedding),
@@ -168,22 +176,25 @@ object PropositionGraphMapper {
 
     // ---- Provenance: ProvenanceEntry <-> (DERIVED_FROM edge + shared Source node) ----
 
-    private fun toDerivedFrom(e: ProvenanceEntry): DerivedFrom =
+    internal fun toDerivedFrom(e: ProvenanceEntry): DerivedFrom =
         DerivedFrom(
             chunkId = e.chunkId,
             startOffset = e.startOffset,
             endOffset = e.endOffset,
             contentHash = e.contentHash,
             source = toSourceNode(e.locator),
+            sourceRevision = e.sourceRevision,
+            entryKey = provenanceStorageEntryKey(e),
         )
 
-    private fun toProvenanceEntry(df: DerivedFrom): ProvenanceEntry =
+    internal fun toProvenanceEntry(df: DerivedFrom): ProvenanceEntry =
         ProvenanceEntry(
             locator = toLocator(df.source),
             chunkId = df.chunkId,
             startOffset = df.startOffset,
             endOffset = df.endOffset,
             contentHash = df.contentHash,
+            sourceRevision = df.sourceRevision,
         )
 
     private fun toSourceNode(loc: SourceLocator): SourceNode =
@@ -228,3 +239,24 @@ object PropositionGraphMapper {
         )
     }
 }
+
+/**
+ * The storage identity of one `DERIVED_FROM` edge: every field of the evidence tuple, length-framed
+ * so a `-1` stands for null and no value needs escaping.
+ *
+ * This is deliberately a separate encoding from the domain's `ProvenanceEvidenceKey`, which is
+ * `internal` to the `dice` module and is the format collector traces record. Graph rows and fold
+ * records have different lifetimes, and pinning one to the other would make a change to either a
+ * migration of both.
+ */
+internal fun provenanceStorageEntryKey(entry: ProvenanceEntry): String =
+    listOf(
+        entry.locator.key(),
+        entry.sourceRevision,
+        entry.chunkId,
+        entry.startOffset?.toString(),
+        entry.endOffset?.toString(),
+        entry.contentHash,
+    ).joinToString(separator = "") { value ->
+        if (value == null) "-1:" else "${value.length}:$value"
+    }
