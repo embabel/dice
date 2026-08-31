@@ -15,19 +15,24 @@
  */
 package com.embabel.dice;
 
+import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.provenance.ContentAddressedLocator;
 import com.embabel.dice.provenance.ProvenanceEntry;
 import com.embabel.dice.provenance.SourceLocator;
 import com.embabel.dice.provenance.SourceRevisionRef;
+import com.embabel.dice.spi.RetiredProposition;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Java's view of the revision contract. {@code @JvmOverloads} on {@link ProvenanceEntry} means
- * every constructor descriptor a Java caller could already have compiled against survives, and the
- * new revision argument arrives as one extra descriptor on the end.
+ * Java's view of the revision contract. {@code @JvmOverloads} on {@link ProvenanceEntry} and
+ * {@link RetiredProposition} means every constructor descriptor a Java caller could already have
+ * compiled against survives, and each new argument arrives as one extra descriptor on the end.
  */
 class SourceRevisionJavaInteropTest {
 
@@ -51,6 +56,44 @@ class SourceRevisionJavaInteropTest {
                 String.class,
                 String.class
         );
+
+        RetiredProposition.class.getConstructor(
+                String.class,
+                PropositionStatus.class,
+                List.class,
+                List.class,
+                List.class
+        );
+        RetiredProposition.class.getConstructor(
+                String.class,
+                PropositionStatus.class,
+                List.class,
+                List.class,
+                List.class,
+                List.class
+        );
+    }
+
+    @Test
+    void javaCallersBuildAndReadFoldedEvidenceKeys() {
+        RetiredProposition legacy = new RetiredProposition(
+                "retired",
+                PropositionStatus.ACTIVE,
+                List.of("chunk-1"),
+                List.of("uri:https://example.com/source"),
+                List.of("src-1")
+        );
+        assertTrue(legacy.getFoldedProvenanceEvidenceKeys().isEmpty());
+
+        RetiredProposition revisioned = new RetiredProposition(
+                "retired",
+                PropositionStatus.ACTIVE,
+                List.of("chunk-1"),
+                List.of("uri:https://example.com/source"),
+                List.of("src-1"),
+                List.of("dice-provenance:v1:opaque")
+        );
+        assertEquals(List.of("dice-provenance:v1:opaque"), revisioned.getFoldedProvenanceEvidenceKeys());
     }
 
     @Test

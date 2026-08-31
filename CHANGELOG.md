@@ -51,10 +51,6 @@ and the consumer PRs that deliver it).
   `clearProvenance`, which previously sat only on `PropositionRepository`, so evidence-sensitive
   callers can depend on the capability without probing for a richer type at runtime. Design note:
   [docs/design/source-revisions.md](docs/design/source-revisions.md).
-  **Interim limitation.** Collapse records fold references as plain locator keys until the collector
-  slice lands, so undoing a collapse that folded revisioned evidence leaves those entries on the
-  survivor; evidence is retained, never wrongly deleted. `ProvenanceEvidenceKey` is the codec that
-  will make those references exact.
   **Compatibility: additive, with a scoped ABI boundary.** Source, JSON, and Java
   constructor-descriptor compatibility are claimed: existing Kotlin and Java call sites compile
   unchanged, provenance JSON written before this change loads and round-trips with a null revision,
@@ -127,3 +123,93 @@ and the consumer PRs that deliver it).
   by an exactly matching revisionless entry. A graph written by a build of the previous entry in this
   block holds prefix-less keys that this build does not recognise, and re-saving that evidence adds a
   second edge for it; clearing such a development store is the whole of the fix.
+
+- Precise undo of a collapse that folded revisioned evidence (third slice of DICE #64).
+  `RetiredProposition` gains `foldedProvenanceEvidenceKeys`, one `ProvenanceEvidenceKey` per entry a
+  fold actually added to the survivor, and `MultiSignalCollectorStrategy` records it. Recording by
+  locator key alone was wrong in two ways, both now fixed: a loser citing `r2` of a document the
+  survivor already cited at `r1` shares that survivor's locator key, so the fold recorded nothing and
+  `r2` stayed on the survivor after an undo; and a bare locator key matches revisionless evidence
+  only, so a recorded ref could not reach a revisioned entry either. `undoSingleCollapse` now
+  subtracts evidence through a new `PropositionStore.subtractProvenance`, which names the refs to
+  remove — the ordinary `save` on the graph backend appends provenance and deletes no edge, so the
+  folded rows used to outlive the undo, and the authoritative replace that would remove them has to
+  name what *stays*, silently discarding evidence a concurrent extraction added since the read.
+  `subtractProvenance` ships with that read-modify-write as its default, documented, and
+  `DrivinePropositionRepository` overrides it with one statement that deletes the named edges and
+  prunes only their orphaned sources. Undo also reads both the survivor and the retired proposition
+  before writing anything, so a collapse whose participants have since been deleted leaves nothing
+  half-written. It also authorizes on two conditions rather than trusting the trace: the collapse
+  must be one the collector applied *into this survivor*, and it must still be in force.
+
+  The first condition needed a fact nothing recorded, so `CollectorRecord` gains `mergedIntoId` —
+  the survivor a sweep actually folded a proposition into, written by `DefaultCollectorRunner` only
+  after the merge is saved. Three different outcomes used to be indistinguishable from an applied
+  merge: a `StatusTransitionSweepPolicy` retirement, the fallback retirement the runner performs
+  when a merge target has vanished or is no longer active, and a member marked as a duplicate of
+  several survivors by different strategies, where only one merge ran. All three now leave
+  `mergedIntoId` null or naming the real target. The field is written identically on every record a
+  run writes for a proposition, which matters because `DrivineCollectorRecordStore` MERGEs on
+  (`propositionId`, `runId`) and keeps one row per member per run while the in-memory store keeps
+  one per mark — reading a merge target off a mark gave different answers on the two stores.
+  `undoSingleCollapse` takes an optional `CollectorRecordStore` and, given one, requires a non-dry
+  run and a record naming this survivor as the applied target.
+
+  The second condition is that the undo has not already run, which needed a second new field:
+  `CollectorRecord.undoneAt`, stamped by `undoSingleCollapse` when it finishes. Audit records never
+  expire, so without it a member re-retired later by anything at all — a decay sweep, a second
+  collector run — would re-arm the original undo and let it subtract that run's evidence a second
+  time, taking evidence the survivor had since re-gained and clobbering the newer retirement. A
+  store keyed by (proposition, run) updates its row in place; one that appends leaves the original
+  beside the stamped copy, and any stamped record for the pair settles it. Replaying a collector
+  outcome no longer erases the stamp — `DrivineCollectorRecordStore` writes it through `coalesce`,
+  and `CollectorRecordStore.record` states that requirement for other implementations. The stamp is
+  written after the survivor's evidence comes off but before the member's status is restored, so
+  every interruption of an undo is recoverable: before the stamp a retry re-runs the whole thing
+  (the subtraction is recomputed from current evidence, so it removes nothing twice), and after it a
+  retry completes the restore alone and touches no evidence. Recognising that half-finished state
+  needs the record to say where the collapse left the member and no other run to have *written* the
+  member since — counted over `TRANSITIONED` and `HARD_DELETED` records from non-dry runs, since a
+  `SKIPPED` record states a run left it alone and a dry run changes nothing. The member's own status is checked as
+  well, and is all a caller without records has. It costs one deliberate false
+  refusal — a member whose undo has not run and which has since revived to its prior status reads as
+  never retired, and refusing leaves evidence alone where accepting could delete it silently. A
+  sibling's folded refs are held on the survivor only until that sibling's own undo has run — read
+  from its `undoneAt` when records are supplied, so a sibling undone and then retired again by a
+  later run no longer reads as still participating — and undoing every member of a shared fold
+  returns the survivor to its pre-collapse evidence instead of pinning the shared entry forever.
+  The survivor's evidence subtraction now completes before the save that a decorator such as
+  `EventEmittingPropositionRepository` publishes from, so a listener sees the post-undo state.
+  `DrivineCollectorTraceStore` persists and reads the new field. Tests fold a
+  revisioned loser into a survivor, undo, and assert the survivor's evidence and its `DERIVED_FROM`
+  edge count are exactly what they were before the fold, in memory and against Neo4j. Design note:
+  [docs/design/source-revisions.md](docs/design/source-revisions.md).
+  **Compatibility: additive, with the same scoped ABI boundary as the first slice.** `@JvmOverloads`
+  on `RetiredProposition` preserves the five-argument Java constructor descriptor and adds one on the
+  end; full Kotlin synthetic constructor and `copy` ABI is not claimed, since adding a field to a
+  data class changes `copy`/`componentN` and the synthetic `$default` constructor. Stored traces need
+  no migration: a `:CollectorRetired` row written before this change has no
+  `foldedProvenanceEvidenceKeys` property, reads back with an empty list, and undoes at locator
+  granularity exactly as it did. Evidence keys are left out of the JSON view of a trace, so existing
+  trace JSON is unchanged and a trace that goes through JSON comes back undoing at locator
+  granularity. Three behavioural notes for hosts: undo now issues a `subtractProvenance` call *before* the
+  survivor's `save`, so a custom `PropositionStore` sees that call — and gets the documented
+  read-modify-write default unless it overrides — while the event a save decorator publishes
+  describes the survivor's final state; undo writes to the record
+  store when one is supplied, re-recording the run's row for the member with `undoneAt` set between
+  the survivor's writes and the member's restore; and an undo returns null having written nothing
+  when a survivor or retired member no longer exists, when the collapse cannot be shown to have been
+  applied into this survivor, when that collapse has already been undone, or when the member is not
+  currently retired — where it could previously have saved the reduced survivor first. An undo
+  interrupted after its stamp resumes by restoring the member only, without re-deriving evidence. `undoSingleCollapse` gains a trailing optional
+  `CollectorRecordStore` parameter and `@JvmOverloads`, so the existing four-argument descriptor
+  survives for both Kotlin and Java callers; the four-argument form keeps the weaker status-based
+  check, documented as such in its KDoc. `PropositionStore` gains `subtractProvenance` with a
+  default implementation, so every existing store compiles and behaves as before.
+  `CollectorRecord` gains trailing optional `mergedIntoId` and
+  `undoneAt` fields, keeping every existing constructor and `of(...)` descriptor through the
+  `@JvmOverloads` already on both; audit rows written before this change carry neither property and
+  read back as no merge and no undo, which is the right answer for a graph that predates them. Undo
+  now reads each sibling of a collapse, so a decision with many retired members
+  costs one extra read per
+  member.

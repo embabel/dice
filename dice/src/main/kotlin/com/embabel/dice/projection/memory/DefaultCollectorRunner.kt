@@ -140,7 +140,13 @@ class DefaultCollectorRunner(
                     is SweepAction.TransitionStatus ->
                         records += records(decision.marks, runId, CollectorOutcome.MARKED, proposition.status, action.newStatus)
                     is SweepAction.MergeInto ->
-                        records += records(decision.marks, runId, CollectorOutcome.MARKED, proposition.status, action.thenStatus)
+                        // The preview's target, unresolved: a real run walks survivor chains and
+                        // breaks cycles before merging. The run header's dryRun flag is what says
+                        // this did not happen.
+                        records += records(
+                            decision.marks, runId, CollectorOutcome.MARKED, proposition.status, action.thenStatus,
+                            mergedIntoId = action.survivorId,
+                        )
                     SweepAction.HardDelete ->
                         records += records(decision.marks, runId, CollectorOutcome.MARKED, proposition.status, null)
                     SweepAction.Skip -> {
@@ -266,7 +272,13 @@ class DefaultCollectorRunner(
                 freshById[survivorId] = savedSurvivor
                 for ((decision, action) in group) {
                     val loser = freshById.getValue(decision.propositionId)
-                    val saved = retire(loser, action.thenStatus, decision.marks, runId, records, applied)
+                    // The merge is done, so each loser's records name the survivor it landed on.
+                    // This is the only place that fact exists: a loser's marks may propose several
+                    // survivors, and only one of them received the evidence.
+                    val saved = retire(
+                        loser, action.thenStatus, decision.marks, runId, records, applied,
+                        mergedIntoId = survivorId,
+                    )
                     freshById[decision.propositionId] = saved
                 }
             }
@@ -383,6 +395,12 @@ class DefaultCollectorRunner(
      *
      * @return the saved proposition, so a caller tracking per-run freshest state can cache it.
      */
+    /**
+     * @param mergedIntoId the survivor this proposition's evidence was just folded into, or null
+     *   when it is being retired without a merge. Recorded on every one of its marks' records so
+     *   an audit store that keeps one row per (proposition, run) answers the same as one that keeps
+     *   them all.
+     */
     private fun retire(
         proposition: Proposition,
         newStatus: PropositionStatus,
@@ -390,10 +408,11 @@ class DefaultCollectorRunner(
         runId: String,
         records: MutableList<CollectorRecord>,
         applied: MutableList<PropositionMark>,
+        mergedIntoId: String? = null,
     ): Proposition {
         val previousStatus = proposition.status
         val saved = repository.save(proposition.withStatus(newStatus))
-        records += records(propMarks, runId, CollectorOutcome.TRANSITIONED, previousStatus, newStatus)
+        records += records(propMarks, runId, CollectorOutcome.TRANSITIONED, previousStatus, newStatus, mergedIntoId)
         applied.addAll(propMarks)
         emitStatusChanged(saved, previousStatus, newStatus, propMarks)
         return saved
@@ -405,6 +424,7 @@ class DefaultCollectorRunner(
         outcome: CollectorOutcome,
         previousStatus: PropositionStatus?,
         newStatus: PropositionStatus?,
+        mergedIntoId: String? = null,
     ): List<CollectorRecord> = propMarks.map { mark ->
         CollectorRecord(
             propositionId = mark.propositionId,
@@ -414,6 +434,7 @@ class DefaultCollectorRunner(
             runId = runId,
             previousStatus = previousStatus,
             newStatus = newStatus,
+            mergedIntoId = mergedIntoId,
         )
     }
 

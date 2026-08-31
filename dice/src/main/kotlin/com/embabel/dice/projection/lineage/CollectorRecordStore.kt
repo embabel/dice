@@ -31,6 +31,13 @@ interface CollectorRecordStore {
     /**
      * Record a collector outcome.
      *
+     * Replaying an outcome is supported and expected. An implementation that upserts on a natural
+     * key must not let a replay clear a stored [CollectorRecord.undoneAt]: the replayed record
+     * carries none, and dropping the stamp would re-authorize a collapse that has already been
+     * undone. Take the incoming value when it is non-null and keep the stored one otherwise. An
+     * append-only implementation satisfies this by construction, since the stamped record survives
+     * alongside the replayed one.
+     *
      * @param record The collector record to store
      */
     fun record(record: CollectorRecord)

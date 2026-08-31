@@ -186,6 +186,62 @@ class DrivineLineageRecordStoreIntegrationTest {
     }
 
     @Test
+    fun `the applied merge target and its undo stamp round-trip, and stamping updates in place`() {
+        val record = CollectorRecord(
+            propositionId = "p-merged",
+            reason = MarkReason.Duplicate("proposed-survivor"),
+            outcome = CollectorOutcome.TRANSITIONED,
+            strategyName = "dedup",
+            runId = "run-merge",
+            at = Instant.parse("2026-01-01T00:01:00Z"),
+            previousStatus = PropositionStatus.ACTIVE,
+            newStatus = PropositionStatus.STALE,
+            mergedIntoId = "applied-survivor",
+        )
+
+        collectorStore.record(record)
+        assertEquals(record, collectorStore.all().single())
+
+        // Finishing an undo re-records the same natural key with the stamp set.
+        val stamped = record.copy(undoneAt = Instant.parse("2026-01-02T00:00:00Z"))
+        collectorStore.record(stamped)
+
+        val reloaded = collectorStore.all().single()
+        assertEquals(stamped, reloaded)
+        assertEquals("applied-survivor", reloaded.mergedIntoId)
+        assertEquals(Instant.parse("2026-01-02T00:00:00Z"), reloaded.undoneAt)
+
+        // Replaying the original outcome must not wipe the stamp: a replayed record carries none,
+        // and a plain SET would clear the stored one and re-authorize the collapse.
+        collectorStore.record(record)
+
+        assertEquals(stamped, collectorStore.all().single())
+    }
+
+    @Test
+    fun `a collector row written before the merge and undo properties existed reads back without them`() {
+        // Simulates a graph written by an earlier build: the node has no mergedIntoId or undoneAt.
+        persistenceManager.execute(
+            QuerySpecification.withStatement(
+                """
+                CREATE (n:CollectorRecord {
+                    propositionId: 'p-legacy', runId: 'run-legacy', reason: 'duplicate',
+                    survivorId: 'survivor-legacy', outcome: 'TRANSITIONED', strategyName: 'dedup',
+                    at: '2026-01-01T00:00:00Z', previousStatus: 'ACTIVE', newStatus: 'STALE'
+                })
+                """.trimIndent(),
+            ),
+        )
+
+        val legacy = collectorStore.findByProposition("p-legacy").single()
+
+        assertNull(legacy.mergedIntoId, "an old row records no merge, so it cannot authorize an undo")
+        assertNull(legacy.undoneAt)
+        assertEquals("survivor-legacy", (legacy.reason as MarkReason.Duplicate).survivorId)
+        assertEquals(CollectorOutcome.TRANSITIONED, legacy.outcome)
+    }
+
+    @Test
     fun `collector record is idempotent on the same proposition-run pair`() {
         collectorStore.record(
             CollectorRecord("p1", MarkReason.Stale, CollectorOutcome.MARKED, "decay", "run-1"),

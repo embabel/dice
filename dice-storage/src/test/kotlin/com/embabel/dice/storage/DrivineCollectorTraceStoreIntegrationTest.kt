@@ -16,11 +16,19 @@
 package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.projection.lineage.CollectorOutcome
+import com.embabel.dice.projection.lineage.CollectorRecord
+import com.embabel.dice.projection.lineage.CollectorRun
 import com.embabel.dice.projection.memory.collector.CollectorRunContext
 import com.embabel.dice.projection.memory.collector.CollectorSurvivorPolicy
 import com.embabel.dice.projection.memory.collector.MultiSignalCollectorStrategy
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.ProvenanceEvidenceKey
+import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.spi.CandidatePair
 import com.embabel.dice.spi.CandidatePairSource
 import com.embabel.dice.spi.CollectorCandidateEdge
@@ -29,6 +37,7 @@ import com.embabel.dice.spi.CollectorDecision
 import com.embabel.dice.spi.CollectorSignalScore
 import com.embabel.dice.spi.CollectorSignalScorer
 import com.embabel.dice.spi.InMemoryConnectedComponentsFinder
+import com.embabel.dice.spi.MarkReason
 import com.embabel.dice.spi.RetiredProposition
 import com.embabel.dice.spi.undoSingleCollapse
 import org.drivine.manager.PersistenceManager
@@ -40,6 +49,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import java.time.Instant
 
 /**
  * Integration tests for [DrivineCollectorTraceStore] against a Neo4j testcontainer (provided by
@@ -57,9 +67,12 @@ class DrivineCollectorTraceStoreIntegrationTest {
     @Autowired
     private lateinit var propositionRepository: DrivinePropositionRepository
 
+    @Autowired
+    private lateinit var recordStore: DrivineCollectorRecordStore
+
     @AfterEach
     fun cleanUp() {
-        CollectorTraceSchema.LABELS.forEach { label ->
+        (CollectorTraceSchema.LABELS + listOf("CollectorRecord", "CollectorRun")).forEach { label ->
             persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:$label) DETACH DELETE n"))
         }
         propositionRepository.clearAll()
@@ -70,6 +83,7 @@ class DrivineCollectorTraceStoreIntegrationTest {
         text: String,
         status: PropositionStatus = PropositionStatus.ACTIVE,
         grounding: List<String> = emptyList(),
+        provenance: List<ProvenanceEntry> = emptyList(),
     ) = Proposition(
         id = id,
         contextId = ContextId("ctx-undo"),
@@ -78,7 +92,50 @@ class DrivineCollectorTraceStoreIntegrationTest {
         confidence = 0.9,
         status = status,
         grounding = grounding,
+        provenanceEntries = provenance,
     )
+
+    private fun derivedFromEdges(propositionId: String): Long =
+        persistenceManager.getOne(
+            QuerySpecification
+                .withStatement("MATCH (:Proposition {id: \$id})-[r:DERIVED_FROM]->() RETURN count(r) AS c")
+                .bind(mapOf("id" to propositionId))
+                .transform(Long::class.java),
+        )
+
+    /** A deterministic one-pair collapse, so the trace under test comes from the real strategy. */
+    private fun collapsingStrategy(survivorId: String) = MultiSignalCollectorStrategy(
+        pairSources = listOf(
+            CandidatePairSource { candidates, _ -> listOf(CandidatePair(anchor = candidates[0], member = candidates[1])) },
+        ),
+        scorers = listOf(CollectorSignalScorer { _, _ -> CollectorSignalScore(signal = "fixed", score = 1.0) }),
+        componentsFinder = InMemoryConnectedComponentsFinder(),
+        traceStore = traceStore,
+        survivorPolicy = CollectorSurvivorPolicy { members -> members.single { it.id == survivorId } },
+        matchThreshold = 0.5,
+    )
+
+    /** Counts the writes an undo attempts, so "nothing was written" is an assertion. */
+    private class RecordingPropositionRepository(
+        private val delegate: PropositionRepository,
+    ) : PropositionRepository by delegate {
+
+        var writes = 0
+            private set
+
+        override fun save(proposition: Proposition): Proposition {
+            writes++
+            return delegate.save(proposition)
+        }
+
+        override fun setProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? {
+            writes++
+            return delegate.setProvenance(propositionId, entries)
+        }
+    }
+
+    /** A caller holding nothing richer than the base store contract. */
+    private class BaseStoreView(delegate: PropositionRepository) : PropositionStore by delegate
 
     private fun edge(anchorId: String, memberId: String, vetoed: Boolean = false, score: Double = 0.9) = CollectorCandidateEdge(
         anchorId = anchorId,
@@ -104,6 +161,7 @@ class DrivineCollectorTraceStoreIntegrationTest {
                 foldedGrounding = listOf("g1", "g2"),
                 foldedProvenanceRefs = listOf("prov-1"),
                 foldedSourceIds = listOf("src-1", "src-2"),
+                foldedProvenanceEvidenceKeys = listOf("dice-provenance:v1:evidence-1"),
             ),
         ),
     )
@@ -139,6 +197,7 @@ class DrivineCollectorTraceStoreIntegrationTest {
         assertEquals(listOf("g1", "g2"), retired.foldedGrounding)
         assertEquals(listOf("prov-1"), retired.foldedProvenanceRefs)
         assertEquals(listOf("src-1", "src-2"), retired.foldedSourceIds)
+        assertEquals(listOf("dice-provenance:v1:evidence-1"), retired.foldedProvenanceEvidenceKeys)
     }
 
     @Test
@@ -214,6 +273,8 @@ class DrivineCollectorTraceStoreIntegrationTest {
         assertEquals("R4", retirement?.propositionId)
         assertEquals(PropositionStatus.ACTIVE, retirement?.priorStatus)
         assertEquals(listOf("g1", "g2"), retirement?.foldedGrounding)
+        // The path undo reads: the whole node, not the projected decision row.
+        assertEquals(listOf("dice-provenance:v1:evidence-1"), retirement?.foldedProvenanceEvidenceKeys)
 
         assertNull(traceStore.findRetirement("S4")) // survivor id, not a retired member
         assertNull(traceStore.findRetirement("unknown"))
@@ -312,9 +373,12 @@ class DrivineCollectorTraceStoreIntegrationTest {
 
         strategy.mark(listOf(survivor, loser), propositionRepository, CollectorRunContext(runId, contextId))
 
-        // Merge the loser's evidence onto the survivor the way DefaultCollectorRunner would.
+        // Merge the loser's evidence onto the survivor and retire it, the way
+        // DefaultCollectorRunner would. Undo reads the retirement off the loser's status, so a
+        // fold that never transitioned it is not an applied fold.
         val mergedSurvivor = propositionRepository.findById(survivor.id)!!.absorbEvidence(loser)
         propositionRepository.save(mergedSurvivor)
+        propositionRepository.save(propositionRepository.findById(loser.id)!!.withStatus(PropositionStatus.STALE))
 
         val decision = traceStore.findDecisionsByRun(runId).single()
         val retired = decision.retired.single { it.propositionId == loser.id }
@@ -338,5 +402,289 @@ class DrivineCollectorTraceStoreIntegrationTest {
         // (a) the survivor keeps "shared" — it owned that ref before the merge.
         // (b) the survivor loses "loser-exclusive" — that one really did come from the loser.
         assertEquals(setOf("shared"), updatedSurvivor?.grounding?.toSet())
+    }
+
+    @Test
+    fun `folding a revisioned loser and undoing leaves the survivor's evidence as it was`() {
+        // The survivor cites r1 of a document; the loser cites r1 and r2. Both revisions share one
+        // locator key, so a fold recorded by locator key alone would name nothing, and r2 would sit
+        // on the survivor after the undo with an edge nobody can account for.
+        val runId = "run-revision-undo"
+        val locator = UriLocator("https://example.com/revision-undo")
+        val revisionOne = ProvenanceEntry(locator = locator, sourceRevision = "r1")
+        val revisionTwo = ProvenanceEntry(locator = locator, sourceRevision = "r2")
+        val survivor = propositionRepository.save(
+            prop("survivor-revision", "Acme signed the agreement", provenance = listOf(revisionOne)),
+        )
+        val loser = propositionRepository.save(
+            prop("loser-revision", "Acme signed an agreement", provenance = listOf(revisionOne, revisionTwo)),
+        )
+        val evidenceBeforeTheFold = propositionRepository.findById(survivor.id)!!.provenanceEntries
+        assertEquals(listOf(revisionOne), evidenceBeforeTheFold)
+        assertEquals(1L, derivedFromEdges(survivor.id))
+
+        collapsingStrategy(survivor.id).mark(
+            listOf(survivor, loser),
+            propositionRepository,
+            CollectorRunContext(runId, survivor.contextId),
+        )
+        propositionRepository.save(propositionRepository.findById(survivor.id)!!.absorbEvidence(loser))
+        propositionRepository.save(propositionRepository.findById(loser.id)!!.withStatus(PropositionStatus.STALE))
+
+        assertEquals(
+            setOf(revisionOne, revisionTwo),
+            propositionRepository.findById(survivor.id)!!.provenanceEntries.toSet(),
+        )
+        assertEquals(2L, derivedFromEdges(survivor.id))
+        assertEquals(
+            listOf(ProvenanceEvidenceKey.encode(revisionTwo)),
+            traceStore.findRetirement(loser.id)?.foldedProvenanceEvidenceKeys,
+        )
+
+        undoSingleCollapse(
+            traceQuery = traceStore,
+            propositions = propositionRepository,
+            survivorId = survivor.id,
+            retiredId = loser.id,
+        )
+
+        assertEquals(evidenceBeforeTheFold, propositionRepository.findById(survivor.id)?.provenanceEntries)
+        assertEquals(1L, derivedFromEdges(survivor.id))
+        assertEquals(PropositionStatus.ACTIVE, propositionRepository.findById(loser.id)?.status)
+    }
+
+    @Test
+    fun `undo removes folded evidence for a caller holding only the base store`() {
+        val runId = "run-base-store-undo"
+        val keep = ProvenanceEntry(UriLocator("https://example.com/base-store-undo/keep"))
+        val folded = ProvenanceEntry(UriLocator("https://example.com/base-store-undo/remove"))
+        val survivor = propositionRepository.save(
+            prop("survivor-base-store", "Acme signed the agreement", provenance = listOf(keep, folded)),
+        )
+        propositionRepository.save(
+            prop(
+                "retired-base-store",
+                "Acme signed an agreement",
+                status = PropositionStatus.STALE,
+                provenance = listOf(folded),
+            ),
+        )
+        traceStore.recordRunContext(runId, survivor.contextId)
+        traceStore.recordDecision(
+            runId,
+            CollectorDecision(
+                runId = runId,
+                componentId = "component-base-store",
+                survivorId = survivor.id,
+                action = "duplicate-merge",
+                retired = listOf(
+                    RetiredProposition(
+                        propositionId = "retired-base-store",
+                        priorStatus = PropositionStatus.ACTIVE,
+                        foldedProvenanceRefs = listOf(folded.locator.key()),
+                        foldedProvenanceEvidenceKeys = listOf(ProvenanceEvidenceKey.encode(folded)),
+                    ),
+                ),
+            ),
+        )
+
+        undoSingleCollapse(
+            traceQuery = traceStore,
+            propositions = BaseStoreView(propositionRepository),
+            survivorId = survivor.id,
+            retiredId = "retired-base-store",
+        )
+
+        assertEquals(listOf(keep), propositionRepository.findById(survivor.id)?.provenanceEntries)
+        assertEquals(1L, derivedFromEdges(survivor.id))
+    }
+
+    @Test
+    fun `undoing both members of a shared fold drains the survivor's edge back to pre-collapse`() {
+        // Two losers folded the same revision onto the survivor. Only the last undo may take it,
+        // and it must take the DERIVED_FROM edge with it — the whole point of routing evidence
+        // removal through setProvenance rather than save.
+        val runId = "run-shared-fold"
+        val locator = UriLocator("https://example.com/shared-fold")
+        val kept = ProvenanceEntry(locator = locator, sourceRevision = "r1")
+        val shared = ProvenanceEntry(locator = locator, sourceRevision = "r2")
+        val survivor = propositionRepository.save(
+            prop("survivor-shared", "Acme signed the agreement", provenance = listOf(kept, shared)),
+        )
+        propositionRepository.save(
+            prop("loser-a-shared", "Acme signed a deal", status = PropositionStatus.STALE, provenance = listOf(shared)),
+        )
+        propositionRepository.save(
+            prop("loser-b-shared", "Acme signed the deal", status = PropositionStatus.STALE, provenance = listOf(shared)),
+        )
+        val sharedKey = ProvenanceEvidenceKey.encode(shared)
+        traceStore.recordRunContext(runId, survivor.contextId)
+        traceStore.recordDecision(
+            runId,
+            CollectorDecision(
+                runId = runId,
+                componentId = "comp-shared-fold",
+                survivorId = survivor.id,
+                action = "duplicate-merge",
+                retired = listOf(
+                    RetiredProposition(
+                        propositionId = "loser-a-shared",
+                        priorStatus = PropositionStatus.ACTIVE,
+                        foldedProvenanceEvidenceKeys = listOf(sharedKey),
+                    ),
+                    RetiredProposition(
+                        propositionId = "loser-b-shared",
+                        priorStatus = PropositionStatus.ACTIVE,
+                        foldedProvenanceEvidenceKeys = listOf(sharedKey),
+                    ),
+                ),
+            ),
+        )
+        assertEquals(2L, derivedFromEdges(survivor.id))
+
+        undoSingleCollapse(traceStore, propositionRepository, survivor.id, "loser-a-shared")
+
+        assertEquals(
+            setOf(kept, shared),
+            propositionRepository.findById(survivor.id)!!.provenanceEntries.toSet(),
+        )
+        assertEquals(2L, derivedFromEdges(survivor.id))
+
+        undoSingleCollapse(traceStore, propositionRepository, survivor.id, "loser-b-shared")
+
+        assertEquals(listOf(kept), propositionRepository.findById(survivor.id)?.provenanceEntries)
+        assertEquals(1L, derivedFromEdges(survivor.id))
+        assertEquals(PropositionStatus.ACTIVE, propositionRepository.findById("loser-a-shared")?.status)
+        assertEquals(PropositionStatus.ACTIVE, propositionRepository.findById("loser-b-shared")?.status)
+    }
+
+    @Test
+    fun `on the graph store one record survives per member and it names the applied merge target`() {
+        // The audit store MERGEs on (propositionId, runId), so a member marked by two strategies
+        // keeps ONE row here and the last write wins. Reading the merge target off the mark would
+        // therefore report whichever mark happened to be written last — here, a survivor the sweep
+        // never merged into. The applied target is written on every one of the member's records, so
+        // it is the same answer whichever row survives.
+        val runId = "run-overwrite"
+        val locator = UriLocator("https://example.com/overwrite")
+        val kept = ProvenanceEntry(locator = locator, sourceRevision = "r1")
+        val disputed = ProvenanceEntry(locator = locator, sourceRevision = "r2")
+        val appliedSurvivor = propositionRepository.save(
+            prop("survivor-applied-target", "Acme signed the agreement", provenance = listOf(kept, disputed)),
+        )
+        val bystander = propositionRepository.save(
+            prop("survivor-never-merged", "Acme closed the round", provenance = listOf(kept, disputed)),
+        )
+        propositionRepository.save(
+            prop(
+                "loser-overwrite",
+                "Acme signed an agreement",
+                status = PropositionStatus.STALE,
+                provenance = listOf(disputed),
+            ),
+        )
+        // The trace names the bystander as survivor — the collapse some strategy proposed.
+        traceStore.recordRunContext(runId, bystander.contextId)
+        traceStore.recordDecision(
+            runId,
+            CollectorDecision(
+                runId = runId,
+                componentId = "comp-overwrite",
+                survivorId = bystander.id,
+                action = "duplicate-merge",
+                retired = listOf(
+                    RetiredProposition(
+                        propositionId = "loser-overwrite",
+                        priorStatus = PropositionStatus.ACTIVE,
+                        foldedProvenanceEvidenceKeys = listOf(ProvenanceEvidenceKey.encode(disputed)),
+                    ),
+                ),
+            ),
+        )
+        recordStore.recordRun(CollectorRun(runId = runId, startedAt = Instant.now(), dryRun = false))
+        // Two marks, written in the order the runner writes them, both carrying the applied target.
+        recordStore.record(collectorRecord(runId, "loser-overwrite", proposed = appliedSurvivor.id, applied = appliedSurvivor.id))
+        recordStore.record(collectorRecord(runId, "loser-overwrite", proposed = bystander.id, applied = appliedSurvivor.id))
+
+        // The overwrite is real: one row, and its reason names the LAST mark written.
+        val stored = recordStore.findByProposition("loser-overwrite").single()
+        assertEquals(bystander.id, (stored.reason as MarkReason.Duplicate).survivorId)
+        assertEquals(appliedSurvivor.id, stored.mergedIntoId)
+
+        val result = undoSingleCollapse(traceStore, propositionRepository, bystander.id, "loser-overwrite", recordStore)
+
+        assertNull(result)
+        assertEquals(
+            setOf(kept, disputed),
+            propositionRepository.findById(bystander.id)!!.provenanceEntries.toSet(),
+            "the survivor the sweep never merged into keeps everything it owns",
+        )
+        assertEquals(2L, derivedFromEdges(bystander.id))
+    }
+
+    private fun collectorRecord(runId: String, propositionId: String, proposed: String, applied: String?) =
+        CollectorRecord(
+            propositionId = propositionId,
+            reason = MarkReason.Duplicate(survivorId = proposed),
+            outcome = CollectorOutcome.TRANSITIONED,
+            strategyName = "strategy-$proposed",
+            runId = runId,
+            previousStatus = PropositionStatus.ACTIVE,
+            newStatus = PropositionStatus.STALE,
+            mergedIntoId = applied,
+        )
+
+    @Test
+    fun `undo writes nothing when the retired proposition is missing`() {
+        val runId = "run-missing-retired"
+        val evidence = ProvenanceEntry(UriLocator("https://example.com/missing-retired"))
+        val survivor = propositionRepository.save(
+            prop("survivor-missing-retired", "Survivor remains", provenance = listOf(evidence)),
+        )
+        traceStore.recordRunContext(runId, survivor.contextId)
+        traceStore.recordDecision(
+            runId,
+            decisionFor("comp-missing-retired", survivorId = survivor.id, retiredId = "missing-retired"),
+        )
+        val before = propositionRepository.findAll().sortedBy { it.id }
+        val recording = RecordingPropositionRepository(propositionRepository)
+
+        val result = undoSingleCollapse(
+            traceQuery = traceStore,
+            propositions = recording,
+            survivorId = survivor.id,
+            retiredId = "missing-retired",
+        )
+
+        assertNull(result)
+        assertEquals(0, recording.writes)
+        assertEquals(before, propositionRepository.findAll().sortedBy { it.id })
+        assertEquals(1L, derivedFromEdges(survivor.id))
+    }
+
+    @Test
+    fun `undo writes nothing when the survivor proposition is missing`() {
+        val runId = "run-missing-survivor"
+        val retired = propositionRepository.save(
+            prop("retired-missing-survivor", "Retired remains", status = PropositionStatus.STALE),
+        )
+        traceStore.recordRunContext(runId, retired.contextId)
+        traceStore.recordDecision(
+            runId,
+            decisionFor("comp-missing-survivor", survivorId = "missing-survivor", retiredId = retired.id),
+        )
+        val before = propositionRepository.findAll().sortedBy { it.id }
+        val recording = RecordingPropositionRepository(propositionRepository)
+
+        val result = undoSingleCollapse(
+            traceQuery = traceStore,
+            propositions = recording,
+            survivorId = "missing-survivor",
+            retiredId = retired.id,
+        )
+
+        assertNull(result)
+        assertEquals(0, recording.writes)
+        assertEquals(before, propositionRepository.findAll().sortedBy { it.id })
     }
 }

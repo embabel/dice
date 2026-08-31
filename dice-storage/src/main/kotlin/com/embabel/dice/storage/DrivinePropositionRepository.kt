@@ -508,6 +508,45 @@ class DrivinePropositionRepository(
     }
 
     /**
+     * Subtract exactly the named evidence in one statement, without reading the proposition first.
+     *
+     * The base contract's default has to name what stays, so it reads the entries, filters, and
+     * replaces — and evidence another writer adds in between is replaced away. Naming what goes
+     * closes that window: this deletes edges by their own identity and leaves every other edge on
+     * the proposition untouched, whenever it arrived.
+     *
+     * Two ref forms, matching the evidence-key contract. A minted key is compared against the
+     * edge's `entryKey`, so it removes one entry. A bare locator key predates revisions and matches
+     * revisionless evidence for that source only, which is why the second predicate requires a null
+     * `sourceRevision` — it also reaches edges written before `entryKey` existed. A ref carrying the
+     * codec's prefix but an unknown version matches no stored key, so it removes nothing.
+     */
+    @Transactional
+    override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? {
+        if (provenanceRefs.isEmpty()) return findById(propositionId)
+        val (encodedRefs, legacyKeys) = provenanceRefs.partition { it.startsWith(EVIDENCE_KEY_PREFIX) }
+        persistenceManager.execute(
+            QuerySpecification.withStatement(
+                """
+                MATCH (p:Proposition {id: ${'$'}propositionId})-[r:DERIVED_FROM]->(s:Source)
+                WHERE (r.entryKey IS NOT NULL AND r.entryKey IN ${'$'}encodedRefs)
+                   OR (r.sourceRevision IS NULL AND s.key IN ${'$'}legacyKeys)
+                WITH collect(DISTINCT s) AS touched, collect(r) AS doomed
+                FOREACH (rel IN doomed | DELETE rel)
+                FOREACH (orphan IN [src IN touched WHERE NOT (src)--()] | DELETE orphan)
+                """.trimIndent()
+            ).bind(
+                mapOf(
+                    "propositionId" to propositionId,
+                    "encodedRefs" to encodedRefs,
+                    "legacyKeys" to legacyKeys,
+                ),
+            ),
+        )
+        return findById(propositionId)
+    }
+
+    /**
      * Drop the edges this replacement no longer wants, then prune only the sources those edges
      * pointed at.
      *
@@ -1328,6 +1367,13 @@ class DrivinePropositionRepository(
     companion object {
         /** Stripe count for save-time dedup locks. */
         private const val DEDUP_STRIPES = 64
+
+        /**
+         * What every minted evidence key starts with. A ref lacking it is a locator key from before
+         * revisions existed. Locator keys are kind-prefixed (`uri:`, `file:`, `content:`,
+         * `connector:`), so the two forms cannot be confused.
+         */
+        private const val EVIDENCE_KEY_PREFIX = "dice-provenance:"
 
         /**
          * The node label and embedding property the proposition vector index covers. These mirror
