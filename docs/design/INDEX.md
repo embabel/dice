@@ -21,6 +21,10 @@ you need.
 - [entity-resolution-and-text2graph.md](entity-resolution-and-text2graph.md) — how mentions get
   matched to existing entities (or minted as new ones) without blowing the LLM budget or
   fragmenting the graph with near-duplicates.
+- [extraction-profiles.md](extraction-profiles.md) — carrying a host's content-policy identity
+  and a run reference through extraction without DICE resolving either: why profile identity is
+  opaque, why the run reference ships ahead of the run, and why profile, perspective, schema and
+  tenant stay independent. EXPERIMENTAL.
 
 ## Propositions & lifecycle
 
