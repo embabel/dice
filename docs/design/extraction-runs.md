@@ -723,6 +723,159 @@ recorded" and fails "an incompatible terminal rewrite is rejected", a finder tha
 passes every single-tenant read and fails "a page scopes before it limits", and a chain walk written
 as a recursive Cypher pattern passes on a healthy graph and hangs on a cycle.
 
+## The Drivine store
+
+`DrivineExtractionRunStore` is the durable implementation. It writes three node labels:
+
+| Node | Key | Holds |
+| --- | --- | --- |
+| `(:ExtractionRun)` | `(contextId, runId)` | the header — lineage, envelope, requested configuration, counts, failures |
+| `(:ExtractionRunInvocation)` | `(contextId, runId, invocationIndex, attempt)` | one attempt at one planned model call |
+| `(:ExtractionRunTerminalWrite)` | `(contextId, runId)` | the fingerprint of the write that ended the run |
+
+The header reaches each child by `[:RECORDED]` and its terminal write by `[:ENDED_BY]`.
+
+Every key is tenant-qualified, and the tenant needs no encoding of the kind
+`DrivineDriftReportStore` gives its scope. That store's scope is nullable and a Cypher MERGE cannot
+key on a null, so a global report needed a non-null `ctx:`-prefixed stand-in no real context id
+could collide with. A run's tenant is never null, so the plain value is already an injective key.
+
+### Compare-and-set, and why it holds across processes
+
+`transition` is one Cypher statement, so it is one transaction, and it works two ways at once.
+
+**A lock.** The statement's first act after matching the run is `SET n.casLock = $lockToken`, before
+it reads anything. A property write takes an exclusive lock on the node and holds it to commit, so a
+second transaction reaching that line blocks. Neo4j reads at read-committed and the read of
+`n.status` is downstream of the `SET` in the same statement, so the second transaction reads the
+status after it took the lock and therefore after the first committed. It sees a terminal run and
+takes the no-op branch. `DrivineMetamodelVersionStore` uses the same write-lock-before-read idiom on
+its counter.
+
+Two details make that argument hold rather than nearly hold. The lock token is a fresh UUID on every
+call, so the write is always a real change and never a no-op a database is free to optimize away
+before taking the lock. And no index carries `status` or the terminal fingerprint, so the planner
+cannot serve the post-lock read from an index entry it read at MATCH time — which is the one way a
+lock-then-read reads stale.
+
+**A constraint.** That argument is about Neo4j's behaviour, and behaviour is a thing to be wrong
+about. So the terminal write is also a `CREATE` of an `(:ExtractionRunTerminalWrite)` node on the
+run's own key, under a uniqueness constraint. Two transactions that both read a run as `RUNNING`
+both try to create it, and the database refuses the second at commit. The loser's whole transaction
+rolls back, header included; the store catches the violation, re-reads the recorded fingerprint in a
+fresh transaction, and answers replayed or conflict. **Exactly one terminal write per run is a schema
+fact, not an inference.**
+
+The constraint's sufficiency is measured rather than assumed: removing the lock leaves every race
+test green — the constraint carries it alone. Removing both and letting the create become a merge
+produces six racing writers all reporting `APPLIED`, and, when they disagree about how the run
+ended, three contradictory endings recorded for one run. That is the multi-process failure the
+in-memory reference's monitor cannot speak to, reproduced and then closed. The lock's own
+sufficiency rests on the isolation argument above, unmeasured, which is why the constraint exists.
+The constraint backstops `transition` only: the status guards in `save` and `recordInvocation`
+rest on the lock argument alone, so a failed lock idiom could set a terminal header back to
+`RUNNING` beside its terminal write — the one-write audit fact would survive; the header would not.
+
+### The fingerprint is stored, never re-derived
+
+The terminal-write node carries the exact string `ExtractionRunTransition.fingerprint` computed, and
+a repeated terminal write is decided by comparing against that string. A store that re-derived a
+digest from the stored run would reject a correct retry whenever an attempt had been recorded in
+between, because the run it derived from would have changed while the terminal write did not. The
+encoding has one implementation, in `dice`, and the graph holds its output.
+
+### A header write cannot touch a child row
+
+Invocation records are their own nodes on their own key, so `save` has no way to delete one. The
+contract's rule that a save merges records rather than replacing them falls out of the graph model
+instead of being implemented: `save` MERGEs the records the incoming run carries, which upserts in
+place on a shared identity, and leaves every other child row alone.
+
+One consequence is worth naming. A durable store keeps identified rows, not the order a caller
+happened to list them in, so it hands attempts back in plan order — the order `invocationsOf`
+promises. `InMemoryExtractionRunStore` hands back the caller's order. `ExtractionRun.invocations` is
+documented as being in whatever order the caller supplied, and `ExtractionRun.equals` compares it
+element by element, so the two backends can return runs that are unequal for the same call sequence.
+The ordered read both agree on is `invocationsOf`.
+
+### Reads
+
+Each page puts its tenant in the MATCH pattern and its `LIMIT` after the `ORDER BY`, which is the
+drift-report store's rule carried over. A page also excludes rows with no sort key: Neo4j sorts null
+largest, so a node missing `startedAtEpochSecond` would sort to the front of a `DESC` order, spend a
+slot of the caller's `limit`, and then be dropped by the mapper — hiding a good run behind a broken
+one. Corrupt rows are logged and skipped rather than failing a whole audit read, so a page can come
+back shorter than asked for; reading further to backfill would break the bound the contract keeps.
+
+`runsOfRoot` is one indexed lookup on the denormalized root. The chain walk is client-side: a parent
+is a property rather than a relationship, because a run can name a parent that has not been stored
+yet and an edge cannot point at a node that does not exist. Without an edge there is no
+variable-length pattern to walk, and the APOC procedures that would do it in one round trip are not a
+dependency this module takes. So the walk is at most `limit` keyed lookups inside one read
+transaction, stopping on a run already seen and resolving every hop inside the starting tenant.
+
+Every read returns each run with its attempts attached, pages included, because the in-memory
+reference does and the two are held to one suite. The cost is bounded — at most `limit` runs times
+the model's cap of 1024 attempts — but it is real on a wide page.
+
+### Schema
+
+`ExtractionRunSchema.specs()` is the whole dependency, and a host declares it in a `SchemaCatalog`
+bean. Three uniqueness constraints — `ExtractionRun(contextId, runId)`,
+`ExtractionRunInvocation(contextId, runId, invocationIndex, attempt)`, and
+`ExtractionRunTerminalWrite(contextId, runId)` — and five range indexes: `ExtractionRun(contextId)`
+for the tenant page, `(contextId, rootRunId)` for the lineage read, `(contextId, parentRunId)` for
+the parent axis, `(contextId, startedAtEpochSecond)` for the paging sort key, and
+`ExtractionRunInvocation(contextId, runId)` for reading one run's attempts. The constraints are not
+tuning: a MERGE on a natural key is race-free only under one, and the third is the compare-and-set.
+
+`ContextId` accepts any non-blank string and the tenant is the leading property of every key here, so
+the store caps it at 1024 characters on the write path — the bound the run model already puts on a
+key-like string. An uncapped tenant id is an index entry of unbounded length, and Neo4j fails that
+write mid-extraction with a message about bytes rather than about the tenant. The cap turns it into a
+named argument rejection before anything is written. Reads are not capped, because a read for a
+tenant longer than the cap matches nothing by construction, which is the fail-closed answer and the
+only one a read could give.
+
+## Protected-content references
+
+An extraction run holds no content. Where a host wants replay material — a prompt as it was
+rendered, a source document as it was read — it keeps that material itself and gives DICE a
+`ProtectedContentRef`: what kind of material it is, when it stops being available, and an opaque
+handle for looking it up.
+
+The handle is a `ProtectedContentHandle`, an eighth member of the `ExtractionOpaqueRef` family, so
+it inherits the enforced floor the other seven have — bounded, character-restricted, truncating
+`toString`, and a validation message that never quotes the value it rejected. That matters more here
+than elsewhere: a host holding material in object storage has a link to hand and no reason to think
+DICE minds, and the character set rejects one outright.
+
+What a host owes a reference it mints:
+
+- **The handle is not dereferenceable.** It names material in the host's own store and carries no
+  way to reach it: no signed URL, no pre-authenticated link, no bearer token, no decryption key, no
+  filename on a share. Holding one grants nothing. The rule is broader than the character check, and
+  the part the check cannot see is the host's to keep.
+- **Expiry is the host's to honour.** `expiresAt` is a declaration about the host's store. DICE acts
+  on none of it — it does not sweep, does not delete, and does not refuse to hand back a reference
+  whose expiry has passed. `isExpiredAt` is the whole of what DICE offers. Keeping the expired
+  reference is deliberate: a run that was replayable until March and is not replayable now is a fact
+  about the run, and deleting the reference would make it look as though it never had replay
+  material.
+- **The classification is a claim.** DICE stores it and carries it into the audit surface, and
+  verifies none of it.
+
+`ProtectedContentClassification` runs `INTERNAL`, `CONFIDENTIAL`, `PERSONAL`, least to most
+restrictive. There is no "unknown" value: a host that cannot classify material classifies it
+`PERSONAL`, because guessing low means personal data treated as operational logging and guessing
+high means something operational looked after more carefully than it needed to be.
+
+Blob storage, key management and retention enforcement are outside #67 by that issue's own text.
+This is the reference and its contract; there is no DICE-side store behind it. Nothing attaches a
+reference to an `ExtractionRun` yet either, and `ExtractionReplayFidelity` still tops out at
+`APPROXIMATE` — a run that carries replay material is a later slice's change to the run header, and
+a test asserts the run holds no such field today.
+
 ## OpenTelemetry GenAI naming, not adopted
 
 OTel's GenAI semantic conventions cover the same ground — `gen_ai.request.*`, `gen_ai.response.*`,
@@ -810,9 +963,9 @@ public surface.
 
 ## What is not here yet
 
-- **No durable store.** `InMemoryExtractionRunStore` is the only implementation. The Drivine store
-  — the tenant-qualified natural key, the deterministic child key for invocation records, the
-  uniqueness constraints, and the Cypher that scopes before it limits — is the next slice.
+- **No auto-configuration.** `DrivineExtractionRunStore` is a bean a host declares itself, along
+  with the `SchemaCatalog` carrying `ExtractionRunSchema.specs()`. An `ExtractionRunAutoConfiguration`
+  arrives with the coordinator.
 - **No coordinator.** Nothing constructs an `ExtractionRun` during extraction yet, and nothing calls
   `save` or `transition` outside tests. Which means the `COMPLETED` precondition is documented and
   structurally narrowed, not observed: the wiring slice is where "the coordinator really does wait

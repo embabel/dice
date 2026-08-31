@@ -128,6 +128,15 @@ open class TestApplication {
     ): DrivineCollectorTraceStore = DrivineCollectorTraceStore(persistenceManager)
 
     @Bean
+    open fun extractionRunSchema(): SchemaCatalog = SchemaCatalog.of(ExtractionRunSchema.specs())
+
+    @Bean
+    open fun extractionRunStore(
+        persistenceManager: PersistenceManager,
+        transactionManager: PlatformTransactionManager,
+    ): DrivineExtractionRunStore = DrivineExtractionRunStore(persistenceManager, transactionManager)
+
+    @Bean
     open fun decayManager(
         repository: DrivinePropositionRepository,
         persistenceManager: PersistenceManager,

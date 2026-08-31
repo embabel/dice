@@ -93,6 +93,15 @@ object ExtractionRunFingerprint {
      */
     const val TERMINAL_VERSION: String = "xrun-terminal:v2"
 
+    /** Version tag on a durable backend's own header-fingerprint encoding. */
+    const val HEADER_VERSION: String = "xrun-header:v1"
+
+    /** Version tag on a durable backend's own invocation-record-fingerprint encoding. */
+    const val INVOCATION_VERSION: String = "xrun-invocation:v1"
+
+    /** What an absent value encodes as, kept distinct from any value a caller could supply. */
+    private const val ABSENT = "-"
+
     /**
      * The digest of one terminal write: the status it asserts, and when the run finished.
      *
@@ -109,6 +118,32 @@ object ExtractionRunFingerprint {
             "status" to status.name,
         )
         return digest(TERMINAL_VERSION + "|" + payload)
+    }
+
+    /**
+     * The digest of an arbitrary flat set of named fields, run through the same canonical rules as
+     * [ofTerminal]: every field is a length-prefixed token, fields are sorted by name so the bytes
+     * never depend on the order a map happens to iterate in, and a `null` value renders as its own
+     * distinct absent marker, kept apart from empty text.
+     *
+     * This is the codec a durable backend's own comparison digests — a header's, an invocation
+     * record's — should run through, ahead of handing the same map to a general-purpose JSON
+     * serializer. A serializer's output moves with things that carry no meaning: which `Map`
+     * implementation built the payload, a library version bumping how it renders a number, a
+     * config flag turned on for an unrelated reason. Two writes of the same logical state must
+     * produce the same digest regardless of any of that, or a correct retry reads as a conflict.
+     *
+     * @param version Names the field set [named] belongs to, so two backends digesting different
+     *   shapes under different versions can never collide. Two calls passing the same [version]
+     *   must mean the same set of field names, or their digests are not comparable to each other.
+     * @param named The named values to digest, already rendered to the strings that mean what the
+     *   caller means — this function does no rendering of its own. A `null` value is encoded as
+     *   absent, distinct from an empty string.
+     */
+    @JvmStatic
+    fun ofFields(version: String, named: Map<String, String?>): String {
+        val payload = fields(*named.map { (name, value) -> name to (value ?: ABSENT) }.toTypedArray())
+        return digest(version + "|" + payload)
     }
 
     /**

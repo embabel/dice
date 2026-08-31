@@ -233,4 +233,66 @@ class ExtractionRunFingerprintTest {
         assertThat(transition.toString()).doesNotContain(transition.fingerprint)
         assertThat(transition.toString()).contains(transition.fingerprint.take(12))
     }
+
+    // ---- ofFields: the general-purpose codec a durable backend digests its own state through ----
+
+    @Test
+    fun `ofFields does not move with the order the caller built the map in`() {
+        // The whole point: a Map's iteration order is an implementation detail with no promised
+        // stability, and a digest that depended on it would turn a harmless map-construction change
+        // into a false conflict for a stored write it is compared against.
+        val forwards = linkedMapOf("alpha" to "1", "beta" to "2", "gamma" to "3")
+        val backwards = linkedMapOf("gamma" to "3", "beta" to "2", "alpha" to "1")
+
+        assertThat(ExtractionRunFingerprint.ofFields("test:v1", forwards))
+            .isEqualTo(ExtractionRunFingerprint.ofFields("test:v1", backwards))
+    }
+
+    @Test
+    fun `ofFields tells absent apart from an empty string`() {
+        val absent = mapOf("detail" to null)
+        val empty = mapOf("detail" to "")
+
+        assertThat(ExtractionRunFingerprint.ofFields("test:v1", absent))
+            .isNotEqualTo(ExtractionRunFingerprint.ofFields("test:v1", empty))
+    }
+
+    @Test
+    fun `ofFields changing any one field's value changes the digest`() {
+        val baseline = ExtractionRunFingerprint.ofFields("test:v1", mapOf("a" to "1", "b" to "2"))
+        val changed = ExtractionRunFingerprint.ofFields("test:v1", mapOf("a" to "1", "b" to "3"))
+
+        assertThat(changed).isNotEqualTo(baseline)
+    }
+
+    @Test
+    fun `ofFields under two different versions never collide even over the same field set`() {
+        val fields = mapOf("a" to "1", "b" to "2")
+
+        assertThat(ExtractionRunFingerprint.ofFields("v1", fields))
+            .isNotEqualTo(ExtractionRunFingerprint.ofFields("v2", fields))
+    }
+
+    @Test
+    fun `ofFields is a lowercase sha-256 hex digest`() {
+        val digest = ExtractionRunFingerprint.ofFields("test:v1", mapOf("a" to "1"))
+
+        assertThat(digest).hasSize(64)
+        assertThat(digest).matches("[0-9a-f]{64}")
+    }
+
+    @Test
+    fun `the header and invocation version tags are distinct from the terminal one`() {
+        // A reader meeting a version it does not know matches nothing; it never guesses. That only
+        // holds if the three encodings this module ships cannot be mistaken for each other.
+        assertThat(ExtractionRunFingerprint.HEADER_VERSION).isEqualTo("xrun-header:v1")
+        assertThat(ExtractionRunFingerprint.INVOCATION_VERSION).isEqualTo("xrun-invocation:v1")
+        assertThat(
+            setOf(
+                ExtractionRunFingerprint.TERMINAL_VERSION,
+                ExtractionRunFingerprint.HEADER_VERSION,
+                ExtractionRunFingerprint.INVOCATION_VERSION,
+            ),
+        ).hasSize(3)
+    }
 }
