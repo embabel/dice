@@ -6,10 +6,11 @@ model for, what the provider actually reported back, how far it got, and what we
 holds none of the material. No prompts, no source text, no responses, no user or session
 objects, no provider SDK payloads, no extension maps.
 
-This note covers DICE #67's value model and its store contract — the types in
-`com.embabel.dice.proposition.extraction`, the lifecycle state machine that governs a run's status,
-and the reads a store owes. The Drivine implementation, the proposition-to-run relation and the
-wiring are separate slices.
+This note covers DICE #67's value model, its store contract, the Drivine implementation, and the
+proposition-to-run relation — the types in `com.embabel.dice.proposition.extraction`, the lifecycle
+state machine that governs a run's status, the reads a store owes, and how a stored claim gets
+traced back to the runs that produced it. The run coordinator and its REST exposure are a separate
+slice.
 
 ## What a run holds
 
@@ -121,9 +122,9 @@ The two checks a record can fail on its own terms do apply: a finish cannot prec
 an `IN_FLIGHT` attempt has not finished.
 
 Completion order writes into identities that already exist. There is no factory that takes a
-position in a result list, and the run stores records in whatever order they arrived while
-`invocationsInPlanOrder()` reads the plan back out. A run rejects two records with the same
-`(invocationIndex, attempt)`.
+position in a result list, and a run holds its records in plan order however they were handed in —
+arrival order is not a fact about the run, and `equals` compares the list. A run rejects two records
+with the same `(invocationIndex, attempt)`.
 
 ## The root run reference, and why it is denormalized
 
@@ -955,6 +956,197 @@ the list is empty leaves the run aliasing a list the caller still holds, and the
 afterwards; it fails later and stranger than the non-empty case. The copies are unmodifiable, so
 the list a caller reads back cannot be edited either.
 
+## Lineage: which runs produced which claims
+
+The gap #67 opens with is that a stored claim cannot be traced to the run that produced it. This is
+the part that closes it.
+
+```mermaid
+flowchart LR
+    P["(:Proposition)<br/><i>id, contextId</i>"]
+    S["(:Source)<br/><i>key</i>"]
+    R1["(:ExtractionRun)<br/><i>run-1</i>"]
+    R2["(:ExtractionRun)<br/><i>run-2</i>"]
+    P -->|DERIVED_FROM| S
+    P -->|PRODUCED_BY_RUN| R1
+    P -->|PRODUCED_BY_RUN| R2
+```
+
+Two runs over identical content leave **one proposition, one source grounding, two run links**. Each
+part of that is a separate way to get it wrong, and `DrivineRunLineageIntegrationTest` measures all
+three on a real graph.
+
+### Only canonical ids go in
+
+`DrivinePropositionRepository.save` answers a fresh insert of text it already holds with the
+proposition it already holds — a different id from the one extraction minted. That has always been
+true and callers have never been able to see it, because `saveAll` returns `Unit`. Any edge written
+afterwards against the minted id points at a node that was never stored.
+
+So the seam is a second save call that keeps the answer:
+
+- `PropositionStore.saveAllReturningCanonical` — the same writes as `saveAll`, returning a
+  `PropositionPersistenceResult`: the stored proposition per input, in input order, plus the
+  input-id to stored-id map. `saveAll` keeps its `Unit` descriptor; changing it would break every
+  implementation and every compiled caller.
+- `PersistablePropositions.persistReturningCanonical` — the same persistence `persist` does, with
+  structural relationships wired against what the repository returned. `persist` is untouched.
+
+`DrivinePropositionRepository` needed no change at all. Its `save` already returned the canonical
+proposition; the id was being dropped one layer up, in `saveAll` and in `persist`.
+
+The result type has two views and they are not interchangeable. `canonicalPropositions` is
+positional — one entry per input, so it can repeat when two inputs deduplicate onto one.
+`canonicalIds` is the distinct set, which is what a write that should happen once per stored
+proposition uses. When one batch names an id twice, every position reports the store's last answer
+for it — a replace-by-id store overwrites the first, so the first object is stale the moment the
+second save lands, and both answers carry the same id so comparing ids cannot catch it. Resolving
+rather than rejecting, because this runs after the saves.
+
+The store is bound to the extractor with `IncrementalPropositionExtraction.withRunLineage(store)`
+rather than a constructor parameter. Binding is **one-time** — a second call throws
+`IllegalStateException`, null included — because the field is read when an analysis records lineage
+rather than when it starts, so a later call would redirect or silently erase the audit record of an
+extraction already in flight. Kotlin compiles a constructor with default arguments into one
+synthetic `<init>(..., int mask, DefaultConstructorMarker)`, and appending a defaulted parameter
+rewrites the descriptor every precompiled Kotlin caller using a default links against. Adding a
+method adds API; appending a defaulted parameter moves one.
+
+### The relation
+
+`(:Proposition {id, contextId})-[:PRODUCED_BY_RUN]->(:ExtractionRun {contextId, runId})`, behind
+`PropositionRunLinkStore`.
+
+Many-to-many in both directions, and it has to be. One run produces many claims. One claim is
+produced by many runs — not an edge case, but the normal outcome of re-extraction, where the second
+run's insert deduplicates onto a proposition the first run created. Both runs are true answers to
+"what produced this?", and a single-valued field would have to pick one silently.
+
+The edge carries no properties. A bare edge says one thing and has nothing for a replay to disagree
+about, which is what lets the write be a plain `MERGE`. A timestamp would need `ON CREATE SET` to
+stay idempotent and would duplicate the run header's `startedAt`.
+
+It is named for the run rather than left as a bare `PRODUCED_BY` because at least three things in
+DICE produce a proposition — an extraction run, a collector run, and later a #68 commit. The target
+label disambiguates a pattern; the name has to disambiguate a grep.
+
+**No new schema.** Both endpoint labels already carry the uniqueness constraints these statements
+seek on, and a relationship has no key of its own: `MERGE` on a pattern between two matched nodes
+creates at most one edge, whoever else is writing. `ExtractionRunSchema.specs()` is unchanged, so a
+host that already declared it needs no migration.
+
+### Tenant-guarded on the write, fail-closed on the reads
+
+Every statement names `contextId` on both endpoints, so a cross-tenant edge is not expressible and
+the reads fail closed for free. A write needs more than that, because "matched nothing" and "you
+asked to link a neighbour's claim" are the same silence: `link` resolves the run and then every
+proposition inside the run's tenant, and names what did not resolve
+(`PropositionRunLinkScopeException`). One out-of-scope id rejects the whole batch and writes nothing.
+
+A proposition id that resolves in another tenant and one nobody holds are the same answer from
+inside a tenant, and they mean the same thing: this run cannot claim to have produced it.
+
+**The preflight names; the write decides.** Validation and the `MERGE` are separate statements, so
+under read-committed isolation a proposition deleted or re-tenanted between them passes the check
+and is gone by the time the write runs. The Drivine statement therefore counts its own matches —
+`WHERE size(ps) = $expected` — in the same snapshot it writes in, so either every proposition is
+present and all the edges are written or none of them are; the caller then compares the returned
+count against the batch size and rolls the transaction back on any mismatch. The preflight stays
+because it is what can name the ids in the error.
+
+**Both reads resolve against live endpoint state**, not against a remembered link. Deleting a
+proposition removes its lineage from both directions: on a graph because the edge is detached with
+the node, and in the reference implementation because the reads filter through the proposition store
+rather than answering from their own map. Without that the in-memory backend would keep reporting
+lineage for claims the store no longer holds, and the two backends would disagree.
+
+Both reads are bounded by a positive limit and ordered by id ascending. Ordering runs newest-first
+would mean reading each run's header for its start time; a caller who wants that has
+`ExtractionRunStore` and the refs these reads return.
+
+### Run identity stays out of source provenance
+
+Nothing in the lineage touches `ProvenanceEntry` or `SourceLocator`. Two claims read from the same
+source under two different runs have equal provenance, and that is asserted rather than assumed —
+both behaviourally and structurally, by reading the two types' fields.
+
+Folding run identity into source identity would make evidence from two runs over one document look
+like evidence from two documents, and it would change what `SourceLocator.key()` means, which is the
+`:Source` node's key. "Where did this come from" and "which execution wrote it down" are different
+questions with different answers, and the second one lives in the relation.
+
+### Which flows consume canonical results, and which do not
+
+`IncrementalPropositionExtraction.persistAndProject` switches on whether the analysis carries a
+`SourceAnalysisContext.currentRun`:
+
+| | structural wiring | projection | grounding | run links |
+|---|---|---|---|---|
+| run present | canonical | canonical | canonical | canonical |
+| no run (legacy) | pre-save | pre-save | pre-save | none |
+
+The canonical column is the correct one. The legacy row is wrong in the way it has always been
+wrong, and this slice does not fix it there, because a host that never asked for extraction runs
+should not have its graph start being written differently. Two tests pin the legacy row so that
+"unchanged" fails if it stops being true.
+
+**The switch is the run, not the link store.** An analysis attributed to a run gets correct edges
+whether or not anyone is recording lineage. A host that passes `currentRun` is a host that opted
+into #67's experimental surface.
+
+Lineage's write joins a caller's transaction rather than opening its own. `REQUIRES_NEW` would
+guarantee a failure could never touch the caller, but it suspends that transaction, and a suspended
+transaction's uncommitted propositions are invisible — so a host wrapping extraction in
+`@Transactional` would get fail-closed lineage on every extraction. Joining means lineage resolves
+the claims it is about and commits with them.
+
+The risk `REQUIRES_NEW` would have removed is Spring marking a participating transaction
+rollback-only when an inner method throws. That marking *is* propagated here — Drivine overrides
+`doSetRollbackOnly` and the shared transaction object's flag is set — but the flag is write-only:
+`DrivineTransactionObject` does not implement `SmartTransactionObject`, so Spring's
+`isGlobalRollbackOnly` cannot see it, and Drivine never reads it when committing. Propagated, then
+dropped. Because that is behaviour rather than contract it is pinned by a test, which goes red if
+Drivine implements `SmartTransactionObject` or starts reading the flag.
+
+**The guarantee covers application-level failures only, and this is the slice's known limitation.**
+Everything `link` raises by itself is thrown after its statements succeeded, so the transaction is
+healthy and a caller that catches can carry on. A statement that fails *at the server* — a deadlock
+between two runs linking overlapping propositions is the realistic case, since nothing orders the
+node locks two concurrent `MERGE` batches take over the same propositions — terminates the
+transaction beneath Spring, and no catch can undo it. A test injects exactly that and measures the
+cost: the wrapping host's later writes are lost.
+
+That window belongs to the ambient-transaction shape only; a host that does not wrap extraction is
+unaffected, because each save has already committed. It closes when the run coordinator commits
+claims before recording lineage (slice 10), which makes lineage a write that does not share a
+caller's fate.
+
+Lineage is written best-effort, and **directly behind the save rather than at the end** — before
+structural wiring, projection and grounding, all three of which can throw. That needed
+`persistReturningCanonical` split in two: `persistCanonicalPropositions` writes the claims and
+`wireStructuralRelationships` writes the chunk/entity edges, so lineage can run between them.
+Structural wiring is the *first* fallible pass, and while it sat inside the same call as the save
+there was no point at which a caller could act on saved claims. The claims are written at that
+point — committed with the caller's transaction where one wraps the call, immediately otherwise —
+and attribution is a statement about them, not a reward for the rest of the pipeline succeeding. Running
+it last meant a failing projector left stored claims with no record of the run that produced them,
+which is the one outcome the relation exists to prevent and arrives exactly when the audit is worth
+most. A link that cannot be written is logged with its exception and the extraction stands: a
+missing link is a truthful gap in the audit, where a throw would surface as an extraction that
+appears to have produced nothing.
+
+### The invocation order fix that rides here
+
+`ExtractionRun.invocations` is normalized to plan order — `(invocationIndex, attempt)` — at
+construction. It used to keep whatever order the caller supplied, which is the order calls came
+back, which is not a fact about the run: the same four calls answered in a different sequence are
+the same run. Since `equals` compares the list element by element, the old behaviour made those two
+runs unequal, and it made the two backends disagree on one call sequence — a durable store keeps
+identified rows and reads them back in plan order, while the in-memory one handed back the order it
+was given. `invocationsInPlanOrder()` is now the identity.
+
+`sourceRevisions` is deliberately not normalized. The order sources were read in is data.
+
 ## Status: EXPERIMENTAL
 
 Every type in this slice carries `@ApiStatus.Experimental`, the marker DICE already uses for API
@@ -974,15 +1166,27 @@ public surface.
   `save` or `transition` outside tests. Which means the `COMPLETED` precondition is documented and
   structurally narrowed, not observed: the wiring slice is where "the coordinator really does wait
   for `persistAndProject`" becomes a test rather than a contract clause.
-- **No proposition-to-run relation.** Attribution from a claim to the runs that produced or
-  confirmed it is its own slice, on canonical saved ids, and run identity stays out of
-  source-provenance equality.
+- **No run coordinator behind the relation.** Attribution from a claim to the run that produced it
+  now exists — `PRODUCED_BY_RUN`, written on canonical saved ids — and run identity stays out of
+  source-provenance equality. What is still missing is the coordinator that mints and terminalizes
+  the run around it.
 - **Protected-content reference: specification only.** A first cut (`ProtectedContentRef`,
   `ProtectedContentClassification`, `ProtectedContentHandle`) landed and was removed again: nothing
   in DICE attached one to an `ExtractionRun`, read one, or enforced its retention. The interface
   returned as a written contract — an opaque `handle` and an `expiresAt`, with the host owning
   writer, reader and retention. DICE stores none of its content, and the first runtime path that
-  needs the reference brings its implementation.
+  needs the reference brings its implementation. Nothing on a run header holds one yet; attaching
+  replay material to the header is a later slice.
+- **No REST exposure for lineage.** Nothing surfaces run lineage over HTTP. That arrives with the
+  coordinator.
+- **Nothing writes lineage for a run the host did not mint.** `persistAndProject` links what it
+  persisted when the analysis carries a `currentRun`, but nothing constructs or terminalizes the run
+  around it yet — the host supplies the ref and owns the run's lifecycle until the coordinator lands.
+- **Dedup unions evidence but not grounding.** When a second extraction deduplicates onto an
+  existing proposition, the repository unions the incoming provenance into it and keeps the stored
+  proposition's `grounding` and `mentions`. So a re-extraction from a *different* chunk that produced
+  identical text contributes no new `HAS_PROPOSITION` edge, which shows up as a missing edge.
+  Unioning them is a repository change with its own test burden and is not this slice.
 - **No per-invocation requested configuration.** The requested configuration is one record on the
   run header. A later slice that needs to vary settings per call adds a separate requested record
   keyed by invocation index rather than a field on the observed record, which would collapse the

@@ -115,7 +115,7 @@ data class ExtractionRunKey(
  * @property cohortRef The arm within that experiment
  * @property replayFidelity How much of this run someone could set up again from what it recorded
  * @property counts How much the run got through
- * @property invocations One record per attempt at each planned model call
+ * @property invocations One record per attempt at each planned model call, normalized to plan order
  * @property failures Bounded record of what went wrong, in the failure vocabulary
  * @property version The compare-and-set generation [ExtractionRunStore.save] checks this header
  *   against. A run that has never been saved, and the run its first accepted save produces, both
@@ -153,9 +153,25 @@ class ExtractionRun @JvmOverloads constructor(
     val sourceRevisions: List<SourceRevisionRef> =
         Collections.unmodifiableList(ArrayList(sourceRevisions))
 
-    /** One record per attempt at each planned call, in whatever order the caller supplied. */
+    /**
+     * One record per attempt at each planned call, always in plan order: call 0 before call 1, and
+     * within a call, first attempt before second.
+     *
+     * **Normalized here rather than left as the caller listed it.** Records arrive in the order
+     * calls came back, which is not the order they were planned in and is not a fact about the run —
+     * two runs that made the same calls and got the same answers in a different sequence are the
+     * same run. Since [equals] compares this list element by element, leaving the caller's order
+     * alone would make those two runs unequal, and it would make a durable backend disagree with the
+     * in-memory one on the same call sequence: a store keeps identified rows and reads them back in
+     * plan order, while an in-memory store would hand back the order it was given.
+     *
+     * [sourceRevisions] is deliberately not normalized the same way. The order sources were read in
+     * is data about the run.
+     */
     val invocations: List<ExtractionInvocationRecord> =
-        Collections.unmodifiableList(ArrayList(invocations))
+        Collections.unmodifiableList(
+            invocations.sortedWith(compareBy({ it.invocationIndex }, { it.attempt })),
+        )
 
     /** What went wrong, bounded and said in the failure vocabulary. */
     val failures: List<ExtractionFailure> =
@@ -230,11 +246,11 @@ class ExtractionRun @JvmOverloads constructor(
      * The invocation records ordered by the plan: call 0 before call 1, and within a call, first
      * attempt before second.
      *
-     * The order records were handed to the constructor is the order calls came back, which is not
-     * the order they were planned in. This reads the identities that were allocated up front.
+     * [invocations] is already in that order — it is normalized at construction — so this returns
+     * it unchanged. Kept as a named call because that is what a caller asking for plan order should
+     * be able to say, and because it is what the stores promise.
      */
-    fun invocationsInPlanOrder(): List<ExtractionInvocationRecord> =
-        invocations.sortedWith(compareBy({ it.invocationIndex }, { it.attempt }))
+    fun invocationsInPlanOrder(): List<ExtractionInvocationRecord> = invocations
 
     /** Every attempt at the call at [invocationIndex], earliest attempt first. */
     fun attemptsOf(invocationIndex: Int): List<ExtractionInvocationRecord> =

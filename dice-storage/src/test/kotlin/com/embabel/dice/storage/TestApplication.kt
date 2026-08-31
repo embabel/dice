@@ -170,6 +170,11 @@ open class TestApplication {
     )
 
     @Bean
+    open fun propositionRunLinkStore(
+        persistenceManager: PersistenceManager,
+    ): DrivinePropositionRunLinkStore = DrivinePropositionRunLinkStore(persistenceManager)
+
+    @Bean
     open fun decayManager(
         repository: DrivinePropositionRepository,
         persistenceManager: PersistenceManager,

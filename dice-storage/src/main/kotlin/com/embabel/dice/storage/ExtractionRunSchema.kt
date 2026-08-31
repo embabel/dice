@@ -51,6 +51,21 @@ object ExtractionRunSchema {
     const val ENDED_BY_REL: String = "ENDED_BY"
 
     /**
+     * A claim to the run that produced it: `(:Proposition)-[:PRODUCED_BY_RUN]->(:ExtractionRun)`.
+     *
+     * Named for the run rather than left as a bare `PRODUCED_BY`, because at least three things in
+     * DICE produce a proposition — an extraction run, a collector run, and later a commit — and each
+     * will want to say so. The target label disambiguates a pattern; the name has to disambiguate a
+     * grep.
+     *
+     * It adds nothing to [specs]. Both endpoint labels already carry the uniqueness constraints
+     * these statements seek on, and a relationship has no key of its own: `MERGE` on a pattern
+     * between two matched nodes creates at most one edge, whoever else is writing. See
+     * [DrivinePropositionRunLinkStore].
+     */
+    const val PRODUCED_BY_RUN_REL: String = "PRODUCED_BY_RUN"
+
+    /**
      * The longest tenant id this store will write.
      *
      * `ContextId` accepts any non-blank string, and the tenant is the leading property of every key
