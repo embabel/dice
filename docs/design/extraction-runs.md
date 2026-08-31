@@ -117,8 +117,7 @@ The root is redundant with the parent chain, and it is stored anyway. OpenLineag
 consumers do not have to walk the chain a hop at a time. Deep pass-and-retry chains are exactly
 where walking hurts, and the audit projection reads lineage by run.
 
-A denormalized field is only worth having if it cannot drift, so it is fixed at mint and the
-constructor rejects every combination that would make it a lie:
+A denormalized field is only worth having if it cannot drift, so it is fixed at mint:
 
 - a run with no parent is its own root;
 - a run with a parent takes its parent's root, and therefore is not its own root;
@@ -126,6 +125,23 @@ constructor rejects every combination that would make it a lie:
 
 `ExtractionRunLineage.root(...)` and `.childOf(...)` do the arithmetic, and `childOf` defaults the
 pass index to the parent's plus one.
+
+**The constructor no longer takes a root a caller could get wrong.** A PR #95 review comment
+pointed out that the old constructor took `rootRunRef` as an independent parameter: any non-self
+value passed, whether or not it named the actual parent's root, and nothing checked it against the
+parent. The constructor is now private and `copy()` follows it — `@ConsistentCopyVisibility` on
+the class — so `root()` and `childOf()` are the only way in: `root()` sets the root to the run's
+own ref, `childOf()` derives it from the actual parent lineage it is handed.
+
+That closes the public API and stops there. Kotlin reflection can still call the private
+constructor directly and hand it a root that contradicts the parent it names — the same route a
+Jackson deserializer resolving a data class's primary constructor would take. Nothing serializes an
+`ExtractionRunLineage` today, so this is a residual for whoever builds that wiring next. It is
+written down here so it stays known: a future store slice reconstructing a lineage from stored
+fields has to walk through `childOf()` with the parent's own lineage in hand; re-assembling
+`rootRunRef` and `parentRunRef` from separate columns is the shortcut that closes. `ExtractionRunLineageTest`
+pins both halves — that the public surface is closed, and that the reflective call still succeeds
+and produces an inconsistent root.
 
 What a value type cannot check is a cycle of length two or more: that needs the other runs, so
 bounded cycle-safe traversal belongs to the store that walks the chains.
@@ -231,7 +247,7 @@ of the ones that matter. That is a better position than having adopted a naming 
 
 ## The cap rule
 
-Every string a run stores is bounded, the bound is a named constant on `ExtractionRunLimits`, the
+Most strings a run stores are bounded: the bound is a named constant on `ExtractionRunLimits`, the
 check runs in the `init` block of the type that owns the value, and anything over the bound is
 **rejected**. Truncating an identifier would be worse than rejecting it: a shortened id is a
 different id, and a store would then key rows on a value the caller never minted.
@@ -239,7 +255,6 @@ different id, and a store would then key rows on a value the caller never minted
 | Constant | Value | Applies to |
 | --- | --- | --- |
 | `MAX_IDENTIFIER_LENGTH` | 256 | opaque tokens, fingerprints, model and role names, service names, provider response ids, runtime identifiers |
-| `MAX_SOURCE_KEY_LENGTH` | 1024 | source keys, which come out of `SourceLocator.key()` and can legitimately hold a long URL |
 | `MAX_FAILURE_DETAIL_LENGTH` | 512 | the one free-text field |
 | `MAX_SOURCE_REVISIONS` | 256 | source revisions per run |
 | `MAX_INVOCATIONS` | 1024 | invocation records per run, across every call and attempt |
@@ -252,11 +267,14 @@ constructor still rejects a longer one.
 Lengths count UTF-16 chars, so a 256-char identifier can be around 1 KB of UTF-8. The bound exists
 to keep a run header finite.
 
-`SourceRevisionRef` predates this rule and validates non-blank only, so `ExtractionRun` applies the
-source-key and identifier bounds to the revisions it stores. That is a stopgap: the check belongs
-on `SourceRevisionRef` itself, so the bound travels with the type instead of being re-applied by
-every consumer. Moving it is a one-line change in the module that owns that type and is follow-up
-work.
+`sourceKey` and `sourceRevision` are not part of the cap rule and carry no bound on `ExtractionRun`.
+A revision's contract is defined where the type lives —
+[docs/design/source-revisions.md](source-revisions.md): opaque, compared for exact equality, never
+parsed, and bounded once by `SourceIdentityBounds` in `SourceRevisionRef`'s own constructor. A PR
+#95 review comment caught `ExtractionRun` adding a second length cap on top of that contract, so a
+revision an earlier query accepted could still fail run recording; the fix deletes the run's cap and
+leaves the one on the type that owns the value. A run records whatever a `SourceRevisionRef` can
+hold, which is the property that makes "accepted by a query, therefore recordable" true.
 
 One string sits outside the rule and stays outside it: `ContextId.value`, the tenant, which is
 validated non-blank and not bounded. `ContextId` is a DICE-wide type owned by the agent framework,

@@ -22,6 +22,7 @@ import com.embabel.dice.proposition.extraction.ExtractionRunFixtures.REVISION_ON
 import com.embabel.dice.proposition.extraction.ExtractionRunFixtures.REVISION_TWO
 import com.embabel.dice.proposition.extraction.ExtractionRunFixtures.RUN
 import com.embabel.dice.proposition.extraction.ExtractionRunFixtures.STARTED_AT
+import com.embabel.dice.provenance.SourceIdentityBounds
 import com.embabel.dice.provenance.SourceRevisionRef
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatIllegalArgumentException
@@ -160,30 +161,35 @@ class ExtractionRunContractTest {
     }
 
     @Test
-    fun `the run applies the cap rule to source revisions its own type does not check`() {
-        // SourceRevisionRef predates the rule and validates non-blank only, so the bound is applied
-        // where the run stores it.
-        assertThatIllegalArgumentException().isThrownBy {
-            runWith(
-                sourceRevisions = listOf(
-                    SourceRevisionRef("u".repeat(ExtractionRunLimits.MAX_SOURCE_KEY_LENGTH + 1), "rev-1"),
-                ),
-            )
-        }.withMessageContaining("sourceKey")
+    fun `run recording adds no per-field length cap on a source revision`() {
+        // Repro for the PR #95 review comment, round 2: a value a query happily works with must
+        // not blow up on the way into run recording. The bound on a source key and a source
+        // revision belongs to SourceRevisionRef, the type that owns those strings, and the run
+        // holds itself to whatever that type accepts. So the test builds the biggest revision the
+        // owning type will mint and records it: both halves are far past the run's own
+        // MAX_IDENTIFIER_LENGTH, which proves the run's identifier cap does not reach them.
+        // (The run still rejects duplicates and more than MAX_SOURCE_REVISIONS of them — see
+        // `every collection the run stores is bounded` above — this test is about length only.)
+        val revision = SourceRevisionRef(
+            "u".repeat(SourceIdentityBounds.MAX_SOURCE_KEY_LENGTH),
+            "r".repeat(SourceIdentityBounds.MAX_SOURCE_REVISION_LENGTH),
+        )
+        assertThat(revision.sourceKey.length).isGreaterThan(ExtractionRunLimits.MAX_IDENTIFIER_LENGTH)
+        assertThat(revision.sourceRevision.length).isGreaterThan(ExtractionRunLimits.MAX_IDENTIFIER_LENGTH)
 
-        assertThatIllegalArgumentException().isThrownBy {
-            runWith(
-                sourceRevisions = listOf(
-                    SourceRevisionRef("uri:doc-a", "r".repeat(ExtractionRunLimits.MAX_IDENTIFIER_LENGTH + 1)),
-                ),
-            )
-        }.withMessageContaining("sourceRevision")
+        assertThat(runWith(sourceRevisions = listOf(revision)).sourceRevisions)
+            .containsExactly(revision)
 
-        // A long URL as a source key is exactly why source keys get more room than identifiers.
-        val longUrlKey = "https://example.test/" + "segment/".repeat(60)
+        // A long URL as a source key is exactly the kind of value SourceRevisionRef has to carry.
+        val longUrlKey = "https://example.test/" + "segment/".repeat(200)
         assertThat(longUrlKey.length).isGreaterThan(ExtractionRunLimits.MAX_IDENTIFIER_LENGTH)
         assertThat(runWith(sourceRevisions = listOf(SourceRevisionRef(longUrlKey, "rev-1"))).sourceRevisions)
             .hasSize(1)
+
+        // And there is no constant here for either field, so a cap cannot creep back in on this
+        // side without someone noticing.
+        assertThat(ExtractionRunLimits::class.java.declaredFields.map { it.name })
+            .doesNotContain("MAX_SOURCE_KEY_LENGTH", "MAX_SOURCE_REVISION_LENGTH")
     }
 
     @Test

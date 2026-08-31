@@ -23,20 +23,23 @@ import org.jetbrains.annotations.ApiStatus
  * What a caller wants to say about one extraction, on top of the text and the user it belongs to.
  *
  * Extraction keeps learning about new dimensions — where the material came from, which version of
- * it, which content policy it runs under — and each one would otherwise mean another argument on
- * [IncrementalPropositionExtraction.rememberText] and another overload to keep the old shape
- * callable. They travel here together, so the next dimension is a field on this type and the
- * entry-point signatures stay put. A host that overrides an entry point keeps compiling when one
- * is added, and sees the new value without touching its override.
+ * it, which content policy it runs under, which run it belongs to — and each one would otherwise
+ * mean another argument on [IncrementalPropositionExtraction.rememberText] and another overload to
+ * keep the old shape callable. They travel here together, so the next dimension is a field on this
+ * type and the entry-point signatures stay put. A host that overrides an entry point keeps
+ * compiling when one is added, and sees the new value without touching its override. [currentRun]
+ * is the first field to arrive that way: it landed with no signature change anywhere.
  *
  * Everything is optional. An empty request — [NONE], or `ExtractionRequest()` — asks for the
  * extraction DICE has always done.
  *
  * A [sourceRevision] needs a [sourceLocator] whose key it matches, because a revision names one
  * version of one specific source. That pairing is checked while the request is being built, so a
- * caller finds out about a mismatch before extraction reads a byte. [profile] is checked against
- * nothing: it is independent of where the material came from, and coupling it to the other two
- * would invent a relationship the contract does not have.
+ * caller finds out about a mismatch before extraction reads a byte. [profile] and [currentRun] are
+ * checked against nothing: each is independent of where the material came from, and coupling them
+ * to the locator and the revision would invent a relationship the contract does not have. DICE
+ * also never checks that a [currentRun] names a run that exists — the host mints run ids and the
+ * run store is the only thing that could answer the question.
  *
  * EXPERIMENTAL, for as long as [ExtractionContentProfileRef] is.
  *
@@ -49,12 +52,15 @@ import org.jetbrains.annotations.ApiStatus
  * @property profile the host's content-profile identity for this extraction. DICE carries it and
  *   does nothing else with it: no provider, model, or credential is chosen from it, and extraction
  *   runs exactly as it would without one.
+ * @property currentRun the extraction run this call belongs to. Identity only: DICE puts it on the
+ *   analysis context and stores nothing under it until the run store lands (DICE #67).
  */
 @ApiStatus.Experimental
 data class ExtractionRequest @JvmOverloads constructor(
     val sourceLocator: SourceLocator? = null,
     val sourceRevision: SourceRevisionRef? = null,
     val profile: ExtractionContentProfileRef? = null,
+    val currentRun: ExtractionRunRef? = null,
 ) {
 
     init {
@@ -94,6 +100,13 @@ data class ExtractionRequest @JvmOverloads constructor(
      */
     fun withProfile(profile: ExtractionContentProfileRef): ExtractionRequest =
         copy(profile = profile)
+
+    /**
+     * Returns a copy that belongs to the given extraction run. EXPERIMENTAL. Changes no other
+     * field and no extraction behaviour.
+     */
+    fun withCurrentRun(currentRun: ExtractionRunRef): ExtractionRequest =
+        copy(currentRun = currentRun)
 
     companion object {
 

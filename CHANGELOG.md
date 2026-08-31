@@ -486,32 +486,34 @@ and the consumer PRs that deliver it).
   make that enforceable at the call site rather than advisory; DICE defines none today and the
   design note records it as an open question.
 
-  **A run reference travelled with this slice for one round and was pulled back out** (PR #94
-  review). `ExtractionRunRef` shipped identity-only, ahead of the durable run store that would key
-  on it. Nothing on this branch consumes it: `persistAndProject`, the method that actually saves
-  extraction's output, takes only the pipeline's result and never sees the context that would have
-  carried a run reference, so a caller passing one got it silently accepted and then dropped.
-  `currentRun` reached the same `PropositionExtractor.extract` extension point `profile` does, so
-  the two were equally reachable; the difference was that a run id had no store to resolve against,
-  so a reader would have had nothing to act on even if one existed. Because that store does not
-  exist on this branch, `currentRun`/`ExtractionRunRef` are removed from this slice entirely —
-  `SourceAnalysisContext`, every `remember*` entry point, `SourceAnalysisRequestEvent`, and
-  `ConversationAnalysisRequestEvent` — and return together with the write that consumes them once
-  the durable run store lands (DICE #67 and the run-model slices above it). No caller outside this
-  slice's own code and tests used the parameter for anything, so there is nothing to migrate. When
-  the reference does return it arrives as a field on `ExtractionRequest`, which is what the request
-  object is for: the entry-point signatures will be the ones this entry describes.
-  slice's own code and tests used the parameter for anything, so there is nothing to migrate.
-  claimed for `SourceAnalysisContext`: two more fields rewrite `copy`, add two `componentN`
-  methods, and change the synthetic `$default` constructor, so Kotlin code compiled against an
-  earlier jar must be recompiled rather than swapped in — the same half of the boundary #64
-  declined, pinned here by a test asserting exactly one `copy` remains and that it takes thirteen
-  arguments. No stored data changes and no migration is required: nothing serializes a profile or a
-  run reference yet. Extraction, resolution, and revision ordering are behaviour-identical; a
-  profile changes what a run is attributed to, not what it does. `ExtractionContentProfileRef` and
-  `ExtractionRunRef` both carry `@ApiStatus.Experimental` and their shapes may still move while
-  #67 lands. A Kotlin `@RequiresOptIn` marker would make that enforceable at the call site rather
-  than advisory; DICE defines none today and the design note records it as an open question.
+  **A run reference travelled with this slice for one round, was pulled back out, and has now
+  returned on the request** (PR #94 review, then PR #95). `ExtractionRunRef` first shipped
+  identity-only, as a loose parameter on every `remember*` entry point, ahead of the durable run
+  store that would key on it. Nothing consumed it: `persistAndProject`, the method that actually
+  saves extraction's output, takes only the pipeline's result and never sees the context that
+  would have carried a run reference, so a caller passing one got it silently accepted and then
+  dropped. The review's objection was to the parameters, so the parameters went, and
+  `ExtractionRequest` arrived to make the next dimension cost no signature at all. `currentRun` is
+  now a fourth field on that request, reaching `SourceAnalysisContext`, `SourceAnalysisRequestEvent`
+  and `ConversationAnalysisRequestEvent` the way a profile does — and the entry-point descriptor
+  sets are byte-for-byte the ones the paragraph above describes. That is the request object paying
+  for itself: a new extraction dimension landed with no new method, no new arity, and nothing for a
+  subclass or a Java caller to migrate. What has not changed is that nothing reads the run yet. It
+  is identity only until the durable run store lands (DICE #67 and the run-model slices above it);
+  a test pins that `persistAndProject` still has exactly one overload taking only the pipeline's
+  result, so there is still no write for a run reference to reach.
+
+  Full Kotlin synthetic `copy` and `componentN` ABI is **not** claimed for `SourceAnalysisContext`:
+  two more fields rewrite `copy`, add two `componentN` methods, and change the synthetic `$default`
+  constructor, so Kotlin code compiled against an earlier jar must be recompiled rather than
+  swapped in — the same half of the boundary #64 declined, pinned here by a test asserting exactly
+  one `copy` remains and that it takes thirteen arguments. No stored data changes and no migration
+  is required: nothing serializes a profile or a run reference yet. Extraction, resolution, and
+  revision ordering are behaviour-identical; a profile changes what a run is attributed to, not
+  what it does. `ExtractionContentProfileRef` and `ExtractionRunRef` both carry
+  `@ApiStatus.Experimental` and their shapes may still move while #67 lands. A Kotlin
+  `@RequiresOptIn` marker would make that enforceable at the call site rather than advisory; DICE
+  defines none today and the design note records it as an open question.
 
 - **EXPERIMENTAL.** The extraction run model in `dice` core — the value types DICE #67's store,
   lineage and wiring slices build on. `ExtractionRun`, keyed by (`ContextId`, `ExtractionRunRef`)
@@ -545,10 +547,17 @@ and the consumer PRs that deliver it).
   reference is denormalized.** `ExtractionRunLineage` carries the run, its parent, what it
   supersedes, its pass index, and its root, following OpenLineage's `ParentRunFacet`, which also
   ships a root alongside the immediate parent so consumers need not walk the chain. The root is
-  fixed at mint — a parentless run is its own root, a child takes its parent's root — and the
-  constructor rejects a parentless run whose root is another run, a child claiming to be its own
-  root, and self-parenting or self-supersession. Cycles longer than one need the other runs and stay
-  with the store that walks the chains. **Privacy is a contract with an enforced floor.**
+  fixed at mint — a parentless run is its own root, a child takes its parent's root. `root()` and
+  `childOf()` (`copy()` follows too, via `@ConsistentCopyVisibility`) are the only public way to
+  mint one: `root()` sets the root to the run's own ref, `childOf()` derives it from the actual
+  parent lineage it is handed, and either way no public parameter can carry a root that disagrees
+  with the parent chain. That closes the public API only. Kotlin reflection, and a Jackson
+  deserializer resolving the primary constructor the same way, can still construct one with a
+  contradictory root — `ExtractionRunLineageTest` pins the gap openly. Nothing serializes this type
+  today, so it affects a future store slice, not current wiring. Self-parenting and
+  self-supersession are still rejected in the `init` block. Cycles longer than one need the other
+  runs and stay with the store that walks the chains. **Privacy is
+  a contract with an enforced floor.**
   `ExtractionActorRef`, `ExtractionRequestRef`, `ExtractionSessionRef`,
   `ExtractionPersonalizationRef`, `ExtractionDeploymentRef`, `ExtractionExperimentRef` and
   `ExtractionCohortRef` are all `ExtractionOpaqueRef`: host-minted tokens DICE compares and never
@@ -576,13 +585,15 @@ and the consumer PRs that deliver it).
   and a migration later. **One cap rule**: every bound is a named constant on `ExtractionRunLimits`,
   checked in the `init` block of the type that owns the value, and an over-long value is rejected
   rather than truncated, because a shortened identifier is a different identifier. Identifiers cap
-  at 256 characters, source keys at 1024 (they come from `SourceLocator.key()` and can hold a long
-  URL), the one free-text failure detail at 512, and the three collections at 256 source revisions,
-  1024 invocation records and 64 failures. The failure detail is the single exception to rejection
-  and only on the way in: its factories clip it, the constructor still rejects. `SourceRevisionRef`
-  predates the rule and validates non-blank only, so `ExtractionRun` applies the bound where it
-  stores one; moving the check onto that type is follow-up work. `ContextId.value` is the one
-  string a run stores that the rule does not cover — `ContextId` is a DICE-wide type owned by the
+  at 256 characters, the one free-text failure detail at 512, and the three collections at 256
+  source revisions, 1024 invocation records and 64 failures. The failure detail is the single
+  exception to rejection and only on the way in: its factories clip it, the constructor still
+  rejects. `sourceKey` and `sourceRevision` carry no length bound on `ExtractionRun`: their one
+  bound lives on `SourceRevisionRef`, the type that owns those strings, which checks both halves
+  against `SourceIdentityBounds` at construction (`docs/design/source-revisions.md`). A run accepts
+  whatever that type accepts and adds no cap of its own, so a revision a query worked with can
+  never fail on the way into run recording.
+  One further string sits outside the rule too: `ContextId.value` — `ContextId` is a DICE-wide type owned by the
   agent framework — which matters because the tenant is half of `ExtractionRunKey`, so the store
   key is bounded on one side only. Two bounds are enforced away from the field they protect:
   `plan(count)` checks the invocation limit against the count before allocating anything, so a

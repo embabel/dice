@@ -33,9 +33,12 @@ import org.jetbrains.annotations.ApiStatus
  * Lengths count UTF-16 chars (`String.length`), so a 256-char identifier can be around 1 KB of
  * UTF-8. The bound is there to keep a run header finite.
  *
- * `SourceRevisionRef` predates this rule and validates non-blank only, so [ExtractionRun] applies
- * [MAX_SOURCE_KEY_LENGTH] and [MAX_IDENTIFIER_LENGTH] to the revisions it stores. Moving those
- * checks into `SourceRevisionRef` is a follow-up in the module that owns it.
+ * `sourceKey` and `sourceRevision` are the one pair of strings this rule does not cover, and there
+ * is no constant here for either. Their bound already exists where it belongs: on
+ * `SourceRevisionRef`, the type that owns those values, which checks both halves against
+ * `SourceIdentityBounds` at construction — see its KDoc and `docs/design/source-revisions.md`.
+ * [ExtractionRun] holds a revision to that same contract and adds no cap of its own, so a revision
+ * that named a source successfully elsewhere always goes on to be recordable.
  *
  * One string a run stores is outside the rule and stays outside it: `ContextId.value`, which
  * `ExtractionRun` holds as its tenant and validates non-blank only. `ContextId` is a DICE-wide
@@ -52,12 +55,6 @@ object ExtractionRunLimits {
      * a sha-256 hex digest, or a host correlation id all fit with room to spare.
      */
     const val MAX_IDENTIFIER_LENGTH: Int = 256
-
-    /**
-     * Longest source key a run stores. Source keys come out of `SourceLocator.key()` and can
-     * legitimately hold a long URL, so they get more room than an identifier a host mints itself.
-     */
-    const val MAX_SOURCE_KEY_LENGTH: Int = 1024
 
     /**
      * Longest failure detail a run stores. Long enough for a classified one-line explanation,

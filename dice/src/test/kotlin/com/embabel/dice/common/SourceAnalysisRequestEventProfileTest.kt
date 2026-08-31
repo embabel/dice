@@ -20,6 +20,7 @@ import com.embabel.chat.Conversation
 import com.embabel.chat.Message
 import com.embabel.dice.incremental.IncrementalSource
 import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef
+import com.embabel.dice.proposition.extraction.ExtractionRunRef
 import com.embabel.dice.provenance.ContentAddressedLocator
 import com.embabel.dice.provenance.SourceRevisionRef
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -29,25 +30,27 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
 
 /**
- * The async publisher's half of the profile contract: the accessor defaults to null, an
- * existing subclass is unaffected, and the shipped conversation event carries a profile when
- * its longer constructor is used.
+ * The async publisher's half of the profile contract: both accessors default to null, an
+ * existing subclass is unaffected, and the shipped conversation event carries a profile and a
+ * run when its longer constructor is used.
  */
 class SourceAnalysisRequestEventProfileTest {
 
     private val profile = ExtractionContentProfileRef("house-style", "v1")
+    private val run = ExtractionRunRef("run-1")
 
     @Test
-    fun `a subclass written before profiles carries none`() {
+    fun `a subclass written before profiles carries neither`() {
         val legacy = LegacyEvent(this, mock(NamedEntity::class.java))
 
         assertNull(legacy.profile())
+        assertNull(legacy.currentRun())
         assertNull(legacy.sourceLocator())
         assertNull(legacy.sourceRevision())
     }
 
     @Test
-    fun `the shipped conversation event defaults to no profile`() {
+    fun `the shipped conversation event defaults to no profile and no run`() {
         val event = ConversationAnalysisRequestEvent(
             source = this,
             user = mock(NamedEntity::class.java),
@@ -55,10 +58,11 @@ class SourceAnalysisRequestEventProfileTest {
         )
 
         assertNull(event.profile())
+        assertNull(event.currentRun())
     }
 
     @Test
-    fun `the conversation event carries the exact profile it was given`() {
+    fun `the conversation event carries the exact profile and run it was given`() {
         val locator = ContentAddressedLocator("event-source")
         val revision = SourceRevisionRef(locator.key(), "r1")
 
@@ -69,11 +73,13 @@ class SourceAnalysisRequestEventProfileTest {
             sourceLocator = locator,
             sourceRevision = revision,
             profile = profile,
+            currentRun = run,
         )
 
         assertSame(locator, event.sourceLocator())
         assertSame(revision, event.sourceRevision())
         assertSame(profile, event.profile())
+        assertSame(run, event.currentRun())
     }
 
     @Test
@@ -89,6 +95,7 @@ class SourceAnalysisRequestEventProfileTest {
         assertNull(event.sourceLocator())
         assertNull(event.sourceRevision())
         assertSame(profile, event.profile())
+        assertNull(event.currentRun())
     }
 
     @Test
@@ -101,6 +108,7 @@ class SourceAnalysisRequestEventProfileTest {
         }
 
         assertSame(profile, profileOnly.profile())
+        assertNull(profileOnly.currentRun())
         assertNull(profileOnly.sourceLocator())
     }
 
