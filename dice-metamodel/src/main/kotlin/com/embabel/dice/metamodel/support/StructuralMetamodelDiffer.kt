@@ -45,7 +45,12 @@ import com.embabel.dice.metamodel.PropertySignature
  * found: a label or a reference target still spelled with an old name is the rename propagating, so
  * it folds into the rename entry rather than reporting as loss on every referrer and every child.
  * Rendered relationship descriptors are left alone, so a relationship touching a renamed type still
- * churns; the names inside a descriptor are free text and are never parsed. See
+ * churns; the names inside a descriptor are free text and are never parsed.
+ *
+ * A rename has to be unmistakable to pair. When two new types both declare `Person` as a former
+ * name, the declaration is saying two things at once, and the differ pairs neither: both read as
+ * ordinary additions, `Person` reads as an ordinary removal, and an
+ * [MetamodelChange.AmbiguousEntityTypeRename] says which claim was set aside. See
  * `docs/design/metamodel-diff.md`.
  *
  * Stateless and thread-safe; one shared instance is fine.
@@ -58,16 +63,22 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         val fromTypes = from.entityTypeNames.toSet()
         val toTypes = to.entityTypeNames.toSet()
 
-        val renamedTypes = pairRenamedTypes(
+        val typePairing = pairRenamedTypes(
             removed = fromTypes - toTypes,
             added = toTypes - fromTypes,
             aliases = to.entityTypeAliases,
         )
+        val renamedTypes = typePairing.renames
 
         (fromTypes - toTypes - renamedTypes.keys).sorted()
             .mapTo(changes) { MetamodelChange.EntityTypeRemoved(it) }
         (toTypes - fromTypes - renamedTypes.values.toSet()).sorted()
             .mapTo(changes) { MetamodelChange.EntityTypeAdded(it) }
+
+        // A contested claim pairs nothing, so both sides of it have just been reported as an
+        // ordinary removal and addition. The entry saying which declaration was set aside goes
+        // here, ahead of the per-type blocks.
+        changes += typePairing.ambiguities
 
         // The types to compare member by member: those named the same in both versions, plus each
         // paired rename, which compares the old name's members against the new name's. Both are
@@ -110,6 +121,7 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
                 )
             }
             changes += properties.renames
+            changes += properties.ambiguities
             changes += properties.signatureChanges
         }
 
@@ -164,46 +176,70 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         )
     }
 
-    /** The four ways a type's property set can differ, gathered in one pass. */
+    /** The five ways a type's property set can differ, gathered in one pass. */
     private data class PropertyDelta(
         val added: Set<PropertySignature>,
         val removed: Set<PropertySignature>,
         val renames: List<MetamodelChange.PropertyRenamed>,
+        val ambiguities: List<MetamodelChange.AmbiguousPropertyRename>,
         val signatureChanges: List<MetamodelChange.PropertySignatureChanged>,
     )
 
+    /** What the type-level pairing found: the renames, and the claims it declined to resolve. */
+    private class TypeRenamePairing(
+        val renames: Map<String, String>,
+        val ambiguities: List<MetamodelChange.AmbiguousEntityTypeRename>,
+    )
+
+    /** The same for one type's properties. */
+    private class PropertyRenamePairing(
+        val renames: List<MetamodelChange.PropertyRenamed>,
+        val ambiguities: List<MetamodelChange.AmbiguousPropertyRename>,
+    )
+
     /**
-     * Pair each removed type with an added type that declares the removed name as a former name.
+     * Pair each removed type with the added type that declares the removed name as a former name.
      *
-     * Removed names are walked in sorted order and matched against added names in sorted order,
-     * which makes the pairing one-to-one and the same every run. An added type claiming two removed
-     * names takes the first of them, and the other stays an ordinary removal; a removed name
-     * claimed by two added types goes to the first of those, and the second stays an ordinary
-     * addition.
+     * Pairing needs an exclusive claim on both sides: among the types that are new in this version,
+     * the removed name is declared by exactly one of them, and that one declares exactly one removed
+     * name. Anything else is a contested claim, and it pairs nothing — both sides read as an
+     * ordinary removal and addition, with a [MetamodelChange.AmbiguousEntityTypeRename] naming the
+     * whole group. See [groupClaims].
+     *
+     * Exclusivity is judged among added types only, since only a removed name arriving on a new type
+     * is shaped like a rename. A type present in both versions can legally declare the same removed
+     * name as a former name — that is a merge, not a rename candidate — and it does not contest the
+     * pairing. It reports where it belongs, as an [MetamodelChange.EntityTypeAliasesChanged] on the
+     * surviving type.
      *
      * Matching is against the whole declared alias set, so a type renamed twice still pairs across
-     * stamps that aren't adjacent.
-     *
-     * @return Old name to new name, empty when nothing paired.
+     * stamps that aren't adjacent. An alias naming a type that isn't gone from the newer version
+     * says nothing and is left out before any of this.
      */
     private fun pairRenamedTypes(
         removed: Set<String>,
         added: Set<String>,
         aliases: Map<String, Set<String>>,
-    ): Map<String, String> {
-        if (removed.isEmpty() || added.isEmpty() || aliases.isEmpty()) return emptyMap()
-
-        val candidates = added.sorted()
-        val claimed = mutableSetOf<String>()
-        val paired = LinkedHashMap<String, String>()
-        for (removedName in removed.sorted()) {
-            val match = candidates.firstOrNull { addedName ->
-                addedName !in claimed && removedName in aliases[addedName].orEmpty()
-            } ?: continue
-            claimed += match
-            paired[removedName] = match
+    ): TypeRenamePairing {
+        if (removed.isEmpty() || added.isEmpty() || aliases.isEmpty()) {
+            return TypeRenamePairing(emptyMap(), emptyList())
         }
-        return paired
+
+        val claims = added
+            .associateWith { addedName -> aliases[addedName].orEmpty() intersect removed }
+            .filterValues { it.isNotEmpty() }
+        if (claims.isEmpty()) return TypeRenamePairing(emptyMap(), emptyList())
+
+        val grouped = groupClaims(claims)
+        return TypeRenamePairing(
+            renames = grouped.paired,
+            ambiguities = grouped.contested.map { group ->
+                MetamodelChange.AmbiguousEntityTypeRename(
+                    formerNames = group.formerNames,
+                    candidates = group.candidates,
+                )
+            },
+        )
     }
 
     /**
@@ -251,17 +287,18 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
     }
 
     /**
-     * Pair each removed property name with an added signature that declares it as a former name.
+     * Pair each removed property name with the added signature that declares it as a former name.
      *
      * Runs on what is left after the name matching in [comparePropertiesOf], so a name present on
      * both sides is never a candidate: an alias naming a property that still exists says nothing.
-     * Removed names are walked in sorted order against added signatures in sorted order, the same
-     * one-to-one discipline the type pairing uses, with the same outcome when one signature claims
-     * two old names or two signatures claim one.
+     * The pairing rule is the type pairing's rule one level down — an exclusive claim on both
+     * sides, and a contested claim pairs nothing and reports as a
+     * [MetamodelChange.AmbiguousPropertyRename].
      *
      * A name carrying more than one signature is left out. That is the type-merge path, where two
      * same-named domain types each declare the property, and there is no single before or after to
-     * pair; it falls back to a removal and an addition, as it does for a shape change.
+     * pair; it falls back to a removal and an addition, as it does for a shape change. A name left
+     * out this way is not part of any claim, so a signature naming it never turns up contested.
      */
     private fun pairRenamedProperties(
         typeName: String,
@@ -269,32 +306,45 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         removed: List<PropertySignature>,
         fromNames: Set<String>,
         toNames: Set<String>,
-    ): List<MetamodelChange.PropertyRenamed> {
+    ): PropertyRenamePairing {
+        val empty = PropertyRenamePairing(emptyList(), emptyList())
+
         val candidates = added
             .groupBy { it.name }
             .filter { (name, signatures) -> signatures.size == 1 && name !in fromNames }
-            .values
-            .map { it.single() }
-            .sorted()
-        if (candidates.isEmpty()) return emptyList()
+            .mapValues { (_, signatures) -> signatures.single() }
+        if (candidates.isEmpty()) return empty
 
         val goneNames = removed
             .groupBy { it.name }
             .filter { (name, signatures) -> signatures.size == 1 && name !in toNames }
             .mapValues { (_, signatures) -> signatures.single() }
+        if (goneNames.isEmpty()) return empty
 
-        val claimed = mutableSetOf<String>()
-        val renames = mutableListOf<MetamodelChange.PropertyRenamed>()
-        for (removedName in goneNames.keys.sorted()) {
-            val match = candidates.firstOrNull { it.name !in claimed && removedName in it.aliases } ?: continue
-            claimed += match.name
-            renames += MetamodelChange.PropertyRenamed(
-                typeName = typeName,
-                before = goneNames.getValue(removedName),
-                after = match,
-            )
-        }
-        return renames.sortedBy { it.after.name }
+        val claims = candidates
+            .mapValues { (_, signature) -> signature.aliases intersect goneNames.keys }
+            .filterValues { it.isNotEmpty() }
+        if (claims.isEmpty()) return empty
+
+        val grouped = groupClaims(claims)
+        return PropertyRenamePairing(
+            renames = grouped.paired
+                .map { (beforeName, afterName) ->
+                    MetamodelChange.PropertyRenamed(
+                        typeName = typeName,
+                        before = goneNames.getValue(beforeName),
+                        after = candidates.getValue(afterName),
+                    )
+                }
+                .sortedBy { it.after.name },
+            ambiguities = grouped.contested.map { group ->
+                MetamodelChange.AmbiguousPropertyRename(
+                    typeName = typeName,
+                    formerNames = group.formerNames,
+                    candidates = group.candidates,
+                )
+            },
+        )
     }
 
     /**
@@ -347,8 +397,9 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         }
 
         // Renames are paired off what is left, and the pair is then excluded from the added and
-        // removed sets, so one rename is one entry rather than a removal plus an addition too.
-        val renames = pairRenamedProperties(
+        // removed sets, so one rename is one entry rather than a removal plus an addition too. A
+        // contested claim pairs nothing, so its names stay in both sets and are reported plainly.
+        val pairing = pairRenamedProperties(
             typeName = typeName,
             added = added,
             removed = removed,
@@ -357,14 +408,92 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         )
 
         return PropertyDelta(
-            added = canonical(added - renames.mapTo(mutableSetOf()) { it.after }),
-            removed = canonical(removed - renames.mapTo(mutableSetOf()) { it.before }),
-            renames = renames,
+            added = canonical(added - pairing.renames.mapTo(mutableSetOf()) { it.after }),
+            removed = canonical(removed - pairing.renames.mapTo(mutableSetOf()) { it.before }),
+            renames = pairing.renames,
+            ambiguities = pairing.ambiguities,
             signatureChanges = signatureChanges,
         )
     }
 
     private companion object {
+
+        /** Old names and the new names claiming them, where no one claim is exclusive. */
+        private class ContestedClaim(val formerNames: Set<String>, val candidates: Set<String>)
+
+        /** The outcome of reading a set of declared claims: what paired, and what was contested. */
+        private class ClaimGrouping(
+            val paired: Map<String, String>,
+            val contested: List<ContestedClaim>,
+        )
+
+        /**
+         * Read declared former names — each new name against the old names it claims — and decide
+         * which of them are renames.
+         *
+         * A claim is a rename when it is exclusive both ways within [claims]: the old name is
+         * claimed by that new name alone, and that new name claims that old name alone. Everything
+         * else is contested and pairs nothing.
+         *
+         * Exclusivity is judged over what the caller puts in [claims], and each caller leaves some
+         * declarations out — a surviving type's alias at the type level, a name carrying two
+         * signatures at the property level. A declaration left out doesn't contest anything here;
+         * it reports through whichever change kind covers it.
+         *
+         * The way to see the rule is as a graph, old names on one side, new names on the other, an
+         * edge for each claim. A piece of that graph holding one name on each side is a rename, and
+         * the walk below pairs it. A larger piece has no answer in the declaration: two new types
+         * claiming `Person` could each be the one that carries its data, and picking either would
+         * attach the old type's history to a type nobody nominated. The whole piece comes back as
+         * one [ContestedClaim] so a caller sees which names are tangled together, and each name in
+         * it goes on to report as an ordinary addition or removal.
+         *
+         * Deterministic: old names are walked in sorted order, so a group is always found at its
+         * lowest old name, and groups don't share old names. That puts [ClaimGrouping.contested] in
+         * order of first contested old name, and the names inside each group come out sorted.
+         *
+         * @param claims New name to the old names it declares as former names. Every old name here
+         *   is one the comparison already found gone; names on both sides are filtered out earlier.
+         */
+        private fun groupClaims(claims: Map<String, Set<String>>): ClaimGrouping {
+            val claimants = mutableMapOf<String, MutableSet<String>>()
+            claims.forEach { (newName, oldNames) ->
+                oldNames.forEach { oldName -> claimants.getOrPut(oldName) { mutableSetOf() } += newName }
+            }
+
+            val paired = LinkedHashMap<String, String>()
+            val contested = mutableListOf<ContestedClaim>()
+            val visited = mutableSetOf<String>()
+
+            for (startName in claimants.keys.sorted()) {
+                if (startName in visited) continue
+
+                // Walk out from this old name to every name reachable through a claim.
+                val groupOld = mutableSetOf(startName)
+                val groupNew = mutableSetOf<String>()
+                val pendingOld = ArrayDeque(listOf(startName))
+                val pendingNew = ArrayDeque<String>()
+                while (pendingOld.isNotEmpty() || pendingNew.isNotEmpty()) {
+                    while (pendingOld.isNotEmpty()) {
+                        val oldName = pendingOld.removeFirst()
+                        claimants.getValue(oldName).forEach { if (groupNew.add(it)) pendingNew += it }
+                    }
+                    while (pendingNew.isNotEmpty()) {
+                        val newName = pendingNew.removeFirst()
+                        claims.getValue(newName).forEach { if (groupOld.add(it)) pendingOld += it }
+                    }
+                }
+                visited += groupOld
+
+                if (groupOld.size == 1 && groupNew.size == 1) {
+                    paired[groupOld.first()] = groupNew.first()
+                } else {
+                    contested += ContestedClaim(canonical(groupOld), canonical(groupNew))
+                }
+            }
+
+            return ClaimGrouping(paired = paired, contested = contested)
+        }
 
         /**
          * Sort into a set that iterates in that order.

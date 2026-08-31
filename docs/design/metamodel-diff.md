@@ -52,11 +52,17 @@ over, where an unhandled change kind would be treated as harmless.
 | `EntityTypeModified` | A type present in both versions gained or lost labels, or gained or lost whole properties (matched by name), with the full signature of each. |
 | `PropertyRenamed` | A property changed name, paired up through a former name its new signature carries. Carries `before` and `after`. |
 | `PropertySignatureChanged` | A property kept its name but changed shape: its type, its cardinality, or whether it holds a value or points at another type. Carries `before` and `after`. |
+| `AmbiguousEntityTypeRename` / `AmbiguousPropertyRename` | A contested claim, so no rename was read: more than one new name claiming one former name, or one new name claiming more than one former name that was still live. Carries the whole contested group. |
 | `RelationshipAdded` / `RelationshipRemoved` | An allowed relationship descriptor appeared or disappeared. |
 
 The kinds don't overlap. Each difference is reported exactly once, by whichever kind describes it
 most precisely. Rendered relationship descriptors are the exception, and
 [Where exactly-once stops](#where-exactly-once-stops) says why.
+
+The two ambiguity kinds sit outside that accounting. They describe a declaration the differ could
+not act on rather than a difference between the two schemas, and the names inside one are also
+reported as ordinary additions and removals. [The pairing rule](#the-pairing-rule) says when they
+come up.
 
 `PropertySignatureChanged` is why the stamp carries signatures rather than property names. `age`
 turning from a string into an integer, or a single `worksAt` becoming a list of them, changes what
@@ -81,10 +87,12 @@ leaving the differ is sorted first. Sets are compared as sets, never as a delimi
 projection: these names come from free text and LLM extraction and routinely contain commas and
 spaces, so `{"a", "b c"}` and `{"a b", "c"}` must not collapse into the same thing.
 
-Entity-type changes come first, by type name, then relationship changes. Within one type the order
-is `EntityTypeRenamed`, `EntityTypeAliasesChanged`, `EntityTypeModified`, `PropertyRenamed` by new
-property name, then `PropertySignatureChanged` by property name. A renamed type is filed under its
-new name.
+Entity-type changes come first, by type name, then relationship changes. Any
+`AmbiguousEntityTypeRename` comes after the added and removed types and before the per-type blocks,
+ordered by first contested former name. Within one type the order is `EntityTypeRenamed`,
+`EntityTypeAliasesChanged`, `EntityTypeModified`, `PropertyRenamed` by new property name,
+`AmbiguousPropertyRename` by first contested former name, then `PropertySignatureChanged` by
+property name. A renamed type is filed under its new name.
 
 ## Declared renames
 
@@ -103,36 +111,70 @@ case-sensitive.
 
 Pairing runs on what is left after the ordinary name matching, so a name present on both sides is
 never a candidate: an alias naming a property that still exists says nothing, and matches nothing.
-Removed names are walked in sorted order against the added entries in sorted order, which makes the
-result one-to-one and identical every run.
+
+A rename pairs when the claim is **exclusive both ways among the claims that are in the running**:
+the old name is claimed by one new name alone, and that new name claims one old name alone. The way
+to see it is as a graph — old names on one side, new names on the other, an edge for every declared
+former name still in the running. A piece of that graph holding one name on each side is a rename.
+Anything larger is contested and pairs nothing.
+
+Two declarations never enter that graph, so neither one contests a pairing:
+
+- **A surviving type's alias.** Exclusivity is judged among the types that are *new* in this
+  version, because only a removed name arriving on a new type is shaped like a rename. A type
+  present in both versions can legally declare the removed name as a former name — `Keeper`
+  aliasing `Person` while `Person` moves to `Customer`. That is a merge rather than a rename
+  candidate, so `Person → Customer` still pairs, and `Keeper`'s declaration reports where it
+  belongs, as an `EntityTypeAliasesChanged` on `Keeper`.
+- **A property name carrying two signatures.** The type-merge path below takes such a name out of
+  the running before claims are read, so a claim on it is voided rather than contested. A signature
+  declaring `aliases = {age, b}` where `age` carries two signatures still pairs `b` exclusively.
 
 ```mermaid
 flowchart TD
-    start["a removed name<br/>(walked in sorted order)"]
+    start["the claims: an edge from each new<br/>name to each old name it declares"]
     dup{"a property name carrying<br/>more than one signature?"}
-    scan{"an unclaimed added entry, in<br/>sorted order, declaring this<br/>name as a former name?"}
+    group["take one connected group<br/>of the claim graph"]
+    exclusive{"one old name and one<br/>new name in the group?"}
     pair["pair them: EntityTypeRenamed<br/>or PropertyRenamed"]
     exclude["exclude both from the added<br/>and removed sets"]
     empty{"anything left in the<br/>EntityTypeModified?"}
     emit["emit EntityTypeModified"]
     drop["emit nothing"]
-    plain["ordinary removal:<br/>EntityTypeRemoved, or removedProperties"]
+    ambiguous["report the whole group:<br/>AmbiguousEntityTypeRename<br/>or AmbiguousPropertyRename"]
+    plain["ordinary removal and addition:<br/>EntityTypeRemoved / EntityTypeAdded,<br/>or removedProperties / addedProperties"]
 
     start --> dup
-    dup -- "yes: the type-merge path" --> plain
-    dup -- "no" --> scan
-    scan -- "yes" --> pair
-    scan -- "no" --> plain
+    dup -- "yes: the type-merge path,<br/>the name is out of the running" --> plain
+    dup -- "no" --> group
+    group --> exclusive
+    exclusive -- "yes" --> pair
+    exclusive -- "no" --> ambiguous
+    ambiguous --> plain
     pair --> exclude
     exclude --> empty
     empty -- "yes" --> emit
     empty -- "no" --> drop
 ```
 
-Two edge cases the sorted walk settles. One added entry declaring two removed names pairs with the
-first of them, and the other stays an ordinary removal. One removed name claimed by two added
-entries pairs with the first of those, and the second stays an ordinary addition. Either way the
-rename is reported once.
+**The ambiguity is reported, never guessed.** Two new types both declaring `Person` as a former name
+is a declaration saying two things at once. Resolving it on sort order, or on any other tiebreak,
+attaches `Person`'s labels, properties and references to a type nobody nominated, and hands the
+other a clean bill as something brand new. The same holds in the other direction: one new type
+claiming two old names that were both live is a merge, and neither old name is the rename. So the
+differ pairs neither, every name in the group reports as an ordinary addition or removal, and one
+ambiguity entry names the whole group so the set-aside declaration is visible instead of silent.
+Groups are found by walking out from each old name, so claims that chain together — `X` claims `A`
+while `Y` claims both `A` and `B` — come back as a single entry covering all four names.
+
+Reporting rather than throwing is deliberate. `MetamodelVersion` already refuses an alias naming a
+type the same schema still declares, and stays quiet about two types sharing one former name, so a
+schema in this state stamps cleanly. The two sides of a diff are then two independently stamped
+versions, and a caller comparing historical stamps out of a store cannot edit either one; throwing
+would leave it with no way to read its own history. The reading a caller gets is the conservative
+one — the old name looks lost, which is what quarantine should act on — with the ambiguity entry
+beside it saying why. The fix belongs in the declaration: retire the alias from the types that
+should not carry it, or stamp the moves separately so each rename stands alone.
 
 The type-merge branch is the same exception `EntityTypeModified` already documents: a
 `DataDictionary` may hold two same-named domain types whose properties get unioned, so one property
@@ -162,6 +204,10 @@ substitutes old name for new in exactly two places:
 
 1. the `type` field of `Kind.REFERENCE` property signatures, and
 2. label sets.
+
+Substitution rides on the pairs the differ made, so a contested claim substitutes nothing: a
+referrer that followed the move reports its reference change in full, the reading it would get with
+no alias declared at all.
 
 A delta that vanishes under the substitution is the rename propagating and folds into
 `EntityTypeRenamed`. A delta that survives is reported and judged normally, stated in substituted

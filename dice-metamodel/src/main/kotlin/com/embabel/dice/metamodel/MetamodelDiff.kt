@@ -46,6 +46,10 @@ private fun <T> immutableCopy(values: List<T>): List<T> = java.util.List.copyOf(
  * differ compares as atoms: a relationship touching a renamed type churns as a
  * [RelationshipRemoved] plus a [RelationshipAdded] alongside the [EntityTypeRenamed] that already
  * described the same move. See `docs/design/metamodel-diff.md`.
+ *
+ * [AmbiguousEntityTypeRename] and [AmbiguousPropertyRename] sit outside that accounting. They
+ * describe a declaration the differ could not act on rather than a structural difference, and the
+ * names they carry are reported as ordinary removals and additions beside them.
  */
 sealed interface MetamodelChange {
 
@@ -91,6 +95,63 @@ sealed interface MetamodelChange {
                 "EntityTypeRenamed pairs two names for one type, but got '$before' twice."
             }
         }
+    }
+
+    /**
+     * Former names that more than one new type lays claim to, or a new type claiming more than one
+     * former name that was still live. The differ refuses to guess which move was the rename.
+     *
+     * Pairing needs an exclusive claim: one old name, one new type, and neither of them wanted by
+     * anything else. Two new types both declaring `Person` as a former name is a schema saying two
+     * incompatible things, and choosing one would attach `Person`'s label, property and reference
+     * history to a type nobody nominated. So nothing pairs here. Every name in [formerNames] is
+     * reported as an [EntityTypeRemoved], every name in [candidates] as an [EntityTypeAdded], the
+     * reading a schema with no aliases at all would get, and this entry records that a declaration
+     * was set aside and why.
+     *
+     * A declaration can reach this state honestly, which is why it reports rather than throws.
+     * `MetamodelVersion` refuses an alias naming a type the same schema still declares, and says
+     * nothing about two types sharing one former name; and the two sides of a diff are two
+     * independently stamped versions, so a caller comparing stamps out of a store has no way to
+     * fix the input. The way out is in the declaration: retire the alias from the types that
+     * should not carry it, or stamp the moves separately so each rename stands alone.
+     *
+     * Experimental: shape may change before 1.0.
+     *
+     * @property formerNames The contested old names, all of them gone from the newer version.
+     * @property candidates The new type names claiming them.
+     */
+    class AmbiguousEntityTypeRename(
+        formerNames: Set<String>,
+        candidates: Set<String>,
+    ) : MetamodelChange {
+
+        // Copied, and a plain class rather than a `data class`, for the same reason as
+        // EntityTypeModified: a generated copy() would hand its argument straight to the field.
+        val formerNames: Set<String> = immutableCopy(formerNames)
+
+        val candidates: Set<String> = immutableCopy(candidates)
+
+        init {
+            require(this.formerNames.isNotEmpty() && this.candidates.isNotEmpty()) {
+                "AmbiguousEntityTypeRename needs names on both sides, but got " +
+                    "formerNames=${this.formerNames}, candidates=${this.candidates}"
+            }
+            require(this.formerNames.size > 1 || this.candidates.size > 1) {
+                "AmbiguousEntityTypeRename describes a contested claim, but one former name and " +
+                    "one candidate is an ordinary rename: ${this.formerNames} to ${this.candidates}"
+            }
+        }
+
+        override fun equals(other: Any?): Boolean =
+            other is AmbiguousEntityTypeRename &&
+                formerNames == other.formerNames &&
+                candidates == other.candidates
+
+        override fun hashCode(): Int = Objects.hash(formerNames, candidates)
+
+        override fun toString(): String =
+            "AmbiguousEntityTypeRename(formerNames=$formerNames, candidates=$candidates)"
     }
 
     /**
@@ -253,6 +314,62 @@ sealed interface MetamodelChange {
     }
 
     /**
+     * The same contested claim as [AmbiguousEntityTypeRename], one level down: property names on
+     * one type that more than one new signature claims, or one new signature claiming more than one
+     * old name.
+     *
+     * Nothing pairs. Every name in [formerNames] stays in
+     * [EntityTypeModified.removedProperties] and every name in [candidates] in
+     * [EntityTypeModified.addedProperties], and this entry records that the declaration was set
+     * aside. Choosing between the claimants would say a property's data carried over into a
+     * signature the operator never named.
+     *
+     * Experimental: shape may change before 1.0.
+     *
+     * @property typeName The entity type carrying the properties, under its name in the newer
+     *   version.
+     * @property formerNames The contested old property names, all of them gone from the newer
+     *   version.
+     * @property candidates The new property names claiming them.
+     */
+    class AmbiguousPropertyRename(
+        typeName: String,
+        formerNames: Set<String>,
+        candidates: Set<String>,
+    ) : MetamodelChange {
+
+        val typeName: String = typeName
+
+        // Copied, and a plain class, for the same reason as AmbiguousEntityTypeRename.
+        val formerNames: Set<String> = immutableCopy(formerNames)
+
+        val candidates: Set<String> = immutableCopy(candidates)
+
+        init {
+            require(this.formerNames.isNotEmpty() && this.candidates.isNotEmpty()) {
+                "AmbiguousPropertyRename needs names on both sides, but got " +
+                    "formerNames=${this.formerNames}, candidates=${this.candidates} on '$typeName'"
+            }
+            require(this.formerNames.size > 1 || this.candidates.size > 1) {
+                "AmbiguousPropertyRename describes a contested claim, but one former name and one " +
+                    "candidate is an ordinary rename: ${this.formerNames} to ${this.candidates} " +
+                    "on '$typeName'"
+            }
+        }
+
+        override fun equals(other: Any?): Boolean =
+            other is AmbiguousPropertyRename &&
+                typeName == other.typeName &&
+                formerNames == other.formerNames &&
+                candidates == other.candidates
+
+        override fun hashCode(): Int = Objects.hash(typeName, formerNames, candidates)
+
+        override fun toString(): String =
+            "AmbiguousPropertyRename(typeName=$typeName, formerNames=$formerNames, candidates=$candidates)"
+    }
+
+    /**
      * A property that kept its name on a type present in both versions, but changed shape: its
      * value type narrowed or widened, its cardinality moved, or it turned from a plain value into a
      * reference to another type (or back).
@@ -332,10 +449,13 @@ sealed interface MetamodelChange {
  * @property fromVersion The baseline (older) version.
  * @property toVersion The target (newer) version.
  * @property changes Every change, in a deterministic order: entity-type changes first (by type
- *   name, a renamed type filed under its newer name), then relationship changes. Within one type
- *   the order is [MetamodelChange.EntityTypeRenamed], [MetamodelChange.EntityTypeAliasesChanged],
+ *   name, a renamed type filed under its newer name), then relationship changes. Any
+ *   [MetamodelChange.AmbiguousEntityTypeRename] comes after the added and removed types and before
+ *   the per-type blocks, ordered by first contested former name. Within one type the order is
+ *   [MetamodelChange.EntityTypeRenamed], [MetamodelChange.EntityTypeAliasesChanged],
  *   [MetamodelChange.EntityTypeModified], [MetamodelChange.PropertyRenamed] by new property name,
- *   then [MetamodelChange.PropertySignatureChanged] by property name. The same pair of versions
+ *   [MetamodelChange.AmbiguousPropertyRename] by first contested former name, then
+ *   [MetamodelChange.PropertySignatureChanged] by property name. The same pair of versions
  *   always produces the same list.
  */
 class MetamodelDiff(
@@ -359,6 +479,8 @@ class MetamodelDiff(
     /**
      * Names from every [MetamodelChange.EntityTypeRemoved]: the quarantine candidates. A type that
      * was renamed under a declared alias is a [MetamodelChange.EntityTypeRenamed] and is not here.
+     * A former name too many types claimed to pair with is here, since the differ declined to read
+     * it as a rename; the [MetamodelChange.AmbiguousEntityTypeRename] beside it says why.
      */
     val removedEntityTypes: Set<String>
         get() = changes
@@ -380,6 +502,37 @@ class MetamodelDiff(
         get() = changes.filterIsInstance<MetamodelChange.PropertySignatureChanged>()
 
     /**
+     * Every [MetamodelChange.AmbiguousEntityTypeRename] entry: the declared type renames this diff
+     * could not read, because the claim was contested in one direction or the other. Empty for
+     * almost every diff. Each entry's names also appear as ordinary additions and removals.
+     */
+    val ambiguousEntityTypeRenames: List<MetamodelChange.AmbiguousEntityTypeRename>
+        get() = changes.filterIsInstance<MetamodelChange.AmbiguousEntityTypeRename>()
+
+    /** The same for properties: every [MetamodelChange.AmbiguousPropertyRename] entry. */
+    val ambiguousPropertyRenames: List<MetamodelChange.AmbiguousPropertyRename>
+        get() = changes.filterIsInstance<MetamodelChange.AmbiguousPropertyRename>()
+
+    /**
+     * Descriptors from every [MetamodelChange.RelationshipAdded]: relationships the newer schema
+     * allows and the older one didn't.
+     */
+    val addedRelationships: Set<String>
+        get() = changes
+            .filterIsInstance<MetamodelChange.RelationshipAdded>()
+            .mapTo(mutableSetOf()) { it.descriptor }
+
+    /**
+     * Descriptors from every [MetamodelChange.RelationshipRemoved]. A relationship touching a
+     * renamed type shows up here and in [addedRelationships], since the differ compares rendered
+     * descriptors as atoms; the [MetamodelChange.EntityTypeRenamed] beside them describes the move.
+     */
+    val removedRelationships: Set<String>
+        get() = changes
+            .filterIsInstance<MetamodelChange.RelationshipRemoved>()
+            .mapTo(mutableSetOf()) { it.descriptor }
+
+    /**
      * Every entity type this diff says something about: added, removed, renamed, modified, or
      * holding a property that was renamed or reshaped. A reshaped type shows up in both
      * [modifiedEntityTypes] and [propertySignatureChanges], so answering "did anything about
@@ -394,9 +547,11 @@ class MetamodelDiff(
                 is MetamodelChange.EntityTypeAdded -> listOf(change.typeName)
                 is MetamodelChange.EntityTypeRemoved -> listOf(change.typeName)
                 is MetamodelChange.EntityTypeRenamed -> listOf(change.before, change.after)
+                is MetamodelChange.AmbiguousEntityTypeRename -> change.formerNames + change.candidates
                 is MetamodelChange.EntityTypeAliasesChanged -> listOf(change.typeName)
                 is MetamodelChange.EntityTypeModified -> listOf(change.typeName)
                 is MetamodelChange.PropertyRenamed -> listOf(change.typeName)
+                is MetamodelChange.AmbiguousPropertyRename -> listOf(change.typeName)
                 is MetamodelChange.PropertySignatureChanged -> listOf(change.typeName)
                 is MetamodelChange.RelationshipAdded -> emptyList()
                 is MetamodelChange.RelationshipRemoved -> emptyList()

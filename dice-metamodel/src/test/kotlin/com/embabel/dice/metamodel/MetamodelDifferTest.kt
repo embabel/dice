@@ -775,40 +775,6 @@ class MetamodelDifferTest {
         }
 
         @Test
-        fun `an added type claiming two removed names pairs with the first and leaves the other removed`() {
-            val old = versionOf(listOf("A", "B"))
-            val new = versionOf(listOf("C"), aliases = mapOf("C" to setOf("A", "B")))
-            val diff = differ.diff(old, new)
-
-            assertEquals(
-                listOf(
-                    MetamodelChange.EntityTypeRemoved("B"),
-                    MetamodelChange.EntityTypeRenamed("A", "C"),
-                    MetamodelChange.EntityTypeAliasesChanged("C", emptySet(), setOf("A", "B")),
-                ),
-                diff.changes,
-            )
-        }
-
-        @Test
-        fun `a removed name claimed by two added types pairs with the first and leaves the other added`() {
-            val old = versionOf(listOf("A"))
-            val new = versionOf(
-                listOf("B", "C"),
-                aliases = mapOf("B" to setOf("A"), "C" to setOf("A")),
-            )
-            val diff = differ.diff(old, new)
-
-            assertEquals(
-                listOf(
-                    MetamodelChange.EntityTypeAdded("C"),
-                    MetamodelChange.EntityTypeRenamed("A", "B"),
-                ),
-                diff.changes,
-            )
-        }
-
-        @Test
         fun `a renamed type reports everything else that moved under its new name`() {
             val old = versionOf(
                 listOf("Person"),
@@ -991,47 +957,6 @@ class MetamodelDifferTest {
             assertFalse(renamed.kindChanged)
         }
 
-        @Test
-        fun `an added signature claiming two removed names pairs with the first and leaves the other removed`() {
-            val old = versionOf(
-                listOf("Person"),
-                properties = mapOf("Person" to setOf(valueProperty("a"), valueProperty("b"))),
-            )
-            val new = versionOf(
-                listOf("Person"),
-                properties = mapOf("Person" to setOf(valueProperty("c", aliases = setOf("a", "b")))),
-            )
-            val diff = differ.diff(old, new)
-
-            val renamed = diff.changes.filterIsInstance<MetamodelChange.PropertyRenamed>().single()
-            assertEquals("a", renamed.before.name)
-            assertEquals("c", renamed.after.name)
-            val modified = diff.modifiedEntityTypes.single()
-            assertEquals(setOf("b"), modified.removedPropertyNames)
-            assertTrue(modified.addedProperties.isEmpty())
-        }
-
-        @Test
-        fun `a removed name claimed by two added signatures pairs with the first and leaves the other added`() {
-            val old = versionOf(listOf("Person"), properties = mapOf("Person" to setOf(valueProperty("a"))))
-            val new = versionOf(
-                listOf("Person"),
-                properties = mapOf(
-                    "Person" to setOf(
-                        valueProperty("b", aliases = setOf("a")),
-                        valueProperty("c", aliases = setOf("a")),
-                    ),
-                ),
-            )
-            val diff = differ.diff(old, new)
-
-            val renamed = diff.changes.filterIsInstance<MetamodelChange.PropertyRenamed>().single()
-            assertEquals("b", renamed.after.name)
-            val modified = diff.modifiedEntityTypes.single()
-            assertEquals(setOf("c"), modified.addedPropertyNames)
-            assertTrue(modified.removedProperties.isEmpty())
-        }
-
         /**
          * The type-merge path: two same-named domain types each declare `age` with a different
          * shape, so the name carries two signatures and there is no single before to pair.
@@ -1078,6 +1003,369 @@ class MetamodelDifferTest {
 
             assertTrue(diff.changes.filterIsInstance<MetamodelChange.PropertyRenamed>().isEmpty())
             assertEquals(setOf("years"), diff.modifiedEntityTypes.single().addedPropertyNames)
+        }
+    }
+
+    /**
+     * Pairing needs an exclusive claim on both sides. Where more than one claim lands on a name the
+     * declaration has said two things at once, nothing pairs, and the diff reports the tangle
+     * rather than picking a winner off the sort order.
+     */
+    @Nested
+    inner class ContestedRenames {
+
+        /**
+         * The case from the #85 review. `Person`'s `age` moved from integer to string on one of the
+         * two claimants and stayed integer on the other, so choosing the alphabetically first would
+         * report a signature change on a type the operator never nominated as the rename, and hand
+         * the other one a clean bill as a brand-new type.
+         */
+        @Test
+        fun `two added types claiming one former name pair with neither`() {
+            val old = versionOf(
+                listOf("Person"),
+                properties = mapOf("Person" to setOf(valueProperty("age", "integer"))),
+            )
+            val new = versionOf(
+                listOf("Customer", "Employee"),
+                properties = mapOf(
+                    "Customer" to setOf(valueProperty("age", "string")),
+                    "Employee" to setOf(valueProperty("age", "integer")),
+                ),
+                aliases = mapOf("Customer" to setOf("Person"), "Employee" to setOf("Person")),
+            )
+            val diff = differ.diff(old, new)
+
+            assertEquals(
+                listOf(
+                    MetamodelChange.EntityTypeRemoved("Person"),
+                    MetamodelChange.EntityTypeAdded("Customer"),
+                    MetamodelChange.EntityTypeAdded("Employee"),
+                    MetamodelChange.AmbiguousEntityTypeRename(
+                        formerNames = setOf("Person"),
+                        candidates = setOf("Customer", "Employee"),
+                    ),
+                ),
+                diff.changes,
+            )
+            assertEquals(setOf("Person"), diff.removedEntityTypes, "the old type reads as lost, which it is")
+            assertTrue(
+                diff.propertySignatureChanges.isEmpty(),
+                "no old type's history is attached to a claimant: ${diff.changes}",
+            )
+        }
+
+        @Test
+        fun `one added type claiming two live former names pairs with neither`() {
+            val old = versionOf(listOf("A", "B"))
+            val new = versionOf(listOf("C"), aliases = mapOf("C" to setOf("A", "B")))
+
+            assertEquals(
+                listOf(
+                    MetamodelChange.EntityTypeRemoved("A"),
+                    MetamodelChange.EntityTypeRemoved("B"),
+                    MetamodelChange.EntityTypeAdded("C"),
+                    MetamodelChange.AmbiguousEntityTypeRename(
+                        formerNames = setOf("A", "B"),
+                        candidates = setOf("C"),
+                    ),
+                ),
+                differ.diff(old, new).changes,
+            )
+        }
+
+        /**
+         * `A` is claimed by both, and `Y` claims `B` as well, so all four names hang together and
+         * no part of the tangle can be resolved on its own. One entry names the whole group.
+         */
+        @Test
+        fun `claims that chain together report as one group`() {
+            val old = versionOf(listOf("A", "B"))
+            val new = versionOf(
+                listOf("X", "Y"),
+                aliases = mapOf("X" to setOf("A"), "Y" to setOf("A", "B")),
+            )
+
+            assertEquals(
+                listOf(
+                    MetamodelChange.EntityTypeRemoved("A"),
+                    MetamodelChange.EntityTypeRemoved("B"),
+                    MetamodelChange.EntityTypeAdded("X"),
+                    MetamodelChange.EntityTypeAdded("Y"),
+                    MetamodelChange.AmbiguousEntityTypeRename(
+                        formerNames = setOf("A", "B"),
+                        candidates = setOf("X", "Y"),
+                    ),
+                ),
+                differ.diff(old, new).changes,
+            )
+        }
+
+        @Test
+        fun `an uncontested rename beside a contested claim still pairs`() {
+            val old = versionOf(listOf("A", "Person"))
+            val new = versionOf(
+                listOf("B", "Customer", "Employee"),
+                aliases = mapOf(
+                    "B" to setOf("A"),
+                    "Customer" to setOf("Person"),
+                    "Employee" to setOf("Person"),
+                ),
+            )
+
+            assertEquals(
+                listOf(
+                    MetamodelChange.EntityTypeRemoved("Person"),
+                    MetamodelChange.EntityTypeAdded("Customer"),
+                    MetamodelChange.EntityTypeAdded("Employee"),
+                    MetamodelChange.AmbiguousEntityTypeRename(
+                        formerNames = setOf("Person"),
+                        candidates = setOf("Customer", "Employee"),
+                    ),
+                    MetamodelChange.EntityTypeRenamed("A", "B"),
+                ),
+                differ.diff(old, new).changes,
+            )
+        }
+
+        @Test
+        fun `two contested groups come out ordered by their first former name`() {
+            val old = versionOf(listOf("A", "P"))
+            val new = versionOf(
+                listOf("A1", "A2", "P1", "P2"),
+                aliases = mapOf(
+                    "A1" to setOf("A"),
+                    "A2" to setOf("A"),
+                    "P1" to setOf("P"),
+                    "P2" to setOf("P"),
+                ),
+            )
+
+            assertEquals(
+                listOf(
+                    MetamodelChange.AmbiguousEntityTypeRename(setOf("A"), setOf("A1", "A2")),
+                    MetamodelChange.AmbiguousEntityTypeRename(setOf("P"), setOf("P1", "P2")),
+                ),
+                differ.diff(old, new).changes
+                    .filterIsInstance<MetamodelChange.AmbiguousEntityTypeRename>(),
+            )
+        }
+
+        /**
+         * Substitution rides on a pair the differ made. Nothing paired here, so a referrer that
+         * followed the move reports its reference change in full, the reading it would get with no
+         * alias declared at all.
+         */
+        @Test
+        fun `a contested claim substitutes nothing on the older side`() {
+            val old = versionOf(
+                listOf("Person", "Referrer"),
+                properties = mapOf("Referrer" to setOf(referenceProperty("link", "Person"))),
+            )
+            val new = versionOf(
+                listOf("Customer", "Employee", "Referrer"),
+                properties = mapOf("Referrer" to setOf(referenceProperty("link", "Customer"))),
+                aliases = mapOf("Customer" to setOf("Person"), "Employee" to setOf("Person")),
+            )
+            val diff = differ.diff(old, new)
+
+            assertEquals(
+                MetamodelChange.PropertySignatureChanged(
+                    typeName = "Referrer",
+                    propertyName = "link",
+                    before = referenceProperty("link", "Person"),
+                    after = referenceProperty("link", "Customer"),
+                ),
+                diff.propertySignatureChanges.single(),
+            )
+        }
+
+        @Test
+        fun `touchedEntityTypes carries every name in a contested claim`() {
+            val diff = differ.diff(
+                versionOf(listOf("Person")),
+                versionOf(
+                    listOf("Customer", "Employee"),
+                    aliases = mapOf("Customer" to setOf("Person"), "Employee" to setOf("Person")),
+                ),
+            )
+            assertEquals(setOf("Person", "Customer", "Employee"), diff.touchedEntityTypes)
+        }
+
+        @Test
+        fun `two added signatures claiming one former name pair with neither`() {
+            val old = versionOf(listOf("Person"), properties = mapOf("Person" to setOf(valueProperty("a"))))
+            val new = versionOf(
+                listOf("Person"),
+                properties = mapOf(
+                    "Person" to setOf(
+                        valueProperty("b", aliases = setOf("a")),
+                        valueProperty("c", aliases = setOf("a")),
+                    ),
+                ),
+            )
+            val diff = differ.diff(old, new)
+
+            assertTrue(diff.changes.filterIsInstance<MetamodelChange.PropertyRenamed>().isEmpty())
+            val modified = diff.modifiedEntityTypes.single()
+            assertEquals(setOf("a"), modified.removedPropertyNames)
+            assertEquals(setOf("b", "c"), modified.addedPropertyNames)
+            assertEquals(
+                MetamodelChange.AmbiguousPropertyRename(
+                    typeName = "Person",
+                    formerNames = setOf("a"),
+                    candidates = setOf("b", "c"),
+                ),
+                diff.changes.filterIsInstance<MetamodelChange.AmbiguousPropertyRename>().single(),
+            )
+        }
+
+        @Test
+        fun `one added signature claiming two former names pairs with neither`() {
+            val old = versionOf(
+                listOf("Person"),
+                properties = mapOf("Person" to setOf(valueProperty("a"), valueProperty("b"))),
+            )
+            val new = versionOf(
+                listOf("Person"),
+                properties = mapOf("Person" to setOf(valueProperty("c", aliases = setOf("a", "b")))),
+            )
+            val diff = differ.diff(old, new)
+
+            assertTrue(diff.changes.filterIsInstance<MetamodelChange.PropertyRenamed>().isEmpty())
+            val modified = diff.modifiedEntityTypes.single()
+            assertEquals(setOf("a", "b"), modified.removedPropertyNames)
+            assertEquals(setOf("c"), modified.addedPropertyNames)
+            assertEquals(
+                MetamodelChange.AmbiguousPropertyRename(
+                    typeName = "Person",
+                    formerNames = setOf("a", "b"),
+                    candidates = setOf("c"),
+                ),
+                diff.changes.filterIsInstance<MetamodelChange.AmbiguousPropertyRename>().single(),
+            )
+        }
+
+        @Test
+        fun `a contested property claim sits after the paired renames on the same type`() {
+            val old = versionOf(
+                listOf("Person"),
+                properties = mapOf("Person" to setOf(valueProperty("a"), valueProperty("x"))),
+            )
+            val new = versionOf(
+                listOf("Person"),
+                properties = mapOf(
+                    "Person" to setOf(
+                        valueProperty("b", aliases = setOf("a")),
+                        valueProperty("c", aliases = setOf("a")),
+                        valueProperty("y", aliases = setOf("x")),
+                    ),
+                ),
+            )
+            val diff = differ.diff(old, new)
+
+            assertEquals(
+                listOf("EntityTypeModified", "PropertyRenamed", "AmbiguousPropertyRename"),
+                diff.changes.map { it::class.simpleName },
+            )
+            assertEquals("y", diff.changes.filterIsInstance<MetamodelChange.PropertyRenamed>().single().after.name)
+        }
+
+        /**
+         * Exclusivity is judged among the types that are new in this version. `Keeper` survives and
+         * declares `Person` as a former name too, which the stamp allows once `Person` is gone, but
+         * a name arriving on a type that was already there is a merge rather than a rename
+         * candidate. So it doesn't contest `Person → Customer`, and reports as an alias change on
+         * `Keeper`.
+         */
+        @Test
+        fun `a surviving type's alias on the removed name does not contest the pairing`() {
+            val old = versionOf(listOf("Keeper", "Person"))
+            val new = versionOf(
+                listOf("Customer", "Keeper"),
+                aliases = mapOf("Customer" to setOf("Person"), "Keeper" to setOf("Person")),
+            )
+
+            assertEquals(
+                listOf(
+                    MetamodelChange.EntityTypeRenamed("Person", "Customer"),
+                    MetamodelChange.EntityTypeAliasesChanged("Keeper", emptySet(), setOf("Person")),
+                ),
+                differ.diff(old, new).changes,
+            )
+        }
+
+        /**
+         * A property name the type-merge path holds two signatures for is out of the running before
+         * claims are read, so a signature naming it claims nothing there, and its other claim is
+         * exclusive and pairs.
+         */
+        @Test
+        fun `a name carrying two signatures cannot contest a claim`() {
+            val old = versionOf(
+                listOf("Person"),
+                properties = mapOf(
+                    "Person" to setOf(
+                        valueProperty("age", "string"),
+                        valueProperty("age", "integer"),
+                        valueProperty("b"),
+                    ),
+                ),
+            )
+            val new = versionOf(
+                listOf("Person"),
+                properties = mapOf("Person" to setOf(valueProperty("years", aliases = setOf("age", "b")))),
+            )
+            val diff = differ.diff(old, new)
+
+            assertTrue(diff.changes.filterIsInstance<MetamodelChange.AmbiguousPropertyRename>().isEmpty())
+            val renamed = diff.changes.filterIsInstance<MetamodelChange.PropertyRenamed>().single()
+            assertEquals("b", renamed.before.name)
+            assertEquals("years", renamed.after.name)
+        }
+
+        @Test
+        fun `a contested diff produces the same ordered change list every run`() {
+            val old = versionOf(
+                listOf("A", "B", "Holder", "Person"),
+                properties = mapOf("Holder" to setOf(valueProperty("a"), valueProperty("x"))),
+            )
+            val new = versionOf(
+                listOf("C", "Customer", "Employee", "Holder"),
+                properties = mapOf(
+                    "Holder" to setOf(
+                        valueProperty("b", aliases = setOf("a")),
+                        valueProperty("c", aliases = setOf("a")),
+                        valueProperty("y", aliases = setOf("x")),
+                    ),
+                ),
+                aliases = mapOf(
+                    "C" to setOf("A", "B"),
+                    "Customer" to setOf("Person"),
+                    "Employee" to setOf("Person"),
+                ),
+            )
+
+            val first = differ.diff(old, new).changes
+            assertTrue(
+                first.filterIsInstance<MetamodelChange.AmbiguousEntityTypeRename>().isNotEmpty(),
+                "the fixture has to contain a contested claim: $first",
+            )
+            repeat(20) {
+                assertEquals(first, differ.diff(old, new).changes)
+                assertEquals(first, differ.diff(rebuilt(old), rebuilt(new)).changes)
+            }
+        }
+
+        @Test
+        fun `one former name and one candidate is a rename, and cannot be reported as contested`() {
+            val thrown = assertThrows<IllegalArgumentException> {
+                MetamodelChange.AmbiguousEntityTypeRename(setOf("Person"), setOf("Human"))
+            }
+            assertTrue(
+                thrown.message!!.contains("ordinary rename"),
+                "the message should say why: ${thrown.message}",
+            )
         }
     }
 
@@ -1317,6 +1605,130 @@ class MetamodelDifferTest {
     }
 
     /**
+     * The convenience accessors on [MetamodelDiff]. A caller reading one change kind should not have
+     * to write `filterIsInstance`, and every kind the differ can emit needs one, so a caller
+     * counting a diff through the accessors accounts for all of it.
+     */
+    @Nested
+    inner class Accessors {
+
+        @Test
+        fun `ambiguousEntityTypeRenames carries every contested type claim`() {
+            val diff = differ.diff(
+                versionOf(listOf("Person")),
+                versionOf(
+                    listOf("Customer", "Employee"),
+                    aliases = mapOf("Customer" to setOf("Person"), "Employee" to setOf("Person")),
+                ),
+            )
+
+            assertEquals(
+                listOf(
+                    MetamodelChange.AmbiguousEntityTypeRename(
+                        formerNames = setOf("Person"),
+                        candidates = setOf("Customer", "Employee"),
+                    ),
+                ),
+                diff.ambiguousEntityTypeRenames,
+            )
+            assertTrue(diff.ambiguousPropertyRenames.isEmpty(), "a type claim is not a property claim")
+        }
+
+        @Test
+        fun `ambiguousPropertyRenames carries every contested property claim`() {
+            val diff = differ.diff(
+                versionOf(listOf("Person"), properties = mapOf("Person" to setOf(valueProperty("a")))),
+                versionOf(
+                    listOf("Person"),
+                    properties = mapOf(
+                        "Person" to setOf(
+                            valueProperty("b", aliases = setOf("a")),
+                            valueProperty("c", aliases = setOf("a")),
+                        ),
+                    ),
+                ),
+            )
+
+            assertEquals(
+                listOf(
+                    MetamodelChange.AmbiguousPropertyRename(
+                        typeName = "Person",
+                        formerNames = setOf("a"),
+                        candidates = setOf("b", "c"),
+                    ),
+                ),
+                diff.ambiguousPropertyRenames,
+            )
+            assertTrue(diff.ambiguousEntityTypeRenames.isEmpty(), "a property claim is not a type claim")
+        }
+
+        /**
+         * The fixture holds at least one change of every kind these accessors cover — contested
+         * claims and relationships included — so the count through the accessors has to come out at
+         * the length of the change list, and dropping any one accessor from the sum breaks it.
+         *
+         * It deliberately holds no `EntityTypeRenamed`, `EntityTypeAliasesChanged` or
+         * `PropertyRenamed`, the three kinds still read through `filterIsInstance` here. Their
+         * accessors arrive with the drift slice, and this test grows to cover them then.
+         */
+        @Test
+        fun `each accessor sees only its own kind, and together they cover the change list`() {
+            val diff = differ.diff(
+                versionOf(
+                    listOf("Gone", "Holder", "Person", "Stable"),
+                    properties = mapOf(
+                        "Holder" to setOf(valueProperty("a"), valueProperty("age", "string")),
+                    ),
+                    relationships = listOf("Stable-[knew]->Gone"),
+                ),
+                versionOf(
+                    listOf("Customer", "Employee", "Holder", "New", "Stable"),
+                    properties = mapOf(
+                        "Holder" to setOf(
+                            valueProperty("b", aliases = setOf("a")),
+                            valueProperty("c", aliases = setOf("a")),
+                            valueProperty("age", "integer"),
+                        ),
+                    ),
+                    aliases = mapOf("Customer" to setOf("Person"), "Employee" to setOf("Person")),
+                    relationships = listOf("Stable-[knows]->New"),
+                ),
+            )
+
+            assertEquals(setOf("Gone", "Person"), diff.removedEntityTypes)
+            assertEquals(setOf("Customer", "Employee", "New"), diff.addedEntityTypes)
+            assertEquals(1, diff.ambiguousEntityTypeRenames.size)
+            assertEquals(1, diff.modifiedEntityTypes.size)
+            assertEquals(1, diff.ambiguousPropertyRenames.size)
+            assertEquals(1, diff.propertySignatureChanges.size)
+            assertEquals(setOf("Stable-[knows]->New"), diff.addedRelationships)
+            assertEquals(setOf("Stable-[knew]->Gone"), diff.removedRelationships)
+
+            val throughAccessors = diff.removedEntityTypes.size + diff.addedEntityTypes.size +
+                diff.ambiguousEntityTypeRenames.size + diff.modifiedEntityTypes.size +
+                diff.ambiguousPropertyRenames.size + diff.propertySignatureChanges.size +
+                diff.addedRelationships.size + diff.removedRelationships.size
+            assertEquals(11, diff.changes.size, "the fixture should exercise every covered kind: ${diff.changes}")
+            assertEquals(diff.changes.size, throughAccessors, "the accessors should partition ${diff.changes}")
+        }
+
+        @Test
+        fun `an empty diff gives every accessor an empty answer`() {
+            val diff = differ.diff(versionOf(listOf("Person")), versionOf(listOf("Person")))
+
+            assertTrue(diff.isEmpty)
+            assertTrue(diff.removedEntityTypes.isEmpty())
+            assertTrue(diff.addedEntityTypes.isEmpty())
+            assertTrue(diff.modifiedEntityTypes.isEmpty())
+            assertTrue(diff.propertySignatureChanges.isEmpty())
+            assertTrue(diff.ambiguousEntityTypeRenames.isEmpty())
+            assertTrue(diff.ambiguousPropertyRenames.isEmpty())
+            assertTrue(diff.addedRelationships.isEmpty())
+            assertTrue(diff.removedRelationships.isEmpty())
+        }
+    }
+
+    /**
      * A finished diff must not be reshapeable. Mirrors `MetamodelVersionTest.Immutability`: Kotlin's
      * read-only collection types are a compile-time promise only, and a Java caller sees plain
      * `java.util` collections through the getters, so these have to refuse at runtime.
@@ -1394,6 +1806,36 @@ class MetamodelDifferTest {
             @Suppress("UNCHECKED_CAST")
             assertThrows<UnsupportedOperationException> {
                 (change.after as MutableSet<String>).clear()
+            }
+        }
+
+        @Test
+        fun `the name sets inside a contested-rename change cannot be mutated`() {
+            val claimants = mutableSetOf("Customer", "Employee")
+            val typeChange = MetamodelChange.AmbiguousEntityTypeRename(setOf("Person"), claimants)
+            val propertyChange = MetamodelChange.AmbiguousPropertyRename("Person", setOf("a"), mutableSetOf("b", "c"))
+
+            claimants += "Sneaky"
+            assertEquals(setOf("Customer", "Employee"), typeChange.candidates)
+
+            @Suppress("UNCHECKED_CAST")
+            assertThrows<UnsupportedOperationException> {
+                (typeChange.formerNames as MutableSet<String>).add("Sneaky")
+            }
+
+            @Suppress("UNCHECKED_CAST")
+            assertThrows<UnsupportedOperationException> {
+                (typeChange.candidates as MutableSet<String>).clear()
+            }
+
+            @Suppress("UNCHECKED_CAST")
+            assertThrows<UnsupportedOperationException> {
+                (propertyChange.formerNames as MutableSet<String>).add("Sneaky")
+            }
+
+            @Suppress("UNCHECKED_CAST")
+            assertThrows<UnsupportedOperationException> {
+                (propertyChange.candidates as MutableSet<String>).clear()
             }
         }
 

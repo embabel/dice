@@ -93,16 +93,26 @@ and the consumer PRs that deliver it).
   runner, no quarantine, no Spring wiring, and no new dependency.
   **Compatibility: additive.** New types in an existing module; no existing API touched.
 
-- Declared renames in the diff, **EXPERIMENTAL** (shape may change before 1.0): three new
+- Declared renames in the diff, **EXPERIMENTAL** (shape may change before 1.0): five new
   `MetamodelChange` members — `PropertyRenamed(typeName, before, after)`,
-  `EntityTypeRenamed(before, after)` and `EntityTypeAliasesChanged(typeName, before, after)`.
+  `EntityTypeRenamed(before, after)`, `EntityTypeAliasesChanged(typeName, before, after)`,
+  `AmbiguousEntityTypeRename(formerNames, candidates)` and
+  `AmbiguousPropertyRename(typeName, formerNames, candidates)`.
   A rename declared through `SchemaAliases` now pairs instead of reading as a removal and an
-  addition. Pairing runs on what is left after the ordinary name matching, walks removed
-  names in sorted order against added entries in sorted order, and is one-to-one: one added
-  entry claiming two removed names takes the first and leaves the other an ordinary removal,
-  one removed name claimed by two added entries goes to the first and leaves the second an
-  ordinary addition, and a property name the type-merge path holds two signatures for falls
-  back to a removal and an addition. Paired properties are excluded from
+  addition. Pairing runs on what is left after the ordinary name matching and needs an
+  exclusive claim on both sides, among the claims in the running: the old name is claimed by
+  one new name alone, and that new name claims one old name alone. A surviving type's alias on
+  the removed name, and a property name carrying two signatures, never enter the running and so
+  contest nothing. Anything else is contested and pairs nothing — two new
+  types both declaring `Person` as a former name, one new type claiming two old names that
+  were both live, or claims that chain the two together. The contested names all report as
+  ordinary additions and removals, and one `AmbiguousEntityTypeRename` or
+  `AmbiguousPropertyRename` carries the whole group, so a declaration the differ set aside is
+  visible rather than silent. It reports rather than throws: a schema in this state stamps
+  cleanly today, and a caller comparing two historical stamps out of a store cannot edit
+  either side. A property name the type-merge path holds two signatures for is out of the
+  running before claims are read and falls back to a removal and an addition. Paired
+  properties are excluded from
   `EntityTypeModified.addedProperties`/`removedProperties`, and an entry left empty by that
   is not emitted. Type pairing matches the whole accumulated alias set, so a type renamed
   twice still pairs across stamps that aren't adjacent, and it suppresses the
@@ -121,9 +131,14 @@ and the consumer PRs that deliver it).
   is an `EntityTypeAliasesChanged`. Declared former names join the declared side of
   `diffAgainstObserved`, so data still carrying a renamed type's old label is not drift.
   `MetamodelDiff.touchedEntityTypes` covers the new kinds, and contributes both names of a
-  rename.
+  rename and every name in a contested claim. `MetamodelDiff` gains four typed accessors —
+  `ambiguousEntityTypeRenames`, `ambiguousPropertyRenames`, `addedRelationships` and
+  `removedRelationships` — so the only kinds still reached through `filterIsInstance` are
+  `EntityTypeRenamed`, `EntityTypeAliasesChanged` and `PropertyRenamed`, whose accessors land
+  with the drift slice. A partition test pins the accessors against the change list on a diff
+  holding every kind they cover.
   **Compatibility: breaking for external exhaustive `when` expressions.** `MetamodelChange`
-  is a sealed interface, and three new members make any `when` over it outside this repo
+  is a sealed interface, and five new members make any `when` over it outside this repo
   non-exhaustive until it handles them. Stated and accepted: the taxonomy is designed to be
   exhausted, and a consumer that silently treated a rename as an unhandled kind would treat
   it as harmless. Nothing else changes for a schema that declares no aliases — pairing and
