@@ -47,12 +47,16 @@ over, where an unhandled change kind would be treated as harmless.
 | Kind | What it means |
 | --- | --- |
 | `EntityTypeAdded` / `EntityTypeRemoved` | A type appeared or disappeared. |
+| `EntityTypeRenamed` | A type changed name, paired up through a former name the newer declaration carries. |
+| `EntityTypeAliasesChanged` | A type's declared former names changed, with nothing else about the type moving. |
 | `EntityTypeModified` | A type present in both versions gained or lost labels, or gained or lost whole properties (matched by name), with the full signature of each. |
+| `PropertyRenamed` | A property changed name, paired up through a former name its new signature carries. Carries `before` and `after`. |
 | `PropertySignatureChanged` | A property kept its name but changed shape: its type, its cardinality, or whether it holds a value or points at another type. Carries `before` and `after`. |
 | `RelationshipAdded` / `RelationshipRemoved` | An allowed relationship descriptor appeared or disappeared. |
 
 The kinds don't overlap. Each difference is reported exactly once, by whichever kind describes it
-most precisely.
+most precisely. Rendered relationship descriptors are the exception, and
+[Where exactly-once stops](#where-exactly-once-stops) says why.
 
 `PropertySignatureChanged` is why the stamp carries signatures rather than property names. `age`
 turning from a string into an integer, or a single `worksAt` becoming a list of them, changes what
@@ -77,6 +81,139 @@ leaving the differ is sorted first. Sets are compared as sets, never as a delimi
 projection: these names come from free text and LLM extraction and routinely contain commas and
 spaces, so `{"a", "b c"}` and `{"a b", "c"}` must not collapse into the same thing.
 
+Entity-type changes come first, by type name, then relationship changes. Within one type the order
+is `EntityTypeRenamed`, `EntityTypeAliasesChanged`, `EntityTypeModified`, `PropertyRenamed` by new
+property name, then `PropertySignatureChanged` by property name. A renamed type is filed under its
+new name.
+
+## Declared renames
+
+Names are identity in a stamp, so a property or type that changes name disappears and reappears.
+That reads as loss on data nobody stranded, and the quarantine slice acts on that reading. Iceberg
+and Delta avoid it with stable field ids minted when a column is created; DICE extracts its schema
+from LLM output and has no id to mint, so the declaration carries the old name instead.
+`SchemaAliases` puts former names into the stamp — `MetamodelVersion.entityTypeAliases` per type,
+`PropertySignature.aliases` per property — and the differ pairs on them.
+
+Aliases accumulate. A type renamed `A` to `B` to `C` declares `{A, B}`, and pairing matches the
+whole set, so a diff across stamps that aren't adjacent still pairs. Names are exact and
+case-sensitive.
+
+### The pairing rule
+
+Pairing runs on what is left after the ordinary name matching, so a name present on both sides is
+never a candidate: an alias naming a property that still exists says nothing, and matches nothing.
+Removed names are walked in sorted order against the added entries in sorted order, which makes the
+result one-to-one and identical every run.
+
+```mermaid
+flowchart TD
+    start["a removed name<br/>(walked in sorted order)"]
+    dup{"a property name carrying<br/>more than one signature?"}
+    scan{"an unclaimed added entry, in<br/>sorted order, declaring this<br/>name as a former name?"}
+    pair["pair them: EntityTypeRenamed<br/>or PropertyRenamed"]
+    exclude["exclude both from the added<br/>and removed sets"]
+    empty{"anything left in the<br/>EntityTypeModified?"}
+    emit["emit EntityTypeModified"]
+    drop["emit nothing"]
+    plain["ordinary removal:<br/>EntityTypeRemoved, or removedProperties"]
+
+    start --> dup
+    dup -- "yes: the type-merge path" --> plain
+    dup -- "no" --> scan
+    scan -- "yes" --> pair
+    scan -- "no" --> plain
+    pair --> exclude
+    exclude --> empty
+    empty -- "yes" --> emit
+    empty -- "no" --> drop
+```
+
+Two edge cases the sorted walk settles. One added entry declaring two removed names pairs with the
+first of them, and the other stays an ordinary removal. One removed name claimed by two added
+entries pairs with the first of those, and the second stays an ordinary addition. Either way the
+rename is reported once.
+
+The type-merge branch is the same exception `EntityTypeModified` already documents: a
+`DataDictionary` may hold two same-named domain types whose properties get unioned, so one property
+name can carry two signatures, and there is no single before to pair. Declaring an alias on such a
+name is refused at declaration time, in `DeclaredSchema.from` and `MetamodelVersion.from`; the
+comparison falls back to a removal and an addition.
+
+Paired properties are excluded from `EntityTypeModified.addedProperties` and `removedProperties`,
+and an entry left with nothing in it is not emitted, so its at-least-one-set-non-empty contract
+holds.
+When paired signatures differ in more than the name, the whole delta rides inside `PropertyRenamed`,
+whose `typeChanged`, `cardinalityChanged` and `kindChanged` read the same way they do on
+`PropertySignatureChanged`.
+
+A paired type rename suppresses the `EntityTypeAdded`/`EntityTypeRemoved` pair. Whatever else moved
+on the type is diffed between the two paired types and reported under the new name.
+
+### Comparison modulo renames
+
+A type's own name is one of its labels, children inherit it, and other types point at it. Renaming
+`Person` to `Human` therefore shows up again on every referrer's reference target and every child's
+label set. Reported literally, a declared rename becomes label loss and signature loss across the
+schema, and the quarantine policy sweeps the rename's own ripples.
+
+So after pairing, the older version is read modulo the renames this diff found. The differ
+substitutes old name for new in exactly two places:
+
+1. the `type` field of `Kind.REFERENCE` property signatures, and
+2. label sets.
+
+A delta that vanishes under the substitution is the rename propagating and folds into
+`EntityTypeRenamed`. A delta that survives is reported and judged normally, stated in substituted
+form: a referrer that moved from `A` to `D` while `A` was renamed to `B` reports `B → D`, because
+the `A → B` half already rides in the rename. An `EntityTypeModified` emptied by substitution is
+not emitted, the same as one emptied by pairing.
+
+`Kind.VALUE` type strings are never substituted. A value type is a free-text rendering of a JVM type
+copied verbatim from the dictionary, so a schema holding an entity type named `Date` that renames to
+`Timestamp` would otherwise rewrite every `birthday: Date` value property in the older version and
+report a change on each of them.
+
+Substitution goes by name, so a label or reference target that merely shares a renamed type's old
+name without deriving from it — reachable when an unselected parent contributes its name as a label
+while a governed type of the same name renames — is rewritten too, and can surface as label churn
+on a type nothing touched. The same-name merge corner it takes to get there is already documented
+as its own hazard; this is one more reason a schema should not lean on it.
+
+### Where exactly-once stops
+
+Relationships are a knowing exception. `MetamodelVersion.relationshipNames` holds rendered
+`From-[name]->To` descriptors, and these names are free text that can contain a `-[...]->`-shaped
+substring, so the differ compares them as atoms and never parses one. A relationship touching a
+renamed endpoint therefore churns as a `RelationshipRemoved` plus a `RelationshipAdded` beside the
+`EntityTypeRenamed` that already described the move. Exactly-once holds for entity-type and property
+changes. Quarantine ignores relationship changes, so this costs a duplicated line in a report and
+nothing else.
+
+### Alias-only changes
+
+Aliases are hashed, so declaring or retiring one moves `contentHash`, and an empty diff has to keep
+meaning the same thing as an equal hash. A property whose signature moved only in its aliases is an
+ordinary `PropertySignatureChanged` with `typeChanged`, `cardinalityChanged` and `kindChanged` all
+false. A type whose declared former names moved is an `EntityTypeAliasesChanged`. Neither says
+anything about stored data.
+
+The alias a rename implies rides in `EntityTypeRenamed`. `Human` declaring `Person` as a former name
+is what made the pairing, so a rename emits `EntityTypeRenamed` alone and no alias change beside it.
+What the declaration says beyond that still reports. Diffing across stamps that aren't adjacent is
+where this shows: comparing the stamp for `A` against the stamp for `C`, where `C` declares
+`{A, B}`, pairs `A` with `C` and reports the intermediate name `B` as an alias change, because the
+older stamp never knew `C` claims it. Each hop diffed on its own emits the rename alone.
+
+### Renames and the observed side
+
+Declared former names join the declared side of the drift comparison, alongside type names and
+labels. Nodes written before a rename keep the old label, and the rename was declared, so the old
+label is known and is not drift. The alternative — keeping it red as a migration signal — makes
+`hasDrift` permanently true on a schema whose rename was explicit, which trains operators to ignore
+the report; migration progress belongs to run lineage. Former names stay out of the unobserved
+direction, for the same reason parent labels do: a former name was never a type of its own.
+
 ## Declared vs. observed, and the asymmetry
 
 `ObservedSchema` is what a live graph holds: entity labels, relationship types, and when the
@@ -98,10 +235,12 @@ informational one.
 
 **A declared label counts as declared.** A graph reports labels, and a type carries every label in
 its hierarchy: declare `Person` with parent `Agent` and every Person node comes back carrying both.
-So the declared side of the drift check is every entity type name *plus* every label those types
-declare. Comparing against type names alone would report `Agent` as undeclared drift on a schema
-nobody had touched. The unobserved direction stays on type names, because "declared but with no
-data" is a statement about types, and a parent label was never a type in its own right.
+So the declared side of the drift check is every entity type name, every label those types declare,
+and every former name they declare. Comparing against type names alone would report `Agent` as
+undeclared drift on a schema nobody had touched, and dropping the former names would do the same to
+data written before a declared rename. The unobserved direction stays on type names, because
+"declared but with no data" is a statement about types, and neither a parent label nor a former name
+was a type in its own right.
 
 **The observed side is names only.** A graph can report which labels and relationship types exist in
 it. It cannot report what a property was *declared* to be: two nodes with the same label can carry

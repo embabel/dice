@@ -723,6 +723,600 @@ class MetamodelDifferTest {
     }
 
     /**
+     * A declared rename pairs an old name with a new one. Without the alias the same move is a
+     * removal plus an addition, which reads as loss on data nobody stranded.
+     */
+    @Nested
+    inner class TypeRenames {
+
+        @Test
+        fun `a renamed type with an alias is one change, not a removal and an addition`() {
+            val old = versionOf(listOf("Person"))
+            val new = versionOf(listOf("Human"), aliases = mapOf("Human" to setOf("Person")))
+            val diff = differ.diff(old, new)
+
+            assertEquals(listOf(MetamodelChange.EntityTypeRenamed("Person", "Human")), diff.changes)
+            assertTrue(diff.removedEntityTypes.isEmpty())
+            assertTrue(diff.addedEntityTypes.isEmpty())
+            assertTrue(
+                diff.modifiedEntityTypes.isEmpty(),
+                "the own-name label swap rides in the rename: ${diff.modifiedEntityTypes}",
+            )
+        }
+
+        @Test
+        fun `a rename without an alias is still a removal and an addition`() {
+            val diff = differ.diff(versionOf(listOf("Person")), versionOf(listOf("Human")))
+            assertEquals(setOf("Person"), diff.removedEntityTypes)
+            assertEquals(setOf("Human"), diff.addedEntityTypes)
+        }
+
+        /**
+         * `A` became `B` became `C`, and the stamp for `B` was never diffed against. Pairing matches
+         * the whole alias set, so `A` still pairs with `C`. The intermediate name comes with it: `C`
+         * claims a name the older stamp knew nothing about, which is an alias change on top of the
+         * rename. Diffing either hop on its own emits the rename alone.
+         */
+        @Test
+        fun `an alias carried across two renames still pairs on a non-adjacent stamp`() {
+            val first = versionOf(listOf("A"))
+            val third = versionOf(listOf("C"), aliases = mapOf("C" to setOf("A", "B")))
+            val diff = differ.diff(first, third)
+
+            assertEquals(
+                listOf(
+                    MetamodelChange.EntityTypeRenamed("A", "C"),
+                    MetamodelChange.EntityTypeAliasesChanged("C", emptySet(), setOf("A", "B")),
+                ),
+                diff.changes,
+            )
+            assertTrue(diff.removedEntityTypes.isEmpty())
+            assertTrue(diff.addedEntityTypes.isEmpty())
+        }
+
+        @Test
+        fun `an added type claiming two removed names pairs with the first and leaves the other removed`() {
+            val old = versionOf(listOf("A", "B"))
+            val new = versionOf(listOf("C"), aliases = mapOf("C" to setOf("A", "B")))
+            val diff = differ.diff(old, new)
+
+            assertEquals(
+                listOf(
+                    MetamodelChange.EntityTypeRemoved("B"),
+                    MetamodelChange.EntityTypeRenamed("A", "C"),
+                    MetamodelChange.EntityTypeAliasesChanged("C", emptySet(), setOf("A", "B")),
+                ),
+                diff.changes,
+            )
+        }
+
+        @Test
+        fun `a removed name claimed by two added types pairs with the first and leaves the other added`() {
+            val old = versionOf(listOf("A"))
+            val new = versionOf(
+                listOf("B", "C"),
+                aliases = mapOf("B" to setOf("A"), "C" to setOf("A")),
+            )
+            val diff = differ.diff(old, new)
+
+            assertEquals(
+                listOf(
+                    MetamodelChange.EntityTypeAdded("C"),
+                    MetamodelChange.EntityTypeRenamed("A", "B"),
+                ),
+                diff.changes,
+            )
+        }
+
+        @Test
+        fun `a renamed type reports everything else that moved under its new name`() {
+            val old = versionOf(
+                listOf("Person"),
+                labels = mapOf("Person" to setOf("Person", "Agent")),
+                properties = mapOf("Person" to setOf(valueProperty("age", "integer"))),
+            )
+            val new = versionOf(
+                listOf("Human"),
+                labels = mapOf("Human" to setOf("Human", "Actor")),
+                properties = mapOf("Human" to setOf(valueProperty("age", "string"))),
+                aliases = mapOf("Human" to setOf("Person")),
+            )
+            val diff = differ.diff(old, new)
+
+            assertEquals(
+                listOf("EntityTypeRenamed", "EntityTypeModified", "PropertySignatureChanged"),
+                diff.changes.map { it::class.simpleName },
+            )
+            val modified = diff.modifiedEntityTypes.single()
+            assertEquals("Human", modified.typeName)
+            assertEquals(setOf("Actor"), modified.addedLabels)
+            assertEquals(setOf("Agent"), modified.removedLabels, "the parent label change is still reported")
+            assertEquals("Human", diff.propertySignatureChanges.single().typeName)
+        }
+
+        @Test
+        fun `every change kind for one type comes out in canonical order`() {
+            val old = versionOf(
+                listOf("Person"),
+                labels = mapOf("Person" to setOf("Person", "Agent")),
+                properties = mapOf(
+                    "Person" to setOf(
+                        valueProperty("age", "integer"),
+                        valueProperty("nickname", "string"),
+                    ),
+                ),
+            )
+            val new = versionOf(
+                listOf("Human"),
+                labels = mapOf("Human" to setOf("Human", "Actor")),
+                properties = mapOf(
+                    "Human" to setOf(
+                        valueProperty("years", "integer", aliases = setOf("age")),
+                        valueProperty("nickname", "text"),
+                    ),
+                ),
+                aliases = mapOf("Human" to setOf("Person", "Individual")),
+            )
+            val diff = differ.diff(old, new)
+
+            assertEquals(
+                listOf(
+                    "EntityTypeRenamed",
+                    "EntityTypeAliasesChanged",
+                    "EntityTypeModified",
+                    "PropertyRenamed",
+                    "PropertySignatureChanged",
+                ),
+                diff.changes.map { it::class.simpleName },
+            )
+            val renamedProperty = diff.changes.filterIsInstance<MetamodelChange.PropertyRenamed>().single()
+            assertEquals("Human", renamedProperty.typeName, "reported under the type's new name")
+            assertEquals("age", renamedProperty.before.name)
+            assertEquals("years", renamedProperty.after.name)
+        }
+
+        @Test
+        fun `touchedEntityTypes carries both names of a rename`() {
+            val diff = differ.diff(
+                versionOf(listOf("Person")),
+                versionOf(listOf("Human"), aliases = mapOf("Human" to setOf("Person"))),
+            )
+            assertEquals(setOf("Person", "Human"), diff.touchedEntityTypes)
+        }
+
+        /**
+         * Relationship descriptors embed type names as free text the differ compares as atoms and
+         * must never parse, so a relationship touching a renamed endpoint churns as a removal plus
+         * an addition alongside the rename. Known exception to reporting each difference once;
+         * quarantine ignores relationship changes, so it has no drift-policy effect.
+         */
+        @Test
+        fun `a relationship touching a renamed type churns as a removal and an addition`() {
+            val old = versionOf(
+                listOf("Company", "Person"),
+                relationships = listOf("Person-[worksAt]->Company"),
+            )
+            val new = versionOf(
+                listOf("Company", "Human"),
+                aliases = mapOf("Human" to setOf("Person")),
+                relationships = listOf("Human-[worksAt]->Company"),
+            )
+            val diff = differ.diff(old, new)
+
+            assertEquals(
+                listOf(
+                    MetamodelChange.EntityTypeRenamed("Person", "Human"),
+                    MetamodelChange.RelationshipRemoved("Person-[worksAt]->Company"),
+                    MetamodelChange.RelationshipAdded("Human-[worksAt]->Company"),
+                ),
+                diff.changes,
+            )
+        }
+
+        @Test
+        fun `the same two versions produce the same ordered change list every run`() {
+            val old = versionOf(
+                listOf("A", "Person", "Referrer"),
+                labels = mapOf("Referrer" to setOf("Referrer", "Person")),
+                properties = mapOf(
+                    "Referrer" to setOf(
+                        referenceProperty("link", "A"),
+                        valueProperty("age", "integer"),
+                    ),
+                ),
+            )
+            val new = versionOf(
+                listOf("B", "Human", "Referrer"),
+                labels = mapOf("Referrer" to setOf("Referrer", "Human")),
+                properties = mapOf(
+                    "Referrer" to setOf(
+                        referenceProperty("link", "B"),
+                        valueProperty("years", "integer", aliases = setOf("age")),
+                    ),
+                ),
+                aliases = mapOf("B" to setOf("A"), "Human" to setOf("Person")),
+            )
+
+            val first = differ.diff(old, new).changes
+            repeat(20) {
+                assertEquals(first, differ.diff(old, new).changes)
+                assertEquals(first, differ.diff(rebuilt(old), rebuilt(new)).changes)
+            }
+        }
+    }
+
+    @Nested
+    inner class PropertyRenames {
+
+        @Test
+        fun `a renamed property with an alias is one change, not an add and a remove`() {
+            val old = versionOf(listOf("Person"), properties = mapOf("Person" to setOf(valueProperty("age", "integer"))))
+            val new = versionOf(
+                listOf("Person"),
+                properties = mapOf("Person" to setOf(valueProperty("years", "integer", aliases = setOf("age")))),
+            )
+            val diff = differ.diff(old, new)
+
+            assertEquals(
+                listOf(
+                    MetamodelChange.PropertyRenamed(
+                        typeName = "Person",
+                        before = valueProperty("age", "integer"),
+                        after = valueProperty("years", "integer", aliases = setOf("age")),
+                    ),
+                ),
+                diff.changes,
+            )
+            assertTrue(
+                diff.modifiedEntityTypes.isEmpty(),
+                "an EntityTypeModified emptied by pairing is not emitted: ${diff.modifiedEntityTypes}",
+            )
+        }
+
+        @Test
+        fun `a property renamed and retyped in one step carries the shape move inside the rename`() {
+            val old = versionOf(listOf("Person"), properties = mapOf("Person" to setOf(valueProperty("age", "string"))))
+            val new = versionOf(
+                listOf("Person"),
+                properties = mapOf(
+                    "Person" to setOf(
+                        valueProperty("years", "integer", cardinality = Cardinality.LIST, aliases = setOf("age")),
+                    ),
+                ),
+            )
+            val renamed = differ.diff(old, new).changes.filterIsInstance<MetamodelChange.PropertyRenamed>().single()
+
+            assertTrue(renamed.typeChanged)
+            assertTrue(renamed.cardinalityChanged)
+            assertFalse(renamed.kindChanged)
+        }
+
+        @Test
+        fun `an added signature claiming two removed names pairs with the first and leaves the other removed`() {
+            val old = versionOf(
+                listOf("Person"),
+                properties = mapOf("Person" to setOf(valueProperty("a"), valueProperty("b"))),
+            )
+            val new = versionOf(
+                listOf("Person"),
+                properties = mapOf("Person" to setOf(valueProperty("c", aliases = setOf("a", "b")))),
+            )
+            val diff = differ.diff(old, new)
+
+            val renamed = diff.changes.filterIsInstance<MetamodelChange.PropertyRenamed>().single()
+            assertEquals("a", renamed.before.name)
+            assertEquals("c", renamed.after.name)
+            val modified = diff.modifiedEntityTypes.single()
+            assertEquals(setOf("b"), modified.removedPropertyNames)
+            assertTrue(modified.addedProperties.isEmpty())
+        }
+
+        @Test
+        fun `a removed name claimed by two added signatures pairs with the first and leaves the other added`() {
+            val old = versionOf(listOf("Person"), properties = mapOf("Person" to setOf(valueProperty("a"))))
+            val new = versionOf(
+                listOf("Person"),
+                properties = mapOf(
+                    "Person" to setOf(
+                        valueProperty("b", aliases = setOf("a")),
+                        valueProperty("c", aliases = setOf("a")),
+                    ),
+                ),
+            )
+            val diff = differ.diff(old, new)
+
+            val renamed = diff.changes.filterIsInstance<MetamodelChange.PropertyRenamed>().single()
+            assertEquals("b", renamed.after.name)
+            val modified = diff.modifiedEntityTypes.single()
+            assertEquals(setOf("c"), modified.addedPropertyNames)
+            assertTrue(modified.removedProperties.isEmpty())
+        }
+
+        /**
+         * The type-merge path: two same-named domain types each declare `age` with a different
+         * shape, so the name carries two signatures and there is no single before to pair.
+         */
+        @Test
+        fun `a removed name carrying two signatures falls back to a removal and an addition`() {
+            val old = versionOf(
+                listOf("Person"),
+                properties = mapOf(
+                    "Person" to setOf(
+                        valueProperty("age", "string"),
+                        valueProperty("age", "integer"),
+                    ),
+                ),
+            )
+            val new = versionOf(
+                listOf("Person"),
+                properties = mapOf("Person" to setOf(valueProperty("years", "integer", aliases = setOf("age")))),
+            )
+            val diff = differ.diff(old, new)
+
+            assertTrue(
+                diff.changes.filterIsInstance<MetamodelChange.PropertyRenamed>().isEmpty(),
+                "no honest pairing exists for a name with two signatures: ${diff.changes}",
+            )
+            val modified = diff.modifiedEntityTypes.single()
+            assertEquals(setOf("age"), modified.removedPropertyNames)
+            assertEquals(setOf("years"), modified.addedPropertyNames)
+        }
+
+        @Test
+        fun `an alias naming a property that still exists pairs nothing`() {
+            val old = versionOf(listOf("Person"), properties = mapOf("Person" to setOf(valueProperty("age", "integer"))))
+            val new = versionOf(
+                listOf("Person"),
+                properties = mapOf(
+                    "Person" to setOf(
+                        valueProperty("age", "integer"),
+                        valueProperty("years", "integer", aliases = setOf("age")),
+                    ),
+                ),
+            )
+            val diff = differ.diff(old, new)
+
+            assertTrue(diff.changes.filterIsInstance<MetamodelChange.PropertyRenamed>().isEmpty())
+            assertEquals(setOf("years"), diff.modifiedEntityTypes.single().addedPropertyNames)
+        }
+    }
+
+    /**
+     * A rename propagates: referrers point at the new name, children inherit the new label. Those
+     * are the rename showing up again, so the before side is read modulo the renames the diff
+     * already paired, and what vanishes under that substitution folds into the rename.
+     */
+    @Nested
+    inner class ComparisonModuloRenames {
+
+        @Test
+        fun `a reference to a renamed type and an inherited label both fold into the rename`() {
+            val old = versionOf(
+                listOf("Employee", "Person"),
+                labels = mapOf("Employee" to setOf("Employee", "Person")),
+                properties = mapOf("Employee" to setOf(referenceProperty("boss", "Person"))),
+            )
+            val new = versionOf(
+                listOf("Employee", "Human"),
+                labels = mapOf("Employee" to setOf("Employee", "Human")),
+                properties = mapOf("Employee" to setOf(referenceProperty("boss", "Human"))),
+                aliases = mapOf("Human" to setOf("Person")),
+            )
+            val diff = differ.diff(old, new)
+
+            assertEquals(listOf(MetamodelChange.EntityTypeRenamed("Person", "Human")), diff.changes)
+            assertTrue(
+                diff.modifiedEntityTypes.isEmpty(),
+                "an EntityTypeModified emptied by substitution is not emitted: ${diff.modifiedEntityTypes}",
+            )
+        }
+
+        @Test
+        fun `a referrer that moved to a third type reports the residual in substituted-before form`() {
+            val old = versionOf(
+                listOf("A", "D", "Referrer"),
+                properties = mapOf("Referrer" to setOf(referenceProperty("link", "A"))),
+            )
+            val new = versionOf(
+                listOf("B", "D", "Referrer"),
+                properties = mapOf("Referrer" to setOf(referenceProperty("link", "D"))),
+                aliases = mapOf("B" to setOf("A")),
+            )
+            val diff = differ.diff(old, new)
+
+            assertEquals(
+                listOf("EntityTypeRenamed", "PropertySignatureChanged"),
+                diff.changes.map { it::class.simpleName },
+            )
+            val change = diff.propertySignatureChanges.single()
+            assertEquals("B", change.before.type, "the A->B half already rides in EntityTypeRenamed")
+            assertEquals("D", change.after.type)
+        }
+
+        /**
+         * A `VALUE` property's type is a free-text rendering of a JVM type. An entity type named
+         * `Date` renaming to `Timestamp` must not rewrite every property that holds a `Date` value,
+         * which is why substitution is scoped to `REFERENCE` targets.
+         */
+        @Test
+        fun `a value type spelled like a renamed entity type is left alone`() {
+            val old = versionOf(
+                listOf("Date", "Person"),
+                properties = mapOf(
+                    "Person" to setOf(
+                        valueProperty("birthday", "Date"),
+                        referenceProperty("meetsOn", "Date"),
+                    ),
+                ),
+            )
+            val new = versionOf(
+                listOf("Person", "Timestamp"),
+                properties = mapOf(
+                    "Person" to setOf(
+                        valueProperty("birthday", "Date"),
+                        referenceProperty("meetsOn", "Timestamp"),
+                    ),
+                ),
+                aliases = mapOf("Timestamp" to setOf("Date")),
+            )
+            val diff = differ.diff(old, new)
+
+            assertEquals(listOf(MetamodelChange.EntityTypeRenamed("Date", "Timestamp")), diff.changes)
+            assertFalse(diff.touchedEntityTypes.contains("Person"), "nothing on Person moved")
+        }
+    }
+
+    /**
+     * Aliases are part of the hash, so declaring or retiring one has to surface as a change for an
+     * empty diff and an equal content hash to keep meaning the same thing.
+     */
+    @Nested
+    inner class AliasOnlyChanges {
+
+        @Test
+        fun `a property whose aliases alone changed is an ordinary signature change`() {
+            val old = versionOf(listOf("Person"), properties = mapOf("Person" to setOf(valueProperty("age", "integer"))))
+            val new = versionOf(
+                listOf("Person"),
+                properties = mapOf("Person" to setOf(valueProperty("age", "integer", aliases = setOf("yearsOld")))),
+            )
+            val diff = differ.diff(old, new)
+
+            val change = diff.propertySignatureChanges.single()
+            assertEquals("age", change.propertyName)
+            assertEquals(emptySet<String>(), change.before.aliases)
+            assertEquals(setOf("yearsOld"), change.after.aliases)
+            assertFalse(change.typeChanged)
+            assertFalse(change.cardinalityChanged)
+            assertFalse(change.kindChanged)
+        }
+
+        @Test
+        fun `a type whose aliases alone changed is an EntityTypeAliasesChanged`() {
+            val old = versionOf(listOf("Human"), aliases = mapOf("Human" to setOf("Person")))
+            val new = versionOf(listOf("Human"), aliases = mapOf("Human" to setOf("Person", "Individual")))
+            val diff = differ.diff(old, new)
+
+            val change = diff.changes.filterIsInstance<MetamodelChange.EntityTypeAliasesChanged>().single()
+            assertEquals("Human", change.typeName)
+            assertEquals(setOf("Person"), change.before)
+            assertEquals(setOf("Individual", "Person"), change.after)
+            assertEquals(1, diff.changes.size, "nothing about the data moved: ${diff.changes}")
+        }
+
+        @Test
+        fun `a retired type alias is reported the same way`() {
+            val old = versionOf(listOf("Human"), aliases = mapOf("Human" to setOf("Person")))
+            val new = versionOf(listOf("Human"))
+            val change = differ.diff(old, new).changes
+                .filterIsInstance<MetamodelChange.EntityTypeAliasesChanged>()
+                .single()
+            assertEquals(setOf("Person"), change.before)
+            assertTrue(change.after.isEmpty())
+        }
+
+        @Test
+        fun `a pure rename emits no alias change beside it`() {
+            val diff = differ.diff(
+                versionOf(listOf("Person")),
+                versionOf(listOf("Human"), aliases = mapOf("Human" to setOf("Person"))),
+            )
+            assertTrue(
+                diff.changes.filterIsInstance<MetamodelChange.EntityTypeAliasesChanged>().isEmpty(),
+                "the rename's own alias entry rides in EntityTypeRenamed: ${diff.changes}",
+            )
+        }
+
+        @Test
+        fun `a rename that also declares an unrelated former name reports both`() {
+            val old = versionOf(listOf("Person"))
+            val new = versionOf(listOf("Human"), aliases = mapOf("Human" to setOf("Person", "Individual")))
+            val diff = differ.diff(old, new)
+
+            assertEquals(
+                listOf("EntityTypeRenamed", "EntityTypeAliasesChanged"),
+                diff.changes.map { it::class.simpleName },
+            )
+        }
+
+        @Test
+        fun `an alias carried through a rename is not reported as an alias change`() {
+            val old = versionOf(listOf("B"), aliases = mapOf("B" to setOf("A")))
+            val new = versionOf(listOf("C"), aliases = mapOf("C" to setOf("A", "B")))
+            assertEquals(listOf(MetamodelChange.EntityTypeRenamed("B", "C")), differ.diff(old, new).changes)
+        }
+
+        @Test
+        fun `equal content hashes still mean an empty diff when both kinds of alias are declared`() {
+            val old = aliasedStamp()
+            val new = aliasedStamp()
+            assertTrue(old.hasSameContentAs(new))
+            assertTrue(differ.diff(old, new).isEmpty, "equal hash, empty diff: ${differ.diff(old, new).changes}")
+        }
+
+        @Test
+        fun `an alias-only difference of either kind moves the hash and produces a change`() {
+            val base = aliasedStamp()
+
+            val typeAliasMoved = aliasedStamp(typeAliases = setOf("Person", "Individual"))
+            assertFalse(base.hasSameContentAs(typeAliasMoved))
+            assertFalse(differ.diff(base, typeAliasMoved).isEmpty)
+
+            val propertyAliasMoved = aliasedStamp(propertyAliases = setOf("yearsOld", "howOld"))
+            assertFalse(base.hasSameContentAs(propertyAliasMoved))
+            assertFalse(differ.diff(base, propertyAliasMoved).isEmpty)
+        }
+
+        /** A stamp carrying both kinds of alias, so a rebuild of it hashes and diffs identically. */
+        private fun aliasedStamp(
+            typeAliases: Set<String> = setOf("Person"),
+            propertyAliases: Set<String> = setOf("yearsOld"),
+        ): MetamodelVersion = versionOf(
+            listOf("Human"),
+            properties = mapOf("Human" to setOf(valueProperty("age", "integer", aliases = propertyAliases))),
+            aliases = mapOf("Human" to typeAliases),
+        )
+    }
+
+    @Nested
+    inner class RenamesAgainstObserved {
+
+        private val declared = DeclaredSchema(
+            version = versionOf(listOf("Human"), aliases = mapOf("Human" to setOf("Person"))),
+            relationshipTypeNames = emptySet(),
+        )
+
+        private fun observed(vararg entityTypeNames: String): ObservedSchema = ObservedSchema(
+            entityTypeNames = entityTypeNames.toSet(),
+            relationshipTypeNames = emptySet(),
+            capturedAt = Instant.parse("2026-01-01T00:00:00Z"),
+        )
+
+        @Test
+        fun `data still labelled with a renamed type's old name is not drift`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(declared, observed("Human", "Person"))
+            assertFalse(diff.hasDrift, "the rename was declared, so the old label is known: ${diff.driftedEntityTypes}")
+            assertTrue(diff.driftedEntityTypes.isEmpty())
+        }
+
+        @Test
+        fun `a label matching neither a declared type nor a declared former name is still drift`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(declared, observed("Human", "GhostIntegrationType"))
+            assertTrue(diff.hasDrift)
+            assertEquals(setOf("GhostIntegrationType"), diff.driftedEntityTypes)
+        }
+
+        @Test
+        fun `a former name is not reported as an unobserved type`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(declared, observed("Human"))
+            assertTrue(
+                diff.unobservedEntityTypes.isEmpty(),
+                "a former name was never a type of its own: ${diff.unobservedEntityTypes}",
+            )
+        }
+    }
+
+    /**
      * A finished diff must not be reshapeable. Mirrors `MetamodelVersionTest.Immutability`: Kotlin's
      * read-only collection types are a compile-time promise only, and a Java caller sees plain
      * `java.util` collections through the getters, so these have to refuse at runtime.
@@ -781,6 +1375,25 @@ class MetamodelDifferTest {
             @Suppress("UNCHECKED_CAST")
             assertThrows<UnsupportedOperationException> {
                 (change.removedLabels as MutableSet<String>).add("Sneaky")
+            }
+        }
+
+        @Test
+        fun `the alias sets inside an alias change cannot be mutated`() {
+            val declaredNames = mutableSetOf("Person")
+            val change = MetamodelChange.EntityTypeAliasesChanged("Human", declaredNames, setOf("Person", "Individual"))
+
+            declaredNames += "Sneaky"
+            assertEquals(setOf("Person"), change.before)
+
+            @Suppress("UNCHECKED_CAST")
+            assertThrows<UnsupportedOperationException> {
+                (change.before as MutableSet<String>).add("Sneaky")
+            }
+
+            @Suppress("UNCHECKED_CAST")
+            assertThrows<UnsupportedOperationException> {
+                (change.after as MutableSet<String>).clear()
             }
         }
 
@@ -863,5 +1476,50 @@ class MetamodelDifferTest {
                 entityTypeProperties = types.toMap(),
                 relationshipNames = emptyList(),
             )
+
+        /**
+         * A stamp assembled field by field, for the rename cases: declared former names, references
+         * between types, and label sets that carry a parent. A type's own name is one of its labels
+         * unless [labels] says otherwise, which is what a real stamp holds and what makes the
+         * rename's own-name label swap show up.
+         */
+        private fun versionOf(
+            types: List<String>,
+            labels: Map<String, Set<String>> = emptyMap(),
+            properties: Map<String, Set<PropertySignature>> = emptyMap(),
+            aliases: Map<String, Set<String>> = emptyMap(),
+            relationships: List<String> = emptyList(),
+        ): MetamodelVersion = MetamodelVersion(
+            schemaName = "test",
+            entityTypeNames = types,
+            entityTypeLabels = types.associateWith { labels[it] ?: setOf(it) },
+            entityTypeProperties = types.associateWith { properties[it].orEmpty() },
+            relationshipNames = relationships,
+            entityTypeAliases = aliases,
+        )
+
+        /** A structurally identical rebuild, so a determinism check doesn't ride on instance reuse. */
+        private fun rebuilt(version: MetamodelVersion): MetamodelVersion = MetamodelVersion(
+            schemaName = version.schemaName,
+            entityTypeNames = version.entityTypeNames,
+            entityTypeLabels = version.entityTypeLabels,
+            entityTypeProperties = version.entityTypeProperties,
+            relationshipNames = version.relationshipNames,
+            entityTypeAliases = version.entityTypeAliases,
+        )
+
+        private fun valueProperty(
+            name: String,
+            type: String = "string",
+            cardinality: Cardinality = Cardinality.ONE,
+            aliases: Set<String> = emptySet(),
+        ): PropertySignature = PropertySignature(name, PropertySignature.Kind.VALUE, type, cardinality, aliases)
+
+        private fun referenceProperty(
+            name: String,
+            target: String,
+            cardinality: Cardinality = Cardinality.ONE,
+            aliases: Set<String> = emptySet(),
+        ): PropertySignature = PropertySignature(name, PropertySignature.Kind.REFERENCE, target, cardinality, aliases)
     }
 }

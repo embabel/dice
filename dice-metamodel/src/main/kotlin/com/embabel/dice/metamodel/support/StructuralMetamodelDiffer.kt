@@ -40,6 +40,14 @@ import com.embabel.dice.metamodel.PropertySignature
  * pair of versions always produces the same change list in the same order, and a stored diff can be
  * compared with another one.
  *
+ * Declared former names make a rename pair up instead of reading as a removal and an addition. The
+ * pairing runs first, and everything after it compares the older version modulo the renames it
+ * found: a label or a reference target still spelled with an old name is the rename propagating, so
+ * it folds into the rename entry rather than reporting as loss on every referrer and every child.
+ * Rendered relationship descriptors are left alone, so a relationship touching a renamed type still
+ * churns; the names inside a descriptor are free text and are never parsed. See
+ * `docs/design/metamodel-diff.md`.
+ *
  * Stateless and thread-safe; one shared instance is fine.
  */
 class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
@@ -50,33 +58,58 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         val fromTypes = from.entityTypeNames.toSet()
         val toTypes = to.entityTypeNames.toSet()
 
-        (fromTypes - toTypes).sorted().mapTo(changes) { MetamodelChange.EntityTypeRemoved(it) }
-        (toTypes - fromTypes).sorted().mapTo(changes) { MetamodelChange.EntityTypeAdded(it) }
+        val renamedTypes = pairRenamedTypes(
+            removed = fromTypes - toTypes,
+            added = toTypes - fromTypes,
+            aliases = to.entityTypeAliases,
+        )
 
-        // A type present in both versions can still have moved: labels, whole properties, or the
-        // shape of a property whose name stayed put. Walk them in name order so the output is
-        // canonical.
-        for (typeName in (fromTypes intersect toTypes).sorted()) {
-            val addedLabels = canonical(to.entityTypeLabels[typeName].orEmpty() - from.entityTypeLabels[typeName].orEmpty())
-            val removedLabels = canonical(from.entityTypeLabels[typeName].orEmpty() - to.entityTypeLabels[typeName].orEmpty())
+        (fromTypes - toTypes - renamedTypes.keys).sorted()
+            .mapTo(changes) { MetamodelChange.EntityTypeRemoved(it) }
+        (toTypes - fromTypes - renamedTypes.values.toSet()).sorted()
+            .mapTo(changes) { MetamodelChange.EntityTypeAdded(it) }
+
+        // The types to compare member by member: those named the same in both versions, plus each
+        // paired rename, which compares the old name's members against the new name's. Both are
+        // reported under the newer name and walked in that order, so the output is canonical.
+        val comparable = ((fromTypes intersect toTypes).map { it to it } + renamedTypes.toList())
+            .sortedBy { (_, afterName) -> afterName }
+
+        for ((beforeName, afterName) in comparable) {
+            if (beforeName != afterName) {
+                changes += MetamodelChange.EntityTypeRenamed(before = beforeName, after = afterName)
+            }
+
+            val aliasesChange = compareAliasesOf(beforeName, afterName, from, to)
+            if (aliasesChange != null) changes += aliasesChange
+
+            // The before side is read modulo the renames this diff already found: a label or a
+            // reference target spelled with an old name is the rename propagating, and comparing it
+            // against the new spelling would report the rename again as loss.
+            val beforeLabels = substitute(from.entityTypeLabels[beforeName].orEmpty(), renamedTypes)
+            val afterLabels = to.entityTypeLabels[afterName].orEmpty()
+            val addedLabels = canonical(afterLabels - beforeLabels)
+            val removedLabels = canonical(beforeLabels - afterLabels)
 
             val properties = comparePropertiesOf(
-                typeName = typeName,
-                from = from.entityTypeProperties[typeName].orEmpty(),
-                to = to.entityTypeProperties[typeName].orEmpty(),
+                typeName = afterName,
+                from = from.entityTypeProperties[beforeName].orEmpty()
+                    .mapTo(mutableSetOf()) { substitute(it, renamedTypes) },
+                to = to.entityTypeProperties[afterName].orEmpty(),
             )
 
             if (addedLabels.isNotEmpty() || removedLabels.isNotEmpty() ||
                 properties.added.isNotEmpty() || properties.removed.isNotEmpty()
             ) {
                 changes += MetamodelChange.EntityTypeModified(
-                    typeName = typeName,
+                    typeName = afterName,
                     addedLabels = addedLabels,
                     removedLabels = removedLabels,
                     addedProperties = properties.added,
                     removedProperties = properties.removed,
                 )
             }
+            changes += properties.renames
             changes += properties.signatureChanges
         }
 
@@ -98,7 +131,13 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         // observed labels against type names alone would call `Agent` undeclared drift on a schema
         // nobody had touched, so the declared side of the drift check is the type names plus every
         // label those types declare.
-        val declaredLabels = declaredTypes + declared.version.entityTypeLabels.values.flatten()
+        //
+        // Declared former names count as declared too. Nodes written before a type was renamed keep
+        // the old label, and the rename was declared, so the old label is known. Leaving it out
+        // would report a declared rename as drift on every check from then on.
+        val declaredLabels = declaredTypes +
+            declared.version.entityTypeLabels.values.flatten() +
+            declared.version.entityTypeAliases.values.flatten()
 
         // Drift is observed and never declared: orphaned data whose declaring integration is gone,
         // or was never registered. The opposite direction gets its own informational bucket, since a
@@ -125,12 +164,138 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         )
     }
 
-    /** The three ways a type's property set can differ, gathered in one pass. */
+    /** The four ways a type's property set can differ, gathered in one pass. */
     private data class PropertyDelta(
         val added: Set<PropertySignature>,
         val removed: Set<PropertySignature>,
+        val renames: List<MetamodelChange.PropertyRenamed>,
         val signatureChanges: List<MetamodelChange.PropertySignatureChanged>,
     )
+
+    /**
+     * Pair each removed type with an added type that declares the removed name as a former name.
+     *
+     * Removed names are walked in sorted order and matched against added names in sorted order,
+     * which makes the pairing one-to-one and the same every run. An added type claiming two removed
+     * names takes the first of them, and the other stays an ordinary removal; a removed name
+     * claimed by two added types goes to the first of those, and the second stays an ordinary
+     * addition.
+     *
+     * Matching is against the whole declared alias set, so a type renamed twice still pairs across
+     * stamps that aren't adjacent.
+     *
+     * @return Old name to new name, empty when nothing paired.
+     */
+    private fun pairRenamedTypes(
+        removed: Set<String>,
+        added: Set<String>,
+        aliases: Map<String, Set<String>>,
+    ): Map<String, String> {
+        if (removed.isEmpty() || added.isEmpty() || aliases.isEmpty()) return emptyMap()
+
+        val candidates = added.sorted()
+        val claimed = mutableSetOf<String>()
+        val paired = LinkedHashMap<String, String>()
+        for (removedName in removed.sorted()) {
+            val match = candidates.firstOrNull { addedName ->
+                addedName !in claimed && removedName in aliases[addedName].orEmpty()
+            } ?: continue
+            claimed += match
+            paired[removedName] = match
+        }
+        return paired
+    }
+
+    /**
+     * Compare what two versions declare as one type's former names.
+     *
+     * When the type was itself renamed, the alias naming the old name is the rename and is reported
+     * as [MetamodelChange.EntityTypeRenamed], so it is left out of the comparison here. What is left
+     * is an alias added or retired on top of that, which moves the content hash and has to surface
+     * as something.
+     *
+     * @return The change, or `null` when the declarations agree.
+     */
+    private fun compareAliasesOf(
+        beforeName: String,
+        afterName: String,
+        from: MetamodelVersion,
+        to: MetamodelVersion,
+    ): MetamodelChange.EntityTypeAliasesChanged? {
+        val before = from.entityTypeAliases[beforeName].orEmpty()
+        val after = to.entityTypeAliases[afterName].orEmpty()
+        val implied = if (beforeName == afterName) emptySet() else setOf(beforeName)
+        if (before - implied == after - implied) return null
+        return MetamodelChange.EntityTypeAliasesChanged(
+            typeName = afterName,
+            before = canonical(before),
+            after = canonical(after),
+        )
+    }
+
+    /** Rewrite any label that is a renamed type's old name into its new one. */
+    private fun substitute(labels: Set<String>, renames: Map<String, String>): Set<String> =
+        if (renames.isEmpty()) labels else labels.mapTo(mutableSetOf()) { renames[it] ?: it }
+
+    /**
+     * Rewrite a reference property's target when it points at a renamed type.
+     *
+     * Only [PropertySignature.Kind.REFERENCE] targets are rewritten. A `VALUE` property's type is a
+     * free-text rendering of a JVM type, so an entity type named `Date` must not rewrite every
+     * property declared as holding a `Date` value.
+     */
+    private fun substitute(signature: PropertySignature, renames: Map<String, String>): PropertySignature {
+        if (renames.isEmpty() || signature.kind != PropertySignature.Kind.REFERENCE) return signature
+        val renamedTarget = renames[signature.type] ?: return signature
+        return signature.copy(type = renamedTarget)
+    }
+
+    /**
+     * Pair each removed property name with an added signature that declares it as a former name.
+     *
+     * Runs on what is left after the name matching in [comparePropertiesOf], so a name present on
+     * both sides is never a candidate: an alias naming a property that still exists says nothing.
+     * Removed names are walked in sorted order against added signatures in sorted order, the same
+     * one-to-one discipline the type pairing uses, with the same outcome when one signature claims
+     * two old names or two signatures claim one.
+     *
+     * A name carrying more than one signature is left out. That is the type-merge path, where two
+     * same-named domain types each declare the property, and there is no single before or after to
+     * pair; it falls back to a removal and an addition, as it does for a shape change.
+     */
+    private fun pairRenamedProperties(
+        typeName: String,
+        added: List<PropertySignature>,
+        removed: List<PropertySignature>,
+        fromNames: Set<String>,
+        toNames: Set<String>,
+    ): List<MetamodelChange.PropertyRenamed> {
+        val candidates = added
+            .groupBy { it.name }
+            .filter { (name, signatures) -> signatures.size == 1 && name !in fromNames }
+            .values
+            .map { it.single() }
+            .sorted()
+        if (candidates.isEmpty()) return emptyList()
+
+        val goneNames = removed
+            .groupBy { it.name }
+            .filter { (name, signatures) -> signatures.size == 1 && name !in toNames }
+            .mapValues { (_, signatures) -> signatures.single() }
+
+        val claimed = mutableSetOf<String>()
+        val renames = mutableListOf<MetamodelChange.PropertyRenamed>()
+        for (removedName in goneNames.keys.sorted()) {
+            val match = candidates.firstOrNull { it.name !in claimed && removedName in it.aliases } ?: continue
+            claimed += match.name
+            renames += MetamodelChange.PropertyRenamed(
+                typeName = typeName,
+                before = goneNames.getValue(removedName),
+                after = match,
+            )
+        }
+        return renames.sortedBy { it.after.name }
+    }
 
     /**
      * Compare one type's properties, matching them up by name.
@@ -144,6 +309,9 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
      * `DataDictionary` may hold two same-named domain types whose properties get unioned into a
      * single stamp. There is no single before/after to pair in that case, so the differing
      * signatures are reported as added and removed.
+     *
+     * Names that match nothing are then run through [pairRenamedProperties], which pairs a
+     * disappearing name with an arriving signature that declares it as a former name.
      */
     private fun comparePropertiesOf(
         typeName: String,
@@ -178,9 +346,20 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
             }
         }
 
+        // Renames are paired off what is left, and the pair is then excluded from the added and
+        // removed sets, so one rename is one entry rather than a removal plus an addition too.
+        val renames = pairRenamedProperties(
+            typeName = typeName,
+            added = added,
+            removed = removed,
+            fromNames = fromByName.keys,
+            toNames = toByName.keys,
+        )
+
         return PropertyDelta(
-            added = canonical(added),
-            removed = canonical(removed),
+            added = canonical(added - renames.mapTo(mutableSetOf()) { it.after }),
+            removed = canonical(removed - renames.mapTo(mutableSetOf()) { it.before }),
+            renames = renames,
             signatureChanges = signatureChanges,
         )
     }

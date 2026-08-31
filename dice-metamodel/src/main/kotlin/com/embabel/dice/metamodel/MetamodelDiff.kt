@@ -41,7 +41,11 @@ private fun <T> immutableCopy(values: List<T>): List<T> = java.util.List.copyOf(
  *
  * The kinds don't overlap. A given difference is reported exactly once, by whichever kind describes
  * it most precisely: a property that keeps its name and changes shape is a
- * [PropertySignatureChanged].
+ * [PropertySignatureChanged], and one that changes name under a declared alias is a
+ * [PropertyRenamed]. The exception is relationships, whose rendered descriptors embed type names the
+ * differ compares as atoms: a relationship touching a renamed type churns as a
+ * [RelationshipRemoved] plus a [RelationshipAdded] alongside the [EntityTypeRenamed] that already
+ * described the same move. See `docs/design/metamodel-diff.md`.
  */
 sealed interface MetamodelChange {
 
@@ -61,6 +65,86 @@ sealed interface MetamodelChange {
     data class EntityTypeRemoved(val typeName: String) : MetamodelChange
 
     /**
+     * An entity type that changed name, paired up because the newer version declares the old name as
+     * one of the type's former names.
+     *
+     * Without the alias the same move reads as [EntityTypeRemoved] plus [EntityTypeAdded], which
+     * says the type's data has nothing describing it any more. With it, this entry replaces that
+     * pair, and whatever else moved on the type is reported under [after] as an
+     * [EntityTypeModified] or a property change.
+     *
+     * The label swap the rename itself implies rides here: a type's own name is one of its labels,
+     * so `Person` becoming `Human` mechanically loses the label `Person` and gains `Human`. That
+     * pair is folded into this entry, along with the same swap wherever it propagates — a child
+     * type's inherited label, another type's reference to this one. Parent and other label changes
+     * still report on the paired [EntityTypeModified].
+     *
+     * Experimental: shape may change before 1.0.
+     *
+     * @property before The name in the older version.
+     * @property after The name in the newer version.
+     */
+    data class EntityTypeRenamed(val before: String, val after: String) : MetamodelChange {
+
+        init {
+            require(before != after) {
+                "EntityTypeRenamed pairs two names for one type, but got '$before' twice."
+            }
+        }
+    }
+
+    /**
+     * An entity type present in both versions whose declared former names changed: an alias was
+     * added or retired.
+     *
+     * Aliases are hashed, so an alias-only edit moves [MetamodelVersion.contentHash] and has to
+     * surface as a change for an empty diff and an equal hash to keep meaning the same thing. It
+     * says nothing about the data: no label, property or relationship moved.
+     *
+     * A rename's own alias entry is not reported here. Declaring `Human` with the former name
+     * `Person` is the rename, and it rides in [EntityTypeRenamed]; this entry covers what the
+     * declaration says about former names beyond that.
+     *
+     * Experimental: shape may change before 1.0.
+     *
+     * @property typeName The entity type name in the newer version.
+     * @property before The former names declared in the older version.
+     * @property after The former names declared in the newer version.
+     */
+    class EntityTypeAliasesChanged(
+        typeName: String,
+        before: Set<String>,
+        after: Set<String>,
+    ) : MetamodelChange {
+
+        val typeName: String = typeName
+
+        // Copied, and a plain class rather than a `data class`, for the same reason as
+        // EntityTypeModified: a generated copy() would hand its argument straight to the field.
+        val before: Set<String> = immutableCopy(before)
+
+        val after: Set<String> = immutableCopy(after)
+
+        init {
+            require(this.before != this.after) {
+                "EntityTypeAliasesChanged requires an actual change, but before and after are " +
+                    "identical for '$typeName': ${this.before}"
+            }
+        }
+
+        override fun equals(other: Any?): Boolean =
+            other is EntityTypeAliasesChanged &&
+                typeName == other.typeName &&
+                before == other.before &&
+                after == other.after
+
+        override fun hashCode(): Int = Objects.hash(typeName, before, after)
+
+        override fun toString(): String =
+            "EntityTypeAliasesChanged(typeName=$typeName, before=$before, after=$after)"
+    }
+
+    /**
      * An entity type that exists in both versions but gained or lost labels or whole properties.
      * One entry carries both deltas for the type; at least one of the four sets is non-empty.
      *
@@ -74,7 +158,12 @@ sealed interface MetamodelChange {
      * merged into one stamp. There is no single before and after to pair up then, so the differing
      * signatures are reported here as added and removed.
      *
-     * @property typeName The entity type name (unchanged).
+     * A property whose declaration pairs an old name with a new one is a [PropertyRenamed] and is
+     * left out of [addedProperties] and [removedProperties]. An entry with nothing left in it after
+     * that is not emitted at all, so the at-least-one-set-non-empty contract holds.
+     *
+     * @property typeName The entity type name. For a type that also changed name, this is the newer
+     *   name, and the change of name itself is an [EntityTypeRenamed].
      * @property addedLabels Labels present in the new version but not the old.
      * @property removedLabels Labels present in the old version but not the new.
      * @property addedProperties Full signatures of properties whose names are new in this version.
@@ -121,6 +210,49 @@ sealed interface MetamodelChange {
     }
 
     /**
+     * A property that changed name on a type present in both versions, paired up because the newer
+     * signature declares the old name as one of its former names.
+     *
+     * Without the alias the same move reads as a removal and an unrelated-looking addition on
+     * [EntityTypeModified], which a quarantine policy has to treat as loss. The pair is
+     * one-to-one: each old name pairs with at most one new signature, and each new signature claims
+     * at most one old name.
+     *
+     * The two signatures can differ in more than the name. A property renamed and retyped in one
+     * step carries its whole delta here, and [typeChanged], [cardinalityChanged] and [kindChanged]
+     * describe it the same way [PropertySignatureChanged] does, so a policy judging the shape move
+     * applies one rule to both.
+     *
+     * Experimental: shape may change before 1.0.
+     *
+     * @property typeName The entity type carrying the property, under its name in the newer version.
+     * @property before The signature in the older version, under its old name.
+     * @property after The signature in the newer version, under its new name.
+     */
+    data class PropertyRenamed(
+        val typeName: String,
+        val before: PropertySignature,
+        val after: PropertySignature,
+    ) : MetamodelChange {
+
+        init {
+            require(before.name != after.name) {
+                "PropertyRenamed pairs two names for one property on '$typeName', but got " +
+                    "'${before.name}' twice."
+            }
+        }
+
+        /** `true` when the value type or reference target moved as well as the name. */
+        val typeChanged: Boolean get() = before.type != after.type
+
+        /** `true` when the property went from one value to many, or the reverse. */
+        val cardinalityChanged: Boolean get() = before.cardinality != after.cardinality
+
+        /** `true` when the property flipped between holding a value and pointing at another type. */
+        val kindChanged: Boolean get() = before.kind != after.kind
+    }
+
+    /**
      * A property that kept its name on a type present in both versions, but changed shape: its
      * value type narrowed or widened, its cardinality moved, or it turned from a plain value into a
      * reference to another type (or back).
@@ -133,6 +265,11 @@ sealed interface MetamodelChange {
      * Whether a move is *lossy* is decided elsewhere. A diff states what changed; deciding that
      * string→integer strands existing values while integer→string doesn't is a policy question for
      * the quarantine slice.
+     *
+     * Declared former names are part of a signature, so adding or retiring one on a property that
+     * kept its name lands here too, with [typeChanged], [cardinalityChanged] and [kindChanged] all
+     * `false`. The entry exists so an empty diff and an equal content hash keep meaning the same
+     * thing.
      *
      * @property typeName The entity type carrying the property.
      * @property propertyName The property name, the same on both sides.
@@ -195,7 +332,11 @@ sealed interface MetamodelChange {
  * @property fromVersion The baseline (older) version.
  * @property toVersion The target (newer) version.
  * @property changes Every change, in a deterministic order: entity-type changes first (by type
- *   name), then relationship changes. The same pair of versions always produces the same list.
+ *   name, a renamed type filed under its newer name), then relationship changes. Within one type
+ *   the order is [MetamodelChange.EntityTypeRenamed], [MetamodelChange.EntityTypeAliasesChanged],
+ *   [MetamodelChange.EntityTypeModified], [MetamodelChange.PropertyRenamed] by new property name,
+ *   then [MetamodelChange.PropertySignatureChanged] by property name. The same pair of versions
+ *   always produces the same list.
  */
 class MetamodelDiff(
     val fromVersion: MetamodelVersion,
@@ -215,7 +356,10 @@ class MetamodelDiff(
     /** `true` when nothing changed. */
     val isEmpty: Boolean get() = changes.isEmpty()
 
-    /** Names from every [MetamodelChange.EntityTypeRemoved]: the quarantine candidates. */
+    /**
+     * Names from every [MetamodelChange.EntityTypeRemoved]: the quarantine candidates. A type that
+     * was renamed under a declared alias is a [MetamodelChange.EntityTypeRenamed] and is not here.
+     */
     val removedEntityTypes: Set<String>
         get() = changes
             .filterIsInstance<MetamodelChange.EntityTypeRemoved>()
@@ -236,20 +380,26 @@ class MetamodelDiff(
         get() = changes.filterIsInstance<MetamodelChange.PropertySignatureChanged>()
 
     /**
-     * Every entity type this diff says something about: added, removed, modified, or holding a
-     * property whose signature moved. A reshaped type shows up in both [modifiedEntityTypes] and
-     * [propertySignatureChanges], so answering "did anything about `Person` change?" from those
-     * lists means checking each one in turn.
+     * Every entity type this diff says something about: added, removed, renamed, modified, or
+     * holding a property that was renamed or reshaped. A reshaped type shows up in both
+     * [modifiedEntityTypes] and [propertySignatureChanges], so answering "did anything about
+     * `Person` change?" from those lists means checking each one in turn.
+     *
+     * A rename contributes both names. A caller asking about `Person` after `Person` became `Human`
+     * is asking about data written under the old name, and the diff does say something about it.
      */
     val touchedEntityTypes: Set<String>
-        get() = changes.mapNotNullTo(mutableSetOf()) { change ->
+        get() = changes.flatMapTo(mutableSetOf()) { change ->
             when (change) {
-                is MetamodelChange.EntityTypeAdded -> change.typeName
-                is MetamodelChange.EntityTypeRemoved -> change.typeName
-                is MetamodelChange.EntityTypeModified -> change.typeName
-                is MetamodelChange.PropertySignatureChanged -> change.typeName
-                is MetamodelChange.RelationshipAdded -> null
-                is MetamodelChange.RelationshipRemoved -> null
+                is MetamodelChange.EntityTypeAdded -> listOf(change.typeName)
+                is MetamodelChange.EntityTypeRemoved -> listOf(change.typeName)
+                is MetamodelChange.EntityTypeRenamed -> listOf(change.before, change.after)
+                is MetamodelChange.EntityTypeAliasesChanged -> listOf(change.typeName)
+                is MetamodelChange.EntityTypeModified -> listOf(change.typeName)
+                is MetamodelChange.PropertyRenamed -> listOf(change.typeName)
+                is MetamodelChange.PropertySignatureChanged -> listOf(change.typeName)
+                is MetamodelChange.RelationshipAdded -> emptyList()
+                is MetamodelChange.RelationshipRemoved -> emptyList()
             }
         }
 

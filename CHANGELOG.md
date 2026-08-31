@@ -92,3 +92,40 @@ and the consumer PRs that deliver it).
   interfaces: deterministic, stateless, no database and no LLM. This slice adds no drift
   runner, no quarantine, no Spring wiring, and no new dependency.
   **Compatibility: additive.** New types in an existing module; no existing API touched.
+
+- Declared renames in the diff, **EXPERIMENTAL** (shape may change before 1.0): three new
+  `MetamodelChange` members — `PropertyRenamed(typeName, before, after)`,
+  `EntityTypeRenamed(before, after)` and `EntityTypeAliasesChanged(typeName, before, after)`.
+  A rename declared through `SchemaAliases` now pairs instead of reading as a removal and an
+  addition. Pairing runs on what is left after the ordinary name matching, walks removed
+  names in sorted order against added entries in sorted order, and is one-to-one: one added
+  entry claiming two removed names takes the first and leaves the other an ordinary removal,
+  one removed name claimed by two added entries goes to the first and leaves the second an
+  ordinary addition, and a property name the type-merge path holds two signatures for falls
+  back to a removal and an addition. Paired properties are excluded from
+  `EntityTypeModified.addedProperties`/`removedProperties`, and an entry left empty by that
+  is not emitted. Type pairing matches the whole accumulated alias set, so a type renamed
+  twice still pairs across stamps that aren't adjacent, and it suppresses the
+  `EntityTypeAdded`/`EntityTypeRemoved` pair, reporting the type's other deltas under the new
+  name. After pairing, the older version is compared modulo the renames the diff found: old
+  name for new is substituted in `Kind.REFERENCE` signature targets and in label sets, and
+  nowhere else. A delta that vanishes under the substitution folds into `EntityTypeRenamed`,
+  and one that survives reports in substituted form (a referrer that moved `A → D` while `A`
+  was renamed to `B` reports `B → D`). `Kind.VALUE` type strings are left alone, so an entity
+  type named `Date` renaming to `Timestamp` does not rewrite every property declared as
+  holding a `Date` value. Rendered relationship descriptors are left alone too, so a
+  relationship touching a renamed endpoint still churns as a removal plus an addition; the
+  names inside a descriptor are free text and are never parsed. Alias-only edits have
+  representations, so an empty diff and an equal `contentHash` keep meaning the same thing: a
+  property whose aliases alone moved is an ordinary `PropertySignatureChanged`, and a type's
+  is an `EntityTypeAliasesChanged`. Declared former names join the declared side of
+  `diffAgainstObserved`, so data still carrying a renamed type's old label is not drift.
+  `MetamodelDiff.touchedEntityTypes` covers the new kinds, and contributes both names of a
+  rename.
+  **Compatibility: breaking for external exhaustive `when` expressions.** `MetamodelChange`
+  is a sealed interface, and three new members make any `when` over it outside this repo
+  non-exhaustive until it handles them. Stated and accepted: the taxonomy is designed to be
+  exhausted, and a consumer that silently treated a rename as an unhandled kind would treat
+  it as harmless. Nothing else changes for a schema that declares no aliases — pairing and
+  substitution are no-ops with an empty alias map, and the existing diff behavior, ordering
+  and output are unchanged. Binary compatibility is untouched; consumers recompile.
