@@ -1875,53 +1875,107 @@ class MetamodelDifferTest {
             assertTrue(diff.ambiguousEntityTypeRenames.isEmpty(), "a property claim is not a type claim")
         }
 
+        @Test
+        fun `renamedEntityTypes carries the whole pairing`() {
+            val diff = differ.diff(
+                versionOf(listOf("Person")),
+                versionOf(listOf("Human"), aliases = mapOf("Human" to setOf("Person"))),
+            )
+
+            assertEquals(listOf(MetamodelChange.EntityTypeRenamed("Person", "Human")), diff.renamedEntityTypes)
+        }
+
+        @Test
+        fun `entityTypeAliasChanges carries alias-only edits`() {
+            val diff = differ.diff(
+                versionOf(listOf("Person")),
+                versionOf(listOf("Person"), aliases = mapOf("Person" to setOf("Individual"))),
+            )
+
+            assertEquals(
+                listOf(MetamodelChange.EntityTypeAliasesChanged("Person", emptySet(), setOf("Individual"))),
+                diff.entityTypeAliasChanges,
+            )
+        }
+
+        @Test
+        fun `renamedProperties carries paired property renames`() {
+            val diff = differ.diff(
+                versionOf(listOf("Person"), properties = mapOf("Person" to setOf(valueProperty("age")))),
+                versionOf(
+                    listOf("Person"),
+                    properties = mapOf("Person" to setOf(valueProperty("years", aliases = setOf("age")))),
+                ),
+            )
+
+            assertEquals(
+                listOf(
+                    MetamodelChange.PropertyRenamed(
+                        typeName = "Person",
+                        before = valueProperty("age"),
+                        after = valueProperty("years", aliases = setOf("age")),
+                    ),
+                ),
+                diff.renamedProperties,
+            )
+        }
+
         /**
-         * The fixture holds at least one change of every kind these accessors cover — contested
-         * claims and relationships included — so the count through the accessors has to come out at
-         * the length of the change list, and dropping any one accessor from the sum breaks it.
-         *
-         * It deliberately holds no `EntityTypeRenamed`, `EntityTypeAliasesChanged` or
-         * `PropertyRenamed`, the three kinds still read through `filterIsInstance` here. Their
-         * accessors arrive with the drift slice, and this test grows to cover them then.
+         * The fixture holds at least one change of every kind the differ can emit — contested
+         * claims, paired renames, alias edits, and relationships included — so the count through
+         * the accessors has to come out at the length of the change list, and dropping any one
+         * accessor from the sum breaks it.
          */
         @Test
         fun `each accessor sees only its own kind, and together they cover the change list`() {
             val diff = differ.diff(
                 versionOf(
-                    listOf("Gone", "Holder", "Person", "Stable"),
+                    listOf("Client", "Gone", "Holder", "Keeper", "Person", "Stable"),
                     properties = mapOf(
                         "Holder" to setOf(valueProperty("a"), valueProperty("age", "string")),
+                        "Keeper" to setOf(valueProperty("born")),
                     ),
                     relationships = listOf("Stable-[knew]->Gone"),
                 ),
                 versionOf(
-                    listOf("Customer", "Employee", "Holder", "New", "Stable"),
+                    listOf("Customer", "Employee", "Holder", "Keeper", "New", "Patron", "Stable"),
                     properties = mapOf(
                         "Holder" to setOf(
                             valueProperty("b", aliases = setOf("a")),
                             valueProperty("c", aliases = setOf("a")),
                             valueProperty("age", "integer"),
                         ),
+                        "Keeper" to setOf(valueProperty("birthYear", aliases = setOf("born"))),
                     ),
-                    aliases = mapOf("Customer" to setOf("Person"), "Employee" to setOf("Person")),
+                    aliases = mapOf(
+                        "Customer" to setOf("Person"),
+                        "Employee" to setOf("Person"),
+                        "Patron" to setOf("Client"),
+                        "Keeper" to setOf("Individual"),
+                    ),
                     relationships = listOf("Stable-[knows]->New"),
                 ),
             )
 
             assertEquals(setOf("Gone", "Person"), diff.removedEntityTypes)
             assertEquals(setOf("Customer", "Employee", "New"), diff.addedEntityTypes)
+            assertEquals(1, diff.renamedEntityTypes.size)
+            assertEquals(1, diff.entityTypeAliasChanges.size)
             assertEquals(1, diff.ambiguousEntityTypeRenames.size)
             assertEquals(1, diff.modifiedEntityTypes.size)
+            assertEquals(1, diff.renamedProperties.size)
             assertEquals(1, diff.ambiguousPropertyRenames.size)
             assertEquals(1, diff.propertySignatureChanges.size)
             assertEquals(setOf("Stable-[knows]->New"), diff.addedRelationships)
             assertEquals(setOf("Stable-[knew]->Gone"), diff.removedRelationships)
 
             val throughAccessors = diff.removedEntityTypes.size + diff.addedEntityTypes.size +
+                diff.renamedEntityTypes.size + diff.entityTypeAliasChanges.size +
                 diff.ambiguousEntityTypeRenames.size + diff.modifiedEntityTypes.size +
-                diff.ambiguousPropertyRenames.size + diff.propertySignatureChanges.size +
-                diff.addedRelationships.size + diff.removedRelationships.size
-            assertEquals(11, diff.changes.size, "the fixture should exercise every covered kind: ${diff.changes}")
+                diff.renamedProperties.size + diff.ambiguousPropertyRenames.size +
+                diff.propertySignatureChanges.size + diff.addedRelationships.size +
+                diff.removedRelationships.size
+            assertEquals(14, diff.changes.size, "the fixture should exercise every kind: ${diff.changes}")
             assertEquals(diff.changes.size, throughAccessors, "the accessors should partition ${diff.changes}")
         }
 
@@ -1932,7 +1986,10 @@ class MetamodelDifferTest {
             assertTrue(diff.isEmpty)
             assertTrue(diff.removedEntityTypes.isEmpty())
             assertTrue(diff.addedEntityTypes.isEmpty())
+            assertTrue(diff.renamedEntityTypes.isEmpty())
+            assertTrue(diff.entityTypeAliasChanges.isEmpty())
             assertTrue(diff.modifiedEntityTypes.isEmpty())
+            assertTrue(diff.renamedProperties.isEmpty())
             assertTrue(diff.propertySignatureChanges.isEmpty())
             assertTrue(diff.ambiguousEntityTypeRenames.isEmpty())
             assertTrue(diff.ambiguousPropertyRenames.isEmpty())

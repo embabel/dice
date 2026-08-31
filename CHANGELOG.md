@@ -198,3 +198,53 @@ and the consumer PRs that deliver it).
   on the proposition model, so anything depending on `dice-metamodel` alone now pulls `dice` in
   transitively. `dice-metamodel` is no longer a leaf module, and `embabel-agent-rag-core` joins
   `embabel-agent-api` as a `provided` dependency it expects the host to supply.
+
+- Rename-aware quarantine and a type-widening allow-list in
+  `MentionTypeDriftQuarantinePolicy`, **EXPERIMENTAL** (behavior may change before 1.0).
+  A declared rename no longer quarantines anything on its own: `EntityTypeRenamed` and
+  `PropertyRenamed` are non-lossy per se, and `EntityTypeAliasesChanged` never quarantines.
+  A paired property rename whose two signatures also differ is judged on that delta by exactly
+  the `PropertySignatureChanged` narrowing rules, so `age: integer LIST` renamed to
+  `years: integer ONE` still quarantines. Candidate matching goes through former names: a
+  mention type is checked against its own name plus every current type name that used to go by
+  it, read off the newer version's whole `MetamodelVersion.entityTypeAliases` map rather than the
+  renames this particular diff carries — so a diff that only drops a property from a type renamed
+  two stamps ago still reaches data written under the old name. Reading the declaration is safe
+  because the reuse-collision refusal already guarantees an alias never names a live declared type.
+  A **removed** type resolves from the older version instead, since the newer one has no entry for
+  it: deleting `C` outright quarantines data labelled with every name `C` had gone by, excluding any
+  the newer version declares as a live type of its own (reusing a retired name is legal once its
+  claimant is gone, and data under it is judged as that live type's). Retiring a former name stops
+  it matching — retirement says the schema no longer claims the name, and data still carrying it is
+  reported by the observed-side comparison as ordinary undeclared drift.
+  Former names accumulate, so a type renamed `A` → `B` → `C` declares `{A, B}` and a lossy change
+  on `C`, or `C` being removed, quarantines data labelled `A`, `B` or `C` alike — however many
+  renames deep the old label sits, and whether or not the rename rides in the same diff as the
+  loss. A former name claimed by two live types is checked against both. The quarantine reason
+  names which schema type an old name resolved to.
+  Alongside it, four value type promotions are now treated as non-lossy: `int` → `long`,
+  `float` → `double`, `Integer` → `Long`, `Float` → `Double`. Iceberg defines two of these as safe
+  column promotions, `int` → `long` and `float` → `double`; the boxed pair is the same two as a JVM
+  dictionary spells them, and Iceberg's reason carries over: every value of the older type has an
+  exact representation in the newer one. Primitive-to-primitive and boxed-to-boxed only, so `int` →
+  `Long` (boxing) and `Integer` → `long` (nullability) stay lossy, as does every reversal and
+  every pair off the list. The list is scoped to `Kind.VALUE`, since one entity type is never a
+  promotion of another. It is published as
+  `MentionTypeDriftQuarantinePolicy.SAFE_TYPE_WIDENINGS` and pinned by a test that renders a
+  real eight-field declaration through `PropertySignature.of`, so a rendering change in the
+  upstream dictionary fails the build rather than quietly emptying the list.
+  `MetamodelDiff` gains `renamedEntityTypes`, `entityTypeAliasChanges` and `renamedProperties`,
+  the same convenience accessors the older change kinds already had.
+  **Compatibility: behavioral.** Which change you see depends on whether the schema declares
+  aliases. For a schema declaring none, matching is exactly what it was and the only move is
+  permissive: a property whose value type went along one of the four allow-listed pairs no longer
+  quarantines. Propositions an earlier sweep quarantined for one of those widenings stay
+  quarantined — the already-quarantined check runs before any matching and nothing clears the
+  reason key on its own, so no stored proposition changes state without an operator. To release
+  them, clear `dice.metamodel.quarantine.reason` on those propositions and re-run the check; under
+  the new rule they come back conforming. For a schema that declares aliases, matching now reaches
+  data under a type's former names, so a proposition mentioning an old type name can newly
+  quarantine when the renamed type lost something — which is the point: the old name is what the
+  graph stores. Aliases arrive in this same Unreleased block, so no consumer can be in that state
+  on a published build. The API is additive: three read-only accessors and one public constant,
+  and no existing signature changed.
