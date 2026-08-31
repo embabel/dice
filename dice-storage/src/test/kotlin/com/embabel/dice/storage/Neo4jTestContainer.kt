@@ -20,23 +20,22 @@ import org.testcontainers.containers.Neo4jContainer
 import org.testcontainers.utility.DockerImageName
 
 /**
- * One self-managed Neo4j testcontainer, shared by every IT in this module's test JVM, pinned to a
- * version we choose instead of the `neo4j:5.26.1-community` `@EnableDrivineTestConfig` hardcodes
- * (no override hook of its own, and 0.0.58 is drivine4j's newest release). `5.26.1-community` has
- * a confirmed upstream bug (https://github.com/neo4j/neo4j/issues/13597): a dynamic
- * relationship-type parameter gets baked into the query-plan cache on first execution and
- * silently reused for every later execution of the same query text with a different value.
- * Confirmed fixed on `neo4j:2026.05-community`, which is what this starts.
+ * One self-managed Neo4j testcontainer, shared by every IT in this module's test JVM, on a version
+ * we pick. `@EnableDrivineTestConfig` hardcodes `neo4j:5.26.1-community` with no override hook, and
+ * 0.0.58 is drivine4j's newest release. `5.26.1-community` has a confirmed upstream bug
+ * (https://github.com/neo4j/neo4j/issues/13597): a dynamic relationship-type parameter gets baked
+ * into the query-plan cache on first execution and silently reused for every later execution of the
+ * same query text with a different value. Confirmed fixed on `neo4j:2026.05-community`, which is
+ * what this starts.
  *
- * Rather than let Drivine start its own container, each test class wires this one in via
- * `test.neo4j.use-local=true` -- the officially-supported switch that tells
- * `DrivineTestConfiguration` to use whatever's in the Spring `Environment` for the `neo` datasource
- * as-is, instead of overriding host/port/password with its own testcontainer. A `@DynamicPropertySource`
- * method in each test class (see [registerProperties]) supplies those values from *this* container,
- * started on first use and reused (via Kotlin `object`/`by lazy`) for the rest of the test JVM.
+ * Each test class wires this container in with `test.neo4j.use-local=true`, the supported switch
+ * that tells `DrivineTestConfiguration` to take the `neo` datasource's host, port and password from
+ * the Spring `Environment` as they are. A `@DynamicPropertySource` method in each test class (see
+ * [registerProperties]) supplies those values from this container, started on first use and reused
+ * (via Kotlin `object`/`by lazy`) for the rest of the test JVM.
  *
- * Duplicated (not shared) with `dice-storage-autoconfigure`'s copy -- each module's tests run in
- * their own forked JVM/classpath.
+ * `dice-storage-autoconfigure` keeps its own copy; each module's tests run in a forked JVM with its
+ * own classpath.
  */
 object Neo4jTestContainer {
 
@@ -51,7 +50,7 @@ object Neo4jTestContainer {
             .also { it.start() }
     }
 
-    /** Points Drivine's `neo` datasource at [instance] instead of its own testcontainer. */
+    /** Points Drivine's `neo` datasource at [instance]. */
     fun registerProperties(registry: DynamicPropertyRegistry) {
         registry.add("test.neo4j.use-local") { "true" }
         registry.add("database.datasources.neo.host") { instance.host }

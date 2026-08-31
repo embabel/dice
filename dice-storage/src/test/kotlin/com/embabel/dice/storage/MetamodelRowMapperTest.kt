@@ -26,15 +26,14 @@ import org.junit.jupiter.api.assertThrows
 import java.time.Instant
 
 /**
- * Unit tests for [MetamodelVersionRowMapper] — no database, just the property map it produces and
+ * Unit tests for [MetamodelVersionRowMapper]: no database, just the property map it produces and
  * consumes.
  *
- * The point of most of these is that reading is *strict*. A stored node missing a property the
- * mapper wrote is corrupt, and the mapper has to say so rather than quietly substituting a blank:
- * the store wraps every read in "skip the unreadable row and warn", and that guard is only worth
- * anything if unreadable rows actually throw. `DrivineMetamodelVersionStoreIntegrationTest` shows
- * the guard firing end to end; these pin the mapper's half of the contract, including the cases the
- * store's own `MATCH` filters out before they can reach it.
+ * Most of these pin strict reads. A stored node missing a property the mapper wrote is corrupt, and
+ * the mapper has to throw: the store wraps every read in "skip the unreadable row and warn", and
+ * that guard needs unreadable rows to throw. `DrivineMetamodelVersionStoreIntegrationTest` shows
+ * the guard firing end to end; these cover the mapper's half of the contract, including the cases
+ * the store's own `MATCH` filters out before they can reach it.
  */
 class MetamodelRowMapperTest {
 
@@ -65,14 +64,13 @@ class MetamodelRowMapperTest {
     @Test
     fun `property signatures are written as explicit named fields, enums by name, in a fixed order`() {
         // The encoding on disk feeds the content hash on the way back in, so it is a persisted
-        // format and this is where its shape is pinned. Three things at once:
-        //  - enum *names*, never ordinals -- an ordinal would silently re-point the moment someone
-        //    inserts a constant into Cardinality;
+        // format, and this is where its shape is pinned:
+        //  - enum names, so inserting a constant into Cardinality can't re-point a stored ordinal;
         //  - map keys sorted (Company before Person, though Person was declared first);
         //  - signatures within a type sorted (age before name).
-        // The sorting is why re-saving an unchanged version writes byte-identical JSON. Without it
-        // the order would come from `java.util.Set.copyOf`, whose iteration order is deliberately
-        // randomised per JVM -- so the same stamp would encode differently after every restart.
+        // The sorting is why re-saving an unchanged version writes byte-identical JSON. Left
+        // unsorted, the order would come from `java.util.Set.copyOf`, whose iteration order is
+        // randomised per JVM, so the same stamp would encode differently after every restart.
         assertEquals(
             """{"Company":[{"name":"employs","kind":"REFERENCE","type":"Person","cardinality":"SET"}],""" +
                 """"Person":[{"name":"age","kind":"VALUE","type":"integer","cardinality":"OPTIONAL"},""" +
@@ -91,9 +89,9 @@ class MetamodelRowMapperTest {
 
     @Test
     fun `every timestamp gets a sortable numeric twin, because the ISO string is not sortable`() {
-        // Half a second apart, and the *older* one is the one with no fractional part. As strings
-        // the older sorts higher, because 'Z' outranks '.'; as numbers it doesn't. Anything that
-        // orders on the string will hand back the wrong row, which is why nothing does.
+        // Half a second apart, and the older one has no fractional part. As strings the older sorts
+        // higher, because 'Z' outranks '.'; as numbers it sorts lower. Anything ordering on the
+        // string hands back the wrong row.
         val older = row(Instant.parse("2026-01-01T00:00:00Z"))
         val newer = row(Instant.parse("2026-01-01T00:00:00.500Z"))
 
@@ -106,9 +104,9 @@ class MetamodelRowMapperTest {
 
     @Test
     fun `every property the mapper writes is required when reading it back`() {
-        // schemaName is in the list on purpose. That corruption can't reach the store's readers --
-        // they all MATCH on schemaName, so a node without one is filtered out upstream -- but the
-        // mapper is the contract's home and this is where it's pinned.
+        // schemaName is in the list on purpose. The store's readers all MATCH on schemaName, so a
+        // node without one is filtered out upstream and never reaches the mapper; the mapper is
+        // where this contract lives, so it is pinned here.
         listOf("schemaName", "contentHash", "entityTypeNames", "entityTypeLabels", "entityTypeProperties", "relationshipNames")
             .forEach { property ->
                 val corrupt = row().apply { remove(property) }
@@ -133,8 +131,8 @@ class MetamodelRowMapperTest {
     @Test
     fun `a property signature naming an enum constant this build does not have fails the read`() {
         // A node written by a build whose Cardinality had a constant ours doesn't. Substituting a
-        // default would change the content and then fail the integrity check with a confusing
-        // message about hashes; failing here says what actually happened.
+        // default would change the content and then fail the integrity check with a message about
+        // hashes; failing here says what actually happened.
         val corrupt = row().apply {
             put(
                 "entityTypeProperties",
@@ -150,7 +148,7 @@ class MetamodelRowMapperTest {
     @Test
     fun `a stored hash that disagrees with the stored fields fails the integrity check`() {
         // contentHash is derived from the structural fields, so the copy on the node is a checksum.
-        // Rewriting the fields underneath it -- an old hash format, a hand-edit -- must be caught.
+        // Rewriting the fields underneath it (an old hash format, a hand-edit) has to be caught.
         val corrupt = row().apply { put("relationshipNames", """["SOMETHING_ELSE"]""") }
 
         val thrown = assertThrows<IllegalArgumentException> { MetamodelVersionRowMapper.fromRow(corrupt) }

@@ -55,8 +55,8 @@ import java.time.Instant
  * present), we assert each returned edge is *valid* rather than object-identical — both engines are
  * free to pick a different but correct edge.
  *
- * Runs against [Neo4jTestContainer], not Drivine's own built-in testcontainer -- see that class
- * for why.
+ * Uses the shared [Neo4jTestContainer]; see that class for why Drivine's built-in testcontainer
+ * is bypassed.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivineGraphQueryParityIntegrationTest {

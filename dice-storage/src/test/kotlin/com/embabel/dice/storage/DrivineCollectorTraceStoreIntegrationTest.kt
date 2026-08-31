@@ -47,8 +47,8 @@ import org.springframework.test.context.DynamicPropertySource
  * Integration tests for [DrivineCollectorTraceStore] against a Neo4j testcontainer. Each test
  * starts from an empty graph via [cleanUp].
  *
- * Runs against [Neo4jTestContainer], not Drivine's own built-in testcontainer -- see that class
- * for why.
+ * Uses the shared [Neo4jTestContainer]; see that class for why Drivine's built-in testcontainer
+ * is bypassed.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivineCollectorTraceStoreIntegrationTest {

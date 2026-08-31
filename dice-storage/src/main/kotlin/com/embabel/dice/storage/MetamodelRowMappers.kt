@@ -27,34 +27,33 @@ private val objectMapper = ObjectMapper()
  * Translate metamodel versions to and from the property maps the Neo4j graph store reads and
  * writes.
  *
- * Neo4j properties are scalars and flat arrays, and a version's content is neither — it is lists,
- * a map of label sets, and a map of property *signature* sets. So all four structural fields are
- * serialized to JSON strings. JSON also handles names containing pipes, tabs, newlines and quotes,
- * which matters because these names come out of LLM extraction and routinely do.
+ * Neo4j properties are scalars and flat arrays, while a version's content is lists, a map of label
+ * sets, and a map of property signature sets, so all four structural fields are serialized to JSON
+ * strings. JSON also handles names containing pipes, tabs, newlines and quotes, which these names
+ * routinely do: they come out of LLM extraction.
  *
- * **The timestamp is informational, and is written twice anyway.** `savedAt` is the ISO-8601 string,
- * which is what you want when you're looking at a node and wondering when it landed. `savedAtEpochMillis`
- * is the same instant as a number, which is what you want when you're filtering or grouping by time
- * in an ad-hoc query — the string is no use for that, since `Instant.toString()` drops the fraction
- * entirely at a whole second and `'Z'` sorts above `'.'`, making `"…T00:00:00Z"` compare greater than
- * `"…T00:00:00.500Z"`.
+ * The save instant is informational, and is written twice. `savedAt` is the ISO-8601 string, which
+ * is what you want when you're looking at a node and wondering when it landed. `savedAtEpochMillis`
+ * is the same instant as a number, for filtering or grouping by time in an ad-hoc query; the string
+ * is no use for that, since `Instant.toString()` drops the fraction entirely at a whole second and
+ * `'Z'` sorts above `'.'`, making `"…T00:00:00Z"` compare greater than `"…T00:00:00.500Z"`.
  *
- * Neither one orders the history. That's the `sequence` property's job — see
- * [DrivineMetamodelVersionStore], which explains why a clock can't express write order. Nothing here
- * writes or reads `sequence`: it's assigned by Cypher off a per-schema counter, and it is storage
- * bookkeeping rather than part of the stamp, so it stays out of the strict round-trip below.
+ * Neither field orders the history. The `sequence` property does that; see
+ * [DrivineMetamodelVersionStore] for why a clock can't express write order. Nothing here writes or
+ * reads `sequence`: Cypher assigns it off a per-schema counter, and it is storage bookkeeping, so
+ * it stays out of the strict round-trip below.
  *
- * **Reads are strict.** A property this mapper wrote must be present when it is read again. A node
- * missing one is corrupt — not a version with a blank name — so the accessor throws and the store's
- * surrounding guard skips the row with a warning instead of quietly materializing junk.
+ * Reads are strict. A property this mapper wrote must be present when it is read again; a node
+ * missing one is corrupt, so the accessor throws and the store's surrounding guard skips the row
+ * with a warning.
  */
 object MetamodelVersionRowMapper {
 
     /**
-     * Bind values for a write — the natural key is (schemaName, contentHash).
+     * Bind values for a write. The natural key is (schemaName, contentHash).
      *
-     * [savedAt] is passed in rather than read from the wall clock here, so this stays a pure
-     * function of its arguments and a test can pin the instant a version was stored at.
+     * [savedAt] is a parameter, so this stays a pure function of its arguments and a test can pin
+     * the instant a version was stored at.
      */
     fun bindMap(version: MetamodelVersion, savedAt: Instant): Map<String, Any?> = mapOf(
         "schemaName" to version.schemaName,
@@ -71,13 +70,12 @@ object MetamodelVersionRowMapper {
      * Rebuild a [MetamodelVersion] from a returned node's property map, and check its integrity
      * on the way.
      *
-     * A version's content hash is derived from its structural fields, not stored alongside them as
-     * an independent value, so the reconstructed object computes its own hash. The `contentHash`
-     * property on the node is therefore a checksum rather than data: recomputing it and finding a
-     * different answer means the node was written by an older hash format, hand-edited, or
-     * corrupted. Either way it is not the version it claims to be, so this throws and the caller
-     * skips it. Note the stored hash is also half the natural key, so a mismatch would additionally
-     * mean a re-save of the same content lands on a *different* node.
+     * A version's content hash is derived from its structural fields, so the reconstructed object
+     * computes its own hash and the `contentHash` property on the node acts as a checksum.
+     * Recomputing it and getting a different answer means the node was written by an older hash
+     * format, hand-edited, or corrupted, so this throws and the caller skips it. The stored hash is
+     * also half the natural key, so a mismatch also means a re-save of the same content lands on a
+     * different node.
      */
     fun fromRow(row: Map<*, *>): MetamodelVersion {
         val storedHash = row.str("contentHash")
@@ -96,13 +94,11 @@ object MetamodelVersionRowMapper {
     }
 }
 
-// Serialization helpers: JSON for escape-safe round-trip encoding.
+// Serialization helpers: JSON, for escape-safe round-trip encoding.
 
-/** Serialize a list to a JSON string. */
 private fun serializeList(items: List<String>): String =
     objectMapper.writeValueAsString(items)
 
-/** Deserialize a JSON string back to a list. */
 private fun deserializeList(serialized: String): List<String> =
     if (serialized.isEmpty()) emptyList()
     else objectMapper.readValue(
@@ -113,9 +109,9 @@ private fun deserializeList(serialized: String): List<String> =
 /**
  * Serialize the per-type label sets as `{"Person": ["Agent", "Entity"], ...}`.
  *
- * Sets have no order, so they're written sorted. Nothing reads the order back — the sets go into a
- * `Set` again — but a deterministic encoding means re-saving the same version writes byte-identical
- * JSON, which keeps an idempotent MERGE genuinely a no-op and makes a stored node diffable by hand.
+ * Sets have no order, so they're written sorted. Nothing reads the order back, but a deterministic
+ * encoding means re-saving the same version writes byte-identical JSON, which keeps an idempotent
+ * MERGE a no-op and makes a stored node diffable by hand.
  */
 private fun serializeMapOfLabelSets(map: Map<String, Set<String>>): String =
     objectMapper.writeValueAsString(map.toSortedMap().mapValues { (_, labels) -> labels.sorted() })
@@ -138,19 +134,19 @@ private fun deserializeMapOfLabelSets(serialized: String): Map<String, Set<Strin
  * {"Person": [{"name": "age", "kind": "VALUE", "type": "integer", "cardinality": "ONE"}]}
  * ```
  *
- * Written out field by field rather than handed to Jackson's bean serializer. The shape on disk is
- * a persisted format — it feeds the version's own content hash on the way back in — so it is spelled
- * out here where you can see it, and doesn't move because someone renames a Kotlin property or
- * because `jackson-module-kotlin` is or isn't on the classpath.
+ * The fields are written out one by one. This shape on disk is a persisted format that feeds the
+ * version's own content hash on the way back in, so it has to stay put when someone renames a
+ * Kotlin property or when `jackson-module-kotlin` leaves the classpath, which is what handing the
+ * object to Jackson's bean serializer would risk.
  *
- * Enums are stored by `name`, not ordinal. An ordinal would silently re-point at a different
- * constant the moment someone inserts a value into [Cardinality] or [PropertySignature.Kind].
+ * Enums are stored by `name`. An ordinal would re-point at a different constant the moment someone
+ * inserts a value into [Cardinality] or [PropertySignature.Kind].
  */
 private fun serializeMapOfSignatureSets(map: Map<String, Set<PropertySignature>>): String =
     objectMapper.writeValueAsString(
         map.toSortedMap().mapValues { (_, signatures) ->
             signatures.sorted().map { signature ->
-                // A LinkedHashMap, so the keys land in this order in the JSON and the encoding is
+                // A LinkedHashMap, so the keys land in the JSON in this order and the encoding is
                 // fully determined by the content.
                 linkedMapOf(
                     "name" to signature.name,
@@ -163,11 +159,10 @@ private fun serializeMapOfSignatureSets(map: Map<String, Set<PropertySignature>>
     )
 
 /**
- * Inverse of [serializeMapOfSignatureSets], and strict about it: a signature object missing a field,
- * or naming an enum constant this build doesn't have, throws rather than being patched up with a
- * default. A guessed default would change the structural content, and the version's integrity check
- * would then reject the whole row anyway — with a confusing message about a hash mismatch instead of
- * the real problem.
+ * Inverse of [serializeMapOfSignatureSets], and strict about it: a signature object missing a
+ * field, or naming an enum constant this build doesn't have, throws. Patching it up with a default
+ * would change the structural content, and the version's integrity check would then reject the
+ * whole row with a message about a hash mismatch that hides the real problem.
  */
 private fun deserializeMapOfSignatureSets(serialized: String): Map<String, Set<PropertySignature>> {
     if (serialized.isEmpty()) return emptyMap()
@@ -209,11 +204,10 @@ private inline fun <reified E : Enum<E>> enumConstant(stored: String, typeName: 
 /**
  * Read a property that must be there, and blow up if it isn't.
  *
- * Returning `""` for an absent property would be the friendlier-looking choice and is precisely
- * the wrong one: a node missing `schemaName` would come back as a real-looking version named `""`,
- * indistinguishable from data, and the caller's "skip the unreadable row" guard would never fire
- * for the most likely kind of corruption there is. Throwing is what makes that guard mean
- * something.
+ * Returning `""` for an absent property would let a node missing `schemaName` come back as a
+ * real-looking version named `""`, indistinguishable from data, and the caller's "skip the
+ * unreadable row" guard would never fire for the most likely kind of corruption there is. Throwing
+ * is what gives that guard something to catch.
  */
 private fun Map<*, *>.str(key: String): String =
     this[key]?.toString() ?: throw IllegalArgumentException("required property '$key' is missing from the stored node")

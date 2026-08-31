@@ -54,8 +54,8 @@ import java.time.Instant
  * dedup commits via its own [org.springframework.transaction.support.TransactionTemplate], so
  * isolation is by explicit `clearAll()` per test rather than rollback.
  *
- * Runs against [Neo4jTestContainer], not Drivine's own built-in testcontainer -- see that class
- * for why.
+ * Uses the shared [Neo4jTestContainer]; see that class for why Drivine's built-in testcontainer
+ * is bypassed.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivinePropositionStoreIntegrationTest {

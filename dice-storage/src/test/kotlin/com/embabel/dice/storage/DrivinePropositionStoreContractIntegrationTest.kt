@@ -29,8 +29,8 @@ import org.springframework.test.context.DynamicPropertySource
  * [DrivinePropositionRepository] (testcontainer). This is the half that catches a graph backend
  * silently disagreeing with the in-memory contract — substitutability enforced, not assumed.
  *
- * Runs against [Neo4jTestContainer], not Drivine's own built-in testcontainer -- see that class
- * for why.
+ * Uses the shared [Neo4jTestContainer]; see that class for why Drivine's built-in testcontainer
+ * is bypassed.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivinePropositionStoreContractIntegrationTest : AbstractPropositionStoreContractTest() {

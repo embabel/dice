@@ -54,16 +54,14 @@ and the consumer PRs that deliver it).
   touched.
 - Drivine/Neo4j-backed `MetamodelVersionStore` in `dice-storage`
   (`DrivineMetamodelVersionStore`): stamps persist as `(:MetamodelVersion)` nodes,
-  MERGEd on the natural key `(schemaName, contentHash)` so a re-stamp updates in
-  place instead of duplicating. `latestVersion`, `versionHistory` and `findVersion`
-  all resolve in Cypher. History is ordered by a persisted per-schema sequence, taken
-  off a `(:MetamodelSchemaCounter)` node in the same statement that creates the version,
-  so ordering is true logical write order rather than a wall clock that ties within a
-  millisecond and can run backwards under NTP correction or failover; `savedAt` and
-  `savedAtEpochMillis` remain as informational metadata. An idempotent re-save neither
-  bumps the counter nor reassigns a sequence. Concurrent saves of one version leave
-  exactly one node. Hosts must declare three uniqueness constraints:
-  `MetamodelVersion(schemaName, contentHash)`, `MetamodelSchemaCounter(schemaName)`, and
-  `MetamodelVersion(schemaName, sequence)`.
-  **Compatibility: additive.** New class and a new `dice-storage` → `dice-metamodel`
+  MERGEd on the natural key `(schemaName, contentHash)`, so a re-stamp updates in
+  place. `latestVersion`, `versionHistory` and `findVersion` all resolve in Cypher.
+  History is ordered by a persisted per-schema sequence, taken off a
+  `(:MetamodelSchemaCounter)` node in the same statement that creates the version;
+  `savedAt` and `savedAtEpochMillis` are informational, and nothing sorts on them.
+  An idempotent re-save leaves the counter and the sequence alone. Concurrent saves
+  of one version leave one node. Hosts must declare three uniqueness constraints:
+  `MetamodelVersion(schemaName, contentHash)`, `MetamodelSchemaCounter(schemaName)`,
+  and `MetamodelVersion(schemaName, sequence)`.
+  **Compatibility: additive.** New class, and a new `dice-storage` → `dice-metamodel`
   module dependency; no existing API touched.

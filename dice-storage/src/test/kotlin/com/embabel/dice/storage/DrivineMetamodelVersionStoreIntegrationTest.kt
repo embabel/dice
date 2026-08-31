@@ -46,13 +46,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * Integration tests for [DrivineMetamodelVersionStore] against a Neo4j testcontainer. Each test
  * starts from an empty graph via [cleanUp].
  *
- * Runs against [Neo4jTestContainer], not Drivine's own built-in testcontainer -- see that class
- * for why.
+ * Uses the shared [Neo4jTestContainer]; see that class for why Drivine's built-in testcontainer
+ * is bypassed.
  *
- * Note what's *absent* from every `MetamodelVersion` built here: a content hash. It's derived from
- * the structural fields, so two versions can't claim the same identity while describing different
- * schemas -- which is why the tests that need two distinct versions of one schema give them
- * genuinely different content rather than different hand-written hash strings.
+ * None of the `MetamodelVersion`s built here carries a hand-written content hash: the hash is
+ * derived from the structural fields. Tests that need two distinct versions of one schema give them
+ * genuinely different content.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivineMetamodelVersionStoreIntegrationTest {
@@ -134,10 +133,10 @@ class DrivineMetamodelVersionStoreIntegrationTest {
 
     @Test
     fun `a property signature round-trips its kind, type and cardinality, not just its name`() {
-        // The whole reason entityTypeProperties holds signatures rather than bare names: turning a
-        // single `age` string into a list of integers is a real schema change. If the store dropped
-        // kind/type/cardinality on the way to disk, the reloaded stamp would hash differently from
-        // the one that was saved -- and the mapper's integrity check would reject its own write.
+        // entityTypeProperties holds signatures, so turning a single `age` string into a list of
+        // integers registers as the schema change it is. If the store dropped kind/type/cardinality
+        // on the way to disk, the reloaded stamp would hash differently from the saved one, and the
+        // mapper's integrity check would reject its own write.
         val everyShape = setOf(
             PropertySignature("optionalString", Kind.VALUE, "string", Cardinality.OPTIONAL),
             PropertySignature("oneInteger", Kind.VALUE, "integer", Cardinality.ONE),
@@ -162,9 +161,8 @@ class DrivineMetamodelVersionStoreIntegrationTest {
 
     @Test
     fun `two versions differing only in one property's cardinality are two stored versions`() {
-        // Same type name, same property name -- the change is invisible to any encoding that stores
-        // property *names*. It has to survive as two nodes with two hashes, or the store has
-        // silently lost a schema change.
+        // Same type name, same property name: an encoding that stored only property names would
+        // miss this change. It has to survive as two nodes with two hashes.
         val schemaName = "cardinality-change-schema"
         fun withCardinality(cardinality: Cardinality) = MetamodelVersion(
             schemaName = schemaName,
@@ -256,9 +254,9 @@ class DrivineMetamodelVersionStoreIntegrationTest {
         assertEquals(1L, storedSequence(schemaName, v1))
         assertEquals(2L, storedSequence(schemaName, v2))
 
-        // Re-stamp the old one much later. This is the idempotent path: it must refresh v1's
-        // content and nothing else -- not its sequence, and not the counter, or the next genuinely
-        // new version would skip a number.
+        // Re-stamp the old one much later. The idempotent path refreshes v1's content and leaves
+        // its sequence and the counter alone; bumping the counter would make the next new version
+        // skip a number.
         clock.pin(Instant.parse("2026-06-01T00:00:00Z"))
         store.saveVersion(v1)
 
@@ -270,9 +268,9 @@ class DrivineMetamodelVersionStoreIntegrationTest {
 
     @Test
     fun `many threads saving the identical version leave exactly one node`() {
-        // The write is a MERGE, which is only race-free under a uniqueness constraint on the key it
-        // merges on -- see TestApplication.metamodelSchema. Without one, concurrent MERGEs all miss,
-        // all take the CREATE branch, and the "history" fills with duplicates of one version.
+        // The write is a MERGE, race-free only under a uniqueness constraint on the key it merges
+        // on; see TestApplication.metamodelSchema. Without one, concurrent MERGEs all miss, all take
+        // the CREATE branch, and the history fills with duplicates of one version.
         val threads = 12
         val version = MetamodelVersion(
             schemaName = "concurrent-schema",
@@ -290,8 +288,8 @@ class DrivineMetamodelVersionStoreIntegrationTest {
             repeat(threads) {
                 pool.submit {
                     startTogether.await()
-                    // A loser in a MERGE race can surface a constraint violation or a lock timeout.
-                    // That's tolerable -- a caller retries. Two surviving nodes are not.
+                    // A loser in a MERGE race can surface a constraint violation or a lock timeout,
+                    // which a caller retries. The surviving node count is what's asserted below.
                     runCatching { store.saveVersion(version) }
                         .onSuccess { succeeded.incrementAndGet() }
                         .onFailure { t -> synchronized(failures) { failures += t } }
@@ -313,18 +311,17 @@ class DrivineMetamodelVersionStoreIntegrationTest {
                 "(${succeeded.get()} succeeded, ${failures.size} failed)",
         )
         assertEquals(version, history.single())
-        // The sequence is assigned in the same transaction as the MERGE that creates the node, and
-        // only on create -- so the losing threads, which matched an existing node, took no number.
+        // The sequence is assigned on create only, in the same transaction as the MERGE, so the
+        // losing threads matched the existing node and took no number.
         assertEquals(1L, storedSequence("concurrent-schema", version), "the one node must hold the first sequence")
         assertEquals(1L, counterValue("concurrent-schema"), "only the creating save may consume a number")
     }
 
     @Test
     fun `concurrent saves of distinct versions each get their own place in the order`() {
-        // The lost-update test. Every thread here creates a *different* version of one schema, so
-        // all of them hit the counter at the same moment. If the increment lost an update, two
-        // versions would claim one position and "newest first" would be arbitrary again for the
-        // pair -- the very bug the sequence was introduced to fix.
+        // The lost-update test. Every thread creates a different version of one schema, so all of
+        // them hit the counter at the same moment. If the increment lost an update, two versions
+        // would claim one position, and the order between that pair would be arbitrary.
         val schemaName = "concurrent-distinct-schema"
         val threads = 12
         val versions = (1..threads).map {
@@ -356,20 +353,19 @@ class DrivineMetamodelVersionStoreIntegrationTest {
             sequences.toSet(),
             "each version must hold its own sequence; got $sequences",
         )
-        // And the order the store reports has to be a total order over all of them, not a heap with
-        // ties in it.
+        // The history the store reports has to hold all of them, with no shared positions.
         assertEquals(threads, store.versionHistory(schemaName).size)
         assertEquals(threads.toLong(), counterValue(schemaName))
     }
 
     @Test
     fun `two versions of one schema cannot be stored at the same position`() {
-        // The safety net under the sequence. The counter increment appears to serialise correctly on
-        // its own -- removing the lock from the save statement doesn't make the test above fail, even
-        // at four times the contention -- so "the increment is atomic" is an observation, not a proof.
-        // This constraint is the proof: whatever the counter does, the database will not hold two
-        // versions of one schema claiming one place in the write order. A lost update becomes a
-        // retryable failure rather than a silently scrambled history.
+        // The safety net under the sequence. The counter increment appears to serialise on its own
+        // (removing the lock from the save statement doesn't fail the test above, even at four times
+        // the contention), so its atomicity is an observation rather than a proof. The guarantee
+        // rests on this constraint: whatever the counter does, the database will not hold two
+        // versions of one schema at one place in the write order, so a lost update becomes a
+        // retryable failure.
         val schemaName = "position-constraint-schema"
         val first = MetamodelVersion(schemaName, listOf("First"), emptyMap(), emptyMap(), emptyList())
         store.saveVersion(first)
@@ -412,9 +408,8 @@ class DrivineMetamodelVersionStoreIntegrationTest {
     @Test
     fun `two versions saved in the very same millisecond still order by write order`() {
         // No sleep, and the clock is pinned to one instant for both saves, so every timestamp on
-        // both nodes is byte-identical. A clock -- at any precision -- simply cannot separate these
-        // two; only a counter can. This is the ordinary case, not an exotic one: back-to-back saves
-        // land in the same millisecond routinely.
+        // both nodes is byte-identical. No clock, at any precision, can separate the two; the
+        // counter can. Back-to-back saves land in the same millisecond routinely.
         val schemaName = "same-millisecond-schema"
         val first = MetamodelVersion(schemaName, listOf("First"), emptyMap(), emptyMap(), emptyList())
         val second = MetamodelVersion(schemaName, listOf("Second"), emptyMap(), emptyMap(), emptyList())
@@ -435,9 +430,8 @@ class DrivineMetamodelVersionStoreIntegrationTest {
     @Test
     fun `write order survives a clock that runs backwards`() {
         // An NTP correction, or a failover to a node with a different skew, can move the wall clock
-        // *backwards* between two saves. Ordering on any timestamp then reports the older stamp as
-        // the newest -- a silent wrong answer, which is worse than a slow one. The sequence is
-        // monotonic regardless of what the clock is doing.
+        // backwards between two saves. Ordering on any timestamp then reports the older stamp as the
+        // newest. The sequence is monotonic whatever the clock does.
         val schemaName = "clock-skew-schema"
         val earlier = MetamodelVersion(schemaName, listOf("WrittenFirst"), emptyMap(), emptyMap(), emptyList())
         val later = MetamodelVersion(schemaName, listOf("WrittenSecond"), emptyMap(), emptyMap(), emptyList())
@@ -451,19 +445,19 @@ class DrivineMetamodelVersionStoreIntegrationTest {
         assertEquals(listOf(later, earlier), store.versionHistory(schemaName))
     }
 
-    // ---- Corrupt rows are skipped, not materialized ----
+    // ---- Corrupt rows are skipped ----
 
     @Test
     fun `a version node missing a required property is skipped and warned about, not read as a blank version`() {
-        // Written straight through Cypher, so the node exists exactly as a partially-failed write or
-        // a hand-edit would leave it: one required property simply absent. `entityTypeNames` rather
-        // than `schemaName` because every read MATCHes on schemaName -- a node without one is
-        // filtered out by the query and never reaches the mapper at all.
+        // Written straight through Cypher, so the node looks the way a partially-failed write or a
+        // hand-edit would leave it: one required property absent. The absent property is
+        // `entityTypeNames`, because every read MATCHes on schemaName, and a node without that is
+        // filtered out by the query before the mapper sees it.
         val schemaName = "corrupt-row-schema"
         val good = MetamodelVersion(schemaName, listOf("Sound"), emptyMap(), emptyMap(), emptyList())
         store.saveVersion(good)
-        // Spelled out property by property rather than copied from the good node, so what's wrong
-        // with it is visible: every property the mapper writes except `entityTypeNames`.
+        // Spelled out property by property so the defect is visible here: every property the mapper
+        // writes except `entityTypeNames`.
         val brokenSavedAt = Instant.parse("2026-01-01T00:00:00Z")
         persistenceManager.execute(
             QuerySpecification.withStatement(
@@ -503,9 +497,9 @@ class DrivineMetamodelVersionStoreIntegrationTest {
     @Test
     fun `a stored property signature missing a field is skipped and warned about by name`() {
         // The signature encoding is a persisted format of its own, so a node can be structurally
-        // fine and still hold a half-written signature -- an older writer, a hand-edit. Guessing a
-        // default cardinality would change the content and surface later as a baffling hash
-        // mismatch, so the mapper names the missing field instead.
+        // fine and still hold a half-written signature (an older writer, a hand-edit). Guessing a
+        // default cardinality would change the content and surface later as a hash mismatch, so the
+        // mapper names the missing field.
         val schemaName = "corrupt-signature-schema"
         val version = MetamodelVersion(
             schemaName = schemaName,
@@ -541,8 +535,8 @@ class DrivineMetamodelVersionStoreIntegrationTest {
     @Test
     fun `a version node whose stored hash disagrees with its stored fields is skipped and warned about`() {
         // The content hash is derived from the structural fields, so the copy on the node is a
-        // checksum rather than data. Disagreement means the node was written by an older hash format
-        // or tampered with -- either way it is not the version it claims to be.
+        // checksum. Disagreement means the node was written by an older hash format or tampered
+        // with.
         val schemaName = "tampered-hash-schema"
         val version = MetamodelVersion(schemaName, listOf("Original"), emptyMap(), emptyMap(), emptyList())
         store.saveVersion(version)
@@ -557,10 +551,10 @@ class DrivineMetamodelVersionStoreIntegrationTest {
 
     @Test
     fun `a corrupt newest node hides only itself, not the readable version behind it`() {
-        // latestVersion deliberately sorts in Cypher but takes the first *readable* row rather than
-        // pushing LIMIT 1 down. With the limit in the query, a corrupt newest node would make the
-        // store answer "no versions at all" while versionHistory still returned the older one --
-        // two reads disagreeing about the same graph.
+        // latestVersion sorts in Cypher and takes the first readable row, keeping LIMIT 1 out of the
+        // query. With the limit in the query, a corrupt newest node would make the store answer "no
+        // versions at all" while versionHistory still returned the older one: two reads disagreeing
+        // about the same graph.
         val schemaName = "corrupt-head-schema"
         val readable = MetamodelVersion(schemaName, listOf("Readable"), emptyMap(), emptyMap(), emptyList())
         val doomed = MetamodelVersion(schemaName, listOf("Doomed"), emptyMap(), emptyMap(), emptyList())
@@ -587,9 +581,9 @@ class DrivineMetamodelVersionStoreIntegrationTest {
 
     @Test
     fun `names containing delimiter characters survive the round-trip intact`() {
-        // The old encoding joined on delimiters; this one is JSON, and these are the characters that
-        // would break a joined one. Entity type names, labels, property names, property types and
-        // relationship names all go through it, so all five carry a delimiter here.
+        // These are the characters that would break a delimiter-joined encoding; this one is JSON.
+        // Entity type names, labels, property names, property types and relationship names all go
+        // through it, so all five carry one here.
         listOf("|" to "pipe", "\t" to "tab", "\n" to "newline", "\"" to "quote", "\\" to "backslash")
             .forEach { (delimiter, label) ->
                 val schemaName = "delimiter-$label"
@@ -627,9 +621,8 @@ class DrivineMetamodelVersionStoreIntegrationTest {
     }
 
     /**
-     * The `sequence` a version node actually holds. Read straight out of the graph because the
-     * sequence is storage bookkeeping — it is deliberately not on [MetamodelVersion], so the only
-     * honest way to assert about it is to go and look.
+     * The `sequence` a version node holds. Read straight out of the graph, since the sequence is
+     * storage bookkeeping and [MetamodelVersion] doesn't carry it.
      */
     private fun storedSequence(schemaName: String, version: MetamodelVersion): Long? =
         persistenceManager.maybeGetOne(
@@ -655,9 +648,9 @@ class DrivineMetamodelVersionStoreIntegrationTest {
     )?.toInt() ?: 0
 
     /**
-     * Run [block] with a listener attached to the store's logger, and hand back both its result and
-     * every WARN message the store emitted. Needed because "skips the row" and "skips the row *and
-     * says so*" are different behaviours, and only the second is any use to an operator.
+     * Run [block] with a listener attached to the store's logger, and hand back its result along
+     * with every WARN message the store emitted. The tests assert on the warning text as well as the
+     * skip, because an operator needs the message to find the bad node.
      */
     private fun <T> capturingStoreWarnings(block: () -> T): Pair<T, List<String>> {
         val logger = LoggerFactory.getLogger(DrivineMetamodelVersionStore::class.java) as Logger
