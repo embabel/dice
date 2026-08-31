@@ -31,7 +31,9 @@ import java.util.Objects
  * @property report The [DriftReport] this run saved. Every run saves one, including a check that
  *   found nothing.
  * @property quarantinedCount How many propositions this run newly quarantined. Always 0 on a dry
- *   run, and 0 whenever there was no entity-type drift.
+ *   run. On a live run it can be non-zero even when [driftedEntityTypes] and
+ *   [driftedRelationshipTypes] are both empty: quarantine reacts to two independent signals, not
+ *   just observed drift — see [DriftCheckRunner.run]'s `dryRun` parameter doc for the second one.
  */
 class DriftCheckResult(
     val dryRun: Boolean,
@@ -84,13 +86,28 @@ class DriftCheckResult(
 interface DriftCheckRunner {
 
     /**
-     * Declare, stamp, observe, diff, report, and quarantine when [dryRun] is `false` and drift
-     * touched an entity type.
+     * Declare, stamp, observe, diff, report, and quarantine when [dryRun] is `false` and either
+     * source has *any* diff to evaluate: an undeclared *entity* type observed in the graph, or a
+     * non-empty declared-vs-previous comparison. Either one starts an evaluation sweep, whether or
+     * not what it found is actually lossy — a purely additive or rename-only declared change still
+     * runs the policy over the candidate propositions, and the policy is what decides nothing about
+     * them needs to move. Only the propositions the policy actually judges affected end up
+     * quarantined. An undeclared *relationship* type alone (observed drift with
+     * [DriftReport.driftedRelationshipTypes] non-empty but [DriftReport.driftedEntityTypes] empty)
+     * does not start a sweep at all — only entity mentions are quarantine candidates today, so
+     * there is nothing for a relationship-only observed drift to catch.
      *
      * @param dryRun When `true`, the check runs and its [DriftReport] is persisted, but no
-     *   proposition is touched. When `false`, propositions whose mentions reference a drifted
-     *   entity type are handed to the configured [DriftQuarantinePolicy] and whatever it flags is
-     *   persisted.
+     *   proposition is touched and nothing is swept against. When `false`, quarantine runs against
+     *   two independent signals merged into one sweep: propositions whose mentions reference an
+     *   entity type the graph holds but the declaration doesn't ([DriftReport.driftedEntityTypes]),
+     *   and propositions caught by a lossy change to the declaration itself since it was last swept
+     *   — a property removed or narrowed, a whole type dropped — even when the live graph and the
+     *   new declaration already agree on everything the graph currently holds. Whatever the
+     *   configured [DriftQuarantinePolicy] flags from either signal is persisted. A dry run
+     *   computes neither signal's quarantine effect, so it cannot preview what a live run would
+     *   catch from the second source: running dry, then live, can still find something the dry
+     *   run reported as clean.
      * @param contextId `null` means the check covers the whole graph. Non-null scopes everything
      *   the check touches to that one context: the observed snapshot, the candidate propositions
      *   read for quarantine, and the persisted [DriftReport]. A mis-declared schema in one context

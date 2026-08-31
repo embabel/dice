@@ -56,6 +56,7 @@ class DriftQuarantinePolicyTest {
         text: String,
         vararg mentionTypes: String,
         status: PropositionStatus = PropositionStatus.ACTIVE,
+        pinned: Boolean = false,
     ): Proposition = Proposition(
         contextId = contextId,
         text = text,
@@ -63,7 +64,7 @@ class DriftQuarantinePolicyTest {
             EntityMention(span = type.lowercase(), type = type, role = MentionRole.SUBJECT)
         },
         confidence = 0.9,
-    ).withStatus(status)
+    ).withStatus(status).withPinned(pinned)
 
     private fun reasonOf(decision: QuarantineDecision.Quarantined): String =
         decision.proposition.metadata[DiceMetadataKeys.QUARANTINE_REASON] as String
@@ -1062,6 +1063,82 @@ class DriftQuarantinePolicyTest {
             assertEquals(1, result.conforming.size)
             assertEquals(0, result.quarantined.size)
             assertEquals(PropositionStatus.ACTIVE, result.conforming.single().proposition.status)
+        }
+    }
+
+    /**
+     * DICE promises pinned propositions cross-cutting immunity from reclamation (see
+     * `PropositionStore.pin`): the decay collector, the sweep policy, and contradiction resolution
+     * all leave them alone. Drift quarantine is another reclamation path and must honor the same
+     * promise: a pinned proposition stays untouched, never flipped to STALE.
+     */
+    @Nested
+    inner class PinnedImmunity {
+
+        @Test
+        fun `a pinned proposition mentioning a removed type is reported protected, not quarantined`() {
+            val diff = differ.diff(schemaWith("Person", "RemovedType"), schemaWith("Person"))
+            val pinned = proposition("legacy pinned fact", "RemovedType", pinned = true)
+
+            val result = policy.evaluate(diff, listOf(pinned))
+
+            assertEquals(0, result.quarantined.size, "a pinned match must never be flipped to STALE")
+            assertEquals(1, result.protected.size)
+            val decision = result.protected.single()
+            assertEquals(PropositionStatus.ACTIVE, decision.proposition.status, "pin means untouched")
+            assertTrue(decision.affectedMentionTypes.contains("RemovedType"))
+            assertTrue(decision.reason.contains("RemovedType"), "the reason should still name what triggered it")
+            assertNull(
+                decision.proposition.metadata[DiceMetadataKeys.QUARANTINE_REASON],
+                "unlike an actual quarantine, the proposition itself carries no reason metadata",
+            )
+            assertEquals(1, result.total, "protected propositions still count toward the sweep total")
+            assertTrue(result.allPropositions.contains(decision.proposition))
+        }
+
+        @Test
+        fun `a pinned proposition with nothing lossy still conforms`() {
+            val diff = differ.diff(schemaWith("Person", "Company"), schemaWith("Person", "Company"))
+
+            val result = policy.evaluate(diff, listOf(proposition("Alice at Acme", "Person", pinned = true)))
+
+            assertEquals(1, result.conforming.size)
+            assertEquals(0, result.protected.size, "protected is only for pins that would otherwise be caught")
+        }
+
+        @Test
+        fun `an unpinned proposition next to a pinned one is still quarantined normally`() {
+            val diff = differ.diff(schemaWith("Person", "RemovedType"), schemaWith("Person"))
+
+            val result = policy.evaluate(
+                diff,
+                listOf(
+                    proposition("pinned", "RemovedType", pinned = true),
+                    proposition("unpinned", "RemovedType"),
+                ),
+            )
+
+            assertEquals(1, result.protected.size)
+            assertEquals(1, result.quarantined.size)
+            assertEquals(PropositionStatus.STALE, result.quarantined.single().proposition.status)
+        }
+
+        @Test
+        fun `a pinned proposition an earlier sweep already quarantined stays already-quarantined`() {
+            // Pin immunity only changes what a *fresh* match does. A proposition that is already
+            // STALE with a quarantine reason — however it got pinned since — is idempotency's
+            // concern, not this one's, and must not silently become Protected.
+            val diff = differ.diff(schemaWith("Person", "RemovedType"), schemaWith("Person"))
+            val stale = policy
+                .evaluate(diff, listOf(proposition("entity with removed type", "RemovedType")))
+                .quarantined.single().proposition
+                .withPinned(true)
+
+            val result = policy.evaluate(diff, listOf(stale))
+
+            assertEquals(1, result.alreadyQuarantined.size)
+            assertEquals(0, result.protected.size)
+            assertEquals(0, result.quarantined.size)
         }
     }
 }

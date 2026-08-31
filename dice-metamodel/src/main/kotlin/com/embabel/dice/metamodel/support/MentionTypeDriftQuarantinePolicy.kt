@@ -94,6 +94,17 @@ import org.slf4j.LoggerFactory
  * the conforming bucket. That holds for any diff, an empty one included, because being already
  * quarantined is a fact about the proposition.
  *
+ * ## Pinned propositions
+ *
+ * A pinned proposition a lossy change would otherwise catch is never flipped to `STALE`. Pinning is
+ * DICE's cross-cutting promise that a proposition resists reclamation, the same promise the decay
+ * collector, the sweep policy and contradiction resolution already honor, and quarantine is one more
+ * reclamation path that has to keep it. The match still gets reported, as
+ * [QuarantineDecision.Protected], so an operator can see what the schema change would have caught
+ * without the proposition itself being touched. A proposition an earlier sweep already quarantined
+ * before it was pinned is unaffected by this: it still comes back as
+ * [QuarantineDecision.AlreadyQuarantined], since idempotency is checked first.
+ *
  * Rename awareness and the widening allow-list are experimental: behavior may change before 1.0.
  */
 class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
@@ -136,6 +147,7 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
 
         val conforming = mutableListOf<QuarantineDecision.Conforming>()
         val quarantined = mutableListOf<QuarantineDecision.Quarantined>()
+        val protected = mutableListOf<QuarantineDecision.Protected>()
         // Former names that actually matched something, for the summary line. The map above holds
         // every former name the declaration knows; this holds the ones a proposition was labelled
         // with, which is what an operator reading the log is trying to find out.
@@ -219,6 +231,24 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
                 fromSchema = diff.fromVersion.schemaName,
                 toSchema = diff.toVersion.schemaName,
             )
+
+            // Pinning promises cross-cutting immunity from reclamation, the same promise the decay
+            // collector, the sweep policy and contradiction resolution already honor. A pinned match
+            // is reported so an operator can still see what the schema change would have caught, but
+            // the proposition itself is never touched.
+            if (proposition.pinned) {
+                logger.debug(
+                    "Protecting pinned proposition (id={}) from quarantine: {}",
+                    proposition.id, reason,
+                )
+                protected += QuarantineDecision.Protected(
+                    proposition = proposition,
+                    reason = reason,
+                    affectedMentionTypes = affectedTypes,
+                )
+                continue
+            }
+
             val flagged = proposition
                 .withStatus(PropositionStatus.STALE)
                 .withMetadataValue(DiceMetadataKeys.QUARANTINE_REASON, reason)
@@ -234,11 +264,13 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
 
         logger.info(
             "Drift quarantine sweep complete: {} conforming, {} already quarantined from a prior sweep, " +
-                "{} newly quarantined (removed types: {}, lossy-modified types: {}, narrowed-property types: {}, " +
-                "narrowed renamed-property types: {}, former names data was matched under: {})",
+                "{} newly quarantined, {} protected by pin (removed types: {}, lossy-modified types: {}, " +
+                "narrowed-property types: {}, narrowed renamed-property types: {}, " +
+                "former names data was matched under: {})",
             conforming.size,
             alreadyQuarantined.size,
             quarantined.size,
+            protected.size,
             removedTypes,
             lossyModified.keys,
             narrowedProperties.keys,
@@ -250,6 +282,7 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
             conforming = conforming,
             quarantined = quarantined,
             alreadyQuarantined = alreadyQuarantined,
+            protected = protected,
         )
     }
 

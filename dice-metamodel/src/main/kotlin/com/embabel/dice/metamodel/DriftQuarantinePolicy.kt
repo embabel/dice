@@ -20,12 +20,14 @@ import com.embabel.dice.proposition.Proposition
 /**
  * What a policy decided about one [Proposition].
  *
- * Three outcomes. The third covers a proposition an earlier sweep already quarantined: counting it
- * as conforming would overstate how clean the set is, and it isn't newly quarantined either,
- * because this sweep leaves it alone to preserve its original reason. Its own variant keeps
- * `conforming.size` accurate.
+ * Four outcomes. [AlreadyQuarantined] covers a proposition an earlier sweep already quarantined:
+ * counting it as conforming would overstate how clean the set is, and it isn't newly quarantined
+ * either, because this sweep leaves it alone to preserve its original reason. [Protected] covers a
+ * pinned proposition that a lossy change would otherwise have caught: pinning is DICE's
+ * cross-cutting "must retain" promise, so this sweep leaves it alone too, and still says what the
+ * schema change would have done to it. Each keeps `conforming.size` accurate.
  *
- * Sealed, so a `when` over the outcomes is exhaustive and the compiler speaks up if a fourth
+ * Sealed, so a `when` over the outcomes is exhaustive and the compiler speaks up if a fifth
  * ever lands.
  */
 sealed interface QuarantineDecision {
@@ -71,6 +73,27 @@ sealed interface QuarantineDecision {
         val reason: String,
         val affectedMentionTypes: Set<String>,
     ) : QuarantineDecision
+
+    /**
+     * A pinned proposition that a lossy schema change would otherwise have quarantined. Pinning
+     * promises cross-cutting immunity from reclamation (see `PropositionStore.pin`), so this sweep
+     * leaves it exactly as it was — an unpinned match on the same change gets flipped to `STALE`,
+     * this one doesn't — and reports it here so an operator reading the sweep can still see it was
+     * affected.
+     *
+     * [proposition] is the original, completely untouched: no status change, no metadata written.
+     * Persisting it is never necessary, unlike [Quarantined]'s copy.
+     *
+     * @property proposition The pinned proposition, unchanged.
+     * @property reason The same explanation an unpinned match would have carried, so an operator
+     *   knows what the schema change was.
+     * @property affectedMentionTypes The entity type names that would have triggered quarantine.
+     */
+    data class Protected(
+        val proposition: Proposition,
+        val reason: String,
+        val affectedMentionTypes: Set<String>,
+    ) : QuarantineDecision
 }
 
 /**
@@ -80,21 +103,25 @@ sealed interface QuarantineDecision {
  * @property quarantined Propositions this sweep flagged, as `STALE` copies waiting to be persisted.
  * @property alreadyQuarantined Propositions an earlier sweep had already flagged, left untouched by
  *   this one. Empty unless the input contained some.
+ * @property protected Pinned propositions a lossy change would otherwise have caught, left
+ *   untouched because pinning promises immunity. Empty unless the input contained some.
  */
 data class QuarantineResult @JvmOverloads constructor(
     val conforming: List<QuarantineDecision.Conforming>,
     val quarantined: List<QuarantineDecision.Quarantined>,
     val alreadyQuarantined: List<QuarantineDecision.AlreadyQuarantined> = emptyList(),
+    val protected: List<QuarantineDecision.Protected> = emptyList(),
 ) {
 
     /** How many propositions the sweep looked at. */
-    val total: Int get() = conforming.size + quarantined.size + alreadyQuarantined.size
+    val total: Int get() = conforming.size + quarantined.size + alreadyQuarantined.size + protected.size
 
     /** Every proposition the sweep saw, in one flat list. */
     val allPropositions: List<Proposition>
         get() = conforming.map { it.proposition } +
             quarantined.map { it.proposition } +
-            alreadyQuarantined.map { it.proposition }
+            alreadyQuarantined.map { it.proposition } +
+            protected.map { it.proposition }
 }
 
 /**
@@ -130,6 +157,12 @@ interface DriftQuarantinePolicy {
      * [QuarantineResult.alreadyQuarantined] rather than short-circuiting the whole input into
      * [QuarantineResult.conforming]. Drift checks run on a schedule and most runs find nothing, so
      * short-circuiting would report quarantined records as conforming on those runs.
+     *
+     * A pinned proposition a lossy change would otherwise catch must never be flipped to `STALE`:
+     * implementations report it as [QuarantineResult.protected] instead, leaving the proposition
+     * itself untouched. This holds even for one an earlier sweep already quarantined before it was
+     * pinned; that one is [QuarantineResult.alreadyQuarantined], since idempotency (above) takes
+     * priority over the pin.
      *
      * @param diff What changed between the old and new schema.
      * @param propositions The propositions to evaluate. Any [Iterable] will do: a list, a

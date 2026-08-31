@@ -30,6 +30,10 @@ internal class InMemoryMetamodelVersionStore : MetamodelVersionStore {
     var saveCount: Int = 0
         private set
 
+    // The reconciled-baseline pointer, tracked apart from `versions`' write order -- see
+    // MetamodelVersionStore.sweptVersion's doc for why this can't be answered off `latestVersion`.
+    private val swept = mutableMapOf<String, MetamodelVersion>()
+
     override fun saveVersion(version: MetamodelVersion) {
         saveCount++
         val alreadyStored = versions.any {
@@ -45,6 +49,13 @@ internal class InMemoryMetamodelVersionStore : MetamodelVersionStore {
 
     override fun versionHistory(schemaName: String): List<MetamodelVersion> =
         versions.filter { it.schemaName == schemaName }
+
+    override fun markSwept(version: MetamodelVersion) {
+        saveVersion(version)
+        swept[version.schemaName] = version
+    }
+
+    override fun sweptVersion(schemaName: String): MetamodelVersion? = swept[schemaName]
 }
 
 /**

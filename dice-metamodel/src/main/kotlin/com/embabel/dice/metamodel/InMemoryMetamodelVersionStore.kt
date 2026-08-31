@@ -28,6 +28,11 @@ class InMemoryMetamodelVersionStore : MetamodelVersionStore {
 
     private val saved = mutableListOf<MetamodelVersion>()
 
+    // Tracked apart from `saved`'s write order on purpose: the reconciled baseline a sweep last
+    // completed against is a *pointer*, one per schema, that moves only on markSwept -- unlike
+    // versionHistory, which never forgets a stamp's original position. See sweptVersion's doc.
+    private val swept = mutableMapOf<String, MetamodelVersion>()
+
     /**
      * Upsert on `(schemaName, contentHash)`. A stamp that is already there keeps its place in the
      * write order, so re-saving an old version doesn't make it the latest; the incoming stamp
@@ -50,4 +55,18 @@ class InMemoryMetamodelVersionStore : MetamodelVersionStore {
 
     override fun versionHistory(schemaName: String): List<MetamodelVersion> =
         synchronized(saved) { saved.filter { it.schemaName == schemaName }.reversed() }
+
+    /**
+     * Also saves [version] into the ordinary history, the way the interface default does, so a
+     * caller that only ever calls [markSwept] for a brand-new stamp still gets it stored -- but the
+     * reconciled-baseline pointer itself is kept in [swept], last-write-wins per schema, which is
+     * what lets it answer correctly after a schema cycles back to an earlier stamp.
+     */
+    override fun markSwept(version: MetamodelVersion) {
+        saveVersion(version)
+        synchronized(swept) { swept[version.schemaName] = version }
+    }
+
+    override fun sweptVersion(schemaName: String): MetamodelVersion? =
+        synchronized(swept) { swept[schemaName] }
 }
