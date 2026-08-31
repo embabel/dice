@@ -25,8 +25,10 @@ import org.drivine.annotation.Root
  *
  * A second view over the same `:Proposition` node, distinct from the lean [PropositionView] (root +
  * mentions). Provenance is heavy and rarely needed on bulk/query/vector paths, so this view is used
- * only where completeness matters — `save` (persist everything) and `findById` (the canonical full
- * fetch).
+ * only where completeness matters. Reads and writes of provenance are raw Cypher keyed by evidence
+ * identity, which leaves this view one job: the `DELETE_ORPHAN` cascade behind
+ * `DrivinePropositionRepository.delete`, where naming the shape is enough to take a proposition's
+ * edges with it and prune the sources nothing cites any more.
  */
 @GraphView
 data class PropositionWithProvenanceView(

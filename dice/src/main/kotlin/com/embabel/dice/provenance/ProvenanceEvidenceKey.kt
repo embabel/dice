@@ -26,8 +26,14 @@ package com.embabel.dice.provenance
  * A ref that lacks the `dice-provenance:` prefix is a legacy locator key, written before revisions
  * existed. Those match revisionless evidence only, so an old trace can never remove evidence from a
  * revision it never saw. Anything that carries the prefix and then fails to parse matches nothing.
+ *
+ * This is the only evidence-key codec in DICE. `dice-storage` keys each `DERIVED_FROM` edge by the
+ * string [encode] returns, so one piece of evidence has one identity whether it is being recorded by
+ * a collapse or stored as a graph row. The format is public because it outlives the process that
+ * wrote it: a version prefix leads every string, and a reader that meets a version it does not know
+ * matches nothing rather than guessing.
  */
-internal object ProvenanceEvidenceKey {
+object ProvenanceEvidenceKey {
 
     private const val MAGIC_PREFIX = "dice-provenance:"
     private const val VERSION_PREFIX = "${MAGIC_PREFIX}v1:"

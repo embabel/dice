@@ -145,7 +145,7 @@ collapse writes down what it folded so an undo can subtract exactly that contrib
 appear on several entries at different revisions. `ProvenanceEvidenceKey` owns the replacement:
 
 ```kotlin
-internal object ProvenanceEvidenceKey {
+object ProvenanceEvidenceKey {
     fun encode(entry: ProvenanceEntry): String
     fun matches(entry: ProvenanceEntry, encoded: String): Boolean
 }
@@ -167,6 +167,47 @@ regions in place, so there is no decode step that could produce a half-trusted e
 that is truncated, has a bad length, carries a non-ASCII digit, or has trailing bytes matches
 nothing at all, so an undo driven by a corrupt reference removes no evidence.
 
+### One codec, and why it is public
+
+This is the only evidence-key codec in DICE, and the graph uses it too: a `DERIVED_FROM` edge is
+keyed by the string `encode` returns for the entry it was written from, so a stored row and a
+recorded fold reference are the same string for the same piece of evidence.
+
+They started out as two. Storage had a `provenanceStorageEntryKey` of its own, on the argument that a
+graph row and a fold record have different lifetimes and pinning one to the other would make a change
+to either a migration of both. The two encodings turned out to frame the same six components in the
+same order with the same `-1` for null, differing only in that the storage copy omitted the
+`dice-provenance:v1:` prefix — one format maintained in two places. Worse, neither module could see
+the other's copy: each was `internal` to itself, so even a conformance test tying them together was
+impossible to write without widening one of them. The escape hatch cost the same visibility change as
+the fix.
+
+So the fix. `ProvenanceEvidenceKey` is public, `dice-storage` calls `encode`, and
+`PropositionGraphMapperRevisionTest` asserts that a stored edge key both equals `encode` for its
+entry and satisfies `matches` against it — and fails `matches` against a different revision of the
+same evidence.
+
+**Adopting the prefix changed the bytes stored on an edge**, and that is worth stating plainly rather
+than leaving as an implication of "one codec". It is safe only because of when it happened:
+`entryKey` is itself unreleased, arriving in this same train, so no released DICE ever wrote one. A
+graph written by an intermediate build of this train holds prefix-less keys that this build does not
+recognise, and re-saving that evidence adds a second edge; clearing such a development store is the
+whole of the fix, and the CHANGELOG says so. After release the same change would be a migration.
+
+The reason a released format change would be expensive is the reason `v1` is now pinned by a literal.
+Every other test compares `encode` against `matches` from the same build, so a coordinated edit to
+both would stay green while orphaning every stored key and every recorded fold reference.
+`ProvenanceEvidenceKeyTest.v1 encodes to exactly these bytes` asserts the worked example above
+character for character, so moving the format under a `v1` label fails the build.
+
+Public is the honest declaration rather than a new commitment. The format was already durable in two
+places before this: recorded in collector traces and stored on every edge. What being public adds is
+a stated contract — a version prefix leads every string, a reader that meets a version it does not
+know matches nothing rather than guessing, and the format is the thing that must not change under
+either reader, not an implementation detail either module owns. The lifetime argument survives as a
+constraint on future versions: a `v2` would have to be introduced the way this note describes for
+legacy locator keys, since `entryKey` values already stored cannot be rewritten by a redeploy.
+
 ```mermaid
 flowchart TD
     E["ProvenanceEntry"]
@@ -182,11 +223,11 @@ flowchart TD
 
 ### The interim gap, until the collector slice lands
 
-`encode` has no production caller yet. Until slice 3 rewires `MultiSignalCollectorStrategy`, a
-collapse still records fold refs as plain locator keys, so undoing a collapse that folded revisioned
-evidence takes the legacy path and leaves those entries on the survivor. The direction of the gap is
-safe — evidence is retained, never wrongly deleted — and it closes when slice 3 starts recording
-encoded refs.
+Storage keys its edges by `encode`, but no *collapse* records an encoded ref yet. Until slice 3
+rewires `MultiSignalCollectorStrategy`, a collapse still writes down plain locator keys, so undoing
+one that folded revisioned evidence takes the legacy path and leaves those entries on the survivor.
+The direction of the gap is safe — evidence is retained, never wrongly deleted — and it closes when
+slice 3 starts recording encoded refs.
 
 ### Legacy evidence is unchanged, by construction
 
@@ -326,6 +367,73 @@ Both are pinned by integration tests that were confirmed to fail against the pre
 the parallel-revision one saw one edge where it needed two, and the dedup one saw an empty result
 for the second revision.
 
+Source identity is guarded in two places, and they do different jobs.
+
+The **check under the `MERGE`** is the one that makes it sound. `upsertSource` merges the `:Source`
+node, returns the identity fields of whatever node it settled on, and compares. `ON CREATE SET`
+leaves an existing node's identity alone, so the row that comes back is whichever identity won, and a
+writer holding a different one fails. The `MERGE` serialises on the `:Source(key)` uniqueness
+constraint, so this is the only check that can separate two writers introducing the same key at once.
+
+The **preflight before the first write** is an ordering guarantee. It reads the store for each
+distinct source key the batch names, and additionally rejects a batch that carries two structurally
+different locators under one key. It buys two things: an ordinary rejected write leaves the graph
+exactly as it found it, and the dedup no-op path — which writes nothing, and so would reach no check
+at all — has something to reject a colliding locator with.
+
+Relying on the preflight alone does not work, and the reason is worth recording because the obvious
+tidy-up is to delete one of the two. A read-then-write check has a window: two writers introducing a
+colliding key can both read an empty store and both pass, and one batch carrying both locators has no
+stored node to disagree with either. `one write carrying two colliding connector locators is
+rejected` and `concurrent writers introducing one colliding source key cannot corrupt it` pin those
+two cases — the second holds both writers at the preflight until each has read nothing, so only the
+`MERGE`-time comparison can tell them apart. `colliding connector tuples cannot overwrite a shared
+source`, `dedup rejects a colliding connector source even when the entry looks already known`, and
+`cross-instance recovery rejects a colliding connector source and preserves its winner` cover the
+three ways a collision with an *already stored* source arrives.
+
+On the dedup path only the novel entries are preflighted. The winner's own entries came out of the
+graph, so there is nothing about them left to disagree with, and reading them back would cost one
+query per stored entry per merge.
+
+### Deleting a proposition that cites one source at several revisions
+
+`delete` is the last provenance path still going through the Drivine object view: it cascades
+`PropositionWithProvenanceView` with `DELETE_ORPHAN`. The write and read paths had to leave that
+mapping because it identifies an edge by its endpoints, which raised the obvious question for delete
+— does a proposition holding two revisions of one source lose an edge, or strand one?
+
+Neither. `deleting a proposition takes its parallel revision edges and only its own orphaned source`
+puts a subject with two revisions of a shared source plus one exclusive source, and a bystander citing
+the shared source, against a real Neo4j. Deleting the subject removes all three of its edges, prunes
+the exclusive source, leaves the shared one standing, and leaves the bystander's own evidence intact.
+Delete asks a different question from a write: it wants every edge gone rather than one particular
+row, so endpoint-level identity is enough. The view and the two mapper functions that build and read
+it stay, with documentation that says what each is for.
+
+### The plans the finders actually run
+
+`public source queries execute their production statements on tenant-first plans` couples each finder
+to the Cypher it sends: a recording persistence manager captures the statement and parameters the
+repository binds, asserts they are the production constants, and EXPLAINs exactly what it captured.
+Nothing under assertion is retyped, so a statement edited without a matching plan change fails here.
+
+The statements carry no `USING INDEX` hint. Neo4j resolves a hint at planning time and fails the whole
+query when the named index is absent, and `dice-storage`'s schema is adopter-supplied. What the plans
+show:
+
+- With an index on `Proposition.contextId` — the range index `dice-storage-autoconfigure` ships — the
+  plan seeks it to produce `p`, and the `DERIVED_FROM` expansion runs under a `SemiApply` above that
+  seek. No `Filter` on `p.contextId` survives, so only that tenant's propositions are ever expanded.
+  Tenant-first is a measured property, not a reading of the Cypher.
+- With no index on `contextId` at all, the leaf is a label scan and the tenant becomes a filter. The
+  finders still plan and still answer, which a hinted statement would not.
+
+The `(contextId, text)` uniqueness constraint does not stand in for the range index: Neo4j will not
+use a composite index for a predicate on only its first property, so a store carrying the dedup
+constraint alone scans. `source queries plan and answer with no index on contextId` pins the second
+plan shape by dropping both.
+
 `PropositionStore` also grows the provenance-management operations — `provenanceOf`,
 `addProvenance`, `setProvenance`, `clearProvenance` — which previously sat only on the richer
 `PropositionRepository`. They move down so evidence-sensitive callers such as collector undo can
@@ -399,10 +507,11 @@ Four slices, each green on its own, together equal to the reviewed
    the default production backend: the revision and `entryKey` on the `DERIVED_FROM` edge, the
    raw-Cypher write and read paths that keep parallel revisions apart, evidence union on both dedup
    paths, and the three Cypher push-down overrides with integration tests.
-2. **Storage** — what remains on the `dice-storage` proposition side: the query-plan assertions that
-   couple each statement to the plan Neo4j actually runs, the DERIVED_FROM edge-count proofs for
-   repeated and concurrent writes of one revision, and the connector-collision and legacy-adoption
-   cases around `:Source` identity.
+2. **Storage** — what remains on the `dice-storage` proposition side: one evidence-key codec shared
+   by the domain and the graph, the query-plan assertions that couple each statement to the plan
+   Neo4j actually runs, the DERIVED_FROM edge-count proofs for repeated and concurrent writes of one
+   revision, the delete cascade over parallel revisions, and the connector-collision and
+   legacy-adoption cases around `:Source` identity.
 3. **Collector hardening** — the trace and undo half: `CollectorSignals` carrying evidence keys,
    undo routed through the store SPI, `DrivineCollectorTraceStore`, and
    `MultiSignalCollectorStrategy`.

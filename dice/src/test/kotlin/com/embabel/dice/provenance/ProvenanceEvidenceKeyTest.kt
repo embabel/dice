@@ -22,6 +22,30 @@ class ProvenanceEvidenceKeyTest {
 
     private val locator = UriLocator("https://example.com/source")
 
+    /**
+     * The exact bytes of `v1`, written out. Every other test here checks `encode` against `matches`
+     * from the same build, so a coordinated edit to both would keep them all green while orphaning
+     * every `entryKey` already stored on a `DERIVED_FROM` edge and every reference already recorded
+     * with a fold. This is the only assertion that fails when the format moves under a `v1` label.
+     *
+     * Changing the format means a new version prefix and a story for the keys already written, not an
+     * edit to this string. The same worked example appears in `docs/design/source-revisions.md`.
+     */
+    @Test
+    fun `v1 encodes to exactly these bytes`() {
+        val entry = ProvenanceEntry(
+            locator = UriLocator("https://a"),
+            sourceRevision = "r1",
+            chunkId = "c",
+            startOffset = 1,
+            endOffset = 2,
+            contentHash = "h",
+        )
+
+        assertThat(ProvenanceEvidenceKey.encode(entry))
+            .isEqualTo("dice-provenance:v1:13:uri:https://a2:r11:c1:11:21:h")
+    }
+
     @Test
     fun `full evidence identity participates in encoding`() {
         val entry = ProvenanceEntry(
