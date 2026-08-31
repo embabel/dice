@@ -179,20 +179,19 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     }
 
     /**
-     * Extract propositions from a file via Tika, attributed to an extraction content profile
-     * and a run. EXPERIMENTAL; see [rememberText] for what the two references mean.
+     * Extract propositions from a file via Tika, attributed to an extraction content profile.
+     * EXPERIMENTAL; see [rememberText] for what the reference means.
      *
-     * With no references to carry this hands straight back to the three-argument form, so a
-     * call that looks like a pre-profile call also dispatches like one.
+     * With no profile to carry this hands straight back to the three-argument form, so a call
+     * that looks like a pre-profile call also dispatches like one.
      */
     open fun rememberFile(
         inputStream: InputStream,
         filename: String,
         user: NamedEntity,
         profile: ExtractionContentProfileRef?,
-        currentRun: ExtractionRunRef?,
     ) {
-        if (profile == null && currentRun == null) {
+        if (profile == null) {
             rememberFile(inputStream, filename, user)
             return
         }
@@ -205,7 +204,6 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 null,
                 null,
                 profile,
-                currentRun,
             )
         }
     }
@@ -248,10 +246,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
 
     /**
      * Extract propositions from a file, ground them in the caller's typed source, and attribute
-     * them to an extraction content profile and a run. EXPERIMENTAL; see [rememberText] for what
-     * the two references mean. The profile is independent of the locator and the revision.
+     * them to an extraction content profile. EXPERIMENTAL; see [rememberText] for what the
+     * reference means. The profile is independent of the locator and the revision.
      *
-     * With no references to carry this hands straight back to the five-argument form, so a call
+     * With no profile to carry this hands straight back to the five-argument form, so a call
      * that looks like a pre-profile call also dispatches like one.
      */
     open fun rememberFileFromSource(
@@ -261,9 +259,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         sourceLocator: SourceLocator,
         sourceRevision: SourceRevisionRef?,
         profile: ExtractionContentProfileRef?,
-        currentRun: ExtractionRunRef?,
     ) {
-        if (profile == null && currentRun == null) {
+        if (profile == null) {
             rememberFileFromSource(inputStream, filename, user, sourceLocator, sourceRevision)
             return
         }
@@ -281,7 +278,6 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 null,
                 null,
                 profile,
-                currentRun,
             )
         }
     }
@@ -325,10 +321,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      *   instance's default; see [SourceAnalysisContext.mintNewEntities].
      *
      * This is the signature that existed before profiles, and it stays its own declaration
-     * rather than growing two defaulted parameters. `@JvmOverloads` emits every reduced-arity
-     * overload as `final`, so folding the new arguments into this method would have turned the
+     * rather than growing a defaulted parameter. `@JvmOverloads` emits every reduced-arity
+     * overload as `final`, so folding the new argument into this method would have turned the
      * six-argument form — the one a subclass overrides — into a final bridge. Declaring the two
-     * shapes separately keeps both open. Unintercepted, every call lands on the eight-argument
+     * shapes separately keeps both open. Unintercepted, every call lands on the seven-argument
      * form below, so overriding that one sees everything; overriding this one sees everything a
      * pre-profile subclass used to see, including file ingestion, which still routes through
      * here rather than jumping to the wide form.
@@ -341,10 +337,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         additionalGrounding: List<String> = emptyList(),
         perspective: ExtractionPerspective? = null,
         mintNewEntities: Boolean? = null,
-    ) = rememberText(text, sourceId, user, additionalGrounding, perspective, mintNewEntities, null, null)
+    ) = rememberText(text, sourceId, user, additionalGrounding, perspective, mintNewEntities, null)
 
     /**
-     * Extract propositions from raw text, attributed to an extraction content profile and a run.
+     * Extract propositions from raw text, attributed to an extraction content profile.
      *
      * Every other text entry point funnels here, so this is the one method to override to see
      * every call.
@@ -353,9 +349,6 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      *   EXPERIMENTAL. DICE puts it on the context and does nothing else with it: no provider,
      *   model, or credential is selected from it, and extraction runs exactly as it would
      *   without one.
-     * @param currentRun reference to the extraction run this call belongs to, or null.
-     *   EXPERIMENTAL. Identity only; nothing is stored under it until DICE #67 lands, and DICE
-     *   does not check that the run exists.
      */
     open fun rememberText(
         text: String,
@@ -365,7 +358,6 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         perspective: ExtractionPerspective?,
         mintNewEntities: Boolean?,
         profile: ExtractionContentProfileRef?,
-        currentRun: ExtractionRunRef?,
     ) =
         rememberTextInternal(
             text = text,
@@ -375,7 +367,6 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             perspective = perspective,
             mintNewEntities = mintNewEntities,
             profile = profile,
-            currentRun = currentRun,
         )
 
     /**
@@ -413,14 +404,13 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         perspective,
         mintNewEntities,
         null,
-        null,
     )
 
     /**
      * Extract propositions from raw text, ground them in the caller's typed source, and
-     * attribute them to an extraction content profile and a run. EXPERIMENTAL; see
-     * [rememberText] for what the two references mean. A profile is independent of the locator
-     * and the revision — it says what extraction should do, they say what it is reading.
+     * attribute them to an extraction content profile. EXPERIMENTAL; see [rememberText] for what
+     * the reference means. A profile is independent of the locator and the revision — it says
+     * what extraction should do, they say what it is reading.
      */
     open fun rememberTextFromSource(
         text: String,
@@ -432,7 +422,6 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         perspective: ExtractionPerspective?,
         mintNewEntities: Boolean?,
         profile: ExtractionContentProfileRef?,
-        currentRun: ExtractionRunRef?,
     ) =
         rememberTextInternal(
             text = text,
@@ -444,7 +433,6 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             perspective = perspective,
             mintNewEntities = mintNewEntities,
             profile = profile,
-            currentRun = currentRun,
         )
 
     private fun rememberTextInternal(
@@ -457,7 +445,6 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         perspective: ExtractionPerspective? = null,
         mintNewEntities: Boolean? = null,
         profile: ExtractionContentProfileRef? = null,
-        currentRun: ExtractionRunRef? = null,
     ) {
         val context = buildContext(
             user = user,
@@ -467,7 +454,6 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             sourceLocator = sourceLocator,
             sourceRevision = sourceRevision,
             profile = profile,
-            currentRun = currentRun,
         )
         val result = propositionPipeline.processOnce(
             text, sourceId, context, additionalGrounding = additionalGrounding,
@@ -516,7 +502,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             }
 
             // The async path grounds propositions exactly the way rememberTextFromSource does:
-            // whatever provenance, profile and run the event carries goes through the same
+            // whatever provenance and profile the event carries goes through the same
             // buildContext call.
             val context = buildContext(
                 user = event.user,
@@ -524,7 +510,6 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 sourceLocator = event.sourceLocator(),
                 sourceRevision = event.sourceRevision(),
                 profile = event.profile(),
-                currentRun = event.currentRun(),
             )
             logger.info(
                 "Context relations count: {}, injected relations count: {}",
@@ -559,7 +544,6 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         sourceLocator: SourceLocator? = null,
         sourceRevision: SourceRevisionRef? = null,
         profile: ExtractionContentProfileRef? = null,
-        currentRun: ExtractionRunRef? = null,
     ): SourceAnalysisContext {
         val aliases = try {
             currentUserAliasesProvider(user)
@@ -625,13 +609,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         if (sourceRevision != null) {
             ctx = ctx.withSourceRevision(sourceRevision)
         }
-        // Carried, never consulted. Nothing downstream of here reads either one — that is what
-        // "DICE holds profile identity and the host binds policy" means in code.
+        // Carried, never consulted. Nothing downstream of here reads it — that is what "DICE
+        // holds profile identity and the host binds policy" means in code.
         if (profile != null) {
             ctx = ctx.withProfile(profile)
-        }
-        if (currentRun != null) {
-            ctx = ctx.withCurrentRun(currentRun)
         }
         return ctx
     }

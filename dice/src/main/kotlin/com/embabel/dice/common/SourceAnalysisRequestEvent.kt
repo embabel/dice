@@ -19,7 +19,6 @@ import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.chat.Message
 import com.embabel.dice.incremental.IncrementalSource
 import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef
-import com.embabel.dice.proposition.extraction.ExtractionRunRef
 import com.embabel.dice.provenance.SourceLocator
 import com.embabel.dice.provenance.SourceRevisionRef
 import org.springframework.context.ApplicationEvent
@@ -35,9 +34,9 @@ import org.springframework.context.ApplicationEvent
  * the way a direct `rememberTextFromSource` call does. Both default to null, so an
  * existing subclass carries no provenance and behaves as it always did.
  *
- * [profile] and [currentRun] work the same way and reach the same context through the same
- * call, so an async publisher can attribute its extraction to a content profile and a run
- * without the listener growing a second code path. Both also default to null.
+ * [profile] works the same way and reaches the same context through the same call, so an async
+ * publisher can attribute its extraction to a content profile without the listener growing a
+ * second code path. It also defaults to null.
  */
 abstract class SourceAnalysisRequestEvent(
     source: Any,
@@ -63,10 +62,4 @@ abstract class SourceAnalysisRequestEvent(
      * publisher has one. EXPERIMENTAL. DICE carries it and routes nothing on it.
      */
     open fun profile(): ExtractionContentProfileRef? = null
-
-    /**
-     * The extraction run this event's analysis belongs to, when the publisher is running one.
-     * EXPERIMENTAL. Identity only — nothing is stored under it until DICE #67 lands.
-     */
-    open fun currentRun(): ExtractionRunRef? = null
 }

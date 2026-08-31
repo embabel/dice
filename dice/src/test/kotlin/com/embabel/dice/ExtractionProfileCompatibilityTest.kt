@@ -24,7 +24,6 @@ import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef
 import com.embabel.dice.proposition.extraction.ExtractionPerspective
-import com.embabel.dice.proposition.extraction.ExtractionRunRef
 import com.embabel.dice.provenance.ContentAddressedLocator
 import com.embabel.dice.provenance.SourceLocator
 import com.embabel.dice.provenance.SourceRevisionRef
@@ -44,17 +43,15 @@ class ExtractionProfileCompatibilityTest {
 
     private fun context(
         profile: ExtractionContentProfileRef? = null,
-        currentRun: ExtractionRunRef? = null,
     ) = SourceAnalysisContext(
         schema = DataDictionary.fromClasses("profile-compatibility"),
         entityResolver = AlwaysCreateEntityResolver,
         contextId = ContextId("profile-compatibility"),
         profile = profile,
-        currentRun = currentRun,
     )
 
     @Test
-    fun `legacy Kotlin source constructors and copy calls see no profile and no run`() {
+    fun `legacy Kotlin source constructors and copy calls see no profile`() {
         val legacy = SourceAnalysisContext(
             schema = DataDictionary.fromClasses("profile-compatibility"),
             entityResolver = AlwaysCreateEntityResolver,
@@ -63,31 +60,26 @@ class ExtractionProfileCompatibilityTest {
 
         assertEquals(true, legacy.promptVariables["legacy"])
         assertNull(legacy.profile)
-        assertNull(legacy.currentRun)
 
-        // The Java-facing builder is unchanged too, and its result carries neither.
+        // The Java-facing builder is unchanged too, and its result carries none.
         val built = SourceAnalysisContext
             .withContextId("profile-compatibility")
             .withEntityResolver(AlwaysCreateEntityResolver)
             .withSchema(DataDictionary.fromClasses("profile-compatibility"))
         assertNull(built.profile)
-        assertNull(built.currentRun)
     }
 
     @Test
-    fun `new Kotlin source constructors and copy calls carry a profile and a run`() {
+    fun `new Kotlin source constructors and copy calls carry a profile`() {
         val profile = ExtractionContentProfileRef("house-style", "v3")
-        val run = ExtractionRunRef("run-42")
 
-        val fromConstructor = context(profile = profile, currentRun = run)
+        val fromConstructor = context(profile = profile)
             .copy(promptVariables = mapOf("profiled" to true))
         assertSame(profile, fromConstructor.profile)
-        assertSame(run, fromConstructor.currentRun)
         assertEquals(true, fromConstructor.promptVariables["profiled"])
 
-        val fromHelpers = context().withProfile(profile).withCurrentRun(run)
+        val fromHelpers = context().withProfile(profile)
         assertSame(profile, fromHelpers.profile)
-        assertSame(run, fromHelpers.currentRun)
     }
 
     @Test
@@ -103,7 +95,6 @@ class ExtractionProfileCompatibilityTest {
             perspective = ExtractionPerspective.USER,
             sourceRevision = revision,
             profile = ExtractionContentProfileRef("house-style", "v3"),
-            currentRun = ExtractionRunRef("run-42"),
         )
 
         assertSame(locator, context.sourceLocator)
@@ -130,7 +121,6 @@ class ExtractionProfileCompatibilityTest {
             Map::class.java,
             SourceRevisionRef::class.java,
             ExtractionContentProfileRef::class.java,
-            ExtractionRunRef::class.java,
         )
         val published = SourceAnalysisContext::class.java.constructors
             .map { it.parameterTypes.toList() }
@@ -143,13 +133,11 @@ class ExtractionProfileCompatibilityTest {
                 "constructor of $arity arguments no longer published",
             )
         }
-        // 12 and 13 are what this slice adds, on the end.
-        for (arity in 12..13) {
-            assertTrue(
-                declared.take(arity) + marker in published,
-                "constructor of $arity arguments was not published",
-            )
-        }
+        // 12 is what this slice adds, on the end.
+        assertTrue(
+            declared.take(12) + marker in published,
+            "constructor of 12 arguments was not published",
+        )
     }
 
     @Test
@@ -159,11 +147,11 @@ class ExtractionProfileCompatibilityTest {
         val copyArities = SourceAnalysisContext::class.java.declaredMethods
             .filter { it.name.startsWith("copy") && !it.name.endsWith("\$default") }
             .map { it.parameterCount }
-        assertEquals(listOf(13), copyArities)
+        assertEquals(listOf(12), copyArities)
 
         val componentCount = SourceAnalysisContext::class.java.declaredMethods
             .count { it.name.startsWith("component") }
-        assertEquals(13, componentCount)
+        assertEquals(12, componentCount)
     }
 
     @Test

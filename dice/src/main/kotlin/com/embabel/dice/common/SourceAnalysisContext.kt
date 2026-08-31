@@ -21,7 +21,6 @@ import com.embabel.dice.provenance.SourceLocator
 import com.embabel.dice.provenance.SourceRevisionRef
 import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef
 import com.embabel.dice.proposition.extraction.ExtractionPerspective
-import com.embabel.dice.proposition.extraction.ExtractionRunRef
 
 /**
  * Base context for analyzing sources.
@@ -46,9 +45,6 @@ import com.embabel.dice.proposition.extraction.ExtractionRunRef
  * credential, and no DICE code reads policy out of it. The host authorizes the profile and binds
  * it to whatever it means. `null` (the default) is the whole of the existing behaviour.
  * Independent of [perspective], [schema] and [contextId]: setting one never constrains another.
- * @param currentRun optional reference to the extraction run this analysis belongs to.
- * EXPERIMENTAL. Identity only — DICE #67 brings the durable run this reference will key.
- * `null` (the default) means the analysis is attributed to no run, which is every caller today.
  * @param mintNewEntities whether a mention the resolver could NOT match to an existing entity may
  * be persisted as a NEW entity node. Default FALSE: unresolved mentions stay unresolved (the
  * proposition is still persisted; its mention simply carries no resolvedId), so extraction never
@@ -76,7 +72,6 @@ data class SourceAnalysisContext @JvmOverloads constructor(
     val mintedEntityProperties: Map<String, Any> = emptyMap(),
     val sourceRevision: SourceRevisionRef? = null,
     val profile: ExtractionContentProfileRef? = null,
-    val currentRun: ExtractionRunRef? = null,
 ) {
 
     init {
@@ -88,10 +83,10 @@ data class SourceAnalysisContext @JvmOverloads constructor(
                 "sourceRevision source key must match sourceLocator source key"
             }
         }
-        // [profile] and [currentRun] are checked against nothing else here, deliberately. A
-        // revision has to name the source the run is reading, which is why it is coupled to
-        // [sourceLocator]. A profile and a run reference are independent of every other field,
-        // and validating them against one would invent a relationship the contract doesn't have.
+        // [profile] is checked against nothing else here, deliberately. A revision has to name
+        // the source it was read from, which is why it is coupled to [sourceLocator]. A profile
+        // is independent of every other field, and validating it against one would invent a
+        // relationship the contract doesn't have.
     }
 
     companion object {
@@ -172,13 +167,6 @@ data class SourceAnalysisContext @JvmOverloads constructor(
      */
     fun withProfile(profile: ExtractionContentProfileRef): SourceAnalysisContext =
         copy(profile = profile)
-
-    /**
-     * Returns a copy that says this analysis belongs to the given extraction run. EXPERIMENTAL.
-     * Changes no other field and no extraction behaviour — see [currentRun].
-     */
-    fun withCurrentRun(currentRun: ExtractionRunRef): SourceAnalysisContext =
-        copy(currentRun = currentRun)
 
     /**
      * Returns a copy allowing (or forbidding) this analysis to persist NEW entities
