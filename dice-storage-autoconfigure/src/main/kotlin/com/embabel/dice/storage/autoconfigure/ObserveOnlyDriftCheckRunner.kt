@@ -21,21 +21,19 @@ import com.embabel.dice.metamodel.DriftCheckRunner
 import org.slf4j.LoggerFactory
 
 /**
- * A [DriftCheckRunner] that will only ever observe. Checks run, reports are written, and no
- * proposition is ever touched — asking for a live run gets you a dry one instead.
+ * A [DriftCheckRunner] that only observes. Checks run and reports are written; a request for a live
+ * run is downgraded to a dry one.
  *
- * This is what `embabel.dice.metamodel.drift.mode=observe` wires, and it exists so the observe tier
- * is a property of the wiring rather than a habit callers have to keep. A dry-run *default* only
- * protects the caller who never passes an argument; a scheduler, an admin endpoint, or a stray
- * `run(dryRun = false)` in a script all reach past it. Wrapping the real runner means the guarantee
- * holds no matter who calls or what they pass, and switching the tier is a config change rather
- * than a code change.
+ * This is what `embabel.dice.metamodel.drift.mode=observe` wires, so the observe tier is enforced by
+ * the wiring. A dry-run default on the method only protects the caller who passes no argument, and a
+ * scheduler, an admin endpoint, or a stray `run(dryRun = false)` in a script all reach past it.
+ * Wrapping the real runner holds the guarantee whoever calls and whatever they pass, and switching
+ * the tier is then a config change.
  *
- * The downgrade is loud but not fatal. Throwing would take down a scheduled job for asking a
- * reasonable question in the wrong environment; instead the call succeeds, the report is written,
- * and the answer says plainly what happened — [DriftCheckResult.dryRun] comes back `true` and
- * [DriftCheckResult.quarantinedCount] is `0`, so a caller that cares can tell it was downgraded
- * without reading the log.
+ * The downgrade logs a warning and returns normally. Throwing would take down a scheduled job for
+ * asking a reasonable question in the wrong environment. The report is written,
+ * [DriftCheckResult.dryRun] comes back `true` and [DriftCheckResult.quarantinedCount] is `0`, so a
+ * caller can tell it was downgraded without reading the log.
  *
  * @param delegate The real runner, which decides everything except whether the run is live.
  */

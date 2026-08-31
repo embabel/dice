@@ -52,14 +52,13 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver
 
 /**
- * Wiring tests for [MetamodelAutoConfiguration]. No Spring Boot app and no database — just the
+ * Wiring tests for [MetamodelAutoConfiguration]. No Spring Boot app and no database: the
  * auto-configuration, a stub `PersistenceManager`, and whichever governance beans a given test
  * wants the application to have supplied.
  *
- * The questions here are the ones the wiring can get wrong on its own: does governance stay
- * completely absent until somebody declares a schema, does a consumer's bean win regardless of
- * declaration order, and does each drift tier produce a runner that actually behaves like that
- * tier.
+ * These cover what the wiring alone can get wrong: whether governance stays absent until somebody
+ * declares a schema, whether a consumer's bean wins whichever declaration order it arrives in, and
+ * whether each drift tier produces a runner that behaves like that tier.
  */
 class MetamodelAutoConfigurationTest {
 
@@ -128,12 +127,13 @@ class MetamodelAutoConfigurationTest {
                 assertThat(ctx).doesNotHaveBean(MetamodelAutoConfiguration::class.java)
                 assertThat(ctx).doesNotHaveBean(MetamodelVersionStore::class.java)
                 assertThat(ctx).doesNotHaveBean(DriftCheckRunner::class.java)
-                // The DeclaredSchemaSource the application supplied is untouched — only ours go.
+                // The DeclaredSchemaSource the application supplied stays; only the metamodel
+                // beans are removed.
                 assertThat(ctx).hasSingleBean(DeclaredSchemaSource::class.java)
             }
     }
 
-    // ---- The differ, resolvable as both of the questions it answers ----
+    // ---- The differ, resolvable under both interfaces ----
 
     @Test
     fun `the default differ resolves as both MetamodelDiffer and DeclaredObservedDiffer`() {
@@ -228,8 +228,8 @@ class MetamodelAutoConfigurationTest {
                 assertThat(ctx.getBean<MetamodelProperties>().drift.mode).isEqualTo(DriftMode.OBSERVE)
                 assertThat(ctx.getBean<DriftCheckRunner>()).isInstanceOf(ObserveOnlyDriftCheckRunner::class.java)
 
-                // Ask for a live run. Drift is real -- 'Ghost' is observed and never declared -- so
-                // the quarantine tier would act here. Observe must not.
+                // Ask for a live run. 'Ghost' is observed and undeclared, so the quarantine tier
+                // would act here.
                 val result = ctx.getBean<DriftCheckRunner>().run(dryRun = false, contextId = null)
 
                 assertThat(result.dryRun).isTrue()
@@ -323,9 +323,9 @@ class MetamodelAutoConfigurationTest {
 
     /**
      * Runs [assertions] twice: once with [userConfiguration] registered before the
-     * auto-configuration and once after. Order-independence is the whole point of shipping this as
-     * a real `@AutoConfiguration` — a plain `@Configuration` with the same
-     * `@ConditionalOnMissingBean` annotations would win or lose depending on which got processed
+     * auto-configuration and once after. Shipping this as a real `@AutoConfiguration` is what makes
+     * the result order-independent. A plain `@Configuration` with the same
+     * `@ConditionalOnMissingBean` annotations would win or lose depending on which was processed
      * first.
      */
     private fun bothOrders(
@@ -358,7 +358,7 @@ internal open class DeclaredSchemaConfig {
     open fun propositionStore(): MapPropositionStore = MapPropositionStore()
 }
 
-/** A graph-connected application that has declared nothing. Governance must stay away. */
+/** A graph-connected application that has declared nothing, so no governance beans appear. */
 @Configuration(proxyBeanMethods = false)
 internal open class NoDeclaredSchemaConfig {
 
@@ -371,9 +371,9 @@ internal open class NoDeclaredSchemaConfig {
 
 /**
  * An application that brought its own governance stores, so no Drivine connection is needed and the
- * whole loop can be driven in memory. The observed schema holds a `Ghost` type the declaration never
- * mentions, and one of the two propositions mentions it — so a live run has exactly one thing to
- * quarantine and one thing to leave alone.
+ * whole loop runs in memory. The observed schema holds a `Ghost` type the declaration never
+ * mentions, and one of the two propositions mentions it, so a live run has one thing to quarantine
+ * and one to leave alone.
  */
 @Configuration(proxyBeanMethods = false)
 internal open class InMemoryGovernanceConfig {

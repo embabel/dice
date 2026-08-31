@@ -43,16 +43,16 @@ import org.springframework.test.context.DynamicPropertySource
 /**
  * The auto-configured governance loop against a real Neo4j.
  *
- * The wiring tests prove which beans appear; this proves they add up to something that works. An
+ * The wiring tests cover which beans appear. This one covers whether they work together. An
  * application supplies one `DeclaredSchemaSource` bean and a graph connection, and gets a runner
- * that stamps a version, asks the live database what it holds, and leaves a drift report behind —
- * all of which is read back out of the database here, not off the objects that wrote it.
+ * that stamps a version, asks the live database what it holds, and leaves a drift report behind.
+ * Every assertion reads that back out of the database.
  *
- * The drift is real and comes from the graph: a `(:Ghost)` node nobody declared. The proposition
- * side is deliberately kept in memory ([MapPropositionStore]) — this test is about the
- * auto-configured Drivine stores and the runner that sequences them, and `dice-storage`'s own
- * integration tests already cover quarantining through a graph-backed repository. It also makes
- * the point twice over that the runner asks for the base `PropositionStore` port.
+ * The drift comes from the graph: a `(:Ghost)` node nobody declared. The proposition side stays in
+ * memory ([MapPropositionStore]), since this test is about the auto-configured Drivine stores and
+ * the runner that sequences them, and `dice-storage`'s own integration tests already cover
+ * quarantining through a graph-backed repository. It also exercises the runner's use of the base
+ * `PropositionStore` port.
  */
 @SpringBootTest(
     classes = [MetamodelIntegrationTestApplication::class],
@@ -89,8 +89,8 @@ class MetamodelAutoConfigurationIntegrationTest {
         (MetamodelSchema.LABELS + "Ghost").forEach { label ->
             persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:$label) DETACH DELETE n"))
         }
-        // A domain node nobody declared. This is the drift the check has to find, and it has to
-        // come out of the database rather than a canned snapshot for the test to mean anything.
+        // A domain node nobody declared. This is the drift the check has to find, and it comes
+        // out of the database rather than a canned snapshot.
         persistenceManager.execute(QuerySpecification.withStatement("CREATE (:Ghost {name: 'undeclared'})"))
     }
 
@@ -108,33 +108,34 @@ class MetamodelAutoConfigurationIntegrationTest {
         assertThat(result.dryRun).isFalse()
         assertThat(result.driftedEntityTypes).contains("Ghost")
 
-        // The stamp resolves out of the database by the hash the report carries -- the guarantee
-        // "stamp before you report" exists to buy.
+        // The stamp resolves out of the database by the hash the report carries. That is what
+        // stamping before reporting buys.
         val stamped = versionStore.findVersion(MetamodelTestFixtures.SCHEMA_NAME, result.report.versionHash)
         assertThat(stamped).isNotNull
         assertThat(stamped!!.entityTypeNames).containsExactly("Person")
 
-        // The report is durable: read back through the store, not off the result object.
+        // The report is durable: read back through the store rather than off the result object.
         val reports = driftReportStore.driftReports(MetamodelTestFixtures.SCHEMA_NAME, limit = 10)
         assertThat(reports).hasSize(1)
         assertThat(reports.single().driftedEntityTypes).contains("Ghost")
         assertThat(reports.single().versionHash).isEqualTo(result.report.versionHash)
 
-        // And the tier did what the tier says: the proposition mentioning Ghost is quarantined,
-        // the one mentioning Person is left alone.
+        // The tier did what it says: the proposition mentioning Ghost is quarantined, the one
+        // mentioning Person is left alone.
         assertThat(result.quarantinedCount).isEqualTo(1)
         assertThat(propositionStore.findByStatus(PropositionStatus.STALE)).hasSize(1)
         assertThat(propositionStore.findByStatus(PropositionStatus.ACTIVE)).hasSize(1)
     }
 
     /**
-     * The self-reporting trap: stamping a version and writing a report both add nodes to the very
-     * graph the next check observes. If those labels came back as drift, every check would fire
-     * because the last one ran.
+     * Stamping a version and writing a report both add nodes to the graph the next check observes.
+     * If those labels came back as drift, every check would report drift caused by the previous
+     * check.
      *
-     * The same goes for `_DrivineSchema`, the inventory node Drivine's `SchemaManager` writes
-     * when it applies a `SchemaCatalog`: no application can silence it by declaring it, so
-     * `DrivineObservedSchemaSource` excludes it by shape along with dice's own bookkeeping.
+     * `_DrivineSchema` is the same problem from outside dice: Drivine's `SchemaManager` writes that
+     * inventory node when it applies a `SchemaCatalog`, and no application can silence it by
+     * declaring it. `DrivineObservedSchemaSource` excludes it by shape along with dice's own
+     * bookkeeping labels.
      */
     @Test
     fun `governance never reports its own bookkeeping as drift`() {
@@ -152,9 +153,9 @@ class MetamodelAutoConfigurationIntegrationTest {
  * `DeclaredSchemaSource` to open the gate, one `PropositionStore`, and nothing else. Everything the
  * governance loop needs comes from [MetamodelAutoConfiguration].
  *
- * `@ImportAutoConfiguration` rather than `@EnableAutoConfiguration` so this stays a focused test of
- * one auto-configuration instead of dragging in every one on the classpath. The `.imports`
- * registration itself is checked in `MetamodelAutoConfigurationTest`.
+ * `@ImportAutoConfiguration` keeps this a test of one auto-configuration;
+ * `@EnableAutoConfiguration` would drag in every one on the classpath. The `.imports` registration
+ * itself is checked in `MetamodelAutoConfigurationTest`.
  */
 @Configuration(proxyBeanMethods = false)
 @EnableDrivine

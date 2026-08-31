@@ -34,10 +34,10 @@ import java.time.Instant
 /**
  * Hand-written stand-ins for the governance collaborators, used by the wiring tests.
  *
- * Real objects rather than mocks on purpose. Half of what these tests check is *behaviour* — did
- * the observe tier really refuse to quarantine, did a report really get written — and a mock that
- * records calls can't answer that without restating the runner's logic in the assertions. These
- * keep their state in a list you can read afterwards.
+ * These are real objects, because half of what the tests check is behaviour: whether the observe
+ * tier refused to quarantine, whether a report was written. A mock that records calls can only
+ * answer that by restating the runner's logic in the assertions. These keep their state in a list
+ * the test reads afterwards.
  */
 internal object MetamodelTestFixtures {
 
@@ -126,9 +126,9 @@ internal class RecordingDriftReportStore : DriftReportStore {
 }
 
 /**
- * A [PropositionStore] over an in-memory map. Deliberately the *base* port and nothing more: a
- * context holding one of these has no `PropositionRepository`, which is what proves the drift
- * runner asks for the narrow port it actually uses.
+ * A [PropositionStore] over an in-memory map. It implements the base port and nothing more, so a
+ * context holding one has no `PropositionRepository`. That is what shows the drift runner asks only
+ * for the narrow port.
  */
 internal class MapPropositionStore(private val initial: List<Proposition> = emptyList()) : PropositionStore {
 

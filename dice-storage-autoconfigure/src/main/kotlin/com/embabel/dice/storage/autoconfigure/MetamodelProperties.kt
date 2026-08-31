@@ -20,9 +20,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 /**
  * How far the schema-governance loop is allowed to go.
  *
- * Governance escalates in tiers, and the tier is a decision an operator makes rather than something
- * the framework guesses. Each one is only safe on top of the one below it, and each is worth having
- * on its own — you can report drift for a year without ever quarantining anything.
+ * Governance escalates in tiers, and an operator picks the tier. Each tier is useful on its own: an
+ * application can report drift for a year and quarantine nothing.
  */
 enum class DriftMode {
 
@@ -33,16 +32,15 @@ enum class DriftMode {
     OFF,
 
     /**
-     * Check and report, never touch a proposition. The default. The runner you get here refuses to
-     * do a live run: ask it for one and it downgrades to a dry run, says so in the log, and reports
-     * back `dryRun = true`.
+     * The default. Check and report, touching no proposition. Ask the runner wired here for a live
+     * run and it downgrades to a dry run, logs the downgrade, and reports back `dryRun = true`.
      */
     OBSERVE,
 
     /**
      * Check, report, and let a caller quarantine. The runner honours `run(dryRun = false)`, which
-     * moves stranded propositions to `STALE` with a reason. Still nothing runs on its own — a
-     * caller has to ask.
+     * moves stranded propositions to `STALE` with a reason. Nothing runs on its own; a caller has
+     * to ask.
      */
     QUARANTINE,
 }
@@ -51,15 +49,15 @@ enum class DriftMode {
  * Settings for the metamodel governance loop.
  *
  * None of this switches governance on by itself. The loop is wired only when the application
- * supplies a `DeclaredSchemaSource` bean — no declared schema, no governance, whatever these
- * properties say. What they control is what happens once one exists.
+ * supplies a `DeclaredSchemaSource` bean, whatever these properties say. They control what happens
+ * once one exists.
  */
 @ConfigurationProperties(prefix = "embabel.dice.metamodel")
 data class MetamodelProperties(
 
     /**
      * Kill switch. `false` removes every metamodel bean even when a `DeclaredSchemaSource` is
-     * present — the way to turn governance off for one environment without deleting the bean.
+     * present, so governance can be switched off for one environment while the bean stays in place.
      */
     val enabled: Boolean = true,
 
@@ -73,10 +71,9 @@ data class MetamodelProperties(
         /**
          * The escalation tier: `off`, `observe` (the default), or `quarantine`. See [DriftMode].
          *
-         * Quarantine is never the default. Reporting can't hurt anything, so it's safe to leave on
-         * forever; changing proposition state is a decision somebody has to make on purpose, and
-         * making it the default would mean a schema someone mistyped could strand real knowledge on
-         * the next scheduled check.
+         * The default is `observe`. Reporting is safe to leave running indefinitely; changing
+         * proposition state is a decision somebody makes on purpose. Defaulting to `quarantine`
+         * would let a mistyped schema strand real knowledge on the next check.
          */
         val mode: DriftMode = DriftMode.OBSERVE,
     )
