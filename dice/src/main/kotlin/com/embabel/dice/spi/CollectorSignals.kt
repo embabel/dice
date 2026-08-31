@@ -195,13 +195,43 @@ data class CollapseUndoResult(
  * [RetiredProposition] carries its own folded set rather than the decision carrying one shared
  * union.
  *
- * Evidence comes off the survivor through [PropositionStore.setProvenance], the authoritative
- * replace. A persistent backend's ordinary `save` appends provenance and never removes it, so an
- * undo that only saved the reduced proposition would leave the folded evidence on the graph.
+ * Evidence comes off the survivor through [PropositionStore.subtractProvenance], which names the
+ * refs to delete. A persistent backend's ordinary `save` appends provenance and never removes it, so
+ * an undo that only saved the reduced proposition would leave the folded evidence on the graph. The
+ * subtraction runs first and the survivor's `save` last; the write order below says why.
  *
  * Both propositions are read before anything is written. A missing participant ends the undo with
  * nothing changed, rather than leaving a survivor whose evidence has been subtracted and a member
  * that was never restored. So does a collapse the collector never applied.
+ *
+ * A survivor deleted *between* that read and the subtraction is caught when the subtraction answers
+ * null for a proposition the store no longer has. The undo ends there, writing nothing — saving the
+ * copy it read would recreate a proposition another writer deleted, with the folded evidence still
+ * on it. Nothing is stamped, the member stays retired, and the null return says no restore happened.
+ * A caller left with a member retired into a survivor that no longer exists has to decide what that
+ * member should be; this function will not guess.
+ *
+ * **How much of the run that covers depends on the store**, because it depends on when the
+ * subtraction last looked.
+ *
+ * - The graph backend's override of [PropositionStore.subtractProvenance] deletes the edges in one
+ *   statement and answers from a read taken after it, writing nothing to the proposition itself.
+ *   Null there is exact, so every deletion up to that read is caught, and the window that stays open
+ *   is the gap between it and the survivor's `save` below.
+ * - The base contract's default is a read-modify-write, and it can recreate the survivor *itself*,
+ *   before this function ever sees an answer. On a store inheriting both defaults it reads,
+ *   delegates to [PropositionStore.setProvenance], which reads again and saves — a deletion landing
+ *   after that second read is undone by that save. A store that overrides [PropositionStore.setProvenance]
+ *   moves that last look to wherever its own write reads.
+ *   Its other two exits — no refs to subtract, or none of them matching — hand back the proposition
+ *   as its first read saw it, so a deletion after that read is invisible and the survivor's `save`
+ *   recreates it. Both of those exits are reachable from here: a fold that added no new evidence
+ *   subtracts nothing, and a retried undo matches nothing.
+ *
+ * So the guard is exact on the graph backend and best-effort on a read-modify-write store. Closing
+ * the rest needs a conditional write the store contract does not have, and it would have to reach
+ * every save in the chain rather than only the one below. The residual is written up in
+ * `docs/design/source-revisions.md`.
  *
  * **Authorization is two conditions, and both must hold.**
  *
@@ -258,9 +288,9 @@ data class CollapseUndoResult(
  *   matches them. An entry differing in any of the six fields — a different revision of the same
  *   source, say — is a different key and is untouched.
  * - **No transaction spans the writes**, so the order is chosen to make every interruption
- *   recoverable. It runs: (1) `setProvenance` subtracts the evidence, (2) `save` carries grounding
- *   and source ids and fires the persistence event, (3) the `undoneAt` stamp, (4) the member's
- *   restore. The stamp sits between the survivor's writes and the restore deliberately — after the
+ *   recoverable. It runs: (1) `subtractProvenance` takes the evidence off, (2) `save` carries
+ *   grounding and source ids and fires the persistence event, (3) the `undoneAt` stamp, (4) the
+ *   member's restore. The stamp sits between the survivor's writes and the restore deliberately — after the
  *   restore, losing it would leave a finished undo still authorized, and a retry could not repair
  *   that because the member would already be back at its prior status.
  *
@@ -277,16 +307,19 @@ data class CollapseUndoResult(
  *
  * @param traceQuery where the collapse decision (and its retired members) is looked up
  * @param propositions where the survivor and retired proposition are read and saved, where each
- *   sibling's current status is checked, and where the survivor's remaining evidence is set
- *   authoritatively
+ *   sibling's current status is checked, and where the folded evidence is subtracted from the
+ *   survivor by name
  * @param survivorId the collapse's survivor — must match the decision that retired [retiredId]
  * @param retiredId the one retired member to restore
  * @param collectorRecords the run's audit records, if the caller has them. Supplying them makes
  *   "was this collapse applied" a recorded fact rather than an inference from status; omitting
  *   them keeps the older, weaker behaviour described above.
  * @return the updated survivor and restored proposition, or null if nothing was retired under
- *   [retiredId] (no trace of this collapse), if either proposition no longer exists, or if the
- *   collapse cannot be shown to have been applied
+ *   [retiredId] (no trace of this collapse), if either proposition was already gone when this
+ *   function read it, if the subtraction reports the survivor gone — every deletion up to that
+ *   point on the graph backend, and up to the default's own last read on a read-modify-write
+ *   store — or if the collapse cannot be shown to have been applied. A deletion landing later than
+ *   that is not detected, and the survivor is recreated; see the paragraphs above.
  * @throws IllegalArgumentException if [retiredId] was retired into a different survivor than
  *   [survivorId] — a caller error, not a missing-data case
  */
@@ -339,12 +372,27 @@ fun undoSingleCollapse(
 
     val refsToSubtract = retirement.provenanceRefsForUndo().filterNot { it in stillNeededProvenanceRefs }
 
-    // Evidence goes first and by name. subtractProvenance deletes exactly these refs against
-    // whatever the store holds now, so evidence another writer adds while this undo is running is
-    // left alone — naming what stays instead would replace it away. The save then carries grounding
-    // and source ids over the survivor as the subtraction left it, and goes last because save is
-    // the write a decorator instruments: the event a listener receives describes the final state.
-    val subtracted = propositions.subtractProvenance(survivorId, refsToSubtract) ?: survivor
+    // Evidence goes first and by name. subtractProvenance deletes exactly these refs, so on a store
+    // that can express that in one statement — the graph backend can — evidence another writer adds
+    // while this undo is running survives it. Naming what stays instead would replace it away. The
+    // base contract's default still reads and replaces, so it keeps that window; its own KDoc says
+    // so. The save then carries grounding and source ids over the survivor as the subtraction left
+    // it, and goes last because save is the write a decorator instruments: the event a listener
+    // receives describes the final state.
+    //
+    // A null answer means the store has no such proposition, so the survivor went away after this
+    // function read it. The copy read then is all that is left, and saving it back would recreate
+    // what the other writer deleted, folded evidence and all. The deletion wins. How late a deletion
+    // can land and still be reported this way is a per-store question — see the KDoc.
+    val subtracted = propositions.subtractProvenance(survivorId, refsToSubtract)
+    if (subtracted == null) {
+        undoLogger.warn(
+            "Abandoning the undo of {} in run {}: survivor {} was already gone when the subtraction " +
+                "ran, so nothing is written and the member stays retired",
+            retiredId, decision.runId, survivorId,
+        )
+        return null
+    }
     val updatedSurvivor = propositions.save(
         subtracted.withoutFoldedEvidence(
             groundingToRemove = retirement.foldedGrounding.filterNot { it in stillNeededGrounding },
