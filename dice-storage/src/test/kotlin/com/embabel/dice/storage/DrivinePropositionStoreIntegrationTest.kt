@@ -41,10 +41,15 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.drivine.connection.DataSourceMap
 import org.drivine.manager.CascadeType
 import org.drivine.manager.GraphObjectManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
+import org.neo4j.driver.AuthTokens
+import org.neo4j.driver.GraphDatabase
+import org.neo4j.driver.SessionConfig
+import org.neo4j.driver.summary.Plan
 import org.springframework.aop.framework.ProxyFactory
 import org.springframework.aop.support.AopUtils
 import org.springframework.beans.factory.annotation.Autowired
@@ -52,6 +57,7 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
 import org.springframework.transaction.interceptor.TransactionInterceptor
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
@@ -86,6 +92,9 @@ class DrivinePropositionStoreIntegrationTest {
 
     @Autowired
     private lateinit var transactionManager: PlatformTransactionManager
+
+    @Autowired
+    private lateinit var dataSourceMap: DataSourceMap
 
     @AfterEach
     fun cleanUp() {
@@ -930,6 +939,290 @@ class DrivinePropositionStoreIntegrationTest {
             storedSourceDisplay(firstWriter.key()),
             "display is write-once: the first writer owns the shared label",
         )
+     * The same collision on the plain save path: two structurally different connector locators, two
+     * tenants, two different texts, so no dedup is involved. The second write names a `:Source` that
+     * already exists under its key and disagrees with it, and must be rejected before it touches the
+     * shared node.
+     */
+    @Test
+    fun `colliding connector tuples cannot overwrite a shared source`() {
+        val original = ConnectorRef("a:b", "c")
+        val colliding = ConnectorRef("a", "b:c")
+        assertEquals(original.key(), colliding.key(), "the fixture depends on these keys colliding")
+        val stored = repository.save(
+            prop("original connector fact", context = "ctx-a", provenance = listOf(ProvenanceEntry(original))),
+        )
+
+        assertThrows<IllegalArgumentException> {
+            repository.save(
+                prop("colliding connector fact", context = "ctx-b", provenance = listOf(ProvenanceEntry(colliding))),
+            )
+        }
+
+        assertEquals(
+            original,
+            repository.findById(stored.id)?.provenanceEntries?.single()?.locator,
+            "the shared source keeps the identity of whoever created it",
+        )
+        assertEquals(1, repository.count(), "the rejected write must leave no proposition behind")
+    }
+
+    /**
+     * A colliding locator arriving in the same batch as genuinely new evidence. The colliding entry
+     * compares equal to one the winner already holds, so the novelty check drops it — and it is then
+     * neither written nor, if only novel entries are checked, ever looked at. The save would report
+     * success while the second connector's evidence had been quietly counted as the first's.
+     */
+    @Test
+    fun `dedup rejects a colliding connector source arriving alongside novel evidence`() {
+        val original = ConnectorRef("a:b", "c")
+        val colliding = ConnectorRef("a", "b:c")
+        val newSource = UriLocator("https://example.com/mixed-batch")
+        assertEquals(original.key(), colliding.key(), "the fixture depends on these keys colliding")
+        val winner = repository.save(
+            prop("mixed batch fact", context = "ctx-mixed", provenance = listOf(ProvenanceEntry(original))),
+        )
+        assertTrue(
+            winner.provenanceEntries.contains(ProvenanceEntry(colliding)),
+            "and on the colliding entry counting as already held, which is what drops it from the novelty check",
+        )
+
+        val thrown = assertThrows<Exception> {
+            repository.save(
+                prop(
+                    "mixed batch fact",
+                    context = "ctx-mixed",
+                    provenance = listOf(ProvenanceEntry(colliding), evidence(newSource, "r1")),
+                ),
+            )
+        }
+        assertTrue(
+            generateSequence(thrown as Throwable?) { it.cause }.any {
+                it is IllegalArgumentException && it.message?.contains("Source key collision") == true
+            },
+            "the batch must be rejected as a source key collision; got: $thrown",
+        )
+
+        assertEquals(1, repository.count())
+        assertEquals(
+            listOf(ProvenanceEntry(original)),
+            repository.findById(winner.id)!!.provenanceEntries,
+            "the winner must be exactly as it was",
+        )
+        assertEquals(1L, edgeCount(winner.id))
+        assertEquals(
+            setOf(original.key()),
+            storedSourceKeys(),
+            "the batch's novel source must not survive a rejected write either",
+        )
+    }
+
+    /**
+     * Both colliding locators in one write, naming a source that does not exist yet. Nothing is
+     * stored to compare against, so a check that only reads the store beforehand sees two clean
+     * entries and lets the second silently attach to the source the first creates.
+     */
+    @Test
+    fun `one write carrying two colliding connector locators is rejected`() {
+        val original = ConnectorRef("a:b", "c")
+        val colliding = ConnectorRef("a", "b:c")
+        assertEquals(original.key(), colliding.key(), "the fixture depends on these keys colliding")
+
+        val thrown = assertThrows<Exception> {
+            repository.save(
+                prop(
+                    "two colliding locators in one write",
+                    context = "ctx-batch-collide",
+                    provenance = listOf(ProvenanceEntry(original), ProvenanceEntry(colliding)),
+                ),
+            )
+        }
+        assertTrue(
+            generateSequence(thrown as Throwable?) { it.cause }.any {
+                it is IllegalArgumentException && it.message?.contains("Source key collision") == true
+            },
+            "the batch must be rejected as a source key collision; got: $thrown",
+        )
+
+        assertEquals(0, repository.count(), "the rejected write must leave no proposition behind")
+        assertEquals(emptySet<String>(), storedSourceKeys(), "and no half-created source")
+    }
+
+    /**
+     * Two writers introducing the same colliding source key at once, with neither able to see the
+     * other's work: the barrier holds both until each has finished reading the store and found
+     * nothing there. Only a check that runs under the `MERGE` can separate them, so this is the case a
+     * read-then-write preflight cannot cover on its own.
+     *
+     * Which writer wins is the database's business. What must hold is that one is rejected, one
+     * succeeds, and the stored source carries the winner's identity rather than a mixture.
+     */
+    @Test
+    fun `concurrent writers introducing one colliding source key cannot corrupt it`() {
+        val original = ConnectorRef("a:b", "c")
+        val colliding = ConnectorRef("a", "b:c")
+        assertEquals(original.key(), colliding.key(), "the fixture depends on these keys colliding")
+        val barrier = CountDownLatch(2)
+        val firstRepository = newTransactionProxiedRepository(
+            SourcePreflightBarrierPersistenceManager(persistenceManager, barrier),
+        )
+        val secondRepository = newTransactionProxiedRepository(
+            SourcePreflightBarrierPersistenceManager(persistenceManager, barrier),
+        )
+
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val outcomes = listOf(
+                executor.submit<Proposition> {
+                    firstRepository.save(
+                        prop("first new-source fact", context = "ctx-new-collide", provenance = listOf(ProvenanceEntry(original))),
+                    )
+                },
+                executor.submit<Proposition> {
+                    secondRepository.save(
+                        prop("second new-source fact", context = "ctx-new-collide", provenance = listOf(ProvenanceEntry(colliding))),
+                    )
+                },
+            ).map { future -> runCatching { future.get(30, TimeUnit.SECONDS) } }
+
+            assertEquals(1, outcomes.count { it.isSuccess }, "exactly one writer may create the shared source")
+            val failure = outcomes.single { it.isFailure }.exceptionOrNull()!!
+            assertTrue(
+                generateSequence(failure as Throwable?) { it.cause }.any {
+                    it is IllegalArgumentException && it.message?.contains("Source key collision") == true
+                },
+                "the losing writer must report the structural Source key collision; got: $failure",
+            )
+
+            val winner = outcomes.single { it.isSuccess }.getOrThrow()
+            val storedLocator = repository.findById(winner.id)!!.provenanceEntries.single().locator
+            assertEquals(
+                winner.provenanceEntries.single().locator,
+                storedLocator,
+                "the stored source must carry the identity of whoever created it",
+            )
+            assertEquals(setOf(original.key()), storedSourceKeys())
+            assertEquals(1, repository.count(), "the rejected writer must leave no proposition behind")
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    /**
+     * A cross-instance race on the *recovery* path. Both writers pass the dedup lookup, one loses on
+     * the uniqueness constraint, and its recovery tries to union evidence whose locator collides with
+     * the winner's. Recovery must reject it and leave the winner as it found it.
+     */
+    @Test
+    fun `cross-instance recovery rejects a colliding connector source and preserves its winner`() {
+        val original = ConnectorRef("a:b", "c")
+        val colliding = ConnectorRef("a", "b:c")
+        assertEquals(original.key(), colliding.key(), "the fixture depends on these keys colliding")
+        val first = prop(
+            "cross-instance collision-prone fact",
+            context = "ctx-recover-collide",
+            provenance = listOf(ProvenanceEntry(original)),
+        )
+        val second = prop(
+            "cross-instance collision-prone fact",
+            context = "ctx-recover-collide",
+            provenance = listOf(ProvenanceEntry(colliding)),
+        )
+        val barrier = CountDownLatch(2)
+        val firstRepository = newTransactionProxiedRepository(
+            DedupLookupBarrierPersistenceManager(persistenceManager, barrier),
+        )
+        val secondRepository = newTransactionProxiedRepository(
+            DedupLookupBarrierPersistenceManager(persistenceManager, barrier),
+        )
+
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val outcomes = listOf(
+                executor.submit<Proposition> { firstRepository.save(first) },
+                executor.submit<Proposition> { secondRepository.save(second) },
+            ).map { future -> runCatching { future.get(30, TimeUnit.SECONDS) } }
+
+            assertEquals(1, outcomes.count { it.isSuccess }, "exactly one writer may win the race")
+            val failure = outcomes.single { it.isFailure }.exceptionOrNull()!!
+            assertTrue(
+                generateSequence(failure as Throwable?) { it.cause }.any {
+                    it is IllegalArgumentException && it.message?.contains("Source key collision") == true
+                },
+                "the losing recovery must report the structural Source key collision; got: $failure",
+            )
+
+            val winner = outcomes.single { it.isSuccess }.getOrThrow()
+            assertEquals(1, repository.count())
+            assertEquals(
+                winner.provenanceEntries,
+                repository.findById(winner.id)!!.provenanceEntries,
+                "a rejected recovery must leave the stored winner unchanged",
+            )
+            assertEquals(1L, edgeCount(winner.id))
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    /**
+     * One revision, written over and over — sequentially, then by two repository instances at once.
+     * The edge MERGE is keyed by evidence identity, so every one of those writes has to land on the
+     * same relationship.
+     */
+    @Test
+    fun `repeated and concurrent writes of one revision remain one relationship`() {
+        val locator = UriLocator("https://example.com/idempotent")
+        val revisionOne = evidence(locator, "r1", chunkId = "chunk", startOffset = 1, endOffset = 4, contentHash = "hash")
+        val saved = repository.save(
+            prop("idempotent evidence", context = "ctx-idempotent", provenance = listOf(revisionOne)),
+        )
+        repository.save(saved)
+
+        val firstRepository = DrivinePropositionRepository(
+            graphObjectManager, persistenceManager, embeddingService, transactionManager,
+        )
+        val secondRepository = DrivinePropositionRepository(
+            graphObjectManager, persistenceManager, embeddingService, transactionManager,
+        )
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val writes = listOf(firstRepository, secondRepository).map { candidate ->
+                executor.submit {
+                    assertTrue(start.await(10, TimeUnit.SECONDS), "both writers must start together")
+                    candidate.save(saved)
+                }
+            }
+            start.countDown()
+            writes.forEach { it.get(30, TimeUnit.SECONDS) }
+        } finally {
+            executor.shutdownNow()
+        }
+
+        assertEquals(1L, edgeCount(saved.id), "replaying one revision must not accumulate edges")
+        assertEquals(listOf(revisionOne), repository.findById(saved.id)!!.provenanceEntries)
+    }
+
+    /**
+     * An edge written before `entryKey` existed carries none. Exactly one entry may claim it — a
+     * revisionless one whose span matches it field for field. A revisioned entry cannot, because
+     * nothing records which revision the legacy edge was read from, and neither can a revisionless
+     * entry over a different span.
+     */
+    @Test
+    fun `legacy unkeyed revisionless evidence is adopted exactly while revisioned writes stay separate`() {
+        val locator = UriLocator("https://example.com/legacy")
+        val revisionless = evidence(locator, null, chunkId = "chunk", startOffset = 1, endOffset = 4, contentHash = "hash")
+        val revisionOne = revisionless.copy(sourceRevision = "r1")
+
+        val adoptTarget = repository.save(prop("adopt legacy", context = "ctx-legacy-adopt"))
+        seedLegacyEdge(adoptTarget.id, revisionless)
+        assertEquals(listOf(revisionless), repository.findById(adoptTarget.id)!!.provenanceEntries)
+
+        repository.save(adoptTarget.withProvenanceEntries(listOf(revisionless)))
+
+        assertEquals(1L, edgeCount(adoptTarget.id), "the exact revisionless legacy edge is claimed in place")
         assertEquals(
             1L,
             persistenceManager.getOne(
@@ -966,6 +1259,430 @@ class DrivinePropositionStoreIntegrationTest {
 
     private fun evidence(locator: UriLocator, revision: String?): ProvenanceEntry =
         ProvenanceEntry(locator = locator, sourceRevision = revision)
+                    .withStatement(
+                        "MATCH (:Proposition {id: \$id})-[r:DERIVED_FROM]->() RETURN count(r.entryKey) AS c",
+                    )
+                    .bind(mapOf("id" to adoptTarget.id))
+                    .transform(Long::class.java),
+            ),
+            "and comes away carrying an entryKey",
+        )
+
+        val revisionedTarget = repository.save(prop("keep legacy separate", context = "ctx-legacy-adopt"))
+        seedLegacyEdge(revisionedTarget.id, revisionless)
+        repository.save(revisionedTarget.withProvenanceEntries(listOf(revisionOne)))
+
+        assertEquals(2L, edgeCount(revisionedTarget.id), "a revisioned write must not claim an unkeyed edge")
+        assertEquals(
+            setOf(revisionless, revisionOne),
+            repository.findById(revisionedTarget.id)!!.provenanceEntries.toSet(),
+        )
+
+        val nonExactTarget = repository.save(prop("keep non-exact legacy separate", context = "ctx-legacy-adopt"))
+        val differentSpan = revisionless.copy(chunkId = "different-chunk")
+        seedLegacyEdge(nonExactTarget.id, revisionless)
+        repository.save(nonExactTarget.withProvenanceEntries(listOf(differentSpan)))
+
+        assertEquals(2L, edgeCount(nonExactTarget.id), "a revisionless write over another span must not claim it")
+        assertEquals(
+            setOf(revisionless, differentSpan),
+            repository.findById(nonExactTarget.id)!!.provenanceEntries.toSet(),
+        )
+    }
+
+    /**
+     * `setProvenance` is the authoritative path: what it is given is what the proposition ends up
+     * with. It has to drop a parallel revision of a source it keeps, leave another proposition's edge
+     * to that same source alone, and prune only the source nothing cites any more.
+     */
+    @Test
+    fun `authoritative provenance replace removes omitted edges and only globally orphaned sources`() {
+        val shared = UriLocator("https://example.com/shared-replace")
+        val exclusive = UriLocator("https://example.com/exclusive-replace")
+        val keep = evidence(shared, "r1", chunkId = "keep")
+        val omittedParallel = evidence(shared, "r2", chunkId = "omit-parallel")
+        val omittedExclusive = evidence(exclusive, "r1", chunkId = "omit-exclusive")
+        val subject = repository.save(
+            prop(
+                "replace subject",
+                context = "ctx-replace",
+                provenance = listOf(keep, omittedParallel, omittedExclusive),
+            ),
+        )
+        val other = repository.save(
+            prop(
+                "shared source remains",
+                context = "ctx-replace",
+                provenance = listOf(evidence(shared, "other")),
+            ),
+        )
+        assertEquals(3L, edgeCount(subject.id))
+
+        repository.setProvenance(subject.id, listOf(keep))
+
+        assertEquals(listOf(keep), repository.findById(subject.id)!!.provenanceEntries)
+        assertEquals(1L, edgeCount(subject.id), "the omitted parallel revision loses its edge")
+        assertEquals(1L, edgeCount(other.id), "replace must not disturb another proposition's edge")
+        assertEquals(
+            setOf(shared.key()),
+            storedSourceKeys(),
+            "only the source nothing cites any more is pruned",
+        )
+    }
+
+    /**
+     * `save` participates in a caller's transaction. Rolling that transaction back has to undo the
+     * whole save — node, mentions, and evidence.
+     */
+    @Test
+    fun `caller rollback undoes a completed save`() {
+        val proposition = prop(
+            "transactional save",
+            context = "ctx-rollback",
+            provenance = listOf(evidence(UriLocator("https://example.com/rollback"), "r1")),
+        )
+
+        TransactionTemplate(transactionManager).executeWithoutResult { status ->
+            repository.save(proposition)
+            assertNotNull(repository.findById(proposition.id), "the save must be visible inside the caller transaction")
+            status.setRollbackOnly()
+        }
+
+        assertNull(repository.findById(proposition.id), "caller rollback must remove the saved proposition")
+        assertEquals(emptySet<String>(), storedSourceKeys(), "and the source it created with it")
+    }
+
+    /**
+     * `delete` is the last provenance path still going through the Drivine object view, so this is
+     * where a proposition holding parallel revisions of one source meets `DELETE_ORPHAN`. The subject
+     * cites one source at two revisions and a second source exclusively; a bystander cites the first
+     * source as well. Deleting the subject must take all three of its edges, prune only the source
+     * left with no citations, and leave the bystander whole.
+     */
+    @Test
+    fun `deleting a proposition takes its parallel revision edges and only its own orphaned source`() {
+        val shared = UriLocator("https://example.com/delete-shared")
+        val exclusive = UriLocator("https://example.com/delete-exclusive")
+        val context = ContextId("ctx-delete")
+        val subject = repository.save(
+            prop(
+                "delete subject",
+                context = "ctx-delete",
+                provenance = listOf(evidence(shared, "r1"), evidence(shared, "r2"), evidence(exclusive, null)),
+            ),
+        )
+        val bystander = repository.save(
+            prop("shared source survives", context = "ctx-delete", provenance = listOf(evidence(shared, "r3"))),
+        )
+        assertEquals(3L, edgeCount(subject.id), "the subject starts with two parallel revisions and one more source")
+
+        assertTrue(repository.delete(subject.id))
+
+        assertNull(repository.findById(subject.id))
+        assertEquals(0L, edgeCount(subject.id), "no DERIVED_FROM edge may outlive its proposition")
+        assertEquals(
+            setOf(shared.key()),
+            storedSourceKeys(),
+            "the exclusively cited source is pruned; the one the bystander still cites is not",
+        )
+        assertEquals(
+            listOf(bystander.id),
+            repository.findBySourceKey(context, shared.key()).map { it.id },
+            "the bystander's own evidence is untouched",
+        )
+        assertEquals(listOf(evidence(shared, "r3")), repository.findById(bystander.id)!!.provenanceEntries)
+    }
+
+    /**
+     * Ties each public finder to the statement it actually sends and the plan Neo4j actually builds
+     * for it. The capture wrapper records the statement and parameters the repository binds, asserts
+     * they are the production ones, then EXPLAINs that exact text with those exact parameters — so a
+     * statement edited without a matching plan change is caught here, and nothing under assertion is
+     * retyped from the production constants.
+     *
+     * Tenant-first is the property being pinned, and it is visible in the plan: the operator that
+     * produces `p` is an index seek on `contextId`, so only that tenant's propositions ever reach the
+     * `DERIVED_FROM` expansion, and no `Filter` on `p.contextId` survives anywhere above it. That
+     * holds on the `contextId` range index `dice-storage-autoconfigure` ships; the `(contextId, text)`
+     * dedup constraint cannot supply it, because Neo4j will not use a composite index for a predicate
+     * on only its first property.
+     */
+    @Test
+    fun `public source queries execute their production statements on tenant-first plans`() {
+        val locator = UriLocator("https://example.com/explain-source")
+        seedExplainFixture(locator)
+        val plans = explainAllSourceQueries(locator)
+
+        plans.forEach { (name, plan) ->
+            val outerInput = semiApplyOuterInput(plan)
+            assertTrue(
+                outerInput.text.contains("IndexSeek") && outerInput.text.contains("contextId"),
+                "$name must drive the provenance check from a tenant index seek, not $outerInput:\n$plan",
+            )
+            val expand = planLine(plan, "DERIVED_FROM")
+            assertTrue(
+                expand.depth > outerInput.depth - 1,
+                "$name must expand DERIVED_FROM inside the SemiApply the seek drives:\n$plan",
+            )
+            assertFalse(
+                plan.contains("p.contextId ="),
+                "$name must not re-filter on the tenant after seeking it:\n$plan",
+            )
+        }
+    }
+
+    /**
+     * The same three statements against a store with no index on `contextId` at all — neither the
+     * range index nor the optional dedup constraint. Neo4j resolves an index hint at planning time and
+     * fails the whole query when the named index is absent, so a hinted statement would not survive
+     * this; these carry none, and instead degrade to a label scan with the tenant applied as a filter.
+     * Every finder still plans and still answers, which is the whole cost of dropping the hints.
+     */
+    @Test
+    fun `source queries plan and answer with no index on contextId`() {
+        val locator = UriLocator("https://example.com/explain-bare")
+        withoutContextIdIndexes {
+            seedExplainFixture(locator)
+            val plans = explainAllSourceQueries(locator)
+
+            plans.forEach { (name, plan) ->
+                val outerInput = semiApplyOuterInput(plan)
+                assertTrue(
+                    outerInput.text.contains("NodeByLabelScan") && outerInput.text.contains("p:Proposition"),
+                    "$name has no index to seek and must drive the check from a label scan:\n$plan",
+                )
+                assertFalse(
+                    plan.lineSequence().any { it.contains("IndexSeek") && it.contains("contextId") },
+                    "$name cannot seek an index that is not there:\n$plan",
+                )
+                // The cost of the fallback, stated as an assertion: the tenant filter sits *above* the
+                // SemiApply, so provenance is expanded for every proposition in the store and only
+                // then narrowed to this tenant.
+                val tenantFilter = planLine(plan, "p.contextId =")
+                assertTrue(
+                    tenantFilter.depth < semiApplyDepth(plan),
+                    "$name applies the tenant after expanding provenance for the whole store:\n$plan",
+                )
+            }
+        }
+    }
+
+    /**
+     * Two propositions in the tenant under test, and enough in other tenants that `contextId` is a
+     * selective predicate.
+     *
+     * The noise is load-bearing. Against a handful of rows the planner has nothing to choose between
+     * seeking the index and scanning it, and it will do either — which showed up as an intermittent
+     * `NodeIndexScan … WHERE contextId IS NOT NULL` where the seek was expected. A scan reads every
+     * proposition's `contextId`, so it is not the tenant-first plan the test means to pin, and
+     * accepting it would have hollowed out the assertion. Statistics are resampled afterwards because
+     * a freshly created index carries none, and the fallback test drops and recreates this one.
+     */
+    private fun seedExplainFixture(locator: UriLocator) {
+        repository.save(
+            prop("explain revisionless", context = "ctx-explain", provenance = listOf(evidence(locator, null))),
+        )
+        repository.save(
+            prop("explain r1", context = "ctx-explain", provenance = listOf(evidence(locator, "r1"))),
+        )
+        (1..8).forEach { tenant ->
+            (1..5).forEach { row ->
+                repository.save(prop("other tenant $tenant fact $row", context = "ctx-other-$tenant"))
+            }
+        }
+        persistenceManager.execute(QuerySpecification.withStatement("CALL db.resampleOutdatedIndexes()"))
+        persistenceManager.execute(QuerySpecification.withStatement("CALL db.awaitIndexes(60)"))
+    }
+
+    /** Every source finder, run through the capture harness, keyed by name for the assertions. */
+    private fun explainAllSourceQueries(locator: UriLocator): Map<String, String> {
+        val context = ContextId("ctx-explain")
+        val common = mapOf<String, Any>("contextId" to "ctx-explain", "sourceKey" to locator.key())
+        return mapOf(
+            "source-key" to captureAndExplainSourceQuery(
+                "source-key",
+                SourceProvenanceQueryStatements.bySourceKey,
+                common,
+            ) { it.findBySourceKey(context, locator.key()) },
+            "source-revision" to captureAndExplainSourceQuery(
+                "source-revision",
+                SourceProvenanceQueryStatements.bySourceRevision,
+                common + ("sourceRevision" to "r1"),
+            ) { it.findBySourceRevision(context, SourceRevisionRef(locator.key(), "r1")) },
+            "revisionless-source" to captureAndExplainSourceQuery(
+                "revisionless-source",
+                SourceProvenanceQueryStatements.revisionlessBySourceKey,
+                common,
+            ) { it.findRevisionlessBySourceLocator(context, locator) },
+        )
+    }
+
+    /**
+     * Run one finder against a repository whose persistence manager records the source statement it
+     * executes, check that statement and its parameters are the production ones, then EXPLAIN exactly
+     * what was recorded. Nothing here is retyped from the production constants, so the plan under
+     * assertion is the plan the repository runs.
+     */
+    private fun captureAndExplainSourceQuery(
+        name: String,
+        expectedStatement: String,
+        expectedParameters: Map<String, Any>,
+        invocation: (DrivinePropositionRepository) -> List<Proposition>,
+    ): String {
+        val capturing = SourceQueryCapturingPersistenceManager(persistenceManager)
+        val results = invocation(newTransactionProxiedRepository(capturing))
+        assertTrue(results.isNotEmpty(), "$name must return the seeded evidence")
+        assertEquals(1, capturing.captured.size, "$name must execute exactly one source query")
+        val captured = capturing.captured.single()
+        assertEquals(expectedStatement, captured.statement, "$name must execute its production statement")
+        assertEquals(expectedParameters, captured.parameters, "$name must bind its production parameters")
+        return explainStatement(name, captured.statement, captured.parameters)
+    }
+
+    /**
+     * EXPLAIN through a plain driver session on the same testcontainer. Drivine hands back rows, and
+     * a plan lives on the result summary rather than in them, so this reaches past it to the driver.
+     */
+    private fun explainStatement(name: String, statement: String, parameters: Map<String, Any>): String {
+        val dataSource = dataSourceMap.dataSources.getValue("neo")
+        val uri = "${dataSource.protocol ?: "bolt"}://${dataSource.host}:${dataSource.port ?: 7687}"
+        val auth = dataSource.userName?.let { AuthTokens.basic(it, dataSource.password.orEmpty()) }
+            ?: AuthTokens.none()
+        return GraphDatabase.driver(uri, auth).use { driver ->
+            val sessionConfig = dataSource.databaseName?.let(SessionConfig::forDatabase)
+                ?: SessionConfig.defaultConfig()
+            driver.session(sessionConfig).use { session ->
+                val plan = session.run("EXPLAIN\n$statement", parameters).consume().plan()
+                renderPlan(plan).also { println("SOURCE_QUERY_EXPLAIN[$name]\n$it") }
+            }
+        }
+    }
+
+    /**
+     * Flatten a plan tree to one line per operator, two spaces of indent per level, children in the
+     * order the planner feeds them — so the outer input of an `Apply`-family operator is the first
+     * child listed and the ordering assertions can read structure off the text.
+     *
+     * Only `Details` is rendered. The other arguments include a `string-representation` holding the
+     * whole plan again as a multi-line ASCII table, which would put unindented text into the middle
+     * of the output and make depth meaningless.
+     */
+    private fun renderPlan(plan: Plan): String = renderPlanLines(plan, 0).trimEnd()
+
+    // Trims once, at the top. Trimming inside the recursion strips a childless operator's own line
+    // ending and glues its next sibling onto it, which silently flattens the tree the depth-based
+    // ordering assertions read.
+    private fun renderPlanLines(plan: Plan, depth: Int): String = buildString {
+        append("  ".repeat(depth))
+        append(plan.operatorType())
+        plan.arguments()["Details"]?.let { append(" | ").append(it.toString().replace('\n', ' ')) }
+        appendLine()
+        plan.children().forEach { append(renderPlanLines(it, depth + 1)) }
+    }
+
+    private data class PlanLine(val depth: Int, val text: String)
+
+    private fun planLines(plan: String): List<PlanLine> =
+        plan.lines().filter { it.isNotBlank() }.map { line ->
+            PlanLine(line.takeWhile { it == ' ' }.length / 2, line.trim())
+        }
+
+    /**
+     * The operator whose rows the `SemiApply` drives — its outer input, and so the thing that decides
+     * how many propositions the provenance expansion is evaluated for.
+     */
+    private fun semiApplyOuterInput(plan: String): PlanLine {
+        val lines = planLines(plan)
+        val semiApply = lines.indexOfFirst { it.text.startsWith("SemiApply") }
+        assertTrue(semiApply >= 0, "expected a SemiApply in:\n$plan")
+        return lines[semiApply + 1].also {
+            assertEquals(lines[semiApply].depth + 1, it.depth, "expected the outer input directly under SemiApply")
+        }
+    }
+
+    private fun semiApplyDepth(plan: String): Int =
+        planLines(plan).first { it.text.startsWith("SemiApply") }.depth
+
+    private fun planLine(plan: String, matching: String): PlanLine {
+        val line = planLines(plan).firstOrNull { it.text.contains(matching) }
+        assertNotNull(line, "expected an operator matching '$matching' in:\n$plan")
+        return line!!
+    }
+
+    private data class CapturedSourceQuery(val statement: String, val parameters: Map<String, Any>)
+
+    /** Records the source-provenance statements a repository runs, identified by their parameters. */
+    private class SourceQueryCapturingPersistenceManager(
+        private val delegate: PersistenceManager,
+    ) : PersistenceManager by delegate {
+
+        val captured = mutableListOf<CapturedSourceQuery>()
+
+        override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
+            if (spec.parameters.keys.containsAll(setOf("contextId", "sourceKey"))) {
+                @Suppress("UNCHECKED_CAST")
+                captured += CapturedSourceQuery(
+                    requireNotNull(spec.statement).text,
+                    spec.parameters.toMap() as Map<String, Any>,
+                )
+            }
+            return delegate.query(spec)
+        }
+    }
+
+    /** Write a `DERIVED_FROM` edge the way a pre-revision DICE wrote one: no `entryKey`, no revision. */
+    private fun seedLegacyEdge(propositionId: String, entry: ProvenanceEntry) {
+        val locator = entry.locator as UriLocator
+        persistenceManager.execute(
+            QuerySpecification
+                .withStatement(
+                    """
+                    MATCH (p:Proposition {id: ${'$'}propositionId})
+                    MERGE (s:Source {key: ${'$'}sourceKey})
+                    SET s.kind = 'uri', s.uri = ${'$'}sourceUri, s.display = ${'$'}sourceDisplay
+                    CREATE (p)-[r:DERIVED_FROM]->(s)
+                    SET r.chunkId = ${'$'}chunkId,
+                        r.startOffset = ${'$'}startOffset,
+                        r.endOffset = ${'$'}endOffset,
+                        r.contentHash = ${'$'}contentHash
+                    """.trimIndent(),
+                )
+                .bind(
+                    mapOf(
+                        "propositionId" to propositionId,
+                        "sourceKey" to locator.key(),
+                        "sourceUri" to locator.uri,
+                        "sourceDisplay" to locator.display,
+                        "chunkId" to entry.chunkId,
+                        "startOffset" to entry.startOffset,
+                        "endOffset" to entry.endOffset,
+                        "contentHash" to entry.contentHash,
+                    ),
+                ),
+        )
+    }
+
+    private fun storedSourceKeys(): Set<String> =
+        persistenceManager.query(
+            QuerySpecification.withStatement("MATCH (s:Source) RETURN s.key AS key").transform(String::class.java),
+        ).toSet()
+
+    private fun evidence(
+        locator: UriLocator,
+        revision: String?,
+        chunkId: String? = null,
+        startOffset: Int? = null,
+        endOffset: Int? = null,
+        contentHash: String? = null,
+    ): ProvenanceEntry =
+        ProvenanceEntry(
+            locator = locator,
+            chunkId = chunkId,
+            startOffset = startOffset,
+            endOffset = endOffset,
+            contentHash = contentHash,
+            sourceRevision = revision,
+        )
 
     private fun edgeCount(propositionId: String): Long =
         persistenceManager.getOne(
@@ -1003,6 +1720,25 @@ class DrivinePropositionStoreIntegrationTest {
             TransactionInterceptor(transactionManager, AnnotationTransactionAttributeSource()),
         )
         return proxyFactory.proxy as DrivinePropositionRepository
+    }
+
+    /**
+     * Holds both writers at the source-identity preflight until each has read the store and found
+     * nothing there, so neither can see the other's `:Source` and the preflight cannot separate them.
+     */
+    private class SourcePreflightBarrierPersistenceManager(
+        private val delegate: PersistenceManager,
+        private val barrier: CountDownLatch,
+    ) : PersistenceManager by delegate {
+
+        override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
+            val result = delegate.query(spec)
+            if (spec.parameters.keys == setOf("sourceKey")) {
+                barrier.countDown()
+                assertTrue(barrier.await(10, TimeUnit.SECONDS), "both writers must preflight against an empty store")
+            }
+            return result
+        }
     }
 
     /** Holds both writers at the dedup lookup until each has seen no duplicate, forcing the race. */
@@ -1244,6 +1980,38 @@ class DrivinePropositionStoreIntegrationTest {
         val orthogonal = normalize(raw.indices.map { (raw[it] - projection * u[it]).toFloat() })
         val sinTheta = kotlin.math.sqrt(1.0 - cosTheta * cosTheta)
         return u.indices.map { (cosTheta * u[it] + sinTheta * orthogonal[it]).toFloat() }
+    }
+
+    /**
+     * Run [body] on a store with nothing indexing `Proposition.contextId` — the range index goes as
+     * well as the dedup constraint — then put both back.
+     */
+    private fun withoutContextIdIndexes(body: () -> Unit) {
+        val rangeIndex = persistenceManager.maybeGetOne(
+            QuerySpecification
+                .withStatement(
+                    "SHOW INDEXES YIELD name, labelsOrTypes, properties, type " +
+                        "WHERE type = 'RANGE' AND 'Proposition' IN labelsOrTypes AND properties = ['contextId'] " +
+                        "RETURN name",
+                )
+                .transform(String::class.java),
+        )
+        rangeIndex?.let { persistenceManager.execute(QuerySpecification.withStatement("DROP INDEX $it IF EXISTS")) }
+        try {
+            withoutContextTextConstraint(body)
+        } finally {
+            rangeIndex?.let {
+                persistenceManager.execute(
+                    QuerySpecification.withStatement(
+                        "CREATE INDEX $it IF NOT EXISTS FOR (p:Proposition) ON (p.contextId)",
+                    ),
+                )
+            }
+            // CREATE INDEX returns before the index is online, and the planner will not seek one that
+            // is still POPULATING. Without this wait, whether the tenant-first plan test sees a seek
+            // depends on whether it happened to run after this one.
+            persistenceManager.execute(QuerySpecification.withStatement("CALL db.awaitIndexes(60)"))
+        }
     }
 
     /** Run [body] with the (contextId, text) uniqueness constraint dropped, then restore it. */

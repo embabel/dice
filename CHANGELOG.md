@@ -53,9 +53,8 @@ and the consumer PRs that deliver it).
   [docs/design/source-revisions.md](docs/design/source-revisions.md).
   **Interim limitation.** Collapse records fold references as plain locator keys until the collector
   slice lands, so undoing a collapse that folded revisioned evidence leaves those entries on the
-  survivor; evidence is retained, never wrongly deleted. Internally, `ProvenanceEvidenceKey` is the
-  codec that will make those references exact — it is `internal` to the `dice` module, machinery
-  behind fold and undo rather than API a consumer can call.
+  survivor; evidence is retained, never wrongly deleted. `ProvenanceEvidenceKey` is the codec that
+  will make those references exact.
   **Compatibility: additive, with a scoped ABI boundary.** Source, JSON, and Java
   constructor-descriptor compatibility are claimed: existing Kotlin and Java call sites compile
   unchanged, provenance JSON written before this change loads and round-trips with a null revision,
@@ -90,3 +89,33 @@ and the consumer PRs that deliver it).
   each writer's evidence still lands on its own `DERIVED_FROM` edge.
   **Compatibility: behavioral, `dice-storage` only.** An existing `:Source` node keeps the label it
   currently has, and a later write leaves that label alone.
+
+- One evidence-key codec across the `dice` core and the graph, plus the storage proofs that go with
+  it (second slice of DICE #64). `com.embabel.dice.provenance.ProvenanceEvidenceKey` is now public:
+  `dice-storage` keys each `DERIVED_FROM` edge by the string it mints, so a stored graph row and a
+  recorded fold reference are the same string for the same piece of evidence. Storage previously
+  carried its own copy of the encoding; the two framed the same fields in the same order and differed
+  only in the version prefix, and each being `internal` to its own module meant nothing could catch a
+  drift between them. A golden-literal test now pins the `v1` bytes, so the format cannot move under
+  its own version label. Source-identity collisions are rejected in two places: under the `MERGE` that
+  upserts the shared `:Source` node, which is what separates two writers introducing one colliding key
+  at the same time, and in a preflight over the whole batch before the first write, which keeps a
+  rejected write from changing anything and also rejects a single write carrying two structurally
+  different locators under one key. Evidence for behavior that was previously asserted only in prose:
+  the source finders are EXPLAINed as the repository binds them, and seek the `contextId` range index
+  before expanding provenance where that index exists, falling back to a label scan and still
+  answering where it does not; `delete` takes every edge of a proposition citing one source at
+  several revisions and prunes only the sources left with no citations; a repeated or concurrent
+  write of one revision stays one relationship; a pre-`entryKey` edge is claimed only by an exactly
+  matching revisionless entry; and a colliding connector locator is rejected on the plain save,
+  in-process dedup, and race-recovery paths alike. Design note:
+  [docs/design/source-revisions.md](docs/design/source-revisions.md).
+  **Compatibility: additive.** `ProvenanceEvidenceKey` widens from `internal` to public, which adds
+  API rather than removing it; the format it encodes is unchanged and already carried a `v1` version
+  prefix, and a reader meeting a version it does not know matches nothing rather than guessing. A
+  stored `entryKey` now carries that prefix, where the storage-local copy of the encoding omitted it.
+  Released graphs are unaffected — the `entryKey` property itself is part of this same unreleased
+  block, so no released DICE ever wrote one, and an edge with no `entryKey` is still adopted in place
+  by an exactly matching revisionless entry. A graph written by a build of the previous entry in this
+  block holds prefix-less keys that this build does not recognise, and re-saving that evidence adds a
+  second edge for it; clearing such a development store is the whole of the fix.

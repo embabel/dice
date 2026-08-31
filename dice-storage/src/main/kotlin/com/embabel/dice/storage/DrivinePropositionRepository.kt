@@ -55,15 +55,21 @@ import java.time.Instant
 /**
  * The three source-provenance queries, kept together so they stay in step with each other.
  *
- * Each scopes to the tenant first and then checks for a matching `DERIVED_FROM` edge, so provenance
- * is only expanded for one tenant's propositions.
+ * Each names the tenant first and then checks for a matching `DERIVED_FROM` edge. On a store with an
+ * index on `Proposition.contextId` — the range index `dice-storage-autoconfigure` ships — that is
+ * also how they run: the plan seeks that index to produce `p`, and only that tenant's propositions
+ * reach the relationship expansion. With no such index the leaf becomes a label scan and the tenant
+ * predicate is applied as a filter, so the expansion sees every proposition in the store. The
+ * `(contextId, text)` dedup constraint does not stand in for the range index, because Neo4j will not
+ * use a composite index for a predicate on only its first property.
  *
  * There is deliberately no `USING INDEX` hint. Neo4j resolves hints at planning time and fails the
- * whole query when the named index is absent, and `dice-storage`'s schema is adopter-supplied — the
- * `(contextId, text)` constraint ships in `dice-storage-autoconfigure`'s catalog, so a host wiring
- * this repository by hand may not have it. A hint would turn an optional dedup backstop into a hard
- * runtime dependency for every source query. Without one, the planner still seeks on `contextId`
- * where an index exists and falls back to a label scan where it does not.
+ * whole query when the named index is absent, and `dice-storage`'s schema is adopter-supplied, so a
+ * host wiring this repository by hand may have neither index. A hint would turn a missing index from
+ * a slower plan into a hard runtime failure for every source query.
+ *
+ * `DrivinePropositionStoreIntegrationTest` EXPLAINs each of these statements as the repository binds
+ * it and asserts both plan shapes, so the paragraph above is a measurement rather than a claim.
  */
 internal object SourceProvenanceQueryStatements {
 
@@ -277,36 +283,59 @@ class DrivinePropositionRepository(
         winner: Proposition,
         incomingEntries: List<ProvenanceEntry>,
     ): Proposition {
-        // Validate every incoming entry, including ones the winner appears to already hold. "Appears"
-        // is the operative word: a locator's equality is its key, and a key can be ambiguous — a
-        // connector id containing a colon can produce the same key as a different (connectorId,
-        // externalId) split — so an entry can compare equal to a stored one while naming a
-        // structurally different source. Validating first stops that evidence being filed under the
-        // wrong source by the no-op path below. These are reads, so an exact replay still writes
-        // nothing.
-        incomingEntries.forEach(::validateSourceIdentity)
+        // Every incoming entry, whatever the novelty check goes on to say about it. "Already held"
+        // means data-class equality, a locator's equality is its key, and a key can be ambiguous — a
+        // connector id containing a colon produces the same key as a different (connectorId,
+        // externalId) split. So an entry can compare equal to a stored one while naming a
+        // structurally different source, and the novelty check is exactly what would drop it. Nothing
+        // downstream sees such an entry either: it is filtered out of the write. Reads only, and once
+        // per distinct source key, so an exact replay still writes nothing.
+        validateSourceIdentities(incomingEntries)
         val knownEntries = winner.provenanceEntries.toHashSet()
         val novelEntries = incomingEntries.filterNot(knownEntries::contains)
         if (novelEntries.isEmpty()) return winner
         val revisedWinner = winner.withProvenanceEntries(novelEntries)
-        doPersist(revisedWinner)
+        // Straight to the write: everything incoming was checked above, and the winner's own entries
+        // riding along in `revisedWinner` came out of the graph, so they have nothing left to
+        // disagree with. Going through doPersist would re-read every source key this batch names.
+        persistValidated(revisedWinner)
         return findById(winner.id) ?: revisedWinner
     }
 
     /**
-     * Read-only check that an incoming entry's locator agrees with the `:Source` already stored under
-     * its key. Nothing stored yet means nothing to disagree with.
+     * Preflight for a batch of incoming evidence: no two entries may claim one source key with
+     * different structure, and none may disagree with the `:Source` already stored under its key.
      *
-     * Separate from the upsert in [upsertSource] so it can run on the exact-replay path, which must
-     * not write.
+     * This is an ordering guarantee, not the guarantee. It runs before the first write of the
+     * operation it guards, so an ordinary rejected batch leaves the graph exactly as it found it, and
+     * so the dedup no-op path — which writes nothing and would otherwise reach no check at all — has
+     * something to reject a colliding locator with. What makes the check *sound* is the identity
+     * comparison inside [upsertSource], which happens under the `MERGE` rather than before it: two
+     * writers introducing the same key with different structure can both read an empty store here.
      */
-    private fun validateSourceIdentity(entry: ProvenanceEntry) {
-        val source = PropositionGraphMapper.toDerivedFrom(entry).source
-        val stored = storedSourceIdentity(source.key) ?: return
-        require(sourceIdentityMatches(stored, source)) {
-            "Source key collision for '${source.key}': stored source identity differs from incoming locator"
-        }
+    private fun validateSourceIdentities(entries: List<ProvenanceEntry>) {
+        entries.map { PropositionGraphMapper.toDerivedFrom(it).source }
+            .groupBy(SourceNode::key)
+            .forEach { (key, sources) ->
+                val first = sources.first()
+                require(sources.all { sourceIdentitiesAgree(it, first) }) {
+                    "Source key collision for '$key': this write carries two structurally different " +
+                        "locators under one source key"
+                }
+                val stored = storedSourceIdentity(key) ?: return@forEach
+                require(sourceIdentityMatches(stored, first)) {
+                    "Source key collision for '$key': stored source identity differs from incoming locator"
+                }
+            }
     }
+
+    private fun sourceIdentitiesAgree(a: SourceNode, b: SourceNode): Boolean =
+        a.kind == b.kind &&
+            a.uri == b.uri &&
+            a.path == b.path &&
+            a.contentHash == b.contentHash &&
+            a.connectorId == b.connectorId &&
+            a.externalId == b.externalId
 
     @Suppress("UNCHECKED_CAST")
     private fun storedSourceIdentity(sourceKey: String): Map<String, Any?>? =
@@ -335,7 +364,20 @@ class DrivinePropositionRepository(
             stored["externalId"] == source.externalId
 
     /**
-     * Persist node, mentions, and (append-only) provenance.
+     * Preflight the proposition's evidence for source-identity conflicts, then write it. A rejected
+     * write changes nothing.
+     */
+    private fun doPersist(proposition: Proposition): Proposition {
+        validateSourceIdentities(proposition.provenanceEntries)
+        return persistValidated(proposition)
+    }
+
+    /**
+     * The write half of [doPersist], for a caller that has already preflighted the evidence it is
+     * introducing. The dedup merge is the one such caller: it validates its whole incoming batch
+     * before the novelty check, so what arrives here is that batch's novel entries plus the winner's
+     * own, which came out of the graph and have nothing left to disagree with. Going back through
+     * [doPersist] would re-read every source key the batch names, a second time, for nothing.
      *
      * Two writes with different ownership:
      * - **Node + mentions** via the lean [PropositionView] with `DELETE_ORPHAN`: authoritative, so a
@@ -346,7 +388,7 @@ class DrivinePropositionRepository(
      *   two endpoints, so one proposition citing one source at two revisions would store a single
      *   row and lose a revision. Authoritative replacement is the job of [setProvenance].
      */
-    private fun doPersist(proposition: Proposition): Proposition {
+    private fun persistValidated(proposition: Proposition): Proposition {
         val embedding = embeddingFor(proposition)
         graphObjectManager.save(PropositionGraphMapper.toView(proposition, embedding), CascadeType.DELETE_ORPHAN)
         appendProvenance(proposition.id, proposition.provenanceEntries)
@@ -356,9 +398,7 @@ class DrivinePropositionRepository(
     private fun embeddingFor(proposition: Proposition): List<Float>? =
         proposition.text.takeIf { it.isNotBlank() }?.let { embeddingService.embed(it).toList() }
 
-    /**
-     * Append evidence, one MERGE per entry keyed by its storage identity.
-     */
+    /** Append evidence, one MERGE per entry keyed by its storage identity. */
     private fun appendProvenance(propositionId: String, entries: List<ProvenanceEntry>) {
         entries.map(PropositionGraphMapper::toDerivedFrom).forEach { edge ->
             val entryKey = requireNotNull(edge.entryKey) { "Provenance entryKey must be computed before persistence" }
@@ -383,11 +423,15 @@ class DrivinePropositionRepository(
     }
 
     /**
-     * Upsert the shared `:Source` node and reject a key collision.
+     * Upsert the shared `:Source` node and reject a key collision — the check that actually makes
+     * source identity safe, because it reads the node the `MERGE` settled on rather than the store as
+     * it looked beforehand.
      *
-     * Two structurally different locators that produce one key would otherwise take turns rewriting
-     * each other's node, so the incoming identity is compared against what is stored and a mismatch
-     * fails the write and leaves the shared node alone.
+     * The preflight in [validateSourceIdentities] cannot stand alone: two writers introducing one key
+     * with different structure, or one batch carrying both, can each see no stored `:Source` and both
+     * pass. Here the `MERGE` serialises on the `:Source(key)` uniqueness constraint, `ON CREATE SET`
+     * leaves an existing node's identity alone, and the returned row is therefore whichever identity
+     * won — so the loser compares against the winner's and fails.
      *
      * Every property here is set once, on create — `display` included. The `:Source` node is global:
      * one locator key is one node across every context that cites it. A refresh-on-write `display`
@@ -457,6 +501,7 @@ class DrivinePropositionRepository(
     @Transactional
     override fun setProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? {
         val updated = (findById(propositionId) ?: return null).withProvenance(entries)
+        validateSourceIdentities(entries)
         graphObjectManager.save(PropositionGraphMapper.toView(updated, embeddingFor(updated)), CascadeType.DELETE_ORPHAN)
         replaceProvenance(propositionId, entries)
         return updated
@@ -940,7 +985,16 @@ class DrivinePropositionRepository(
      */
     private fun toEngineScore(rawCosineThreshold: Double): Double = (1.0 + rawCosineThreshold) / 2.0
 
-    /** DELETE_ORPHAN (not DELETE_ALL) so shared `:Source` nodes survive unless this was their last reference. */
+    /**
+     * DELETE_ORPHAN (not DELETE_ALL) so shared `:Source` nodes survive unless this was their last
+     * reference.
+     *
+     * The last provenance path still going through the object view. It handles parallel revisions:
+     * deleting a proposition that cites one source at two revisions takes both edges and leaves that
+     * source standing while anything else cites it. `deleting a proposition takes its parallel
+     * revision edges and only its own orphaned source` pins that against a real Neo4j, which is why
+     * the raw-Cypher rewrite the write and read paths needed is not needed here.
+     */
     @Transactional
     override fun delete(id: String): Boolean =
         graphObjectManager.delete<PropositionWithProvenanceView>(id, CascadeType.DELETE_ORPHAN) > 0
