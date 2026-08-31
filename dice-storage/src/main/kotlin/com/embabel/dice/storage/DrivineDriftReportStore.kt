@@ -29,42 +29,39 @@ import java.time.Instant
  * `(:MetamodelDriftReport)` node.
  *
  * The write MERGEs on the natural key `(schemaName, versionHash, capturedAt, contextKey)`, so a
- * retry writes the same node again rather than a second copy of one observation. That is only
- * race-free under a uniqueness constraint on the same four properties — see [MetamodelSchema], and
- * see [DriftReportRowMapper.GLOBAL_CONTEXT_KEY] for why the fourth is `contextKey` and not
- * `contextId`.
+ * retry updates the same node in place. That is race-free only under a uniqueness constraint on the
+ * same four properties; see [MetamodelSchema], and see [DriftReportRowMapper.GLOBAL_CONTEXT_KEY] for
+ * why the fourth property is `contextKey`.
  *
- * Every statement is parameterized; nothing caller-derived is ever interpolated into Cypher.
+ * Every statement is parameterized; nothing caller-derived is interpolated into Cypher.
  *
- * ## Scope goes into the query, never into a filter afterwards
+ * ## Scope is applied in the query, ahead of the limit
  *
- * The contract's hardest rule, and the one its test pins: each of the three reads has its own
- * statement, with its scope in the `WHERE` clause and the `LIMIT` applied after it. The tempting
- * shortcut — read one limited page and filter it down in Kotlin — applies the limit *before* the
- * scope, so a schema whose recent history happens to be mostly context-scoped would report zero
- * global drift while plenty sat in the store. That is a wrong answer that looks exactly like a
- * right one, which is why there are three statements here rather than one and a `filter`.
+ * Each of the three reads has its own statement, with its scope in the `WHERE` clause and the
+ * `LIMIT` applied after it. Reading one limited page and filtering it in Kotlin would apply the
+ * limit before the scope, so a schema whose recent history is mostly context-scoped would report
+ * zero global drift while the store held plenty. Hence three statements, and no `filter`. The
+ * contract's test pins this.
  *
- * ## Newest first means the capture instant, broken by a counter
+ * ## Ordering: capture instant, with a per-schema counter breaking ties
  *
- * The order is [DriftReport.capturedAt] descending — the instant the graph was *looked at*, which
- * is what the contract promises and what a `since` window bounds. Write order can't stand in for
- * it: a check of last week's snapshot saved today is still last week's observation.
+ * The order is [DriftReport.capturedAt] descending, the instant the graph was looked at, which is
+ * what the contract promises and what a `since` window bounds. Write order can't stand in for it: a
+ * check of last week's snapshot saved today is still last week's observation.
  *
- * The instant alone is not a total order, though. Two reports of one schema — a global sweep and a
- * per-context one, say — can share a capture instant, and then a plain `ORDER BY` leaves their
- * relative order to the database. With a `LIMIT` on top that is not merely untidy: the page
- * boundary lands somewhere arbitrary, so the same read can return different rows each time and a
- * caller walking the history can miss one entirely. So each report also takes the next value off a
- * per-schema `(:MetamodelDriftReportCounter)` node when — and only when — its node is first
- * created, and that sequence breaks ties. Same mechanism as
- * [DrivineMetamodelVersionStore]'s, deliberately on its own counter node: stamps and reports have
- * very different volumes (a stamp per schema change, a report per scheduled check), a shared
- * counter would put every drift check in the same run into a write conflict with the version stamp
- * that precedes it, and the version store's own sequence would grow gaps that mean nothing.
+ * The instant alone is not a total order. Two reports of one schema, say a global sweep and a
+ * per-context one, can share a capture instant, and a plain `ORDER BY` then leaves their relative
+ * order to the database. Under a `LIMIT` the page boundary lands arbitrarily, so the same read can
+ * return different rows each time and a caller walking the history can miss one. So each report also
+ * takes the next value off a per-schema `(:MetamodelDriftReportCounter)` node, only when its node is
+ * first created, and that sequence breaks ties. [DrivineMetamodelVersionStore] uses the same
+ * mechanism on its own counter node. Stamps and reports have very different volumes — a stamp per
+ * schema change, a report per scheduled check — so a shared counter would put every drift check in a
+ * run into a write conflict with the version stamp preceding it, and would leave gaps in the version
+ * store's sequence.
  *
- * A re-save of a report that already exists neither bumps the counter nor reassigns the sequence,
- * so an idempotent write stays idempotent and a corrected observation keeps its original place.
+ * A re-save of an existing report leaves the counter and the sequence alone, so the write stays
+ * idempotent and a corrected observation keeps its original place.
  *
  * @param persistenceManager Drivine's handle on the `neo` datasource.
  */
@@ -82,17 +79,16 @@ open class DrivineDriftReportStore(
          * exists without its place in the tie-break order.
          *
          * `WITH n WHERE n.sequence IS NULL` separates the two halves. On a re-save that filters the
-         * row away, so the counter is never bumped and the existing sequence is never reassigned —
-         * the drifted type sets are refreshed and the report keeps the position it has always had.
+         * row away, leaving the counter and the existing sequence untouched; the drifted type sets
+         * are refreshed and the report keeps its original position.
          *
          * `SET c.lockedBy = ...` writes a property nobody reads, to take the exclusive lock on the
-         * counter before the increment below reads it; on its own the increment is a
-         * read-modify-write and two concurrent savers could both read 5 and both write 6. It is
-         * cheap insurance rather than a proven necessity — the same measurement in
-         * [DrivineMetamodelVersionStore] could not tell the locked and unlocked versions apart.
-         * What is load-bearing is the uniqueness constraint on `(schemaName, sequence)`: a lost
-         * update becomes a loud, retryable constraint violation instead of a silently arbitrary
-         * order.
+         * counter before the increment below reads it. On its own the increment is a
+         * read-modify-write, and two concurrent savers could both read 5 and both write 6. The
+         * benefit is unproven: the same measurement in [DrivineMetamodelVersionStore] could not tell
+         * the locked and unlocked versions apart. The guarantee comes from the uniqueness constraint
+         * on `(schemaName, sequence)`, under which a lost update fails with a constraint violation
+         * the caller can retry.
          */
         private val SAVE_REPORT = """
             MERGE (n:MetamodelDriftReport {
@@ -119,11 +115,10 @@ open class DrivineDriftReportStore(
         /**
          * Every read starts here.
          *
-         * `capturedAtEpochSecond IS NOT NULL` is not defensive noise. Neo4j sorts null as the
-         * *largest* value, so a node missing the sort key would sort to the front of a DESC order,
-         * consume a slot of the caller's `limit`, and then be dropped by the mapper — hiding a
-         * perfectly good report behind a broken one. A node with no sort key never took a place in
-         * the order at all, so it is excluded in the database instead.
+         * `capturedAtEpochSecond IS NOT NULL` is load-bearing. Neo4j sorts null as the largest
+         * value, so a node missing the sort key would sort to the front of a DESC order, consume a
+         * slot of the caller's `limit`, and then be dropped by the mapper, hiding a good report
+         * behind a broken one. Excluding it in the database keeps it out of the order entirely.
          */
         private val MATCH_SCHEMA = """
             MATCH (n:MetamodelDriftReport {schemaName: ${'$'}schemaName})
@@ -133,14 +128,14 @@ open class DrivineDriftReportStore(
         /** Only unscoped, whole-graph checks: a global report has no `contextId` property at all. */
         private const val ONLY_GLOBAL = "AND n.contextId IS NULL"
 
-        /** Only one context's checks. Global reports and other contexts' are both excluded. */
+        /** Only one context's checks. Global reports and other contexts' are excluded. */
         private const val ONLY_CONTEXT = "AND n.contextId = \$contextId"
 
         /**
          * The `since` bound, inclusive, compared second-then-nanosecond so it is exact.
          *
-         * Comparing a single truncated millisecond value would be simpler and subtly wrong: a bound
-         * falling part-way through a millisecond would sweep in reports captured just before it.
+         * Comparing a single truncated millisecond value would sweep in reports captured just before
+         * a bound that falls part-way through a millisecond.
          */
         private val SINCE_BOUND = """
             AND (n.capturedAtEpochSecond > ${'$'}sinceEpochSecond
@@ -194,15 +189,15 @@ open class DrivineDriftReportStore(
     /**
      * Assemble and run one of the three scoped reads.
      *
-     * The statement is built from the constants above and nothing else — `scope` is one of this
-     * class's own literals, never anything a caller supplied — so this stays string *assembly*, not
-     * string interpolation of user data. Every value still travels as a bound parameter.
+     * The statement is assembled from the constants above and nothing else. `scope` is one of this
+     * class's own literals, so no caller-supplied text reaches the statement, and every value
+     * travels as a bound parameter.
      *
-     * A corrupt row that survives the query is warned about and skipped rather than taking down the
-     * whole governance read; see [DriftReportRowMapper], which throws instead of inventing defaults
-     * precisely so this can happen. Note the honest consequence of a bounded read: a skipped row has
-     * already spent one of the caller's `limit` slots, so a page can come back shorter than asked
-     * for. Silently reading further to backfill would break the bound the contract exists to keep.
+     * A corrupt row that survives the query is logged and skipped, which keeps one bad node from
+     * failing the whole governance read; [DriftReportRowMapper] throws rather than inventing
+     * defaults so that this can happen. A skipped row has already spent one of the caller's `limit`
+     * slots, so a page can come back shorter than asked for. Reading further to backfill would break
+     * the bound the contract keeps.
      */
     private fun readPage(
         scope: String?,

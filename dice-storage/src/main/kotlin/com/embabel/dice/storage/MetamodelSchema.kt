@@ -21,22 +21,22 @@ import org.drivine.schema.UniquenessConstraintSpec
 /**
  * The constraints and node labels the metamodel governance stores need, as plain data.
  *
- * Two things depend on this list and they must not disagree. A host (and the integration-test
- * harness) declares [specs] so the stores' MERGEs are race-free; [LABELS] is what
- * [DrivineObservedSchemaSource] subtracts from an observation so governance never reports its own
- * bookkeeping as domain drift. Keeping both here means adding a governance node label is one edit,
- * not two edits in two modules that quietly drift apart.
+ * Two things depend on this list and have to agree. A host, and the integration-test harness,
+ * declares [specs] so the stores' MERGEs are race-free; [LABELS] is what
+ * [DrivineObservedSchemaSource] subtracts from an observation, which keeps governance from reporting
+ * its own bookkeeping as domain drift. Keeping both here makes adding a governance node label a
+ * single edit in one module.
  */
 object MetamodelSchema {
 
     /**
-     * Every MERGE these stores perform needs its key to be unique, because a MERGE is only
-     * race-free when it is. Without that, concurrent saves all miss the match, all create, and the
-     * history fills with duplicates.
+     * Every MERGE these stores perform needs its key to be unique, because a MERGE is race-free
+     * only then. Without that, concurrent saves all miss the match, all create, and the history
+     * fills with duplicates.
      *
-     * The two `sequence` constraints are the safety net under the ordering. They make two records
-     * of one schema sharing a position impossible to store, so a lost counter update fails loudly
-     * and retryably instead of quietly making "newest first" arbitrary.
+     * The two `sequence` constraints back the ordering. They make two records of one schema sharing
+     * a position impossible to store, so a lost counter update fails with a constraint violation the
+     * caller can retry.
      */
     fun specs(): List<SchemaItemSpec> = listOf(
         // Version stamps -- see DrivineMetamodelVersionStore.
@@ -44,9 +44,8 @@ object MetamodelSchema {
         UniquenessConstraintSpec(label = "MetamodelSchemaCounter", property = "schemaName"),
         UniquenessConstraintSpec(label = "MetamodelVersion", properties = listOf("schemaName", "sequence")),
 
-        // Drift reports -- see DrivineDriftReportStore. The natural key carries `contextKey` rather
-        // than `contextId` because a Cypher MERGE can't key on a null, so a global report needs a
-        // non-null stand-in to be as idempotent as a scoped one.
+        // Drift reports -- see DrivineDriftReportStore. The natural key carries `contextKey`
+        // because a Cypher MERGE can't key on a null, and a global report has no `contextId`.
         UniquenessConstraintSpec(
             label = "MetamodelDriftReport",
             properties = listOf("schemaName", "versionHash", "capturedAt", "contextKey"),

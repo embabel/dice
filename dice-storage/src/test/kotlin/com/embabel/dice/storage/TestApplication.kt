@@ -189,9 +189,9 @@ open class TestApplication {
     ): DrivineDriftReportStore = DrivineDriftReportStore(persistenceManager)
 
     /**
-     * On the system clock, not [PinnableClock]. An observation's capture instant is half of a drift
-     * report's identity, so two checks sharing one really are the same record — pinning here by
-     * default would silently collapse consecutive checks into a single report.
+     * Left on the system clock. An observation's capture instant is half of a drift report's
+     * identity, so two checks sharing one instant are the same record; pinning [PinnableClock] here
+     * by default would collapse consecutive checks into a single report.
      */
     @Bean
     open fun observedSchemaSource(

@@ -46,10 +46,10 @@ import org.springframework.test.context.DynamicPropertySource
  * [DrivineDriftReportStore] and [DrivinePropositionRepository], with the real differ and the real
  * quarantine policy.
  *
- * The unit tests in `dice-metamodel` already pin the runner's sequencing against fakes. What only a
- * database can answer is whether the three persistent pieces line up: a report written by one store
- * must name a hash the *other* store can resolve, and the proposition the policy flagged must come
- * back out of the graph flagged.
+ * The unit tests in `dice-metamodel` pin the runner's sequencing against fakes. What only a database
+ * can answer is whether the three persistent pieces line up: a report written by one store names a
+ * hash the other store can resolve, and the proposition the policy flagged comes back out of the
+ * graph flagged.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivineDriftCheckIntegrationTest {
@@ -132,14 +132,14 @@ class DrivineDriftCheckIntegrationTest {
             "a context-scoped check must not show up as a whole-graph one",
         )
 
-        // 3. Its hash resolves through the *other* store -- the guarantee "stamp before you report"
-        //    exists to buy, and the one that only breaks once both are real.
+        // 3. Its hash resolves through the version store, which is what stamping before reporting
+        //    guarantees. Only real stores on both sides can show it.
         val resolved = versionStore.findVersion(schemaName, persisted.single().versionHash)
         assertNotNull(resolved, "a persisted report named a version hash nothing recorded")
         assertEquals(declaredVersion, resolved)
 
-        // 4. The stranded proposition came back out of the graph flagged, with a reason a person
-        //    can read.
+        // 4. The stranded proposition came back out of the graph flagged, carrying a readable
+        //    quarantine reason.
         val reloaded = repository.findById(stranded.id)
         assertNotNull(reloaded)
         assertEquals(PropositionStatus.STALE, reloaded!!.status)
@@ -169,8 +169,8 @@ class DrivineDriftCheckIntegrationTest {
 
     @Test
     fun `a conforming context reports no drift, and the run is still on the record`() {
-        // A zero-drift check is a fact worth having, not a no-op -- "we looked and it was clean" is
-        // the answer an audit needs, and only a persisted report can give it.
+        // A zero-drift check still persists a report, so an audit can see that the check ran and
+        // found the context clean.
         repository.save(
             Proposition(
                 contextId = contextId,

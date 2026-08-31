@@ -34,10 +34,9 @@ import java.time.Instant
 /**
  * [DrivineObservedSchemaSource] against a Neo4j testcontainer.
  *
- * The load-bearing test here is the last group: governance must never observe *itself*. Stamping a
- * version and writing a drift report both add nodes to the very graph the next check looks at, so
- * without the exclusion every run would report the previous run as drift and the noise would never
- * settle.
+ * The last group covers governance observing its own bookkeeping. Stamping a version and writing a
+ * drift report both add nodes to the graph the next check looks at, so without the exclusion every
+ * run reports the previous run as drift.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivineObservedSchemaSourceIntegrationTest {
@@ -93,8 +92,8 @@ class DrivineObservedSchemaSourceIntegrationTest {
 
     @Test
     fun `a relationship two contexts produced is drift in both of them`() {
-        // Deliberately does not collapse to one owner: an undeclared relationship type present in
-        // your context's data is drift in your context, whoever else also produced it.
+        // The join does not collapse to one owner: an undeclared relationship type present in a
+        // context's data is drift in that context, whoever else produced it.
         writeProposition("p-a", tenantA)
         writeProposition("p-b", tenantB)
         writeRelationship(type = "SHARED_REL", sourcePropositionIds = listOf("p-a", "p-b"))
@@ -152,8 +151,8 @@ class DrivineObservedSchemaSourceIntegrationTest {
         writeMention("p-a", "m-a", type = "Person")
         persistenceManager.execute(QuerySpecification.withStatement("CREATE (:Source {key: 'src'})"))
         persistenceManager.execute(QuerySpecification.withStatement("CREATE (:ProcessedChunk {id: 'chunk'})"))
-        // Without this the test could pass by observing nothing at all. The database really is
-        // reporting these labels; the exclusion is what keeps them out of the snapshot.
+        // Without this precondition the test would pass on an empty observation. It pins that the
+        // database is reporting these labels, so the exclusion is what keeps them out.
         assertTrue(
             rawLabels().containsAll(setOf("Proposition", "Mention", "Source", "ProcessedChunk")),
             "precondition: the raw catalogue must hold the bookkeeping labels, but was ${rawLabels()}",
@@ -169,10 +168,9 @@ class DrivineObservedSchemaSourceIntegrationTest {
 
     @Test
     fun `the metamodel's own nodes are never reported as domain drift`() {
-        // The self-reference that matters: a drift check stamps a version and writes a report, and
-        // both land in the graph the *next* check observes. Without the exclusion the second run
-        // reports MetamodelVersion and MetamodelDriftReport as undeclared entity types, and every
-        // run after that reports them again.
+        // A drift check stamps a version and writes a report, and both land in the graph the next
+        // check observes. Without the exclusion the second run reports MetamodelVersion and
+        // MetamodelDriftReport as undeclared entity types, as does every run after it.
         val version = MetamodelVersion("observed-schema", listOf("Person"), emptyMap(), emptyMap(), emptyList())
         versionStore.saveVersion(version)
         reportStore.saveDriftReport(
@@ -202,9 +200,9 @@ class DrivineObservedSchemaSourceIntegrationTest {
 
     @Test
     fun `dice's own relationship types are never reported as domain drift`() {
-        // HAS_MENTION and DERIVED_FROM sit on every proposition ever stored, so this is not an edge
-        // case: without the exclusion, the first whole-graph check against a populated graph
-        // reports them as relationship drift, and so does every check after it.
+        // HAS_MENTION and DERIVED_FROM sit on every proposition ever stored. Without the exclusion,
+        // the first whole-graph check against a populated graph reports them as relationship drift,
+        // as does every check after it.
         writeProposition("p-a", tenantA)
         writeMention("p-a", "m-a", type = "Person")
         persistenceManager.execute(
@@ -226,13 +224,12 @@ class DrivineObservedSchemaSourceIntegrationTest {
         )
     }
 
-    // ---- a name is not a reservation ----
+    // ---- Exclusion by shape, not by label name ----
 
     @Test
     fun `a domain node that only shares a bookkeeping label's name is still observed`() {
-        // The failure this guards against: reserving the *name* `Source` would mean an app that
-        // genuinely governs a type called Source could never see it reported as undeclared. A drift
-        // check that structurally cannot report a type is worse than one that reports too much.
+        // Excluding the name `Source` would hide an app's own undeclared `Source` type from every
+        // report. Exclusion goes by node shape so that type stays observable.
         persistenceManager.execute(
             QuerySpecification.withStatement("CREATE (:Source {companyName: 'Acme', founded: 1999})"),
         )
@@ -248,7 +245,7 @@ class DrivineObservedSchemaSourceIntegrationTest {
 
     @Test
     fun `dice's own nodes are still excluded when nothing else claims their label`() {
-        // The other half: the shape test must not have simply stopped excluding anything.
+        // The other half of the shape test: dice's own conforming nodes still get excluded.
         writeProposition("p-a", tenantA)
         writeMention("p-a", "m-a", type = "Person")
         persistenceManager.execute(QuerySpecification.withStatement("CREATE (:Source {key: 'src-1'})"))
@@ -266,8 +263,8 @@ class DrivineObservedSchemaSourceIntegrationTest {
 
     @Test
     fun `a domain relationship sharing a bookkeeping type's name is still observed`() {
-        // Same rule on the relationship side, decided by the same marker the scoped path uses:
-        // an edge carrying sourcePropositions was projected from domain data, whatever it is called.
+        // Same rule on the relationship side, decided by the marker the scoped path uses: an edge
+        // carrying sourcePropositions was projected from domain data, whatever it is called.
         writeProposition("p-a", tenantA)
         writeRelationship(type = "DERIVED_FROM", sourcePropositionIds = listOf("p-a"))
 
@@ -283,8 +280,8 @@ class DrivineObservedSchemaSourceIntegrationTest {
 
     @Test
     fun `every label the trace and metamodel stores write has a shape entry`() {
-        // Keeps the shape map one edit away from the schema objects: a new node label added to
-        // either store without a shape here would silently stop being excluded.
+        // Keeps the shape map in step with the schema objects: a new node label added to either
+        // store without a shape here would stop being excluded.
         (CollectorTraceSchema.LABELS + MetamodelSchema.LABELS).forEach { label ->
             assertTrue(
                 DICE_BOOKKEEPING_LABEL_SHAPES.containsKey(label),
@@ -296,8 +293,8 @@ class DrivineObservedSchemaSourceIntegrationTest {
     // ---- helpers ----
 
     /**
-     * A proposition node carrying dice's full shape, because the shape is what tells the observer
-     * this is dice's node and not a domain one that happens to share the label.
+     * A proposition node carrying dice's full shape, which is how the observer recognises it as
+     * dice's own rather than a domain node sharing the label.
      */
     private fun writeProposition(id: String, contextId: ContextId) {
         persistenceManager.execute(

@@ -347,28 +347,27 @@ and the consumer PRs that deliver it).
   and no existing signature changed.
 - Drivine/Neo4j-backed drift persistence in `dice-storage`. `DrivineDriftReportStore` keeps each
   check as a `(:MetamodelDriftReport)` node, MERGEd on the natural key
-  `(schemaName, versionHash, capturedAt, contextKey)` — `contextKey` being `global` or `ctx:<id>`,
-  since a Cypher MERGE cannot key on a null; prefixing every real context keeps the encoding
-  injective, so no `ContextId` value can share a key with the global bucket and silently rewrite its
-  scope. All three bounded reads are separate statements that push their scope
-  into the query *before* the `LIMIT`, which is what stops a schema whose recent history is mostly
-  context-scoped from reporting zero global drift while plenty sits in the store. Ordering is newest
-  first by capture instant, stored as `(epochSecond, nano)` so both the sort and an inclusive `since`
-  window stay exact below the millisecond, with a per-schema `(:MetamodelDriftReportCounter)`
-  sequence breaking exact ties so a limited page is repeatable. `DrivineObservedSchemaSource` takes
-  the snapshot: `db.labels()`/`db.relationshipTypes()` unscoped, and per context the distinct mention
-  types plus the edges whose `sourcePropositions` name that context's propositions. The unscoped
-  path subtracts dice's own bookkeeping — every proposition, provenance, lineage, collector-trace
-  and metamodel node label, and the `HAS_MENTION`/`DERIVED_FROM`/`SCORED`/`RETIRED_IN` edges — so
-  governance never observes the nodes its own last run wrote as domain drift. That subtraction is by
-  *shape*, not by name: a label is hidden only while every node carrying it matches dice's shape for
-  it, and an edge type only while none of its edges carries `sourcePropositions`, so an app
-  governing a type genuinely called `Source` still sees it reported. `MetamodelSchema`
-  collects the uniqueness constraints these stores need alongside the label list the observer
-  excludes, so the two cannot drift apart. Still no Spring wiring; that arrives in the autoconfigure
-  slice.
+  `(schemaName, versionHash, capturedAt, contextKey)`, with `contextKey` either `global` or
+  `ctx:<id>`, since a Cypher MERGE cannot key on a null. Prefixing every real context keeps the
+  encoding injective, so no `ContextId` value can share a key with the global bucket and rewrite its
+  scope. All three bounded reads are separate statements that push their scope into the query ahead
+  of the `LIMIT`, which stops a schema whose recent history is mostly context-scoped from reporting
+  zero global drift while plenty sits in the store. Ordering is newest first by capture instant,
+  stored as `(epochSecond, nano)` so both the sort and an inclusive `since` window stay exact below
+  the millisecond, with a per-schema `(:MetamodelDriftReportCounter)` sequence breaking exact ties so
+  a limited page is repeatable. `DrivineObservedSchemaSource` takes the snapshot:
+  `db.labels()`/`db.relationshipTypes()` unscoped, and per context the distinct mention types plus
+  the edges whose `sourcePropositions` name that context's propositions. The unscoped path subtracts
+  dice's own bookkeeping — every proposition, provenance, lineage, collector-trace and metamodel node
+  label, and the `HAS_MENTION`/`DERIVED_FROM`/`SCORED`/`RETIRED_IN` edges — which keeps governance
+  from observing the nodes its own last run wrote as domain drift. That subtraction goes by node
+  shape: a label is hidden only while every node carrying it matches dice's shape for it, and an edge
+  type only while none of its edges carries `sourcePropositions`, so an app governing a type called
+  `Source` still sees it reported. `MetamodelSchema` collects the uniqueness constraints these stores
+  need alongside the label list the observer excludes, keeping the two in one place. Still no Spring
+  wiring; that arrives in the autoconfigure slice.
   **Compatibility: additive.** New classes in an existing module; no existing API touched. Hosts
   that already declared the three `MetamodelVersion`/`MetamodelSchemaCounter` constraints by hand can
-  swap in `MetamodelSchema.specs()`, which is a superset — the drift-report store needs three more:
+  swap in `MetamodelSchema.specs()`, a superset. The drift-report store needs three more:
   `MetamodelDriftReport(schemaName, versionHash, capturedAt, contextKey)`,
   `MetamodelDriftReportCounter(schemaName)`, and `MetamodelDriftReport(schemaName, sequence)`.

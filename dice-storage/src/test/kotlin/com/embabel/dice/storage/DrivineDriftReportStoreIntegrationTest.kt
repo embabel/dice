@@ -39,10 +39,10 @@ import java.time.Instant
  * [DrivineDriftReportStore] against a Neo4j testcontainer. Each test starts from an empty drift log
  * via [cleanUp].
  *
- * These are the same questions `DriftReportStoreTest` asks of the in-memory reference, answered in
- * Cypher — plus the ones only a database can get wrong: the scope pushed into the query rather than
- * applied to a page that has already been cut, a `since` bound that stays exact below the
- * millisecond, and the sequence that keeps a limited page from moving between reads.
+ * These are the questions `DriftReportStoreTest` asks of the in-memory reference, answered in
+ * Cypher, plus the ones only a database can get wrong: scope pushed into the query ahead of the
+ * limit, a `since` bound that stays exact below the millisecond, and the sequence that keeps a
+ * limited page stable between reads.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivineDriftReportStoreIntegrationTest {
@@ -126,8 +126,8 @@ class DrivineDriftReportStoreIntegrationTest {
 
     @Test
     fun `type names carrying delimiter characters survive the round-trip`() {
-        // The sets are JSON, not a joined string, and these are the characters that would break a
-        // joined one. Type names come out of LLM extraction and do contain them.
+        // The sets are stored as JSON, so these characters round-trip. Type names come out of LLM
+        // extraction and do contain them.
         val report = DriftReport(
             schemaName = schemaName,
             versionHash = "delimiters",
@@ -177,10 +177,9 @@ class DrivineDriftReportStoreIntegrationTest {
 
     @Test
     fun `since stays exact below the millisecond`() {
-        // The reason the sort and the bound are stored as (epochSecond, nano) rather than as epoch
-        // milliseconds. These two are 500 microseconds apart, which truncates to the same
-        // millisecond: a millis-based bound would sweep the earlier one in and quietly widen the
-        // window the caller asked for.
+        // Why the sort and the bound are stored as (epochSecond, nano). These two are 500
+        // microseconds apart and truncate to the same millisecond, so a millis-based bound would
+        // sweep the earlier one in and widen the window the caller asked for.
         val earlier = epoch.plusNanos(200_000)
         val later = epoch.plusNanos(700_000)
         listOf(earlier to "early", later to "late").forEach { (instant, hash) ->
@@ -215,10 +214,10 @@ class DrivineDriftReportStoreIntegrationTest {
 
     @Test
     fun `reports captured at the same instant hold a stable order across reads`() {
-        // A global sweep and a context sweep can share a capture instant. The instant alone then
-        // leaves their order to the database, and with a LIMIT on top the page boundary lands
-        // somewhere arbitrary -- the same read can return different rows each time. The per-schema
-        // sequence is what makes the order total, so a page is repeatable.
+        // A global sweep and a context sweep can share a capture instant. The instant alone leaves
+        // their order to the database, and under a LIMIT the page boundary lands arbitrarily, so
+        // the same read can return different rows each time. The per-schema sequence makes the
+        // order total, which makes a page repeatable.
         val instant = epoch.plusSeconds(600)
         val first = DriftReport(schemaName, "tie-1", setOf("A"), emptySet(), instant, contextA)
         val second = DriftReport(schemaName, "tie-2", setOf("B"), emptySet(), instant, contextB)
@@ -247,9 +246,9 @@ class DrivineDriftReportStoreIntegrationTest {
 
     @Test
     fun `scoping happens before limiting, not after`() {
-        // The rule the contract exists to protect. A store that read a limited page and then
-        // filtered it would answer "no global drift" here: the newest three reports are all
-        // context-scoped, so the one global report never survives to the filter.
+        // A store that read a limited page and then filtered it would answer "no global drift"
+        // here: the newest three reports are all context-scoped, so the one global report never
+        // reaches the filter.
         val global = save(1)
         save(2, contextA)
         save(3, contextA)
@@ -260,8 +259,8 @@ class DrivineDriftReportStoreIntegrationTest {
 
     @Test
     fun `a context read pushes its scope down too`() {
-        // The mirror image: the newest reports are global and another context's, so an in-memory
-        // filter over a page of 2 would report no drift in context A at all.
+        // Same shape on the context read: the newest reports are global and another context's, so
+        // an in-memory filter over a page of 2 would report no drift in context A.
         val inA = save(1, contextA)
         save(2)
         save(3, contextB)
@@ -310,9 +309,9 @@ class DrivineDriftReportStoreIntegrationTest {
 
     @Test
     fun `a global and a scoped check at the same instant are two records, not an overwrite`() {
-        // The reason the natural key carries a never-null contextKey. Keying on contextId itself
-        // would make the global report's key contain a null, which a Cypher MERGE can never match:
-        // it would take the CREATE branch every time and duplicate on retry.
+        // Why the natural key carries a never-null contextKey. Keying on contextId itself would put
+        // a null in the global report's key, which a Cypher MERGE never matches: it would take the
+        // CREATE branch every time and duplicate on retry.
         val instant = epoch.plusSeconds(60)
         val global = DriftReport(schemaName, "same-hash", setOf("Ghost"), emptySet(), instant)
         val scoped = DriftReport(schemaName, "same-hash", setOf("Ghost"), emptySet(), instant, contextA)
@@ -327,12 +326,12 @@ class DrivineDriftReportStoreIntegrationTest {
 
     @Test
     fun `a context named after the global marker cannot collide with a global report`() {
-        // ContextId accepts any non-blank string, so any encoding that stores a bare context id
-        // alongside a sentinel is one `ContextId(sentinel)` away from a collision: both reports
-        // would MERGE onto one node and each save would rewrite the other's scope, so a
-        // context-scoped finding would surface as whole-graph drift. Prefixing every real context
-        // makes that unrepresentable rather than unlikely -- including for the previous sentinel,
-        // which a caller may well still be using as a context id.
+        // ContextId accepts any non-blank string, so an encoding that stores a bare context id
+        // alongside a sentinel collides as soon as a caller passes `ContextId(sentinel)`: both
+        // reports MERGE onto one node and each save rewrites the other's scope, surfacing a
+        // context-scoped finding as whole-graph drift. Prefixing every real context makes the
+        // collision unrepresentable, including for the sentinel a caller may still be using as a
+        // context id.
         val instant = epoch.plusSeconds(60)
         listOf(
             ContextId(DriftReportRowMapper.GLOBAL_CONTEXT_KEY),
@@ -372,9 +371,9 @@ class DrivineDriftReportStoreIntegrationTest {
 
     @Test
     fun `two reports of one schema cannot be stored at the same position`() {
-        // The safety net under the sequence: whatever the counter does, the database will not hold
-        // two reports of one schema claiming one place in the tie-break order, so a lost counter
-        // update is a retryable failure rather than a silently wobbling page.
+        // The uniqueness constraint backing the sequence: whatever the counter does, the database
+        // will not hold two reports of one schema at one place in the tie-break order, so a lost
+        // counter update surfaces as a constraint violation the caller can retry.
         val first = save(1)
         assertEquals(1L, storedSequence(first))
 
@@ -443,9 +442,9 @@ class DrivineDriftReportStoreIntegrationTest {
 
     @Test
     fun `a node with no sort key is excluded in the database, not after the page is cut`() {
-        // Neo4j sorts null largest, so a node missing the sort key would sort to the front of a DESC
-        // order, spend one of the caller's limit slots, and then be dropped by the mapper -- hiding
-        // a perfectly good report behind a broken one.
+        // Neo4j sorts null largest, so a node missing the sort key would sort to the front of a
+        // DESC order, spend one of the caller's limit slots, and then be dropped by the mapper,
+        // hiding a good report behind a broken one.
         val readable = save(1)
         persistenceManager.execute(
             QuerySpecification.withStatement(
@@ -468,7 +467,7 @@ class DrivineDriftReportStoreIntegrationTest {
 
     // ---- helpers ----
 
-    /** The `sequence` a report node actually holds — storage bookkeeping, so read straight out. */
+    /** The `sequence` a report node holds. It is storage bookkeeping, so read it straight out. */
     private fun storedSequence(report: DriftReport): Long? = persistenceManager.maybeGetOne(
         QuerySpecification.withStatement(
             """
@@ -487,9 +486,8 @@ class DrivineDriftReportStoreIntegrationTest {
     )
 
     /**
-     * Run [block] with a listener on the store's logger, and hand back both its result and every
-     * WARN it emitted. "Skips the row" and "skips the row *and says so*" are different behaviours,
-     * and only the second is any use to an operator.
+     * Run [block] with a listener on the store's logger and hand back both its result and every
+     * WARN it emitted, so a test can assert that a skipped row is also logged.
      */
     private fun <T> capturingStoreWarnings(block: () -> T): Pair<T, List<String>> {
         val logger = LoggerFactory.getLogger(DrivineDriftReportStore::class.java) as Logger

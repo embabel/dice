@@ -225,7 +225,7 @@ private fun deserializeList(serialized: String): List<String> =
         objectMapper.typeFactory.constructCollectionType(List::class.java, String::class.java)
     )
 
-/** Deserialize a JSON string back to a set — what a drift report's drifted type collections are. */
+/** Deserialize a JSON string back to a set, the form a drift report's drifted type fields take. */
 private fun deserializeSet(serialized: String): Set<String> =
     if (serialized.isEmpty()) emptySet()
     else objectMapper.readValue(
@@ -380,8 +380,8 @@ private fun Map<*, *>.str(key: String): String =
     requireNotNull(this[key]) { "required property '$key' is missing from the stored node" }.toString()
 
 /**
- * Read a property whose absence is itself meaningful, rather than a fault: a stamp that declared
- * no aliases, or a drift report whose check covered the whole graph and so wrote no `contextId`.
- * Everything else goes through [str].
+ * Read a property whose absence carries meaning: a stamp that declared no aliases, or a drift
+ * report whose check covered the whole graph and so wrote no `contextId`. Every other property
+ * goes through [str].
  */
 private fun Map<*, *>.strOrNull(key: String): String? = this[key]?.toString()

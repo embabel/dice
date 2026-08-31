@@ -619,41 +619,36 @@ matters.
 Both storage-side contracts are implemented in `dice-storage`, against Neo4j via Drivine.
 
 `DrivineDriftReportStore` keeps each check as a `(:MetamodelDriftReport)` node, MERGEd on the
-natural key `(schemaName, versionHash, capturedAt, contextKey)` — where `contextKey` is `global` for
+natural key `(schemaName, versionHash, capturedAt, contextKey)`, where `contextKey` is `global` for
 an unscoped check and `ctx:<id>` for a scoped one, because a Cypher MERGE cannot key on a null. The
-prefix is what makes the encoding injective: `ContextId` accepts any non-blank string, so an
-unprefixed id plus a bare sentinel would let a context named after the sentinel share a key with the
-global bucket and silently rewrite its scope. Each of the three bounded reads is
-its own statement with its scope in the `WHERE` clause and the `LIMIT` after it, which is the whole
-point: filtering a page that has already been cut applies the limit before the scope and can report
-zero global drift while plenty sits in the store. Reports come back newest first by capture instant,
-compared to the nanosecond so a `since` window stays exact, with a per-schema counter breaking exact
-ties so a limited page doesn't move between reads.
+prefix makes the encoding injective: `ContextId` accepts any non-blank string, so an unprefixed id
+plus a bare sentinel would let a context named after the sentinel share a key with the global bucket
+and rewrite its scope. Each of the three bounded reads is its own statement with its scope in the
+`WHERE` clause and the `LIMIT` after it. Filtering a page that has already been cut applies the limit
+ahead of the scope, and can report zero global drift while plenty sits in the store. Reports come
+back newest first by capture instant, compared to the nanosecond so a `since` window stays exact,
+with a per-schema counter breaking exact ties so a limited page is repeatable.
 
 `DrivineObservedSchemaSource` takes the snapshot. Unscoped, it reads the database's own catalogue
 (`db.labels()`, `db.relationshipTypes()`); scoped to a context, it derives entity types from that
 context's mentions and relationship types from the `sourcePropositions` each projected edge carries.
-Either way it subtracts dice's own bookkeeping — the proposition, mention, provenance, lineage,
+Either way it subtracts dice's own bookkeeping: the proposition, mention, provenance, lineage,
 collector-trace and metamodel node labels, and the `HAS_MENTION`/`DERIVED_FROM`-style edges. That
-subtraction is load-bearing rather than tidy: stamping a version and writing a report both add nodes
-to the very graph the next check looks at, so without it every run would report the previous run as
-drift and the noise would never settle.
+subtraction is load-bearing. Stamping a version and writing a report both add nodes to the graph the
+next check looks at, so without it every run reports the previous run as drift.
 
-**The subtraction is by shape, not by name.** Reserving the name `Source` would mean an app that
-genuinely governs a type called `Source` could never see it reported as undeclared — a drift check
-that structurally cannot report a type is worse than one that reports too much. So a bookkeeping
-label is excluded only while every node carrying it matches dice's shape for it (dice's `Source`
-nodes carry `key`, its governance nodes carry `schemaName`, and so on), and a bookkeeping
-relationship type only while no edge of that type carries `sourcePropositions` — the marker the
-graph writer stamps on every edge it projects from domain data, and the same one the context-scoped
-query already selects on.
+The subtraction goes by node shape, so that a domain type called `Source` stays visible. A
+bookkeeping label is excluded only while every node carrying it matches dice's shape for it (dice's
+`Source` nodes carry `key`, its governance nodes carry `schemaName`, and so on), and a bookkeeping
+relationship type only while no edge of that type carries `sourcePropositions`, the marker the graph
+writer stamps on every edge it projects from domain data. The context-scoped query selects on the
+same marker.
 
-Two limits are worth stating rather than papering over. Exclusion is decided per label, not per
-node, so a graph mixing a domain `Source` with dice's own reports `Source` every run until the type
-is declared — deliberately the visible direction to fail in. And deciding it costs a scan of dice's
-own labels on each unscoped observation; context-scoped checks never pay it.
+Two limits follow. Exclusion is decided per label, not per node, so a graph mixing a domain `Source`
+with dice's own reports `Source` every run until the type is declared. And deciding it costs a scan
+of dice's own labels on each unscoped observation; context-scoped checks don't pay it.
 
-Hosts declare the constraints these stores need (see `MetamodelSchema`); a MERGE is only race-free
+Hosts declare the constraints these stores need (see `MetamodelSchema`); a MERGE is race-free only
 under a uniqueness constraint on the key it merges on.
 
 ## What comes next
