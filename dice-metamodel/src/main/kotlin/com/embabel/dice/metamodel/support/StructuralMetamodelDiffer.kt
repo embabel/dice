@@ -26,19 +26,18 @@ import com.embabel.dice.metamodel.ObservedSchema
 import com.embabel.dice.metamodel.PropertySignature
 
 /**
- * The shipped differ: a deterministic, structural comparison, with no heuristics and no LLM
- * anywhere near it.
+ * The shipped differ: a deterministic structural comparison, with no heuristics and no LLM.
  *
- * It works on exactly the data a [MetamodelVersion] already carries — entity type names, per-type
- * label sets, per-type property *signatures*, and relationship descriptors. Those are the same
- * fields the content hash is built from, which is what makes an empty diff and an equal hash mean
- * the same thing.
+ * It works on the data a [MetamodelVersion] already carries: entity type names, per-type label sets,
+ * per-type property *signatures*, and relationship descriptors. Those are the same fields the
+ * content hash is built from, which is what makes an empty diff and an equal hash mean the same
+ * thing.
  *
  * Two rules it keeps throughout. Sets are compared as sets, never as a delimiter-joined projection,
- * so a label or property name containing a comma or a space — routine when names come from LLM
- * extraction — can't collapse two genuinely different sets into a false "unchanged". And output is
- * canonical: type names, property names and signatures all come out sorted, so the same pair of
- * versions always produces the same change list, in the same order, and a stored diff can be
+ * because a label or property name can contain a comma or a space, which is routine when names come
+ * from LLM extraction, and joining would collapse two different sets into a false "unchanged".
+ * Output is canonical: type names, property names and signatures all come out sorted, so the same
+ * pair of versions always produces the same change list in the same order, and a stored diff can be
  * compared with another one.
  *
  * Stateless and thread-safe; one shared instance is fine.
@@ -101,18 +100,18 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         // label those types declare.
         val declaredLabels = declaredTypes + declared.version.entityTypeLabels.values.flatten()
 
-        // Drift is observed-but-never-declared: orphaned data whose declaring integration is gone,
-        // or was never registered. The opposite direction is not drift — a declared type with zero
-        // instances is a perfectly ordinary state, so it gets its own, purely informational bucket.
-        // That direction stays on the type names: "declared but with no data" is a statement about
-        // types, and a parent label listed as an unobserved type would be noise about something
-        // that was never a type in its own right.
+        // Drift is observed and never declared: orphaned data whose declaring integration is gone,
+        // or was never registered. The opposite direction gets its own informational bucket, since a
+        // declared type with zero instances is an ordinary state. That direction stays on the type
+        // names: "declared but with no data" is a statement about types, and a parent label listed
+        // as an unobserved type would be noise about something that was never a type in its own
+        // right.
         //
-        // Relationships compare on the bare type name, because that is all a graph can report (a
+        // Relationships compare on the bare type name, because that is all a graph can report: a
         // `db.relationshipTypes()`-style query knows the type, not which node types an instance
-        // actually connected). The bare names come off the declaration, which carried them
-        // un-rendered; we never recover one by parsing a `From-[name]->To` descriptor, since these
-        // names are free text and can contain a `-[...]->`-shaped substring themselves.
+        // connected. The bare names come off the declaration, which carried them un-rendered. We
+        // never recover one by parsing a `From-[name]->To` descriptor, since these names are free
+        // text and can contain a `-[...]->`-shaped substring themselves.
         val declaredRels = declared.relationshipTypeNames
         val observedRels = observed.relationshipTypeNames
 
@@ -136,14 +135,15 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
     /**
      * Compare one type's properties, matching them up by name.
      *
-     * Matching by name is what lets a reshaped property read as a reshape rather than as a deletion
-     * next to an unrelated addition: `age: string` becoming `age: integer` is one change with a
-     * before and an after, not two changes a caller has to pair back up.
+     * Matching by name turns a reshaped property into one change carrying a before and an after:
+     * `age: string` becoming `age: integer` is a single
+     * [MetamodelChange.PropertySignatureChanged], which saves a caller pairing up a deletion and an
+     * addition.
      *
-     * A name can legitimately map to more than one signature on either side — a `DataDictionary`
-     * may hold two same-named domain types whose properties get unioned into a single stamp. There
-     * is no single before/after to pair in that case, so the differing signatures are reported as
-     * added and removed instead of a guessed pairing.
+     * A name can legitimately map to more than one signature on either side, because a
+     * `DataDictionary` may hold two same-named domain types whose properties get unioned into a
+     * single stamp. There is no single before/after to pair in that case, so the differing
+     * signatures are reported as added and removed.
      */
     private fun comparePropertiesOf(
         typeName: String,
@@ -191,7 +191,7 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
          * Sort into a set that iterates in that order.
          *
          * The sets inside a [MetamodelVersion] are JVM-immutable copies, whose iteration order is
-         * deliberately unspecified and varies between JVM runs. Set equality doesn't care, but a
+         * unspecified and varies between JVM runs. Set equality doesn't care, but a
          * change list that gets logged or rendered does, so anything leaving here is sorted first.
          */
         private fun <T : Comparable<T>> canonical(values: Collection<T>): Set<T> =

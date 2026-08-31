@@ -77,18 +77,18 @@ and the consumer PRs that deliver it).
   property that existed before keeps its name, meaning, and encoding, and the two
   new alias fields are absent when nothing declares them.
 - Schema diffing contracts in `dice-metamodel`: `MetamodelDiffer` compares two declared
-  stamps and returns a `MetamodelDiff` — an ordered, canonically sorted list of sealed
-  `MetamodelChange` entries. The taxonomy covers property *signatures*, not just names:
-  alongside `EntityTypeAdded`/`Removed`/`Modified` and `RelationshipAdded`/`Removed`, a
+  stamps and returns a `MetamodelDiff`, an ordered, canonically sorted list of sealed
+  `MetamodelChange` entries. The taxonomy covers property *signatures* as well as names.
+  Alongside `EntityTypeAdded`/`Removed`/`Modified` and `RelationshipAdded`/`Removed`, a
   `PropertySignatureChanged` pairs `before` and `after` for a property that kept its name
-  but changed value type, cardinality, or value-vs-reference kind — the case a name-only
-  diff reports as nothing at all. `DeclaredObservedDiffer` answers the other question,
-  comparing a `DeclaredSchema` against an `ObservedSchema` snapshot of a live graph and
-  separating drift (observed but undeclared, actionable) from unobserved (declared but
-  empty, normal). That comparison is names-only on the observed side, deliberately: a graph
-  reports labels and relationship types, never declared property shapes.
-  `ObservedSchemaSource` is the SPI a storage backend implements later; `ObservedSchema` is
-  a plain value type, so tests drive the whole comparison from a canned snapshot.
-  `StructuralMetamodelDiffer` implements both interfaces — deterministic, stateless, no
-  database and no LLM. No drift runner, no quarantine, no Spring, and no new dependency.
+  and changed value type, cardinality, or value-vs-reference kind, which a name-only diff
+  reports as no change at all. `DeclaredObservedDiffer` compares a `DeclaredSchema` against
+  an `ObservedSchema` snapshot of a live graph, separating drift (observed but undeclared,
+  actionable) from unobserved (declared but empty, normal). That comparison is names-only
+  on the observed side: a graph reports labels and relationship types, and cannot report
+  declared property shapes. `ObservedSchemaSource` is the SPI a storage backend implements
+  in a later slice; `ObservedSchema` is a plain value type, so tests drive the whole
+  comparison from a canned snapshot. `StructuralMetamodelDiffer` implements both
+  interfaces: deterministic, stateless, no database and no LLM. This slice adds no drift
+  runner, no quarantine, no Spring wiring, and no new dependency.
   **Compatibility: additive.** New types in an existing module; no existing API touched.

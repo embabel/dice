@@ -20,9 +20,9 @@ import com.embabel.agent.core.DataDictionary
 /**
  * Compares two declared schemas and says what changed.
  *
- * A version stamp answers "is this the same schema as before?"; a differ answers "and what moved?"
- * — which is what you need to decide whether stored knowledge is still described by the schema it
- * was extracted under.
+ * A version stamp answers "is this the same schema as before?". A differ answers "what moved?",
+ * which is what you need to decide whether stored knowledge is still described by the schema it was
+ * extracted under.
  *
  * Take the [MetamodelVersion] overload when you already have stamps, which is the normal case: an
  * application stamps at ingestion time and stores the stamp, so the older side comes back out of a
@@ -44,8 +44,8 @@ interface MetamodelDiffer {
      *
      * This governs everything in both dictionaries, the closed-world reading. If the application
      * governs only part of its domain, stamp with its [GovernedTypeSelector] first (or take the two
-     * stamps off `DeclaredSchema.from(...)`) and use the other overload — otherwise exploratory
-     * types nobody committed to will show up as schema changes.
+     * stamps off `DeclaredSchema.from(...)`) and use the other overload. Otherwise exploratory types
+     * nobody committed to show up as schema changes.
      *
      * @param from The baseline (older) [DataDictionary].
      * @param to The target (newer) [DataDictionary].
@@ -56,23 +56,20 @@ interface MetamodelDiffer {
 }
 
 /**
- * Compares a [DeclaredSchema] against an [ObservedSchema] — what was declared against what a live
- * graph actually holds — and says where the two disagree.
+ * Compares a [DeclaredSchema] against an [ObservedSchema] and says where what was declared and what
+ * a live graph holds disagree.
  *
- * Its own interface rather than another overload on [MetamodelDiffer], because it answers a
- * different question. [MetamodelDiffer] compares two declarations, both of them decisions somebody
- * made; this compares a decision to an observation. The answer shape differs too: a
- * [MetamodelDiff] is a symmetric list of changes, while a [DeclaredObservedDiff] separates drift
- * (observed but undeclared, actionable) from merely-unobserved (declared but empty, normal).
- * Folding them together would force every caller to sift a generic change list to tell those apart.
+ * A separate interface from [MetamodelDiffer] because the answer shape differs. A [MetamodelDiff] is
+ * a symmetric list of changes over two declarations. A [DeclaredObservedDiff] separates drift
+ * (observed but undeclared, actionable) from unobserved (declared but empty, normal), which a single
+ * change list would leave every caller to sift apart.
  *
- * It takes a whole [DeclaredSchema] rather than a bare stamp because the comparison needs the bare
- * relationship type names, and those can only travel alongside the stamp — never be recovered from
- * it. [MetamodelVersion.relationshipNames] holds rendered `From-[name]->To` descriptors, and these
- * names come from free text and LLM extraction, so a name can itself contain a `-[...]->`-shaped
- * substring; reverse-parsing a descriptor is ambiguous and silently picks the wrong segment.
- * `DeclaredSchema.from(dictionary, selector)` builds both halves under the same governance rule, so
- * they can't drift apart.
+ * It takes a whole [DeclaredSchema] because the comparison needs the bare relationship type names,
+ * and those have to travel alongside the stamp. [MetamodelVersion.relationshipNames] holds rendered
+ * `From-[name]->To` descriptors, and relationship names come from free text and LLM extraction, so a
+ * name can itself contain a `-[...]->`-shaped substring; reverse-parsing a descriptor is ambiguous
+ * and silently picks the wrong segment. `DeclaredSchema.from(dictionary, selector)` builds both
+ * halves under the same governance rule, so they can't drift apart.
  */
 interface DeclaredObservedDiffer {
 
@@ -80,7 +77,7 @@ interface DeclaredObservedDiffer {
      * Compare [declared] against [observed].
      *
      * @param declared The schema as declared, stamp plus bare relationship type names.
-     * @param observed A snapshot of what the live graph actually holds.
+     * @param observed A snapshot of what the live graph holds.
      * @return An immutable diff separating drift from unobserved-but-declared types.
      */
     fun diffAgainstObserved(declared: DeclaredSchema, observed: ObservedSchema): DeclaredObservedDiff

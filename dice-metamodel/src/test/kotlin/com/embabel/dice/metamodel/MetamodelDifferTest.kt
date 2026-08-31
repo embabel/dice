@@ -280,10 +280,9 @@ class MetamodelDifferTest {
     }
 
     /**
-     * The reason this module stamps property *signatures* rather than property names. Every case
-     * below leaves both schemas with exactly the same type names and the same property names, so a
-     * name-only diff would report nothing at all — while what the graph can actually hold has
-     * changed.
+     * Why this module stamps property *signatures* rather than property names. Every case below
+     * leaves both schemas with the same type names and the same property names, so a name-only diff
+     * would report nothing, while what the graph can hold has changed.
      */
     @Nested
     inner class PropertySignatureChanges {
@@ -385,10 +384,10 @@ class MetamodelDifferTest {
         }
 
         /**
-         * A `DataDictionary` may hold two same-named domain types, whose properties get unioned into
-         * one stamp — so a single property name can carry two signatures at once. There is no
-         * before/after pair to report then, and guessing one would be a fiction, so the differing
-         * signatures come back as added and removed instead.
+         * A `DataDictionary` may hold two same-named domain types whose properties get unioned into
+         * one stamp, so a single property name can carry two signatures at once. There is no
+         * before/after pair to report then, so the differing signatures come back as added and
+         * removed.
          */
         @Test
         fun `a property name carrying two signatures falls back to added and removed`() {
@@ -443,9 +442,9 @@ class MetamodelDifferTest {
     inner class DelimiterSafetyInNames {
 
         /**
-         * A label name that contains a comma — possible when names come from LLM extraction.
-         * The diff compares label sets directly, so punctuation in a name is just a character;
-         * the change is still detected and the label comes back as one entry, not split.
+         * A label name that contains a comma, which happens when names come from LLM extraction.
+         * The diff compares label sets directly, so punctuation in a name is just a character: the
+         * change is still detected and the label comes back as one entry.
          */
         @Test
         fun `label containing a comma is treated as a single label`() {
@@ -464,10 +463,10 @@ class MetamodelDifferTest {
         }
 
         /**
-         * Property names can contain spaces when they come from free-text / LLM extraction.
-         * The two sets `{"a", "b c"}` and `{"a b", "c"}` are genuinely different, yet both
-         * collapse to the string "a b c" if you compare a space-joined projection instead of
-         * the sets themselves. A real property change must never be hidden by that collision.
+         * Property names can contain spaces when they come from free-text or LLM extraction. The
+         * two sets `{"a", "b c"}` and `{"a b", "c"}` are different, yet both collapse to the string
+         * "a b c" under a space-joined projection. Comparing the sets themselves keeps a real
+         * property change visible.
          */
         @Test
         fun `property sets that collide under a space delimiter are still reported as modified`() {
@@ -583,10 +582,9 @@ class MetamodelDifferTest {
         }
 
         /**
-         * The observed side has names and nothing else, so a declared property's shape is never
-         * part of this comparison. Two declarations differing only in a property signature produce
-         * an identical declared/observed diff — the graph simply cannot answer that question, and
-         * this comparison doesn't pretend it can.
+         * The observed side has names and nothing else, so a declared property's shape is never part
+         * of this comparison. Two declarations differing only in a property signature produce an
+         * identical declared/observed diff, because the graph cannot answer that question.
          */
         @Test
         fun `a property signature difference is invisible to the declared-observed comparison`() {
@@ -689,12 +687,11 @@ class MetamodelDifferTest {
         }
 
         /**
-         * A relationship name that embeds a `-[...]->`-shaped substring — the exact case a
-         * regex-based implementation got wrong, where a greedy `.*-\[(.+)]->.*` backtracks to the
-         * *last* such substring and parses `"A-[X]->B"` down to `"X"`. Since these names are
-         * free-text and LLM-derived, that shape is realistic rather than contrived. Bare names
-         * travel with the declaration and are never recovered from a descriptor, so the match holds
-         * whatever the name looks like.
+         * A relationship name that embeds a `-[...]->`-shaped substring: the case a regex-based
+         * implementation got wrong, where a greedy `.*-\[(.+)]->.*` backtracks to the *last* such
+         * substring and parses `"A-[X]->B"` down to `"X"`. These names are free-text and
+         * LLM-derived, so that shape occurs. Bare names travel with the declaration and are never
+         * recovered from a descriptor, so the match holds whatever the name looks like.
          */
         @Test
         fun `a relationship name shaped like a full descriptor still matches by its bare name`() {
@@ -726,9 +723,9 @@ class MetamodelDifferTest {
     }
 
     /**
-     * A diff is a result, and results don't change. Mirrors `MetamodelVersionTest.Immutability`:
-     * Kotlin's read-only collection types are a compile-time promise only — a Java caller sees plain
-     * `java.util` collections through the getters — so these have to refuse at runtime.
+     * A finished diff must not be reshapeable. Mirrors `MetamodelVersionTest.Immutability`: Kotlin's
+     * read-only collection types are a compile-time promise only, and a Java caller sees plain
+     * `java.util` collections through the getters, so these have to refuse at runtime.
      */
     @Nested
     inner class Immutability {
@@ -855,8 +852,8 @@ class MetamodelDifferTest {
 
         /**
          * A stamp built directly from property signatures, for shapes a `DataDictionary` makes
-         * awkward to express — a `VALUE` and a `REFERENCE` under one name, or two signatures for
-         * the same property name.
+         * awkward to express: a `VALUE` and a `REFERENCE` under one name, or two signatures for the
+         * same property name.
          */
         private fun stampOf(vararg types: Pair<String, Set<PropertySignature>>): MetamodelVersion =
             MetamodelVersion(

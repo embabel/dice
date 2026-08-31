@@ -18,20 +18,20 @@ package com.embabel.dice.metamodel
 import com.embabel.agent.core.ContextId
 
 /**
- * Takes a fresh snapshot of what a live graph actually holds, so a [DeclaredObservedDiffer] can
- * compare it against what was declared.
+ * Takes a fresh snapshot of what a live graph holds, so a [DeclaredObservedDiffer] can compare it
+ * against what was declared.
  *
- * This is the storage-side SPI of the pair: [DeclaredSchemaSource] is where an application says
- * what it governs, and this is where a backend says what is really there. The module has no graph
- * driver dependency and can't implement it — a storage layer (Neo4j via Drivine, or anything else)
- * provides the real implementation by querying its live database for distinct labels and
- * relationship types. Tests supply a canned [ObservedSchema] instead and never touch a database.
+ * This is the storage-side SPI of a pair: [DeclaredSchemaSource] is where an application says what
+ * it governs, and this is where a backend says what is there. This module has no graph driver
+ * dependency, so a storage layer (Neo4j via Drivine, or anything else) provides the implementation
+ * by querying its live database for distinct labels and relationship types. Tests supply a canned
+ * [ObservedSchema] and never touch a database.
  *
- * An ordinary interface, not a `fun interface`: it carries two entry points — the scoped [observe]
- * an implementation provides, and the no-argument [observe] convenience it gets for free — and a
- * SAM lambda can only ever supply the first. The no-argument form is a real method with a body
- * rather than a Kotlin default argument so Java callers can write `observe()` too; Java cannot see
- * a Kotlin default argument. It is also all Java gets: `ContextId` is a Kotlin value class, so the
+ * An ordinary interface rather than a `fun interface`, because it carries two entry points: the
+ * scoped [observe] an implementation provides, and the no-argument [observe] convenience it gets for
+ * free. A SAM lambda can only supply the first. The no-argument form is a real method with a body
+ * rather than a Kotlin default argument so Java callers can write `observe()`; Java cannot see a
+ * Kotlin default argument. It is also all Java gets: `ContextId` is a Kotlin value class, so the
  * scoped form compiles to a mangled JVM name Java can't call.
  */
 interface ObservedSchemaSource {
@@ -39,8 +39,8 @@ interface ObservedSchemaSource {
     /**
      * @param contextId `null` snapshots the whole graph. Non-null scopes the snapshot to that one
      *   context: only that context's own data is consulted. What "scoped" means concretely is up
-     *   to the implementation — a graph-backed one typically walks the context's own nodes, and
-     *   may return an empty relationship-type set when it can only reach node labels that way.
+     *   to the implementation. A graph-backed one typically walks the context's own nodes, and may
+     *   return an empty relationship-type set when it can only reach node labels that way.
      * @return a fresh [ObservedSchema] snapshot, captured at call time.
      */
     fun observe(contextId: ContextId?): ObservedSchema

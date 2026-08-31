@@ -18,31 +18,30 @@ package com.embabel.dice.metamodel
 import java.util.Objects
 
 /**
- * Copy into a collection nothing can change afterwards — not even a Java caller mutating what a
- * getter handed back, or the builder still holding the original.
+ * Copy into a set that nothing can change afterwards, including a Java caller mutating what a
+ * getter returned and a builder that still holds the original.
  *
- * `java.util.Set.copyOf` would also be genuinely immutable, but its iteration order is deliberately
- * randomised, and these results are sorted on the way out so a diff reads and logs the same way
- * every run. Wrapping a fresh `LinkedHashSet` keeps that order and is just as unmodifiable: the
- * mutable copy inside never escapes.
+ * `java.util.Set.copyOf` is immutable too, but it randomises iteration order. Results here are
+ * sorted on the way out so a diff reads and logs the same way every run, so this wraps a fresh
+ * `LinkedHashSet`, which keeps that order and is equally unmodifiable: the mutable copy inside
+ * never escapes.
  */
 private fun <T> immutableCopy(values: Set<T>): Set<T> =
     java.util.Collections.unmodifiableSet(LinkedHashSet(values))
 
-/** The list equivalent: a genuinely immutable copy that keeps its order. */
+/** Same for lists: an immutable copy that keeps its order. */
 private fun <T> immutableCopy(values: List<T>): List<T> = java.util.List.copyOf(values)
 
 /**
  * One structural change between two metamodel versions.
  *
- * Sealed, so a caller can handle every change kind in a `when` and have the compiler tell them when
- * a new kind arrives. That matters more than usual here: the next slice decides which changes are
- * lossy enough to quarantine data over, and a change kind nobody noticed would quietly be treated
- * as harmless.
+ * Sealed, so a caller can handle every change kind in a `when` and the compiler flags them when a
+ * new kind arrives. The next slice decides which changes are lossy enough to quarantine data over,
+ * where an unhandled change kind would be treated as harmless.
  *
  * The kinds don't overlap. A given difference is reported exactly once, by whichever kind describes
- * it most precisely — a property that keeps its name but changes shape is a
- * [PropertySignatureChanged], never an add plus a remove.
+ * it most precisely: a property that keeps its name and changes shape is a
+ * [PropertySignatureChanged].
  */
 sealed interface MetamodelChange {
 
@@ -54,8 +53,8 @@ sealed interface MetamodelChange {
     data class EntityTypeAdded(val typeName: String) : MetamodelChange
 
     /**
-     * An entity type present in the older schema but gone from the newer one. Propositions whose
-     * entity mentions reference it are the obvious quarantine candidates later.
+     * An entity type present in the older schema and gone from the newer one. Propositions whose
+     * entity mentions reference it are the quarantine candidates in a later slice.
      *
      * @property typeName The name of the removed entity type.
      */
@@ -67,15 +66,13 @@ sealed interface MetamodelChange {
      *
      * Properties are matched by **name**. A property that appears or disappears lands here, with
      * its full signature so a reader can see what was gained or lost. A property whose name
-     * survives but whose shape moved is a [PropertySignatureChanged] instead — it isn't a removal
-     * and an addition, and reporting it as one would lose the before/after pairing that makes the
-     * change readable.
+     * survives while its shape moves is a [PropertySignatureChanged], which pairs the before and
+     * after signatures in one entry.
      *
      * The one exception is a type that declares the same property name more than once with
      * different signatures, which a `DataDictionary` permits when two same-named domain types are
-     * merged into one stamp. There is no single before and after to pair up, so the differing
-     * signatures are reported here as added and removed instead. Rare, and better than inventing a
-     * pairing.
+     * merged into one stamp. There is no single before and after to pair up then, so the differing
+     * signatures are reported here as added and removed.
      *
      * @property typeName The entity type name (unchanged).
      * @property addedLabels Labels present in the new version but not the old.
@@ -128,14 +125,14 @@ sealed interface MetamodelChange {
      * value type narrowed or widened, its cardinality moved, or it turned from a plain value into a
      * reference to another type (or back).
      *
-     * This is the change the name-only taxonomy used to miss entirely. Turning `age` from a string
-     * into an integer, or a single `worksAt` into a list of them, is a real change to what the
-     * graph can hold, and data extracted under the old shape may no longer fit the new one — but
-     * with only names on both sides, nothing moved and nothing was reported.
+     * Matching properties by name alone misses this case. Turning `age` from a string into an
+     * integer, or a single `worksAt` into a list of them, changes what the graph can hold, and data
+     * extracted under the old shape may no longer fit the new one, while both versions still have a
+     * property called `age`.
      *
-     * Whether a particular move is *lossy* is deliberately not decided here. A diff states what
-     * changed; deciding that string→integer strands existing values while integer→string doesn't is
-     * a policy question, and it belongs to the quarantine slice that comes next.
+     * Whether a move is *lossy* is decided elsewhere. A diff states what changed; deciding that
+     * string→integer strands existing values while integer→string doesn't is a policy question for
+     * the quarantine slice.
      *
      * @property typeName The entity type carrying the property.
      * @property propertyName The property name, the same on both sides.
@@ -187,13 +184,13 @@ sealed interface MetamodelChange {
 /**
  * What changed between two declared [MetamodelVersion]s.
  *
- * Both sides are declarations — two things somebody decided — so the comparison is symmetric and
- * every difference is a change. Comparing a declaration against a live graph is a different
- * question with a different answer shape; that's [DeclaredObservedDiff].
+ * Both sides are declarations, so the comparison is symmetric and every difference is a change.
+ * Comparing a declaration against a live graph has a different answer shape; that is
+ * [DeclaredObservedDiff].
  *
- * A diff is **empty** when the two schemas are structurally equivalent. That is exactly the
- * condition [MetamodelVersion.hasSameContentAs] reports, and the two agree by construction: the
- * differ walks the same fields the content hash is built from.
+ * A diff is **empty** when the two schemas are structurally equivalent, the same condition
+ * [MetamodelVersion.hasSameContentAs] reports. The two agree by construction: the differ walks the
+ * same fields the content hash is built from.
  *
  * @property fromVersion The baseline (older) version.
  * @property toVersion The target (newer) version.
@@ -207,18 +204,18 @@ class MetamodelDiff(
 ) {
 
     /**
-     * Copied into a genuinely immutable list. A diff is a result, and results don't change: a Java
-     * caller doing `getChanges().clear()`, or the differ still holding the builder list, must not be
-     * able to reshape one after the fact. Kotlin's `List` is a compile-time promise only, so this
-     * has to refuse at runtime. Plain class rather than a `data class` for the same reason — a
-     * generated `copy()` would hand its argument straight to the field and skip the copying.
+     * Copied into an immutable list, so a Java caller calling `getChanges().clear()`, or the differ
+     * still holding its builder list, cannot reshape a finished diff. Kotlin's `List` is a
+     * compile-time promise only, so the refusal has to happen at runtime. This is a plain class for
+     * the same reason: a generated `data class` `copy()` would hand its argument straight to the
+     * field and skip the copying.
      */
     val changes: List<MetamodelChange> = immutableCopy(changes)
 
     /** `true` when nothing changed. */
     val isEmpty: Boolean get() = changes.isEmpty()
 
-    /** Names from every [MetamodelChange.EntityTypeRemoved] — the quarantine candidates. */
+    /** Names from every [MetamodelChange.EntityTypeRemoved]: the quarantine candidates. */
     val removedEntityTypes: Set<String>
         get() = changes
             .filterIsInstance<MetamodelChange.EntityTypeRemoved>()
@@ -239,10 +236,10 @@ class MetamodelDiff(
         get() = changes.filterIsInstance<MetamodelChange.PropertySignatureChanged>()
 
     /**
-     * Every entity type this diff says something about — added, removed, modified, or holding a
+     * Every entity type this diff says something about: added, removed, modified, or holding a
      * property whose signature moved. A reshaped type shows up in both [modifiedEntityTypes] and
-     * [propertySignatureChanges], so answering "did anything about `Person` change?" otherwise
-     * means checking several lists and forgetting one.
+     * [propertySignatureChanges], so answering "did anything about `Person` change?" from those
+     * lists means checking each one in turn.
      */
     val touchedEntityTypes: Set<String>
         get() = changes.mapNotNullTo(mutableSetOf()) { change ->
@@ -272,35 +269,33 @@ class MetamodelDiff(
 /**
  * What a declared schema and a live graph disagree about.
  *
- * A different question from [MetamodelDiff], which compares two declarations to each other. Here
- * one side is what was decided and the other is a snapshot of reality, and the two can legitimately
- * disagree in either direction — so the result isn't a symmetric change list, it's two clearly
- * separated buckets:
+ * [MetamodelDiff] compares two declarations to each other. Here one side is what was declared and
+ * the other is a snapshot of reality, and the two can legitimately disagree in either direction, so
+ * the result is two separate buckets rather than a symmetric change list:
  *
  * - **Drift** ([driftedEntityTypes] / [driftedRelationshipTypes]): observed in the graph, never
- *   declared. This is the actionable case. Concretely it means data is sitting in the graph whose
- *   declaring integration has since been removed, or never registered one, so nothing here can tell
- *   that data apart as valid or explain its shape.
- * - **Unobserved** ([unobservedEntityTypes] / [unobservedRelationshipTypes]): declared, but with
- *   zero instances in the graph right now. Purely informational — a declared type with no data yet
- *   is a completely normal state, not drift.
+ *   declared. This is the actionable case: data is sitting in the graph whose declaring integration
+ *   has since been removed, or never registered one, so nothing here can confirm that data as valid
+ *   or explain its shape.
+ * - **Unobserved** ([unobservedEntityTypes] / [unobservedRelationshipTypes]): declared, with zero
+ *   instances in the graph right now. Informational; a declared type with no data yet is a normal
+ *   state.
  *
- * **Names only, both ways.** The declaration knows each property's kind, type and cardinality; the
- * graph doesn't, and can't be asked. So this comparison stops at type and relationship names, and
- * says nothing about whether a declared property's shape matches what the graph stores. Pretending
- * otherwise would mean sampling nodes and calling the sample a schema. Property signatures are
- * compared where both sides genuinely have them: declared against declared, in [MetamodelDiff].
+ * **Names only, both ways.** The declaration knows each property's kind, type and cardinality. The
+ * graph doesn't, and can't be asked, so anything richer than a name would be a sample of the data
+ * rather than the schema. This comparison stops at type and relationship names and says nothing
+ * about whether a declared property's shape matches what the graph stores. Property signatures are
+ * compared where both sides have them: declared against declared, in [MetamodelDiff].
  *
- * **A declared label counts as declared.** What a graph reports is labels, and a type usually
- * carries more than one: declaring `Person` with parent `Agent` puts both labels on every `Person`
- * node. So the declared side of the drift comparison is every entity type name *plus* every label
- * those types declare — otherwise an inherited label would be reported as undeclared drift on a
- * schema nobody had changed. Going the other way, [unobservedEntityTypes] stays on the type names
- * alone: "declared but with no data" is a statement about types, and listing a parent label as an
- * unobserved type would be noise about something that was never a type in its own right.
+ * **A declared label counts as declared.** A graph reports labels, and a type usually carries more
+ * than one: declaring `Person` with parent `Agent` puts both labels on every `Person` node. So the
+ * declared side of the drift comparison is every entity type name *plus* every label those types
+ * declare. Without the labels, an inherited label would be reported as undeclared drift on a schema
+ * nobody had changed. [unobservedEntityTypes] stays on the type names alone, because "declared but
+ * with no data" is a statement about types, and a parent label was never a type in its own right.
  *
  * @property declared The schema as declared at snapshot time, stamp and bare relationship names.
- * @property observedSchema What the live graph actually held at snapshot time.
+ * @property observedSchema What the live graph held at snapshot time.
  * @property driftedEntityTypes Observed labels matching neither a declared type name nor a declared
  *   label.
  * @property driftedRelationshipTypes Relationship type names observed with no matching declaration.
@@ -316,9 +311,9 @@ class DeclaredObservedDiff(
     unobservedRelationshipTypes: Set<String>,
 ) {
 
-    // Copied into genuinely immutable sets, and a plain class rather than a `data class`, for the
-    // same reason as MetamodelDiff: a result must not be reshapeable after the fact, and a
-    // generated copy() would hand its arguments straight to the fields and skip the copying.
+    // Copied into immutable sets, and a plain class rather than a `data class`, for the same reason
+    // as MetamodelDiff: a finished result must not be reshapeable, and a generated copy() would hand
+    // its arguments straight to the fields and skip the copying.
 
     val driftedEntityTypes: Set<String> = immutableCopy(driftedEntityTypes)
 
@@ -328,7 +323,7 @@ class DeclaredObservedDiff(
 
     val unobservedRelationshipTypes: Set<String> = immutableCopy(unobservedRelationshipTypes)
 
-    /** The stamp inside [declared] — its hash is what a drift report would record. */
+    /** The stamp inside [declared]; its hash is what a drift report would record. */
     val declaredVersion: MetamodelVersion get() = declared.version
 
     /** `true` when the graph holds any type or relationship that was never declared. */
