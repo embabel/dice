@@ -47,8 +47,13 @@ import com.embabel.dice.proposition.extraction.ExtractionRunRef
  * it to whatever it means. `null` (the default) is the whole of the existing behaviour.
  * Independent of [perspective], [schema] and [contextId]: setting one never constrains another.
  * @param currentRun optional reference to the extraction run this analysis belongs to.
- * EXPERIMENTAL. Identity only — DICE #67 brings the durable run this reference will key.
- * `null` (the default) means the analysis is attributed to no run, which is every caller today.
+ * EXPERIMENTAL, and unlike [profile] this one is read. An analysis carrying a run has its
+ * structural wiring, graph projection and grounding run over the propositions the repository
+ * returned rather than the ones extraction minted — the two differ whenever the backend
+ * deduplicates, and the returned ones are what is actually stored — and, where the host configured
+ * a `PropositionRunLinkStore`, each stored proposition is attributed to this run.
+ * `null` (the default) means the analysis is attributed to no run and behaves exactly as it did
+ * before extraction runs existed.
  * @param mintNewEntities whether a mention the resolver could NOT match to an existing entity may
  * be persisted as a NEW entity node. Default FALSE: unresolved mentions stay unresolved (the
  * proposition is still persisted; its mention simply carries no resolvedId), so extraction never
@@ -175,7 +180,12 @@ data class SourceAnalysisContext @JvmOverloads constructor(
 
     /**
      * Returns a copy that says this analysis belongs to the given extraction run. EXPERIMENTAL.
-     * Changes no other field and no extraction behaviour — see [currentRun].
+     *
+     * Changes no other field, but — unlike [withProfile] — it does change what the analysis writes.
+     * An analysis carrying a run wires structural relationships, graph projection and grounding
+     * against the propositions the repository returned rather than the ones extraction minted, and
+     * attributes each stored proposition to the run where a `PropositionRunLinkStore` is
+     * configured. See [currentRun].
      */
     fun withCurrentRun(currentRun: ExtractionRunRef): SourceAnalysisContext =
         copy(currentRun = currentRun)

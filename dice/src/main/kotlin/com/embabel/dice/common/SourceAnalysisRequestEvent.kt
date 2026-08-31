@@ -66,7 +66,13 @@ abstract class SourceAnalysisRequestEvent(
 
     /**
      * The extraction run this event's analysis belongs to, when the publisher is running one.
-     * EXPERIMENTAL. Identity only — nothing is stored under it until DICE #67 lands.
+     *
+     * EXPERIMENTAL, and returning one is not free the way [profile] is. The async path goes through
+     * the same `buildContext` call `rememberText` does, so an event carrying a run gets the same
+     * treatment: structural wiring, graph projection and grounding run over the propositions the
+     * repository returned instead of the ones extraction minted, and each stored proposition is
+     * attributed to the run where the host configured a `PropositionRunLinkStore`. Returning null —
+     * the default — leaves the analysis attributed to no run and behaves as it always did.
      */
     open fun currentRun(): ExtractionRunRef? = null
 }

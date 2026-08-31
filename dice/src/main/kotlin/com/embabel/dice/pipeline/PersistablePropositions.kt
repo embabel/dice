@@ -21,6 +21,7 @@ import com.embabel.agent.rag.service.RelationshipData
 import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.dice.common.EntityExtractionResult
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionPersistenceResult
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.RelationshipTypes
 
@@ -78,6 +79,102 @@ interface PersistablePropositions : EntityExtractionResult, PropositionExtractio
 
         // Create structural relationships
         createStructuralRelationships(propsToSave, namedEntityDataRepository)
+    }
+
+    /**
+     * Persist the same things [persist] does, and report which stored proposition each extracted
+     * one landed on.
+     *
+     * The difference that matters is one line: structural relationships are wired against the
+     * propositions the repository returned, not the ones extraction minted. On a deduplicating
+     * backend those are not the same. `DrivinePropositionRepository` collapses a fresh insert onto
+     * an existing proposition with identical `(contextId, text)` and returns that one, so a
+     * `HAS_PROPOSITION` or `MENTIONS` edge written against the minted id points at a node that was
+     * never stored. Here it points at the node that was.
+     *
+     * [persist] is left exactly as it was. This is a second entry point rather than a fix applied
+     * in place, because changing what [persist] wires would change behaviour for every existing
+     * caller — including hosts that never asked for extraction runs.
+     *
+     * Entity persistence, the referenced-entity filter, and which propositions get saved are all
+     * identical to [persist].
+     *
+     * @param propositionRepository Where propositions go.
+     * @param namedEntityDataRepository Where entities go, and what writes the structural edges.
+     * @return The stored proposition for each one persisted, and the input-id to stored-id mapping.
+     */
+    fun persistReturningCanonical(
+        propositionRepository: PropositionRepository,
+        namedEntityDataRepository: NamedEntityDataRepository,
+    ): PropositionPersistenceResult {
+        val persisted = persistCanonicalPropositions(propositionRepository, namedEntityDataRepository)
+        wireStructuralRelationships(persisted, namedEntityDataRepository)
+        return persisted
+    }
+
+    /**
+     * The first half of [persistReturningCanonical]: entities and propositions are saved, and
+     * nothing else happens. Saved means committed only when no transaction wraps the call; inside
+     * an ambient transaction the claims land with the caller's commit, not here.
+     *
+     * **Split out so a caller can act on saved claims before anything fallible runs.** Structural
+     * wiring goes through `mergeRelationship`, which can throw, and while it lived inside the same
+     * call the propositions were already stored by the time it failed — but a caller could not do
+     * anything about that until the call returned, which it never did. Extraction-run lineage is the
+     * caller that has to: attribution is a statement about claims that exist, and a failing edge
+     * write must not be able to strand a stored claim with no record of the run that produced it.
+     *
+     * A caller that has no such ordering requirement should use [persistReturningCanonical], which
+     * is this followed by [wireStructuralRelationships] and is what it always was.
+     *
+     * @param propositionRepository Where propositions go.
+     * @param namedEntityDataRepository Where entities go.
+     * @return The stored proposition for each one persisted, and the input-id to stored-id mapping.
+     */
+    fun persistCanonicalPropositions(
+        propositionRepository: PropositionRepository,
+        namedEntityDataRepository: NamedEntityDataRepository,
+    ): PropositionPersistenceResult {
+        val propsToSave = propositionsToPersist()
+
+        // Only persist entities that are actually referenced by propositions being saved
+        val referencedEntityIds = propsToSave
+            .flatMap { it.mentions }
+            .mapNotNull { it.resolvedId }
+            .toSet()
+
+        newEntities()
+            .filter { it.id in referencedEntityIds }
+            .forEach { entity ->
+                namedEntityDataRepository.save(entity)
+            }
+        updatedEntities()
+            .filter { it.id in referencedEntityIds }
+            .forEach { entity ->
+                namedEntityDataRepository.update(entity)
+            }
+
+        return propositionRepository.saveAllReturningCanonical(propsToSave)
+    }
+
+    /**
+     * The second half of [persistReturningCanonical]: the chunk, proposition and entity edges, wired
+     * against the propositions the repository returned so every edge lands on a node the store
+     * actually holds.
+     *
+     * @param persisted What [persistCanonicalPropositions] returned.
+     * @param namedEntityDataRepository What writes the edges.
+     */
+    fun wireStructuralRelationships(
+        persisted: PropositionPersistenceResult,
+        namedEntityDataRepository: NamedEntityDataRepository,
+    ) {
+        // The distinct view: two inputs that deduplicated onto one proposition are one
+        // proposition, and issuing the same merge twice is duplicate work, not a second edge.
+        createStructuralRelationships(
+            persisted.distinctCanonicalPropositions,
+            namedEntityDataRepository,
+        )
     }
 
     companion object {

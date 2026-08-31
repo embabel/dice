@@ -33,12 +33,14 @@ import com.embabel.dice.incremental.proposition.PropositionIncrementalAnalyzer
 import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.projection.graph.GraphProjectionService
+import com.embabel.dice.proposition.PropositionPersistenceResult
 import com.embabel.dice.proposition.PropositionRepository
 import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Async
 import java.io.InputStream
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
 import java.util.function.Function
@@ -117,6 +119,65 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      */
     private val mintedEntityPropertiesProvider: (NamedEntity) -> Map<String, Any> = { _ -> emptyMap() },
 ) {
+
+    /**
+     * Where `(proposition, run)` links go, once a host has bound one with [withRunLineage].
+     *
+     * Volatile because it is written on whatever thread builds the extractor and read on the async
+     * extraction threads. It is written exactly once — [runLineageBound] enforces that — so a
+     * reader sees either the initial null or the bound store, never a value that later changes
+     * underneath it.
+     */
+    @Volatile
+    private var propositionRunLinkStore: PropositionRunLinkStore? = null
+
+    /** Whether [withRunLineage] has been called. Binding is one-time; see there for why. */
+    private val runLineageBound = AtomicBoolean(false)
+
+    /**
+     * Binds the store that records which extraction run produced which claims, and returns this
+     * extractor so a bean method can do it in one expression.
+     *
+     * ```kotlin
+     * IncrementalPropositionExtraction(pipeline, ..., properties).withRunLineage(linkStore)
+     * ```
+     *
+     * **Why this is a method and not a constructor parameter.** Kotlin compiles a constructor with
+     * default arguments into a single synthetic
+     * `<init>(...every parameter..., int mask, DefaultConstructorMarker)`, and that is what a
+     * precompiled Kotlin caller links against whenever it omits any argument. Appending a parameter
+     * rewrites that descriptor, so every such caller would fail with `NoSuchMethodError` — and
+     * `@JvmOverloads` does not save them, because it republishes the Java overloads that Kotlin
+     * callers using defaults never touch. Adding a method adds API; appending a defaulted parameter
+     * moves one. `RunLineageBinaryCompatibilityTest` pins the descriptor.
+     *
+     * **Binding is one-time, and a second call is rejected.** The field is read when an analysis
+     * records lineage, not when it starts, so a later call would redirect or silently erase the
+     * audit record of an extraction already in flight — the failure would be a missing or misfiled
+     * lineage row long after the call that caused it. An audit surface should not be swappable at a
+     * distance. Passing null is a binding like any other: it is how a host says "record none", and
+     * it cannot later be upgraded, or "bound once" would depend on which value was passed.
+     *
+     * Bind before the extractor starts handling events.
+     *
+     * Lineage is only ever consulted for an analysis that carries a
+     * [SourceAnalysisContext.currentRun]; without a run this store is never touched. EXPERIMENTAL.
+     *
+     * @param propositionRunLinkStore The lineage store, or null to record no lineage.
+     * @return this extractor.
+     * @throws IllegalStateException if lineage has already been bound.
+     */
+    open fun withRunLineage(
+        propositionRunLinkStore: PropositionRunLinkStore?,
+    ): IncrementalPropositionExtraction {
+        check(runLineageBound.compareAndSet(false, true)) {
+            "run lineage is already bound on this extractor; it binds once, before the extractor " +
+                "starts handling events, so an analysis in flight cannot have its audit record " +
+                "redirected or erased"
+        }
+        this.propositionRunLinkStore = propositionRunLinkStore
+        return this
+    }
     private val analyzer: IncrementalAnalyzer<Message, ChunkPropositionResult> =
         PropositionIncrementalAnalyzer(
             propositionPipeline,
@@ -309,7 +370,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
 
         if (result != null && result.propositions.isNotEmpty()) {
             logger.info(result.infoString(true, 1))
-            persistAndProject(result)
+            persistAndProject(result, context)
             logAllPropositions(contextIdProvider.apply(user))
             logger.info("Remembered source: {}", sourceId)
         } else {
@@ -377,7 +438,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             }
 
             logger.info(result.infoString(true, 1))
-            persistAndProject(result)
+            persistAndProject(result, context)
             logAllPropositions(contextIdProvider.apply(event.user))
         } catch (e: Exception) {
             logger.warn("Failed to extract propositions", e)
@@ -455,15 +516,39 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         // context and the request always agree about a call.
         request.sourceLocator?.let { ctx = ctx.withSourceLocator(it) }
         request.sourceRevision?.let { ctx = ctx.withSourceRevision(it) }
-        // Carried, never consulted. Nothing downstream of here reads either one — that is what
-        // "DICE holds profile identity and the host binds policy" means in code, and the run
-        // reference is identity only until the run store lands.
+        // The profile is carried and never consulted. Nothing downstream of here reads it — that is
+        // what "DICE holds profile identity and the host binds policy" means in code.
         request.profile?.let { ctx = ctx.withProfile(it) }
+        // The run is read in exactly one place: persistAndProject writes a lineage link for it. It
+        // changes nothing else about what gets stored. See persistAndProject.
         request.currentRun?.let { ctx = ctx.withCurrentRun(it) }
         return ctx
     }
 
-    private fun persistAndProject(result: ChunkPropositionResult) {
+    /**
+     * Persists what an analysis produced, then projects and grounds it.
+     *
+     * **Which propositions the three wiring passes run over depends on whether the analysis carries
+     * a run.** Both answers are defensible and only one is compatible.
+     *
+     * With a run ([SourceAnalysisContext.currentRun] non-null), everything downstream of the save
+     * runs over the propositions the repository returned. That is the correct set: a deduplicating
+     * backend answers a fresh insert with the proposition that already exists, and an edge, a
+     * projection or a grounding link written against the id extraction minted points at a node that
+     * was never stored. The lineage links go on those same canonical ids, and they are written
+     * directly behind the save rather than at the end, so a projector that throws cannot leave them
+     * unattributed. How durable the claims are at that point depends on the caller: with no ambient
+     * transaction the save has committed, and with one they are still the caller's to commit or roll
+     * back. See [recordRunLineage].
+     *
+     * With no run, the pre-save propositions are used, exactly as before — same call, same
+     * arguments, same order. That path is wrong in the same way it has always been wrong, and this
+     * slice does not change it, because a host that never asked for extraction runs should not have
+     * its graph start being written differently. The switch is the run, not the presence of a link
+     * store: an analysis that carries a run gets the canonical path whether or not lineage is being
+     * recorded.
+     */
+    private fun persistAndProject(result: ChunkPropositionResult, context: SourceAnalysisContext) {
         val propsToSave = result.propositionsToPersist()
         val referencedEntityIds = propsToSave
             .flatMap { it.mentions }
@@ -482,7 +567,38 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             logger.info("Updated entity: name='{}', labels={}", entity.name, entity.labels())
         }
 
-        result.persist(propositionRepository, entityRepository)
+        val currentRun = context.currentRun
+        val persisted = if (currentRun == null) {
+            // The legacy path, byte-identical: one call that saves and wires structurally, exactly
+            // as it always did.
+            result.persist(propositionRepository, entityRepository)
+            null
+        } else {
+            // Saving only. Structural wiring is deliberately left until after lineage below.
+            result.persistCanonicalPropositions(propositionRepository, entityRepository)
+        }
+        // The distinct view, not the positional one. Inputs that deduplicated together are one
+        // stored proposition, and projecting or grounding it once per input inflates the records
+        // written about that work even though the edges themselves are idempotent.
+        val toWire = persisted?.distinctCanonicalPropositions ?: propsToSave
+
+        // Lineage goes here: the propositions are saved and *nothing fallible has run yet*.
+        //
+        // Attribution is a statement about claims that exist, not a reward for the rest of the
+        // pipeline succeeding. Every pass below this line can throw — structural wiring through
+        // mergeRelationship, projection, grounding — and any of them throwing used to leave stored
+        // claims with no record of the run that produced them. That is the one outcome the relation
+        // exists to prevent, and it would arrive exactly when something has already gone wrong and
+        // the audit matters most.
+        if (currentRun != null && persisted != null) {
+            recordRunLineage(context, currentRun, persisted)
+        }
+
+        // The structural edges the run-present path held back, now that lineage is recorded.
+        if (persisted != null) {
+            result.wireStructuralRelationships(persisted, entityRepository)
+        }
+
         if (newProps > 0 || updatedProps > 0 || newEntitiesToSave > 0) {
             logger.info(
                 "Persisted: {} new propositions, {} updated propositions, {} new entities",
@@ -492,7 +608,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             logger.info("No new data to persist (all propositions were duplicates)")
         }
 
-        val projectionResult = graphProjectionService.projectAndPersist(propsToSave)
+        val projectionResult = graphProjectionService.projectAndPersist(toWire)
         val persistenceResult = projectionResult.second
         if (persistenceResult.persistedCount > 0) {
             logger.info(
@@ -505,7 +621,49 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         // `(:Proposition)-[:GROUNDED_IN]->(:<entity>)` edges when the
         // ids resolve to stored entities. No-op when no wiring service
         // was supplied (default for backward compatibility).
-        groundingWiringService?.wire(propsToSave)
+        groundingWiringService?.wire(toWire)
+    }
+
+    /**
+     * Attributes the canonical propositions to the run that produced them.
+     *
+     * Best-effort by design. Lineage is an audit record written after the claims are already
+     * saved, so failing to write it must not fail the extraction that produced them. The failure is
+     * logged with the run it was for; a missing link surfaces as a gap in the audit, which is a
+     * truthful gap, where a thrown exception here would surface as an extraction that appears to
+     * have produced nothing.
+     *
+     * **How much that protects depends on who owns the transaction.** With no ambient transaction —
+     * the shape every entry point takes unless a host wraps it — the propositions committed as they
+     * were saved, so swallowing the failure really does leave them standing. Inside a host's
+     * `@Transactional`, nothing has committed yet: the claims, the lineage and everything the passes
+     * below write share that transaction's fate, so a later failure still rolls all of it back and
+     * this catch only stops lineage from being the cause. And a lineage failure that came from the
+     * database rather than from the store's own checks has already terminated that transaction,
+     * which no catch can undo. DICE #67 slice 10 closes both by committing claims before recording
+     * lineage.
+     */
+    private fun recordRunLineage(
+        context: SourceAnalysisContext,
+        currentRun: ExtractionRunRef,
+        persisted: PropositionPersistenceResult,
+    ) {
+        val linkStore = propositionRunLinkStore ?: return
+        if (persisted.canonicalIds.isEmpty()) return
+        val key = ExtractionRunKey(context.contextId, currentRun)
+        try {
+            val linked = linkStore.link(key, persisted.canonicalIds)
+            logger.info("Attributed {} propositions to extraction run {}", linked, currentRun.runId)
+        } catch (e: RuntimeException) {
+            // The exception goes to the logger, not just its message. A scope rejection here means
+            // this analysis's context disagrees with the tenant its own propositions were saved
+            // under, which is a pipeline bug rather than an infrastructure blip, and the class and
+            // stack are what say which.
+            logger.warn(
+                "Could not attribute propositions to extraction run {}",
+                currentRun.runId, e,
+            )
+        }
     }
 
     private fun logAllPropositions(contextId: String) {
