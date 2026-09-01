@@ -23,6 +23,7 @@ import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.ProvenanceScanningSourceRevisionQueries
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
@@ -45,7 +46,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class InMemoryPropositionRepository(
     private val embeddingService: EmbeddingService? = null,
-) : PropositionRepository {
+) : PropositionRepository, ProvenanceScanningSourceRevisionQueries {
 
     private val logger = LoggerFactory.getLogger(InMemoryPropositionRepository::class.java)
 

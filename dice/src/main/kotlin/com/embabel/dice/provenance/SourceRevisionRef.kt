@@ -18,6 +18,9 @@ package com.embabel.dice.provenance
 /**
  * Identifies an opaque revision of a source.
  *
+ * Both halves are checked against [SourceIdentityBounds] on construction, so a value too long to
+ * store or index is refused here, before it can reach a query or a write.
+ *
  * @property sourceKey Canonical source identity produced by [SourceLocator.key]
  * @property sourceRevision Provider-defined opaque revision value
  */
@@ -29,5 +32,7 @@ data class SourceRevisionRef(
     init {
         require(sourceKey.isNotBlank()) { "sourceKey must not be blank" }
         require(sourceRevision.isNotBlank()) { "sourceRevision must not be blank" }
+        SourceIdentityBounds.requireSourceKeyWithinBounds(sourceKey)
+        SourceIdentityBounds.requireSourceRevisionWithinBounds(sourceRevision)
     }
 }

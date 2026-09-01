@@ -18,7 +18,7 @@ package com.embabel.dice.proposition.store
 import com.embabel.agent.core.ContextId
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.proposition.Proposition
-import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.SourceRevisionQueryCapable
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.SourceRevisionRef
 import com.embabel.dice.provenance.UriLocator
@@ -104,8 +104,16 @@ internal class PortableSourceQueryFixture {
         )
 }
 
+/**
+ * The portable behaviour every source-revision backend owes, run against one seeded store.
+ *
+ * The parameter type is the whole point of the capability split. This call site needs
+ * [SourceRevisionQueryCapable]; a store that only implements
+ * [com.embabel.dice.proposition.PropositionRepository] will not compile here, so nobody can reach
+ * these finders on a backend that never promised to answer them.
+ */
 internal fun assertPortableSourceQueries(
-    repository: PropositionRepository,
+    repository: SourceRevisionQueryCapable,
     fixture: PortableSourceQueryFixture,
 ) {
     val allSourceVersions = repository.findBySourceKey(

@@ -22,8 +22,6 @@ import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.util.loggerFor
 import com.embabel.dice.provenance.ProvenanceEntry
-import com.embabel.dice.provenance.SourceLocator
-import com.embabel.dice.provenance.SourceRevisionRef
 
 /**
  * The full proposition repository: combines the base persistence port with every opt-in
@@ -75,81 +73,6 @@ interface PropositionRepository :
      * delegates to the lean [findAll] — fine for backends that always carry provenance (e.g. in-memory).
      */
     fun findAll(withProvenance: Boolean): List<Proposition> = findAll()
-
-    // ========================================================================
-    // Source provenance queries
-    //
-    // Each finder is a pair: a typed entry point taking a ContextId, and a plain-String variant that
-    // holds the default body. The typed one forwards to the String one, matching
-    // findByContextId -> findByContextIdValue in PropositionStore. Overrides belong on the String
-    // variant, because ContextId is a value class: the typed method's JVM name is mangled and a Java
-    // backend cannot override it, so an override placed there would be invisible to Java callers.
-    // The String variant has an ordinary JVM signature and sits on the path of every typed call.
-    //
-    // The default bodies read the context and filter loaded provenance in memory, which is correct
-    // for any backend whose context read carries provenance. A backend whose context read is lean
-    // MUST override all three, or its callers get empty results; dice-storage's
-    // DrivinePropositionRepository does, pushing each predicate into Cypher.
-    // ========================================================================
-
-    /**
-     * Find propositions in [contextId] with evidence from any revision of [sourceKey].
-     *
-     * Both revisioned and revisionless evidence matches when its locator key equals [sourceKey].
-     */
-    fun findBySourceKey(contextId: ContextId, sourceKey: String): List<Proposition> =
-        findBySourceKey(contextId.value, sourceKey)
-
-    /**
-     * [findBySourceKey] by plain context-id string — the override point, and what Java callers use.
-     */
-    fun findBySourceKey(contextIdValue: String, sourceKey: String): List<Proposition> =
-        findByContextId(ContextId(contextIdValue)).filter { proposition ->
-            proposition.provenanceEntries.any { it.locator.key() == sourceKey }
-        }
-
-    /**
-     * Find propositions in [contextId] with evidence from exactly [ref]'s source key and revision.
-     */
-    fun findBySourceRevision(contextId: ContextId, ref: SourceRevisionRef): List<Proposition> =
-        findBySourceRevision(contextId.value, ref)
-
-    /**
-     * [findBySourceRevision] by plain context-id string — the override point, and what Java callers
-     * use.
-     */
-    fun findBySourceRevision(contextIdValue: String, ref: SourceRevisionRef): List<Proposition> =
-        findByContextId(ContextId(contextIdValue)).filter { proposition ->
-            proposition.provenanceEntries.any {
-                it.locator.key() == ref.sourceKey && it.sourceRevision == ref.sourceRevision
-            }
-        }
-
-    /**
-     * Find propositions in [contextId] with revisionless evidence whose locator key equals
-     * [locator]'s key.
-     *
-     * Evidence carrying any revision does not match.
-     */
-    fun findRevisionlessBySourceLocator(
-        contextId: ContextId,
-        locator: SourceLocator,
-    ): List<Proposition> =
-        findRevisionlessBySourceLocator(contextId.value, locator)
-
-    /**
-     * [findRevisionlessBySourceLocator] by plain context-id string — the override point, and what
-     * Java callers use.
-     */
-    fun findRevisionlessBySourceLocator(
-        contextIdValue: String,
-        locator: SourceLocator,
-    ): List<Proposition> =
-        findByContextId(ContextId(contextIdValue)).filter { proposition ->
-            proposition.provenanceEntries.any {
-                it.locator.key() == locator.key() && it.sourceRevision == null
-            }
-        }
 
     // ========================================================================
     // Administrative operations - bulk re-embed and coarse deletion

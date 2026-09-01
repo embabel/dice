@@ -29,6 +29,7 @@ import com.embabel.dice.proposition.PropositionQuery.OrderBy
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.GraphQueryCapable
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.SourceRevisionQueryCapable
 import com.embabel.dice.proposition.PropositionStoreType
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.SourceLocator
@@ -119,7 +120,7 @@ class DrivinePropositionRepository(
      * [findClusters] Cypher. Defaults to the canonical [VECTOR_INDEX]; overridable only for tests.
      */
     private val vectorIndexName: String = VECTOR_INDEX,
-) : PropositionRepository, GraphQueryCapable {
+) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable {
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
 
@@ -386,8 +387,13 @@ class DrivinePropositionRepository(
      *
      * Two structurally different locators that produce one key would otherwise take turns rewriting
      * each other's node, so the incoming identity is compared against what is stored and a mismatch
-     * fails the write rather than corrupting the shared node. `display` is presentation-only and is
-     * refreshed on every write; the identity fields are set once, on create.
+     * fails the write and leaves the shared node alone.
+     *
+     * Every property here is set once, on create — `display` included. The `:Source` node is global:
+     * one locator key is one node across every context that cites it. A refresh-on-write `display`
+     * therefore leaked one context's label into all the others, because whichever writer ran last
+     * owned the label everybody read. Write-once keeps the shared node stable while each writer's
+     * own evidence still lands on its own `DERIVED_FROM` edge.
      */
     @Suppress("UNCHECKED_CAST")
     private fun upsertSource(source: SourceNode, params: Map<String, Any?>) {
@@ -400,8 +406,8 @@ class DrivinePropositionRepository(
                               s.path = ${'$'}sourcePath,
                               s.contentHash = ${'$'}sourceContentHash,
                               s.connectorId = ${'$'}connectorId,
-                              s.externalId = ${'$'}externalId
-                SET s.display = ${'$'}sourceDisplay
+                              s.externalId = ${'$'}externalId,
+                              s.display = ${'$'}sourceDisplay
                 RETURN {
                     kind: s.kind,
                     uri: s.uri,
@@ -575,10 +581,10 @@ class DrivinePropositionRepository(
 
     // ---- Source provenance queries ----
     //
-    // The interface defaults filter loaded provenance in memory, and this backend's context read is
-    // lean — it carries no provenance at all — so without these overrides all three finders would
-    // return nothing here. Each one pushes its predicate into Cypher instead. The overrides sit on
-    // the plain-String variant because that is the one every typed call also routes through.
+    // This backend's context read is lean: it carries no provenance at all. That is exactly why
+    // SourceRevisionQueryCapable declares these finders abstract, and why this store has to earn the
+    // capability by pushing each predicate into Cypher. Implementations sit on the plain-String
+    // variant because that is the one every typed call also routes through.
 
     @Transactional(readOnly = true)
     override fun findBySourceKey(contextIdValue: String, sourceKey: String): List<Proposition> =

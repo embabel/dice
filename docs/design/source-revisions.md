@@ -106,7 +106,9 @@ classDiagram
         +encode(ProvenanceEntry) String
         +matches(ProvenanceEntry, String) Boolean
     }
-    class PropositionRepository {
+    class SourceRevisionQueryCapable {
+        <<opt-in capability>>
+        +supportsSourceRevisionQueries Boolean
         +findBySourceKey(contextId, sourceKey)
         +findBySourceRevision(contextId, ref)
         +findRevisionlessBySourceLocator(contextId, locator)
@@ -116,8 +118,8 @@ classDiagram
     ProvenanceEntry --> SourceLocator : locator
     SourceRevisionRef ..> SourceLocator : sourceKey is a locator key
     ProvenanceEvidenceKey ..> ProvenanceEntry : encodes and matches
-    PropositionRepository ..> SourceRevisionRef : exact-version query
-    PropositionRepository ..> Proposition : returns
+    SourceRevisionQueryCapable ..> SourceRevisionRef : exact-version query
+    SourceRevisionQueryCapable ..> Proposition : returns
 ```
 
 `sourceRevision` is the sixth field of `ProvenanceEntry`, defaulted to null and validated non-blank
@@ -212,7 +214,7 @@ properties hold for those, and slice 1's tests pin each one:
 
 ## Querying by source
 
-Three finders land on `PropositionRepository`, all context-scoped:
+Three finders land on `SourceRevisionQueryCapable`, all context-scoped:
 
 | Method | Matches |
 | --- | --- |
@@ -220,25 +222,60 @@ Three finders land on `PropositionRepository`, all context-scoped:
 | `findBySourceRevision(contextId, ref)` | exactly that source key and that revision |
 | `findRevisionlessBySourceLocator(contextId, locator)` | that source key with no revision |
 
-Each exists twice: the `ContextId`-typed form above, and a plain-String form that holds the default
-body. The typed one forwards to the String one, following `findByContextId` →
-`findByContextIdValue` in `PropositionStore`. The direction is load-bearing. `ContextId` is a Kotlin
-value class, so the typed method's JVM name is mangled and a Java class cannot override it; an
-override placed there would be unreachable from Java, and if the delegation ran the other way a
-Java backend's override would be unreachable from Kotlin. With the String form as the single
-override point, every call from either language passes through it.
-`PropositionRepositoryDelegationTest` calls the typed entry points against a backend that overrode
-only the String forms and counts the dispatches, so the test fails if a typed call ever skips the
-override.
+### Why this is a capability the base repository leaves out
 
-The default bodies read the context and filter loaded provenance in memory, which is correct for any
-backend whose context read carries provenance — the in-memory and JSON-file repositories get it for
-free. A backend whose context read is lean must override all three, and `DrivinePropositionRepository`
-does: its context read loads a view with no provenance at all, so the defaults would return nothing.
-Its overrides push each predicate into Cypher instead, scoping to the tenant first and then testing
-for a matching `DERIVED_FROM` edge, with the revision compared as an edge property (`IS NULL` for
-the revisionless query). `DrivinePropositionStoreIntegrationTest` runs all three against a real
-Neo4j through both the typed and the String entry points.
+An earlier draft put these three finders on `PropositionRepository` with default bodies that read
+the context and filtered loaded provenance in memory. That is safe only for a backend whose context
+read carries provenance. On a backend that stores evidence and never projects it through an ordinary
+read — which describes the graph store — the default returns an empty list, and an empty list here
+already means something: nothing in this context cites that source. An unsupported operation would
+have been indistinguishable from a genuine negative answer, which is the worst shape a query contract
+can take.
+
+So the surface lives on its own opt-in interface, following the house pattern of `GraphQueryCapable`
+and `VectorSearchCapable`. The three plain-String finders are **abstract**: implementing
+`SourceRevisionQueryCapable` is a promise to answer correctly for your own storage, and there is no
+body to inherit that could quietly answer wrongly. A backend that cannot answer does not implement
+it, and is therefore absent from the type. A caller asks for the capability and treats its absence as
+its own case:
+
+```kotlin
+val revisionQueries = repository as? SourceRevisionQueryCapable
+    ?: error("this backend cannot answer source-revision queries")
+```
+
+`supportsSourceRevisionQueries` is the runtime half of the same signal, mirroring
+`VectorSearchCapable.supportsVector`. A type can promise what a particular instance cannot deliver:
+`EventEmittingPropositionRepository` decorates a plain `PropositionRepository`, so whether it can
+answer depends on the delegate it was handed. It carries the capability type, reports `false` from
+the flag when its delegate lacks the capability, and throws an `UnsupportedOperationException` naming
+that delegate if a call gets through anyway. Two ways to find out, no empty list.
+
+`ProvenanceScanningSourceRevisionQueries` carries the in-memory scan as default bodies, for the
+stores whose reads genuinely do hold every entry — `InMemoryPropositionRepository` and
+`JsonFilePropositionRepository` implement that, and get all three for free. Naming the condition
+keeps it visible: a store may only mix that in when its context read carries provenance.
+
+### The typed and String forms
+
+Each finder exists twice: the `ContextId`-typed form above, and a plain-String form that carries the
+work. The typed one forwards to the String one, following `findByContextId` →
+`findByContextIdValue` in `PropositionStore`. The direction is load-bearing. `ContextId` is a Kotlin
+value class, so the typed method's JVM name is mangled and a Java class cannot implement it; an
+implementation placed there would be unreachable from Java, and if the delegation ran the other way a
+Java backend's implementation would be unreachable from Kotlin. With the String form as the single
+implementation point, every call from either language passes through it.
+`PropositionRepositoryDelegationTest` calls the typed entry points against a backend that implemented
+only the String forms and counts the dispatches, so the test fails if a typed call ever skips them.
+The same test pins the split itself: a store implementing only `PropositionRepository` yields null
+from the `as?` probe, while a capability-declaring store does not.
+
+`DrivinePropositionRepository` implements `SourceRevisionQueryCapable` directly, because its context
+read loads a view with no provenance at all. Each finder pushes its predicate into Cypher, scoping to
+the tenant first and then testing for a matching `DERIVED_FROM` edge, with the revision compared as
+an edge property (`IS NULL` for the revisionless query).
+`DrivinePropositionStoreIntegrationTest` runs all three against a real Neo4j through both the typed
+and the String entry points.
 
 Inside the `dice` module a shared fixture, `PortableSourceQueryFixture` with
 `assertPortableSourceQueries`, states what the three finders mean once; the in-memory and JSON-file
@@ -295,6 +332,45 @@ for the second revision.
 depend on the capability directly, without probing for a repository type at runtime.
 `PropositionRepository` keeps its declarations as overrides that delegate to the store defaults, so
 existing implementors see no behaviour change.
+
+### A shared `:Source` node needs an unshared label
+
+`:Source` is deliberately global: one locator key is one node, whichever context cites it. That is
+what makes "everything from this document" a single graph question. Presentation was following the
+same rule by accident. `display` was refreshed on every write, so a second context citing the same
+document repainted the label the first context reads — one tenant's wording leaking into everybody
+else's UI, with no way to tell where it came from.
+
+Identity and presentation now part company. The key stays global, and `display` becomes write-once:
+it is set in the `ON CREATE SET` block alongside the identity fields and left alone thereafter. Each
+writer's own evidence still lands on its own `DERIVED_FROM` edge, so nothing about what a context can
+see or query changes. `display` has never participated in `SourceLocator.key()`, so identity is
+untouched either way. `DrivinePropositionStoreIntegrationTest` writes the same locator from two
+contexts with different labels and asserts the first label survives while both writers' evidence
+arrives; reverting the write-once change turns it red.
+
+### Bounding what comes in from outside
+
+Two strings reaching this model come from outside DICE and end up inside stored identity: the
+canonical source key, and the provider-defined revision. Both get hashed into an evidence key and
+written to indexed graph properties, so an unbounded value inflates every index entry mentioning it
+and can trip a graph store's own ceiling deep inside a write, where it surfaces as an opaque database
+error.
+
+`SourceIdentityBounds` states the two limits as public constants — `MAX_SOURCE_KEY_LENGTH` at 2048
+and `MAX_SOURCE_REVISION_LENGTH` at 1024 — and both are enforced while the value object is being
+built, in `ProvenanceEntry`'s and `SourceRevisionRef`'s `init` blocks. That placement is the point:
+construction happens before anything is hashed and before any store call, so an over-long value is
+refused with an `IllegalArgumentException` naming the limit it broke while the store is still
+untouched. `SourceIdentityBoundsTest` pins all of it — a value exactly at each limit is accepted, a
+value one character over is refused, the message names the limit, and a counting store records zero
+interactions across the rejected write.
+
+The numbers are generous by design. 2048 is the practical ceiling browsers and proxies settled on for
+a URL, which is the longest thing a locator wraps. 1024 is the longest real revision token we know
+of, an S3 object version id; a git SHA is 40 or 64 characters, an HTTP ETag a few dozen, a Slack or
+Notion timestamp about 20. Nothing a real connector emits comes near either limit; they exist to stop
+a runaway or hostile value.
 
 ## Compatibility boundary
 

@@ -18,13 +18,24 @@ and the consumer PRs that deliver it).
   `SourceRevisionRef(sourceKey, sourceRevision)` is the value that names one version of one source
   for queries and carriage. Equality and dedup follow from the data class, so evidence at two
   revisions over the same span now survives a fold as two entries where it previously collapsed into
-  one. Three context-scoped finders land on `PropositionRepository` — `findBySourceKey` (any
-  revision), `findBySourceRevision` (exact), and `findRevisionlessBySourceLocator`. Each comes in a
-  `ContextId`-typed form and a plain-String form; the typed form forwards to the String one, which is
-  the override point, so a backend written in either language stays reachable from both. In
-  `dice-storage`, `DrivinePropositionRepository` overrides all three and pushes them into Cypher
-  (its context read carries no provenance, so the in-memory defaults would return nothing there),
-  and `DerivedFrom` carries the revision as a `DERIVED_FROM` edge property. Two graph-write changes
+  one. Three context-scoped finders arrive on a new opt-in capability interface,
+  `SourceRevisionQueryCapable` — `findBySourceKey` (any revision), `findBySourceRevision` (exact),
+  and `findRevisionlessBySourceLocator`. Each comes in a `ContextId`-typed form and a plain-String
+  form; the typed form forwards to the String one, which is the implementation point, so a backend
+  written in either language stays reachable from both. The String forms are abstract, so a backend
+  that implements the interface has promised to answer for its own storage, and a backend that
+  cannot answer is simply absent from the type: a caller probes with `as?` and handles that absence
+  as its own case. `PropositionRepository` carries none of this surface. A shared default body
+  written over an ordinary context read would have returned an empty list on any backend that stores
+  evidence without projecting it, and an empty list already carries a meaning here — nothing in this
+  context cites that source — so an unsupported operation would have read as a false negative.
+  `ProvenanceScanningSourceRevisionQueries` supplies the in-memory scan for the stores whose reads do
+  carry every entry (`InMemoryPropositionRepository`, `JsonFilePropositionRepository`).
+  `EventEmittingPropositionRepository` carries the capability type and forwards to its delegate,
+  reporting `supportsSourceRevisionQueries = false` and throwing with the delegate named when the
+  delegate it was handed cannot answer. In `dice-storage`, `DrivinePropositionRepository` implements
+  the capability and pushes all three predicates into Cypher, because its context read carries no
+  provenance at all, and `DerivedFrom` carries the revision as a `DERIVED_FROM` edge property. Two graph-write changes
   come with that, each fixing a way a revision was lost before any query ran. Edges now carry an
   `entryKey` identity and are written by MERGE on it, so one proposition citing one source at two
   revisions stores two rows: relationship-fragment mapping identifies an edge by its endpoints alone
@@ -59,3 +70,23 @@ and the consumer PRs that deliver it).
   matching revisionless entry is written. The source queries carry no index hint, so they plan on a
   store that never adopted the optional `(contextId, text)` uniqueness constraint. Pipeline,
   collector, and REST behavior are unchanged; those arrive in the following Wave A slices.
+- Length ceilings on the externally supplied strings that become stored identity, in
+  `SourceIdentityBounds`: `MAX_SOURCE_KEY_LENGTH` (2048) and `MAX_SOURCE_REVISION_LENGTH` (1024).
+  Both are checked while `ProvenanceEntry` and `SourceRevisionRef` are being constructed, which sits
+  upstream of every hash and every indexed write, so a runaway value is refused with an
+  `IllegalArgumentException` naming the limit it broke, before any store is touched. The numbers are
+  roomy on purpose: 2048 is the practical ceiling browsers and proxies settled on for a URL, and 1024
+  is the longest real revision token we know of, an S3 object version id.
+  **Compatibility: behavioral.** A caller offering a source key or revision longer than the limit now
+  gets a rejection where it previously got an oversized index entry. Nothing a real connector emits
+  comes close to either number.
+
+### Fixed
+
+- `:Source.display` in the graph projection is write-once. A `:Source` node is global — one locator
+  key is one node across every context that cites it — and `display` used to be refreshed on every
+  write, so whichever writer ran last owned the label every other context read. It is now set on
+  create only. Identity is unaffected: `display` has never participated in `SourceLocator.key()`, and
+  each writer's evidence still lands on its own `DERIVED_FROM` edge.
+  **Compatibility: behavioral, `dice-storage` only.** An existing `:Source` node keeps the label it
+  currently has, and a later write leaves that label alone.
