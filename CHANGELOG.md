@@ -37,3 +37,11 @@ and the consumer PRs that deliver it).
   static form. The changed Kotlin synthetic constructor, `copy`, `copy$default`
   and `componentN` signatures on `PropertySignature` are the accepted boundary:
   Kotlin callers recompile, and no consumer holds a compiled reference to them.
+
+- `DiceMetadataKeys.METAMODEL_VERSION` metadata key and stamping contract.
+  Propositions can carry the declared schema version hash under this key to
+  record which schema governed their extraction. The key is defined here with
+  its contract; production wiring that stamps propositions at persistence time
+  lands in a follow-up slice after the extraction-run stack merges.
+  **Compatibility: additive.** New metadata key only; no existing API or code
+  touched.
