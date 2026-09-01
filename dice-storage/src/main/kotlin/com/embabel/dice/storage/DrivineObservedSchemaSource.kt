@@ -24,62 +24,8 @@ import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 
 /**
- * Every node label dice writes for its own bookkeeping, and the properties that identify a node
- * carrying that label as dice's own.
- *
- * A drift check compares the domain schema an app declared against what a live graph holds. None of
- * these labels belongs to a declared domain schema, so counting them would flag dice's own storage
- * as drift on every run, and would make governance report itself: stamping a version and writing a
- * report both add labels to the graph the next check observes.
- *
- * Exclusion is by shape, so that a domain type called `Source` stays visible. A label is excluded
- * only when the nodes carrying it match dice's shape for it — dice's `Source` nodes carry `key`, its
- * governance nodes carry `schemaName`, and so on. A same-named node that doesn't match keeps the
- * label in the observation, where an undeclared type can still be reported.
- *
- * Each shape is the label's declared uniqueness key, plus properties the node fragment writes
- * unconditionally where those add discrimination. Shapes are kept minimal: one demanding a property
- * dice doesn't always write would make dice's own nodes look foreign and bring back the
- * self-reporting case above.
- *
- * `DiceBookkeepingShapeTest` pins that every label in [CollectorTraceSchema.LABELS] and
- * [MetamodelSchema.LABELS] has an entry here, so adding a node label to either store can't quietly
- * skip this map.
- */
-val DICE_BOOKKEEPING_LABEL_SHAPES: Map<String, List<String>> = mapOf(
-    // Core persistence: propositions and their mentions, provenance, chunk history.
-    "Proposition" to listOf("id", "contextId", "text"),
-    "Mention" to listOf("id", "span", "type", "role"),
-    "Source" to listOf("key"),
-    "ProcessedChunk" to listOf("id"),
-
-    // Lineage records.
-    "ProjectionRecord" to listOf("propositionId", "runId", "target"),
-    "CollectorRecord" to listOf("propositionId", "runId"),
-    "CollectorRun" to listOf("runId"),
-
-    // Collector trace. Uniqueness keys only — the trace store writes these through several
-    // statements, and a stricter shape would risk calling its own half-written run foreign.
-    "CollectorTraceRun" to listOf("runId"),
-    "CollectorCandidateEdge" to listOf("id"),
-    "CollectorSignalScore" to listOf("id"),
-    "CollectorComponent" to listOf("id"),
-    "CollectorDecision" to listOf("id"),
-    "CollectorRetired" to listOf("id"),
-
-    // Metamodel governance.
-    "MetamodelVersion" to listOf("schemaName", "contentHash"),
-    "MetamodelSchemaCounter" to listOf("schemaName"),
-    "MetamodelDriftReport" to listOf("schemaName", "versionHash", "capturedAt", "contextKey"),
-    "MetamodelDriftReportCounter" to listOf("schemaName"),
-)
-
-/** The bookkeeping label names, for callers that only need the names. */
-val DICE_BOOKKEEPING_LABELS: Set<String> = DICE_BOOKKEEPING_LABEL_SHAPES.keys
-
-/**
  * Relationship types dice writes for its own bookkeeping, on the same grounds as
- * [DICE_BOOKKEEPING_LABEL_SHAPES] and under the same shape rule.
+ * [DiceOwnedSchema] and under the same ownership rule.
  *
  * Dice's bookkeeping extends past node labels. `HAS_MENTION` and `DERIVED_FROM` sit on every
  * proposition ever stored, so without this set a whole-graph observation reports them as undeclared
@@ -103,10 +49,17 @@ val DICE_BOOKKEEPING_RELATIONSHIP_TYPES: Set<String> = setOf(
  *
  * There are two observation paths, because the database offers no single query that answers both:
  *
- * - **Whole graph** (`contextId == null`) introspects the database's own catalogue, `db.labels()`
- *   and `db.relationshipTypes()`, and subtracts dice's bookkeeping from both sides. The subtraction
- *   goes by node shape; see [DICE_BOOKKEEPING_LABEL_SHAPES]. A bookkeeping name the domain is also
- *   using stays in the observation, so an undeclared type can still be reported.
+ * - **Whole graph** (`contextId == null`) reads the database's own catalogue, `db.labels()` and
+ *   `db.relationshipTypes()`, and subtracts what dice owns from both sides. Ownership goes by node
+ *   shape; see [DiceOwnedSchema]. A dice label the domain is also using stays in the observation, so
+ *   an undeclared type can still be reported.
+ *
+ *   It then asks a second question, and reports the answer in its own set: the distinct
+ *   `Mention.type` values on dice's own propositions, across the whole graph, returned as
+ *   [ObservedSchema.mentionTypeNames]. A mention type is what an extractor claimed a span was, and
+ *   it becomes a graph label only when something projects it, so a graph can hold live propositions
+ *   mentioning `Ghost` while `db.labels()` has never heard of it. Reading labels alone left that
+ *   type invisible to every unscoped check, which is what this query fixes.
  * - **One context** (`contextId != null`) cannot use those procedures: they have no notion of a
  *   context and answer for the whole database. It derives both sides from that context's own data:
  *   - entity types are the distinct `Mention.type` values on that context's propositions;
@@ -117,13 +70,26 @@ val DICE_BOOKKEEPING_RELATIONSHIP_TYPES: Set<String> = setOf(
  *     in both. An undeclared relationship type present in a context's data is drift in that context
  *     whoever else produced it.
  *
- * The scoped entity side is unfiltered. Bookkeeping exclusions are Neo4j labels, while a mention's
- * `type` is a domain type name an extractor produced, so the two live in different namespaces and
- * subtracting one from the other would hide real drift from an app governing a type called `Source`.
+ * Mention types are reported as extraction wrote them, on both paths. Dice's ownership rules cover
+ * Neo4j labels, while a mention's `type` is a domain type name an extractor produced, so the two
+ * live in different namespaces and subtracting one from the other would hide real drift from an app
+ * governing a type called `Source`.
+ *
+ * ## Two kinds of name, kept apart
+ *
+ * The whole-graph observation answers with labels in [ObservedSchema.entityTypeNames], tagged
+ * [ObservedSchema.EntityTypeBasis.GRAPH_LABELS], and mention types in
+ * [ObservedSchema.mentionTypeNames]. The differ then judges each by its own rule: a label against
+ * every label a declared type carries, so an inherited parent label of a governed type reads as
+ * declared, and a mention type against declared type names and their declared former names alone.
+ * Merging the two would have to pick one rule for both, and picking the label rule reopens what the
+ * mention rule exists to close — a mention typed `Agent` passing under a schema that governs
+ * `Person` with parent label `Agent` and declares no `Agent` type. An unscoped check and a
+ * context-scoped one now read mention types the same strict way.
  *
  * Two limits follow from working off names and shape:
  *
- * 1. Exclusion is decided per label, not per node. If any node wearing a bookkeeping label fails
+ * 1. Ownership is decided per label, and never per node. If any node wearing a dice label fails
  *    dice's shape, the whole label stays observed, dice's own nodes included, so a graph mixing a
  *    domain `Source` with dice's own reports `Source` every run until the domain type is declared.
  * 2. Deciding it costs a scan of dice's own labels on every unscoped observation. Each probe stops
@@ -148,14 +114,14 @@ open class DrivineObservedSchemaSource(
             "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType"
 
         /**
-         * Bookkeeping labels the domain has also claimed: those carrying at least one node that
-         * fails dice's shape for them. Whatever this returns stays in the observation.
+         * Dice labels the domain has also claimed: those carrying at least one node that fails
+         * dice's shape for them. Whatever this returns stays in the observation.
          *
          * One branch per label, each stopping at the first non-conforming node, unioned into a
-         * single round trip. Label and property names are this file's own compile-time constants;
-         * nothing caller-derived is assembled in.
+         * single round trip. Label and property names come from [DiceOwnedSchema], which derives
+         * them from the storage definitions; nothing caller-derived is assembled in.
          */
-        private val LABELS_CLAIMED_BY_DOMAIN: String = DICE_BOOKKEEPING_LABEL_SHAPES.entries
+        private val LABELS_CLAIMED_BY_DOMAIN: String = DiceOwnedSchema.NODE_SHAPES.entries
             .joinToString("\nUNION ALL\n") { (label, shape) ->
                 val notDiceShaped = shape.joinToString(" OR ") { property -> "n.$property IS NULL" }
                 "MATCH (n:$label) WHERE $notDiceShaped RETURN '$label' AS label LIMIT 1"
@@ -170,6 +136,32 @@ open class DrivineObservedSchemaSource(
             MATCH ()-[r:${DICE_BOOKKEEPING_RELATIONSHIP_TYPES.joinToString("|")}]->()
             WHERE r.sourcePropositions IS NOT NULL
             RETURN DISTINCT type(r)
+        """.trimIndent()
+
+        /**
+         * Entity types across the whole graph: what dice's own propositions mention, wherever they
+         * live.
+         *
+         * The catalogue this file reads for labels knows nothing about mention types. A type an
+         * extractor wrote reaches `db.labels()` only if something projected a node for it, so a
+         * graph can hold active propositions mentioning `Ghost` with no `(:Ghost)` node anywhere,
+         * and a whole-graph check reading labels alone calls that graph clean. This query asks the
+         * propositions themselves.
+         *
+         * Both ends are held to dice's own shape, so a domain node that happens to wear
+         * `:Proposition` or `:Mention` contributes nothing: what comes back is the set of types
+         * dice's own extraction recorded. `m.type` is part of the mention shape, so a mention with
+         * no type is already excluded by it.
+         *
+         * Every proposition counts, whatever its status, which is how the context-scoped query
+         * reads too. A quarantined proposition still carries the undeclared type it was quarantined
+         * for, and a check that stopped reporting it would read clean while the data sits there.
+         */
+        private val MENTION_TYPES_IN_GRAPH = """
+            MATCH (p:Proposition)-[:HAS_MENTION]->(m:Mention)
+            WHERE ${DiceOwnedSchema.ownedNodePredicate("p", "Proposition")}
+              AND ${DiceOwnedSchema.ownedNodePredicate("m", "Mention")}
+            RETURN DISTINCT m.type
         """.trimIndent()
 
         /**
@@ -245,16 +237,21 @@ open class DrivineObservedSchemaSource(
     override fun observe(): ObservedSchema = observe(null)
 
     private fun observeWholeGraph(): ObservedSchema {
-        // Subtract only the bookkeeping the domain has not also claimed. A name both dice and the
+        // Subtract only the storage the domain has not also claimed. A name both dice and the
         // domain use counts as the domain's here, so it stays observable as drift.
-        val hiddenLabels = DICE_BOOKKEEPING_LABELS - queryStrings(LABELS_CLAIMED_BY_DOMAIN)
+        val hiddenLabels = DiceOwnedSchema.LABELS - queryStrings(LABELS_CLAIMED_BY_DOMAIN)
         val hiddenRelationshipTypes =
             DICE_BOOKKEEPING_RELATIONSHIP_TYPES - queryStrings(RELATIONSHIP_TYPES_CLAIMED_BY_DOMAIN)
+        // Two kinds of entity name, in two sets: the labels the graph reports, and the types dice's
+        // propositions were extracted with. The mention side needs no subtraction, since the query
+        // that produced it already asked dice's own propositions, and it stays out of the label set
+        // so the differ can hold it to the mention rule; see the class doc.
         return ObservedSchema(
             entityTypeNames = queryStrings(ALL_LABELS) - hiddenLabels,
             relationshipTypeNames = queryStrings(ALL_RELATIONSHIP_TYPES) - hiddenRelationshipTypes,
             capturedAt = clock.instant(),
             entityTypeBasis = ObservedSchema.EntityTypeBasis.GRAPH_LABELS,
+            mentionTypeNames = queryStrings(MENTION_TYPES_IN_GRAPH),
         )
     }
 

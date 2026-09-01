@@ -33,6 +33,10 @@ import com.embabel.dice.metamodel.PropertySignature
  * content hash is built from, which is what makes an empty diff and an equal hash mean the same
  * thing.
  *
+ * An observation can carry two kinds of entity name, and [diffAgainstObserved] judges each by its
+ * own rule: graph labels against the declared side its basis calls for, mention types against
+ * declared type names and their declared former names alone. See [ObservedSchema.mentionTypeNames].
+ *
  * Two rules it keeps throughout. Sets are compared as sets, never as a delimiter-joined projection,
  * because a label or property name can contain a comma or a space, which is routine when names come
  * from LLM extraction, and joining would collapse two different sets into a false "unchanged".
@@ -184,6 +188,18 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
             declared.ungovernedEntityTypeNames +
             ownLabelsOf(declared.ungovernedEntityTypeNames)
 
+        // Mention types arrive in their own set, and they are judged by the mention rule whatever
+        // basis the names above carry. A whole-graph observation reports both kinds at once — labels
+        // off the database catalogue, mention types off the stored propositions — and one basis tag
+        // can only describe one of them. Judging the pair together under GRAPH_LABELS would widen the
+        // declared side to inherited labels for the mention half too, which is the escape hatch
+        // MENTION_TYPES exists to close: a mention typed `Agent` would pass under a schema that
+        // governs `Person` with parent label `Agent` and declares no `Agent` type at all.
+        val observedMentionTypes = observed.mentionTypeNames
+        val mentionTypesExcludedFromDrift = declaredEitherSpelling +
+            declared.ungovernedEntityTypeNames +
+            ownLabelsOf(declared.ungovernedEntityTypeNames)
+
         // Drift is observed and never declared: orphaned data whose declaring integration is gone,
         // or was never registered. The opposite direction gets its own informational bucket, since a
         // declared type with zero instances is an ordinary state. That direction stays on the type
@@ -207,11 +223,19 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         return DeclaredObservedDiff(
             declared = declared,
             observedSchema = observed,
-            driftedEntityTypes = canonical(observedTypes - excludedFromDrift),
+            driftedEntityTypes = canonical(
+                (observedTypes - excludedFromDrift) + (observedMentionTypes - mentionTypesExcludedFromDrift),
+            ),
             driftedRelationshipTypes = canonical(observedRels - relsExcludedFromDrift),
+            // Data mentioning a declared type is that type being observed, the same as a graph label
+            // reporting it, so both sets answer this bucket.
             unobservedEntityTypes = canonical(
                 declaredTypes.filterNot {
-                    isObserved(it, declared.version.entityTypeAliases[it].orEmpty(), observedTypes)
+                    isObserved(
+                        it,
+                        declared.version.entityTypeAliases[it].orEmpty(),
+                        observedTypes + observedMentionTypes,
+                    )
                 },
             ),
             unobservedRelationshipTypes = canonical(declaredRels - observedRels),

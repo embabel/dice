@@ -17,6 +17,7 @@ package com.embabel.dice.storage
 
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.MetamodelVersionStore
+import com.embabel.dice.metamodel.SweptBaselineStore
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.slf4j.LoggerFactory
@@ -24,7 +25,8 @@ import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 
 /**
- * Drivine/Neo4j implementation of [MetamodelVersionStore]. Every schema stamp is a
+ * Drivine/Neo4j implementation of [SweptBaselineStore]: a [MetamodelVersionStore] that also keeps a
+ * durable pointer at the declaration a sweep last finished reconciling. Every schema stamp is a
  * `(:MetamodelVersion)` node.
  *
  * The write MERGEs on the natural key `(schemaName, contentHash)`, so a retry or a re-stamp of an
@@ -72,9 +74,11 @@ import java.time.Clock
  * keeps a separate `swept` map: as `sweptContentHash`, a property on the schema's own
  * `(:MetamodelSchemaCounter)` node, moved only by [markSwept]. Nothing about an ordinary [saveVersion]
  * touches it, which is what makes a dry run, a scoped run, or a crash mid-sweep leave the baseline
- * exactly where it was — see `MetamodelVersionStore.sweptVersion`'s own doc for why a store that
- * doesn't track this independently answers `latestVersion` instead, and gets the wrong answer once a
- * declaration cycles back to a stamp it already used.
+ * exactly where it was. Tracking the pointer durably is what earns this store the right to declare
+ * [SweptBaselineStore] at all: a backend that could only answer the question from write order keeps
+ * the plain [MetamodelVersionStore] contract, and `DriftCheckRunner` then stays silent about a
+ * baseline nobody tracks. See [SweptBaselineStore.sweptVersion] for what write order gets wrong once
+ * a declaration cycles back to a stamp it already used.
  *
  * @param persistenceManager Drivine's handle on the `neo` datasource.
  * @param clock supplies the instant a version is stamped as saved at. Injectable so a test can pin
@@ -84,7 +88,7 @@ import java.time.Clock
 class DrivineMetamodelVersionStore(
     private val persistenceManager: PersistenceManager,
     private val clock: Clock = Clock.systemUTC(),
-) : MetamodelVersionStore {
+) : SweptBaselineStore {
 
     private val logger = LoggerFactory.getLogger(DrivineMetamodelVersionStore::class.java)
 
@@ -210,11 +214,10 @@ class DrivineMetamodelVersionStore(
     ).firstOrNull()
 
     /**
-     * Overridden so the reconciled baseline is tracked independently of write order; see this class's
-     * own doc. Also saves [version] into the ordinary history, the way the interface default does, so
-     * a caller that only ever calls this for a brand-new stamp still gets it stored — both writes run
-     * in the one transaction, so a reader never observes the pointer moved without the stamp it names
-     * being resolvable.
+     * Moves the reconciled baseline to [version], and saves the stamp into the ordinary history on
+     * the way, so a caller that only ever calls this for a brand-new declaration still gets it stored.
+     * Both writes run in the one transaction, so a reader never observes the pointer moved without the
+     * stamp it names being resolvable.
      */
     @Transactional
     override fun markSwept(version: MetamodelVersion) {
@@ -231,9 +234,9 @@ class DrivineMetamodelVersionStore(
     }
 
     /**
-     * Overridden to resolve the reconciled baseline from [markSwept]'s own pointer. The interface
-     * default answers `latestVersion`, a write-order question that gets the wrong answer here — see
-     * this class's own doc.
+     * Reads [markSwept]'s own pointer and resolves the hash it holds back into the stamp it names.
+     * A schema no sweep has ever completed for carries no such pointer, so this answers `null`; see
+     * this class's own doc for why write order cannot stand in for it.
      */
     @Transactional(readOnly = true)
     override fun sweptVersion(schemaName: String): MetamodelVersion? {

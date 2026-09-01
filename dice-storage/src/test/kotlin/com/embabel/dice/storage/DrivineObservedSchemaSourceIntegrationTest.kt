@@ -16,9 +16,17 @@
 package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.incremental.BookmarkKey
+import com.embabel.dice.incremental.HashKey
+import com.embabel.dice.incremental.ProcessedChunkRecord
 import com.embabel.dice.metamodel.DriftReport
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.ObservedSchema
+import com.embabel.dice.proposition.EntityMention
+import com.embabel.dice.proposition.MentionRole
+import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.UriLocator
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
@@ -59,6 +67,12 @@ class DrivineObservedSchemaSourceIntegrationTest {
 
     @Autowired
     private lateinit var persistenceManager: PersistenceManager
+
+    @Autowired
+    private lateinit var repository: DrivinePropositionRepository
+
+    @Autowired
+    private lateinit var chunkHistoryStore: DrivineChunkHistoryStore
 
     private val tenantA = ContextId("tenant-a")
     private val tenantB = ContextId("tenant-b")
@@ -148,6 +162,53 @@ class DrivineObservedSchemaSourceIntegrationTest {
     }
 
     @Test
+    fun `whole-graph observation reports a mention type that has no graph label`() {
+        // A mention type reaches `db.labels()` only once something projects a node for it, so the
+        // label catalogue alone answers "clean" for a graph whose propositions carry an undeclared
+        // type. The observation asks the propositions as well, and answers in its own set.
+        writeProposition("p-a", tenantA)
+        writeMention("p-a", "m-a", type = "Ghost")
+        assertFalse(rawLabels().contains("Ghost"), "precondition: no (:Ghost) node exists")
+
+        val observed = source.observe()
+
+        assertTrue(
+            observed.mentionTypeNames.contains("Ghost"),
+            "an undeclared mention type stayed invisible to the whole-graph check; got " +
+                "${observed.mentionTypeNames}",
+        )
+        assertFalse(
+            observed.entityTypeNames.contains("Ghost"),
+            "mention types stay out of the label set, so each side keeps its own comparison rule; " +
+                "got ${observed.entityTypeNames}",
+        )
+        assertEquals(ObservedSchema.EntityTypeBasis.GRAPH_LABELS, observed.entityTypeBasis)
+    }
+
+    @Test
+    fun `whole-graph mention types come from dice's own propositions`() {
+        // A domain node wearing `:Proposition` is somebody else's record, and whatever it calls its
+        // mentions is its own business. The label half already reports both labels as domain data.
+        persistenceManager.execute(
+            QuerySpecification.withStatement(
+                "CREATE (:Proposition {headline: 'not ours'})-[:HAS_MENTION]->(:Mention {type: 'Impostor'})",
+            ),
+        )
+
+        val observed = source.observe()
+
+        assertFalse(
+            observed.mentionTypeNames.contains("Impostor"),
+            "a mention type off a node dice never wrote reached the observation; got " +
+                "${observed.mentionTypeNames}",
+        )
+        assertTrue(
+            observed.entityTypeNames.containsAll(setOf("Proposition", "Mention")),
+            "the domain claimed both labels, so both stay observable; got ${observed.entityTypeNames}",
+        )
+    }
+
+    @Test
     fun `an observation is stamped with the instant it was taken`() {
         val before = Instant.now()
 
@@ -162,8 +223,8 @@ class DrivineObservedSchemaSourceIntegrationTest {
     fun `dice's own storage labels are never reported as domain drift`() {
         writeProposition("p-a", tenantA)
         writeMention("p-a", "m-a", type = "Person")
-        persistenceManager.execute(QuerySpecification.withStatement("CREATE (:Source {key: 'src'})"))
-        persistenceManager.execute(QuerySpecification.withStatement("CREATE (:ProcessedChunk {id: 'chunk'})"))
+        writeSource("src")
+        writeProcessedChunk("chunk")
         // Without this precondition the test would pass on an empty observation. It pins that the
         // database is reporting these labels, so the exclusion is what keeps them out.
         assertTrue(
@@ -174,8 +235,8 @@ class DrivineObservedSchemaSourceIntegrationTest {
         val observed = source.observe()
 
         assertTrue(
-            observed.entityTypeNames.none { it in DICE_BOOKKEEPING_LABELS },
-            "bookkeeping leaked into the observation: ${observed.entityTypeNames intersect DICE_BOOKKEEPING_LABELS}",
+            observed.entityTypeNames.none { it in DiceOwnedSchema.LABELS },
+            "bookkeeping leaked into the observation: ${observed.entityTypeNames intersect DiceOwnedSchema.LABELS}",
         )
     }
 
@@ -220,7 +281,7 @@ class DrivineObservedSchemaSourceIntegrationTest {
         writeMention("p-a", "m-a", type = "Person")
         persistenceManager.execute(
             QuerySpecification.withStatement(
-                "MATCH (p:Proposition {id: 'p-a'}) CREATE (p)-[:DERIVED_FROM]->(:Source {key: 'src'})",
+                "MATCH (p:Proposition {id: 'p-a'}) CREATE (p)-[:DERIVED_FROM]->(:Source {key: 'src', kind: 'uri'})",
             ),
         )
         assertTrue(
@@ -261,8 +322,8 @@ class DrivineObservedSchemaSourceIntegrationTest {
         // The other half of the shape test: dice's own conforming nodes still get excluded.
         writeProposition("p-a", tenantA)
         writeMention("p-a", "m-a", type = "Person")
-        persistenceManager.execute(QuerySpecification.withStatement("CREATE (:Source {key: 'src-1'})"))
-        persistenceManager.execute(QuerySpecification.withStatement("CREATE (:ProcessedChunk {id: 'chunk-1'})"))
+        writeSource("src-1")
+        writeProcessedChunk("chunk-1")
 
         val observed = source.observe()
 
@@ -270,6 +331,64 @@ class DrivineObservedSchemaSourceIntegrationTest {
             assertFalse(
                 observed.entityTypeNames.contains(label),
                 "dice's own '$label' nodes match its shape and must stay excluded; got ${observed.entityTypeNames}",
+            )
+        }
+    }
+
+    @Test
+    fun `a domain Source node keyed the way dice keys its own is still observed`() {
+        // The overlap a key-only rule gets wrong: a host's own `Source` type, carrying a property
+        // called `key`, which is exactly dice's uniqueness key for the label. Ownership is decided
+        // on everything dice writes, and dice writes `kind` on every source of its own, so this node
+        // stays the domain's and the type stays reportable.
+        persistenceManager.execute(
+            QuerySpecification.withStatement("CREATE (:Source {key: 'acme-crm', displayName: 'Acme CRM'})"),
+        )
+        writeSource("dice-own-src")
+
+        val observed = source.observe()
+
+        assertTrue(
+            observed.entityTypeNames.contains("Source"),
+            "a domain Source carrying only a key is domain data; got ${observed.entityTypeNames}",
+        )
+    }
+
+    @Test
+    fun `nodes dice really wrote match the shapes derived from its own schema`() {
+        // The derivation is worth only as much as its agreement with the writers, so this one goes
+        // through the real repository and the real chunk-history store. A shape demanding a property
+        // dice sometimes leaves out would show up here as dice reporting its own storage as drift.
+        repository.save(
+            Proposition(
+                contextId = tenantA,
+                text = "Ada wrote the first algorithm",
+                mentions = listOf(EntityMention(span = "Ada", type = "Person", role = MentionRole.SUBJECT)),
+                provenanceEntries = listOf(ProvenanceEntry(locator = UriLocator("https://example.com/ada"))),
+                confidence = 0.9,
+            ),
+        )
+        chunkHistoryStore.recordProcessed(
+            ProcessedChunkRecord(
+                bookmarkKey = BookmarkKey(tenantA, "source-1"),
+                hashKey = HashKey(tenantA, "content-hash-1"),
+                startIndex = 0,
+                endIndex = 10,
+                processedAt = Instant.parse("2026-01-01T00:00:00Z"),
+            ),
+        )
+        val written = listOf("Proposition", "Mention", "Source", "ProcessedChunk")
+        assertTrue(
+            rawLabels().containsAll(written.toSet()),
+            "precondition: the raw catalogue must hold what dice just wrote, but was ${rawLabels()}",
+        )
+
+        val observed = source.observe()
+
+        written.forEach { label ->
+            assertFalse(
+                observed.entityTypeNames.contains(label),
+                "dice reported its own '$label' nodes as drift; got ${observed.entityTypeNames}",
             )
         }
     }
@@ -292,13 +411,14 @@ class DrivineObservedSchemaSourceIntegrationTest {
     }
 
     @Test
-    fun `every label the trace and metamodel stores write has a shape entry`() {
-        // Keeps the shape map in step with the schema objects: a new node label added to either
-        // store without a shape here would stop being excluded.
-        (CollectorTraceSchema.LABELS + MetamodelSchema.LABELS).forEach { label ->
+    fun `every label a dice store declares has an ownership shape`() {
+        // The shapes are derived from these same schema objects, so this is a pin on the derivation
+        // reaching all of them: a label declared by a store and missing here would stop being
+        // excluded.
+        (CollectorTraceSchema.LABELS + MetamodelSchema.LABELS + LineageSchema.LABELS).forEach { label ->
             assertTrue(
-                DICE_BOOKKEEPING_LABEL_SHAPES.containsKey(label),
-                "'$label' is written by a dice store but has no bookkeeping shape",
+                DiceOwnedSchema.NODE_SHAPES.containsKey(label),
+                "'$label' is written by a dice store and carries no ownership shape",
             )
         }
     }
@@ -306,14 +426,42 @@ class DrivineObservedSchemaSourceIntegrationTest {
     // ---- helpers ----
 
     /**
-     * A proposition node carrying dice's full shape, which is how the observer recognises it as
-     * dice's own rather than a domain node sharing the label.
+     * A proposition node carrying every property dice's own writer always writes, which is how the
+     * observer recognises it as dice's own where a domain node shares the label. The list is
+     * [DiceOwnedSchema.NODE_SHAPES] for `Proposition`, read off `PropositionNode`'s required
+     * constructor parameters.
      */
     private fun writeProposition(id: String, contextId: ContextId) {
         persistenceManager.execute(
             QuerySpecification.withStatement(
-                "CREATE (:Proposition {id: \$id, contextId: \$contextId, text: \$text})",
-            ).bind(mapOf("id" to id, "contextId" to contextId.value, "text" to "a fact about $id")),
+                "CREATE (:Proposition {id: \$id, contextId: \$contextId, text: \$text, " +
+                    "confidence: \$confidence, created: \$created})",
+            ).bind(
+                mapOf(
+                    "id" to id,
+                    "contextId" to contextId.value,
+                    "text" to "a fact about $id",
+                    "confidence" to 0.9,
+                    "created" to Instant.parse("2026-01-01T00:00:00Z").toString(),
+                ),
+            ),
+        )
+    }
+
+    /** Likewise a source node: dice writes `key` and `kind` on every one of its own. */
+    private fun writeSource(key: String) {
+        persistenceManager.execute(
+            QuerySpecification.withStatement("CREATE (:Source {key: \$key, kind: 'uri'})").bind(mapOf("key" to key)),
+        )
+    }
+
+    /** Likewise a processed chunk, as `DrivineChunkHistoryStore` writes it. */
+    private fun writeProcessedChunk(id: String) {
+        persistenceManager.execute(
+            QuerySpecification.withStatement(
+                "CREATE (:ProcessedChunk {id: \$id, contextId: 'tenant-a', contentHash: 'hash', " +
+                    "sourceId: 'src', startIndex: 0, endIndex: 10, processedAt: \$processedAt})",
+            ).bind(mapOf("id" to id, "processedAt" to Instant.parse("2026-01-01T00:00:00Z").toString())),
         )
     }
 

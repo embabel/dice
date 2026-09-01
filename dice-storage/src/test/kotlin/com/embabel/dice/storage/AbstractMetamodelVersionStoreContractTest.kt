@@ -17,14 +17,16 @@ package com.embabel.dice.storage
 
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.MetamodelVersionStore
+import com.embabel.dice.metamodel.SweptBaselineStore
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 /**
  * Cross-backend contract for [MetamodelVersionStore]: the upsert, history ordering, keyed lookup,
- * and schema isolation. Each subclass supplies a store and inherits the whole suite, so a backend
- * that disagrees with the in-memory reference fails at authoring time.
+ * schema isolation, and the swept baseline a [SweptBaselineStore] tracks alongside it. Each
+ * subclass supplies a store and inherits the whole suite, so a backend that disagrees with the
+ * in-memory reference fails at authoring time.
  *
  * The rules here matter because the drift check re-stamps its schema on every pass. A store that
  * treated each of those re-stamps as a new record would fill the history with copies of one version,
@@ -32,8 +34,14 @@ import org.junit.jupiter.api.Test
  */
 abstract class AbstractMetamodelVersionStoreContractTest {
 
-    /** A store holding nothing for the schema names below. */
-    protected abstract fun store(): MetamodelVersionStore
+    /**
+     * A store holding nothing for the schema names below.
+     *
+     * Typed as [SweptBaselineStore], since the swept-baseline half of this suite is a promise only
+     * a store that tracks the pointer durably can make. A backend that cannot keeps the plain
+     * [MetamodelVersionStore] contract and has no business inheriting these tests.
+     */
+    protected abstract fun store(): SweptBaselineStore
 
     /** A stamp of one entity type. */
     private fun version(
@@ -140,16 +148,16 @@ abstract class AbstractMetamodelVersionStoreContractTest {
 
     // ---- the swept baseline, tracked apart from ordinary write order ----
     //
-    // A store that doesn't override `sweptVersion`/`markSwept` inherits the interface default,
-    // forwarding to `latestVersion`/`saveVersion` — see `MetamodelVersionStore.sweptVersion`'s doc
-    // for why that reopens the exact bug `DefaultDriftCheckRunner` relies on this pointer to close.
-    // Three of the four tests below fail against that default: the null-until-swept case, the
-    // independence-from-a-later-new-stamp case, and the independence-from-a-later-re-save case. The
-    // middle test, `markSwept moves the swept baseline to that version`, passes against the
-    // forwarding default too — a schema with exactly one saved version has that version as both its
-    // `latestVersion` and (via `markSwept`'s forwarding to `saveVersion`) its only candidate, so the
-    // default answers correctly by coincidence on a single-version schema. It stays in the suite as a
-    // positive check on the real behavior; it just isn't the one that catches a non-overriding store.
+    // `SweptBaselineStore` gives neither method a default body, which is what these four hold a
+    // store to. A forwarding default answering from `latestVersion`/`saveVersion` would reopen the
+    // exact bug `DefaultDriftCheckRunner` relies on this pointer to close — see
+    // `SweptBaselineStore.sweptVersion`'s doc. Three of the four tests below catch a store that
+    // answers that way: the null-until-swept case, the independence-from-a-later-new-stamp case,
+    // and the independence-from-a-later-re-save case. The middle test, `markSwept moves the swept
+    // baseline to that version`, would pass against a forwarding store too — a schema with exactly
+    // one saved version has that version as both its `latestVersion` and its only swept candidate,
+    // so write order answers correctly there by coincidence. It stays in the suite as a positive
+    // check on the real behavior.
 
     @Test
     fun `sweptVersion is null until markSwept is called`() {

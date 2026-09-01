@@ -518,6 +518,66 @@ class MetamodelDifferTest {
             entityTypeBasis = ObservedSchema.EntityTypeBasis.MENTION_TYPES,
         )
 
+        /**
+         * A declaration governing `Person`, which carries the parent label `Agent` on every node it
+         * writes. Nothing declares `Agent` a type of its own.
+         */
+        private fun personCarryingParentLabelAgent(): DeclaredSchema = DeclaredSchema(
+            version = MetamodelVersion(
+                schemaName = "test",
+                entityTypeNames = listOf("Person"),
+                entityTypeLabels = mapOf("Person" to setOf("Person", "Agent")),
+                entityTypeProperties = mapOf("Person" to emptySet()),
+                relationshipNames = emptyList(),
+            ),
+            relationshipTypeNames = emptySet(),
+        )
+
+        /** A whole-graph observation: labels in one set, mention types in the other. */
+        private fun observedWholeGraph(labels: Set<String>, mentionTypes: Set<String>): ObservedSchema =
+            ObservedSchema(
+                entityTypeNames = labels,
+                relationshipTypeNames = emptySet(),
+                capturedAt = Instant.parse("2026-01-01T00:00:00Z"),
+                entityTypeBasis = ObservedSchema.EntityTypeBasis.GRAPH_LABELS,
+                mentionTypeNames = mentionTypes,
+            )
+
+        @Test
+        fun `a parent label a declared type carries is no drift`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                personCarryingParentLabelAgent(),
+                observedWholeGraph(labels = setOf("Person", "Agent"), mentionTypes = setOf("Person")),
+            )
+
+            assertFalse(diff.hasDrift, "a governed type's own hierarchy is declared; got ${diff.driftedEntityTypes}")
+        }
+
+        @Test
+        fun `a mention type spelled like a parent label is drift`() {
+            // What the two sets keep apart. The graph legally reports `Agent` as a label, since every
+            // governed `Person` node carries it, while a mention claiming to BE an `Agent` is a claim
+            // about a type nothing declared. Judging both sets under the label rule would let the
+            // mention ride the label through.
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                personCarryingParentLabelAgent(),
+                observedWholeGraph(labels = setOf("Person", "Agent"), mentionTypes = setOf("Person", "Agent")),
+            )
+
+            assertEquals(setOf("Agent"), diff.driftedEntityTypes)
+        }
+
+        @Test
+        fun `a declared type observed only through its mentions counts as observed`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declared("Person"),
+                observedWholeGraph(labels = emptySet(), mentionTypes = setOf("Person")),
+            )
+
+            assertTrue(diff.unobservedEntityTypes.isEmpty(), "got ${diff.unobservedEntityTypes}")
+            assertFalse(diff.hasDrift, "got ${diff.driftedEntityTypes}")
+        }
+
         @Test
         fun `an observed type with no declaration is reported as drift`() {
             val diff = declaredObservedDiffer.diffAgainstObserved(

@@ -128,12 +128,12 @@ open class TestApplication {
         persistenceManager: PersistenceManager,
     ): DrivineChunkHistoryStore = DrivineChunkHistoryStore(graphObjectManager, persistenceManager)
 
+    /**
+     * The lineage stores MERGE on the keys [LineageSchema] declares, so the constraints come off the
+     * same list. A host wires it the same way.
+     */
     @Bean
-    open fun lineageSchema(): SchemaCatalog = SchemaCatalog.of(
-        UniquenessConstraintSpec(label = "ProjectionRecord", properties = listOf("propositionId", "runId", "target")),
-        UniquenessConstraintSpec(label = "CollectorRecord", properties = listOf("propositionId", "runId")),
-        UniquenessConstraintSpec(label = "CollectorRun", property = "runId"),
-    )
+    open fun lineageSchema(): SchemaCatalog = SchemaCatalog.of(LineageSchema.specs())
 
     @Bean
     open fun projectionRecordStore(

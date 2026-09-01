@@ -41,8 +41,10 @@ class DrivineProjectionRecordStore(
     private val logger = LoggerFactory.getLogger(DrivineProjectionRecordStore::class.java)
 
     /**
-     * Upsert the record on its natural key (proposition + run + target) so a replayed projection
-     * outcome updates in place rather than piling up duplicate nodes.
+     * Upsert the record on the natural key [LineageSchema] declares for it (proposition + run +
+     * target), so a replayed projection outcome updates in place and no duplicate node piles up.
+     * The pattern is built from that key, which keeps the write and the uniqueness constraint
+     * protecting it on one definition.
      */
     @Transactional
     override fun record(record: ProjectionRecord) {
@@ -50,7 +52,7 @@ class DrivineProjectionRecordStore(
         persistenceManager.execute(
             QuerySpecification.withStatement(
                 """
-                MERGE (n:ProjectionRecord {propositionId: ${'$'}propositionId, runId: ${'$'}runId, target: ${'$'}target})
+                MERGE ${LineageSchema.mergePattern("n", LineageSchema.PROJECTION_RECORD)}
                 SET n.targetRef = ${'$'}targetRef,
                     n.lifecycle = ${'$'}lifecycle,
                     n.at        = ${'$'}at,

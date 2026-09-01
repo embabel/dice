@@ -20,9 +20,11 @@ import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.metamodel.DeclaredSchema
 import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.metamodel.DriftCheckRunner
+import com.embabel.dice.metamodel.DriftSweepCapable
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.support.DefaultDriftCheckRunner
 import com.embabel.dice.metamodel.support.MentionTypeDriftQuarantinePolicy
+import com.embabel.dice.metamodel.support.PropositionStoreDriftSweep
 import com.embabel.dice.metamodel.support.StructuralMetamodelDiffer
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
@@ -32,6 +34,7 @@ import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -42,14 +45,17 @@ import org.springframework.test.context.DynamicPropertySource
 
 /**
  * The whole drift check end to end, on real Drivine stores against a Neo4j testcontainer:
- * `DefaultDriftCheckRunner` wired to [DrivineMetamodelVersionStore], [DrivineObservedSchemaSource],
- * [DrivineDriftReportStore] and [DrivinePropositionRepository], with the real differ and the real
- * quarantine policy.
+ * `DefaultDriftCheckRunner` wired to [DrivineMetamodelVersionStore], [DrivineObservedSchemaSource]
+ * and [DrivineDriftReportStore], with the real differ.
+ *
+ * A check reports and moves nothing, so acting on what it found is a second, deliberate step: these
+ * tests sweep through [PropositionStoreDriftSweep] over [DrivinePropositionRepository], with the
+ * real quarantine policy, exactly the way a host would.
  *
  * The unit tests in `dice-metamodel` pin the runner's sequencing against fakes. What only a database
- * can answer is whether the three persistent pieces line up: a report written by one store names a
- * hash the other store can resolve, and the proposition the policy flagged comes back out of the
- * graph flagged.
+ * can answer is whether the persistent pieces line up: a report written by one store names a hash
+ * the other store can resolve, and the proposition the policy flagged comes back out of the graph
+ * flagged.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivineDriftCheckIntegrationTest {
@@ -101,10 +107,39 @@ class DrivineDriftCheckIntegrationTest {
             differ = differ,
             metamodelDiffer = differ,
             driftReportStore = reportStore,
-            quarantinePolicy = MentionTypeDriftQuarantinePolicy(),
-            propositionStore = repository,
         )
     }
+
+    /**
+     * A second declaration, governing one type that carries a parent label. Every `Person` node
+     * carries `Agent` too, and nothing declares `Agent` a type of its own, which is the pair of facts
+     * an unscoped check has to keep apart.
+     */
+    private val hierarchyVersion = MetamodelVersion(
+        schemaName = schemaName,
+        entityTypeNames = listOf("Person"),
+        entityTypeLabels = mapOf("Person" to setOf("Person", "Agent")),
+        entityTypeProperties = mapOf("Person" to emptySet()),
+        relationshipNames = emptyList(),
+    )
+
+    private val hierarchyRunner: DriftCheckRunner by lazy {
+        DefaultDriftCheckRunner(
+            declaredSchemaSource = DeclaredSchemaSource {
+                DeclaredSchema(version = hierarchyVersion, relationshipTypeNames = emptySet())
+            },
+            versionStore = versionStore,
+            observedSchemaSource = observedSchemaSource,
+            differ = differ,
+            metamodelDiffer = differ,
+            driftReportStore = reportStore,
+        )
+    }
+
+    /** The deliberate half: what a host calls once it has read a check's report and decided. */
+    private val sweep: DriftSweepCapable by lazy { PropositionStoreDriftSweep(repository) }
+
+    private val policy = MentionTypeDriftQuarantinePolicy()
 
     @AfterEach
     fun cleanUp() {
@@ -113,7 +148,7 @@ class DrivineDriftCheckIntegrationTest {
     }
 
     @Test
-    fun `an undeclared mention type is reported, resolvable, and quarantined`() {
+    fun `an undeclared mention type is reported, resolvable, and quarantined by a sweep`() {
         val stranded = repository.save(
             Proposition(
                 contextId = contextId,
@@ -123,11 +158,10 @@ class DrivineDriftCheckIntegrationTest {
             ),
         )
 
-        val result = runner.run(dryRun = false, contextId = contextId)
+        val result = runner.run(contextId)
 
         // 1. The check saw the undeclared type and nothing else.
         assertEquals(setOf("Ghost"), result.report.driftedEntityTypes)
-        assertEquals(1, result.quarantinedCount)
 
         // 2. The report is really in the graph, under the context it was scoped to.
         val persisted = reportStore.driftReportsInContext(schemaName, contextId, limit = 10)
@@ -143,7 +177,12 @@ class DrivineDriftCheckIntegrationTest {
         assertNotNull(resolved, "a persisted report named a version hash nothing recorded")
         assertEquals(declaredVersion, resolved)
 
-        // 4. The stranded proposition came back out of the graph flagged, carrying a readable
+        // 4. The check moved nothing, so a host sweeps the context it decided to reconcile. The
+        //    sweep evaluates the same merged comparison the report showed.
+        val swept = sweep.sweep(result.quarantineDiff, policy, contextId)
+        assertEquals(listOf(stranded.id), swept.quarantined.map { it.proposition.id })
+
+        // 5. The stranded proposition came back out of the graph flagged, carrying a readable
         //    quarantine reason.
         val reloaded = repository.findById(stranded.id)
         assertNotNull(reloaded)
@@ -154,7 +193,7 @@ class DrivineDriftCheckIntegrationTest {
     }
 
     @Test
-    fun `a dry run records the same report and touches no proposition`() {
+    fun `a check records its report and touches no proposition`() {
         val untouched = repository.save(
             Proposition(
                 contextId = contextId,
@@ -164,12 +203,15 @@ class DrivineDriftCheckIntegrationTest {
             ),
         )
 
-        val result = runner.run(dryRun = true, contextId = contextId)
+        val result = runner.run(contextId)
 
         assertEquals(setOf("Ghost"), result.report.driftedEntityTypes)
-        assertEquals(0, result.quarantinedCount)
         assertEquals(1, reportStore.driftReportsInContext(schemaName, contextId, limit = 10).size)
-        assertEquals(PropositionStatus.ACTIVE, repository.findById(untouched.id)!!.status)
+        assertEquals(
+            PropositionStatus.ACTIVE,
+            repository.findById(untouched.id)!!.status,
+            "a check reports what it found and leaves every proposition where it was",
+        )
     }
 
     @Test
@@ -185,10 +227,13 @@ class DrivineDriftCheckIntegrationTest {
             ),
         )
 
-        val result = runner.run(dryRun = false, contextId = contextId)
+        val result = runner.run(contextId)
 
         assertTrue(result.report.driftedEntityTypes.isEmpty(), "got ${result.report.driftedEntityTypes}")
-        assertEquals(0, result.quarantinedCount)
+        assertTrue(
+            sweep.sweep(result.quarantineDiff, policy, contextId).quarantined.isEmpty(),
+            "a clean context gives a sweep nothing to do",
+        )
         assertEquals(listOf(result.report), reportStore.driftReportsInContext(schemaName, contextId, limit = 10))
     }
 
@@ -203,8 +248,8 @@ class DrivineDriftCheckIntegrationTest {
             ),
         )
 
-        val first = runner.run(dryRun = true, contextId = contextId)
-        val second = runner.run(dryRun = true, contextId = contextId)
+        val first = runner.run(contextId)
+        val second = runner.run(contextId)
 
         val history = reportStore.driftReportsInContext(schemaName, contextId, limit = 10)
         assertEquals(listOf(second.report, first.report), history, "a drift log accumulates; it is not a gauge")
@@ -221,14 +266,113 @@ class DrivineDriftCheckIntegrationTest {
             ),
         )
 
-        val result = runner.run(dryRun = false, contextId = contextId)
+        val result = runner.run(contextId)
 
         assertTrue(result.report.driftedEntityTypes.isEmpty(), "got ${result.report.driftedEntityTypes}")
-        assertEquals(0, result.quarantinedCount)
+        sweep.sweep(result.quarantineDiff, policy, contextId)
         assertEquals(
             PropositionStatus.ACTIVE,
             repository.findByContextId(ContextId("elsewhere")).single().status,
             "a check scoped to one context must not be able to reach another's data",
         )
     }
+
+    @Test
+    fun `an unscoped check reports a mention type nothing ever projected, and a sweep quarantines it`() {
+        // The whole-graph path reads the database's label catalogue, and a mention type reaches that
+        // catalogue only once something projects a node for it. An extraction that recorded `Ghost`
+        // and produced no `(:Ghost)` node left the graph looking clean to every unscoped check while
+        // a live proposition carried the undeclared type.
+        val stranded = repository.save(
+            Proposition(
+                contextId = contextId,
+                text = "The ghost haunts the manor",
+                mentions = listOf(EntityMention(span = "the ghost", type = "Ghost", role = MentionRole.SUBJECT)),
+                confidence = 0.9,
+            ),
+        )
+        assertEquals(PropositionStatus.ACTIVE, repository.findById(stranded.id)!!.status)
+        assertFalse(
+            rawLabels().contains("Ghost"),
+            "precondition: no typed graph projection for Ghost, but the catalogue held ${rawLabels()}",
+        )
+
+        val result = runner.run()
+
+        assertTrue(
+            result.report.driftedEntityTypes.contains("Ghost"),
+            "the unscoped check missed a type only the propositions know about; got " +
+                "${result.report.driftedEntityTypes}",
+        )
+        assertEquals(
+            listOf(result.report),
+            reportStore.globalDriftReports(schemaName, limit = 10),
+            "an unscoped check records a whole-graph report",
+        )
+
+        // The quarantine half is the host's deliberate step, on the context holding the data.
+        val swept = sweep.sweep(result.quarantineDiff, policy, contextId)
+
+        assertEquals(listOf(stranded.id), swept.quarantined.map { it.proposition.id })
+        assertEquals(PropositionStatus.STALE, repository.findById(stranded.id)!!.status)
+    }
+
+    @Test
+    fun `a projected node's parent label is no drift on an unscoped check`() {
+        // One half of the pair. The graph reports `Agent` as a label, because every governed
+        // `Person` node carries its whole hierarchy, and the declaration says so.
+        repository.save(
+            Proposition(
+                contextId = contextId,
+                text = "Ada is a person",
+                mentions = listOf(EntityMention(span = "Ada", type = "Person", role = MentionRole.SUBJECT)),
+                confidence = 0.9,
+            ),
+        )
+        projectNodeCarryingHierarchy()
+
+        val result = hierarchyRunner.run()
+
+        assertTrue(
+            result.report.driftedEntityTypes.isEmpty(),
+            "a governed type's own hierarchy label read as drift; got ${result.report.driftedEntityTypes}",
+        )
+    }
+
+    @Test
+    fun `a mention typed as a parent label is drift on an unscoped check`() {
+        // The other half, on a graph holding the same node. Only the mention differs: this one claims
+        // to BE an `Agent`, a type nothing declared. Reading both kinds of name under the label rule
+        // let that claim ride the governed type's hierarchy through an unscoped check.
+        val stranded = repository.save(
+            Proposition(
+                contextId = contextId,
+                text = "Ada answers for the estate",
+                mentions = listOf(EntityMention(span = "Ada", type = "Agent", role = MentionRole.SUBJECT)),
+                confidence = 0.9,
+            ),
+        )
+        projectNodeCarryingHierarchy()
+
+        val result = hierarchyRunner.run()
+
+        assertEquals(setOf("Agent"), result.report.driftedEntityTypes)
+        val swept = sweep.sweep(result.quarantineDiff, policy, contextId)
+        assertEquals(listOf(stranded.id), swept.quarantined.map { it.proposition.id })
+        assertEquals(PropositionStatus.STALE, repository.findById(stranded.id)!!.status)
+    }
+
+    /** A projected entity node carrying a governed `Person`'s whole label hierarchy. */
+    private fun projectNodeCarryingHierarchy() {
+        persistenceManager.execute(QuerySpecification.withStatement("CREATE (:Person:Agent {id: 'e-ada'})"))
+    }
+
+    /** What the database's own catalogue reports, before an observation subtracts anything from it. */
+    private fun rawLabels(): Set<String> = persistenceManager
+        .query(
+            QuerySpecification.withStatement("CALL db.labels() YIELD label RETURN label")
+                .transform(String::class.java),
+        )
+        .filterNotNull()
+        .toSet()
 }

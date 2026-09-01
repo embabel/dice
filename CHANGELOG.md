@@ -390,14 +390,14 @@ and the consumer PRs that deliver it).
   type of its own — an inherited-label escape hatch for undeclared mention types. `DrivineObservedSchemaSource`
   tags its context-scoped observation `MENTION_TYPES`; `StructuralMetamodelDiffer.diffAgainstObserved`
   now compares a `MENTION_TYPES` observation against declared type names and their declared former
-  names only, with no widening to inherited labels. Third, `DrivineMetamodelVersionStore` overrides
-  `sweptVersion`/`markSwept`, tracking the reconciled baseline as a `sweptContentHash` property on the
-  schema's own `(:MetamodelSchemaCounter)` node, moved only by `markSwept` and left untouched by an
-  ordinary `saveVersion`, the same independence `InMemoryMetamodelVersionStore` already had. Without
-  this override the durable store inherited the interface's forwarding default, and every run's own
-  history-stamping write — dry, scoped, or crashed alike — silently consumed the very signal
-  `DefaultDriftCheckRunner`'s declared-vs-previous comparison depends on, a gap the drift-runner slice
-  above called out and deferred to this one.
+  names only, with no widening to inherited labels. Third, `DrivineMetamodelVersionStore` tracks the
+  reconciled baseline as a `sweptContentHash` property on the schema's own
+  `(:MetamodelSchemaCounter)` node, moved only by `markSwept` and left untouched by an ordinary
+  `saveVersion`, the same independence `InMemoryMetamodelVersionStore` already had. A durable store
+  answering that question from write order would let every run's own history-stamping write — dry,
+  scoped, or crashed alike — silently consume the very signal `DefaultDriftCheckRunner`'s
+  declared-vs-previous comparison depends on, a gap the drift-runner slice above called out and
+  deferred to this one.
   **Compatibility: additive.** `ObservedSchema` gains a defaulted constructor parameter under
   `@JvmOverloads`, so the pre-existing three-argument constructor survives in the compiled class
   alongside the new four-argument one, confirmed by running `javap` on the compiled class after
@@ -406,7 +406,44 @@ and the consumer PRs that deliver it).
   gain behavior on existing methods; no signature changed. `AbstractMetamodelVersionStoreContractTest`
   gains four `sweptVersion`/`markSwept` cases; the graph store now passes all four, and three of
   them — the null-until-swept case, the independence-from-a-later-new-stamp case, and the
-  independence-from-a-later-re-save case — previously failed against the forwarding default.
+  independence-from-a-later-re-save case — catch a store that answers from write order.
+
+- Three more corrections to the same Drivine drift slice, from a later review round.
+  First, a whole-graph observation now asks dice's own propositions for their distinct `Mention.type`
+  values, alongside the label catalogue it already read. A mention type reaches `db.labels()` only
+  once something projects a node for it, so an extraction that recorded `Ghost` and projected nothing
+  left an undeclared type invisible to every unscoped check, while the context-scoped check on the
+  same data reported it. The query holds both ends to dice's own shape, so a domain node wearing
+  `:Proposition` contributes no mention types. The two kinds of name stay in separate sets:
+  `ObservedSchema` gains `mentionTypeNames` (empty by default), `DrivineObservedSchemaSource` fills
+  it on the unscoped path, and `StructuralMetamodelDiffer.diffAgainstObserved` judges labels under
+  the observation's basis and mention types under the `MENTION_TYPES` rule, unioning what drifted.
+  Merging them would have to pick one rule for both, and the label rule reopens what `MENTION_TYPES`
+  exists to close: a mention typed `Agent` passing under a schema that governs `Person` with parent
+  label `Agent` and declares no `Agent` type. An unscoped check and a scoped one now read mention
+  types the same strict way, pinned by a differ test and by an integration pair that puts a
+  `(:Person:Agent)` node in the graph and moves only the mention type between them.
+  Second, the ownership catalog is derived from the storage definitions themselves, in the new
+  `DiceOwnedSchema`, replacing the literal inventory of labels and properties the observer used to
+  hold. A node fragment's shape is every constructor parameter dice's writer cannot leave out
+  (declared non-null, with no default), so dice's `Source` shape is `key` **and** `kind`, and a
+  host's own `(:Source {key: ...})` stays observed where the old key-only shape hid it. A
+  Cypher-backed store's shape is the union of the properties its uniqueness constraints name. The new
+  `LineageSchema` gives the lineage stores' labels and natural keys one definition site, and both
+  stores build their MERGE patterns from it, so the key a record is upserted on and the key its
+  constraint protects cannot drift apart.
+  Third, `DrivineMetamodelVersionStore` declares `SweptBaselineStore`, the sub-interface the swept
+  baseline moved onto, so `DefaultDriftCheckRunner` reads the durable pointer described above and a
+  Drivine-backed host gets the declared-vs-previous half of a report once its first sweep completes.
+  **Compatibility: behavioral.** `ObservedSchema` gains a fifth constructor parameter,
+  `mentionTypeNames`, defaulted to empty under the existing `@JvmOverloads`, so every three- and
+  four-argument constructor form survives and any caller that never fills it gets exactly the
+  comparison it got before. `DiceOwnedSchema` and `LineageSchema` are new. No signature was removed
+  or narrowed. A whole-graph check against a populated graph can report more than it did: mention
+  types nothing ever projected, and a domain node sharing a dice label while missing a property dice
+  always writes. Both were undetected drift before, so what appears is a real finding, and a scoped
+  check's answer is unchanged. Hosts declaring the lineage constraints by hand can swap in
+  `LineageSchema.specs()`.
 
 - `dice-storage-autoconfigure` now depends on `spring-boot-transaction`. On Spring Boot 4, a
   `PlatformTransactionManager` bean alone does not activate `@Transactional`: the interceptor that
