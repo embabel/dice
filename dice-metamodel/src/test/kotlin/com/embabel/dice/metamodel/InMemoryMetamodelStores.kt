@@ -19,10 +19,11 @@ import com.embabel.agent.core.ContextId
 import java.time.Instant
 
 /**
- * In-memory [MetamodelVersionStore] for tests: upserts on `(schemaName, contentHash)` and keeps
- * history newest first, the same way the real contract describes.
+ * In-memory [SweptBaselineStore] for tests: upserts on `(schemaName, contentHash)`, keeps history
+ * newest first, and tracks the reconciled baseline as its own pointer, the same way the real
+ * contracts describe.
  */
-internal class InMemoryMetamodelVersionStore : MetamodelVersionStore {
+internal class InMemoryMetamodelVersionStore : SweptBaselineStore {
 
     private val versions = mutableListOf<MetamodelVersion>()
 
@@ -31,7 +32,7 @@ internal class InMemoryMetamodelVersionStore : MetamodelVersionStore {
         private set
 
     // The reconciled-baseline pointer, tracked apart from `versions`' write order -- see
-    // MetamodelVersionStore.sweptVersion's doc for why this can't be answered off `latestVersion`.
+    // SweptBaselineStore.sweptVersion's doc for why this can't be answered off `latestVersion`.
     private val swept = mutableMapOf<String, MetamodelVersion>()
 
     override fun saveVersion(version: MetamodelVersion) {

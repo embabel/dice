@@ -19,27 +19,30 @@ import com.embabel.agent.core.ContextId
 import java.util.Objects
 
 /**
- * What one [DriftCheckRunner.run] call found and did.
+ * What one [DriftCheckRunner.run] call found.
  *
- * The drifted types are read off [report] rather than copied into fields here. Every run persists a
+ * The drifted types are read off [report], with no second copy kept here. Every run persists a
  * report, so a copy would be a second version of the same answer, and two versions can disagree: a
  * caller who logged the result and an operator who read the stored report would then see different
  * type sets for the same check.
  *
- * @property dryRun Whether this was a preview. On a dry run the report is still persisted; no
- *   proposition is touched.
  * @property report The [DriftReport] this run saved. Every run saves one, including a check that
  *   found nothing.
- * @property quarantinedCount How many propositions this run newly quarantined. Always 0 on a dry
- *   run. On a live run it can be non-zero even when [driftedEntityTypes] and
- *   [driftedRelationshipTypes] are both empty: quarantine reacts to two independent signals, not
- *   just observed drift — see [DriftCheckRunner.run]'s `dryRun` parameter doc for the second one.
+ * @property declaredVersion The stamp the check ran against. [DriftReport.versionHash] is this
+ *   stamp's [MetamodelVersion.contentHash], and holding the stamp itself is what lets [quarantineDiff]
+ *   answer without a second trip to the version store.
  */
 class DriftCheckResult(
-    val dryRun: Boolean,
     val report: DriftReport,
-    val quarantinedCount: Int,
+    val declaredVersion: MetamodelVersion,
 ) {
+
+    init {
+        require(report.versionHash == declaredVersion.contentHash) {
+            "report was judged against ${report.versionHash} but was handed the stamp " +
+                "${declaredVersion.contentHash}"
+        }
+    }
 
     /** The declared schema the check ran against. */
     val schemaName: String get() = report.schemaName
@@ -56,78 +59,76 @@ class DriftCheckResult(
     /** `true` when the graph contained any type or relationship that was never declared. */
     val hasDrift: Boolean get() = report.hasDrift
 
+    /**
+     * How the declaration itself moved since the last completed sweep. `null` when the version store
+     * tracked no baseline to compare against. See [DriftReport.declaredDiff].
+     */
+    val declaredDiff: MetamodelDiff? get() = report.declaredDiff
+
+    /** `true` when either half of the check found something. See [DriftReport.hasAnyChange]. */
+    val hasAnyChange: Boolean get() = report.hasAnyChange
+
+    /**
+     * The merged comparison a deliberate sweep would evaluate propositions against, so what this
+     * check reports and what a sweep would act on are the same facts. See
+     * [DriftReport.quarantineDiff].
+     */
+    val quarantineDiff: MetamodelDiff by lazy { report.quarantineDiff(declaredVersion) }
+
     override fun equals(other: Any?): Boolean =
         other is DriftCheckResult &&
-            dryRun == other.dryRun &&
             report == other.report &&
-            quarantinedCount == other.quarantinedCount
+            declaredVersion == other.declaredVersion
 
-    override fun hashCode(): Int = Objects.hash(dryRun, report, quarantinedCount)
+    override fun hashCode(): Int = Objects.hash(report, declaredVersion)
 
     override fun toString(): String =
-        "DriftCheckResult(dryRun=$dryRun, quarantinedCount=$quarantinedCount, report=$report)"
+        "DriftCheckResult(report=$report, declaredVersion=$declaredVersion)"
 }
 
 /**
  * Runs a drift check end to end: takes the declared schema, stamps it, snapshots what a live graph
- * holds, compares the two, writes the result down, and quarantines the propositions the drift
- * stranded when asked to.
+ * holds, compares the two, compares the declaration against the baseline a sweep last reconciled,
+ * and writes the whole answer down.
  *
- * Dry-run by default. Observing and reporting changes nothing; moving propositions to `STALE` is a
- * separate decision a caller opts into. Nothing here schedules itself, so a consuming application
- * decides when [run] is called, as it does for the collector.
+ * ## A check reports; it changes nothing
  *
- * The shorter [run] forms are real overloads with bodies rather than Kotlin default arguments,
- * because Java can't see a default argument: `runner.run()` has to exist as a method for a Java
- * caller to write it. Implementations override the two-argument form and get the other two free.
- * Those two shorter forms are also the whole Java surface, since `ContextId` is a Kotlin value class
- * and the two-argument form compiles to a mangled JVM name Java can't call.
+ * There is one mode. A check reads, compares, and persists a [DriftReport], and no path through it
+ * moves a proposition or the swept baseline. Acting on what a check found is a separate, deliberate
+ * step a host takes through [DriftSweepCapable], with its own bounded, context-scoped candidate
+ * selection.
+ *
+ * That split is why [DriftCheckResult.quarantineDiff] exists. A check is the only half DICE runs on
+ * its own, so its report has to show the *complete* comparison a sweep would act on, including the
+ * declared-vs-previous half. A report reading clean while a sweep on the very same state would
+ * quarantine is exactly the surprise this shape removes.
+ *
+ * Nothing here schedules itself. A consuming application decides when [run] is called, as it does
+ * for the collector.
+ *
+ * The no-argument [run] is a real overload with a body, because Java can't see a Kotlin default
+ * argument: `runner.run()` has to exist as a method for a Java caller to write it. It is also the
+ * whole Java surface, since `ContextId` is a Kotlin value class and the scoped form compiles to a
+ * mangled JVM name Java can't call. An implementation writes the scoped form and gets the other
+ * free.
  */
 interface DriftCheckRunner {
 
     /**
-     * Declare, stamp, observe, diff, report, and quarantine when [dryRun] is `false` and either
-     * source has *any* diff to evaluate: an undeclared *entity* type observed in the graph, or a
-     * non-empty declared-vs-previous comparison. Either one starts an evaluation sweep, whether or
-     * not what it found is actually lossy — a purely additive or rename-only declared change still
-     * runs the policy over the candidate propositions, and the policy is what decides nothing about
-     * them needs to move. Only the propositions the policy actually judges affected end up
-     * quarantined. An undeclared *relationship* type alone (observed drift with
-     * [DriftReport.driftedRelationshipTypes] non-empty but [DriftReport.driftedEntityTypes] empty)
-     * does not start a sweep at all — only entity mentions are quarantine candidates today, so
-     * there is nothing for a relationship-only observed drift to catch.
+     * Declare, stamp, observe, diff against the graph, diff against the swept baseline, and persist
+     * the report.
      *
-     * @param dryRun When `true`, the check runs and its [DriftReport] is persisted, but no
-     *   proposition is touched and nothing is swept against. When `false`, quarantine runs against
-     *   two independent signals merged into one sweep: propositions whose mentions reference an
-     *   entity type the graph holds but the declaration doesn't ([DriftReport.driftedEntityTypes]),
-     *   and propositions caught by a lossy change to the declaration itself since it was last swept
-     *   — a property removed or narrowed, a whole type dropped — even when the live graph and the
-     *   new declaration already agree on everything the graph currently holds. Whatever the
-     *   configured [DriftQuarantinePolicy] flags from either signal is persisted. A dry run
-     *   computes neither signal's quarantine effect, so it cannot preview what a live run would
-     *   catch from the second source: running dry, then live, can still find something the dry
-     *   run reported as clean.
-     * @param contextId `null` means the check covers the whole graph. Non-null scopes everything
-     *   the check touches to that one context: the observed snapshot, the candidate propositions
-     *   read for quarantine, and the persisted [DriftReport]. A mis-declared schema in one context
-     *   can only quarantine propositions in that same context.
-     * @return What was found, and what was quarantined if this was a live run.
+     * @param contextId `null` means the check covers the whole graph. Non-null scopes both the
+     *   observed snapshot and the persisted [DriftReport] to that one context, so a scoped check
+     *   reports what that context alone holds.
+     * @return What was found.
      */
-    fun run(dryRun: Boolean, contextId: ContextId?): DriftCheckResult
+    fun run(contextId: ContextId?): DriftCheckResult
 
     /**
-     * Run a dry check over the whole graph. Nothing is quarantined; the report is still persisted.
+     * Check the whole graph.
      *
      * @return What was found.
      */
-    fun run(): DriftCheckResult = run(dryRun = true, contextId = null)
-
-    /**
-     * Run over the whole graph, dry or live.
-     *
-     * @param dryRun `true` to preview without touching any proposition.
-     * @return What was found, and what was quarantined if this was a live run.
-     */
-    fun run(dryRun: Boolean): DriftCheckResult = run(dryRun, null)
+    fun run(): DriftCheckResult = run(null)
 }

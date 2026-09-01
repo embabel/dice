@@ -17,6 +17,8 @@ package com.embabel.dice.metamodel.support
 
 import com.embabel.agent.core.Cardinality
 import com.embabel.dice.common.DiceMetadataKeys
+import com.embabel.dice.metamodel.DeclaredSchema
+import com.embabel.dice.metamodel.DriftQuarantineKeys
 import com.embabel.dice.metamodel.DriftQuarantinePolicy
 import com.embabel.dice.metamodel.MetamodelChange
 import com.embabel.dice.metamodel.MetamodelDiff
@@ -77,6 +79,24 @@ import org.slf4j.LoggerFactory
  * new name, a child's inherited label — folds into [MetamodelChange.EntityTypeRenamed] in the diff
  * and never reaches this policy as loss.
  *
+ * ## Two spellings of one type name
+ *
+ * A declared name can be fully qualified where the data is simple. A JVM-backed type is declared as
+ * `com.example.Person`, extraction records the mention as `Person`, and the graph writes `Person` as
+ * the label. Matching on the declared spelling alone would read a lossy change on
+ * `com.example.Person` as touching nothing at all, and a schema that dropped the type outright would
+ * leave every proposition it stranded looking healthy.
+ *
+ * So every name this policy matches on — removed types, types that lost shape, declared former names
+ * — is registered under both spellings: the name as declared, and the label it writes onto a node
+ * (`DeclaredSchema.ownLabelOf`). This is the same cut the declared-vs-observed comparison makes, so
+ * the two halves of a drift check agree about which type is which. Two declared types in different
+ * packages share one label, and a graph can't tell them apart either, so a mention under that label
+ * is checked against both.
+ *
+ * Matching a mention under the other spelling of its own type is ordinary matching, so it never
+ * shows up in the reason as a former name.
+ *
  * ## Value types
  *
  * A changed value type counts as lossy in both directions except for the four promotions in
@@ -112,32 +132,7 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
     private val logger = LoggerFactory.getLogger(MentionTypeDriftQuarantinePolicy::class.java)
 
     override fun evaluate(diff: MetamodelDiff, propositions: Iterable<Proposition>): QuarantineResult {
-        val removedTypes = diff.removedEntityTypes
-
-        // Types whose name survived and which lost labels or whole properties. Also lossy, because
-        // a mention may have relied on a label or property that is now gone. Keyed by type name.
-        val lossyModified = diff.modifiedEntityTypes
-            .filter { it.removedLabels.isNotEmpty() || it.removedProperties.isNotEmpty() }
-            .associateBy { it.typeName }
-
-        // Types carrying a property that kept its name but narrowed. Grouped by type name, since
-        // one type can have several such properties and the reason should name them all.
-        val narrowedProperties = diff.propertySignatureChanges
-            .filter { isNarrowing(it.before, it.after) }
-            .groupBy { it.typeName }
-
-        // Types carrying a property that was renamed and narrowed in the same step. The rename is
-        // harmless; the shape move underneath it is judged by the same rule as any other.
-        val narrowedRenames = diff.renamedProperties
-            .filter { isNarrowing(it.before, it.after) }
-            .groupBy { it.typeName }
-
-        // Every name a surviving type has gone by, pointing at the name its changes are reported
-        // under, and every name a removed type has gone by, pointing at the removal. Two maps, read
-        // off opposite sides of the diff, because a removed type is absent from the newer side.
-        // Extracted once per sweep rather than per proposition.
-        val currentNamesByFormerName = formerTypeNames(diff)
-        val formerNamesOfRemovedTypes = formerNamesOfRemovedTypes(diff)
+        val signals = lossySignalsOf(diff)
 
         // There is deliberately no "nothing lossy, so everything conforms" shortcut here. Whether a
         // proposition is already quarantined is a fact about the proposition and doesn't depend on
@@ -153,7 +148,7 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
         // with, which is what an operator reading the log is trying to find out.
         val formerNamesMatched = sortedSetOf<String>()
         // Propositions left alone because a previous sweep already quarantined them. Their own
-        // bucket rather than folded into conforming, so conforming.size counts only clean ones.
+        // bucket, so conforming.size counts only clean ones.
         val alreadyQuarantined = mutableListOf<QuarantineDecision.AlreadyQuarantined>()
 
         for (proposition in propositions) {
@@ -184,9 +179,12 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
             for (mentionType in mentionTypes) {
                 var affected = false
 
-                // Note that this mention type isn't the schema's own name for the type it hit.
+                // Note that this mention type isn't the schema's own name for the type it hit. Two
+                // spellings of one name don't count: a mention of `Person` against a declared
+                // `com.example.Person` is the same type, and calling that a former name would put a
+                // baffling line in the reason.
                 fun recordFormerName(schemaName: String) {
-                    if (schemaName != mentionType) {
+                    if (DeclaredSchema.ownLabelOf(schemaName) != DeclaredSchema.ownLabelOf(mentionType)) {
                         matchedByFormerName.getOrPut(mentionType) { sortedSetOf() } += schemaName
                         formerNamesMatched += mentionType
                     }
@@ -194,21 +192,21 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
 
                 // Removals resolve through the OLDER version's aliases. A removed type takes its
                 // former names down with it, and the newer version has no record they were ever
-                // this type's, so the surviving-type map above can't see them.
+                // this type's, so the surviving-type map can't see them.
                 val removals = sortedSetOf<String>()
-                if (mentionType in removedTypes) removals += mentionType
-                removals += formerNamesOfRemovedTypes[mentionType].orEmpty()
+                removals += signals.removedTypesBySpelling[mentionType].orEmpty()
+                removals += signals.formerNamesOfRemovedTypes[mentionType].orEmpty()
                 if (removals.isNotEmpty()) {
                     removedHit += removals
                     affected = true
                     removals.forEach(::recordFormerName)
                 }
 
-                for (currentName in setOf(mentionType) + currentNamesByFormerName[mentionType].orEmpty()) {
+                for (currentName in setOf(mentionType) + signals.currentNamesByFormerName[mentionType].orEmpty()) {
                     var lossyUnderThisName = false
-                    lossyModified[currentName]?.let { lossyHit += it; lossyUnderThisName = true }
-                    narrowedProperties[currentName]?.let { narrowedHit += it; lossyUnderThisName = true }
-                    narrowedRenames[currentName]?.let { renamedHit += it; lossyUnderThisName = true }
+                    signals.lossyModified[currentName]?.let { lossyHit += it; lossyUnderThisName = true }
+                    signals.narrowedProperties[currentName]?.let { narrowedHit += it; lossyUnderThisName = true }
+                    signals.narrowedRenames[currentName]?.let { renamedHit += it; lossyUnderThisName = true }
                     if (lossyUnderThisName) {
                         affected = true
                         recordFormerName(currentName)
@@ -249,9 +247,14 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
                 continue
             }
 
+            // Where the proposition came from, written onto the copy so a release can put it back
+            // exactly there. `STALE` is a destination several roads lead to -- ordinary decay
+            // reaches it too -- so a release with nothing recorded here could only guess.
+            val previousStatus = proposition.status
             val flagged = proposition
                 .withStatus(PropositionStatus.STALE)
                 .withMetadataValue(DiceMetadataKeys.QUARANTINE_REASON, reason)
+                .withMetadataValue(DriftQuarantineKeys.PREVIOUS_STATUS, previousStatus.name)
 
             logger.debug("Quarantining proposition '{}' (id={}): {}", proposition.text, proposition.id, reason)
 
@@ -259,6 +262,7 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
                 proposition = flagged,
                 reason = reason,
                 affectedMentionTypes = affectedTypes,
+                previousStatus = previousStatus,
             )
         }
 
@@ -271,10 +275,10 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
             alreadyQuarantined.size,
             quarantined.size,
             protected.size,
-            removedTypes,
-            lossyModified.keys,
-            narrowedProperties.keys,
-            narrowedRenames.keys,
+            diff.removedEntityTypes,
+            signals.lossyModified.keys,
+            signals.narrowedProperties.keys,
+            signals.narrowedRenames.keys,
             formerNamesMatched,
         )
 
@@ -287,6 +291,71 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
     }
 
     /**
+     * Every mention type name this policy could match under [diff], which is what a bounded sweep
+     * asks its store for.
+     *
+     * It is read off exactly the same [lossySignals] the evaluation uses, so the two can't drift
+     * apart: a name that would quarantine a proposition is a name a sweep asks for. Both spellings
+     * of every name are here, since a graph writes the simple label for a fully qualified
+     * declaration and a sweep must ask for what the store actually holds.
+     */
+    override fun candidateMentionTypes(diff: MetamodelDiff): Set<String> {
+        val signals = lossySignalsOf(diff)
+        val lossyNames = signals.lossyModified.keys + signals.narrowedProperties.keys + signals.narrowedRenames.keys
+        val formerNamesOfLossyTypes = signals.currentNamesByFormerName
+            .filterValues { currentNames -> currentNames.any { it in lossyNames } }
+            .keys
+        return java.util.Collections.unmodifiableSet(
+            sortedSetOf<String>().apply {
+                addAll(signals.removedTypesBySpelling.keys)
+                addAll(signals.formerNamesOfRemovedTypes.keys)
+                addAll(lossyNames)
+                addAll(formerNamesOfLossyTypes)
+            },
+        )
+    }
+
+    /**
+     * The lossy parts of a diff, gathered once and keyed by every spelling a mention could use.
+     *
+     * @property removedTypesBySpelling Each spelling of a removed type name, pointing at the
+     *   declared name (or names) it stands for.
+     * @property lossyModified Types whose name survived and which lost labels or whole properties.
+     *   Lossy, because a mention may have relied on a label or property that is now gone.
+     * @property narrowedProperties Types carrying a property that kept its name and narrowed.
+     * @property narrowedRenames Types carrying a property renamed and narrowed in the same step. The
+     *   rename is harmless; the shape move underneath it is judged by the same rule as any other.
+     * @property currentNamesByFormerName Every name a surviving type has gone by, pointing at the
+     *   name its changes are reported under.
+     * @property formerNamesOfRemovedTypes Every name a removed type had gone by, pointing at the
+     *   removal. Two maps, read off opposite sides of the diff, because a removed type is absent
+     *   from the newer side.
+     */
+    private class LossySignals(
+        val removedTypesBySpelling: Map<String, Set<String>>,
+        val lossyModified: Map<String, List<MetamodelChange.EntityTypeModified>>,
+        val narrowedProperties: Map<String, List<MetamodelChange.PropertySignatureChanged>>,
+        val narrowedRenames: Map<String, List<MetamodelChange.PropertyRenamed>>,
+        val currentNamesByFormerName: Map<String, Set<String>>,
+        val formerNamesOfRemovedTypes: Map<String, Set<String>>,
+    )
+
+    private fun lossySignalsOf(diff: MetamodelDiff): LossySignals = LossySignals(
+        removedTypesBySpelling = bySpelling(diff.removedEntityTypes),
+        lossyModified = diff.modifiedEntityTypes
+            .filter { it.removedLabels.isNotEmpty() || it.removedProperties.isNotEmpty() }
+            .groupBySpelling { it.typeName },
+        narrowedProperties = diff.propertySignatureChanges
+            .filter { isNarrowing(it.before, it.after) }
+            .groupBySpelling { it.typeName },
+        narrowedRenames = diff.renamedProperties
+            .filter { isNarrowing(it.before, it.after) }
+            .groupBySpelling { it.typeName },
+        currentNamesByFormerName = formerTypeNames(diff),
+        formerNamesOfRemovedTypes = formerNamesOfRemovedTypes(diff),
+    )
+
+    /**
      * Whether a proposition is one an earlier sweep already handled: `STALE` *and* carrying a
      * quarantine reason. Both halves matter, because a proposition made stale by ordinary decay
      * carries no reason and is still a live candidate here.
@@ -296,13 +365,14 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
             proposition.metadata.containsKey(DiceMetadataKeys.QUARANTINE_REASON)
 
     /**
-     * Every name an entity type has gone by, mapped to what that type is called now.
+     * Every name an entity type has gone by, mapped to what that type is called now, under every
+     * spelling a mention could carry.
      *
-     * Read off the **newer version's whole declared alias map**, not just the renames this diff
-     * happens to contain. A rename and a loss usually land in different releases: stamp 2 renames
-     * `Person` to `Human`, stamp 3 drops a property, and the stamp-2-to-stamp-3 diff holds no rename
-     * at all while the graph still holds nodes labelled `Person` and the declaration still says
-     * `Human` used to be one. Keying off the diff's renames would let that loss pass over every
+     * Read off the **newer version's whole declared alias map**, and never off only the renames this
+     * diff happens to contain. A rename and a loss usually land in different releases: stamp 2
+     * renames `Person` to `Human`, stamp 3 drops a property, and the stamp-2-to-stamp-3 diff holds
+     * no rename at all while the graph still holds nodes labelled `Person` and the declaration still
+     * says `Human` used to be one. Keying off the diff's renames would let that loss pass over every
      * proposition it stranded, silently, which is the direction this policy exists to avoid.
      *
      * Safe to read unconditionally because of the declaration guard: an alias may not name a type
@@ -316,20 +386,25 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
     private fun formerTypeNames(diff: MetamodelDiff): Map<String, Set<String>> {
         val byFormerName = mutableMapOf<String, MutableSet<String>>()
         diff.toVersion.entityTypeAliases.forEach { (typeName, formerNames) ->
-            for (formerName in formerNames - typeName) {
-                byFormerName.getOrPut(formerName) { sortedSetOf() } += typeName
+            for (formerName in formerNames) {
+                for (spelling in spellingsOf(formerName) - spellingsOf(typeName)) {
+                    byFormerName.getOrPut(spelling) { sortedSetOf() } += typeName
+                }
             }
         }
-        // A diff assembled by hand rather than by the differ can carry a rename whose old name the
+        // A diff assembled by hand, with no differ involved, can carry a rename whose old name the
         // stamp's alias map doesn't hold.
         for (rename in diff.renamedEntityTypes) {
-            byFormerName.getOrPut(rename.before) { sortedSetOf() } += rename.after
+            for (spelling in spellingsOf(rename.before)) {
+                byFormerName.getOrPut(spelling) { sortedSetOf() } += rename.after
+            }
         }
         return byFormerName
     }
 
     /**
-     * Every name a **removed** type had gone by, mapped to the removed type it belonged to.
+     * Every name a **removed** type had gone by, mapped to the removed type it belonged to, under
+     * every spelling a mention could carry.
      *
      * Read off the OLDER version, which is the only side that still has the entry. A removed type
      * takes its former names with it: `C` with former names `{A, B}` disappearing leaves
@@ -341,22 +416,59 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
      * A former name the newer version declares as a live type of its own is left out. Reusing a
      * retired name is legal once the type that claimed it is gone, and the removal's rationale is
      * that nothing describes those mentions any more, which is false when the schema declares a type
-     * by that exact name. Data under it is judged as that type's, like any other mention.
+     * by that exact name. Data under it is judged as that type's, like any other mention. The
+     * exclusion goes by spelling too: a graph writing `Person` can't tell a retired `Person` from a
+     * live `com.example.Person`.
      */
     private fun formerNamesOfRemovedTypes(diff: MetamodelDiff): Map<String, Set<String>> {
         val removed = diff.removedEntityTypes
         if (removed.isEmpty()) return emptyMap()
 
-        val stillDeclared = diff.toVersion.entityTypeNames.toSet()
+        val stillDeclared = diff.toVersion.entityTypeNames.flatMapTo(mutableSetOf()) { spellingsOf(it) }
         val byFormerName = mutableMapOf<String, MutableSet<String>>()
         for (typeName in removed) {
             val formerNames = diff.fromVersion.entityTypeAliases[typeName].orEmpty()
-            for (formerName in formerNames - typeName - stillDeclared) {
-                byFormerName.getOrPut(formerName) { sortedSetOf() } += typeName
+            for (formerName in formerNames) {
+                for (spelling in spellingsOf(formerName) - spellingsOf(typeName) - stillDeclared) {
+                    byFormerName.getOrPut(spelling) { sortedSetOf() } += typeName
+                }
             }
         }
         return byFormerName
     }
+
+    /**
+     * The spellings one declared type name can appear under in a graph: the name itself, and the
+     * label that name writes onto a node.
+     *
+     * A stamp holds `com.example.Person` for a JVM-backed type while extraction records the mention
+     * as `Person`, so matching either spelling alone reads a lossy change as touching nothing. This
+     * is the same cut `DeclaredObservedDiffer` makes on the declared side of a drift comparison, so
+     * the two halves of a drift check agree about which type is which.
+     */
+    private fun spellingsOf(typeName: String): Set<String> =
+        setOf(typeName, DeclaredSchema.ownLabelOf(typeName))
+
+    /** Each spelling of each name, pointing at the declared name (or names) it stands for. */
+    private fun bySpelling(names: Collection<String>): Map<String, Set<String>> {
+        val bySpelling = mutableMapOf<String, MutableSet<String>>()
+        for (name in names) {
+            for (spelling in spellingsOf(name)) {
+                bySpelling.getOrPut(spelling) { sortedSetOf() } += name
+            }
+        }
+        return bySpelling
+    }
+
+    /**
+     * Group changes under every spelling of the type name [typeNameOf] reads off them. A list per
+     * key, since two declared types in different packages share one label and a graph can't tell
+     * them apart.
+     */
+    private fun <T> List<T>.groupBySpelling(typeNameOf: (T) -> String): Map<String, List<T>> =
+        flatMap { change -> spellingsOf(typeNameOf(change)).map { it to change } }
+            .groupBy({ it.first }, { it.second })
+
 
     /**
      * Whether a property's new shape might not hold what its old shape did.

@@ -1141,6 +1141,236 @@ class DriftQuarantinePolicyTest {
             assertEquals(0, result.quarantined.size)
         }
     }
+
+    /**
+     * A declared name can be fully qualified where the graph writes the simple label. Both spellings
+     * have to match the same type, or a lossy change on `com.example.Person` sails past every
+     * proposition whose mentions say `Person`, and an ungoverned `com.example.Sighting` reads as a
+     * type nobody declared.
+     */
+    @Nested
+    inner class QualifiedAndSimpleSpellings {
+
+        private fun qualified(
+            types: List<String>,
+            properties: Map<String, Set<PropertySignature>> = emptyMap(),
+            aliases: Map<String, Set<String>> = emptyMap(),
+        ): MetamodelVersion = MetamodelVersion(
+            schemaName = "test",
+            entityTypeNames = types,
+            entityTypeLabels = types.associateWith { setOf(DeclaredSchema.ownLabelOf(it)) },
+            entityTypeProperties = types.associateWith { properties[it].orEmpty() },
+            relationshipNames = emptyList(),
+            entityTypeAliases = aliases,
+        )
+
+        @Test
+        fun `a simple mention matches a qualified declaration that lost a property`() {
+            val diff = differ.diff(
+                qualified(
+                    listOf("com.example.Person"),
+                    mapOf("com.example.Person" to setOf(valueProperty("age"))),
+                ),
+                qualified(listOf("com.example.Person")),
+            )
+
+            val result = policy.evaluate(diff, listOf(proposition("Alice is 40", "Person")))
+
+            assertEquals(1, result.quarantined.size, "the graph writes `Person` for `com.example.Person`")
+            assertTrue(reasonOf(result.quarantined.single()).contains("age"))
+        }
+
+        @Test
+        fun `a simple mention matches a qualified type the declaration removed`() {
+            val diff = differ.diff(
+                qualified(listOf("com.example.Person", "com.example.Sighting")),
+                qualified(listOf("com.example.Person")),
+            )
+
+            val result = policy.evaluate(diff, listOf(proposition("a sighting", "Sighting")))
+
+            assertEquals(1, result.quarantined.size)
+            assertTrue(
+                reasonOf(result.quarantined.single()).contains("com.example.Sighting"),
+                "the reason names the type as the schema declares it",
+            )
+        }
+
+        @Test
+        fun `a spelling difference is ordinary matching and never reported as a former name`() {
+            // Without the guard, an operator reads "mention type 'Person' is a declared former name
+            // of [com.example.Person]", which is a baffling thing to say about one type.
+            val diff = differ.diff(
+                qualified(
+                    listOf("com.example.Person"),
+                    mapOf("com.example.Person" to setOf(valueProperty("age"))),
+                ),
+                qualified(listOf("com.example.Person")),
+            )
+
+            val reason = reasonOf(
+                policy.evaluate(diff, listOf(proposition("Alice is 40", "Person"))).quarantined.single(),
+            )
+
+            assertTrue(
+                !reason.contains("former name"),
+                "two spellings of one type are the same type: $reason",
+            )
+        }
+
+        @Test
+        fun `a qualified declaration that changed nothing lossy quarantines nothing`() {
+            // The carried case, at the policy's own level: a graph holding `Sighting` and `Person`
+            // against a declaration that lost nothing must leave both alone.
+            val unchanged = qualified(listOf("com.example.Person"))
+            val diff = differ.diff(unchanged, unchanged)
+
+            val result = policy.evaluate(
+                diff,
+                listOf(proposition("a sighting", "Sighting"), proposition("Alice", "Person")),
+            )
+
+            assertEquals(2, result.conforming.size)
+            assertEquals(0, result.quarantined.size)
+        }
+
+        @Test
+        fun `a declared former name matches under either spelling`() {
+            val diff = differ.diff(
+                qualified(
+                    listOf("com.example.Person"),
+                    mapOf("com.example.Person" to setOf(valueProperty("age"))),
+                    aliases = mapOf("com.example.Person" to setOf("com.example.Human")),
+                ),
+                qualified(
+                    listOf("com.example.Person"),
+                    aliases = mapOf("com.example.Person" to setOf("com.example.Human")),
+                ),
+            )
+
+            val result = policy.evaluate(diff, listOf(proposition("Alice is 40", "Human")))
+
+            assertEquals(1, result.quarantined.size, "the graph writes `Human` for `com.example.Human`")
+            assertTrue(reasonOf(result.quarantined.single()).contains("former name"))
+        }
+    }
+
+    /**
+     * [DriftQuarantinePolicy.candidateMentionTypes] is what lets a sweep read a narrow, bounded set
+     * of propositions. It has to be a superset of everything [DriftQuarantinePolicy.evaluate] would
+     * match, or a bounded sweep never reads a proposition it would have quarantined.
+     */
+    @Nested
+    inner class CandidateMentionTypes {
+
+        @Test
+        fun `a diff that strands nothing has no candidates`() {
+            val diff = differ.diff(schemaWith("Person"), schemaWith("Person", "Company"))
+
+            assertEquals(emptySet<String>(), policy.candidateMentionTypes(diff))
+        }
+
+        @Test
+        fun `a removed type is a candidate`() {
+            val diff = differ.diff(schemaWith("Person", "RemovedType"), schemaWith("Person"))
+
+            assertEquals(setOf("RemovedType"), policy.candidateMentionTypes(diff))
+        }
+
+        @Test
+        fun `a type that narrowed a property is a candidate, and its untouched neighbours are left out`() {
+            val diff = differ.diff(
+                versionOf("Person" to setOf(valueProperty("age")), "Company" to emptySet()),
+                versionOf(
+                    "Person" to setOf(valueProperty("age", type = "integer")),
+                    "Company" to emptySet(),
+                ),
+            )
+
+            assertEquals(setOf("Person"), policy.candidateMentionTypes(diff))
+        }
+
+        @Test
+        fun `both spellings of a qualified name are offered to the store`() {
+            // A sweep asks a store for names, and the store holds what the graph wrote. Offering the
+            // qualified spelling alone would ask for a label no graph has ever held.
+            val before = MetamodelVersion(
+                schemaName = "test",
+                entityTypeNames = listOf("com.example.Person", "com.example.Sighting"),
+                entityTypeLabels = mapOf(
+                    "com.example.Person" to setOf("Person"),
+                    "com.example.Sighting" to setOf("Sighting"),
+                ),
+                entityTypeProperties = mapOf(
+                    "com.example.Person" to emptySet(),
+                    "com.example.Sighting" to emptySet(),
+                ),
+                relationshipNames = emptyList(),
+            )
+            val after = MetamodelVersion(
+                schemaName = "test",
+                entityTypeNames = listOf("com.example.Person"),
+                entityTypeLabels = mapOf("com.example.Person" to setOf("Person")),
+                entityTypeProperties = mapOf("com.example.Person" to emptySet()),
+                relationshipNames = emptyList(),
+            )
+
+            assertEquals(
+                setOf("Sighting", "com.example.Sighting"),
+                policy.candidateMentionTypes(differ.diff(before, after)),
+            )
+        }
+
+        @Test
+        fun `a declared former name of a lossy type is a candidate`() {
+            val aliases = mapOf("Human" to setOf("Person"))
+            val diff = differ.diff(
+                versionOf(listOf("Human"), mapOf("Human" to setOf(valueProperty("age"))), aliases),
+                versionOf(listOf("Human"), emptyMap(), aliases),
+            )
+
+            assertTrue(
+                "Person" in policy.candidateMentionTypes(diff),
+                "the graph still holds the old label: ${policy.candidateMentionTypes(diff)}",
+            )
+        }
+
+        @Test
+        fun `every proposition evaluate would flag carries a candidate mention type`() {
+            // The contract that makes bounded selection sound, checked directly across the shapes
+            // this policy matches on.
+            val aliases = mapOf("Human" to setOf("Person"))
+            val diffs = listOf(
+                differ.diff(schemaWith("Person", "RemovedType"), schemaWith("Person")),
+                differ.diff(
+                    versionOf("Person" to setOf(valueProperty("age"))),
+                    versionOf("Person" to emptySet()),
+                ),
+                differ.diff(
+                    versionOf(listOf("Human"), mapOf("Human" to setOf(valueProperty("age"))), aliases),
+                    versionOf(listOf("Human"), emptyMap(), aliases),
+                ),
+            )
+            val candidates = listOf(
+                proposition("removed", "RemovedType"),
+                proposition("narrowed", "Person"),
+                proposition("renamed", "Human"),
+                proposition("untouched", "Company"),
+            )
+
+            diffs.forEach { diff ->
+                val offered = policy.candidateMentionTypes(diff)
+                policy.evaluate(diff, candidates).quarantined.forEach { flagged ->
+                    assertTrue(
+                        flagged.proposition.mentions.any { it.type in offered },
+                        "evaluate flagged '${flagged.proposition.text}' on types " +
+                            "${flagged.proposition.mentions.map { it.type }}, which a bounded sweep " +
+                            "asking for $offered would never have read",
+                    )
+                }
+            }
+        }
+    }
 }
 
 /**

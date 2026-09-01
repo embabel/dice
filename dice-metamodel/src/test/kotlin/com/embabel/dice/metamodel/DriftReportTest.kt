@@ -15,7 +15,9 @@
  */
 package com.embabel.dice.metamodel
 
+import com.embabel.agent.core.Cardinality
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.metamodel.support.StructuralMetamodelDiffer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -36,6 +38,7 @@ class DriftReportTest {
         driftedRelationshipTypes: Set<String> = emptySet(),
         capturedAt: Instant = this.capturedAt,
         contextId: ContextId? = null,
+        declaredDiff: MetamodelDiff? = null,
     ) = DriftReport(
         schemaName = schemaName,
         versionHash = versionHash,
@@ -43,6 +46,7 @@ class DriftReportTest {
         driftedRelationshipTypes = driftedRelationshipTypes,
         capturedAt = capturedAt,
         contextId = contextId,
+        declaredDiff = declaredDiff,
     )
 
     @Test
@@ -109,5 +113,118 @@ class DriftReportTest {
             report(contextId = ContextId("ctx-2")),
         )
         assertNotEquals(report(contextId = ContextId("ctx-1")), report())
+    }
+
+    private fun version(
+        types: List<String>,
+        properties: Map<String, Set<PropertySignature>> = emptyMap(),
+    ): MetamodelVersion = MetamodelVersion(
+        schemaName = "test-schema",
+        entityTypeNames = types,
+        entityTypeLabels = types.associateWith { setOf(it) },
+        entityTypeProperties = types.associateWith { properties[it].orEmpty() },
+        relationshipNames = emptyList(),
+    )
+
+    /** `Person` loses its `age` property between two stamps. */
+    private fun personLostAge(): MetamodelDiff = StructuralMetamodelDiffer().diff(
+        version(
+            listOf("Person"),
+            mapOf("Person" to setOf(PropertySignature("age", PropertySignature.Kind.VALUE, "string", Cardinality.ONE))),
+        ),
+        version(listOf("Person")),
+    )
+
+    @Test
+    fun `a report carries the declared comparison it was given`() {
+        val declaredDiff = personLostAge()
+
+        val report = report(declaredDiff = declaredDiff)
+
+        assertEquals(declaredDiff, report.declaredDiff)
+        assertFalse(report.hasDrift, "the graph-truth half is clean")
+        assertTrue(report.hasAnyChange, "and the report still says something happened")
+    }
+
+    @Test
+    fun `a report with neither kind of change reports nothing happened`() {
+        val clean = report()
+
+        assertNull(clean.declaredDiff)
+        assertFalse(clean.hasAnyChange)
+    }
+
+    @Test
+    fun `an empty declared comparison is not a change`() {
+        val unchanged = version(listOf("Person"))
+        val empty = StructuralMetamodelDiffer().diff(unchanged, unchanged)
+
+        val report = report(declaredDiff = empty)
+
+        assertFalse(report.hasAnyChange, "a declaration that hasn't moved strands nothing")
+    }
+
+    @Test
+    fun `two reports differing only in the declared comparison are different reports`() {
+        assertNotEquals(report(declaredDiff = personLostAge()), report())
+        assertNotEquals(
+            report(declaredDiff = personLostAge()).hashCode(),
+            report().hashCode(),
+        )
+    }
+
+    @Test
+    fun `the quarantine comparison merges observed drift into the declared changes`() {
+        val declaredVersion = version(listOf("Person"))
+
+        val merged = report(
+            versionHash = declaredVersion.contentHash,
+            driftedEntityTypes = setOf("GhostType"),
+            declaredDiff = personLostAge(),
+        ).quarantineDiff(declaredVersion)
+
+        assertEquals(setOf("GhostType"), merged.removedEntityTypes, "observed drift becomes a removal")
+        assertEquals(
+            listOf("age"),
+            merged.modifiedEntityTypes.single().removedPropertyNames.toList(),
+            "and the declared property removal rides along",
+        )
+        assertEquals(
+            personLostAge().fromVersion,
+            merged.fromVersion,
+            "the declared comparison's own from-side carries through, so former names still resolve",
+        )
+    }
+
+    @Test
+    fun `a removal reported by both halves appears once`() {
+        val declaredVersion = version(emptyList())
+        val removal = StructuralMetamodelDiffer().diff(version(listOf("Ghost")), declaredVersion)
+
+        val merged = report(
+            versionHash = declaredVersion.contentHash,
+            driftedEntityTypes = setOf("Ghost"),
+            declaredDiff = removal,
+        ).quarantineDiff(declaredVersion)
+
+        assertEquals(
+            listOf(MetamodelChange.EntityTypeRemoved("Ghost")),
+            merged.changes,
+            "the same type removed on both sides is one removal: ${merged.changes}",
+        )
+    }
+
+    @Test
+    fun `a report with no declared comparison still yields a usable quarantine comparison`() {
+        val declaredVersion = version(listOf("Person"))
+
+        val merged = report(
+            versionHash = declaredVersion.contentHash,
+            driftedEntityTypes = setOf("GhostType"),
+        ).quarantineDiff(declaredVersion)
+
+        assertEquals(setOf("GhostType"), merged.removedEntityTypes)
+        assertEquals(declaredVersion, merged.fromVersion)
+        assertEquals(declaredVersion, merged.toVersion)
     }
 }

@@ -16,6 +16,30 @@
 package com.embabel.dice.metamodel
 
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionStatus
+
+/**
+ * Metadata keys the metamodel writes onto a proposition, alongside the shared
+ * [com.embabel.dice.common.DiceMetadataKeys.QUARANTINE_REASON].
+ *
+ * They live here because drift quarantine is the only thing that writes or reads them, and the core
+ * proposition model has no business knowing about schema versioning. The naming follows the same
+ * `dice.<area>.<name>` convention, so nothing collides with a consumer's own keys.
+ */
+object DriftQuarantineKeys {
+
+    /**
+     * The [PropositionStatus] a proposition carried at the moment it was quarantined, stored as its
+     * `name`.
+     *
+     * Quarantine moves a proposition to `STALE`, and `STALE` is a destination several roads lead to
+     * — ordinary decay reaches it as well. Without this key, releasing a quarantine could only guess
+     * where to put the proposition back. With it, release is exact:
+     * [DriftSweepCapable.releaseFromQuarantine] reads the value, restores that status, and clears
+     * both keys.
+     */
+    const val PREVIOUS_STATUS = "dice.metamodel.quarantine.previousStatus"
+}
 
 /**
  * What a policy decided about one [Proposition].
@@ -61,17 +85,22 @@ sealed interface QuarantineDecision {
      * Schema drift stranded this proposition, and it has been flagged.
      *
      * [proposition] is an immutable copy already moved to `STALE` and annotated with the reason
-     * under `DiceMetadataKeys.QUARANTINE_REASON`. The original is never mutated, and nothing is
-     * written anywhere; persisting the copy is the caller's job.
+     * under `DiceMetadataKeys.QUARANTINE_REASON` and the status it came from under
+     * [DriftQuarantineKeys.PREVIOUS_STATUS]. The original is never mutated, and nothing is written
+     * anywhere; persisting the copy is the caller's job.
      *
      * @property proposition The flagged, `STALE` copy.
      * @property reason A human-readable explanation of why it was quarantined.
      * @property affectedMentionTypes The entity type names that triggered it.
+     * @property previousStatus The status the proposition carried before this decision, which
+     *   [DriftSweepCapable.releaseFromQuarantine] restores. `STALE` when the proposition was already
+     *   stale from ordinary decay, in which case quarantine wrote a reason and moved no status.
      */
     data class Quarantined(
         val proposition: Proposition,
         val reason: String,
         val affectedMentionTypes: Set<String>,
+        val previousStatus: PropositionStatus,
     ) : QuarantineDecision
 
     /**
@@ -134,12 +163,11 @@ data class QuarantineResult @JvmOverloads constructor(
  *
  * It takes a [MetamodelDiff], a comparison of two declared versions, which is what says exactly
  * which types the schema stopped recognising. A drift check compares a declaration against a live
- * graph, and synthesizes the equivalent diff rather than deciding quarantine on its own terms.
+ * graph and synthesizes the equivalent diff, so quarantine is decided on one kind of input.
  *
  * ```kotlin
- * val diff = differ.diff(previousVersion, currentVersion)
- * val result = policy.evaluate(diff, repository.findAll())
- * result.quarantined.forEach { repository.save(it.proposition) }
+ * val diff = result.quarantineDiff
+ * val swept = sweepStore.sweep(diff, policy, contextId)
  * ```
  */
 interface DriftQuarantinePolicy {
@@ -170,4 +198,30 @@ interface DriftQuarantinePolicy {
      * @return One decision per input proposition.
      */
     fun evaluate(diff: MetamodelDiff, propositions: Iterable<Proposition>): QuarantineResult
+
+    /**
+     * Every entity type name that, appearing as a mention type, could make a proposition a candidate
+     * under [diff].
+     *
+     * This is what lets a sweep ask its store for a narrow, bounded set of propositions
+     * ([DriftSweepCapable.quarantineCandidates]) with no policy knowledge of its own. Which names
+     * matter is a policy judgement — a removed type's declared former names count, an added type's
+     * name doesn't — so the policy is the only thing that can answer it.
+     *
+     * **The contract that makes bounded selection sound:** if a proposition's mention types are all
+     * outside this set, [evaluate] must classify it as [QuarantineDecision.Conforming] or
+     * [QuarantineDecision.AlreadyQuarantined]. A sweep never reads such a proposition, so a policy
+     * that would have quarantined one anyway silently strands data.
+     *
+     * Include every spelling a mention can use. A declared type name can be fully qualified where
+     * the graph writes the simple label, so a policy matching both must list both here, or a
+     * bounded sweep asks for a spelling the store has never seen.
+     *
+     * An empty result means the diff could strand nothing, and a sweep then reads no propositions at
+     * all.
+     *
+     * @param diff What changed between the old and new schema.
+     * @return The mention type names worth reading. Empty when nothing in [diff] can strand data.
+     */
+    fun candidateMentionTypes(diff: MetamodelDiff): Set<String>
 }

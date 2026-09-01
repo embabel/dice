@@ -32,6 +32,19 @@ import java.util.Objects
  * resolves through [MetamodelVersionStore.findVersion]. Pull a year-old report and you can still
  * recover the exact shape that was expected when it was taken.
  *
+ * ## A report carries both halves of the comparison
+ *
+ * [driftedEntityTypes] and [driftedRelationshipTypes] are the graph-truth half: what the graph holds
+ * that this declaration doesn't recognise. [declaredDiff] is the other half: how the declaration
+ * itself moved since the last completed sweep — a property removed, a cardinality narrowed, a whole
+ * type dropped — which the graph-truth half cannot see, because nothing about such a type is
+ * undeclared and only its shape moved.
+ *
+ * Both are here because a report is what a person reads before deciding to sweep, and a sweep acts
+ * on both. A report that showed only the first half could read completely clean while a sweep
+ * against the very same state would quarantine, and the person who checked would have no way to
+ * know. [quarantineDiff] hands back the exact merged comparison such a sweep evaluates.
+ *
  * @property schemaName The declared schema's name at check time. Together with [versionHash] this
  *   is what resolves the report back to a stored [MetamodelVersion].
  * @property versionHash The [MetamodelVersion.contentHash] of the declared schema the check ran
@@ -40,9 +53,12 @@ import java.util.Objects
  *   declared, sorted the way the diff produced them.
  * @property driftedRelationshipTypes Relationship type names observed with no matching declaration.
  * @property capturedAt When the observation was taken: the [ObservedSchema.capturedAt] of the
- *   snapshot it was computed from, rather than the time of the write.
+ *   snapshot it was computed from, which is a different instant from the write.
  * @property contextId The context the check was scoped to, or `null` when it covered the whole
  *   graph.
+ * @property declaredDiff How the declaration itself moved since the last completed sweep, described
+ *   above. `null` when the store tracked no baseline to compare against, which is the state of every
+ *   schema before its first sweep finishes.
  */
 class DriftReport @JvmOverloads constructor(
     val schemaName: String,
@@ -51,6 +67,7 @@ class DriftReport @JvmOverloads constructor(
     driftedRelationshipTypes: Set<String>,
     val capturedAt: Instant,
     val contextId: ContextId? = null,
+    val declaredDiff: MetamodelDiff? = null,
 ) {
 
     // Both sets are copied into JVM-immutable ones that keep the order they arrived in, and this
@@ -67,6 +84,48 @@ class DriftReport @JvmOverloads constructor(
     val hasDrift: Boolean
         get() = driftedEntityTypes.isNotEmpty() || driftedRelationshipTypes.isNotEmpty()
 
+    /**
+     * `true` when either half of the check found something: an undeclared type or relationship in
+     * the graph, or a declared change since the last completed sweep.
+     *
+     * [hasDrift] answers the narrower graph-truth question, so read this one when you want to know
+     * whether a sweep would have anything at all to look at.
+     */
+    val hasAnyChange: Boolean get() = hasDrift || declaredDiff?.isEmpty == false
+
+    /**
+     * The single comparison a deliberate sweep evaluates propositions against: this report's
+     * observed drift and its [declaredDiff] merged into one [MetamodelDiff].
+     *
+     * A sweep decides once, off one diff. Running the two comparisons as two sweeps would let each
+     * make an independent call about the same proposition, and the second call would see a
+     * proposition the first had already moved.
+     *
+     * Every entity type name from either source lands in one [MetamodelChange.EntityTypeRemoved]
+     * block, sorted by name, which is the global ordering [MetamodelDiff] promises. A removal
+     * [declaredDiff] already reports is filtered out before the merge, so no name appears twice, and
+     * [declaredDiff]'s remaining changes keep their relative order behind the block.
+     *
+     * [declaredDiff]'s own [MetamodelDiff.fromVersion] carries through as the merged `from` side
+     * when there is one, so a policy can still resolve the declared former names of a type the
+     * declaration removed. A type observed in the graph and declared by nobody has no former names
+     * on either side.
+     *
+     * @param declaredVersion The stamp this check ran against — the one [versionHash] resolves to
+     *   through [MetamodelVersionStore.findVersion].
+     * @return The merged diff.
+     */
+    fun quarantineDiff(declaredVersion: MetamodelVersion): MetamodelDiff {
+        val declaredChanges = declaredDiff?.changes.orEmpty()
+        val removedNames = (declaredDiff?.removedEntityTypes.orEmpty() union driftedEntityTypes).sorted()
+        return MetamodelDiff(
+            fromVersion = declaredDiff?.fromVersion ?: declaredVersion,
+            toVersion = declaredVersion,
+            changes = removedNames.map { MetamodelChange.EntityTypeRemoved(it) } +
+                declaredChanges.filterNot { it is MetamodelChange.EntityTypeRemoved },
+        )
+    }
+
     override fun equals(other: Any?): Boolean =
         other is DriftReport &&
             schemaName == other.schemaName &&
@@ -74,7 +133,8 @@ class DriftReport @JvmOverloads constructor(
             driftedEntityTypes == other.driftedEntityTypes &&
             driftedRelationshipTypes == other.driftedRelationshipTypes &&
             capturedAt == other.capturedAt &&
-            contextId == other.contextId
+            contextId == other.contextId &&
+            declaredDiff == other.declaredDiff
 
     override fun hashCode(): Int = Objects.hash(
         schemaName,
@@ -83,12 +143,13 @@ class DriftReport @JvmOverloads constructor(
         driftedRelationshipTypes,
         capturedAt,
         contextId,
+        declaredDiff,
     )
 
     override fun toString(): String =
         "DriftReport(schemaName=$schemaName, versionHash=$versionHash, " +
             "driftedEntityTypes=$driftedEntityTypes, driftedRelationshipTypes=$driftedRelationshipTypes, " +
-            "capturedAt=$capturedAt, contextId=${contextId?.value})"
+            "capturedAt=$capturedAt, contextId=${contextId?.value}, declaredDiff=$declaredDiff)"
 
     private companion object {
 

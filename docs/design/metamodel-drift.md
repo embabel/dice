@@ -1,12 +1,28 @@
 # Metamodel drift: checking a live graph against a declared schema
 
-A drift check takes the schema an application declares, observes what a live graph is holding,
-records where the two disagree, and, when asked to, pulls the propositions that disagreement
-stranded out of normal use.
+A drift check takes the schema an application declares, observes what a live graph is holding, and
+records where the two disagree. Pulling the propositions that disagreement stranded out of normal use
+is a separate, deliberate step a host takes afterwards.
 
 Stamping and diffing both work on declarations. A drift check is the step that reads the graph.
 
-The shape of a run is fixed, and every step leaves something behind:
+## Two halves, and only one of them runs itself
+
+**A check reports.** `DriftCheckRunner` has one mode. It reads, compares, writes a `DriftReport`, and
+no path through it moves a proposition or the swept baseline. It holds no quarantine policy and no
+proposition store, so there is nothing for it to move them with.
+
+**A sweep acts.** `DriftSweepCapable` is the store-side SPI a host calls once it has read a report and
+decided. Its candidate selection is bounded, confined to one `ContextId`, and filtered on mention
+type. Nothing in DICE calls it on a timer, from a scheduler, or out of auto-configuration.
+
+The split is what makes a report trustworthy. While a check could also act, a report was a preview of
+one half of what a run would do, and the honest thing to say about it was that a clean report and a
+quarantining run could describe the same state. Now a check reports the *whole* comparison a sweep
+would evaluate — see [What a report carries](#what-a-report-carries) — so reading one and deciding
+from it is sound.
+
+The shape of a check is fixed, and every step leaves something behind:
 
 ```mermaid
 sequenceDiagram
@@ -19,39 +35,49 @@ sequenceDiagram
     participant Differ as DeclaredObservedDiffer
     participant MetamodelDiffer as MetamodelDiffer
     participant Reports as DriftReportStore
-    participant Policy as DriftQuarantinePolicy
-    participant Props as PropositionRepository
-    participant Listener as DiceEventListener
 
-    Caller->>Runner: run(dryRun, contextId)
+    Caller->>Runner: run(contextId)
     Runner->>Declared: declare()
     Declared-->>Runner: DeclaredSchema (stamp + bare rel names)
-    Runner->>Versions: sweptVersion(schemaName)
+    Runner->>Versions: sweptVersion(schemaName) — when the store is a SweptBaselineStore
     Versions-->>Runner: reconciled baseline, or null if no sweep has completed yet
     Runner->>Versions: saveVersion(stamp)
-    Note over Runner,Versions: history write, every run, dry or live;<br/>on a store without independent tracking, moves the<br/>reconciled baseline too, but only when the stamp is new
+    Note over Runner,Versions: history write, every run;<br/>it leaves the reconciled baseline alone
     Runner->>Observed: observe(contextId)
     Observed-->>Runner: ObservedSchema (labels + rel types, one instant)
     Runner->>Differ: diffAgainstObserved(declared, observed)
     Differ-->>Runner: DeclaredObservedDiff (drifted vs unobserved)
     Runner->>MetamodelDiffer: diff(baseline, current) — only when a baseline exists
     MetamodelDiffer-->>Runner: declared-vs-previous MetamodelDiff
-    Runner->>Reports: saveDriftReport(report)
+    Runner->>Reports: saveDriftReport(report, including the declared comparison)
     Note over Runner,Reports: written on every run, including<br/>checks that find nothing
-    alt live run and (entity-type observed drift or a non-empty declared-vs-previous diff)
-        Runner->>Props: candidates (scoped or all)
-        Runner->>Policy: evaluate(merged diff, candidates)
-        Policy-->>Runner: STALE copies + reasons, pinned matches reported protected
-        Runner->>Props: save(each quarantined copy)
-        Runner->>Listener: onEvent(PropositionStatusChanged), skipped if status didn't move
-    else dry run, or relationship-only/no drift from either comparison
-        Note over Runner: nothing is touched, nothing is emitted
-    end
-    alt live run AND unscoped (contextId is null)
-        Runner->>Versions: markSwept(stamp)
-        Note over Runner,Versions: on a store with independent tracking, this is<br/>the moment the reconciled baseline advances; a default-forwarding<br/>store's baseline follows write order instead — a new stamp moved it<br/>back at saveVersion, a re-saved stamp never moves it
-    end
     Runner-->>Caller: DriftCheckResult
+```
+
+A sweep is the second diagram, and a person starts it:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Host
+    participant Sweep as DriftSweepCapable
+    participant Policy as DriftQuarantinePolicy
+    participant Props as PropositionStore
+    participant Listener as DiceEventListener
+    participant Versions as SweptBaselineStore
+
+    Host->>Sweep: sweep(result.quarantineDiff, policy, contextId)
+    Sweep->>Policy: candidateMentionTypes(diff)
+    Policy-->>Sweep: the mention types this change could strand
+    loop one bounded page at a time, until a page comes back short
+        Sweep->>Props: quarantineCandidates(contextId, mentionTypes, limit, afterId)
+        Sweep->>Policy: evaluate(diff, page)
+        Policy-->>Sweep: STALE copies + reasons, pinned matches reported protected
+        Sweep->>Props: applyQuarantine(each flagged copy)
+        Sweep->>Listener: onEvent(PropositionStatusChanged), skipped if status didn't move
+    end
+    Sweep-->>Host: QuarantineResult
+    Host->>Versions: markSwept(stamp) — once every context is done
 ```
 
 ## The three tiers
@@ -62,12 +88,13 @@ Schema governance in DICE has three tiers, shipped in that order.
 [metamodel-versioning.md](metamodel-versioning.md).
 
 **Detect and report.** Compare two declarations against each other, or a declaration against a live
-graph, and record what you find. The drift check sits here, and it is the default: `run()` with no
-arguments is a dry, whole-graph check that persists a report and changes nothing.
+graph, and record what you find. The drift check sits here, and it is all `DriftCheckRunner` does:
+`run()` is a whole-graph check that persists a report and changes nothing.
 
-**Quarantine.** Act on a lossy change by marking the affected propositions stale rather than
-deleting them. Off by default; `run(dryRun = false)` turns it on. This slice adds the contracts, and
-the wiring that schedules a live run arrives with the autoconfigure slice.
+**Quarantine.** Act on a lossy change by marking the affected propositions stale, which is a
+different thing from deleting them. A host does this through `DriftSweepCapable`, at a moment it
+chooses. This slice adds the contracts and a reference implementation; a durable store's own
+implementation, and any wiring, come later.
 
 Each tier builds on the one below it, and each is useful on its own. You can stamp for a year
 without detecting, and detect for a year without quarantining. Rejecting undeclared types at write
@@ -133,7 +160,7 @@ to go into the query, so every backend writes all three.
 
 ## Quarantine
 
-A live run hands a `DriftQuarantinePolicy` a single merged `MetamodelDiff` built from two independent
+A sweep hands a `DriftQuarantinePolicy` a single merged `MetamodelDiff` built from two independent
 comparisons, and quarantines whatever the policy flags in either one.
 
 ### Two sources of drift
@@ -145,8 +172,8 @@ narrowed or dropped on a type the graph and the declaration still agree the name
 that change is observed drift, because nothing about the *type* is undeclared — only its shape moved.
 
 **Declared vs. previous declared** (`MetamodelDiffer`) closes that gap. Before its own history write,
-the runner reads `MetamodelVersionStore.sweptVersion` for this schema — the declaration the *last
-completed live, unscoped sweep* reconciled against — and diffs it against the current declaration with the same
+the runner reads `SweptBaselineStore.sweptVersion` for this schema — the declaration the *last
+completed sweep* reconciled against — and diffs it against the current declaration with the same
 kind of comparison [metamodel-diff.md](metamodel-diff.md) describes for comparing any two versions.
 Whatever moved — a removed property, a narrowed cardinality, a whole type dropped — reaches the
 policy exactly like an observed removal does, because it becomes the same `MetamodelChange` entries
@@ -154,43 +181,99 @@ the policy already knows how to judge. There is no baseline on a schema's first-
 half doesn't run at all.
 
 The two comparisons are merged into one diff before the policy sees it, evaluated once — never as two
-separate sweeps that could each make an independent call about the same proposition. `DriftReport`
-itself is unaffected by this merge: it still records only declared-vs-observed drift, which is the
-graph-truth signal — "the graph holds something nobody declared" — an operator watching the log
-wants; the declared-vs-previous comparison exists to feed quarantine, not to duplicate the report.
+separate sweeps that could each make an independent call about the same proposition.
+
+### What a report carries
+
+A `DriftReport` records both halves. `driftedEntityTypes` and `driftedRelationshipTypes` are the
+graph-truth signal — "the graph holds something nobody declared" — an operator watching the log wants.
+`declaredDiff` is how the declaration itself moved since the last completed sweep, and it is `null`
+when there was no baseline to compare against. `DriftReport.quarantineDiff(declaredVersion)` merges
+the two into the exact comparison a sweep evaluates, and `DriftCheckResult.quarantineDiff` is the same
+thing off a live result.
+
+Carrying both is what makes a report a sound basis for deciding. A report holding only the graph-truth
+half could read completely clean while a sweep on the very same state quarantined, because a property
+that quietly narrowed shows up in neither drifted set. The person who checked would have had no way to
+know. `hasDrift` still answers the narrow graph-truth question; `hasAnyChange` answers "would a sweep
+have anything at all to look at?".
+
+The declared comparison is part of the record, so a `DriftReportStore` backend persists it alongside
+the drifted type sets. A report read back out of the store a year later resolves to the same
+`quarantineDiff` the live result did.
+
+### The sweep SPI
+
+`DriftSweepCapable` is three store operations plus one `sweep` that composes them:
+
+- `quarantineCandidates(contextId, mentionTypes, limit, afterId)` — **bounded** by `limit`,
+  **scoped** to one required `ContextId`, and **filtered** on mention type by the backend, ordered by
+  proposition id so `afterId` is a usable cursor. All three are contract requirements, spelled out in
+  the KDoc. Reading every proposition and filtering afterwards materialises every tenant in one heap,
+  and costs the size of the store on a change that touches one type.
+- `applyQuarantine(decision)` — persist one `STALE` copy the policy built, and announce the
+  transition when the status genuinely moved.
+- `releaseFromQuarantine(propositionId)` — see [Release](#release) below.
+
+The mention types come from `DriftQuarantinePolicy.candidateMentionTypes(diff)`, so the store needs no
+policy knowledge of its own. The contract that makes that sound: a proposition whose mention types are
+all outside that set must evaluate to conforming, or a bounded sweep would skip something it should
+have caught. Both spellings of every name are offered, since a declaration can be fully qualified
+where a graph writes the simple label.
+
+A store implements `DriftSweepCapable` when its backend can honour that. One that can't sweeps through
+`PropositionStoreDriftSweep`, the reference implementation, which works over any `PropositionStore` and
+is honest about the cost: it reads the one context and applies the mention-type filter, the ordering
+and the page bound in the JVM. The context bound is real there — the read never leaves the context —
+and the rest is the part a backend should push down.
+
+### Release
+
+Quarantine is reversible, and `releaseFromQuarantine` is what reverses it: it restores the status the
+proposition carried before quarantine and clears both quarantine keys in one write.
+
+Clearing `dice.metamodel.quarantine.reason` by hand does half the job and leaves the proposition
+`STALE`, so it stays out of ordinary retrieval with nothing on it saying why, and the next sweep
+treats it as a fresh candidate and quarantines it again. The status to restore comes from
+`dice.metamodel.quarantine.previousStatus`, which the policy writes onto the `STALE` copy at
+quarantine time — `STALE` is a destination several roads lead to, ordinary decay included, so a
+release with nothing recorded could only guess. A proposition carrying no readable value there goes
+back to `ACTIVE`, which is what "let this back into use" means once the record is gone.
+
+Releasing something that was never quarantined answers `null` and changes nothing, so releasing twice
+is safe.
 
 #### The baseline only moves once a sweep finishes
 
 `sweptVersion` is a pointer to one reconciled declaration per schema, tracked apart from the ordinary
-stamp history above, and it advances only when `DefaultDriftCheckRunner.run()` calls
-`MetamodelVersionStore.markSwept` — the very last thing it does, and only for a **live, unscoped**
-run. The three cases below only hold for a store that overrides `sweptVersion`/`markSwept` with
-genuinely independent tracking, such as `InMemoryMetamodelVersionStore`. A store that doesn't
-override them inherits the interface default, `sweptVersion` answering `latestVersion` — see that
-method's doc on `MetamodelVersionStore` for how much of the runner's care this reopens.
+stamp history above. **A completed sweep is the only thing that may move it**, and the host that ran
+the sweep is what calls `SweptBaselineStore.markSwept`, once every context it meant to reconcile is
+done. Three writes look tempting and are all wrong:
 
-- A **dry run** never calls `markSwept`. It still reads `sweptVersion` and computes the
-  declared-vs-previous diff, but throws the result away without acting on it — `DriftReport.hasDrift`
-  comes only from the observed-vs-declared comparison, so a dry run cannot preview what a live run
-  would quarantine from the declared-vs-previous side. This is a known limitation, not an oversight:
-  a dry run can report `hasDrift = false` and `quarantinedCount = 0` while the very next live run,
-  same declaration, finds and quarantines a lossy declared change. Treating a dry run as having
-  reconciled the schema would make this worse — a live run right after would compare the declaration
-  against itself and find nothing at all — so `run()` with no arguments stays a check that reports
-  and changes nothing, including this pointer, at the cost of not being a reliable preview of
-  declared-vs-previous quarantine.
-- A run **scoped to one context** still computes and acts on the declared-vs-previous diff for that
-  context's own candidates, but leaves the schema-wide baseline where it was. Advancing it after a
-  scoped sweep would tell every other context's later check "this declaration is already
-  reconciled," when only one context's candidates were ever looked at.
-- A **crash between the history write and the end of the sweep** leaves `markSwept` uncalled, so the
-  next check — whenever it runs — sees the same unreconciled baseline and retries the same
-  comparison. The already-quarantined bucket makes that retry safe: anything the interrupted run did
-  manage to save comes back as already handled, not re-flagged.
+- A **drift check** never marks. It reads `sweptVersion`, computes the declared-vs-previous diff, and
+  reports it. The lossy change it found is still waiting for somebody to act on, so retiring it would
+  mean the next check compared the declaration against itself and found nothing at all.
+- A sweep **scoped to one context** reconciled that context alone. Marking after it would tell every
+  other context's later check "this declaration is already reconciled," when only one context's
+  candidates were ever looked at.
+- An **interrupted** sweep leaves `markSwept` uncalled, because the host never reaches it, so the
+  next check sees the same unreconciled baseline and the next sweep retries the same comparison. The
+  already-quarantined bucket makes that retry safe: anything the interrupted sweep did manage to save
+  comes back as already handled, and never re-flagged.
 
-`sweptVersion` is a different question from `MetamodelVersionStore.latestVersion`, which the store's
-own doc covers in detail: `latestVersion` tracks write order and answers wrong once a declaration
-cycles back to a stamp it already used before.
+Marking after a sweep that found nothing to quarantine is correct. "Nothing needed doing" is a
+completed reconciliation against that declaration.
+
+`sweptVersion` and `markSwept` live on `SweptBaselineStore`, a separate interface a version store
+implements when it can keep the pointer honestly, with **no default bodies**. That absence is the
+point. A forwarding default answering `MetamodelVersionStore.latestVersion` made every store look like
+it tracked a baseline while answering with write order, so a check's own stamp moved what the next
+sweep treated as already reconciled. A store implementing nothing here reports `declaredDiff = null`
+and gets the graph-truth half alone, which is the honest answer.
+
+`sweptVersion` is also a different question from `latestVersion`, which the store's own doc covers in
+detail: `latestVersion` tracks write order and answers wrong once a declaration cycles back to a stamp
+it already used before.
 
 ### Lossy changes
 
@@ -345,23 +428,22 @@ Three properties make this safe to run as routine maintenance:
   quarantined before it was pinned is unaffected: idempotency is checked first, so it stays
   `alreadyQuarantined`.
 
-The policy decides and doesn't write. On a live run, the `STALE` copies it returns come back to the
-caller, and the runner persists them. A dry run never calls `evaluate` at all, so there is no policy
-decision to persist. See "The baseline only moves once a sweep finishes" above for what a dry run
-does and doesn't do.
+The policy decides and doesn't write. The `STALE` copies it returns come back to the caller, and the
+sweep persists them through `applyQuarantine`. A drift check never calls `evaluate` at all, so there
+is no policy decision for it to persist.
 
-The runner reads and writes those propositions through `PropositionStore`, the base persistence port,
-rather than `PropositionRepository`. A drift check only reads by context or in bulk and saves;
-requiring vector search, graph traversal and temporal query alongside would shut a plain
-store-and-retrieve backend out of drift checking over capabilities it never uses.
+`PropositionStoreDriftSweep` reads and writes those propositions through `PropositionStore`, the base
+persistence port, and never `PropositionRepository`. A sweep reads by context and saves; requiring
+vector search, graph traversal and temporal query alongside would shut a plain store-and-retrieve
+backend out of drift work over capabilities it never uses.
 
 ### Announcing a quarantine
 
-Each proposition the runner actually quarantines is announced to a `DiceEventListener` as a
+Each proposition a sweep actually quarantines is announced to a `DiceEventListener` as a
 `PropositionStatusChanged` (`previousStatus` the status it carried in, `newStatus` `STALE`, `reason`
-the same text the metadata carries), right after it is saved. This is what lets something like
-`ProjectionLineageStaleCascade` hear that a proposition went stale and mark its projection records
-stale in turn.
+the same text the metadata carries), right after it is saved. A release announces the transition back.
+This is what lets something like `ProjectionLineageStaleCascade` hear that a proposition went stale
+and mark its projection records stale in turn.
 
 A proposition can arrive at the sweep already `STALE` from ordinary decay, with no quarantine reason
 yet, and the policy correctly treats that as a fresh candidate — the idempotency rule only skips one
@@ -369,13 +451,13 @@ that's *already quarantined*, not one that's merely stale for some other reason.
 writes the reason but doesn't move its status, so no event fires for it: the event promises a
 transition happened, and here one didn't.
 
-The runner emits this itself. The injected `PropositionStore` is never asked to notice the
+The sweep emits this itself. The injected `PropositionStore` is never asked to notice the
 transition and emit it on its own — the way `EventEmittingPropositionRepository` does when an
 application chooses to wrap its repository in one — because that would make the signal conditional
 on a wiring choice made somewhere else entirely, and silently absent for an application that wires a
 plain, undecorated store, which is what auto-configuration hands out by default. Emitting the event
-from inside the runner, the same way `DefaultCollectorRunner` already emits its own transitions,
-means the signal fires wherever the runner runs, independent of what store backs it. `listener`
+from inside the sweep, the same way `DefaultCollectorRunner` already emits its own transitions,
+means the signal fires wherever the sweep runs, independent of what store backs it. `listener`
 defaults to a no-op, so nothing about the rest of this section changes for a caller who isn't
 listening.
 
@@ -389,15 +471,15 @@ column whose value doesn't fit the declared schema, the value is captured into a
 column rather than dropped, and the row still lands. The stance is that data an extraction already
 produced is evidence: a schema that no longer describes it sets that data aside for a person to look
 at rather than deleting it. Quarantine is the same move on a proposition: `STALE`, annotated
-with a reason, still in the store, still readable, and reversible by clearing one metadata key.
+with a reason, still in the store, still readable, and reversible through `releaseFromQuarantine`.
 
 **Enforcement and evolution are separate settings**, which is how Delta and the Snowflake-style
 lakehouses organize this. Enforcement asks whether an incoming write matches; evolution asks whether
 the schema should move to accommodate it. DICE splits them the same way, and both halves are opt-in:
 the declared schema — which types a `GovernedTypeSelector` governs and what `SchemaAliases` says they
-used to be called — is the enforcement side, and the drift mode (`run()` dry versus
-`run(dryRun = false)`) is what a check is allowed to do about a mismatch. A schema that governs
-nothing enforces nothing, and a dry check changes nothing whatever it finds.
+used to be called — is the enforcement side, and calling `DriftSweepCapable.sweep` is what a host
+does about a mismatch. A schema that governs nothing enforces nothing, and a check changes nothing
+whatever it finds.
 
 ### Not adopted: auto-adopting additive drift
 
@@ -425,10 +507,12 @@ If it is ever wanted, the shape that would be safe:
 
 ## Scope
 
-Every part of a run takes the same optional `ContextId`, and it means the same thing throughout: the
-observed snapshot, the candidate propositions read for quarantine, and the persisted report are all
-confined to that one context. A mis-declared schema in one context can only quarantine propositions
-in that same context. Pass `null` and the check covers the whole graph.
+A check takes an optional `ContextId`: the observed snapshot and the persisted report are both
+confined to that one context, and `null` covers the whole graph.
+
+A sweep takes a **required** one. There is no whole-graph sweep, so a mis-declared schema in one
+context has no way to reach another context's propositions. A host that means to reconcile several
+contexts sweeps each in turn and marks the baseline once they are all done.
 
 ## Using it
 
@@ -436,32 +520,47 @@ in that same context. Pass `null` and the check covers the whole graph.
 val differ = StructuralMetamodelDiffer() // implements both differ interfaces below
 val runner = DefaultDriftCheckRunner(
     declaredSchemaSource = { DeclaredSchema.from(dataDictionary, governed) },
-    versionStore = versionStore,
+    versionStore = versionStore, // a SweptBaselineStore, to get the declared comparison too
     observedSchemaSource = observedSchemaSource,
     differ = differ,
     metamodelDiffer = differ,
     driftReportStore = driftReportStore,
-    quarantinePolicy = MentionTypeDriftQuarantinePolicy(),
-    propositionStore = propositionStore,
-    listener = SafeDiceEventListener(projectionLineageStaleCascade), // optional; defaults to a no-op
 )
 
-// The default: dry, whole graph. Reports, changes nothing.
+// A check. Reports, changes nothing.
 val result = runner.run()
 if (result.hasDrift) {
     log.warn("undeclared in the graph: {} {}", result.driftedEntityTypes, result.driftedRelationshipTypes)
 }
-
-// Opt in to acting on it.
-val live = runner.run(dryRun = false)
-log.info("quarantined {} proposition(s)", live.quarantinedCount)
+if (result.hasAnyChange) {
+    log.warn("a sweep would evaluate: {}", result.quarantineDiff.changes)
+}
 
 // What did the last week look like?
 driftReportStore.globalDriftReports(schemaName, limit = 50, since = Instant.now().minus(7, ChronoUnit.DAYS))
 ```
 
-`DriftCheckResult` reads its drifted types off the `report` it saved rather than keeping a second
-copy, so what you log and what an operator later reads out of the store can't disagree.
+Acting on it is a separate call a person decides to make:
+
+```kotlin
+val sweep = PropositionStoreDriftSweep(
+    propositionStore,
+    SafeDiceEventListener(projectionLineageStaleCascade), // optional; defaults to a no-op
+)
+
+for (contextId in contextsToReconcile) {
+    val swept = sweep.sweep(result.quarantineDiff, MentionTypeDriftQuarantinePolicy(), contextId)
+    log.info("quarantined {} proposition(s) in {}", swept.quarantined.size, contextId)
+}
+// Only now, with every context done, has anything actually been reconciled.
+versionStore.markSwept(result.declaredVersion)
+
+// Changed your mind about one of them?
+sweep.releaseFromQuarantine(propositionId)
+```
+
+`DriftCheckResult` reads its drifted types off the `report` it saved and keeps no second copy, so what
+you log and what an operator later reads out of the store can't disagree.
 
 The runner is stateless and schedules nothing. Running it repeatedly, or for different schemas at
 once, is fine. Two concurrent checks of the same schema don't corrupt anything, since each captures
@@ -471,10 +570,17 @@ matters.
 ## What comes next
 
 `DriftReportStore` and `ObservedSchemaSource` are contracts here with no implementation yet. They
-need a Drivine-backed report store, and an observer that asks Neo4j for its distinct labels and
-relationship types. There is no Spring configuration in `dice-metamodel` either, so a runner is an
-ordinary constructor call until the autoconfigure slice assembles one, with quarantine off unless a
-host turns it on.
+need a Drivine-backed report store — one that persists a report's `declaredDiff` alongside its drifted
+type sets — and an observer that asks Neo4j for its distinct labels and relationship types.
+
+`DriftSweepCapable` and `SweptBaselineStore` are the same: contracts with an in-memory reference
+implementation and no durable one. Until the graph-backed store implements `SweptBaselineStore`, a
+Drivine-backed host gets the graph-truth half of a report and a `null` declared comparison. Until it
+implements `DriftSweepCapable`, a host sweeps through `PropositionStoreDriftSweep`, which is correct
+and does its filtering in the JVM.
+
+There is no Spring configuration in `dice-metamodel` either, so a runner is an ordinary constructor
+call, and nothing sweeps unless a host calls it.
 
 **Registration-time compatibility evaluation** is deferred design, tracked under the metamodel epic
 (`embabel/dice#45`) until it gets its own issue. A registry-style compatibility check would grade a

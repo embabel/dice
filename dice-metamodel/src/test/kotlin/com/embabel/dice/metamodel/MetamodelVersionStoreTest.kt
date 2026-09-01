@@ -23,10 +23,10 @@ import org.junit.jupiter.api.Test
 
 /**
  * Covers behaviour the contract itself ships, independent of any specific backend: the default
- * [findVersion], which a backend is free to override with a keyed lookup, and the
- * [MetamodelVersionStore.sweptVersion] / [MetamodelVersionStore.markSwept] pointer, both the
- * defaults and [InMemoryMetamodelVersionStore]'s independent tracking of it. A store implementation
- * gets its own tests wherever it lives.
+ * [findVersion], which a backend is free to override with a keyed lookup, and
+ * [InMemoryMetamodelVersionStore]'s reading of the [SweptBaselineStore.sweptVersion] /
+ * [SweptBaselineStore.markSwept] pointer. A store implementation gets its own tests wherever it
+ * lives.
  *
  * The upsert rules [MetamodelVersionStore.saveVersion] states are checked by
  * `AbstractMetamodelVersionStoreContractTest`, which runs the same suite against
@@ -92,10 +92,10 @@ class MetamodelVersionStoreTest {
     }
 
     /**
-     * [MetamodelVersionStore.sweptVersion] tracks a different fact than [MetamodelVersionStore
-     * .latestVersion]: which declaration the last completed live sweep actually reconciled against,
-     * not which stamp arrived most recently in write order. [InMemoryMetamodelVersionStore] tracks
-     * it independently; the interface default (covered separately below) does not.
+     * [SweptBaselineStore.sweptVersion] tracks a different fact than
+     * [MetamodelVersionStore.latestVersion]: which declaration the last completed sweep actually
+     * reconciled against, where `latestVersion` answers which stamp arrived most recently in write
+     * order.
      */
     @Nested
     inner class SweptVersion {
@@ -161,31 +161,46 @@ class MetamodelVersionStoreTest {
     }
 
     /**
-     * The interface defaults exist so a store that doesn't override [MetamodelVersionStore
-     * .sweptVersion]/[MetamodelVersionStore.markSwept] still compiles and behaves like the runner
-     * did before those methods existed -- not a placeholder pretending the gap they describe is
-     * closed.
+     * A plain [MetamodelVersionStore] has no swept baseline at all, and there is no forwarding
+     * default that would give it one. That absence is the fix for a real hazard: a default answering
+     * [MetamodelVersionStore.latestVersion] moved on every ordinary stamp, so a store that never
+     * asked for baseline tracking still handed one out, and a dry, scoped or interrupted write
+     * looked to the next check like a finished sweep.
      */
     @Nested
-    inner class InterfaceDefaults {
+    inner class NoBaselineWithoutTheCapability {
 
         @Test
-        fun `sweptVersion defaults to latestVersion`() {
-            val store = MinimalStore()
-            val v = version("app", "Person")
-            store.saveVersion(v)
+        fun `a plain version store is no SweptBaselineStore`() {
+            val store: MetamodelVersionStore = MinimalStore()
+            store.saveVersion(version("app", "Person"))
 
-            assertEquals(store.latestVersion("app"), store.sweptVersion("app"))
+            assertFalse(
+                store is SweptBaselineStore,
+                "stamping must never be enough to make a store look like it tracks a baseline",
+            )
         }
 
         @Test
-        fun `markSwept defaults to an ordinary saveVersion`() {
-            val store = MinimalStore()
-            val v = version("app", "Person")
+        fun `the in-memory store does declare the capability`() {
+            val store: MetamodelVersionStore = InMemoryMetamodelVersionStore()
 
-            store.markSwept(v)
+            assertTrue(store is SweptBaselineStore)
+        }
 
-            assertEquals(v, store.latestVersion("app"), "the default's only effect is the ordinary save")
+        @Test
+        fun `saving a stamp many times leaves the baseline where it was`() {
+            val store = InMemoryMetamodelVersionStore()
+            val swept = version("app", "Person")
+            store.markSwept(swept)
+
+            repeat(5) { store.saveVersion(version("app", "Person", "Company")) }
+
+            assertEquals(
+                swept,
+                store.sweptVersion("app"),
+                "a completed sweep is the only thing that may move the baseline",
+            )
         }
     }
 
