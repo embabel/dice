@@ -482,7 +482,7 @@ class MetamodelVersion @JvmOverloads constructor(
             val entityTypeAliases = aliases.typeAliases.filterKeys { it in governedNames }
 
             // The two refusals run here as well as in the constructor so a declaration that can't
-            // be stamped fails at the seam that wrote it, naming the alias to retire.
+            // be stamped fails at the call that stamped it, naming the alias to retire.
             requireNoTypeAliasReuse(governedNames, entityTypeAliases)
             requireNoAliasesOnDuplicateNames(entityTypeProperties)
 

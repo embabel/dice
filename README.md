@@ -114,7 +114,7 @@ recover by reading a single class — see the design notes in [`docs/design/`](d
   two-phase save, materialised effective confidence, schema-as-beans, and the decay tick.
 - [Events](docs/design/events.md) — the domain-event model the store and pipeline emit.
 - [Metamodel versioning](docs/design/metamodel-versioning.md) — content-hash schema stamps, per-type
-  governance, the declared-schema opt-in seam, and version history.
+  governance, the declared-schema opt-in, and version history.
 
 ## Real-World Example: Impromptu
 

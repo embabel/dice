@@ -10,7 +10,7 @@
     <artifactId>dice-metamodel</artifactId>
     <packaging>jar</packaging>
     <name>Dice Metamodel</name>
-    <description>Schema versioning for DICE knowledge graphs: content-hash stamping, the declared-schema seam, and the version store contract</description>
+    <description>Schema versioning for DICE knowledge graphs: content-hash stamping, the declared-schema contract, and the version store contract</description>
 
     <dependencies>
         <!--

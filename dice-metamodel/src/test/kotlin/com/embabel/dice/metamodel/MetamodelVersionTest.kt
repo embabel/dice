@@ -1181,7 +1181,7 @@ class MetamodelVersionTest {
         }
 
         @Test
-        fun `a declared type name in another type's alias set is rejected at the stamping seam`() {
+        fun `a declared type name in another type's alias set is rejected at stamping`() {
             val dictionary = DataDictionary.fromDomainTypes(
                 "test",
                 listOf(DynamicType("Human"), DynamicType("Person")),
@@ -1238,7 +1238,7 @@ class MetamodelVersionTest {
         }
 
         @Test
-        fun `aliases on a property name with more than one signature are rejected at the stamping seam`() {
+        fun `aliases on a property name with more than one signature are rejected at stamping`() {
             // Two same-named Person declarations each carry their own `age`, so the union holds two
             // signatures for one name and an old name can't say which it meant.
             val thrown = assertThrows<IllegalArgumentException> {

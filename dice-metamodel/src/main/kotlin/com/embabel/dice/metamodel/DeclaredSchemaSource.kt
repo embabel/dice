@@ -108,7 +108,7 @@ class DeclaredSchema(
 /**
  * Supplies the schema an application has declared.
  *
- * This is the opt-in seam for versioning: with no declared schema, nothing is stamped. The Spring
+ * This interface is the versioning opt-in: with no declared schema, nothing is stamped. The Spring
  * wiring that arrives in a later slice activates only when a `DeclaredSchemaSource` bean is
  * present, so an application that hasn't decided what it governs is left alone.
  *
