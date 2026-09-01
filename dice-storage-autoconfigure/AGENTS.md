@@ -29,7 +29,7 @@ Three rules, and that's the whole mechanism:
    exception — they carry no `@ConditionalOnMissingBean`, so they're applied whenever the graph
    backend is active and aren't overridable by a competing bean.)
 3. **Graph beans are declared before their in-memory counterparts**, so the flip resolves by
-   registration order rather than mutually-exclusive conditions.
+   registration order (with no need for mutually-exclusive conditions).
 
 The graph repository and the vector-index schema additionally require `@ConditionalOnBean(Ai::class)`
 — they need an embedding service, which comes from the embabel-agent `Ai` handle.
@@ -43,7 +43,7 @@ by the starter) applies them idempotently on startup — there is no migration r
   `Source.key`, the composite `(Proposition.contextId, Proposition.text)` dedup backstop, and the range
   indexes queries filter by (`contextId`, `status`, `level`, `effectiveConfidence`, `Mention.resolvedId`, …).
 - `lineageRecordSchema` — natural-key uniqueness for `ProjectionRecord`, `CollectorRecord`, and
-  `CollectorRun`, which is what lets the lineage stores `MERGE` (upsert) instead of duplicating.
+  `CollectorRun`, which lets the lineage stores `MERGE` (upsert) without duplicating.
 - `propositionVectorIndexSchema` — the cosine vector index on `Proposition.embedding`, sized to the
   embedding model's dimension and stamped with the model name as the schema version. Gated behind
   `embabel.dice.store.vector-index.enabled` (default true).
@@ -86,4 +86,4 @@ drift from that annotation and silently break vector search, so they live as con
 - Changing the embedding model to a different vector dimension requires dropping and recreating the
   vector index — the schema is applied idempotently but won't resize an existing index.
 - The decay tick is a no-op when no `DecayManager` is available (resolved lazily), so enabling decay
-  without a store backend simply does nothing rather than failing.
+  without a store backend does nothing (it never fails).

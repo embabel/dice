@@ -44,6 +44,24 @@ val DICE_BOOKKEEPING_RELATIONSHIP_TYPES: Set<String> = setOf(
 )
 
 /**
+ * Node labels written by infrastructure libraries that Dice runs on top of, excluding them from
+ * whole-graph drift observation.
+ *
+ * Infrastructure libraries own these labels and write them as part of their own bookkeeping.
+ * DICE's schema definitions cannot declare them — the library owns them entirely — so every
+ * whole-graph observation would report them as undeclared drift on every run if left unexcluded.
+ *
+ * Unlike [DICE_BOOKKEEPING_RELATIONSHIP_TYPES], which are decided by shape (a `sourcePropositions`
+ * marker on edges), these are decided by name. An infrastructure library's bookkeeping is not
+ * declared anywhere in DICE's schema, so there is no shape to recognize it by.
+ *
+ * Currently includes `_DrivineSchema`, written by the Drivine library itself.
+ */
+val INFRASTRUCTURE_LABELS: Set<String> = setOf(
+    "_DrivineSchema",
+)
+
+/**
  * Drivine / Neo4j implementation of [ObservedSchemaSource]: asks a live graph what it contains, so a
  * `DeclaredObservedDiffer` can compare it against what was declared.
  *
@@ -247,7 +265,7 @@ open class DrivineObservedSchemaSource(
         // that produced it already asked dice's own propositions, and it stays out of the label set
         // so the differ can hold it to the mention rule; see the class doc.
         return ObservedSchema(
-            entityTypeNames = queryStrings(ALL_LABELS) - hiddenLabels,
+            entityTypeNames = queryStrings(ALL_LABELS) - hiddenLabels - INFRASTRUCTURE_LABELS,
             relationshipTypeNames = queryStrings(ALL_RELATIONSHIP_TYPES) - hiddenRelationshipTypes,
             capturedAt = clock.instant(),
             entityTypeBasis = ObservedSchema.EntityTypeBasis.GRAPH_LABELS,

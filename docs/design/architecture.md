@@ -16,7 +16,7 @@ DICE is a multi-module Maven build. Each module's intent, and what it's allowed 
 | `dice-storage-autoconfigure` | Spring Boot autoconfiguration that wires `dice-storage`'s beans (repository, projectors, trust scorer) into a host application. Depends on `dice-storage`. |
 | `dice-ingestion` | Content-hash dedup ledger and source adapters that sit in front of `PropositionPipeline`, so the same artifact is never extracted twice concurrently. Depends on `dice`. |
 | `dice-report` | Rationale and structured report generation over propositions and their lineage. Depends on `dice`. |
-| `dice-metamodel` | Schema governance: content-hash stamps over the governed part of a `DataDictionary`, the declared-schema seam, the version and drift-report store contracts, diffing, drift checking, and non-destructive quarantine. A leaf over `embabel-agent-api`, with no dependency on `dice`; `dice-storage` implements its store contracts. |
+| `dice-metamodel` | Schema governance: content-hash stamps over the governed part of a `DataDictionary`, the declared-schema contract, the version and drift-report store contracts, diffing, drift checking, and non-destructive quarantine. A leaf over `embabel-agent-api`, with no dependency on `dice`; `dice-storage` implements its store contracts. |
 | `dice-integration-tests` | End-to-end tests exercising the real Neo4j backend and full pipeline across module boundaries. Depends on `dice`, `dice-ingestion`, `dice-report` (and transitively `dice-storage`). Not shipped. |
 
 ```mermaid
@@ -198,7 +198,7 @@ audit trails survive a restart. See [graph-projection](graph-projection.md).
 walking propositions over any store, routing to a native `GraphQueryCapable` backend when available.
 `RetrievalRouter` is the single multi-modal entry point: it checks whether the backing store
 supports the requested mode (VECTOR / ENTITY / GRAPH_WALK / TEMPORAL / HYBRID) and returns an
-empty `supported=false` result rather than falling back to a scan when the mode isn't available.
+empty `supported=false` result when the mode isn't available (never falling back to a scan).
 
 ```mermaid
 sequenceDiagram

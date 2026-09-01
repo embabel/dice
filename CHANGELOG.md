@@ -12,7 +12,7 @@ and the consumer PRs that deliver it).
 
 - `dice-metamodel` module, first slice of schema versioning: `MetamodelVersion`
   content-hash stamping with per-type governance selection, the declared-schema
-  opt-in seam, and the `MetamodelVersionStore` contract. Pure JVM.
+  opt-in contract, and the `MetamodelVersionStore` contract. Pure JVM.
   **Compatibility: additive.** New module; no existing API touched.
 
 - Declared renames in `dice-metamodel`. **EXPERIMENTAL** (shape may change

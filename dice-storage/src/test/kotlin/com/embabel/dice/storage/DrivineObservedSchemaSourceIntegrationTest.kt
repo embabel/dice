@@ -301,6 +301,35 @@ class DrivineObservedSchemaSourceIntegrationTest {
     // ---- Exclusion by shape, not by label name ----
 
     @Test
+    fun `infrastructure labels written by Drivine are never reported as domain drift`() {
+        // The Drivine library writes the `_DrivineSchema` label as its own bookkeeping and owns it
+        // entirely. DICE's schema definitions cannot declare it, so without exclusion every
+        // whole-graph check reports it as drift. This test verifies that the exclusion catches it
+        // while an unknown label still drifts, proving the exclusion is exact.
+        persistenceManager.execute(
+            QuerySpecification.withStatement("CREATE (:_DrivineSchema {something: 'drivine owns this'})"),
+        )
+        persistenceManager.execute(
+            QuerySpecification.withStatement("CREATE (:UnknownLabel {id: 'drift-marker'})"),
+        )
+        assertTrue(
+            rawLabels().containsAll(setOf("_DrivineSchema", "UnknownLabel")),
+            "precondition: the raw catalogue must hold both labels, but was ${rawLabels()}",
+        )
+
+        val observed = source.observe()
+
+        assertFalse(
+            observed.entityTypeNames.contains("_DrivineSchema"),
+            "Drivine's bookkeeping label must be excluded; got ${observed.entityTypeNames}",
+        )
+        assertTrue(
+            observed.entityTypeNames.contains("UnknownLabel"),
+            "unknown labels must still be reported as drift; got ${observed.entityTypeNames}",
+        )
+    }
+
+    @Test
     fun `a domain node that only shares a bookkeeping label's name is still observed`() {
         // Excluding the name `Source` would hide an app's own undeclared `Source` type from every
         // report. Exclusion goes by node shape so that type stays observable.
