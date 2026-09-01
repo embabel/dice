@@ -58,6 +58,31 @@ class DeclaredSchema(
 
     val ungovernedRelationshipTypeNames: Set<String> = java.util.Set.copyOf(ungovernedRelationshipTypeNames)
 
+    /**
+     * The simple labels the declared entity types carry into a graph: each name in
+     * [MetamodelVersion.entityTypeNames] cut down to the part after its final dot.
+     *
+     * A declared name can be fully qualified. A JVM-backed type is named by its class name, so the
+     * stamp holds `com.example.Person`, while extraction records a mention of it as `Person` and a
+     * graph reports `Person` as the label on the node. A comparison that put those two spellings
+     * side by side would call every declared type unobserved and read a same-named observed type as
+     * drift, so the comparison runs on these labels.
+     *
+     * The cut is textual: it takes the name apart at its last dot and changes nothing else. Two
+     * spellings sit outside it — a JVM nested class carries its outer class in the class name after
+     * a `$`, and the agent platform uppercases the first character of a label it derives this way,
+     * where this keeps every character as declared. A host that meets either one maps its own
+     * names; the `TypeIdentity` SPI in this package specifies that mapping.
+     *
+     * Two declared names differing only in their package share one label, and this set holds it
+     * once. A graph does the same: a label carries no package, so nothing reading one back can tell
+     * those two types apart.
+     *
+     * Derived from [version], so [equals] and [toString] stay on the fields a caller handed in.
+     */
+    val entityTypeOwnLabels: Set<String> =
+        java.util.Set.copyOf(version.entityTypeNames.mapTo(mutableSetOf()) { ownLabelOf(it) })
+
     override fun equals(other: Any?): Boolean =
         other is DeclaredSchema &&
             version == other.version &&
@@ -78,6 +103,23 @@ class DeclaredSchema(
             "ungovernedRelationshipTypeNames=$ungovernedRelationshipTypeNames)"
 
     companion object {
+
+        /**
+         * The label a declared entity type name writes onto a node: the part after its final dot,
+         * or the whole name when it holds no dot.
+         *
+         * This is the cut the agent platform makes when it turns a type name into a label, so a
+         * stamp holding `com.example.Person` lines up with the `Person` a graph reports. A name
+         * ending in a dot has nothing after it and stands as its own label; that spelling is
+         * malformed, and folding it into an empty label would quietly match every other malformed
+         * name.
+         *
+         * @param entityTypeName A declared entity type name.
+         * @return Its own label.
+         */
+        @JvmStatic
+        fun ownLabelOf(entityTypeName: String): String =
+            entityTypeName.substringAfterLast('.').ifEmpty { entityTypeName }
 
         /**
          * Declare the governed part of [dataDictionary]: stamp it and carry through the bare

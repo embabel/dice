@@ -144,25 +144,39 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         // nobody had touched, so the declared side of the drift check is the type names plus every
         // label those types declare.
         //
+        // A declared name can also be fully qualified where the observed one is simple. The stamp
+        // holds `com.example.Person` for a JVM-backed type, extraction records the mention as
+        // `Person`, and the graph reports `Person`. Both spellings of every declared type go on the
+        // declared side, through DeclaredSchema.entityTypeOwnLabels.
+        //
         // Declared former names count as declared too. Nodes written before a type was renamed keep
         // the old label, and the rename was declared, so the old label is known. Leaving it out
-        // would report a declared rename as drift on every check from then on.
+        // would report a declared rename as drift on every check from then on. A former name is a
+        // declared name, so it brings its own label with it the same way.
+        val declaredAliases = declared.version.entityTypeAliases.values.flatten()
         val declaredLabels = declaredTypes +
+            declared.entityTypeOwnLabels +
             declared.version.entityTypeLabels.values.flatten() +
-            declared.version.entityTypeAliases.values.flatten()
+            declaredAliases +
+            ownLabelsOf(declaredAliases)
 
         // A type the host's dictionary names but the selector leaves outside governance is a known
         // type, and the drift check has to recognise it as such. It gets its own excluded set,
         // separate from declaredLabels, because it must stay out of unobservedEntityTypes below: a
         // governance-exempt type with no data isn't the informational case that bucket describes.
-        val excludedFromDrift = declaredLabels + declared.ungovernedEntityTypeNames
+        // These names come off the same dictionary the governed ones do, so they can be fully
+        // qualified in the same way, and their own labels are excluded alongside them.
+        val excludedFromDrift = declaredLabels +
+            declared.ungovernedEntityTypeNames +
+            ownLabelsOf(declared.ungovernedEntityTypeNames)
 
         // Drift is observed and never declared: orphaned data whose declaring integration is gone,
         // or was never registered. The opposite direction gets its own informational bucket, since a
         // declared type with zero instances is an ordinary state. That direction stays on the type
         // names: "declared but with no data" is a statement about types, and a parent label listed
         // as an unobserved type would be noise about something that was never a type in its own
-        // right.
+        // right. A declared type counts as observed under either spelling of its own name, so a
+        // fully qualified declaration is answered by the simple label a graph reports for it.
         //
         // Relationships compare on the bare type name, because that is all a graph can report: a
         // `db.relationshipTypes()`-style query knows the type, not which node types an instance
@@ -178,7 +192,7 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
             observedSchema = observed,
             driftedEntityTypes = canonical(observedTypes - excludedFromDrift),
             driftedRelationshipTypes = canonical(observedRels - relsExcludedFromDrift),
-            unobservedEntityTypes = canonical(declaredTypes - observedTypes),
+            unobservedEntityTypes = canonical(declaredTypes.filterNot { isObserved(it, observedTypes) }),
             unobservedRelationshipTypes = canonical(declaredRels - observedRels),
         )
     }
@@ -424,6 +438,19 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
     }
 
     private companion object {
+
+        /**
+         * The own labels of a set of declared names: [DeclaredSchema.ownLabelOf] over each of them.
+         */
+        private fun ownLabelsOf(names: Collection<String>): Set<String> =
+            names.mapTo(mutableSetOf()) { DeclaredSchema.ownLabelOf(it) }
+
+        /**
+         * Whether the graph reported a declared type, under either spelling of its name: the name
+         * as it was declared, or the label that name writes onto a node.
+         */
+        private fun isObserved(declaredTypeName: String, observedTypes: Set<String>): Boolean =
+            declaredTypeName in observedTypes || DeclaredSchema.ownLabelOf(declaredTypeName) in observedTypes
 
         /** Old names and the new names claiming them, where no one claim is exclusive. */
         private class ContestedClaim(val formerNames: Set<String>, val candidates: Set<String>)

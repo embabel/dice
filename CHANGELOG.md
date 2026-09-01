@@ -144,3 +144,31 @@ and the consumer PRs that deliver it).
   it as harmless. Nothing else changes for a schema that declares no aliases — pairing and
   substitution are no-ops with an empty alias map, and the existing diff behavior, ordering
   and output are unchanged. Binary compatibility is untouched; consumers recompile.
+
+- Type identity in the declared/observed comparison. `DeclaredSchema.entityTypeOwnLabels` holds
+  the label each declared entity type writes onto a node: the declared name cut at its last dot,
+  derived through the new `DeclaredSchema.ownLabelOf` helper. A JVM-backed type is declared by its
+  class name, so a stamp holds `com.example.Person` while extraction records the mention as
+  `Person` and the graph reports `Person` as the label. `diffAgainstObserved` put those two
+  spellings side by side, which reported one healthy type twice — as an unobserved declaration,
+  and as drift under the very label it was written with. Both directions now match on either
+  spelling: a declared type counts as observed when the graph reports its declared name or its own
+  label, and the drift exclusion covers the own labels of the declared types, of declared former
+  names, and of the known-but-ungoverned types, which reach the check carrying no label set of
+  their own. What gets reported is unchanged — an unobserved type comes back under the name the
+  stamp declares. Two declared names differing only in their package share one own label and the
+  set holds it once, which is what a graph does as well: a label carries no package, so a node
+  written under either type reads back the same way. A schema whose declared names hold no dots
+  behaves as it did before, pinned by the existing suite.
+  Alongside it, `TypeIdentity`, **EXPERIMENTAL** (shape may change before 1.0): the interface a
+  host implements to say which declared entity type an outside name means, for names arriving from
+  a TypeScript API, an OpenAPI document, or any other system that spells types its own way. This
+  slice ships it as a specification — KDoc, a stated contract (total, deterministic,
+  round-tripping, many-to-one, exact string matching) and a worked OpenAPI example. Nothing in
+  DICE implements it, calls it or wires it; the shipped differ compares on the own-label rule
+  above, which covers the graph.
+  **Compatibility: additive, carrying one behavioral fix.** One new property on `DeclaredSchema`,
+  one new static helper, one new interface; no existing API touched. `contentHash` is untouched:
+  own labels are derived on demand and reach no hash. The behavioral part is the fix itself — for
+  a host declaring fully qualified type names, a drift check that reported such a type in both
+  buckets at once reports it in neither. A host whose declared names hold no dots sees no change.

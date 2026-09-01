@@ -549,6 +549,106 @@ class MetamodelDifferTest {
             assertEquals(setOf("NeverSeenYet"), diff.unobservedEntityTypes)
         }
 
+        /**
+         * A JVM-backed type is declared by its class name, and what comes back at it is the simple
+         * label: extraction records a mention type of `Person`, and the graph reports `Person` on
+         * the node. Comparing the two spellings directly called every fully qualified type
+         * unobserved, and read the label it was written under as drift — one declared type
+         * reported twice, in both buckets, on a schema in perfect health.
+         */
+        @Test
+        fun `a fully qualified declared type is matched by the simple label a graph reports`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declared("com.example.Person"),
+                observed(entityTypeNames = setOf("Person")),
+            )
+            assertFalse(diff.hasDrift, "the observed label names the declared type: ${diff.driftedEntityTypes}")
+            assertTrue(diff.driftedEntityTypes.isEmpty())
+            assertTrue(
+                diff.unobservedEntityTypes.isEmpty(),
+                "the declared type was observed under its label: ${diff.unobservedEntityTypes}",
+            )
+        }
+
+        @Test
+        fun `a graph reporting a declared name in full still matches it`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declared("com.example.Person"),
+                observed(entityTypeNames = setOf("com.example.Person")),
+            )
+            assertFalse(diff.hasDrift)
+            assertTrue(diff.unobservedEntityTypes.isEmpty())
+        }
+
+        /**
+         * The label match must stay a match on the declared name and nothing else. A type nobody
+         * declared is still drift, which is the whole point of the bucket.
+         */
+        @Test
+        fun `an observed label matching no declared name or own label is still drift`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declared("com.example.Person"),
+                observed(entityTypeNames = setOf("Person", "Ghost")),
+            )
+            assertTrue(diff.hasDrift)
+            assertEquals(setOf("Ghost"), diff.driftedEntityTypes)
+            assertTrue(diff.unobservedEntityTypes.isEmpty())
+        }
+
+        @Test
+        fun `a fully qualified declared type with no data is unobserved under its declared name`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declared("com.example.Person", "com.example.NeverSeenYet"),
+                observed(entityTypeNames = setOf("Person")),
+            )
+            assertFalse(diff.hasDrift)
+            assertEquals(setOf("com.example.NeverSeenYet"), diff.unobservedEntityTypes)
+        }
+
+        /**
+         * An ungoverned type is declared by the same dictionary as a governed one, so its name can
+         * be fully qualified too, and it reaches the drift check with no label set of its own to
+         * fall back on. Reading it by its simple label is what keeps a deliberately ungoverned type
+         * out of drift once its name is qualified.
+         */
+        @Test
+        fun `a known but ungoverned fully qualified type is not drift when observed by its label`() {
+            val person = DynamicType("com.example.Person")
+            val sighting = DynamicType(
+                name = "com.example.Sighting",
+                ownProperties = listOf(DomainTypePropertyDefinition("about", person)),
+            )
+            val dictionary = DataDictionary.fromDomainTypes("test", listOf(person, sighting))
+            val declaration = DeclaredSchema.from(dictionary, GovernedTypeSelector { it.name == "com.example.Person" })
+
+            assertEquals(setOf("com.example.Sighting"), declaration.ungovernedEntityTypeNames)
+
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declaration,
+                observed(entityTypeNames = setOf("Person", "Sighting"), relationshipTypeNames = setOf("about")),
+            )
+
+            assertFalse(diff.hasDrift, "both types are declared: ${diff.driftedEntityTypes}")
+            assertTrue(diff.driftedEntityTypes.isEmpty())
+            assertTrue(diff.unobservedEntityTypes.isEmpty())
+        }
+
+        @Test
+        fun `an ungoverned qualified type does not hide an undeclared one`() {
+            val person = DynamicType("com.example.Person")
+            val sighting = DynamicType("com.example.Sighting")
+            val dictionary = DataDictionary.fromDomainTypes("test", listOf(person, sighting))
+            val declaration = DeclaredSchema.from(dictionary, GovernedTypeSelector { it.name == "com.example.Person" })
+
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declaration,
+                observed(entityTypeNames = setOf("Person", "Sighting", "Ghost")),
+            )
+
+            assertTrue(diff.hasDrift)
+            assertEquals(setOf("Ghost"), diff.driftedEntityTypes)
+        }
+
         @Test
         fun `relationship drift is compared on the bare relationship type name, not the full descriptor`() {
             // Declared descriptors carry from/to node types; an observed graph only reports bare
@@ -1648,6 +1748,30 @@ class MetamodelDifferTest {
             val diff = declaredObservedDiffer.diffAgainstObserved(declared, observed("Human", "GhostIntegrationType"))
             assertTrue(diff.hasDrift)
             assertEquals(setOf("GhostIntegrationType"), diff.driftedEntityTypes)
+        }
+
+        /**
+         * A declared former name is a declared name, so it carries its own label the same way a
+         * live one does. Rename `com.example.Person` to `com.example.Human` and the nodes written
+         * before the rename still come back labelled `Person`, which the declaration explains.
+         */
+        @Test
+        fun `a qualified former name is known by its label too`() {
+            val renamed = DeclaredSchema(
+                version = versionOf(
+                    listOf("com.example.Human"),
+                    aliases = mapOf("com.example.Human" to setOf("com.example.Person")),
+                ),
+                relationshipTypeNames = emptySet(),
+            )
+
+            val diff = declaredObservedDiffer.diffAgainstObserved(renamed, observed("Human", "Person"))
+
+            assertFalse(diff.hasDrift, "the rename was declared: ${diff.driftedEntityTypes}")
+            assertTrue(diff.unobservedEntityTypes.isEmpty())
+
+            val ghosted = declaredObservedDiffer.diffAgainstObserved(renamed, observed("Human", "Ghost"))
+            assertEquals(setOf("Ghost"), ghosted.driftedEntityTypes)
         }
 
         @Test
