@@ -24,15 +24,24 @@ import com.embabel.dice.metamodel.DriftCheckResult
 import com.embabel.dice.metamodel.DriftCheckRunner
 import com.embabel.dice.metamodel.DriftQuarantinePolicy
 import com.embabel.dice.metamodel.DriftReportStore
+import com.embabel.dice.metamodel.DriftSweepCapable
+import com.embabel.dice.metamodel.InMemoryMetamodelVersionStore
+import com.embabel.dice.metamodel.MetamodelChange
 import com.embabel.dice.metamodel.MetamodelDiff
 import com.embabel.dice.metamodel.MetamodelDiffer
+import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.MetamodelVersionStore
 import com.embabel.dice.metamodel.ObservedSchema
 import com.embabel.dice.metamodel.ObservedSchemaSource
 import com.embabel.dice.metamodel.QuarantineResult
 import com.embabel.dice.metamodel.support.DefaultDriftCheckRunner
 import com.embabel.dice.metamodel.support.MentionTypeDriftQuarantinePolicy
+import com.embabel.dice.metamodel.support.PropositionStoreDriftSweep
 import com.embabel.dice.metamodel.support.StructuralMetamodelDiffer
+import com.embabel.dice.projection.lineage.InMemoryProjectionRecordStore
+import com.embabel.dice.projection.lineage.ProjectionLifecycle
+import com.embabel.dice.projection.lineage.ProjectionLineageStaleCascade
+import com.embabel.dice.projection.lineage.ProjectionRecord
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
@@ -53,20 +62,22 @@ import org.springframework.core.io.support.PathMatchingResourcePatternResolver
 
 /**
  * Wiring tests for [MetamodelAutoConfiguration]. No Spring Boot app and no database: the
- * auto-configuration, a stub `PersistenceManager`, and whichever governance beans a given test
- * wants the application to have supplied.
+ * auto-configuration, a stub `PersistenceManager` where the graph backend is selected, and whichever
+ * governance beans a given test wants the application to have supplied.
  *
  * These cover what the wiring alone can get wrong: whether governance stays absent until somebody
- * declares a schema, whether a consumer's bean wins whichever declaration order it arrives in, and
- * whether each drift tier produces a runner that behaves like that tier.
+ * declares a schema, whether a consumer's bean wins whichever declaration order it arrives in,
+ * whether a host with no graph still starts, and whether a quarantine is heard by the listeners the
+ * application registered.
  */
 class MetamodelAutoConfigurationTest {
 
     private val autoConfiguration = AutoConfigurations.of(MetamodelAutoConfiguration::class.java)
 
-    /** The application declared a schema and has a graph connection: the normal case. */
+    /** The application declared a schema and selected the graph backend: the normal case. */
     private val runner = ApplicationContextRunner()
         .withConfiguration(autoConfiguration)
+        .withPropertyValues(GRAPH_BACKEND)
         .withUserConfiguration(DeclaredSchemaConfig::class.java)
 
     // ---- The opt-in gate ----
@@ -75,6 +86,7 @@ class MetamodelAutoConfigurationTest {
     fun `no DeclaredSchemaSource bean means no metamodel beans at all`() {
         ApplicationContextRunner()
             .withConfiguration(autoConfiguration)
+            .withPropertyValues(GRAPH_BACKEND)
             .withUserConfiguration(NoDeclaredSchemaConfig::class.java)
             .run { ctx ->
                 assertThat(ctx).hasNotFailed()
@@ -85,6 +97,7 @@ class MetamodelAutoConfigurationTest {
                 assertThat(ctx).doesNotHaveBean(ObservedSchemaSource::class.java)
                 assertThat(ctx).doesNotHaveBean(DeclaredObservedDiffer::class.java)
                 assertThat(ctx).doesNotHaveBean(DriftQuarantinePolicy::class.java)
+                assertThat(ctx).doesNotHaveBean(DriftSweepCapable::class.java)
                 assertThat(ctx).doesNotHaveBean(DriftCheckRunner::class.java)
                 assertThat(ctx).doesNotHaveBean(SchemaCatalog::class.java)
             }
@@ -100,7 +113,8 @@ class MetamodelAutoConfigurationTest {
             assertThat(ctx.getBean<ObservedSchemaSource>()).isInstanceOf(DrivineObservedSchemaSource::class.java)
             assertThat(ctx.getBean<DriftQuarantinePolicy>())
                 .isInstanceOf(MentionTypeDriftQuarantinePolicy::class.java)
-            assertThat(ctx).hasSingleBean(DriftCheckRunner::class.java)
+            assertThat(ctx.getBean<DriftSweepCapable>()).isInstanceOf(PropositionStoreDriftSweep::class.java)
+            assertThat(ctx.getBean<DriftCheckRunner>()).isInstanceOf(DefaultDriftCheckRunner::class.java)
             assertThat(ctx).hasSingleBean(SchemaCatalog::class.java)
         }
     }
@@ -125,15 +139,109 @@ class MetamodelAutoConfigurationTest {
             .run { ctx ->
                 assertThat(ctx).hasNotFailed()
                 assertThat(ctx).doesNotHaveBean(MetamodelAutoConfiguration::class.java)
+                assertThat(ctx).doesNotHaveBean(MetamodelProperties::class.java)
                 assertThat(ctx).doesNotHaveBean(MetamodelVersionStore::class.java)
+                assertThat(ctx).doesNotHaveBean(DriftReportStore::class.java)
+                assertThat(ctx).doesNotHaveBean(ObservedSchemaSource::class.java)
+                assertThat(ctx).doesNotHaveBean(DeclaredObservedDiffer::class.java)
+                assertThat(ctx).doesNotHaveBean(MetamodelDiffer::class.java)
+                assertThat(ctx).doesNotHaveBean(DriftQuarantinePolicy::class.java)
+                assertThat(ctx).doesNotHaveBean(DriftSweepCapable::class.java)
                 assertThat(ctx).doesNotHaveBean(DriftCheckRunner::class.java)
+                assertThat(ctx).doesNotHaveBean(SchemaCatalog::class.java)
                 // The DeclaredSchemaSource the application supplied stays; only the metamodel
                 // beans are removed.
                 assertThat(ctx).hasSingleBean(DeclaredSchemaSource::class.java)
             }
     }
 
-    // ---- The differ, resolvable under both interfaces ----
+    // ---- Backend selection ----
+
+    @Test
+    fun `a declared schema starts under the default in-memory backend, with no PersistenceManager`() {
+        ApplicationContextRunner()
+            .withConfiguration(autoConfiguration)
+            .withUserConfiguration(InMemoryBackendConfig::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx).doesNotHaveBean(PersistenceManager::class.java)
+
+                // What a host with no graph gets: schema history, the comparisons, the policy, and
+                // the sweep it can call once it has a diff.
+                assertThat(ctx.getBean<MetamodelVersionStore>())
+                    .isInstanceOf(InMemoryMetamodelVersionStore::class.java)
+                assertThat(ctx).hasSingleBean(StructuralMetamodelDiffer::class.java)
+                assertThat(ctx).hasSingleBean(DriftQuarantinePolicy::class.java)
+                assertThat(ctx.getBean<DriftSweepCapable>()).isInstanceOf(PropositionStoreDriftSweep::class.java)
+
+                // What it does not get, and why: there is no live graph to observe, so there is
+                // nothing for a check to ask about and no drift log to write the answer to.
+                assertThat(ctx).doesNotHaveBean(ObservedSchemaSource::class.java)
+                assertThat(ctx).doesNotHaveBean(DriftReportStore::class.java)
+                assertThat(ctx).doesNotHaveBean(DriftCheckRunner::class.java)
+                // The Neo4j constraints are DDL for the Drivine stores, which are not here either.
+                assertThat(ctx).doesNotHaveBean(SchemaCatalog::class.java)
+            }
+    }
+
+    // ---- Status transitions reach the application's listeners ----
+
+    @Test
+    fun `a quarantine through the wired sweep drives the projection lineage cascade`() {
+        ApplicationContextRunner()
+            .withConfiguration(autoConfiguration)
+            .withUserConfiguration(CascadeListeningConfig::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                val propositions = ctx.getBean<MapPropositionStore>()
+                val ghost = propositions.findAll().single { proposition ->
+                    proposition.mentions.any { it.type == "Ghost" }
+                }
+                val records = ctx.getBean<InMemoryProjectionRecordStore>()
+                records.record(
+                    ProjectionRecord(
+                        propositionId = ghost.id,
+                        target = "graph",
+                        lifecycle = ProjectionLifecycle.PROJECTED,
+                        runId = "run-1",
+                    ),
+                )
+
+                // A host acting on a schema change that dropped `Ghost`. Nothing in DICE called this.
+                val result = ctx.getBean<DriftSweepCapable>().sweep(
+                    diff = MetamodelTestFixtures.diffRemoving("Ghost"),
+                    policy = ctx.getBean<DriftQuarantinePolicy>(),
+                    contextId = MetamodelTestFixtures.CONTEXT_ID,
+                )
+
+                assertThat(result.quarantined).hasSize(1)
+                assertThat(propositions.findById(ghost.id)!!.status).isEqualTo(PropositionStatus.STALE)
+                // The point of the test: the cascade heard the transition, so the projection record
+                // derived from that proposition is stale too.
+                assertThat(records.findByProposition(ghost.id).single().lifecycle)
+                    .isEqualTo(ProjectionLifecycle.STALE)
+            }
+    }
+
+    @Test
+    fun `the sweep still works when the application registered no listener at all`() {
+        ApplicationContextRunner()
+            .withConfiguration(autoConfiguration)
+            .withUserConfiguration(InMemoryBackendConfig::class.java)
+            .run { ctx ->
+                val propositions = ctx.getBean<MapPropositionStore>()
+                val result = ctx.getBean<DriftSweepCapable>().sweep(
+                    diff = MetamodelTestFixtures.diffRemoving("Ghost"),
+                    policy = ctx.getBean<DriftQuarantinePolicy>(),
+                    contextId = MetamodelTestFixtures.CONTEXT_ID,
+                )
+
+                assertThat(result.quarantined).hasSize(1)
+                assertThat(propositions.findByStatus(PropositionStatus.STALE)).hasSize(1)
+            }
+    }
+
+    // ---- The two differ roles ----
 
     @Test
     fun `the default differ resolves as both MetamodelDiffer and DeclaredObservedDiffer`() {
@@ -142,6 +250,52 @@ class MetamodelAutoConfigurationTest {
             assertThat(ctx.getBean<MetamodelDiffer>()).isSameAs(asStructural)
             assertThat(ctx.getBean<DeclaredObservedDiffer>()).isSameAs(asStructural)
         }
+    }
+
+    @Test
+    fun `a distinct MetamodelDiffer bean and DeclaredObservedDiffer bean are both used`() {
+        ApplicationContextRunner()
+            .withConfiguration(autoConfiguration)
+            .withUserConfiguration(TwoDifferConfig::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                // The declared-against-baseline comparison only runs when a sweep has completed, so
+                // give it a baseline to compare against.
+                ctx.getBean<InMemoryMetamodelVersionStore>()
+                    .markSwept(MetamodelTestFixtures.declaredSchema("Person", "Retired").version)
+
+                val result = ctx.getBean<DriftCheckRunner>().run()
+
+                val declaredObserved = ctx.getBean<RecordingDeclaredObservedDiffer>()
+                val metamodel = ctx.getBean<RecordingMetamodelDiffer>()
+                assertThat(declaredObserved.calls).isEqualTo(1)
+                assertThat(metamodel.calls).isEqualTo(1)
+                // Each answer reaches the report under its own heading, so neither differ can be
+                // standing in for the other.
+                assertThat(result.driftedEntityTypes).containsExactly(RecordingDeclaredObservedDiffer.MARKER)
+                assertThat(result.declaredDiff!!.removedEntityTypes)
+                    .containsExactly(RecordingMetamodelDiffer.MARKER)
+            }
+    }
+
+    @Test
+    fun `a consumer MetamodelDiffer alone still leaves the declared-against-graph comparison working`() {
+        ApplicationContextRunner()
+            .withConfiguration(autoConfiguration)
+            .withUserConfiguration(MetamodelDifferOnlyConfig::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                ctx.getBean<InMemoryMetamodelVersionStore>()
+                    .markSwept(MetamodelTestFixtures.declaredSchema("Person", "Retired").version)
+
+                val result = ctx.getBean<DriftCheckRunner>().run()
+
+                assertThat(ctx.getBean<RecordingMetamodelDiffer>().calls).isEqualTo(1)
+                assertThat(result.declaredDiff!!.removedEntityTypes)
+                    .containsExactly(RecordingMetamodelDiffer.MARKER)
+                // The shipped structural differ filled the role nobody supplied a bean for.
+                assertThat(result.driftedEntityTypes).containsExactly("Ghost")
+            }
     }
 
     // ---- Consumer beans win, in either declaration order ----
@@ -174,6 +328,15 @@ class MetamodelAutoConfigurationTest {
     }
 
     @Test
+    fun `a consumer sweep wins whether it is registered before or after`() {
+        bothOrders(CustomSweepConfig::class.java) { ctx ->
+            assertThat(ctx).hasNotFailed()
+            assertThat(ctx).hasSingleBean(DriftSweepCapable::class.java)
+            assertThat(ctx.getBean<DriftSweepCapable>()).isInstanceOf(CustomSweep::class.java)
+        }
+    }
+
+    @Test
     fun `consumer stores win, and then no Drivine connection is needed at all`() {
         ApplicationContextRunner()
             .withConfiguration(autoConfiguration)
@@ -185,57 +348,40 @@ class MetamodelAutoConfigurationTest {
                     .isInstanceOf(RecordingMetamodelVersionStore::class.java)
                 assertThat(ctx.getBean<DriftReportStore>()).isInstanceOf(RecordingDriftReportStore::class.java)
                 assertThat(ctx.getBean<ObservedSchemaSource>()).isInstanceOf(FixedObservedSchemaSource::class.java)
+                assertThat(ctx).hasSingleBean(DriftCheckRunner::class.java)
             }
     }
 
     // ---- The narrow proposition port ----
 
     @Test
-    fun `the runner wires against a bare PropositionStore, with no PropositionRepository in sight`() {
+    fun `the sweep wires against a bare PropositionStore, with no PropositionRepository in sight`() {
         ApplicationContextRunner()
             .withConfiguration(autoConfiguration)
             .withUserConfiguration(InMemoryGovernanceConfig::class.java)
             .run { ctx ->
                 assertThat(ctx).hasNotFailed()
                 assertThat(ctx).doesNotHaveBean(PropositionRepository::class.java)
-                assertThat(ctx).hasSingleBean(DriftCheckRunner::class.java)
+                assertThat(ctx).hasSingleBean(DriftSweepCapable::class.java)
             }
     }
 
-    // ---- The drift tiers ----
+    // ---- A check reports and changes nothing ----
 
     @Test
-    fun `mode off leaves the stores wired and no runner`() {
-        ApplicationContextRunner()
-            .withConfiguration(autoConfiguration)
-            .withUserConfiguration(InMemoryGovernanceConfig::class.java)
-            .withPropertyValues("embabel.dice.metamodel.drift.mode=off")
-            .run { ctx ->
-                assertThat(ctx).hasNotFailed()
-                assertThat(ctx.getBean<MetamodelProperties>().drift.mode).isEqualTo(DriftMode.OFF)
-                assertThat(ctx).hasSingleBean(MetamodelVersionStore::class.java)
-                assertThat(ctx).hasSingleBean(DriftReportStore::class.java)
-                assertThat(ctx).doesNotHaveBean(DriftCheckRunner::class.java)
-            }
-    }
-
-    @Test
-    fun `observe is the default tier and downgrades a live run to a dry one`() {
+    fun `observe is the default mode and a check leaves every proposition alone`() {
         ApplicationContextRunner()
             .withConfiguration(autoConfiguration)
             .withUserConfiguration(InMemoryGovernanceConfig::class.java)
             .run { ctx ->
                 assertThat(ctx.getBean<MetamodelProperties>().drift.mode).isEqualTo(DriftMode.OBSERVE)
-                assertThat(ctx.getBean<DriftCheckRunner>()).isInstanceOf(ObserveOnlyDriftCheckRunner::class.java)
+                assertThat(ctx.getBean<DriftCheckRunner>()).isInstanceOf(DefaultDriftCheckRunner::class.java)
 
-                // Ask for a live run. 'Ghost' is observed and undeclared, so the quarantine tier
-                // would act here.
-                val result = ctx.getBean<DriftCheckRunner>().run(dryRun = false, contextId = null)
+                // 'Ghost' is observed and undeclared, so there is real drift to report.
+                val result = ctx.getBean<DriftCheckRunner>().run()
 
-                assertThat(result.dryRun).isTrue()
                 assertThat(result.hasDrift).isTrue()
                 assertThat(result.driftedEntityTypes).containsExactly("Ghost")
-                assertThat(result.quarantinedCount).isZero()
 
                 val store = ctx.getBean<RecordingDriftReportStore>()
                 assertThat(store.saved).hasSize(1)
@@ -247,50 +393,29 @@ class MetamodelAutoConfigurationTest {
     }
 
     @Test
-    fun `explicit observe mode wires the same observe-only runner`() {
+    fun `explicit observe mode wires the same runner`() {
         ApplicationContextRunner()
             .withConfiguration(autoConfiguration)
             .withUserConfiguration(InMemoryGovernanceConfig::class.java)
             .withPropertyValues("embabel.dice.metamodel.drift.mode=observe")
             .run { ctx ->
-                assertThat(ctx.getBean<DriftCheckRunner>()).isInstanceOf(ObserveOnlyDriftCheckRunner::class.java)
-            }
-    }
-
-    @Test
-    fun `quarantine mode wires the real runner and a live run really quarantines`() {
-        ApplicationContextRunner()
-            .withConfiguration(autoConfiguration)
-            .withUserConfiguration(InMemoryGovernanceConfig::class.java)
-            .withPropertyValues("embabel.dice.metamodel.drift.mode=quarantine")
-            .run { ctx ->
-                assertThat(ctx.getBean<MetamodelProperties>().drift.mode).isEqualTo(DriftMode.QUARANTINE)
                 assertThat(ctx.getBean<DriftCheckRunner>()).isInstanceOf(DefaultDriftCheckRunner::class.java)
-
-                val result = ctx.getBean<DriftCheckRunner>().run(dryRun = false, contextId = null)
-
-                assertThat(result.dryRun).isFalse()
-                assertThat(result.driftedEntityTypes).containsExactly("Ghost")
-                assertThat(result.quarantinedCount).isEqualTo(1)
-
-                val store = ctx.getBean<MapPropositionStore>()
-                assertThat(store.findByStatus(PropositionStatus.STALE)).hasSize(1)
-                assertThat(store.findByStatus(PropositionStatus.ACTIVE)).hasSize(1)
             }
     }
 
     @Test
-    fun `quarantine mode still leaves a dry run harmless`() {
+    fun `mode off leaves the stores and the sweep wired, and no runner`() {
         ApplicationContextRunner()
             .withConfiguration(autoConfiguration)
             .withUserConfiguration(InMemoryGovernanceConfig::class.java)
-            .withPropertyValues("embabel.dice.metamodel.drift.mode=quarantine")
+            .withPropertyValues("embabel.dice.metamodel.drift.mode=off")
             .run { ctx ->
-                val result = ctx.getBean<DriftCheckRunner>().run()
-
-                assertThat(result.dryRun).isTrue()
-                assertThat(result.quarantinedCount).isZero()
-                assertThat(ctx.getBean<MapPropositionStore>().findByStatus(PropositionStatus.STALE)).isEmpty()
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<MetamodelProperties>().drift.mode).isEqualTo(DriftMode.OFF)
+                assertThat(ctx).hasSingleBean(MetamodelVersionStore::class.java)
+                assertThat(ctx).hasSingleBean(DriftReportStore::class.java)
+                assertThat(ctx).hasSingleBean(DriftSweepCapable::class.java)
+                assertThat(ctx).doesNotHaveBean(DriftCheckRunner::class.java)
             }
     }
 
@@ -333,14 +458,22 @@ class MetamodelAutoConfigurationTest {
         assertions: (org.springframework.boot.test.context.assertj.AssertableApplicationContext) -> Unit,
     ) {
         ApplicationContextRunner()
+            .withPropertyValues(GRAPH_BACKEND)
             .withUserConfiguration(DeclaredSchemaConfig::class.java, userConfiguration)
             .withConfiguration(autoConfiguration)
             .run(assertions)
 
         ApplicationContextRunner()
+            .withPropertyValues(GRAPH_BACKEND)
             .withConfiguration(autoConfiguration)
             .withUserConfiguration(DeclaredSchemaConfig::class.java, userConfiguration)
             .run(assertions)
+    }
+
+    private companion object {
+
+        /** Selects the Drivine/Neo4j backend, the same switch the proposition store reads. */
+        const val GRAPH_BACKEND = "embabel.dice.store.type=graph"
     }
 }
 
@@ -370,10 +503,57 @@ internal open class NoDeclaredSchemaConfig {
 }
 
 /**
+ * An application on the default in-memory backend that declared a schema and nothing else. No
+ * `PersistenceManager` anywhere, which is the whole point: declaring a schema must not drag a graph
+ * connection in behind it.
+ */
+@Configuration(proxyBeanMethods = false)
+internal open class InMemoryBackendConfig {
+
+    @Bean
+    open fun declaredSchemaSource(): DeclaredSchemaSource = FixedDeclaredSchemaSource()
+
+    @Bean
+    open fun propositionStore(): MapPropositionStore = MapPropositionStore(
+        listOf(
+            MetamodelTestFixtures.proposition("Ada haunts the archive", mentionType = "Ghost"),
+            MetamodelTestFixtures.proposition("Ada wrote the notes", mentionType = "Person"),
+        ),
+    )
+}
+
+/**
+ * The same host, plus the lineage cascade registered as an ordinary `DiceEventListener` bean. This
+ * is what a real application does when it wants derived projection records to follow their
+ * proposition.
+ */
+@Configuration(proxyBeanMethods = false)
+internal open class CascadeListeningConfig {
+
+    @Bean
+    open fun declaredSchemaSource(): DeclaredSchemaSource = FixedDeclaredSchemaSource()
+
+    @Bean
+    open fun propositionStore(): MapPropositionStore = MapPropositionStore(
+        listOf(
+            MetamodelTestFixtures.proposition("Ada haunts the archive", mentionType = "Ghost"),
+            MetamodelTestFixtures.proposition("Ada wrote the notes", mentionType = "Person"),
+        ),
+    )
+
+    @Bean
+    open fun projectionRecordStore(): InMemoryProjectionRecordStore = InMemoryProjectionRecordStore()
+
+    @Bean
+    open fun projectionLineageStaleCascade(
+        recordStore: InMemoryProjectionRecordStore,
+    ): ProjectionLineageStaleCascade = ProjectionLineageStaleCascade(recordStore)
+}
+
+/**
  * An application that brought its own governance stores, so no Drivine connection is needed and the
  * whole loop runs in memory. The observed schema holds a `Ghost` type the declaration never
- * mentions, and one of the two propositions mentions it, so a live run has one thing to quarantine
- * and one to leave alone.
+ * mentions, so a check has real drift to report.
  */
 @Configuration(proxyBeanMethods = false)
 internal open class InMemoryGovernanceConfig {
@@ -399,6 +579,94 @@ internal open class InMemoryGovernanceConfig {
     )
 }
 
+/** Records that it was asked, and answers with a name no other collaborator could have produced. */
+internal class RecordingDeclaredObservedDiffer : DeclaredObservedDiffer {
+
+    var calls = 0
+        private set
+
+    override fun diffAgainstObserved(declared: DeclaredSchema, observed: ObservedSchema): DeclaredObservedDiff {
+        calls++
+        return DeclaredObservedDiff(
+            declared = declared,
+            observedSchema = observed,
+            driftedEntityTypes = setOf(MARKER),
+            driftedRelationshipTypes = emptySet(),
+            unobservedEntityTypes = emptySet(),
+            unobservedRelationshipTypes = emptySet(),
+        )
+    }
+
+    companion object {
+
+        const val MARKER = "AnsweredByTheConsumerDeclaredObservedDiffer"
+    }
+}
+
+/** The same trick for the other role: its answer carries a name only it can produce. */
+internal class RecordingMetamodelDiffer : MetamodelDiffer {
+
+    var calls = 0
+        private set
+
+    override fun diff(from: MetamodelVersion, to: MetamodelVersion): MetamodelDiff {
+        calls++
+        return MetamodelDiff(
+            fromVersion = from,
+            toVersion = to,
+            changes = listOf(MetamodelChange.EntityTypeRemoved(MARKER)),
+        )
+    }
+
+    companion object {
+
+        const val MARKER = "AnsweredByTheConsumerMetamodelDiffer"
+    }
+}
+
+/** An application supplying a distinct bean for each of the two differ roles. */
+@Configuration(proxyBeanMethods = false)
+internal open class TwoDifferConfig {
+
+    @Bean
+    open fun declaredSchemaSource(): DeclaredSchemaSource = FixedDeclaredSchemaSource()
+
+    @Bean
+    open fun versionStore(): InMemoryMetamodelVersionStore = InMemoryMetamodelVersionStore()
+
+    @Bean
+    open fun driftReportStore(): RecordingDriftReportStore = RecordingDriftReportStore()
+
+    @Bean
+    open fun observedSchemaSource(): FixedObservedSchemaSource = FixedObservedSchemaSource()
+
+    @Bean
+    open fun consumerDeclaredObservedDiffer(): RecordingDeclaredObservedDiffer = RecordingDeclaredObservedDiffer()
+
+    @Bean
+    open fun consumerMetamodelDiffer(): RecordingMetamodelDiffer = RecordingMetamodelDiffer()
+}
+
+/** An application that only wanted to replace the declaration-against-baseline comparison. */
+@Configuration(proxyBeanMethods = false)
+internal open class MetamodelDifferOnlyConfig {
+
+    @Bean
+    open fun declaredSchemaSource(): DeclaredSchemaSource = FixedDeclaredSchemaSource()
+
+    @Bean
+    open fun versionStore(): InMemoryMetamodelVersionStore = InMemoryMetamodelVersionStore()
+
+    @Bean
+    open fun driftReportStore(): RecordingDriftReportStore = RecordingDriftReportStore()
+
+    @Bean
+    open fun observedSchemaSource(): FixedObservedSchemaSource = FixedObservedSchemaSource()
+
+    @Bean
+    open fun consumerMetamodelDiffer(): RecordingMetamodelDiffer = RecordingMetamodelDiffer()
+}
+
 internal class CustomDiffer : DeclaredObservedDiffer {
     override fun diffAgainstObserved(declared: DeclaredSchema, observed: ObservedSchema): DeclaredObservedDiff =
         DeclaredObservedDiff(
@@ -419,6 +687,9 @@ internal open class CustomDifferConfig {
 }
 
 internal class CustomPolicy : DriftQuarantinePolicy {
+
+    override fun candidateMentionTypes(diff: MetamodelDiff): Set<String> = emptySet()
+
     override fun evaluate(diff: MetamodelDiff, propositions: Iterable<Proposition>): QuarantineResult =
         QuarantineResult(conforming = emptyList(), quarantined = emptyList())
 }
@@ -431,7 +702,7 @@ internal open class CustomPolicyConfig {
 }
 
 internal class CustomRunner : DriftCheckRunner {
-    override fun run(dryRun: Boolean, contextId: ContextId?): DriftCheckResult =
+    override fun run(contextId: ContextId?): DriftCheckResult =
         throw UnsupportedOperationException("never called; this test only asks which bean won")
 }
 
@@ -440,4 +711,27 @@ internal open class CustomRunnerConfig {
 
     @Bean
     open fun customRunner(): DriftCheckRunner = CustomRunner()
+}
+
+/** A store-side sweep of the kind a durable backend implements once it can push the query down. */
+internal class CustomSweep : DriftSweepCapable {
+
+    override fun quarantineCandidates(
+        contextId: ContextId,
+        mentionTypes: Set<String>,
+        limit: Int,
+        afterId: String?,
+    ): List<Proposition> = emptyList()
+
+    override fun applyQuarantine(decision: com.embabel.dice.metamodel.QuarantineDecision.Quarantined): Proposition =
+        decision.proposition
+
+    override fun releaseFromQuarantine(propositionId: String): Proposition? = null
+}
+
+@Configuration(proxyBeanMethods = false)
+internal open class CustomSweepConfig {
+
+    @Bean
+    open fun customSweep(): DriftSweepCapable = CustomSweep()
 }

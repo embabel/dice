@@ -14,14 +14,17 @@ brings an `EntityManagerFactory` and the repository infrastructure with it, and 
 ```mermaid
 flowchart TD
     A{"DeclaredSchemaSource<br/>bean present?"}
-    A -- no --> Z["Nothing. No stores, no differ,<br/>no runner, no cost."]
+    A -- no --> Z["Nothing. No stores, no differ,<br/>no runner, no sweep, no cost."]
     A -- yes --> B{"embabel.dice.metamodel<br/>.enabled"}
     B -- false --> Z
-    B -- true --> C["Version store, drift log,<br/>observed-schema source,<br/>differ, quarantine policy,<br/>schema constraints"]
-    C --> D{"embabel.dice.metamodel<br/>.drift.mode"}
-    D -- off --> E["No runner.<br/>Stamps and history only."]
-    D -- "observe (default)" --> F["ObserveOnlyDriftCheckRunner<br/>reports; touches no proposition"]
-    D -- quarantine --> G["DefaultDriftCheckRunner<br/>run(dryRun = false) marks stranded<br/>propositions STALE"]
+    B -- true --> C{"embabel.dice.store.type"}
+    C -- graph --> D["Drivine version store,<br/>drift log, observed-schema<br/>source, schema constraints"]
+    C -- "in-memory (default)" --> E["In-memory version store.<br/>No drift log, nothing<br/>to observe."]
+    D --> F["Differ, quarantine policy,<br/>DriftSweepCapable"]
+    E --> F
+    F --> G{"embabel.dice.metamodel<br/>.drift.mode"}
+    G -- off --> H["No runner.<br/>Stamps and history only."]
+    G -- "observe (default)" --> I["DriftCheckRunner,<br/>where there is a graph<br/>to observe"]
 ```
 
 There is no sensible default declared schema, and both ways of guessing one are bad. Govern
@@ -34,34 +37,94 @@ in the consumer's own code, where a reader can see it.
 in one environment while the bean stays in place. It is consulted only once the bean exists, so it
 changes nothing for an application that never declared a schema.
 
-## Drift tiers
+## Nothing runs, and nothing quarantines
 
-`embabel.dice.metamodel.drift.mode` sets how far a check may go. It maps the three tiers in
-[metamodel-drift.md](metamodel-drift.md) onto one property value each:
+Every bean the auto-configuration registers is a capability sitting still.
+
+There is no scheduler and no startup hook. A check happens when the application calls
+`DriftCheckRunner.run()`, from a cron, an admin endpoint or a migration script. The check declares,
+stamps, observes, runs both comparisons and writes a `DriftReport`, and no path through it moves a
+proposition.
+
+Acting on what a check found is a second, deliberate step. The application reads
+`DriftCheckResult.quarantineDiff`, decides, and calls `DriftSweepCapable.sweep` once per context it
+means to reconcile. The wiring supplies the object that performs a sweep and never calls it.
+
+```kotlin
+val result = runner.run()
+if (result.hasAnyChange) {
+    val swept = sweep.sweep(result.quarantineDiff, policy, contextId)
+    log.info("quarantined {} proposition(s)", swept.quarantined.size)
+}
+```
+
+`embabel.dice.metamodel.drift.mode` picks whether the runner bean exists at all:
 
 | Mode | What you get | What it can change |
 | --- | --- | --- |
 | `off` | Stores and stamps. Schema history is recorded and readable. | Nothing |
-| `observe` (default) | A runner that checks and writes reports | Nothing |
-| `quarantine` | The real runner | Marks stranded propositions `STALE`, with a reason |
+| `observe` (default) | The same, plus a runner that checks and writes reports | Nothing |
 
-The default is `observe`. Reporting is safe to leave running indefinitely; changing proposition
-state is a decision somebody makes on purpose.
+`observe` is the default because reporting is safe to leave running indefinitely. `off` is there for
+an application that wants schema stamps and version history without a check running against its
+graph.
 
-Which mistakes are recoverable drives that choice. A typo in a declared type name under `observe`
-produces a report naming a type you expected to see, which takes five minutes to fix. The same typo
-under `quarantine` marks every proposition mentioning that type stale on the next check. Quarantine
-is non-destructive, so that is recoverable too, but only if somebody notices.
+There is no `quarantine` mode, and there is no property anywhere that turns one on. Quarantine
+happens because a host called `sweep`, and a configuration value that could make DICE move
+propositions by itself would be exactly the surprise this shape exists to remove.
 
-The `observe` guarantee lives in the wiring. The bean you get is an `ObserveOnlyDriftCheckRunner`
-wrapping the real one; it downgrades `run(dryRun = false)` to a dry run, logs a warning, and returns
-a result whose `dryRun` is `true`. A dry-run default on the method only protects the caller who
-passes no arguments, and a scheduler, an admin endpoint, or one line in a script all reach straight
-past it. Making the tier a property of the bean holds the guarantee whoever calls, and moving
-between tiers is then a config change.
+## Status transitions reach your listeners
 
-Nothing is scheduled here. This wires the capability to run a check; when one runs is the
-application's call.
+A sweep moves a proposition to `STALE`, and things downstream need to hear about it.
+`ProjectionLineageStaleCascade` marks every projection record derived from that proposition stale,
+and it can only do so if the transition is announced.
+
+So the sweep is built with every `DiceEventListener` bean on the context, fanned out through a
+`CompositeDiceEventListener`, which makes each delivery exception-safe: a listener that throws is
+logged and the remaining listeners still hear the event. Registering the cascade is a one-liner in
+the application:
+
+```kotlin
+@Bean
+fun projectionLineageStaleCascade(records: ProjectionRecordStore) =
+    ProjectionLineageStaleCascade(records)
+```
+
+An application with no listener bean gets the no-op listener and everything else behaves the same.
+
+## Backend selection follows the store
+
+The Drivine/Neo4j governance beans register under `embabel.dice.store.type=graph`, the same switch
+`DiceStorageAutoConfiguration` reads for the proposition store, and they are declared before their
+in-memory counterparts so the fallback resolves by registration order.
+
+Declaring a schema on the default in-memory backend starts cleanly, with no `PersistenceManager`
+anywhere. What such an application gets:
+
+| Piece | In-memory backend | Graph backend |
+| --- | --- | --- |
+| `MetamodelVersionStore` | `InMemoryMetamodelVersionStore` | `DrivineMetamodelVersionStore` |
+| `DriftReportStore` | — | `DrivineDriftReportStore` |
+| `ObservedSchemaSource` | — | `DrivineObservedSchemaSource` |
+| `DeclaredObservedDiffer` / `MetamodelDiffer` | `StructuralMetamodelDiffer` | same |
+| `DriftQuarantinePolicy` | `MentionTypeDriftQuarantinePolicy` | same |
+| `DriftSweepCapable` | `PropositionStoreDriftSweep` | same |
+| `DriftCheckRunner` | — | `DefaultDriftCheckRunner` |
+| `SchemaCatalog` | — | metamodel uniqueness constraints |
+
+The two blanks in the middle column are the honest answer for a host with no graph. An
+observed-schema source reports what a live graph holds, and there is no live graph here; a drift log
+is a durable record an operator reads days later, and a heap map is not one. With nothing to
+observe, a check has no question to ask, so no runner is registered either.
+
+That still leaves the first tier of governance fully working: such an application can stamp its
+declaration, keep a version history, compare two declarations through the differ, and sweep on a
+diff it built itself. It moves to the graph backend when it wants live drift detection.
+
+The metamodel uniqueness constraints ride along as a `SchemaCatalog` bean, the same way the
+proposition and lineage constraints do; Drivine's `SchemaManager` applies them idempotently on
+startup. The stores' MERGEs are only race-free under them, so that bean carries no
+`@ConditionalOnMissingBean`. Catalogs accumulate, so an application adding its own gets both.
 
 ## Replacing a default
 
@@ -78,52 +141,45 @@ registering through the imports file makes "your bean wins" a guarantee.
 `MetamodelAutoConfigurationTest` checks it from both directions, registering the consumer's
 configuration before and after the auto-configuration and asserting the same result.
 
-The replaceable pieces:
+`DriftSweepCapable` is the one worth calling out. The shipped `PropositionStoreDriftSweep` works on
+any `PropositionStore` and does its mention-type filtering, ordering and paging in the JVM. A
+durable store that can push all three into a query implements `DriftSweepCapable` itself, and this
+default then steps aside.
 
-| Type | Default | Backed by |
-| --- | --- | --- |
-| `MetamodelVersionStore` | `DrivineMetamodelVersionStore` | Neo4j |
-| `DriftReportStore` | `DrivineDriftReportStore` | Neo4j |
-| `ObservedSchemaSource` | `DrivineObservedSchemaSource` | Neo4j |
-| `DeclaredObservedDiffer` | `StructuralMetamodelDiffer` | pure JVM |
-| `DriftQuarantinePolicy` | `MentionTypeDriftQuarantinePolicy` | pure JVM |
-| `DriftCheckRunner` | per `drift.mode`, above | — |
+## The two differ roles are resolved separately
 
-The differ is registered under its concrete type, because `StructuralMetamodelDiffer` answers two
-questions — declaration against declaration (`MetamodelDiffer`) and declaration against a live graph
-(`DeclaredObservedDiffer`) — and both need to resolve. Backing off keys on `DeclaredObservedDiffer`
-alone, since that is the collaborator the runner needs. An application supplying only a
-`MetamodelDiffer`, which is a legitimate thing to want on its own, still gets a working drift check.
+A check asks two different questions, and each has its own interface:
 
-The metamodel uniqueness constraints ride along as a `SchemaCatalog` bean, the same way the
-proposition and lineage constraints do; Drivine's `SchemaManager` applies them idempotently on
-startup. The stores' MERGEs are only race-free under them, so that bean carries no
-`@ConditionalOnMissingBean`. Catalogs accumulate, so an application adding its own gets both.
+- `DeclaredObservedDiffer` — what the live graph holds that this declaration doesn't recognise.
+- `MetamodelDiffer` — what moved in the declaration itself since the baseline a sweep last
+  reconciled.
 
-## The runner takes the narrow port
+The shipped `StructuralMetamodelDiffer` answers both, so it is registered under its concrete type
+and resolves as either interface. The runner looks the two up independently, which means one object
+can fill both roles, a consumer can replace either role on its own, and a consumer can supply two
+distinct beans and have both used. Whichever role no bean fills falls back to a
+`StructuralMetamodelDiffer` the runner builds for itself.
 
-`DefaultDriftCheckRunner` is wired against `PropositionStore`, the base persistence port.
+The default differ bean backs off as soon as the application supplies either interface. That keeps a
+consumer's `MetamodelDiffer` from competing with the shipped differ for the same injection point,
+which is how such a bean could end up quietly ignored.
+
+## The sweep takes the narrow port
+
+`PropositionStoreDriftSweep` is wired against `PropositionStore`, the base persistence port.
 `PropositionRepository` adds vector search, graph traversal, temporal query, and core search
-operations on top, and a drift check uses none of them: it reads propositions by context or in bulk
-and saves the flagged copies back.
+operations on top, and a sweep uses none of them: it reads one context's propositions and saves the
+flagged copies back.
 
 Asking for the wider interface at the wiring layer would shut a plain store-and-retrieve backend out
 of governance over capabilities it is never asked to use, and would do so as a missing
 `PropositionRepository` bean at startup. A `PropositionRepository` satisfies the narrow parameter,
 so asking for less costs nothing.
 
-## A missing PersistenceManager fails startup
-
-The defaults are Drivine/Neo4j-backed and are not gated on a `PersistenceManager` being present. An
-application that declared a schema without a graph connection fails at startup with the missing bean
-named. Wiring nothing when the connection is missing would leave somebody believing governance is
-running when it isn't. An application that wants the loop without Drivine supplies its own three
-stores; they are `@ConditionalOnMissingBean` like everything else, and then no `PersistenceManager`
-is asked for at all.
-
 ## Property reference
 
 | Property | Default | Meaning |
 | --- | --- | --- |
 | `embabel.dice.metamodel.enabled` | `true` | Kill switch. Consulted only when a `DeclaredSchemaSource` bean exists |
-| `embabel.dice.metamodel.drift.mode` | `observe` | `off`, `observe`, or `quarantine` — see above |
+| `embabel.dice.metamodel.drift.mode` | `observe` | `off` or `observe` — whether a `DriftCheckRunner` bean is registered |
+| `embabel.dice.store.type` | `in-memory` | Shared with the proposition store. `graph` selects the Drivine-backed governance stores |

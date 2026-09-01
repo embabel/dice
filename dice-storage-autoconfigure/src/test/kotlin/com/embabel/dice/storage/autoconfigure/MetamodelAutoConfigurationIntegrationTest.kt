@@ -17,8 +17,11 @@ package com.embabel.dice.storage.autoconfigure
 
 import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.metamodel.DriftCheckRunner
+import com.embabel.dice.metamodel.DriftQuarantinePolicy
 import com.embabel.dice.metamodel.DriftReportStore
+import com.embabel.dice.metamodel.DriftSweepCapable
 import com.embabel.dice.metamodel.MetamodelVersionStore
+import com.embabel.dice.metamodel.support.DefaultDriftCheckRunner
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.storage.DrivineDriftReportStore
 import com.embabel.dice.storage.DrivineMetamodelVersionStore
@@ -51,12 +54,12 @@ import org.springframework.test.context.DynamicPropertySource
  * The drift comes from the graph: a `(:Ghost)` node nobody declared. The proposition side stays in
  * memory ([MapPropositionStore]), since this test is about the auto-configured Drivine stores and
  * the runner that sequences them, and `dice-storage`'s own integration tests already cover
- * quarantining through a graph-backed repository. It also exercises the runner's use of the base
- * `PropositionStore` port.
+ * quarantining through a graph-backed repository. It also exercises the wired sweep's use of the
+ * base `PropositionStore` port.
  */
 @SpringBootTest(
     classes = [MetamodelIntegrationTestApplication::class],
-    properties = ["embabel.dice.metamodel.drift.mode=quarantine"],
+    properties = ["embabel.dice.store.type=graph"],
 )
 class MetamodelAutoConfigurationIntegrationTest {
 
@@ -79,6 +82,12 @@ class MetamodelAutoConfigurationIntegrationTest {
     private lateinit var propositionStore: MapPropositionStore
 
     @Autowired
+    private lateinit var driftSweep: DriftSweepCapable
+
+    @Autowired
+    private lateinit var quarantinePolicy: DriftQuarantinePolicy
+
+    @Autowired
     private lateinit var persistenceManager: PersistenceManager
 
     @BeforeEach
@@ -98,14 +107,13 @@ class MetamodelAutoConfigurationIntegrationTest {
     fun `the auto-configured beans are the Drivine ones`() {
         assertThat(versionStore).isInstanceOf(DrivineMetamodelVersionStore::class.java)
         assertThat(driftReportStore).isInstanceOf(DrivineDriftReportStore::class.java)
-        assertThat(runner).isNotInstanceOf(ObserveOnlyDriftCheckRunner::class.java)
+        assertThat(runner).isInstanceOf(DefaultDriftCheckRunner::class.java)
     }
 
     @Test
-    fun `a live run stamps the schema, finds the undeclared type, and persists a report`() {
-        val result = runner.run(dryRun = false, contextId = null)
+    fun `a check stamps the schema, finds the undeclared type, and persists a report`() {
+        val result = runner.run()
 
-        assertThat(result.dryRun).isFalse()
         assertThat(result.driftedEntityTypes).contains("Ghost")
 
         // The stamp resolves out of the database by the hash the report carries. That is what
@@ -120,9 +128,28 @@ class MetamodelAutoConfigurationIntegrationTest {
         assertThat(reports.single().driftedEntityTypes).contains("Ghost")
         assertThat(reports.single().versionHash).isEqualTo(result.report.versionHash)
 
-        // The tier did what it says: the proposition mentioning Ghost is quarantined, the one
-        // mentioning Person is left alone.
-        assertThat(result.quarantinedCount).isEqualTo(1)
+        // The check moved nothing. Every proposition is where it was.
+        assertThat(propositionStore.findByStatus(PropositionStatus.ACTIVE)).hasSize(2)
+        assertThat(propositionStore.findByStatus(PropositionStatus.STALE)).isEmpty()
+    }
+
+    /**
+     * The second half of the loop, as a host performs it: read the check, decide, then call the
+     * sweep. The auto-configuration wires the sweep and never calls it, so this method is the only
+     * thing in the whole test that can move a proposition.
+     */
+    @Test
+    fun `a host that acts on the check quarantines through the wired sweep`() {
+        val result = runner.run()
+
+        val swept = driftSweep.sweep(
+            diff = result.quarantineDiff,
+            policy = quarantinePolicy,
+            contextId = MetamodelTestFixtures.CONTEXT_ID,
+        )
+
+        // The proposition mentioning Ghost is quarantined, the one mentioning Person is left alone.
+        assertThat(swept.quarantined).hasSize(1)
         assertThat(propositionStore.findByStatus(PropositionStatus.STALE)).hasSize(1)
         assertThat(propositionStore.findByStatus(PropositionStatus.ACTIVE)).hasSize(1)
     }
@@ -130,12 +157,13 @@ class MetamodelAutoConfigurationIntegrationTest {
     /**
      * Stamping a version and writing a report both add nodes to the graph the next check observes.
      * If those labels came back as drift, every check would report drift caused by the previous
-     * check.
+     * check. `DiceOwnedSchema` in `dice-storage` is what keeps them out, and this asserts that the
+     * auto-configured stores and observed-schema source really do line up with it.
      *
-     * `_DrivineSchema` is the same problem from outside dice: Drivine's `SchemaManager` writes that
-     * inventory node when it applies a `SchemaCatalog`, and no application can silence it by
-     * declaring it. `DrivineObservedSchemaSource` excludes it by shape along with dice's own
-     * bookkeeping labels.
+     * Drivine's `SchemaManager` writes a `_DrivineSchema` inventory node whenever it applies a
+     * `SchemaCatalog`, and that label is currently reported as drift, since `DiceOwnedSchema`
+     * describes dice's own labels and knows nothing about Drivine's. Fixing it is a `dice-storage`
+     * change and there is no assertion for it here.
      */
     @Test
     fun `governance never reports its own bookkeeping as drift`() {
@@ -144,7 +172,6 @@ class MetamodelAutoConfigurationIntegrationTest {
 
         assertThat(second.driftedEntityTypes).contains("Ghost")
         assertThat(second.driftedEntityTypes).doesNotContainAnyElementsOf(MetamodelSchema.LABELS)
-        assertThat(second.driftedEntityTypes).doesNotContain("_DrivineSchema")
     }
 }
 

@@ -550,18 +550,28 @@ and the consumer PRs that deliver it).
     checked exception commits, and custom rollback rules can override either behaviour.
 - Spring Boot auto-configuration for schema governance: `MetamodelAutoConfiguration` in
   `dice-storage-autoconfigure`. It registers only when the application supplies a
-  `DeclaredSchemaSource` bean, and then wires the whole loop against the existing Drivine
-  `PersistenceManager`: version store, drift-report store, observed-schema source, differ,
-  quarantine policy, drift runner, and a `SchemaCatalog` carrying the six metamodel uniqueness
-  constraints. Every wired collaborator is `@ConditionalOnMissingBean`, so an application that
-  defines its own keeps it. Settings live under `embabel.dice.metamodel`: `enabled=false` removes
-  the beans in one environment without deleting the declared-schema bean, and `drift.mode` is
-  `off`, `observe` or `quarantine`, defaulting to `observe`. Under `observe` the registered runner
-  is an `ObserveOnlyDriftCheckRunner`, which downgrades `run(dryRun = false)` to a dry run, logs
-  the downgrade, and returns a report with `dryRun = true`. Under `quarantine` the runner is
-  `DefaultDriftCheckRunner` and a live run moves stranded propositions to `STALE`. Nothing runs on
-  a schedule; a caller decides when a check happens. `DrivineObservedSchemaSource` also excludes
-  Drivine's own `_DrivineSchema` inventory label by shape.
-  **Compatibility: additive.** An application with no `DeclaredSchemaSource` bean sees no behavior
-  change. One with one needs the six metamodel constraints, which the module's `SchemaCatalog`
-  bean supplies, and a `PersistenceManager` and `PropositionStore` on the context.
+  `DeclaredSchemaSource` bean, and then wires the loop: version store, drift-report store,
+  observed-schema source, the two differ roles, quarantine policy, a `DriftSweepCapable`, the drift
+  runner, and a `SchemaCatalog` carrying the metamodel uniqueness constraints. Every wired
+  collaborator is `@ConditionalOnMissingBean`, so an application that defines its own keeps it.
+  Settings live under `embabel.dice.metamodel`: `enabled=false` removes the beans in one
+  environment while the declared-schema bean stays in place, and `drift.mode` is `off` or `observe`
+  (the default), which picks whether a `DriftCheckRunner` bean is registered.
+  Backend selection follows `embabel.dice.store.type`, the same switch the proposition store reads.
+  Under `graph` the Drivine/Neo4j version store, drift log and observed-schema source are wired.
+  Under the default in-memory backend an application that declares a schema still starts with no
+  `PersistenceManager` anywhere: it gets `InMemoryMetamodelVersionStore`, the differ, the policy and
+  the sweep, and it gets no drift log, no observed-schema source and no runner, because there is no
+  live graph to observe.
+  Nothing in the wiring runs a check or moves a proposition. A check happens when the application
+  calls `DriftCheckRunner.run()`, and it reads, compares and writes a `DriftReport` and touches no
+  proposition. Quarantine happens when the application calls `DriftSweepCapable.sweep` on a diff it
+  decided to act on; there is no scheduler and no property that makes DICE sweep by itself. The
+  wired sweep announces each status transition to every `DiceEventListener` bean on the context
+  through a `CompositeDiceEventListener`, so a registered `ProjectionLineageStaleCascade` marks the
+  projection records derived from a quarantined proposition stale.
+  **Compatibility: additive.** No symbol that exists on the previous release changes shape or
+  behavior. An application with no `DeclaredSchemaSource` bean sees no change at all. One that
+  declares a schema and selects the graph backend needs the metamodel constraints, which the
+  module's `SchemaCatalog` bean supplies, and a `PersistenceManager` on the context; a
+  `PropositionStore` brings the sweep with it, and its absence leaves the rest of the loop working.

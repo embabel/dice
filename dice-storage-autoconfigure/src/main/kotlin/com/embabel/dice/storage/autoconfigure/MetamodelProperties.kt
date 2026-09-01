@@ -18,31 +18,28 @@ package com.embabel.dice.storage.autoconfigure
 import org.springframework.boot.context.properties.ConfigurationProperties
 
 /**
- * How far the schema-governance loop is allowed to go.
+ * Whether the wiring registers a drift-check runner.
  *
- * Governance escalates in tiers, and an operator picks the tier. Each tier is useful on its own: an
- * application can report drift for a year and quarantine nothing.
+ * There are two settings because there are two useful answers. Some applications want schema
+ * history and nothing else; most want the check as well. Neither setting can quarantine anything: a
+ * check reads, compares and writes a report, and moving a proposition is a separate call a host
+ * makes on `DriftSweepCapable` at a moment it picks.
  */
 enum class DriftMode {
 
     /**
-     * No drift checking at all. Stamps and stores are still wired, so an application can record and
-     * read schema versions, but nothing compares the declaration against a live graph.
+     * Stamps and stores only. The version store, the drift log and the differ are wired, so an
+     * application can record and read schema versions, and no runner bean is registered, so nothing
+     * compares the declaration against a live graph.
      */
     OFF,
 
     /**
-     * The default. Check and report, touching no proposition. Ask the runner wired here for a live
-     * run and it downgrades to a dry run, logs the downgrade, and reports back `dryRun = true`.
+     * The default. A [com.embabel.dice.metamodel.DriftCheckRunner] bean is registered. Ask it for a
+     * check and it stamps the declaration, snapshots the graph, compares, and writes a drift report.
+     * It touches no proposition on any path.
      */
     OBSERVE,
-
-    /**
-     * Check, report, and let a caller quarantine. The runner honours `run(dryRun = false)`, which
-     * moves stranded propositions to `STALE` with a reason. Nothing runs on its own; a caller has
-     * to ask.
-     */
-    QUARANTINE,
 }
 
 /**
@@ -61,7 +58,7 @@ data class MetamodelProperties(
      */
     val enabled: Boolean = true,
 
-    /** Drift checking: how far a check is allowed to go. */
+    /** Drift checking: whether a runner is wired at all. */
     val drift: DriftProperties = DriftProperties(),
 ) {
 
@@ -69,11 +66,10 @@ data class MetamodelProperties(
     data class DriftProperties(
 
         /**
-         * The escalation tier: `off`, `observe` (the default), or `quarantine`. See [DriftMode].
+         * `off` or `observe` (the default). See [DriftMode].
          *
-         * The default is `observe`. Reporting is safe to leave running indefinitely; changing
-         * proposition state is a decision somebody makes on purpose. Defaulting to `quarantine`
-         * would let a mistyped schema strand real knowledge on the next check.
+         * `off` is for an application that wants schema stamps and history without a drift check
+         * running against its graph.
          */
         val mode: DriftMode = DriftMode.OBSERVE,
     )

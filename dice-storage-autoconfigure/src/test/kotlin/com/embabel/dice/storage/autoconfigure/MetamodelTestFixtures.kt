@@ -21,6 +21,8 @@ import com.embabel.dice.metamodel.DeclaredSchema
 import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.metamodel.DriftReport
 import com.embabel.dice.metamodel.DriftReportStore
+import com.embabel.dice.metamodel.MetamodelChange
+import com.embabel.dice.metamodel.MetamodelDiff
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.MetamodelVersionStore
 import com.embabel.dice.metamodel.ObservedSchema
@@ -34,10 +36,10 @@ import java.time.Instant
 /**
  * Hand-written stand-ins for the governance collaborators, used by the wiring tests.
  *
- * These are real objects, because half of what the tests check is behaviour: whether the observe
- * tier refused to quarantine, whether a report was written. A mock that records calls can only
- * answer that by restating the runner's logic in the assertions. These keep their state in a list
- * the test reads afterwards.
+ * These are real objects, because half of what the tests check is behaviour: whether a check left
+ * every proposition alone, whether a report was written, whether a sweep announced what it did. A
+ * mock that records calls can only answer that by restating the runner's own logic in the
+ * assertions. These keep their state in a list the test reads afterwards.
  */
 internal object MetamodelTestFixtures {
 
@@ -57,6 +59,16 @@ internal object MetamodelTestFixtures {
             ),
             relationshipTypeNames = emptySet(),
         )
+
+    /**
+     * A diff that drops [typeName] from the declaration: the shape of schema change a host acts on
+     * with a sweep, since data already extracted under that type has nothing describing it any more.
+     */
+    fun diffRemoving(typeName: String): MetamodelDiff = MetamodelDiff(
+        fromVersion = declaredSchema("Person", typeName).version,
+        toVersion = declaredSchema("Person").version,
+        changes = listOf(MetamodelChange.EntityTypeRemoved(typeName)),
+    )
 
     /** A proposition mentioning [mentionType], so the quarantine policy has something to catch. */
     fun proposition(text: String, mentionType: String): Proposition =
@@ -127,7 +139,7 @@ internal class RecordingDriftReportStore : DriftReportStore {
 
 /**
  * A [PropositionStore] over an in-memory map. It implements the base port and nothing more, so a
- * context holding one has no `PropositionRepository`. That is what shows the drift runner asks only
+ * context holding one has no `PropositionRepository`. That is what shows the wired sweep asks only
  * for the narrow port.
  */
 internal class MapPropositionStore(private val initial: List<Proposition> = emptyList()) : PropositionStore {
