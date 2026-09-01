@@ -151,6 +151,12 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
             declared.version.entityTypeLabels.values.flatten() +
             declared.version.entityTypeAliases.values.flatten()
 
+        // A type the host's dictionary names but the selector leaves outside governance is a known
+        // type, and the drift check has to recognise it as such. It gets its own excluded set,
+        // separate from declaredLabels, because it must stay out of unobservedEntityTypes below: a
+        // governance-exempt type with no data isn't the informational case that bucket describes.
+        val excludedFromDrift = declaredLabels + declared.ungovernedEntityTypeNames
+
         // Drift is observed and never declared: orphaned data whose declaring integration is gone,
         // or was never registered. The opposite direction gets its own informational bucket, since a
         // declared type with zero instances is an ordinary state. That direction stays on the type
@@ -165,12 +171,13 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         // text and can contain a `-[...]->`-shaped substring themselves.
         val declaredRels = declared.relationshipTypeNames
         val observedRels = observed.relationshipTypeNames
+        val relsExcludedFromDrift = declaredRels + declared.ungovernedRelationshipTypeNames
 
         return DeclaredObservedDiff(
             declared = declared,
             observedSchema = observed,
-            driftedEntityTypes = canonical(observedTypes - declaredLabels),
-            driftedRelationshipTypes = canonical(observedRels - declaredRels),
+            driftedEntityTypes = canonical(observedTypes - excludedFromDrift),
+            driftedRelationshipTypes = canonical(observedRels - relsExcludedFromDrift),
             unobservedEntityTypes = canonical(declaredTypes - observedTypes),
             unobservedRelationshipTypes = canonical(declaredRels - observedRels),
         )

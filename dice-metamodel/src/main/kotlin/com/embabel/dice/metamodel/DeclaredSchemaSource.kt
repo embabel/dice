@@ -19,7 +19,9 @@ import com.embabel.agent.core.DataDictionary
 import org.jetbrains.annotations.ApiStatus
 
 /**
- * The schema as declared: the stamped [version] plus the bare relationship type names it allows.
+ * The schema as declared: the stamped [version] plus the bare relationship type names it allows,
+ * and the entity type and relationship names the host declared but chose to leave outside
+ * governance.
  *
  * The bare names travel alongside the stamp rather than being recovered from it, because
  * [MetamodelVersion.relationshipNames] holds rendered `From-[name]->To` descriptors and
@@ -29,27 +31,51 @@ import org.jetbrains.annotations.ApiStatus
  * declared relationships against what a graph holds needs those bare names, and that comparison is
  * the next slice.
  *
+ * An ungoverned type is still a known one: the host's dictionary named it, and a
+ * [GovernedTypeSelector] simply chose not to version it. That is a different thing from a type
+ * nobody ever declared, and a drift check needs to tell the two apart — see
+ * [ungovernedEntityTypeNames].
+ *
  * @property version The stamped declared schema.
  * @property relationshipTypeNames The bare relationship type names [version] allows.
+ * @property ungovernedEntityTypeNames Entity type names the host's dictionary declares, left out of
+ *   [version] because the selector doesn't govern them. Still known types.
+ * @property ungovernedRelationshipTypeNames Relationship type names an ungoverned type declares,
+ *   left out of [relationshipTypeNames] the same way.
  */
 @ApiStatus.Experimental
 class DeclaredSchema(
     val version: MetamodelVersion,
     relationshipTypeNames: Set<String>,
+    ungovernedEntityTypeNames: Set<String> = emptySet(),
+    ungovernedRelationshipTypeNames: Set<String> = emptySet(),
 ) {
 
     /** Copied into a JVM-immutable set so the declaration can't drift from its stamped [version]. */
     val relationshipTypeNames: Set<String> = java.util.Set.copyOf(relationshipTypeNames)
 
+    val ungovernedEntityTypeNames: Set<String> = java.util.Set.copyOf(ungovernedEntityTypeNames)
+
+    val ungovernedRelationshipTypeNames: Set<String> = java.util.Set.copyOf(ungovernedRelationshipTypeNames)
+
     override fun equals(other: Any?): Boolean =
         other is DeclaredSchema &&
             version == other.version &&
-            relationshipTypeNames == other.relationshipTypeNames
+            relationshipTypeNames == other.relationshipTypeNames &&
+            ungovernedEntityTypeNames == other.ungovernedEntityTypeNames &&
+            ungovernedRelationshipTypeNames == other.ungovernedRelationshipTypeNames
 
-    override fun hashCode(): Int = 31 * version.hashCode() + relationshipTypeNames.hashCode()
+    override fun hashCode(): Int = java.util.Objects.hash(
+        version,
+        relationshipTypeNames,
+        ungovernedEntityTypeNames,
+        ungovernedRelationshipTypeNames,
+    )
 
     override fun toString(): String =
-        "DeclaredSchema(version=$version, relationshipTypeNames=$relationshipTypeNames)"
+        "DeclaredSchema(version=$version, relationshipTypeNames=$relationshipTypeNames, " +
+            "ungovernedEntityTypeNames=$ungovernedEntityTypeNames, " +
+            "ungovernedRelationshipTypeNames=$ungovernedRelationshipTypeNames)"
 
     companion object {
 
@@ -103,6 +129,9 @@ class DeclaredSchema(
         ): DeclaredSchema = DeclaredSchema(
             version = MetamodelVersion.from(dataDictionary, selector, aliases),
             relationshipTypeNames = MetamodelVersion.governedRelationshipTypeNames(dataDictionary, selector),
+            ungovernedEntityTypeNames = MetamodelVersion.ungovernedEntityTypeNames(dataDictionary, selector),
+            ungovernedRelationshipTypeNames =
+                MetamodelVersion.ungovernedRelationshipTypeNames(dataDictionary, selector),
         )
     }
 }

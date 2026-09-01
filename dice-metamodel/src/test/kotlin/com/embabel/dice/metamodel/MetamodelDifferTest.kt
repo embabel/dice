@@ -17,6 +17,7 @@ package com.embabel.dice.metamodel
 
 import com.embabel.agent.core.Cardinality
 import com.embabel.agent.core.DataDictionary
+import com.embabel.agent.core.DomainTypePropertyDefinition
 import com.embabel.agent.core.DynamicType
 import com.embabel.agent.core.ValuePropertyDefinition
 import com.embabel.dice.metamodel.support.StructuralMetamodelDiffer
@@ -719,6 +720,61 @@ class MetamodelDifferTest {
             assertTrue(diff.hasDrift, "observed 'X' must not be confused with the declared '$trickyRelName'")
             assertEquals(setOf("X"), diff.driftedRelationshipTypes)
             assertEquals(setOf(trickyRelName), diff.unobservedRelationshipTypes)
+        }
+
+        /**
+         * `Sighting` is in the dictionary and the selector deliberately excludes it. Observing it
+         * has to read as an ordinary open-world type doing what open-world types do: a downstream
+         * policy watching drift for signs of orphaned data would otherwise flag a proposition
+         * resting on `Sighting` for a governance decision the host left it out of on purpose.
+         */
+        @Test
+        fun `a known but ungoverned type is not drift when observed`() {
+            val person = DynamicType("Person")
+            val sighting = DynamicType(
+                name = "Sighting",
+                ownProperties = listOf(DomainTypePropertyDefinition("about", person)),
+            )
+            val dictionary = DataDictionary.fromDomainTypes("test", listOf(person, sighting))
+            val declaration = DeclaredSchema.from(dictionary, GovernedTypeSelector { it.name == "Person" })
+
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declaration,
+                observed(entityTypeNames = setOf("Person", "Sighting"), relationshipTypeNames = setOf("about")),
+            )
+
+            assertFalse(diff.hasDrift, "Sighting and its relationship are known and deliberately ungoverned: " +
+                "entity=${diff.driftedEntityTypes}, rel=${diff.driftedRelationshipTypes}")
+            assertTrue(diff.driftedEntityTypes.isEmpty())
+            assertTrue(diff.driftedRelationshipTypes.isEmpty())
+        }
+
+        /**
+         * A selector that governs nothing must enforce nothing over what the dictionary already
+         * names, and stay a statement about governance: a type the dictionary never declared at all
+         * still surfaces as drift, keeping detection alive for genuinely undeclared types.
+         */
+        @Test
+        fun `a selector governing no types enforces no types the dictionary declares`() {
+            val person = DynamicType("Person")
+            val sighting = DynamicType(
+                name = "Sighting",
+                ownProperties = listOf(DomainTypePropertyDefinition("about", person)),
+            )
+            val dictionary = DataDictionary.fromDomainTypes("test", listOf(person, sighting))
+            val declaration = DeclaredSchema.from(dictionary, GovernedTypeSelector { false })
+
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                declaration,
+                observed(
+                    entityTypeNames = setOf("Person", "Sighting", "GhostIntegrationType"),
+                    relationshipTypeNames = setOf("about"),
+                ),
+            )
+
+            assertTrue(diff.hasDrift, "a type the dictionary never named must still be reported")
+            assertEquals(setOf("GhostIntegrationType"), diff.driftedEntityTypes)
+            assertTrue(diff.driftedRelationshipTypes.isEmpty())
         }
     }
 

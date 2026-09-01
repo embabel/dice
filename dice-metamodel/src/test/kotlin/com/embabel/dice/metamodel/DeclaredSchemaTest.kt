@@ -58,6 +58,33 @@ class DeclaredSchemaTest {
     }
 
     @Test
+    fun `ungoverned types and their relationships are carried alongside the governed stamp`() {
+        // Sighting declares `about`, so leaving Sighting ungoverned takes its relationship with it.
+        val declared = DeclaredSchema.from(dictionary(), GovernedTypeSelector { it.name in setOf("Person", "Company") })
+
+        assertEquals(setOf("Sighting"), declared.ungovernedEntityTypeNames)
+        assertEquals(setOf("about"), declared.ungovernedRelationshipTypeNames)
+    }
+
+    @Test
+    fun `a selector governing everything leaves nothing ungoverned`() {
+        val declared = DeclaredSchema.from(dictionary())
+
+        assertTrue(declared.ungovernedEntityTypeNames.isEmpty())
+        assertTrue(declared.ungovernedRelationshipTypeNames.isEmpty())
+    }
+
+    @Test
+    fun `a selector governing nothing leaves every dictionary type ungoverned`() {
+        val declared = DeclaredSchema.from(dictionary(), GovernedTypeSelector { false })
+
+        assertEquals(setOf("Person", "Company", "Sighting"), declared.ungovernedEntityTypeNames)
+        assertEquals(setOf("worksAt", "about"), declared.ungovernedRelationshipTypeNames)
+        assertTrue(declared.version.entityTypeNames.isEmpty(), "the stamp itself must cover nothing")
+        assertTrue(declared.relationshipTypeNames.isEmpty())
+    }
+
+    @Test
     fun `a source is just a supplier of the declaration`() {
         val source = DeclaredSchemaSource { DeclaredSchema.from(dictionary()) }
 

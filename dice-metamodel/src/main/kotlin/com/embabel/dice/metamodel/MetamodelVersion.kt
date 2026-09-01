@@ -532,5 +532,32 @@ class MetamodelVersion @JvmOverloads constructor(
             .filter { selector.governs(it.from) }
             .map { it.name }
             .toSet()
+
+        /**
+         * The dictionary's entity type names that [selector] leaves out of governance.
+         *
+         * These are still types the host declared — just ones it chose not to version. A drift
+         * check needs to tell them apart from a type nobody ever declared, so they travel as their
+         * own set, computed straight from the dictionary and the selector's verdict on each type.
+         */
+        internal fun ungovernedEntityTypeNames(
+            dataDictionary: DataDictionary,
+            selector: GovernedTypeSelector,
+        ): Set<String> = dataDictionary.domainTypes
+            .filterNot { selector.governs(it) }
+            .map { it.name }
+            .toSet()
+
+        /**
+         * The bare relationship type names [selector] leaves out of governance: the complement of
+         * [governedRelationshipTypeNames] over every relationship the dictionary allows.
+         */
+        internal fun ungovernedRelationshipTypeNames(
+            dataDictionary: DataDictionary,
+            selector: GovernedTypeSelector,
+        ): Set<String> = dataDictionary.allowedRelationships()
+            .filterNot { selector.governs(it.from) }
+            .map { it.name }
+            .toSet()
     }
 }
