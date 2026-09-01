@@ -342,7 +342,7 @@ contract has an executable statement of what its rules mean; durable storage is 
 
 The durable implementation lives in `dice-storage`. `DrivineMetamodelVersionStore` keeps each stamp
 as a `(:MetamodelVersion)` node and MERGEs on `(schemaName, contentHash)`, so re-stamping an
-unchanged schema updates the node already there. Three things govern how it behaves:
+unchanged schema updates the node already there. Four things govern how it behaves:
 
 - **It needs three uniqueness constraints**, declared in a `SchemaCatalog` bean. A MERGE is
   race-free only when what it merges on is unique, so `MetamodelVersion(schemaName, contentHash)`
@@ -359,6 +359,13 @@ unchanged schema updates the node already there. Three things govern how it beha
 - **A re-save updates content only.** Sequence, counter, and `savedAt` keep their existing values,
   so an old stamp stays at its original position in the history. `InMemoryMetamodelVersionStore`,
   the reference implementation `dice-metamodel` ships, behaves the same way.
+- **The reconciled baseline tracks independently of write order.** This store supplies its own
+  `sweptVersion`/`markSwept`, leaving the interface's forwarding default behind: `markSwept` writes `sweptContentHash`
+  as a property on the schema's own `(:MetamodelSchemaCounter)` node, and `sweptVersion` resolves that
+  hash back through `findVersion`. An ordinary `saveVersion` never touches it, so a dry run, a scoped
+  run, or a crash mid-sweep — every path [metamodel-drift.md](metamodel-drift.md) walks through —
+  leaves the baseline exactly where it was, the same independence `InMemoryMetamodelVersionStore`
+  keeps in its separate `swept` map.
 
 The structural fields are stored as JSON strings, since Neo4j properties are scalars and flat
 arrays. Property signatures get explicit named fields with enums by name

@@ -67,6 +67,15 @@ import java.time.Clock
  * re-stamps its schema on every pass anyway, so for that caller the next pass already is the
  * retry.
  *
+ * The reconciled baseline [sweptVersion] answers is tracked apart from that write-order history, the
+ * same way [InMemoryMetamodelVersionStore][com.embabel.dice.metamodel.InMemoryMetamodelVersionStore]
+ * keeps a separate `swept` map: as `sweptContentHash`, a property on the schema's own
+ * `(:MetamodelSchemaCounter)` node, moved only by [markSwept]. Nothing about an ordinary [saveVersion]
+ * touches it, which is what makes a dry run, a scoped run, or a crash mid-sweep leave the baseline
+ * exactly where it was — see `MetamodelVersionStore.sweptVersion`'s own doc for why a store that
+ * doesn't track this independently answers `latestVersion` instead, and gets the wrong answer once a
+ * declaration cycles back to a stamp it already used.
+ *
  * @param persistenceManager Drivine's handle on the `neo` datasource.
  * @param clock supplies the instant a version is stamped as saved at. Injectable so a test can pin
  *   the instants of two saves.
@@ -139,6 +148,30 @@ class DrivineMetamodelVersionStore(
             RETURN n
             ORDER BY coalesce(n.sequence, -1) DESC
         """.trimIndent()
+
+        /**
+         * Move the reconciled baseline. MERGEs the schema's counter node in case a schema's very
+         * first save is also its first sweep, though the ordinary [saveVersion] call [markSwept]
+         * makes first will normally have already created it.
+         */
+        private val MARK_SWEPT = """
+            MERGE (c:MetamodelSchemaCounter {schemaName: ${'$'}schemaName})
+            SET c.sweptContentHash = ${'$'}contentHash
+        """.trimIndent()
+
+        /**
+         * The reconciled baseline's content hash, or no row at all when the schema has never been
+         * swept. Neo4j never stores an explicit null property, so `sweptContentHash IS NOT NULL`
+         * reads as "the counter node exists and carries this property" — true only once [markSwept]
+         * has run for the schema. The Cypher `WHERE` filter answers this in the database itself, so a
+         * schema with no counter node at all and one whose counter exists but has never been swept
+         * both come back the same way: no row.
+         */
+        private val SWEPT_CONTENT_HASH = """
+            MATCH (c:MetamodelSchemaCounter {schemaName: ${'$'}schemaName})
+            WHERE c.sweptContentHash IS NOT NULL
+            RETURN c.sweptContentHash AS sweptContentHash
+        """.trimIndent()
     }
 
     override fun saveVersion(version: MetamodelVersion) {
@@ -175,6 +208,42 @@ class DrivineMetamodelVersionStore(
         """.trimIndent(),
         mapOf("schemaName" to schemaName, "contentHash" to contentHash),
     ).firstOrNull()
+
+    /**
+     * Overridden so the reconciled baseline is tracked independently of write order; see this class's
+     * own doc. Also saves [version] into the ordinary history, the way the interface default does, so
+     * a caller that only ever calls this for a brand-new stamp still gets it stored — both writes run
+     * in the one transaction, so a reader never observes the pointer moved without the stamp it names
+     * being resolvable.
+     */
+    @Transactional
+    override fun markSwept(version: MetamodelVersion) {
+        saveVersion(version)
+        logger.debug(
+            "Marking metamodel version schemaName={} contentHash={} as the reconciled baseline",
+            version.schemaName,
+            version.contentHash.take(8),
+        )
+        persistenceManager.execute(
+            QuerySpecification.withStatement(MARK_SWEPT)
+                .bind(mapOf("schemaName" to version.schemaName, "contentHash" to version.contentHash)),
+        )
+    }
+
+    /**
+     * Overridden to resolve the reconciled baseline from [markSwept]'s own pointer. The interface
+     * default answers `latestVersion`, a write-order question that gets the wrong answer here — see
+     * this class's own doc.
+     */
+    @Transactional(readOnly = true)
+    override fun sweptVersion(schemaName: String): MetamodelVersion? {
+        val sweptContentHash = persistenceManager.maybeGetOne(
+            QuerySpecification.withStatement(SWEPT_CONTENT_HASH)
+                .bind(mapOf("schemaName" to schemaName))
+                .transform(String::class.java),
+        ) ?: return null
+        return findVersion(schemaName, sweptContentHash)
+    }
 
     /**
      * Run one of the version queries and turn its rows into stamps, dropping any row that won't

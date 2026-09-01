@@ -20,6 +20,7 @@ import com.embabel.dice.metamodel.ObservedSchema
 import com.embabel.dice.metamodel.ObservedSchemaSource
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
+import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 
 /**
@@ -200,8 +201,48 @@ open class DrivineObservedSchemaSource(
         """.trimIndent()
     }
 
+    /**
+     * Both branches issue several queries that get assembled into one [ObservedSchema], and this
+     * annotation is what keeps them from running as separate implicit transactions: everything below
+     * runs inside one Neo4j transaction, the same pattern [DrivineCollectorTraceStore.findEdgesByRun]
+     * uses to rehydrate one answer out of more than one query. Where these queries run as separate
+     * implicit transactions, a concurrent graph write landing between two of them shows up in only
+     * one, the other having already run by the time it committed, and the resulting [ObservedSchema]
+     * describes a combination of graph states that existed at no single instant.
+     *
+     * The guarantee this buys stops short of full snapshot isolation. Neo4j's default isolation
+     * level is read committed, a per-row guarantee that applies within a single statement's own
+     * execution: a single statement's own result rows are not guaranteed to reflect one coherent instant
+     * of the graph either, because a write can commit while that one statement is still streaming
+     * its rows, so a query can itself see a non-repeatable, missing, or double read of data it
+     * touches more than once during its own execution, on top of the cross-statement residual below.
+     * A write that commits while this transaction is still open can reach any statement, or any row
+     * within a statement, that is read after that commit, while an earlier read in the same
+     * transaction has already returned its own answer from the graph as it stood beforehand. What
+     * this annotation buys is narrowing the exposure down to the span of one transaction, and ruling
+     * out reads that were never even in the same transaction to begin with; it does not make any one
+     * statement's own result set internally coherent. A caller needing a stronger guarantee would need
+     * Neo4j's explicit locking, which this observation has no reason to pay for: drift is inherently a
+     * live-graph snapshot judged moments after the fact, and an occasional narrow race landing inside
+     * one check's transaction is a smaller, self-healing problem — the next check reads it either way.
+     * Reads spread across separate transactions carry no time bound between them at all, which is the
+     * wider exposure this closes.
+     */
+    @Transactional(readOnly = true)
     override fun observe(contextId: ContextId?): ObservedSchema =
         if (contextId == null) observeWholeGraph() else observeContext(contextId)
+
+    /**
+     * Carries its own [Transactional] annotation, which is why this override exists at all. [ObservedSchemaSource.observe]'s default body, `= observe(null)`, calls
+     * `observe(contextId)` on `this` from inside the bean's own compiled code — a self-invocation.
+     * Spring's proxy applies `@Transactional` advice only to calls that arrive through the proxy
+     * from outside the bean, so a caller invoking the interface's no-argument `observe()` on this
+     * class, absent this override, would reach [observeWholeGraph] with no transaction started at
+     * all, and its several queries would run as separate implicit transactions again, exactly
+     * what annotating the two-argument overload was meant to close.
+     */
+    @Transactional(readOnly = true)
+    override fun observe(): ObservedSchema = observe(null)
 
     private fun observeWholeGraph(): ObservedSchema {
         // Subtract only the bookkeeping the domain has not also claimed. A name both dice and the
@@ -213,6 +254,7 @@ open class DrivineObservedSchemaSource(
             entityTypeNames = queryStrings(ALL_LABELS) - hiddenLabels,
             relationshipTypeNames = queryStrings(ALL_RELATIONSHIP_TYPES) - hiddenRelationshipTypes,
             capturedAt = clock.instant(),
+            entityTypeBasis = ObservedSchema.EntityTypeBasis.GRAPH_LABELS,
         )
     }
 
@@ -223,10 +265,16 @@ open class DrivineObservedSchemaSource(
         // `sourcePropositions`, which only a projected domain edge carries. Subtracting names on top
         // would drop a domain relationship type spelled `DERIVED_FROM` that the query had already
         // shown to be the domain's.
+        //
+        // Tagged MENTION_TYPES deliberately: a mention's `type` is domain data an extractor wrote,
+        // living in its own namespace apart from graph labels, so a governed type's inherited
+        // parent label must stay out of what
+        // counts as declared for it. See ObservedSchema.EntityTypeBasis.
         return ObservedSchema(
             entityTypeNames = queryStrings(MENTION_TYPES_IN_CONTEXT, bindings),
             relationshipTypeNames = queryStrings(RELATIONSHIP_TYPES_IN_CONTEXT, bindings),
             capturedAt = clock.instant(),
+            entityTypeBasis = ObservedSchema.EntityTypeBasis.MENTION_TYPES,
         )
     }
 

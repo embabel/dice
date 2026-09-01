@@ -137,4 +137,88 @@ abstract class AbstractMetamodelVersionStoreContractTest {
     fun `latestVersion is null for a schema with no versions`() {
         assertNull(store().latestVersion("contract-never-saved"))
     }
+
+    // ---- the swept baseline, tracked apart from ordinary write order ----
+    //
+    // A store that doesn't override `sweptVersion`/`markSwept` inherits the interface default,
+    // forwarding to `latestVersion`/`saveVersion` — see `MetamodelVersionStore.sweptVersion`'s doc
+    // for why that reopens the exact bug `DefaultDriftCheckRunner` relies on this pointer to close.
+    // Three of the four tests below fail against that default: the null-until-swept case, the
+    // independence-from-a-later-new-stamp case, and the independence-from-a-later-re-save case. The
+    // middle test, `markSwept moves the swept baseline to that version`, passes against the
+    // forwarding default too — a schema with exactly one saved version has that version as both its
+    // `latestVersion` and (via `markSwept`'s forwarding to `saveVersion`) its only candidate, so the
+    // default answers correctly by coincidence on a single-version schema. It stays in the suite as a
+    // positive check on the real behavior; it just isn't the one that catches a non-overriding store.
+
+    @Test
+    fun `sweptVersion is null until markSwept is called`() {
+        val store = store()
+        val schemaName = "contract-swept-null"
+
+        store.saveVersion(version(schemaName))
+
+        assertNull(
+            store.sweptVersion(schemaName),
+            "an ordinary save must not look like a completed sweep",
+        )
+    }
+
+    @Test
+    fun `markSwept moves the swept baseline to that version`() {
+        val store = store()
+        val schemaName = "contract-swept-moves"
+        val stamp = version(schemaName)
+        store.saveVersion(stamp)
+
+        store.markSwept(stamp)
+
+        assertEquals(stamp, store.sweptVersion(schemaName))
+    }
+
+    @Test
+    fun `saveVersion alone never moves an already-established swept baseline`() {
+        // The exact case a forwarding default gets wrong: every run re-stamps its declaration, dry,
+        // scoped, or crashed alike, and none of those is a completed reconciliation.
+        val store = store()
+        val schemaName = "contract-swept-independent"
+        val reconciled = version(schemaName, "Reconciled")
+        store.saveVersion(reconciled)
+        store.markSwept(reconciled)
+
+        store.saveVersion(version(schemaName, "NotYetReconciled"))
+
+        assertEquals(
+            reconciled,
+            store.sweptVersion(schemaName),
+            "an ordinary save must not advance the reconciled baseline on its own",
+        )
+    }
+
+    @Test
+    fun `re-saving an existing, unreconciled stamp never moves the swept baseline either`() {
+        // The case above saves `NotYetReconciled` exactly once, as a brand-new stamp; the only
+        // re-save it performs is of `reconciled` itself, through `markSwept`. Here `notYetReconciled`
+        // gets saved a second time — an ordinary re-save of a stamp that already exists but was never
+        // swept — which is the gap that case leaves open. A store that keys "advance the swept
+        // pointer" off any save landing on an existing key, mistaking an ordinary re-save for a sign
+        // that stamp is now reconciled, would pass that case and still be wrong: PR #86's design note
+        // calls out this exact re-save hazard for saveVersion's own history contract, and the swept
+        // pointer needs the same guard.
+        val store = store()
+        val schemaName = "contract-swept-resave"
+        val reconciled = version(schemaName, "Reconciled")
+        val notYetReconciled = version(schemaName, "NotYetReconciled")
+        store.saveVersion(reconciled)
+        store.markSwept(reconciled)
+        store.saveVersion(notYetReconciled)
+
+        store.saveVersion(notYetReconciled)
+
+        assertEquals(
+            reconciled,
+            store.sweptVersion(schemaName),
+            "re-saving an existing, unreconciled stamp must not advance the reconciled baseline",
+        )
+    }
 }

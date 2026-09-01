@@ -611,12 +611,18 @@ class MetamodelDiff(
  * about whether a declared property's shape matches what the graph stores. Property signatures are
  * compared where both sides have them: declared against declared, in [MetamodelDiff].
  *
- * **A declared label counts as declared.** A graph reports labels, and a type usually carries more
- * than one: declaring `Person` with parent `Agent` puts both labels on every `Person` node. So the
- * declared side of the drift comparison is every entity type name *plus* every label those types
- * declare. Without the labels, an inherited label would be reported as undeclared drift on a schema
- * nobody had changed. [unobservedEntityTypes] stays on the type names alone, because "declared but
- * with no data" is a statement about types, and a parent label was never a type in its own right.
+ * **What counts as declared depends on what kind of name was observed**, per
+ * [ObservedSchema.EntityTypeBasis]. A graph reports labels, and a type usually carries more than
+ * one: declaring `Person` with parent `Agent` puts both labels on every `Person` node, so against a
+ * [ObservedSchema.EntityTypeBasis.GRAPH_LABELS] observation the declared side is every entity type
+ * name *plus* every label those types declare — without the labels, an inherited label would be
+ * reported as undeclared drift on a schema nobody had changed. A mention's `type` is domain data an
+ * extractor wrote, living in its own namespace apart from graph labels, so against a [ObservedSchema.EntityTypeBasis.MENTION_TYPES]
+ * observation the declared side stays on entity type names, with no widening to inherited labels: a
+ * mention typed `Agent` conforms only when `Agent` is itself a declared type, whatever labels a
+ * governed `Person` carries. [unobservedEntityTypes] stays on the type names alone either way,
+ * because "declared but with no data" is a statement about types, and a parent label was never a
+ * type in its own right.
  *
  * @property declared The schema as declared at snapshot time, stamp and bare relationship names.
  * @property observedSchema What the live graph held at snapshot time.

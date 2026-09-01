@@ -648,6 +648,30 @@ Two limits follow. Exclusion is decided per label, not per node, so a graph mixi
 with dice's own reports `Source` every run until the type is declared. And deciding it costs a scan
 of dice's own labels on each unscoped observation; context-scoped checks don't pay it.
 
+`observe` runs its whole set of queries — bookkeeping-exclusion probes included — inside one Neo4j
+transaction, so the several reads that get assembled into one `ObservedSchema` come from a single
+transaction's view of the graph, closing the case where a concurrent write landing between separately
+transacted queries produces a combined observation the graph never actually held at any instant.
+Neo4j's default isolation level is read committed, and that guarantee holds per row, leaving both a
+statement and a transaction free to see the graph shift underneath them: a write that commits mid-statement can still land in that same statement's own
+result set, so a single statement can itself see a non-repeatable, missing, or double read of data
+it touches more than once while it runs, and its rows are not guaranteed to reflect one coherent
+instant of the graph, on top of the residual race between two different statements inside the same
+transaction. This narrows the exposure to the span of one transaction and rules out reads that were
+never even in the same transaction, and no more than that; the method's own KDoc states the residual
+plainly.
+
+The observation also tags what kind of name its entity types are: `ObservedSchema.EntityTypeBasis`,
+`GRAPH_LABELS` for the unscoped path and `MENTION_TYPES` for the context-scoped one. The two answer
+different questions. A Neo4j label carries a type's whole declared hierarchy — `Person` with parent
+`Agent` puts both labels on every `Person` node — so the differ's declared side for a `GRAPH_LABELS`
+observation widens to every label a declared type carries. `Mention.type` is domain data an extractor
+wrote, and a governed type's inherited label has no bearing on it, so the differ's declared side for a
+`MENTION_TYPES` observation stays on declared type names and their declared former names, with no
+widening. Tagging the two the same way let a mention typed `Agent` conform under a schema that only
+governs `Person` with parent `Agent` — an undeclared mention type escaping detection by riding a
+governed type's parent label — until the observation itself carried which comparison it needs.
+
 Hosts declare the constraints these stores need (see `MetamodelSchema`); a MERGE is race-free only
 under a uniqueness constraint on the key it merges on.
 

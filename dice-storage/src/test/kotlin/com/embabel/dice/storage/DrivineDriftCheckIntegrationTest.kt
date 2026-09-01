@@ -87,6 +87,10 @@ class DrivineDriftCheckIntegrationTest {
         relationshipNames = emptyList(),
     )
 
+    // StructuralMetamodelDiffer implements both differ interfaces; one instance plays both roles,
+    // the way DefaultDriftCheckRunner's own doc says it ordinarily does.
+    private val differ = StructuralMetamodelDiffer()
+
     private val runner: DriftCheckRunner by lazy {
         DefaultDriftCheckRunner(
             declaredSchemaSource = DeclaredSchemaSource {
@@ -94,7 +98,8 @@ class DrivineDriftCheckIntegrationTest {
             },
             versionStore = versionStore,
             observedSchemaSource = observedSchemaSource,
-            differ = StructuralMetamodelDiffer(),
+            differ = differ,
+            metamodelDiffer = differ,
             driftReportStore = reportStore,
             quarantinePolicy = MentionTypeDriftQuarantinePolicy(),
             propositionStore = repository,

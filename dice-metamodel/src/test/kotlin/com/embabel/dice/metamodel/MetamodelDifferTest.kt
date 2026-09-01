@@ -507,6 +507,17 @@ class MetamodelDifferTest {
             capturedAt = Instant.parse("2026-01-01T00:00:00Z"),
         )
 
+        /** An observation tagged as mention types, on the other basis — see [ObservedSchema.EntityTypeBasis]. */
+        private fun observedMentionTypes(
+            entityTypeNames: Set<String>,
+            relationshipTypeNames: Set<String> = emptySet(),
+        ): ObservedSchema = ObservedSchema(
+            entityTypeNames = entityTypeNames,
+            relationshipTypeNames = relationshipTypeNames,
+            capturedAt = Instant.parse("2026-01-01T00:00:00Z"),
+            entityTypeBasis = ObservedSchema.EntityTypeBasis.MENTION_TYPES,
+        )
+
         @Test
         fun `an observed type with no declaration is reported as drift`() {
             val diff = declaredObservedDiffer.diffAgainstObserved(
@@ -750,6 +761,44 @@ class MetamodelDifferTest {
             )
             assertFalse(diff.hasDrift, "an inherited label is declared: ${diff.driftedEntityTypes}")
             assertTrue(diff.driftedEntityTypes.isEmpty())
+        }
+
+        /**
+         * The escape this closes: `Mention.type` is domain data an extractor wrote, living in its own
+         * namespace apart from graph labels, so a governed type's inherited parent label must not let
+         * an undeclared mention type pass. `Agent` is only a parent label of governed `Person` here — nothing declares `Agent`
+         * as a type in its own right — so a mention typed `Agent` has to read as drift.
+         */
+        @Test
+        fun `a mention typed with a parent label of a governed type is drift`() {
+            val personIsAnAgent = DeclaredSchema.from(
+                DataDictionary.fromDomainTypes(
+                    "test",
+                    listOf(DynamicType(name = "Person", parents = listOf(DynamicType(name = "Agent")))),
+                ),
+            )
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                personIsAnAgent,
+                observedMentionTypes(entityTypeNames = setOf("Agent")),
+            )
+            assertTrue(diff.hasDrift, "an undeclared mention type must not escape through an inherited label")
+            assertEquals(setOf("Agent"), diff.driftedEntityTypes)
+        }
+
+        /** The same mention type against a graph-label observation is the pre-existing, correct case. */
+        @Test
+        fun `the same inherited label reported as a graph label is not drift`() {
+            val personIsAnAgent = DeclaredSchema.from(
+                DataDictionary.fromDomainTypes(
+                    "test",
+                    listOf(DynamicType(name = "Person", parents = listOf(DynamicType(name = "Agent")))),
+                ),
+            )
+            val diff = declaredObservedDiffer.diffAgainstObserved(
+                personIsAnAgent,
+                observed(entityTypeNames = setOf("Agent")),
+            )
+            assertFalse(diff.hasDrift, "a graph label observation still counts an inherited label as declared")
         }
 
         @Test

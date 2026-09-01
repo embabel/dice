@@ -89,6 +89,7 @@ class PinnableClock : Clock() {
 @EnableDrivine
 @EnableDrivineTestConfig
 @EnableAspectJAutoProxy(proxyTargetClass = true)
+@org.springframework.transaction.annotation.EnableTransactionManagement
 open class TestApplication {
 
     @Bean

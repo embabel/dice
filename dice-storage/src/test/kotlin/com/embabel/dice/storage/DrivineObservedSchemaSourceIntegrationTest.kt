@@ -18,6 +18,7 @@ package com.embabel.dice.storage
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.metamodel.DriftReport
 import com.embabel.dice.metamodel.MetamodelVersion
+import com.embabel.dice.metamodel.ObservedSchema
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
@@ -111,6 +112,17 @@ class DrivineObservedSchemaSourceIntegrationTest {
     }
 
     @Test
+    fun `a scoped observation is tagged with the mention-types basis`() {
+        // A mention's type is domain data an extractor wrote, living in its own namespace apart
+        // from graph labels; the differ needs
+        // this tag to know it must not widen the declared side to a governed type's inherited labels.
+        writeProposition("p-a", tenantA)
+        writeMention("p-a", "m-a", type = "Person")
+
+        assertEquals(ObservedSchema.EntityTypeBasis.MENTION_TYPES, source.observe(tenantA).entityTypeBasis)
+    }
+
+    @Test
     fun `an empty context observes nothing rather than the whole graph`() {
         writeProposition("p-a", tenantA)
         writeMention("p-a", "m-a", type = "Person")
@@ -132,6 +144,7 @@ class DrivineObservedSchemaSourceIntegrationTest {
 
         assertTrue(observed.entityTypeNames.contains("Entity"), "got ${observed.entityTypeNames}")
         assertTrue(observed.relationshipTypeNames.contains("GLOBAL_REL"), "got ${observed.relationshipTypeNames}")
+        assertEquals(ObservedSchema.EntityTypeBasis.GRAPH_LABELS, observed.entityTypeBasis)
     }
 
     @Test

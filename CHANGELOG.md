@@ -371,3 +371,90 @@ and the consumer PRs that deliver it).
   swap in `MetamodelSchema.specs()`, a superset. The drift-report store needs three more:
   `MetamodelDriftReport(schemaName, versionHash, capturedAt, contextKey)`,
   `MetamodelDriftReportCounter(schemaName)`, and `MetamodelDriftReport(schemaName, sequence)`.
+
+- Three corrections to the Drivine drift-persistence slice above, closing gaps a review found before
+  the pieces ever reached a released build.
+  `DrivineObservedSchemaSource.observe` is now `@Transactional(readOnly = true)`, so the several
+  queries a whole-graph or context-scoped observation issues run inside one Neo4j transaction and are
+  assembled from it, the pattern `DrivineCollectorTraceStore.findEdgesByRun` already uses for the same
+  reason. A concurrent graph write landing between separately-transacted queries could previously
+  combine into an `ObservedSchema` describing a graph state that never existed at any single instant.
+  This narrows the exposure to Neo4j's own per-transaction read-committed semantics — a write that
+  commits while the transaction is still open can still reach a later statement inside it. The
+  method's own KDoc states that residual honestly; Neo4j offers no full snapshot isolation to claim.
+  Second, `ObservedSchema` gains `entityTypeBasis: EntityTypeBasis` (`GRAPH_LABELS` default,
+  `MENTION_TYPES`), stating what kind of name `entityTypeNames` holds. The shared differ was comparing
+  a context-scoped observation's `Mention.type` values against the same declared-labels set a
+  whole-graph observation's Neo4j labels compare against, so a mention typed `Agent` passed drift
+  detection when `Agent` was only a parent label of governed `Person` and nothing declared `Agent` a
+  type of its own — an inherited-label escape hatch for undeclared mention types. `DrivineObservedSchemaSource`
+  tags its context-scoped observation `MENTION_TYPES`; `StructuralMetamodelDiffer.diffAgainstObserved`
+  now compares a `MENTION_TYPES` observation against declared type names and their declared former
+  names only, with no widening to inherited labels. Third, `DrivineMetamodelVersionStore` overrides
+  `sweptVersion`/`markSwept`, tracking the reconciled baseline as a `sweptContentHash` property on the
+  schema's own `(:MetamodelSchemaCounter)` node, moved only by `markSwept` and left untouched by an
+  ordinary `saveVersion`, the same independence `InMemoryMetamodelVersionStore` already had. Without
+  this override the durable store inherited the interface's forwarding default, and every run's own
+  history-stamping write — dry, scoped, or crashed alike — silently consumed the very signal
+  `DefaultDriftCheckRunner`'s declared-vs-previous comparison depends on, a gap the drift-runner slice
+  above called out and deferred to this one.
+  **Compatibility: additive.** `ObservedSchema` gains a defaulted constructor parameter under
+  `@JvmOverloads`, so the pre-existing three-argument constructor survives in the compiled class
+  alongside the new four-argument one, confirmed by running `javap` on the compiled class after
+  compiling. Every existing Kotlin or Java caller and canned test fixture keeps compiling, keeping
+  its prior (`GRAPH_LABELS`) reading. `DrivineMetamodelVersionStore` and `DrivineObservedSchemaSource`
+  gain behavior on existing methods; no signature changed. `AbstractMetamodelVersionStoreContractTest`
+  gains four `sweptVersion`/`markSwept` cases; the graph store now passes all four, and three of
+  them — the null-until-swept case, the independence-from-a-later-new-stamp case, and the
+  independence-from-a-later-re-save case — previously failed against the forwarding default.
+
+- `dice-storage-autoconfigure` now depends on `spring-boot-transaction`. On Spring Boot 4, a
+  `PlatformTransactionManager` bean alone does not activate `@Transactional`: the interceptor that
+  reads the annotation lives in that separate module, which was missing here. Every `@Transactional`
+  across `dice-storage` — around 78 of them — was silently inert in any application built on this
+  autoconfiguration module, running with no transactional guarantees at all despite the annotations
+  reading as if it did. `TransactionAutoConfiguration`'s own `@ConditionalOnMissingBean` on
+  `AbstractTransactionManagementConfiguration` means it backs off cleanly for a consumer that already
+  enables transaction management itself, so this addition is safe to double up on.
+  **Compatibility: behavioral.** This is a genuine runtime change on upgrade: `@Transactional`
+  methods across `dice-storage` start actually running inside transactions for the first time in
+  any consumer using this autoconfiguration. `DrivinePropositionRepository.save`
+  is direct proof that activation can expose a latent assumption written against the inert state: its
+  dedup path ran a `TransactionTemplate` under an ambient (but previously inert) class-level
+  `@Transactional`, with the stripe lock documented as held across the template's own commit. With
+  transaction management genuinely active, the template's default propagation joined the now-real
+  ambient transaction and deferred that commit past the lock release, reopening the exact race the
+  KDoc claimed could not happen, and leaving the constraint-violation recovery path one participation
+  away from `UnexpectedRollbackException`. Fixed by giving that `TransactionTemplate`
+  `Propagation.REQUIRES_NEW`, so it always commits independently of whatever transaction is already
+  open, proven with a test that pins a sibling save into the exact window between the writer's stripe
+  lock release and its commit, forcing the overlap deterministically so nothing depends on scheduling
+  luck: it fails against the joined-transaction behavior and passes with the independent one, every
+  run.
+
+  **Upgrade guidance for consumers of `dice-storage-autoconfigure`:**
+  - Audit your own `@Transactional` usage too, alongside dice's own. Any `@Transactional` method in
+    your application that quietly relied on nothing actually enforcing it starts running for real the
+    moment this dependency lands on your classpath.
+  - Do not wrap `GraphDecayManager.materialize`/`materializeAll` in your own `@Transactional`
+    boundary. Its KDoc already warned against this, because the sweep's `CALL { ... } IN
+    TRANSACTIONS` batching depends on running in its own implicit transaction; that warning had no
+    teeth while `@Transactional` was inert, and an enclosing transaction now makes the batched
+    Cypher fail outright.
+  - `DrivinePropositionRepository.reembedAll()` now genuinely holds one Neo4j connection and
+    transaction open for its entire run, including every call out to your `EmbeddingService`. If
+    that service is remote or slow, budget for a database connection held that whole time. Write
+    locks are a separate, narrower concern: the batch write only starts in `executeBatch`, after
+    every embedding has already been computed, so lock contention with concurrent writers is
+    confined to that last stretch near the end of the run.
+  - `@Transactional(readOnly = true)` is worth knowing the limits of on this Drivine version
+    (0.0.79), confirmed by reading the resolved jar's bytecode: `isReadOnly()` feeds a debug log
+    line and nothing else, so a write reached through one of dice's read-only-annotated methods is
+    still permitted — that part is unchanged. What genuinely does change is a consequence of the
+    surrounding `@Transactional` advice becoming real: commit grouping and rollback. Such a write
+    now lands inside the same real transaction as everything else that method does and commits
+    together with the rest of the call, and a later rollback-triggering exception in that same call
+    now rolls it back too. Previously, with no active transaction wrapping it, the write had already
+    committed independently and stayed committed whatever happened next. Which exceptions trigger
+    that rollback follows Spring's defaults: a `RuntimeException` or an `Error` rolls back and a
+    checked exception commits, and custom rollback rules can override either behaviour.
