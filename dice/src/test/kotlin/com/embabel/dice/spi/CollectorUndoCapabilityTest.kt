@@ -16,6 +16,9 @@
 package com.embabel.dice.spi
 
 import com.embabel.agent.core.ContextId
+import com.embabel.agent.rag.service.Cluster
+import com.embabel.common.core.types.SimilarityResult
+import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.common.DiceEvent
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.PropositionPersisted
@@ -25,12 +28,14 @@ import com.embabel.dice.projection.lineage.CollectorRecordStore
 import com.embabel.dice.projection.lineage.CollectorRun
 import com.embabel.dice.projection.lineage.InMemoryCollectorRecordStore
 import com.embabel.dice.projection.memory.DefaultCollectorRunner
+import com.embabel.dice.projection.memory.DuplicateCollectorStrategy
 import com.embabel.dice.projection.memory.RunAwareCollectorStrategy
 import com.embabel.dice.projection.memory.collector.CollectorRunContext
 import com.embabel.dice.projection.memory.collector.CollectorSurvivorPolicy
 import com.embabel.dice.projection.memory.collector.MultiSignalCollectorStrategy
 import com.embabel.dice.proposition.EventEmittingPropositionRepository
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
@@ -440,6 +445,88 @@ class CollectorUndoCapabilityTest {
         assertEquals(listOf(revisionOne), store.findById(survivor.id)?.provenanceEntries)
         assertEquals(PropositionStatus.ACTIVE, store.findById(loser.id)?.status)
     }
+
+    @Test
+    fun `a collapse the duplicate strategy applied is undone`() {
+        // The strategy withDuplicateDetection installs, run end to end through
+        // DefaultCollectorRunner with the merging policy, then reversed through the guarded undo.
+        val store = InMemoryPropositionRepository()
+        val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
+        // Equal confidence and reinforce count, so the id tie-break picks the survivor: it sorts last.
+        val survivor = store.save(
+            proposition("survivor-duplicate", listOf(revisionOne), text = "Acme signed the agreement"),
+        )
+        val loser = store.save(
+            proposition("loser-duplicate", listOf(revisionOne, revisionTwo), text = "Acme signed an agreement"),
+        )
+
+        val runId = duplicateSweep(store, DuplicateCollectorStrategy(traceStore = trace), records, survivor, loser)
+
+        val decision = trace.findDecisionForProposition(loser.id)
+        assertEquals(runId, decision?.runId)
+        assertEquals(survivor.id, decision?.survivorId)
+        assertEquals(
+            listOf(ProvenanceEvidenceKey.encode(revisionTwo)),
+            decision?.retired?.single()?.foldedProvenanceEvidenceKeys,
+        )
+        assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
+        assertEquals(PropositionStatus.STALE, store.findById(loser.id)?.status)
+        assertEquals(
+            listOf(survivor.id),
+            records.findByProposition(loser.id).filter { it.runId == runId }.map { it.mergedIntoId },
+        )
+
+        val result = undo(trace, store, survivor.id, loser.id, records)
+
+        assertEquals(listOf(revisionOne), result?.survivor?.provenanceEntries)
+        assertEquals(listOf(revisionOne), store.findById(survivor.id)?.provenanceEntries)
+        assertEquals(PropositionStatus.ACTIVE, store.findById(loser.id)?.status)
+    }
+
+    @Test
+    fun `a duplicate sweep with no trace store leaves nothing to undo`() {
+        // The audit records say the merge happened, but no decision was written, so the undo has
+        // no record of what moved and answers null without touching either proposition.
+        val store = InMemoryPropositionRepository()
+        val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
+        val survivor = store.save(proposition("survivor-untraced", listOf(revisionOne)))
+        val loser = store.save(proposition("loser-untraced", listOf(revisionOne, revisionTwo)))
+
+        val runId = duplicateSweep(store, DuplicateCollectorStrategy(), records, survivor, loser)
+
+        assertEquals(PropositionStatus.STALE, store.findById(loser.id)?.status)
+        assertEquals(
+            listOf(survivor.id),
+            records.findByProposition(loser.id).filter { it.runId == runId }.map { it.mergedIntoId },
+        )
+        assertNull(trace.findDecisionForProposition(loser.id))
+
+        assertNull(undo(trace, store, survivor.id, loser.id, records))
+
+        assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
+        assertEquals(PropositionStatus.STALE, store.findById(loser.id)?.status)
+        assertTrue(records.all().none { it.undoneAt != null })
+    }
+
+    /**
+     * Runs the real collector over one pair the duplicate strategy is told are near-duplicates.
+     * The in-memory store has no embeddings to cluster on, so the cluster is handed in.
+     */
+    private fun duplicateSweep(
+        store: InMemoryPropositionRepository,
+        strategy: DuplicateCollectorStrategy,
+        records: InMemoryCollectorRecordStore,
+        survivor: Proposition,
+        loser: Proposition,
+    ): String = DefaultCollectorRunner(
+        repository = ClusteringStore(store, Cluster(survivor, listOf(SimilarityResult.create(loser, 0.95)))),
+        strategies = listOf(strategy),
+        policy = MergingSweepPolicy(),
+        recordStore = records,
+        listener = DiceEventListener.DEV_NULL,
+    ).run(contextId).runId
 
     @Test
     fun `retrying an undo that already succeeded takes nothing further from the survivor`() {
@@ -1372,6 +1459,19 @@ class CollectorUndoCapabilityTest {
     private class NoSubtractionStore(
         delegate: InMemoryPropositionRepository,
     ) : PropositionRepository by delegate
+
+    /** Answers every cluster query with one fixed cluster; everything else goes to the real store. */
+    private class ClusteringStore(
+        delegate: InMemoryPropositionRepository,
+        private val cluster: Cluster<Proposition>,
+    ) : PropositionRepository by delegate {
+
+        override fun findClusters(
+            similarityThreshold: ZeroToOne,
+            topK: Int,
+            query: PropositionQuery,
+        ): List<Cluster<Proposition>> = listOf(cluster)
+    }
 
     /** Counts every write an undo attempts, so "nothing was written" is an assertion. */
     private class CountingStore(

@@ -18,8 +18,13 @@ package com.embabel.dice.projection.memory
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.service.Cluster
 import com.embabel.common.core.types.SimilarityResult
+import com.embabel.dice.projection.memory.collector.CollectorRunContext
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.ProvenanceEvidenceKey
+import com.embabel.dice.provenance.UriLocator
+import com.embabel.dice.spi.InMemoryCollectorTraceStore
 import com.embabel.dice.spi.MarkReason
 import io.mockk.every
 import io.mockk.mockk
@@ -37,6 +42,7 @@ class DuplicateCollectorStrategyTest {
         text: String,
         confidence: Double = 0.8,
         reinforceCount: Int = 0,
+        provenance: List<ProvenanceEntry> = emptyList(),
     ): Proposition =
         Proposition(
             contextId = contextId,
@@ -45,6 +51,7 @@ class DuplicateCollectorStrategyTest {
             confidence = confidence,
             decay = 0.0,
             reinforceCount = reinforceCount,
+            provenanceEntries = provenance,
         )
 
     private fun cluster(anchor: Proposition, vararg similar: Proposition): Cluster<Proposition> =
@@ -160,6 +167,70 @@ class DuplicateCollectorStrategyTest {
         // a and c are the losers, both pointing at b as survivor.
         assertEquals(setOf(a.id, c.id), first.map { it.propositionId }.toSet())
         assertTrue(first.all { it.reason == MarkReason.Duplicate(b.id) })
+    }
+
+    @Test
+    fun `a traced run records one decision per collapsed component, holding what each loser folds in`() {
+        val shared = ProvenanceEntry(locator = UriLocator("https://example.com/shared"))
+        val extra = ProvenanceEntry(locator = UriLocator("https://example.com/extra"))
+        val strong = proposition("strong", confidence = 0.9, provenance = listOf(shared))
+        val weak = proposition("weak", confidence = 0.3, provenance = listOf(shared, extra))
+        val alone = proposition("alone", confidence = 0.5)
+        val repository = mockk<PropositionRepository>(relaxed = true)
+        every { repository.findClusters(any(), any(), any()) } returns
+            listOf(cluster(strong, weak), Cluster(alone, emptyList()))
+        val trace = InMemoryCollectorTraceStore()
+
+        val marks = DuplicateCollectorStrategy(traceStore = trace)
+            .mark(listOf(strong, weak, alone), repository, CollectorRunContext("run-1", contextId))
+
+        assertEquals(listOf(weak.id), marks.map { it.propositionId })
+        val decision = trace.decisionsFor("run-1").single()
+        assertEquals(strong.id, decision.survivorId)
+        assertEquals("duplicate-merge", decision.action)
+        val retired = decision.retired.single()
+        assertEquals(weak.id, retired.propositionId)
+        // Only the evidence the survivor lacked is written down as folded.
+        assertEquals(listOf(extra.locator.key()), retired.foldedProvenanceRefs)
+        assertEquals(listOf(ProvenanceEvidenceKey.encode(extra)), retired.foldedProvenanceEvidenceKeys)
+        assertEquals(1, trace.edgesFor("run-1").size)
+        assertEquals(0.95, trace.edgesFor("run-1").single().aggregateScore)
+        assertEquals(setOf(strong.id, weak.id), trace.componentsFor("run-1").single { it.memberIds.size == 2 }.memberIds.toSet())
+    }
+
+    @Test
+    fun `members grouped through an anchor outside the snapshot still get their edges recorded`() {
+        // The anchor is not a candidate, so it never joins the component, but the two members it
+        // clustered are unioned through it. The trace has to show the edges that did that.
+        val outside = proposition("outside", confidence = 0.9)
+        val a = proposition("a", confidence = 0.7)
+        val b = proposition("b", confidence = 0.4)
+        val repository = mockk<PropositionRepository>(relaxed = true)
+        every { repository.findClusters(any(), any(), any()) } returns listOf(cluster(outside, a, b))
+        val trace = InMemoryCollectorTraceStore()
+
+        val marks = DuplicateCollectorStrategy(traceStore = trace)
+            .mark(listOf(a, b), repository, CollectorRunContext("run-2", contextId))
+
+        assertEquals(listOf(b.id), marks.map { it.propositionId })
+        assertEquals(setOf(a.id, b.id), trace.componentsFor("run-2").single().memberIds.toSet())
+        val edgeEnds = trace.edgesFor("run-2").map { setOf(it.anchorId, it.memberId) }.toSet()
+        assertEquals(setOf(setOf(outside.id, a.id), setOf(outside.id, b.id)), edgeEnds)
+    }
+
+    @Test
+    fun `a blank run id records no trace`() {
+        val strong = proposition("strong", confidence = 0.9)
+        val weak = proposition("weak", confidence = 0.3)
+        val repository = mockk<PropositionRepository>(relaxed = true)
+        every { repository.findClusters(any(), any(), any()) } returns listOf(cluster(strong, weak))
+        val trace = InMemoryCollectorTraceStore()
+
+        val marks = DuplicateCollectorStrategy(traceStore = trace).mark(listOf(strong, weak), repository, contextId)
+
+        assertEquals(listOf(weak.id), marks.map { it.propositionId })
+        assertTrue(trace.decisionsFor("").isEmpty())
+        assertTrue(trace.edgesFor("").isEmpty())
     }
 
     @Test

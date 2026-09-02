@@ -19,7 +19,6 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.projection.memory.RunAwareCollectorStrategy
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
-import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import com.embabel.dice.spi.CandidatePair
 import com.embabel.dice.spi.CandidatePairSource
 import com.embabel.dice.spi.CollectorCandidateEdge
@@ -30,7 +29,6 @@ import com.embabel.dice.spi.CollectorTraceStore
 import com.embabel.dice.spi.ConnectedComponentsFinder
 import com.embabel.dice.spi.MarkReason
 import com.embabel.dice.spi.PropositionMark
-import com.embabel.dice.spi.RetiredProposition
 import org.slf4j.LoggerFactory
 
 /**
@@ -302,37 +300,8 @@ class MultiSignalCollectorStrategy(
         val losers = members.filter { it.id != survivor.id }
 
         if (tracing) {
-            // Record only what each loser actually ADDS to the survivor, not its whole evidence
-            // set: absorbEvidence is a deduplicating union, so any ref the survivor already owned
-            // pre-merge (common for near-duplicates from the same source) must not be recorded as
-            // "folded", or undo would later strip evidence the survivor held independently.
-            //
-            // Evidence is compared by its full evidence key, so one document read at two revisions
-            // counts as two pieces of evidence: a survivor citing r1 does not hide the loser's r2,
-            // and undo can name r2 exactly. The locator keys stay beside them for trace readers and
-            // for consumers still reading the older field.
-            val survivorGrounding = survivor.grounding.toSet()
-            val survivorProvenanceRefs = survivor.provenanceEntries
-                .map { it.locator.key() }
-                .toSet()
-            val survivorEvidenceKeys = survivor.provenanceEntries
-                .map(ProvenanceEvidenceKey::encode)
-                .toSet()
-            val survivorSourceIds = survivor.sourceIds.toSet()
-            val retired = losers.map { loser ->
-                RetiredProposition(
-                    propositionId = loser.id,
-                    priorStatus = loser.status,
-                    foldedGrounding = loser.grounding - survivorGrounding,
-                    foldedProvenanceRefs = loser.provenanceEntries
-                        .map { it.locator.key() }
-                        .distinct() - survivorProvenanceRefs,
-                    foldedSourceIds = loser.sourceIds - survivorSourceIds,
-                    foldedProvenanceEvidenceKeys = loser.provenanceEntries
-                        .map(ProvenanceEvidenceKey::encode)
-                        .distinct() - survivorEvidenceKeys,
-                )
-            }
+            // Each loser's record holds only what it adds to the survivor; see retiredByFold for why.
+            val retired = losers.map { loser -> retiredByFold(loser, survivor) }
             trace("recordDecision") {
                 traceStore.recordDecision(
                     runId,
