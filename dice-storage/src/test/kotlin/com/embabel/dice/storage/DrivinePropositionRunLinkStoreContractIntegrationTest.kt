@@ -15,12 +15,16 @@
  */
 package com.embabel.dice.storage
 
+import com.embabel.dice.proposition.extraction.ExtractionRunKey
+import com.embabel.dice.proposition.extraction.ExtractionRunRef
 import com.embabel.dice.proposition.extraction.PropositionRunLinkStore
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -92,4 +96,53 @@ class DrivinePropositionRunLinkStoreContractIntegrationTest : AbstractPropositio
     }
 
     override fun store(): PropositionRunLinkStore = linkStore
+
+    /**
+     * Linking the same claim to the same run twice leaves one edge in the graph.
+     *
+     * The contract suite already says a replay reports the same count, but a count is what the
+     * *store* believes. This counts the relationships themselves, because the failure being guarded
+     * against is precisely one where both answers look right and the graph holds two edges: every
+     * read here returns run refs and ids, so a duplicate edge is invisible to all of them and shows
+     * up later as inflated audit answers.
+     *
+     * The write is a `MERGE` between two already-matched nodes, which is what makes this hold under
+     * concurrent writers as well — Neo4j locks the endpoints when the merge decides to create.
+     */
+    @Test
+    fun `linking the same pair twice leaves exactly one edge`() {
+        val key = ExtractionRunKey(tenant, ExtractionRunRef(fixtureRunIds.first()))
+        val propositionId = fixturePropositionIds.first()
+
+        val first = linkStore.link(key, listOf(propositionId))
+        val second = linkStore.link(key, listOf(propositionId))
+
+        assertEquals(first, second, "a replay reports what the first write did")
+        assertEquals(
+            1L,
+            edgeCount(propositionId, key.runRef.runId),
+            "the graph holds exactly one PRODUCED_BY_RUN edge for the pair",
+        )
+
+        // The same claim named twice inside a single batch is also one edge.
+        linkStore.link(key, listOf(propositionId, propositionId))
+        assertEquals(
+            1L,
+            edgeCount(propositionId, key.runRef.runId),
+            "a duplicate inside one batch is still one edge",
+        )
+    }
+
+    /** How many `PRODUCED_BY_RUN` edges join this claim to this run, counted in the graph itself. */
+    private fun edgeCount(propositionId: String, runId: String): Long = persistenceManager.getOne(
+        QuerySpecification.withStatement(
+            """
+            MATCH (p:Proposition {id: ${'$'}propositionId})
+                  -[r:${ExtractionRunSchema.PRODUCED_BY_RUN_REL}]->
+                  (n:ExtractionRun {contextId: ${'$'}contextId, runId: ${'$'}runId})
+            RETURN count(r) AS c
+            """.trimIndent(),
+        ).bind(mapOf("propositionId" to propositionId, "contextId" to tenant.value, "runId" to runId))
+            .transform(Long::class.java),
+    )
 }

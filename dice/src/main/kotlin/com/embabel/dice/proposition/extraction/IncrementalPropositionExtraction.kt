@@ -131,6 +131,13 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     @Volatile
     private var propositionRunLinkStore: PropositionRunLinkStore? = null
 
+    /**
+     * What happens when lineage cannot be written. Bound with the store, and volatile for the same
+     * reason: written on the thread that builds the extractor, read on the extraction threads.
+     */
+    @Volatile
+    private var lineageFailurePolicy: LineageFailurePolicy = LineageFailurePolicy.DEFAULT
+
     /** Whether [withRunLineage] has been called. Binding is one-time; see there for why. */
     private val runLineageBound = AtomicBoolean(false)
 
@@ -163,12 +170,36 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * Lineage is only ever consulted for an analysis that carries a
      * [SourceAnalysisContext.currentRun]; without a run this store is never touched. EXPERIMENTAL.
      *
+     * Binds [LineageFailurePolicy.DEFAULT]. Use the two-argument form to choose.
+     *
      * @param propositionRunLinkStore The lineage store, or null to record no lineage.
      * @return this extractor.
      * @throws IllegalStateException if lineage has already been bound.
      */
     open fun withRunLineage(
         propositionRunLinkStore: PropositionRunLinkStore?,
+    ): IncrementalPropositionExtraction =
+        withRunLineage(propositionRunLinkStore, LineageFailurePolicy.DEFAULT)
+
+    /**
+     * Binds the lineage store and says what happens when a lineage write cannot be made.
+     *
+     * A separate overload, because a defaulted parameter on the one-argument form would move that
+     * method's Kotlin descriptor — the whole reason lineage is bound by a method in the first place. `RunLineageBinaryCompatibilityTest` pins it.
+     *
+     * **A null store under [LineageFailurePolicy.STRICT] is a legitimate binding**, and it is how a
+     * host says "record no lineage" while still refusing to run one. It only bites when an analysis
+     * actually carries a run: with no store bound and a run set, [LineageFailurePolicy.STRICT]
+     * fails that call. A host that passes runs must bind a store.
+     *
+     * @param propositionRunLinkStore The lineage store, or null to record no lineage.
+     * @param policy What happens when lineage cannot be written. See [LineageFailurePolicy].
+     * @return this extractor.
+     * @throws IllegalStateException if lineage has already been bound.
+     */
+    open fun withRunLineage(
+        propositionRunLinkStore: PropositionRunLinkStore?,
+        policy: LineageFailurePolicy,
     ): IncrementalPropositionExtraction {
         check(runLineageBound.compareAndSet(false, true)) {
             "run lineage is already bound on this extractor; it binds once, before the extractor " +
@@ -176,6 +207,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 "redirected or erased"
         }
         this.propositionRunLinkStore = propositionRunLinkStore
+        this.lineageFailurePolicy = policy
         return this
     }
     private val analyzer: IncrementalAnalyzer<Message, ChunkPropositionResult> =
@@ -528,25 +560,30 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     /**
      * Persists what an analysis produced, then projects and grounds it.
      *
-     * **Which propositions the three wiring passes run over depends on whether the analysis carries
-     * a run.** Both answers are defensible and only one is compatible.
+     * **Everything downstream of the save runs over the propositions the repository returned, on
+     * every call.** A deduplicating backend answers a fresh insert with the proposition that
+     * already exists, so the id extraction minted can name a node that was never stored. Projecting
+     * or grounding against that id writes an edge pointing at nothing. The propositions the save
+     * handed back are the ones the store actually holds, and they are what the wiring passes get.
      *
-     * With a run ([SourceAnalysisContext.currentRun] non-null), everything downstream of the save
-     * runs over the propositions the repository returned. That is the correct set: a deduplicating
-     * backend answers a fresh insert with the proposition that already exists, and an edge, a
-     * projection or a grounding link written against the id extraction minted points at a node that
-     * was never stored. The lineage links go on those same canonical ids, and they are written
-     * directly behind the save rather than at the end, so a projector that throws cannot leave them
-     * unattributed. How durable the claims are at that point depends on the caller: with no ambient
-     * transaction the save has committed, and with one they are still the caller's to commit or roll
-     * back. See [recordRunLineage].
+     * **Audit metadata never changes product behaviour, so a run is not a switch.** This used to
+     * take the canonical propositions only when the analysis carried a run, which made an audit
+     * setting decide whether the graph was written correctly — a host that turned on extraction runs
+     * silently got different edges, and a host that did not kept the phantom ones. Whether anyone is
+     * recording lineage is a question about the audit trail and has no business changing what gets
+     * stored. A run now adds one thing: the lineage write below. It subtracts and alters nothing.
      *
-     * With no run, the pre-save propositions are used, exactly as before — same call, same
-     * arguments, same order. That path is wrong in the same way it has always been wrong, and this
-     * slice does not change it, because a host that never asked for extraction runs should not have
-     * its graph start being written differently. The switch is the run, not the presence of a link
-     * store: an analysis that carries a run gets the canonical path whether or not lineage is being
-     * recorded.
+     * **Lineage is written last, after projection and grounding have both completed.** It is the
+     * final step because it is the only one whose failure is allowed to be loud: under
+     * [LineageFailurePolicy.STRICT] a lineage failure fails the whole operation, and putting it
+     * anywhere earlier would mean raising out of the middle of the pipeline with the claims saved
+     * and the graph half-written. Running it last means the state a STRICT failure leaves behind is
+     * a complete one — claims persisted, structural edges wired, projection and grounding done, and
+     * no `PRODUCED_BY_RUN` edge — so the only thing missing is the audit record the caller is being
+     * told about. See [recordRunLineage] for exactly what that end state is.
+     *
+     * How durable any of it is depends on the caller: with no ambient transaction each write has
+     * committed as it was made, and with one they are all still the caller's to commit or roll back.
      */
     private fun persistAndProject(result: ChunkPropositionResult, context: SourceAnalysisContext) {
         val propsToSave = result.propositionsToPersist()
@@ -568,36 +605,16 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         }
 
         val currentRun = context.currentRun
-        val persisted = if (currentRun == null) {
-            // The legacy path, byte-identical: one call that saves and wires structurally, exactly
-            // as it always did.
-            result.persist(propositionRepository, entityRepository)
-            null
-        } else {
-            // Saving only. Structural wiring is deliberately left until after lineage below.
-            result.persistCanonicalPropositions(propositionRepository, entityRepository)
-        }
+        // Saving only; the structural edges follow immediately below. The two are separate calls
+        // because the canonical propositions the save returns are what everything after it wires
+        // against.
+        val persisted = result.persistCanonicalPropositions(propositionRepository, entityRepository)
         // The distinct view, not the positional one. Inputs that deduplicated together are one
         // stored proposition, and projecting or grounding it once per input inflates the records
         // written about that work even though the edges themselves are idempotent.
-        val toWire = persisted?.distinctCanonicalPropositions ?: propsToSave
+        val toWire = persisted.distinctCanonicalPropositions
 
-        // Lineage goes here: the propositions are saved and *nothing fallible has run yet*.
-        //
-        // Attribution is a statement about claims that exist, not a reward for the rest of the
-        // pipeline succeeding. Every pass below this line can throw — structural wiring through
-        // mergeRelationship, projection, grounding — and any of them throwing used to leave stored
-        // claims with no record of the run that produced them. That is the one outcome the relation
-        // exists to prevent, and it would arrive exactly when something has already gone wrong and
-        // the audit matters most.
-        if (currentRun != null && persisted != null) {
-            recordRunLineage(context, currentRun, persisted)
-        }
-
-        // The structural edges the run-present path held back, now that lineage is recorded.
-        if (persisted != null) {
-            result.wireStructuralRelationships(persisted, entityRepository)
-        }
+        result.wireStructuralRelationships(persisted, entityRepository)
 
         if (newProps > 0 || updatedProps > 0 || newEntitiesToSave > 0) {
             logger.info(
@@ -622,46 +639,109 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         // ids resolve to stored entities. No-op when no wiring service
         // was supplied (default for backward compatibility).
         groundingWiringService?.wire(toWire)
+
+        // Lineage goes last, once the claims are stored and the whole graph around them is written.
+        // Under STRICT this call can fail the operation, and the state it leaves behind when it does
+        // is a complete extraction that simply has no audit edge. See recordRunLineage.
+        if (currentRun != null) {
+            recordRunLineage(context, currentRun, persisted)
+        }
     }
 
     /**
      * Attributes the canonical propositions to the run that produced them.
      *
-     * Best-effort by design. Lineage is an audit record written after the claims are already
-     * saved, so failing to write it must not fail the extraction that produced them. The failure is
-     * logged with the run it was for; a missing link surfaces as a gap in the audit, which is a
-     * truthful gap, where a thrown exception here would surface as an extraction that appears to
-     * have produced nothing.
+     * **Loud by default.** A host that gives an extraction a run has asked for attribution, and
+     * [LineageFailurePolicy.STRICT] — the default — treats "it could not be recorded" as a failure
+     * of that call. Both ways attribution can go missing fail: no store bound with a run set, and a
+     * link write that throws. [LineageFailurePolicy.LENIENT] logs each and carries on, for a host
+     * that has decided in configuration that the claims outweigh their audit trail.
      *
-     * **How much that protects depends on who owns the transaction.** With no ambient transaction —
-     * the shape every entry point takes unless a host wraps it — the propositions committed as they
-     * were saved, so swallowing the failure really does leave them standing. Inside a host's
-     * `@Transactional`, nothing has committed yet: the claims, the lineage and everything the passes
-     * below write share that transaction's fate, so a later failure still rolls all of it back and
-     * this catch only stops lineage from being the cause. And a lineage failure that came from the
-     * database rather than from the store's own checks has already terminated that transaction,
-     * which no catch can undo. DICE #67 slice 10 closes both by committing claims before recording
-     * lineage.
+     * This used to swallow every `RuntimeException` and return quietly on a missing store, which
+     * meant the two failures an operator most needs to hear about — lineage wired wrong, and lineage
+     * refusing writes — both reported success. See [LineageFailurePolicy] for why that is the wrong
+     * default for an audit surface.
+     *
+     * **The end state a STRICT failure leaves behind, exactly.** This runs last, after structural
+     * wiring, projection and grounding have all completed. So when it raises, the extraction itself
+     * is finished and consistent: the canonical claims are persisted, their structural edges are
+     * wired, the projection has run and grounding has run. The single thing missing is the
+     * `PRODUCED_BY_RUN` edge. The operation is reported as failed, and what failed is the
+     * attribution, with everything it was going to attribute already in place.
+     *
+     * That ordering is the point. Recording lineage earlier — behind the save, ahead of the fallible
+     * passes — would attribute claims sooner, but a STRICT failure would then raise out of the
+     * middle of the pipeline and leave the claims saved with projection and grounding silently
+     * skipped: a partial state nobody declared. Attribution is a statement about work that is
+     * finished, so it is made when the work is finished.
+     *
+     * [LineageFailurePolicy.LENIENT] reaches the same end state and reports success, with the
+     * failure in the log.
+     *
+     * **What a raised failure costs depends on who owns the transaction.** With no ambient
+     * transaction — the shape every entry point takes unless a host wraps it — everything above
+     * committed as it was written, so the caller learns that a complete extraction is unattributed.
+     * Inside a host's `@Transactional`, all of it shares that transaction's fate and the failure
+     * rolls the whole extraction back, which is what strict attribution asks for. A lineage failure
+     * raised by the database itself, below the store's own checks, has already terminated that
+     * transaction either way, and no policy here can undo that.
+     *
+     * An analysis that saved nothing records nothing and is not a failure under either policy: there
+     * is no claim for the audit to be missing.
      */
     private fun recordRunLineage(
         context: SourceAnalysisContext,
         currentRun: ExtractionRunRef,
         persisted: PropositionPersistenceResult,
     ) {
-        val linkStore = propositionRunLinkStore ?: return
-        if (persisted.canonicalIds.isEmpty()) return
         val key = ExtractionRunKey(context.contextId, currentRun)
+        val linkStore = propositionRunLinkStore
+        if (linkStore == null) {
+            // A wiring mistake, true of every call this extractor will ever make: this analysis asked
+            // to be attributed and nothing can record it.
+            onLineageFailure(
+                key,
+                LineageNotRecordedException(
+                    key,
+                    "analysis carries extraction run ${currentRun.runId} and no " +
+                        "PropositionRunLinkStore is bound, so its propositions cannot be attributed; " +
+                        "bind one with withRunLineage, or bind LineageFailurePolicy.LENIENT to accept " +
+                        "the gap",
+                ),
+            )
+            return
+        }
+        if (persisted.canonicalIds.isEmpty()) return
         try {
             val linked = linkStore.link(key, persisted.canonicalIds)
             logger.info("Attributed {} propositions to extraction run {}", linked, currentRun.runId)
         } catch (e: RuntimeException) {
-            // The exception goes to the logger, not just its message. A scope rejection here means
-            // this analysis's context disagrees with the tenant its own propositions were saved
-            // under, which is a pipeline bug rather than an infrastructure blip, and the class and
-            // stack are what say which.
-            logger.warn(
-                "Could not attribute propositions to extraction run {}",
-                currentRun.runId, e,
+            onLineageFailure(
+                key,
+                LineageNotRecordedException(
+                    key,
+                    "could not attribute ${persisted.canonicalIds.size} proposition(s) to extraction " +
+                        "run ${currentRun.runId}",
+                    e,
+                ),
+            )
+        }
+    }
+
+    /**
+     * Raises or logs, per the bound policy.
+     *
+     * The whole exception goes to the logger under [LineageFailurePolicy.LENIENT], with its class
+     * and stack. A scope rejection means this analysis's context disagrees with the tenant its own
+     * propositions were saved under, which is a pipeline bug; an outage looks quite different, and
+     * the stack is what tells them apart.
+     */
+    private fun onLineageFailure(key: ExtractionRunKey, failure: LineageNotRecordedException) {
+        when (lineageFailurePolicy) {
+            LineageFailurePolicy.STRICT -> throw failure
+            LineageFailurePolicy.LENIENT -> logger.warn(
+                "Lineage not recorded for extraction run {}; continuing under LENIENT policy",
+                key.runRef.runId, failure,
             )
         }
     }

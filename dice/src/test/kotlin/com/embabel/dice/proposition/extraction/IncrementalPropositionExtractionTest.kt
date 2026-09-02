@@ -161,23 +161,36 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
-    fun `the run reference reaches the context and nothing consumes it`() {
+    fun `the run reference reaches the context by one route and drives only the lineage write`() {
         // PR #94's review comment was that buildContext accepted a currentRun and put it on the
         // context while nothing read it, so the parameter came out and the type came out with it.
-        // The run is back now, on the request, and the same question applies: what reads it?
-        // Nothing does, and this pins the two facts that make that checkable.
+        // The run is back on the request, and now one thing does read it: persistAndProject writes
+        // the lineage link. That is the whole of what a run does.
         //
-        // First: persistAndProject — the method that actually saves the extracted propositions —
-        // takes only a ChunkPropositionResult and never the context that would carry a run. It has
-        // exactly one overload, so a second one taking the context (a run reference's only route
-        // into a write) cannot hide behind a check that only confirms one particular arity exists.
+        // The earlier form of this test asserted that persistAndProject never saw the context at
+        // all, which was how "nothing consumes the run" stayed checkable. Lineage makes that false
+        // by design. What replaces it is narrower and still mechanical: the context reaches exactly
+        // one method that writes, and the only run-shaped thing reachable from there is the lineage
+        // recorder. A second consumer would have to appear here.
         val persistAndProjectOverloads = IncrementalPropositionExtraction::class.java
             .declaredMethods.filter { it.name == "persistAndProject" }
         assertEquals(1, persistAndProjectOverloads.size, "persistAndProject must have exactly one overload")
-        assertEquals(1, persistAndProjectOverloads.single().parameterCount)
         assertEquals(
-            ChunkPropositionResult::class.java,
-            persistAndProjectOverloads.single().parameterTypes.single(),
+            listOf(ChunkPropositionResult::class.java, SourceAnalysisContext::class.java),
+            persistAndProjectOverloads.single().parameterTypes.toList(),
+        )
+
+        // Exactly one private method takes an ExtractionRunRef, and it is the lineage recorder. If a
+        // second one appears, a run has grown a second effect and the operator rule that a run adds
+        // a lineage write and nothing else no longer holds.
+        val runConsumers = IncrementalPropositionExtraction::class.java.declaredMethods
+            .filter { ExtractionRunRef::class.java in it.parameterTypes }
+            .map { it.name }
+            .toSet()
+        assertEquals(
+            setOf("recordRunLineage"),
+            runConsumers,
+            "a run drives the lineage write and nothing else",
         )
 
         // Second: the run reaches the context by exactly one route, the request, and reaches it

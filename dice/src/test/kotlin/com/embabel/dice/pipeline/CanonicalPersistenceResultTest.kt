@@ -37,8 +37,7 @@ import org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 import org.junit.jupiter.api.Test
 
 /**
- * The persistence-result seam: what a save landed on, and what happens to the edges written
- * afterwards.
+ * What a save landed on, and what happens to the edges written afterwards.
  *
  * The thing being pinned is one substitution. `DrivinePropositionRepository` answers a fresh insert
  * of text it already holds with the proposition it already holds — a different id. Everything
@@ -46,10 +45,10 @@ import org.junit.jupiter.api.Test
  * never stored. These tests run over a repository that deduplicates the same way, because one that
  * never deduplicates cannot tell the two paths apart.
  */
-class PersistenceResultSeamTest {
+class CanonicalPersistenceResultTest {
 
-    private val tenant = ContextId("seam-tenant")
-    private val schema: DataDictionary = DataDictionary.fromClasses("seam")
+    private val tenant = ContextId("canonical-tenant")
+    private val schema: DataDictionary = DataDictionary.fromClasses("canonical")
 
     /**
      * `DrivinePropositionRepository`'s dedup rule, in memory: a *new* id carrying text already
@@ -151,7 +150,7 @@ class PersistenceResultSeamTest {
     private fun edgeSources(repo: TrackingEntityRepository, type: String): List<String> =
         repo.relationshipsOfType(type).map { it.source.id }
 
-    // ---- the store-level seam ----
+    // ---- what the store hands back ----
 
     @Test
     fun `saveAll drops the canonical id and the new call keeps it`() {
@@ -270,9 +269,10 @@ class PersistenceResultSeamTest {
     @Test
     fun `a canonical result from another tenant is rejected`() {
         // Lineage would refuse to link it — the run link store resolves every proposition inside the
-        // run's tenant — but lineage is best-effort and swallows its own failure, so refusing there
-        // is not refusing at all. Structural wiring, projection and grounding would still have run
-        // over a foreign-tenant object, writing this tenant's edges against a neighbour's claim.
+        // run's tenant — but lineage is the last step of the pipeline, and it only runs when the
+        // analysis carries a run. By the time it could refuse, structural wiring, projection and
+        // grounding have already run over a foreign-tenant object, writing this tenant's edges
+        // against a neighbour's claim; an analysis with no run never reaches that check at all.
         // The check belongs where the object enters the pipeline.
         val mine = proposition("Alice likes coffee", id = "mine")
         val theirs = mine.copy(id = "theirs", contextId = ContextId("someone-else"))
@@ -372,7 +372,7 @@ class PersistenceResultSeamTest {
         }.withMessageContaining("every proposition it was given")
     }
 
-    // ---- the persist-path seam ----
+    // ---- which id the edges are written against ----
 
     @Test
     fun `persist wires structural edges against the id extraction minted`() {

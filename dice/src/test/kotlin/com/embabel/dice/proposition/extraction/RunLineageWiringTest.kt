@@ -42,20 +42,24 @@ import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import io.mockk.verify
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import java.time.Instant
 
 /**
- * What `persistAndProject` hands to projection, grounding and lineage, and how that depends on
- * whether the analysis carries an extraction run.
+ * What `persistAndProject` hands to projection, grounding and lineage.
  *
- * The switch matters because the two answers differ exactly when a store deduplicates. With a run,
- * everything downstream of the save runs over the propositions the repository returned, so a
- * projection of a deduplicated proposition targets the id that is stored. With no run, the
- * pre-save propositions are used, exactly as before — and these tests pin that too, because
- * "unchanged for legacy callers" is a claim that has to fail if it stops being true.
+ * The headline is that a run does not change any of it. Projection and grounding run over the
+ * propositions the repository returned on every call, so a projection of a deduplicated proposition
+ * targets the id that is stored whether or not anyone asked for an audit trail. A run adds the
+ * lineage write and nothing else, and the byte-identical case below is what holds that line: the
+ * same extraction with and without a run must reach the repository the same way.
+ *
+ * These tests deliberately pin the *opposite* of what the first cut of this slice did, where the run
+ * chose between canonical and pre-save ids. That made an audit setting decide whether the graph was
+ * written correctly. See `persistAndProject`.
  *
  * **The survival cases below run with no ambient transaction, and that is the shape they speak
  * for.** The repository here commits each save as it makes it, so "the claim is still there after
@@ -125,7 +129,14 @@ class RunLineageWiringTest {
         val projected: MutableList<List<Proposition>>,
         val grounded: MutableList<List<Proposition>>,
         val linkStore: RecordingLinkStore?,
-    )
+        val entityRepository: NamedEntityDataRepository,
+    ) {
+        /** Whether structural wiring reached the entity repository. */
+        val structurallyWired: Boolean
+            get() = runCatching {
+                verify { entityRepository.mergeRelationship(any(), any(), any()) }
+            }.isSuccess
+    }
 
     private class RecordingLinkStore(
         private val runsPresent: Set<ExtractionRunKey>,
@@ -155,6 +166,7 @@ class RunLineageWiringTest {
         projectionFails: Boolean = false,
         structuralWiringFails: Boolean = false,
         groundingFails: Boolean = false,
+        policy: LineageFailurePolicy = LineageFailurePolicy.DEFAULT,
     ): Harness {
         val repository = DeduplicatingRepository()
         stored?.let { repository.save(it) }
@@ -210,8 +222,8 @@ class RunLineageWiringTest {
             graphProjectionService = projection,
             properties = PropositionExtractionProperties(),
             groundingWiringService = grounding,
-        ).withRunLineage(linkStore)
-        return Harness(repository, extraction, projected, grounded, linkStore)
+        ).withRunLineage(linkStore, policy)
+        return Harness(repository, extraction, projected, grounded, linkStore, entityRepository)
     }
 
     private fun IncrementalPropositionExtraction.remember(currentRun: ExtractionRunRef?) =
@@ -222,14 +234,20 @@ class RunLineageWiringTest {
             emptyList(),
             null,
             null,
-            null,
-            currentRun,
+            ExtractionRequest(currentRun = currentRun),
         )
 
-    // ---- the legacy path is unchanged ----
+    // ---- canonical persistence is the only path ----
 
     @Test
-    fun `with no run the pre-save propositions are projected, exactly as before`() {
+    fun `with no run the projection of a deduplicated proposition targets the canonical id`() {
+        // The discriminating case for "canonical persistence is the only path". Extraction minted
+        // "minted"; the deduplicating store answered with "canonical" and never stored "minted".
+        // Projection and grounding must target what the store holds, with no run anywhere in sight.
+        //
+        // This is the behavioural fix. Before it, a no-run extraction projected and grounded against
+        // "minted" — an id the store does not hold — so the edges pointed at a node that was never
+        // written.
         val harness = harness(
             stored = proposition("Alice likes coffee", id = "canonical"),
             extracted = proposition("Alice likes coffee", id = "minted"),
@@ -238,33 +256,78 @@ class RunLineageWiringTest {
 
         harness.extraction.remember(currentRun = null)
 
-        // The minted id, which the store does not hold. Wrong, and the same wrong it has always
-        // been: a host that never asked for extraction runs gets the behaviour it already has.
-        assertThat(harness.projected.single().map { it.id }).containsExactly("minted")
-        assertThat(harness.grounded.single().map { it.id }).containsExactly("minted")
-        assertThat(harness.repository.findById("minted")).isNull()
+        assertThat(harness.projected.single().map { it.id })
+            .describedAs("projection targets the stored id, with no run involved")
+            .containsExactly("canonical")
+        assertThat(harness.grounded.single().map { it.id })
+            .describedAs("grounding targets the stored id too")
+            .containsExactly("canonical")
+        assertThat(harness.repository.findById("minted"))
+            .describedAs("the minted id was never stored, which is why projecting it was wrong")
+            .isNull()
     }
 
     @Test
     fun `with no run and a link store present nothing is linked`() {
         val links = RecordingLinkStore(runsPresent = setOf(ExtractionRunKey(tenant, runRef)))
         val harness = harness(
-            stored = null,
+            stored = proposition("Alice likes coffee", id = "canonical"),
             extracted = proposition("Alice likes coffee", id = "minted"),
             linkStore = links,
         )
 
         harness.extraction.remember(currentRun = null)
 
-        assertThat(links.linked).isEmpty()
-        assertThat(harness.projected.single().map { it.id }).containsExactly("minted")
+        assertThat(links.linked)
+            .describedAs("no run, no lineage: the store is bound and never touched")
+            .isEmpty()
+        assertThat(harness.projected.single().map { it.id }).containsExactly("canonical")
+    }
+
+    @Test
+    fun `a run adds the lineage write and changes nothing else about persistence`() {
+        // The other half of the operator rule. The no-run and run-present extractions are run over
+        // identical inputs, and everything except the lineage write has to match.
+        fun run(currentRun: ExtractionRunRef?): Harness {
+            val links = RecordingLinkStore(runsPresent = setOf(ExtractionRunKey(tenant, runRef)))
+            val harness = harness(
+                stored = proposition("Alice likes coffee", id = "canonical"),
+                extracted = proposition("Alice likes coffee", id = "minted"),
+                linkStore = links,
+            )
+            harness.extraction.remember(currentRun = currentRun)
+            return harness
+        }
+
+        val without = run(currentRun = null)
+        val with = run(currentRun = runRef)
+
+        // Compared by id, because a `Proposition` carries creation and revision timestamps taken
+        // from the wall clock, so two runs of the same extraction differ in fields that have nothing
+        // to do with the run. The ids are what says which claims were
+        // wired, which is the thing a run must not change.
+        fun ids(passes: List<List<Proposition>>) = passes.map { pass -> pass.map { it.id } }
+
+        assertThat(ids(with.projected))
+            .describedAs("a run does not change what projection is handed")
+            .isEqualTo(ids(without.projected))
+        assertThat(ids(with.grounded))
+            .describedAs("a run does not change what grounding is handed")
+            .isEqualTo(ids(without.grounded))
+        assertThat(with.repository.findAll().map { it.id })
+            .describedAs("the same claims are stored either way")
+            .isEqualTo(without.repository.findAll().map { it.id })
+
+        // The one and only difference.
+        assertThat(without.linkStore!!.linked).isEmpty()
+        assertThat(with.linkStore!!.linked.single().second).containsExactly("canonical")
     }
 
     // ---- the run-present path consumes canonical results ----
 
     @Test
     fun `the projection of a deduplicated proposition targets the canonical id`() {
-        // The headline of the seam. Under a run, projection is handed what the store holds.
+        // The same claim as the no-run case above, with a run present. Both hold, which is the point.
         val harness = harness(
             stored = proposition("Alice likes coffee", id = "canonical"),
             extracted = proposition("Alice likes coffee", id = "minted"),
@@ -298,30 +361,103 @@ class RunLineageWiringTest {
         assertThat(ids).containsExactly("canonical")
     }
 
+    // ---- attribution fails loud by policy ----
+
     @Test
-    fun `a run with no link store still takes the canonical path`() {
-        // The switch is the run, not the store. An analysis attributed to a run gets correct edges
-        // whether or not anyone is recording lineage.
+    fun `a run with no link store bound fails the extraction under STRICT`() {
+        // The host asked for attribution and nothing can record it. That is a wiring mistake, true
+        // of every call this extractor will make, and the default policy says so out loud. A
+        // success with a silent gap in the audit is the outcome being prevented.
         val harness = harness(
             stored = proposition("Alice likes coffee", id = "canonical"),
             extracted = proposition("Alice likes coffee", id = "minted"),
             linkStore = null,
+            policy = LineageFailurePolicy.STRICT,
+        )
+
+        assertThatThrownBy { harness.extraction.remember(currentRun = runRef) }
+            .isInstanceOf(LineageNotRecordedException::class.java)
+            .hasMessageContaining("no PropositionRunLinkStore is bound")
+            .hasMessageContaining(runRef.runId)
+    }
+
+    @Test
+    fun `STRICT is what an unqualified binding gets`() {
+        // The default is the whole point of the policy, so it is pinned here; the enum's
+        // declaration order does not get to decide it quietly.
+        assertThat(LineageFailurePolicy.DEFAULT).isEqualTo(LineageFailurePolicy.STRICT)
+
+        val extraction = harness(
+            stored = null,
+            extracted = proposition("Alice likes coffee", id = "minted"),
+            linkStore = null,
+        ).extraction
+
+        assertThatThrownBy { extraction.remember(currentRun = runRef) }
+            .describedAs("harness bound no policy, so the default had to be the strict one")
+            .isInstanceOf(LineageNotRecordedException::class.java)
+    }
+
+    @Test
+    fun `a run with no link store records nothing and carries on under LENIENT`() {
+        val harness = harness(
+            stored = proposition("Alice likes coffee", id = "canonical"),
+            extracted = proposition("Alice likes coffee", id = "minted"),
+            linkStore = null,
+            policy = LineageFailurePolicy.LENIENT,
         )
 
         harness.extraction.remember(currentRun = runRef)
 
-        assertThat(harness.projected.single().map { it.id }).containsExactly("canonical")
+        assertThat(harness.projected.single().map { it.id })
+            .describedAs("the extraction completed, on the canonical ids like every other call")
+            .containsExactly("canonical")
     }
 
     @Test
-    fun `lineage is recorded even when structural wiring throws`() {
-        // Structural wiring is the *first* fallible thing after the save, and it used to sit inside
-        // the same call that did the saving — so lineage could not be attempted until it returned.
-        // A throwing mergeRelationship therefore left durable claims with no record of the run that
-        // produced them, which is the same hole the projector case closed one step later.
-        //
-        // "Immediately after the propositions are durable" has to mean before *any* fallible
-        // wiring, not before the fallible wiring that happened to be easy to move.
+    fun `a link write that throws fails the extraction under STRICT`() {
+        val links = RecordingLinkStore(
+            runsPresent = emptySet(),
+            failWith = IllegalStateException("link store is down"),
+        )
+        val harness = harness(
+            stored = null,
+            extracted = proposition("Alice likes coffee", id = "minted"),
+            linkStore = links,
+            policy = LineageFailurePolicy.STRICT,
+        )
+
+        assertThatThrownBy { harness.extraction.remember(currentRun = runRef) }
+            .isInstanceOf(LineageNotRecordedException::class.java)
+            .hasMessageContaining("could not attribute")
+            .hasRootCauseMessage("link store is down")
+
+        // The claim was saved before lineage was attempted, and with no ambient transaction it
+        // stands. The caller learns that a stored claim is unattributed, which is the point.
+        assertThat(harness.repository.findById("minted")).isNotNull()
+    }
+
+    @Test
+    fun `a run whose link store rejects the scope fails the extraction under STRICT`() {
+        // A scope rejection is a pipeline bug. It has to be at least as loud as an outage.
+        val links = RecordingLinkStore(runsPresent = emptySet())
+        val harness = harness(
+            stored = null,
+            extracted = proposition("Alice likes coffee", id = "minted"),
+            linkStore = links,
+            policy = LineageFailurePolicy.STRICT,
+        )
+
+        assertThatThrownBy { harness.extraction.remember(currentRun = runRef) }
+            .isInstanceOf(LineageNotRecordedException::class.java)
+            .hasCauseInstanceOf(ExtractionRunNotFoundException::class.java)
+    }
+
+    @Test
+    fun `a structural wiring throw means lineage is never attempted`() {
+        // Lineage runs last, so a pass that throws before it means attribution is never attempted.
+        // The claims are durable and the graph around them is incomplete, which is the honest report
+        // of what happened: the extraction failed partway, and nothing claims a run produced it.
         val links = RecordingLinkStore(runsPresent = setOf(ExtractionRunKey(tenant, runRef)))
         val harness = harness(
             stored = null,
@@ -335,20 +471,16 @@ class RunLineageWiringTest {
             .hasMessage("structural wiring is down")
 
         assertThat(harness.repository.findById("minted")).isNotNull()
-        assertThat(links.linked.single().second)
-            .describedAs("the claim is durable, so its attribution is too")
-            .containsExactly("minted")
+        assertThat(links.linked)
+            .describedAs("the pipeline failed before attribution, so no run claims this work")
+            .isEmpty()
         assertThat(harness.projected)
-            .describedAs("projection never ran, which is what places lineage before the wiring")
+            .describedAs("projection never ran either")
             .isEmpty()
     }
 
     @Test
-    fun `lineage is recorded even when projection throws`() {
-        // Lineage runs directly behind the save, not at the end. Running it last meant a throwing
-        // projector left durable claims with no record of the run that produced them — precisely
-        // when something has gone wrong and the audit is worth most. The claims are already stored
-        // when attribution happens, so nothing downstream can take it away.
+    fun `a throwing projector stops the extraction before lineage`() {
         val links = RecordingLinkStore(runsPresent = setOf(ExtractionRunKey(tenant, runRef)))
         val harness = harness(
             stored = null,
@@ -357,30 +489,24 @@ class RunLineageWiringTest {
             projectionFails = true,
         )
 
-        // The projector's failure still surfaces; it is not being swallowed to make this pass.
         assertThatThrownBy { harness.extraction.remember(currentRun = runRef) }
             .isInstanceOf(IllegalStateException::class.java)
             .hasMessage("projector is down")
 
         assertThat(harness.repository.findById("minted")).isNotNull()
-        assertThat(links.linked.single().second)
-            .describedAs("the claim is durable, so its attribution is too")
-            .containsExactly("minted")
         assertThat(harness.grounded)
-            .describedAs("grounding never ran, which is what makes the ordering observable")
+            .describedAs("grounding never ran")
+            .isEmpty()
+        assertThat(links.linked)
+            .describedAs("and lineage, which comes after grounding, was never reached")
             .isEmpty()
     }
 
     @Test
-    fun `a grounding failure leaves the claims, the links and the projection standing`() {
-        // Grounding is the last pass, so unlike the structural and projection cases this one cannot
-        // show lineage being rescued by ordering — everything upstream has already happened. What it
-        // does pin is that being last is not the same as being safe to be vague about: the three
-        // things written before it are durable and stay durable, and the failure still reaches the
-        // caller rather than being swallowed because there is nothing after it to protect.
-        //
-        // Two reviewers disagreed about whether this test asserts anything. It asserts the terminal
-        // pass's contract, which nothing else covers.
+    fun `a grounding failure stops the extraction before lineage`() {
+        // Grounding is the last of the three wiring passes, and lineage sits behind it. A grounding
+        // failure therefore reaches the caller with the claims stored, the structural edges written
+        // and the projection done, and no attribution.
         val links = RecordingLinkStore(runsPresent = setOf(ExtractionRunKey(tenant, runRef)))
         val harness = harness(
             stored = null,
@@ -394,22 +520,93 @@ class RunLineageWiringTest {
             .hasMessage("grounding is down")
 
         assertThat(harness.repository.findById("minted")).isNotNull()
-        assertThat(links.linked.single().second).containsExactly("minted")
         assertThat(harness.projected.single().map { it.id }).containsExactly("minted")
         assertThat(harness.grounded.single().map { it.id })
-            .describedAs("grounding ran and threw, rather than never being reached")
+            .describedAs("grounding ran and threw, so it was reached")
             .containsExactly("minted")
+        assertThat(links.linked).isEmpty()
+    }
+
+    // ---- the end state a lineage failure leaves behind ----
+
+    @Test
+    fun `a STRICT lineage failure leaves a complete extraction with no run edge`() {
+        // The discriminating test for where lineage sits. Every pass succeeds; only the link write
+        // fails. Because lineage is last, the state the caller is left with is a whole extraction —
+        // claims saved, structural edges wired, projection done, grounding done — missing exactly
+        // one thing, the PRODUCED_BY_RUN edge, which is what the raised failure is about.
+        //
+        // Ordering lineage earlier would make this a partial state instead: the claims would be
+        // saved and projection and grounding would be skipped by the raise, with nothing declaring
+        // that.
+        val links = RecordingLinkStore(
+            runsPresent = emptySet(),
+            failWith = IllegalStateException("link store is down"),
+        )
+        val harness = harness(
+            stored = null,
+            extracted = proposition("Alice likes coffee", id = "minted"),
+            linkStore = links,
+            policy = LineageFailurePolicy.STRICT,
+        )
+
+        // The operation is reported as failed.
+        assertThatThrownBy { harness.extraction.remember(currentRun = runRef) }
+            .isInstanceOf(LineageNotRecordedException::class.java)
+            .hasRootCauseMessage("link store is down")
+
+        // ...and everything the extraction was going to do is done.
+        assertThat(harness.repository.findById("minted"))
+            .describedAs("claims persisted")
+            .isNotNull()
+        assertThat(harness.structurallyWired)
+            .describedAs("structural edges wired")
+            .isTrue()
+        assertThat(harness.projected.single().map { it.id })
+            .describedAs("projection ran over the canonical ids")
+            .containsExactly("minted")
+        assertThat(harness.grounded.single().map { it.id })
+            .describedAs("grounding ran over the canonical ids")
+            .containsExactly("minted")
+        assertThat(links.linked)
+            .describedAs("and the one missing thing is the PRODUCED_BY_RUN edge")
+            .isEmpty()
     }
 
     @Test
-    fun `lineage that cannot be written does not fail the extraction that produced it`() {
-        // Lineage is an audit record written after the claims are durable. Failing it must not undo
-        // them, and must not report an extraction that produced nothing.
+    fun `a LENIENT lineage failure reaches the same end state and reports success`() {
+        val links = RecordingLinkStore(
+            runsPresent = emptySet(),
+            failWith = IllegalStateException("link store is down"),
+        )
+        val harness = harness(
+            stored = null,
+            extracted = proposition("Alice likes coffee", id = "minted"),
+            linkStore = links,
+            policy = LineageFailurePolicy.LENIENT,
+        )
+
+        // Reported as success.
+        harness.extraction.remember(currentRun = runRef)
+
+        // Same end state as the STRICT case above, asserted the same way so the two are comparable.
+        assertThat(harness.repository.findById("minted")).isNotNull()
+        assertThat(harness.structurallyWired).isTrue()
+        assertThat(harness.projected.single().map { it.id }).containsExactly("minted")
+        assertThat(harness.grounded.single().map { it.id }).containsExactly("minted")
+        assertThat(links.linked).isEmpty()
+    }
+
+    @Test
+    fun `lineage that cannot be written does not fail the extraction under LENIENT`() {
+        // The documented downgrade. A host that has decided the claims outweigh their audit trail
+        // says so in configuration and gets the old best-effort behaviour, explicitly.
         val links = RecordingLinkStore(runsPresent = emptySet(), failWith = IllegalStateException("no store"))
         val harness = harness(
             stored = null,
             extracted = proposition("Alice likes coffee", id = "minted"),
             linkStore = links,
+            policy = LineageFailurePolicy.LENIENT,
         )
 
         harness.extraction.remember(currentRun = runRef)
