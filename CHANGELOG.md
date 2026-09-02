@@ -38,10 +38,10 @@ and the consumer PRs that deliver it).
   and `componentN` signatures on `PropertySignature` are the accepted boundary:
   Kotlin callers recompile, and no consumer holds a compiled reference to them.
 
-- `DiceMetadataKeys.METAMODEL_VERSION` metadata key and stamping contract.
-  Propositions can carry the declared schema version hash under this key to
-  record which schema governed their extraction. The key is defined here with
-  its contract; production wiring that stamps propositions at persistence time
-  lands in a follow-up slice after the extraction-run stack merges.
-  **Compatibility: additive.** New metadata key only; no existing API or code
-  touched.
+- Schema attribution mechanism: per-proposition version is answered through the
+  run that produced the proposition (PRODUCED_BY_RUN). The run record carries
+  the declared schema's content hash, resolved by the extraction coordinator from
+  the host's DeclaredSchemaSource. The `DiceMetadataKeys.METAMODEL_VERSION`
+  metadata key is removed; lineage answers per-proposition attribution.
+  **Compatibility: breaking.** The key is no longer available; code holding it
+  must migrate to extraction-run queries.

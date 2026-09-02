@@ -34,25 +34,6 @@ object DiceMetadataKeys {
     const val TRUST_SCORE = "dice.trust.score"
 
     /**
-     * Content hash of the schema active at extraction time.
-     *
-     * The extraction persistence path writes this key onto a canonical proposition's metadata map
-     * at persistence time to record which declared schema version governed its extraction. The value
-     * is the content hash computed by the metamodel versioning module for the schema snapshot in
-     * effect at extraction. The value is opaque: consumers should compare it by equality to detect
-     * schema changes across propositions, and should avoid parsing or inspecting its structure.
-     *
-     * A missing key means the proposition was extracted before schema governance was adopted and
-     * has no declared version. Downstream drift detection and version-aware operations must treat
-     * unversioned propositions explicitly (e.g., assume they came from a known prior schema, or
-     * exclude them from compatibility checks).
-     *
-     * Production wiring that stamps propositions at persistence time lands in a follow-up slice
-     * after the extraction-run stack merges.
-     */
-    const val METAMODEL_VERSION = "dice.metamodel.version"
-
-    /**
      * Human-readable reason a proposition was quarantined due to schema drift.
      *
      * The presence of this key (alongside `STALE` status) means the proposition was

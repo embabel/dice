@@ -119,8 +119,8 @@ data class PropertySignature @JvmOverloads constructor(
  * [DataDictionary] at a point in time.
  *
  * Two [MetamodelVersion] instances with the same [contentHash] represent semantically equivalent
- * schemas. A proposition can record the version it was created under via the
- * `dice.metamodel.version` metadata key.
+ * schemas. The extraction run records the version it ran under by carrying this content hash, and a
+ * proposition's version is answered through its run lineage.
  *
  * The hash is computed here from the structural fields, and a caller cannot supply it. It is the
  * store's natural key and what [hasSameContentAs] compares, so if it were an ordinary constructor

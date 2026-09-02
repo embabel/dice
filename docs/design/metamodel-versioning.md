@@ -46,9 +46,10 @@ for.
 The live schema is mutable, so stamping means taking an immutable snapshot of it.
 `MetamodelVersion.from(dataDictionary)` snapshots sorted entity type names, the full label set per
 type, the full property *signature* set per type, and sorted relationship descriptors, then
-fingerprints them as a SHA-256 `contentHash`. A proposition records the version it was extracted
-under in the `dice.metamodel.version` metadata key, which is how you later tell which stored
-knowledge a schema change touches.
+fingerprints them as a SHA-256 `contentHash`. A proposition's schema attribution is answered through
+the run that produced it (PRODUCED_BY_RUN); the run record carries the declared schema's content hash,
+resolved by the extraction coordinator from the host's DeclaredSchemaSource. A per-proposition
+denormalized copy is a coordinator concern for a later slice if reads demand it.
 
 Four choices in the fingerprint matter.
 
@@ -310,6 +311,11 @@ cause would give one schema as many identities as it had causes.
 `versionHistory`, and `findVersion(schemaName, contentHash)`. There is no delete. Correlating what
 a graph holds today against the stamp it was extracted under only works while the old stamps are
 still there.
+
+`MetamodelVersion` and `MetamodelVersionStore` carry no context dimension — one declared schema
+serves every tenant, the default where a `DataDictionary` is application-wide. Drift reports and
+observation are per `ContextId`; a reader arriving from the drift store should not assume versions
+are scoped.
 
 `saveVersion` is an upsert on `(schemaName, contentHash)`. Re-saving is idempotent, because the key
 carries the content: the hash is derived from exactly the fields a re-save would overwrite, so
