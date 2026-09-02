@@ -41,10 +41,10 @@ import org.slf4j.LoggerFactory
  * ## Nothing here writes to a proposition
  *
  * This class reads, compares, and writes a [DriftReport]. It holds no quarantine policy and no
- * proposition store, so there is no path through it that can move a proposition to `STALE` or move
- * the swept baseline. Acting on a check is a deliberate host step through
- * `DriftSweepCapable`, and the baseline moves when the host says a sweep finished, through
- * [SweptBaselineStore.markSwept].
+ * proposition store, so there is no path through it that can quarantine a proposition or move the
+ * swept baseline. This module cannot even see the proposition model: acting on a check is a
+ * deliberate host step through `DriftSweepCapable` over in dice core, and the baseline moves when
+ * the host says a sweep finished, through [SweptBaselineStore.markSwept].
  *
  * Two writes still happen, and both are records of the check itself: the declared version stamp, and
  * the report.

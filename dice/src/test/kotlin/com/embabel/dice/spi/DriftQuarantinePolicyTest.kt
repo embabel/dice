@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.metamodel
+package com.embabel.dice.spi
 
 import com.embabel.agent.core.Cardinality
 import com.embabel.agent.core.DataDictionary
@@ -21,7 +21,13 @@ import com.embabel.agent.core.DynamicType
 import com.embabel.agent.core.JvmType
 import com.embabel.agent.core.ValuePropertyDefinition
 import com.embabel.dice.common.DiceMetadataKeys
-import com.embabel.dice.metamodel.support.MentionTypeDriftQuarantinePolicy
+import com.embabel.dice.metamodel.DeclaredSchema
+import com.embabel.dice.metamodel.MetamodelChange
+import com.embabel.dice.metamodel.MetamodelDiff
+import com.embabel.dice.metamodel.MetamodelDiffer
+import com.embabel.dice.metamodel.MetamodelVersion
+import com.embabel.dice.metamodel.PropertySignature
+import com.embabel.dice.metamodel.SchemaAliases
 import com.embabel.dice.metamodel.support.StructuralMetamodelDiffer
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
@@ -141,7 +147,7 @@ class DriftQuarantinePolicyTest {
             assertEquals(1, result.conforming.size)
             assertEquals(1, result.quarantined.size)
             val decision = result.quarantined.single()
-            assertEquals(PropositionStatus.STALE, decision.proposition.status)
+            assertEquals(PropositionStatus.QUARANTINED, decision.proposition.status)
             assertTrue(decision.affectedMentionTypes.contains("LegacyType"))
             assertNotNull(decision.proposition.metadata[DiceMetadataKeys.QUARANTINE_REASON])
         }
@@ -185,7 +191,7 @@ class DriftQuarantinePolicyTest {
 
             val result = policy.evaluate(diff, listOf(original))
 
-            assertEquals(PropositionStatus.STALE, result.quarantined.single().proposition.status)
+            assertEquals(PropositionStatus.QUARANTINED, result.quarantined.single().proposition.status)
             assertEquals(PropositionStatus.ACTIVE, original.status, "the caller's copy must be untouched")
             assertNull(original.metadata[DiceMetadataKeys.QUARANTINE_REASON])
         }
@@ -227,7 +233,7 @@ class DriftQuarantinePolicyTest {
 
             assertEquals(1, result.quarantined.size)
             val decision = result.quarantined.single()
-            assertEquals(PropositionStatus.STALE, decision.proposition.status)
+            assertEquals(PropositionStatus.QUARANTINED, decision.proposition.status)
             assertTrue(decision.affectedMentionTypes.contains("Person"))
             assertTrue(reasonOf(decision).contains("Agent"), "the reason should name the lost label")
         }
@@ -377,7 +383,7 @@ class DriftQuarantinePolicyTest {
                 decision.proposition.metadata[DiceMetadataKeys.QUARANTINE_REASON],
             )
             assertEquals(stale.metadata[DiceMetadataKeys.QUARANTINE_REASON], decision.originalReason)
-            assertEquals(PropositionStatus.STALE, decision.proposition.status)
+            assertEquals(PropositionStatus.QUARANTINED, decision.proposition.status)
             assertTrue(second.allPropositions.contains(decision.proposition))
         }
 
@@ -402,7 +408,7 @@ class DriftQuarantinePolicyTest {
             assertEquals(1, result.total)
             val decision = result.alreadyQuarantined.single()
             assertEquals(stale.id, decision.proposition.id)
-            assertEquals(PropositionStatus.STALE, decision.proposition.status)
+            assertEquals(PropositionStatus.QUARANTINED, decision.proposition.status)
             assertEquals(stale.metadata[DiceMetadataKeys.QUARANTINE_REASON], decision.originalReason)
         }
 
@@ -445,8 +451,8 @@ class DriftQuarantinePolicyTest {
 
         @Test
         fun `a proposition made stale by something other than quarantine is still evaluated`() {
-            // STALE alone isn't enough to skip one, because decay also makes propositions stale and
-            // those carry no quarantine reason. Skipping on status alone would let drifted data
+            // Quarantine has a status of its own, so STALE means ordinary decay reached this one
+            // and it is still a live candidate here. Treating STALE as held would let drifted data
             // through.
             val diff = differ.diff(schemaWith("Person", "RemovedType"), schemaWith("Person"))
             val staleByDecay = proposition("aged out", "RemovedType", status = PropositionStatus.STALE)
@@ -1070,7 +1076,7 @@ class DriftQuarantinePolicyTest {
      * DICE promises pinned propositions cross-cutting immunity from reclamation (see
      * `PropositionStore.pin`): the decay collector, the sweep policy, and contradiction resolution
      * all leave them alone. Drift quarantine is another reclamation path and must honor the same
-     * promise: a pinned proposition stays untouched, never flipped to STALE.
+     * promise: a pinned proposition stays untouched, and is never flipped to QUARANTINED.
      */
     @Nested
     inner class PinnedImmunity {
@@ -1082,7 +1088,7 @@ class DriftQuarantinePolicyTest {
 
             val result = policy.evaluate(diff, listOf(pinned))
 
-            assertEquals(0, result.quarantined.size, "a pinned match must never be flipped to STALE")
+            assertEquals(0, result.quarantined.size, "a pinned match must never be flipped to QUARANTINED")
             assertEquals(1, result.protected.size)
             val decision = result.protected.single()
             assertEquals(PropositionStatus.ACTIVE, decision.proposition.status, "pin means untouched")
@@ -1120,14 +1126,14 @@ class DriftQuarantinePolicyTest {
 
             assertEquals(1, result.protected.size)
             assertEquals(1, result.quarantined.size)
-            assertEquals(PropositionStatus.STALE, result.quarantined.single().proposition.status)
+            assertEquals(PropositionStatus.QUARANTINED, result.quarantined.single().proposition.status)
         }
 
         @Test
         fun `a pinned proposition an earlier sweep already quarantined stays already-quarantined`() {
-            // Pin immunity only changes what a *fresh* match does. A proposition that is already
-            // STALE with a quarantine reason — however it got pinned since — is idempotency's
-            // concern, not this one's, and must not silently become Protected.
+            // Pin immunity only changes what a *fresh* match does. A proposition already
+            // QUARANTINED — however it got pinned since — is idempotency's concern, and must never
+            // silently become Protected.
             val diff = differ.diff(schemaWith("Person", "RemovedType"), schemaWith("Person"))
             val stale = policy
                 .evaluate(diff, listOf(proposition("entity with removed type", "RemovedType")))

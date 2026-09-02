@@ -72,9 +72,9 @@ sequenceDiagram
     loop one bounded page at a time, until a page comes back short
         Sweep->>Props: quarantineCandidates(contextId, mentionTypes, limit, afterId)
         Sweep->>Policy: evaluate(diff, page)
-        Policy-->>Sweep: STALE copies + reasons, pinned matches reported protected
+        Policy-->>Sweep: QUARANTINED copies + reasons, pinned matches reported protected
         Sweep->>Props: applyQuarantine(each flagged copy)
-        Sweep->>Listener: onEvent(PropositionStatusChanged), skipped if status didn't move
+        Sweep->>Listener: onEvent(PropositionStatusChanged)
     end
     Sweep-->>Host: QuarantineResult
     Host->>Versions: markSwept(stamp) — once every context is done
@@ -202,6 +202,17 @@ The declared comparison is part of the record, so a `DriftReportStore` backend p
 the drifted type sets. A report read back out of the store a year later resolves to the same
 `quarantineDiff` the live result did.
 
+### Where this lives
+
+The quarantine policy and the sweep SPI — `DriftQuarantinePolicy`, `DriftSweepCapable`,
+`MentionTypeDriftQuarantinePolicy`, `PropositionStoreDriftSweep` — sit in `dice` core, in
+`com.embabel.dice.spi`, beside the other proposition lifecycle policies. They move a proposition
+between lifecycle statuses, which is what that package is for, and putting them there is what keeps
+the module dependency pointing one way: `dice` reads a `MetamodelDiff`, and `dice-metamodel` stays a
+leaf over the agent `DataDictionary` with no view of the proposition model at all. A drift check
+therefore has no type through which it could reach a proposition, which is the structural half of
+"a check changes nothing".
+
 ### The sweep SPI
 
 `DriftSweepCapable` is three store operations plus one `sweep` that composes them:
@@ -211,8 +222,8 @@ the drifted type sets. A report read back out of the store a year later resolves
   proposition id so `afterId` is a usable cursor. All three are contract requirements, spelled out in
   the KDoc. Reading every proposition and filtering afterwards materialises every tenant in one heap,
   and costs the size of the store on a change that touches one type.
-- `applyQuarantine(decision)` — persist one `STALE` copy the policy built, and announce the
-  transition when the status genuinely moved.
+- `applyQuarantine(decision)` — persist one `QUARANTINED` copy the policy built, and announce the
+  transition.
 - `releaseFromQuarantine(propositionId)` — see [Release](#release) below.
 
 The mention types come from `DriftQuarantinePolicy.candidateMentionTypes(diff)`, so the store needs no
@@ -227,20 +238,50 @@ is honest about the cost: it reads the one context and applies the mention-type 
 and the page bound in the JVM. The context bound is real there — the read never leaves the context —
 and the rest is the part a backend should push down.
 
+### `QUARANTINED` is a status, so the hold has an owner
+
+A quarantined proposition carries `PropositionStatus.QUARANTINED`. It reads like `STALE` to anything
+filtering on `ACTIVE`, so it drops out of retrieval, projection and consolidation the same way. The
+difference is who owns it.
+
+`STALE` is decay's status: decay puts propositions there and `DecayStatusPolicy` takes them back out
+again once utility climbs past the recovery ceiling. A quarantine expressed as `STALE` plus a metadata
+note would sit directly in that path — and confidence says nothing about whether the schema change has
+been dealt with, so a confident proposition held for drift would be revived by the next decay sweep,
+held again by the next drift sweep, and the two would take turns indefinitely. Recovery from
+quarantine would be a side effect of that overlap, with no operation behind it.
+
+With a status of its own the hold is exact:
+
+- Reads that filter on `ACTIVE` exclude it structurally, with nothing new to remember.
+- `DecayStatusPolicy` never sees a `STALE` to revive, and returns `null` for `QUARANTINED` outright,
+  so a host that widens `DecaySweepConfig.targetStatuses` to every status still can't lift a hold.
+- Contradiction resolution and the abstraction pass read `ACTIVE` propositions, so neither can move one.
+- `pruneStale` deletes `STALE` propositions and leaves quarantined ones alone.
+- The idempotency check is the status, so editing the reason metadata by hand doesn't release anything.
+- Release is an explicit transition with a name.
+
+`ProjectionLineageStaleCascade` treats `QUARANTINED` as terminal alongside `SUPERSEDED`,
+`CONTRADICTED` and `STALE`: the proposition has left ordinary use, so anything projected from it is no
+longer backed by a live belief.
+
 ### Release
 
 Quarantine is reversible, and `releaseFromQuarantine` is what reverses it: it restores the status the
 proposition carried before quarantine and clears both quarantine keys in one write.
 
-Clearing `dice.metamodel.quarantine.reason` by hand does half the job and leaves the proposition
-`STALE`, so it stays out of ordinary retrieval with nothing on it saying why, and the next sweep
-treats it as a fresh candidate and quarantines it again. The status to restore comes from
-`dice.metamodel.quarantine.previousStatus`, which the policy writes onto the `STALE` copy at
-quarantine time — `STALE` is a destination several roads lead to, ordinary decay included, so a
-release with nothing recorded could only guess. A proposition carrying no readable value there goes
-back to `ACTIVE`, which is what "let this back into use" means once the record is gone.
+Release is the **only** way out. Which propositions are held is read off `PropositionStatus.QUARANTINED`,
+so clearing `dice.metamodel.quarantine.reason` by hand changes nothing about the hold: the proposition
+stays out of ordinary retrieval with nothing on it saying why. Every lifecycle policy in DICE leaves
+`QUARANTINED` alone, so no decay sweep and no consolidation pass can lift it either.
 
-Releasing something that was never quarantined answers `null` and changes nothing, so releasing twice
+The status to restore comes from `dice.metamodel.quarantine.previousStatus`, which the policy writes
+onto the quarantined copy at the moment it flags it — a proposition can be quarantined from any
+status, ordinary decay's `STALE` included, so a release with nothing recorded could only guess. A
+proposition carrying no usable value there goes back to `ACTIVE`, which is what "let this back into
+use" means once the record is gone.
+
+Releasing a proposition that isn't quarantined answers `null` and changes nothing, so releasing twice
 is safe.
 
 #### The baseline only moves once a sweep finishes
@@ -307,6 +348,13 @@ the old ones, and guessing wrong in the permissive direction leaves unreadable d
 A rename is a fact the declaration states, so on its own it strands nothing.
 `EntityTypeRenamed` and `PropertyRenamed` are non-lossy per se, and `EntityTypeAliasesChanged` never
 quarantines at all.
+
+**A declared rename or alias changes how the diff and the drift check read old data. Nothing rewrites
+a stored mention type.** A proposition extracted under `Person` still says `Person` after the schema
+renames the type to `Human`, and it says `Person` forever; what the declaration buys is that both
+halves of a drift check know the two names belong together, so a later loss on `Human` reaches that
+proposition and an observed `Person` in the graph is read as declared. There is no migration here and
+no backfill to schedule.
 
 That holds for a type rename **by construction**, because of what the differ does upstream. A type's
 own name is one of its labels, so `Person` becoming `Human` mechanically loses the label `Person`;
@@ -409,14 +457,14 @@ Swap in a different `DriftQuarantinePolicy` if your storage makes more promotion
 Three properties make this safe to run as routine maintenance:
 
 - **Non-destructive.** Nothing is deleted and nothing is mutated. An affected proposition comes back
-  as an immutable copy moved to `STALE`, annotated with a human-readable reason under
+  as an immutable copy moved to `QUARANTINED`, annotated with a human-readable reason under
   `dice.metamodel.quarantine.reason`. Leaving drifted propositions in normal retrieval would corrupt
   query results; deleting them would destroy something a person might want to rescue.
 - **Idempotent.** A proposition an earlier sweep quarantined comes back in its own
   `alreadyQuarantined` bucket, untouched and with its original reason intact, so it is neither
-  re-flagged nor counted in `conforming`. To force one back through evaluation, clear its reason
-  metadata first. Status alone is not enough to skip a proposition: ordinary decay also makes
-  propositions stale, and those carry no reason and are still candidates. The classification doesn't
+  re-flagged nor counted in `conforming`. To force one back through evaluation, release it. The
+  check is the status and nothing else: `QUARANTINED` means held, while a proposition ordinary decay
+  left `STALE` is a live candidate here like any other. The classification doesn't
   depend on the diff in front of it: being already quarantined is a fact about the proposition, so
   an empty or purely additive diff still sorts one into `alreadyQuarantined`. Skipping the check on
   an empty diff would report quarantined records as conforming on every run that finds no drift.
@@ -428,7 +476,7 @@ Three properties make this safe to run as routine maintenance:
   quarantined before it was pinned is unaffected: idempotency is checked first, so it stays
   `alreadyQuarantined`.
 
-The policy decides and doesn't write. The `STALE` copies it returns come back to the caller, and the
+The policy decides and doesn't write. The `QUARANTINED` copies it returns come back to the caller, and the
 sweep persists them through `applyQuarantine`. A drift check never calls `evaluate` at all, so there
 is no policy decision for it to persist.
 
@@ -440,16 +488,15 @@ backend out of drift work over capabilities it never uses.
 ### Announcing a quarantine
 
 Each proposition a sweep actually quarantines is announced to a `DiceEventListener` as a
-`PropositionStatusChanged` (`previousStatus` the status it carried in, `newStatus` `STALE`, `reason`
-the same text the metadata carries), right after it is saved. A release announces the transition back.
-This is what lets something like `ProjectionLineageStaleCascade` hear that a proposition went stale
-and mark its projection records stale in turn.
+`PropositionStatusChanged` (`previousStatus` the status it carried in, `newStatus` `QUARANTINED`,
+`reason` the same text the metadata carries), right after it is saved. A release announces the
+transition back. This is what lets something like `ProjectionLineageStaleCascade` hear that a
+proposition left ordinary use and mark its projection records stale in turn.
 
-A proposition can arrive at the sweep already `STALE` from ordinary decay, with no quarantine reason
-yet, and the policy correctly treats that as a fresh candidate — the idempotency rule only skips one
-that's *already quarantined*, not one that's merely stale for some other reason. Quarantining it
-writes the reason but doesn't move its status, so no event fires for it: the event promises a
-transition happened, and here one didn't.
+A proposition can arrive at the sweep already `STALE` from ordinary decay, and the policy treats that
+as a fresh candidate — the idempotency rule skips one that is *already quarantined*, which is a
+status of its own. Quarantining that proposition moves it from `STALE` to `QUARANTINED`, the event
+says exactly that, and a later release puts it back to `STALE`.
 
 The sweep emits this itself. The injected `PropositionStore` is never asked to notice the
 transition and emit it on its own — the way `EventEmittingPropositionRepository` does when an
@@ -470,8 +517,8 @@ record each violation with what was expected and where, don't block the write.
 column whose value doesn't fit the declared schema, the value is captured into a `_rescued_data`
 column rather than dropped, and the row still lands. The stance is that data an extraction already
 produced is evidence: a schema that no longer describes it sets that data aside for a person to look
-at rather than deleting it. Quarantine is the same move on a proposition: `STALE`, annotated
-with a reason, still in the store, still readable, and reversible through `releaseFromQuarantine`.
+at, and deletes nothing. Quarantine is the same move on a proposition — `QUARANTINED`, annotated with
+a reason, still in the store, still readable, and reversible through `releaseFromQuarantine`.
 
 **Enforcement and evolution are separate settings**, which is how Delta and the Snowflake-style
 lakehouses organize this. Enforcement asks whether an incoming write matches; evolution asks whether

@@ -13,18 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.metamodel.support
+package com.embabel.dice.spi
 
 import com.embabel.agent.core.Cardinality
 import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.metamodel.DeclaredSchema
-import com.embabel.dice.metamodel.DriftQuarantineKeys
-import com.embabel.dice.metamodel.DriftQuarantinePolicy
 import com.embabel.dice.metamodel.MetamodelChange
 import com.embabel.dice.metamodel.MetamodelDiff
 import com.embabel.dice.metamodel.PropertySignature
-import com.embabel.dice.metamodel.QuarantineDecision
-import com.embabel.dice.metamodel.QuarantineResult
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import org.slf4j.LoggerFactory
@@ -105,14 +101,14 @@ import org.slf4j.LoggerFactory
  * the permissive direction leaves unreadable data looking healthy. A changed reference target is
  * always lossy: it names a different entity type, which is not a promotion of anything.
  *
- * Quarantining moves the proposition to [PropositionStatus.STALE] and annotates it under
- * [DiceMetadataKeys.QUARANTINE_REASON]. Both produce an immutable copy; the original is never
- * mutated, and persisting the copies is the caller's job.
+ * Quarantining moves the proposition to [PropositionStatus.QUARANTINED], annotates it under
+ * [DiceMetadataKeys.QUARANTINE_REASON], and records the status it came from. All of that produces an
+ * immutable copy; the original is never mutated, and persisting the copies is the caller's job.
  *
  * A proposition an earlier sweep already quarantined comes back as
  * [QuarantineDecision.AlreadyQuarantined], untouched, with its original reason preserved and outside
  * the conforming bucket. That holds for any diff, an empty one included, because being already
- * quarantined is a fact about the proposition.
+ * quarantined is a fact about the proposition — its status says so.
  *
  * ## Pinned propositions
  *
@@ -248,11 +244,11 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
             }
 
             // Where the proposition came from, written onto the copy so a release can put it back
-            // exactly there. `STALE` is a destination several roads lead to -- ordinary decay
-            // reaches it too -- so a release with nothing recorded here could only guess.
+            // exactly there. A quarantined proposition can have arrived from any status, so a
+            // release with nothing recorded here could only guess.
             val previousStatus = proposition.status
             val flagged = proposition
-                .withStatus(PropositionStatus.STALE)
+                .withStatus(PropositionStatus.QUARANTINED)
                 .withMetadataValue(DiceMetadataKeys.QUARANTINE_REASON, reason)
                 .withMetadataValue(DriftQuarantineKeys.PREVIOUS_STATUS, previousStatus.name)
 
@@ -356,13 +352,17 @@ class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
     )
 
     /**
-     * Whether a proposition is one an earlier sweep already handled: `STALE` *and* carrying a
-     * quarantine reason. Both halves matter, because a proposition made stale by ordinary decay
-     * carries no reason and is still a live candidate here.
+     * Whether a proposition is one an earlier sweep already handled: its status is
+     * [PropositionStatus.QUARANTINED].
+     *
+     * The status is the whole answer. Quarantine has a status of its own, so nothing else in DICE
+     * can put a proposition there and nothing else can take it out — a proposition made stale by
+     * ordinary decay is `STALE` and still a live candidate here, and one whose quarantine reason
+     * was edited away by hand is still held, because the hold is the status. Release is what lets
+     * one back through evaluation.
      */
     private fun isAlreadyQuarantined(proposition: Proposition): Boolean =
-        proposition.status == PropositionStatus.STALE &&
-            proposition.metadata.containsKey(DiceMetadataKeys.QUARANTINE_REASON)
+        proposition.status == PropositionStatus.QUARANTINED
 
     /**
      * Every name an entity type has gone by, mapped to what that type is called now, under every

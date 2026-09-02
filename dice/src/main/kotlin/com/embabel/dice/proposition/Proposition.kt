@@ -50,7 +50,23 @@ enum class PropositionStatus {
      * re-reinforcement can lift a STALE proposition back to [ACTIVE].
      */
     @ApiStatus.Experimental
-    STALE
+    STALE,
+
+    /**
+     * Held out of use by schema governance until a person looks.
+     *
+     * A drift sweep puts a proposition here when a schema change stranded the entity types it
+     * mentions. It reads like [STALE] to anything filtering on [ACTIVE], and the difference is who
+     * owns it: decay reaches [STALE] on its own and can lift a proposition back out on its own,
+     * while nothing automatic touches a quarantined proposition. Lifecycle policies leave it alone
+     * — no decay transition, no revival, no contradiction-resolution move — and the one way out is
+     * an explicit release, which restores the status the proposition carried before quarantine.
+     *
+     * The reason it was held is on the proposition, under
+     * `DiceMetadataKeys.QUARANTINE_REASON`.
+     */
+    @ApiStatus.Experimental
+    QUARANTINED
 }
 
 /**

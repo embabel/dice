@@ -14,17 +14,6 @@
 
     <dependencies>
         <!--
-            Dice core: Proposition, PropositionStatus, PropositionRepository, DiceMetadataKeys.
-            Needed since quarantine landed: marking a stranded proposition STALE touches the
-            proposition model, so this module is no longer a leaf. Anyone depending on
-            dice-metamodel alone now pulls dice in transitively.
-        -->
-        <dependency>
-            <groupId>com.embabel.dice</groupId>
-            <artifactId>dice</artifactId>
-        </dependency>
-
-        <!--
             Embabel agent core types (DataDictionary, DomainType, ContextId); provided, supplied by
             the consuming app.
         -->

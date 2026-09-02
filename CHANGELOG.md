@@ -211,14 +211,26 @@ and the consumer PRs that deliver it).
   it reads the one context and does the filter, ordering and page bound in the JVM, which is the part
   a durable backend pushes down. There is no Drivine implementation, and nothing in DICE calls a
   sweep on a timer or from auto-configuration.
-  **Release is a real operation.** `releaseFromQuarantine` restores the status a proposition carried
-  before quarantine and clears its quarantine metadata in one write. Clearing
-  `dice.metamodel.quarantine.reason` by hand left the proposition `STALE`, out of ordinary retrieval
-  with nothing saying why, and a fresh candidate for the next sweep. The status to restore comes from
-  the new `DriftQuarantineKeys.PREVIOUS_STATUS` (`dice.metamodel.quarantine.previousStatus`), which
-  the policy writes onto the `STALE` copy at quarantine time; a proposition with no readable value
-  there is released to `ACTIVE`. Releasing something that was never quarantined answers `null`, so
-  releasing twice is safe.
+  **Quarantine is its own lifecycle status, so the hold has an owner.** `PropositionStatus` gains
+  `QUARANTINED`, and a drift sweep moves a stranded proposition there. A quarantine expressed as
+  `STALE` plus a metadata note sat directly in the decay path: `DecayStatusPolicy` moves any `STALE`
+  proposition back to `ACTIVE` once utility clears the recovery threshold, with no reason check, and
+  `DecayManager` persists that. A confident proposition held for schema drift was therefore revived by
+  the next decay sweep and held again by the next drift sweep, indefinitely. Recovery from quarantine
+  was a side effect of that overlap, with no operation behind it. `QUARANTINED` closes it structurally: reads
+  that filter on `ACTIVE` exclude it, `DecayStatusPolicy` never sees a `STALE` to revive *and* returns
+  `null` for `QUARANTINED` outright (so a host that widens `DecaySweepConfig.targetStatuses` to every
+  status still can't lift a hold), `pruneStale` leaves it alone, contradiction resolution and the
+  abstraction pass read `ACTIVE` and never reach it, and the policy's already-quarantined check is the
+  status alone — editing the reason metadata by hand releases nothing.
+  `ProjectionLineageStaleCascade` treats `QUARANTINED` as terminal alongside `SUPERSEDED`,
+  `CONTRADICTED` and `STALE`, so a quarantine still marks derived projection records stale.
+  **Release is a real operation, and now the only way out.** `releaseFromQuarantine` restores the
+  status a proposition carried before quarantine, clears its quarantine metadata, and announces the
+  transition, in one write. The status to restore comes from the new
+  `DriftQuarantineKeys.PREVIOUS_STATUS` (`dice.metamodel.quarantine.previousStatus`), which the policy
+  writes onto the quarantined copy; a proposition with no usable value there is released to `ACTIVE`.
+  Releasing a proposition that isn't quarantined answers `null`, so releasing twice is safe.
   **The swept baseline moves only for a completed sweep.** `sweptVersion` and `markSwept` live on the
   new `SweptBaselineStore : MetamodelVersionStore`, with no default bodies, and the host that ran the
   sweep is what calls `markSwept` once every context is reconciled. Splitting them off is the fix for
@@ -232,7 +244,7 @@ and the consumer PRs that deliver it).
   re-save contract, even though `A` is what's declared again).
   Quarantine itself is non-destructive, idempotent, and honors pinning. `DriftQuarantinePolicy`
   returns `QuarantineDecision`s (`Conforming` / `Quarantined` / `AlreadyQuarantined` / `Protected`);
-  only `Quarantined` is an immutable `STALE` copy carrying a reason and the status it came from, for
+  only `Quarantined` is an immutable `QUARANTINED` copy carrying a reason and the status it came from, for
   the caller to persist — the other three carry the proposition back untouched. A pinned proposition
   a lossy change would otherwise catch comes back `Protected`, untouched, per DICE's cross-cutting pin
   promise, with the same reason text so an operator can still see what it would have caught. The
@@ -246,29 +258,42 @@ and the consumer PRs that deliver it).
   is recognised as the declared type it is. This matches what `DeclaredObservedDiffer` already did on
   the declared side, so the two halves of a check agree about which type is which; a mention matching
   under the other spelling of its own type is ordinary matching and is never reported as a former
-  name. Each proposition a sweep actually moves to `STALE` is announced to its `DiceEventListener` as
-  a `PropositionStatusChanged`, emitted by the sweep itself so the signal doesn't depend on whether
-  the injected `PropositionStore` happens to be wrapped in something like
+  name. Each proposition a sweep quarantines is announced to its `DiceEventListener` as a
+  `PropositionStatusChanged`, emitted by the sweep itself so the signal doesn't depend on whether the
+  injected `PropositionStore` happens to be wrapped in something like
   `EventEmittingPropositionRepository` — the default auto-configured store isn't. A proposition
-  already `STALE` from ordinary decay that a sweep quarantines (writing the reason, leaving the
-  status where it was) emits no event, since nothing about its status actually changed. A release
-  announces the transition back. This is what lets a listener such as `ProjectionLineageStaleCascade`
-  mark a quarantined proposition's projection records stale in turn.
-  **Compatibility: additive, with two source-breaking exceptions.** New types in an existing module;
-  no existing API touched except the two below. `DefaultDriftCheckRunner`'s constructor gains a
-  *required* `metamodelDiffer: MetamodelDiffer` parameter (the declared-vs-previous comparison) —
-  every existing caller must start supplying one. `QuarantineDecision` is a sealed interface gaining
-  a fourth member, `Protected`, so an external exhaustive `when` over it needs a new branch to keep
-  compiling — the same shape of change already accepted for `MetamodelChange` in this same Unreleased
-  block. Everything else here stays additive: `MetamodelVersionStore` is unchanged, so every existing
-  implementation — `DrivineMetamodelVersionStore` included — keeps compiling untouched, and a backend
-  opts into baseline tracking by implementing `SweptBaselineStore` when it is ready;
-  `QuarantineResult` gains a `protected: List<QuarantineDecision.Protected>` parameter defaulted to
-  empty, so existing callers of its constructor are unaffected. One dependency-graph change:
-  `dice-metamodel` now depends on `dice` (core), because quarantine works on the proposition model, so
-  anything depending on `dice-metamodel` alone now pulls `dice` in transitively. `dice-metamodel` is
-  no longer a leaf module, and `embabel-agent-rag-core` joins `embabel-agent-api` as a `provided`
-  dependency it expects the host to supply.
+  already `STALE` from ordinary decay is a fresh candidate, moves `STALE` → `QUARANTINED`, and a
+  later release puts it back to `STALE`. A release announces the transition back. This is what lets a
+  listener such as `ProjectionLineageStaleCascade` mark a quarantined proposition's projection records
+  stale in turn.
+  **The quarantine machinery lives in `dice` core, in `com.embabel.dice.spi`.**
+  `DriftQuarantinePolicy`, `DriftQuarantineKeys`, `QuarantineDecision`, `QuarantineResult`,
+  `DriftSweepCapable`, `MentionTypeDriftQuarantinePolicy` and `PropositionStoreDriftSweep` sit beside
+  `StatusTransitionPolicy` and `SweepPolicy`, because moving a proposition between lifecycle statuses
+  is what that package is for. The module dependency now points one way: `dice` depends on
+  `dice-metamodel` to read a `MetamodelDiff`, and `dice-metamodel` is a leaf over the agent
+  `DataDictionary` again with no view of the proposition model at all. A drift check therefore has no
+  type through which it could reach a proposition, which is the structural half of "a check changes
+  nothing". `embabel-agent-rag-core` remains a `provided` dependency of `dice-metamodel`.
+  **Compatibility: additive on the released surface, with three source-breaking exceptions.**
+  `DefaultDriftCheckRunner`'s constructor gains a *required* `metamodelDiffer: MetamodelDiffer`
+  parameter (the declared-vs-previous comparison) — every existing caller must start supplying one.
+  `QuarantineDecision` is a sealed interface gaining a fourth member, `Protected`, so an external
+  exhaustive `when` over it needs a new branch to keep compiling — the same shape of change already
+  accepted for `MetamodelChange` in this same Unreleased block. `PropositionStatus` gains
+  `QUARANTINED`, so an exhaustive `when` over the enum needs a new branch too; inside DICE there was
+  exactly one (`DefaultDreamLoopOrchestrator.statusStrength`, where `QUARANTINED` now ranks above
+  every automatic retirement, since letting one overwrite a governance hold would drop the reason and
+  the recorded prior status with it), and `me`'s status matching is the known external consumer, which
+  recompiles. Persistence is by enum *name* throughout (`PropositionGraphMapper`,
+  `CollectorTraceRowMappers`, `LineageRowMappers`), so no stored value changes meaning. The
+  quarantine types keep their names and move package, from `com.embabel.dice.metamodel` and
+  `com.embabel.dice.metamodel.support` to `com.embabel.dice.spi`; they were added in this same
+  Unreleased block and have never shipped. Everything else stays additive: `MetamodelVersionStore` is
+  unchanged, so every existing implementation — `DrivineMetamodelVersionStore` included — keeps
+  compiling untouched, and a backend opts into baseline tracking by implementing `SweptBaselineStore`
+  when it is ready; `QuarantineResult` gains a `protected: List<QuarantineDecision.Protected>`
+  parameter defaulted to empty, so existing callers of its constructor are unaffected.
 
 - Rename-aware quarantine and a type-widening allow-list in
   `MentionTypeDriftQuarantinePolicy`, **EXPERIMENTAL** (behavior may change before 1.0).
@@ -310,10 +335,10 @@ and the consumer PRs that deliver it).
   aliases. For a schema declaring none, matching is exactly what it was and the only move is
   permissive: a property whose value type went along one of the four allow-listed pairs no longer
   quarantines. Propositions an earlier sweep quarantined for one of those widenings stay
-  quarantined — the already-quarantined check runs before any matching and nothing clears the
-  reason key on its own, so no stored proposition changes state without an operator. To release
-  them, clear `dice.metamodel.quarantine.reason` on those propositions and re-run the check; under
-  the new rule they come back conforming. For a schema that declares aliases, matching now reaches
+  quarantined — the already-quarantined check runs before any matching and nothing lifts a hold on
+  its own, so no stored proposition changes state without an operator. To release them, call
+  `releaseFromQuarantine` on those propositions and re-run the check; under the new rule they come
+  back conforming. For a schema that declares aliases, matching now reaches
   data under a type's former names, so a proposition mentioning an old type name can newly
   quarantine when the renamed type lost something — which is the point: the old name is what the
   graph stores. Aliases arrive in this same Unreleased block, so no consumer can be in that state

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.metamodel
+package com.embabel.dice.spi
 
 import com.embabel.agent.core.Cardinality
 import com.embabel.agent.core.ContextId
@@ -24,9 +24,19 @@ import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.common.PropositionStatusChanged
 import com.embabel.dice.common.SafeDiceEventListener
+import com.embabel.dice.metamodel.DeclaredSchema
+import com.embabel.dice.metamodel.DriftCheckResult
+import com.embabel.dice.metamodel.DriftReport
+import com.embabel.dice.metamodel.DriftReportStore
+import com.embabel.dice.metamodel.GovernedTypeSelector
+import com.embabel.dice.metamodel.InMemoryMetamodelVersionStore
+import com.embabel.dice.metamodel.MetamodelDiff
+import com.embabel.dice.metamodel.MetamodelVersion
+import com.embabel.dice.metamodel.MetamodelVersionStore
+import com.embabel.dice.metamodel.ObservedSchema
+import com.embabel.dice.metamodel.ObservedSchemaSource
+import com.embabel.dice.metamodel.PropertySignature
 import com.embabel.dice.metamodel.support.DefaultDriftCheckRunner
-import com.embabel.dice.metamodel.support.MentionTypeDriftQuarantinePolicy
-import com.embabel.dice.metamodel.support.PropositionStoreDriftSweep
 import com.embabel.dice.metamodel.support.StructuralMetamodelDiffer
 import com.embabel.dice.projection.lineage.InMemoryProjectionRecordStore
 import com.embabel.dice.projection.lineage.ProjectionLifecycle
@@ -138,7 +148,7 @@ class DriftSweepTest {
             val result = sweep.sweep(personLostAge(), policy, contextId)
 
             assertEquals(1, result.quarantined.size, "only context A holds a candidate")
-            assertEquals(PropositionStatus.STALE, propositions.findById(inScope.id)!!.status)
+            assertEquals(PropositionStatus.QUARANTINED, propositions.findById(inScope.id)!!.status)
 
             val untouched = propositions.findById(outOfScope.id)!!
             assertEquals(
@@ -173,8 +183,8 @@ class DriftSweepTest {
             sweep.sweep(diff, policy, contextId)
             sweep.sweep(diff, policy, otherContextId)
 
-            assertEquals(PropositionStatus.STALE, propositions.findById(inA.id)!!.status)
-            assertEquals(PropositionStatus.STALE, propositions.findById(inB.id)!!.status)
+            assertEquals(PropositionStatus.QUARANTINED, propositions.findById(inA.id)!!.status)
+            assertEquals(PropositionStatus.QUARANTINED, propositions.findById(inB.id)!!.status)
         }
     }
 
@@ -204,7 +214,7 @@ class DriftSweepTest {
 
             assertEquals(5, result.quarantined.size, "paging must reach the whole context: $result")
             assertTrue(
-                propositions.findAll().all { it.status == PropositionStatus.STALE },
+                propositions.findAll().all { it.status == PropositionStatus.QUARANTINED },
                 "every candidate was quarantined",
             )
         }
@@ -272,7 +282,7 @@ class DriftSweepTest {
 
             assertEquals(1, result.quarantined.size)
             val quarantined = propositions.findById(affected.id)!!
-            assertEquals(PropositionStatus.STALE, quarantined.status)
+            assertEquals(PropositionStatus.QUARANTINED, quarantined.status)
             assertNotNull(quarantined.metadata[DiceMetadataKeys.QUARANTINE_REASON])
             assertEquals(PropositionStatus.ACTIVE, propositions.findById(safe.id)!!.status)
         }
@@ -306,8 +316,9 @@ class DriftSweepTest {
 
         @Test
         fun `a quarantine's status change reaches projection lineage through the listener`() {
-            // ProjectionLineageStaleCascade is how a proposition going STALE marks its projection
-            // records stale in turn; it reacts to PropositionStatusChanged.
+            // ProjectionLineageStaleCascade is how a proposition leaving ordinary use marks its
+            // projection records stale in turn; it reacts to PropositionStatusChanged, and
+            // QUARANTINED counts as leaving ordinary use.
             val affected = propositions.save(proposition("Alice is 40", "Person"))
             val recordStore = InMemoryProjectionRecordStore()
             recordStore.record(
@@ -323,7 +334,7 @@ class DriftSweepTest {
 
             sweep.sweep(personLostAge(), policy, contextId)
 
-            assertEquals(PropositionStatus.STALE, propositions.findById(affected.id)!!.status)
+            assertEquals(PropositionStatus.QUARANTINED, propositions.findById(affected.id)!!.status)
             assertEquals(
                 ProjectionLifecycle.STALE,
                 recordStore.findByProposition(affected.id).single().lifecycle,
@@ -341,7 +352,7 @@ class DriftSweepTest {
 
             val event = recording.events.filterIsInstance<PropositionStatusChanged>().single()
             assertEquals(PropositionStatus.ACTIVE, event.previousStatus)
-            assertEquals(PropositionStatus.STALE, event.newStatus)
+            assertEquals(PropositionStatus.QUARANTINED, event.newStatus)
             assertTrue(event.reason!!.contains("age"), event.reason)
         }
 
@@ -357,10 +368,11 @@ class DriftSweepTest {
         }
 
         @Test
-        fun `a proposition already STALE from decay is quarantined without announcing a transition`() {
-            // The idempotency check only skips one that is already quarantined (STALE with a
-            // reason); one STALE from ordinary decay carries no reason and is a fresh candidate. It
-            // gets its reason written while its status stays put, so no event should claim a move.
+        fun `a proposition already STALE from decay is quarantined out of that status`() {
+            // The idempotency check skips one whose status is already QUARANTINED. Ordinary decay
+            // reaches STALE, which is a different place, so a decayed proposition is a fresh
+            // candidate here: it moves to QUARANTINED, the move is announced, and STALE is what a
+            // release will put it back to.
             val decayed = propositions.save(
                 proposition("Alice is 40", "Person", status = PropositionStatus.STALE),
             )
@@ -370,10 +382,22 @@ class DriftSweepTest {
             val result = sweep.sweep(personLostAge(), policy, contextId)
 
             assertEquals(1, result.quarantined.size, "sanity: it was quarantined")
-            assertNotNull(propositions.findById(decayed.id)!!.metadata[DiceMetadataKeys.QUARANTINE_REASON])
-            assertTrue(
-                recording.events.isEmpty(),
-                "previousStatus and newStatus are both STALE, so nothing actually transitioned",
+            assertEquals(PropositionStatus.STALE, result.quarantined.single().previousStatus)
+            val held = propositions.findById(decayed.id)!!
+            assertEquals(PropositionStatus.QUARANTINED, held.status)
+            assertNotNull(held.metadata[DiceMetadataKeys.QUARANTINE_REASON])
+            assertEquals(
+                PropositionStatus.STALE.name,
+                held.metadata[DriftQuarantineKeys.PREVIOUS_STATUS],
+            )
+            val event = recording.events.filterIsInstance<PropositionStatusChanged>().single()
+            assertEquals(PropositionStatus.STALE, event.previousStatus)
+            assertEquals(PropositionStatus.QUARANTINED, event.newStatus)
+
+            assertEquals(
+                PropositionStatus.STALE,
+                sweep.releaseFromQuarantine(decayed.id)!!.status,
+                "release puts it back where decay had left it",
             )
         }
 
@@ -409,7 +433,7 @@ class DriftSweepTest {
             val original = propositions.save(proposition("Alice is 40", "Person"))
             val sweep = PropositionStoreDriftSweep(propositions)
             sweep.sweep(personLostAge(), policy, contextId)
-            assertEquals(PropositionStatus.STALE, propositions.findById(original.id)!!.status, "sanity")
+            assertEquals(PropositionStatus.QUARANTINED, propositions.findById(original.id)!!.status, "sanity")
 
             val released = sweep.releaseFromQuarantine(original.id)
 
@@ -417,7 +441,7 @@ class DriftSweepTest {
             assertEquals(
                 PropositionStatus.ACTIVE,
                 released!!.status,
-                "clearing the reason alone would leave it STALE and out of ordinary retrieval",
+                "clearing the reason alone would leave it held with nothing on it saying why",
             )
             assertNull(released.metadata[DiceMetadataKeys.QUARANTINE_REASON])
             assertNull(released.metadata[DriftQuarantineKeys.PREVIOUS_STATUS])
@@ -462,7 +486,7 @@ class DriftSweepTest {
             sweep.releaseFromQuarantine(original.id)
 
             val event = recording.events.filterIsInstance<PropositionStatusChanged>().single()
-            assertEquals(PropositionStatus.STALE, event.previousStatus)
+            assertEquals(PropositionStatus.QUARANTINED, event.previousStatus)
             assertEquals(PropositionStatus.ACTIVE, event.newStatus)
         }
 
@@ -488,9 +512,9 @@ class DriftSweepTest {
 
         @Test
         fun `a quarantine with no recorded previous status is released to ACTIVE`() {
-            // What an older quarantine looks like, or one whose metadata a person edited.
+            // What a quarantine whose previousStatus metadata a person edited away looks like.
             val legacy = propositions.save(
-                proposition("Alice is 40", "Person", status = PropositionStatus.STALE)
+                proposition("Alice is 40", "Person", status = PropositionStatus.QUARANTINED)
                     .withMetadataValue(DiceMetadataKeys.QUARANTINE_REASON, "quarantined by an earlier build"),
             )
             val sweep = PropositionStoreDriftSweep(propositions)
@@ -606,7 +630,7 @@ class DriftSweepTest {
             val result = sweep.sweep(diffOf(before, after), policy, contextId)
 
             assertEquals(1, result.quarantined.size, "the simple mention must match the qualified declaration")
-            assertEquals(PropositionStatus.STALE, propositions.findById(mentioning.id)!!.status)
+            assertEquals(PropositionStatus.QUARANTINED, propositions.findById(mentioning.id)!!.status)
         }
     }
 
@@ -732,6 +756,41 @@ class DriftSweepTest {
         val events = mutableListOf<DiceEvent>()
         override fun onEvent(event: DiceEvent) {
             events += event
+        }
+    }
+
+    /**
+     * Somewhere for a drift check to write its report. These tests read what the sweep did, so a
+     * plain list is enough; `dice-metamodel`'s own suite is where the store contract is exercised.
+     */
+    private class InMemoryDriftReportStore : DriftReportStore {
+
+        private val reports = mutableListOf<DriftReport>()
+
+        override fun saveDriftReport(report: DriftReport) {
+            reports += report
+        }
+
+        override fun driftReports(schemaName: String, limit: Int, since: Instant?): List<DriftReport> =
+            page(limit, since) { it.schemaName == schemaName }
+
+        override fun globalDriftReports(schemaName: String, limit: Int, since: Instant?): List<DriftReport> =
+            page(limit, since) { it.schemaName == schemaName && it.contextId == null }
+
+        override fun driftReportsInContext(
+            schemaName: String,
+            contextId: ContextId,
+            limit: Int,
+            since: Instant?,
+        ): List<DriftReport> = page(limit, since) { it.schemaName == schemaName && it.contextId == contextId }
+
+        private fun page(limit: Int, since: Instant?, scope: (DriftReport) -> Boolean): List<DriftReport> {
+            require(limit > 0) { "limit must be positive, but was $limit" }
+            return reports
+                .filter(scope)
+                .filter { since == null || !it.capturedAt.isBefore(since) }
+                .sortedByDescending { it.capturedAt }
+                .take(limit)
         }
     }
 }

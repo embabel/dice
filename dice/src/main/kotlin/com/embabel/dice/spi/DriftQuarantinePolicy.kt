@@ -13,13 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.metamodel
+package com.embabel.dice.spi
 
+import com.embabel.dice.metamodel.MetamodelDiff
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 
 /**
- * Metadata keys the metamodel writes onto a proposition, alongside the shared
+ * Metadata keys drift quarantine writes onto a proposition, alongside the shared
  * [com.embabel.dice.common.DiceMetadataKeys.QUARANTINE_REASON].
  *
  * They live here because drift quarantine is the only thing that writes or reads them, and the core
@@ -32,11 +33,10 @@ object DriftQuarantineKeys {
      * The [PropositionStatus] a proposition carried at the moment it was quarantined, stored as its
      * `name`.
      *
-     * Quarantine moves a proposition to `STALE`, and `STALE` is a destination several roads lead to
-     * — ordinary decay reaches it as well. Without this key, releasing a quarantine could only guess
-     * where to put the proposition back. With it, release is exact:
-     * [DriftSweepCapable.releaseFromQuarantine] reads the value, restores that status, and clears
-     * both keys.
+     * A proposition can be quarantined from any status — active, promoted, already stale from
+     * ordinary decay — so without this key, releasing one could only guess where to put it back.
+     * With it, release is exact: [DriftSweepCapable.releaseFromQuarantine] reads the value, restores
+     * that status, and clears both keys.
      */
     const val PREVIOUS_STATUS = "dice.metamodel.quarantine.previousStatus"
 }
@@ -64,12 +64,13 @@ sealed interface QuarantineDecision {
     data class Conforming(val proposition: Proposition) : QuarantineDecision
 
     /**
-     * An earlier sweep already quarantined this one: it is `STALE` and carries a
-     * `DiceMetadataKeys.QUARANTINE_REASON`, so this sweep left it as it found it. Nothing needs
+     * An earlier sweep already quarantined this one: its status is
+     * [PropositionStatus.QUARANTINED], so this sweep left it as it found it. Nothing needs
      * persisting for these.
      *
-     * To force one back through evaluation, clear its `QUARANTINE_REASON` metadata and pass it in
-     * again.
+     * To force one back through evaluation, release it
+     * ([DriftSweepCapable.releaseFromQuarantine]) and pass it in again. Editing the metadata by hand
+     * does nothing, because the hold is the status.
      *
      * @property proposition The proposition, unchanged.
      * @property originalReason The reason the earlier sweep recorded, when it is still readable as
@@ -84,17 +85,17 @@ sealed interface QuarantineDecision {
     /**
      * Schema drift stranded this proposition, and it has been flagged.
      *
-     * [proposition] is an immutable copy already moved to `STALE` and annotated with the reason
-     * under `DiceMetadataKeys.QUARANTINE_REASON` and the status it came from under
-     * [DriftQuarantineKeys.PREVIOUS_STATUS]. The original is never mutated, and nothing is written
-     * anywhere; persisting the copy is the caller's job.
+     * [proposition] is an immutable copy already moved to [PropositionStatus.QUARANTINED] and
+     * annotated with the reason under `DiceMetadataKeys.QUARANTINE_REASON` and the status it came
+     * from under [DriftQuarantineKeys.PREVIOUS_STATUS]. The original is never mutated, and nothing
+     * is written anywhere; persisting the copy is the caller's job.
      *
-     * @property proposition The flagged, `STALE` copy.
+     * @property proposition The flagged, `QUARANTINED` copy.
      * @property reason A human-readable explanation of why it was quarantined.
      * @property affectedMentionTypes The entity type names that triggered it.
      * @property previousStatus The status the proposition carried before this decision, which
-     *   [DriftSweepCapable.releaseFromQuarantine] restores. `STALE` when the proposition was already
-     *   stale from ordinary decay, in which case quarantine wrote a reason and moved no status.
+     *   [DriftSweepCapable.releaseFromQuarantine] restores. Any status but `QUARANTINED` itself: a
+     *   proposition already quarantined never reaches this decision.
      */
     data class Quarantined(
         val proposition: Proposition,
@@ -106,9 +107,9 @@ sealed interface QuarantineDecision {
     /**
      * A pinned proposition that a lossy schema change would otherwise have quarantined. Pinning
      * promises cross-cutting immunity from reclamation (see `PropositionStore.pin`), so this sweep
-     * leaves it exactly as it was — an unpinned match on the same change gets flipped to `STALE`,
-     * this one doesn't — and reports it here so an operator reading the sweep can still see it was
-     * affected.
+     * leaves it exactly as it was — an unpinned match on the same change gets flipped to
+     * `QUARANTINED`, this one doesn't — and reports it here so an operator reading the sweep can
+     * still see it was affected.
      *
      * [proposition] is the original, completely untouched: no status change, no metadata written.
      * Persisting it is never necessary, unlike [Quarantined]'s copy.
@@ -129,7 +130,8 @@ sealed interface QuarantineDecision {
  * What a whole sweep decided, with one decision per proposition it was given.
  *
  * @property conforming Propositions the change doesn't touch.
- * @property quarantined Propositions this sweep flagged, as `STALE` copies waiting to be persisted.
+ * @property quarantined Propositions this sweep flagged, as `QUARANTINED` copies waiting to be
+ *   persisted.
  * @property alreadyQuarantined Propositions an earlier sweep had already flagged, left untouched by
  *   this one. Empty unless the input contained some.
  * @property protected Pinned propositions a lossy change would otherwise have caught, left
@@ -157,9 +159,14 @@ data class QuarantineResult @JvmOverloads constructor(
  * Decides which propositions a schema change has stranded, and flags them.
  *
  * Quarantining is non-destructive. An affected proposition comes back as an immutable copy moved
- * to [com.embabel.dice.proposition.PropositionStatus.STALE] with a metadata note explaining why;
- * the original is untouched and nothing is written to any store. Persisting the copies is the
- * caller's job, which is what lets a drift check preview a sweep without changing anything.
+ * to [PropositionStatus.QUARANTINED] with a metadata note explaining why; the original is untouched
+ * and nothing is written to any store. Persisting the copies is the caller's job, which is what lets
+ * a drift check preview a sweep without changing anything.
+ *
+ * A quarantined proposition has an owner. It sits in a status of its own, which every lifecycle
+ * policy in DICE leaves alone, so nothing automatic can lift the hold and nothing automatic can
+ * mistake it for ordinary staleness. Only [DriftSweepCapable.releaseFromQuarantine] lets one back
+ * into use.
  *
  * It takes a [MetamodelDiff], a comparison of two declared versions, which is what says exactly
  * which types the schema stopped recognising. A drift check compares a declaration against a live
@@ -175,10 +182,10 @@ interface DriftQuarantinePolicy {
     /**
      * Evaluate every proposition against [diff].
      *
-     * Implementations must be idempotent: a proposition already quarantined by a prior sweep
-     * (`STALE` with a `QUARANTINE_REASON`) must keep its original reason. Those come back unchanged
-     * as [QuarantineDecision.AlreadyQuarantined], not as conforming, which would report them as
-     * clean. Clear the metadata key to force one back through evaluation.
+     * Implementations must be idempotent: a proposition already quarantined by a prior sweep (one
+     * whose status is [PropositionStatus.QUARANTINED]) must keep its original reason. Those come
+     * back unchanged as [QuarantineDecision.AlreadyQuarantined]. Calling them conforming would
+     * report them as clean. Release one to force it back through evaluation.
      *
      * That classification does not depend on [diff]. Being already quarantined is a fact about the
      * proposition, so an empty or purely additive diff must still sort those into
@@ -186,11 +193,11 @@ interface DriftQuarantinePolicy {
      * [QuarantineResult.conforming]. Drift checks run on a schedule and most runs find nothing, so
      * short-circuiting would report quarantined records as conforming on those runs.
      *
-     * A pinned proposition a lossy change would otherwise catch must never be flipped to `STALE`:
-     * implementations report it as [QuarantineResult.protected] instead, leaving the proposition
-     * itself untouched. This holds even for one an earlier sweep already quarantined before it was
-     * pinned; that one is [QuarantineResult.alreadyQuarantined], since idempotency (above) takes
-     * priority over the pin.
+     * A pinned proposition a lossy change would otherwise catch must never be flipped to
+     * `QUARANTINED`. Implementations report it as [QuarantineResult.protected] and leave the
+     * proposition itself untouched. This holds even for one an earlier sweep already quarantined
+     * before it was pinned; that one is [QuarantineResult.alreadyQuarantined], since idempotency
+     * (above) takes priority over the pin.
      *
      * @param diff What changed between the old and new schema.
      * @param propositions The propositions to evaluate. Any [Iterable] will do: a list, a

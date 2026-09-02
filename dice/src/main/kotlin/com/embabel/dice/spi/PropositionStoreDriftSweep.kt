@@ -13,15 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.metamodel.support
+package com.embabel.dice.spi
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.common.PropositionStatusChanged
-import com.embabel.dice.metamodel.DriftQuarantineKeys
-import com.embabel.dice.metamodel.DriftSweepCapable
-import com.embabel.dice.metamodel.QuarantineDecision
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
@@ -87,10 +84,6 @@ class PropositionStoreDriftSweep @JvmOverloads constructor(
     override fun applyQuarantine(decision: QuarantineDecision.Quarantined): Proposition {
         val saved = propositions.save(decision.proposition)
         logger.debug("Quarantined proposition (id={}): {}", saved.id, decision.reason)
-        // A proposition can arrive already STALE from ordinary decay (no quarantine reason yet, so
-        // the policy still treats it as a fresh candidate) and get quarantined without its status
-        // actually moving. Announcing a transition then would be a lie the listener has no way to
-        // catch, so this only fires when something really changed.
         announce(saved, decision.previousStatus, saved.status, decision.reason)
         return saved
     }
@@ -99,14 +92,18 @@ class PropositionStoreDriftSweep @JvmOverloads constructor(
      * Restores the status recorded under [DriftQuarantineKeys.PREVIOUS_STATUS] and drops both
      * quarantine keys in one save.
      *
+     * Whether a proposition is held is read off its status, so a proposition that isn't
+     * [PropositionStatus.QUARANTINED] has nothing to release and answers `null` — including one
+     * whose quarantine reason was cleared by hand, which is still held.
+     *
      * A proposition with no readable previous status — quarantined by an older policy, or with the
      * key edited away — goes back to [PropositionStatus.ACTIVE]. Releasing says "let this back into
      * use", and `ACTIVE` is what that means when the record of where it came from is gone.
      */
     override fun releaseFromQuarantine(propositionId: String): Proposition? {
         val quarantined = propositions.findById(propositionId) ?: return null
-        if (!quarantined.metadata.containsKey(DiceMetadataKeys.QUARANTINE_REASON)) {
-            logger.debug("Proposition (id={}) carries no quarantine reason; nothing to release", propositionId)
+        if (quarantined.status != PropositionStatus.QUARANTINED) {
+            logger.debug("Proposition (id={}) is not quarantined; nothing to release", propositionId)
             return null
         }
 
@@ -127,12 +124,21 @@ class PropositionStoreDriftSweep @JvmOverloads constructor(
 
     /**
      * The status this proposition carried before it was quarantined, or [PropositionStatus.ACTIVE]
-     * when nothing readable was recorded.
+     * when nothing usable was recorded.
+     *
+     * A recorded `QUARANTINED` counts as unusable: restoring it would leave the release having
+     * cleared the reason and moved nothing, so the proposition would stay held with no explanation
+     * on it. A policy never writes that value, so this only fires on a hand-edited record.
      */
     private fun previousStatusOf(proposition: Proposition): PropositionStatus {
         val recorded = proposition.metadata[DriftQuarantineKeys.PREVIOUS_STATUS] as? String
             ?: return PropositionStatus.ACTIVE
-        return runCatching { PropositionStatus.valueOf(recorded) }.getOrDefault(PropositionStatus.ACTIVE)
+        val parsed = runCatching { PropositionStatus.valueOf(recorded) }.getOrNull()
+        return if (parsed == null || parsed == PropositionStatus.QUARANTINED) {
+            PropositionStatus.ACTIVE
+        } else {
+            parsed
+        }
     }
 
     /** Tell the listener, and only when the status genuinely moved. */

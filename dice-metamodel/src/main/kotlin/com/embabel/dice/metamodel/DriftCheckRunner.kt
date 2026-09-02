@@ -95,8 +95,8 @@ class DriftCheckResult(
  *
  * There is one mode. A check reads, compares, and persists a [DriftReport], and no path through it
  * moves a proposition or the swept baseline. Acting on what a check found is a separate, deliberate
- * step a host takes through [DriftSweepCapable], with its own bounded, context-scoped candidate
- * selection.
+ * step a host takes through `DriftSweepCapable`, which lives in dice core with the rest of the
+ * proposition lifecycle, and which has its own bounded, context-scoped candidate selection.
  *
  * That split is why [DriftCheckResult.quarantineDiff] exists. A check is the only half DICE runs on
  * its own, so its report has to show the *complete* comparison a sweep would act on, including the

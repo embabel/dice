@@ -13,10 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.metamodel
+package com.embabel.dice.spi
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.metamodel.DriftCheckResult
+import com.embabel.dice.metamodel.DriftCheckRunner
+import com.embabel.dice.metamodel.MetamodelDiff
+import com.embabel.dice.metamodel.SweptBaselineStore
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionStatus
 
 /**
  * The store-side operations a host needs to act on a drift check: find the propositions a schema
@@ -33,7 +38,7 @@ import com.embabel.dice.proposition.Proposition
  *
  * A store implements this when its backend can honour that, exactly the way DICE's other opt-in
  * store capabilities work. A store that can't keeps the plain persistence contract and its host
- * sweeps through [com.embabel.dice.metamodel.support.PropositionStoreDriftSweep], the reference
+ * sweeps through [PropositionStoreDriftSweep], the reference
  * implementation, which is honest about doing the filtering in the JVM.
  *
  * ## Nothing calls this on its own
@@ -56,10 +61,12 @@ import com.embabel.dice.proposition.Proposition
  *
  * ## Releasing is a real operation
  *
- * Quarantine is reversible, and [releaseFromQuarantine] is what reverses it. Clearing the reason
- * metadata by hand leaves the proposition `STALE`, which keeps it out of ordinary retrieval with
- * nothing left to explain why. Release restores the status the proposition carried before quarantine
- * and clears both keys in one write.
+ * Quarantine is reversible, and [releaseFromQuarantine] is the only thing that reverses it.
+ * [PropositionStatus.QUARANTINED] is a status of its own that every lifecycle policy in DICE leaves
+ * alone, so a quarantined proposition stays put until a host says otherwise: no decay sweep revives
+ * it, no consolidation pass moves it, and editing its metadata by hand changes nothing. Release
+ * restores the status the proposition carried before quarantine and clears both quarantine keys in
+ * one write.
  */
 interface DriftSweepCapable {
 
@@ -126,13 +133,12 @@ interface DriftSweepCapable {
     /**
      * Persist one quarantine decision.
      *
-     * [QuarantineDecision.Quarantined.proposition] is already the `STALE` copy carrying its reason
-     * and the status it came from; a policy built it and wrote nothing. This is the write.
+     * [QuarantineDecision.Quarantined.proposition] is already the `QUARANTINED` copy carrying its
+     * reason and the status it came from; a policy built it and wrote nothing. This is the write.
      *
-     * An implementation announces the transition to whatever listener it was given, skipping the
-     * announcement when the status didn't actually move — a proposition that arrived `STALE` from
-     * ordinary decay gets its reason written without transitioning, and an event claiming otherwise
-     * would be a lie a listener has no way to catch.
+     * An implementation announces the transition to whatever listener it was given as a
+     * [com.embabel.dice.common.PropositionStatusChanged], so a consumer watching the proposition
+     * lifecycle hears about a quarantine the way it hears about any other status move.
      *
      * @param decision What the policy decided.
      * @return The saved proposition.
@@ -143,22 +149,25 @@ interface DriftSweepCapable {
      * Let a quarantined proposition back out: restore the status it carried before quarantine and
      * clear its quarantine metadata, in one write.
      *
-     * This is the whole reversibility story. A host that clears
+     * This is the whole reversibility story, and it is the only way out. A host that clears
      * [com.embabel.dice.common.DiceMetadataKeys.QUARANTINE_REASON] by hand leaves the proposition
-     * `STALE`, so it stays out of ordinary retrieval with nothing on it saying why, and the next
-     * sweep treats it as a fresh candidate and quarantines it again.
+     * `QUARANTINED` with nothing on it saying why, still held and now unexplained.
      *
      * The prior status comes from [DriftQuarantineKeys.PREVIOUS_STATUS], which the policy wrote at
      * quarantine time. A proposition carrying no readable value there is restored to
-     * [com.embabel.dice.proposition.PropositionStatus.ACTIVE], which is the only sensible reading of
-     * "let it back into use" when the record of where it came from is gone.
+     * [PropositionStatus.ACTIVE], which is the only sensible reading of "let it back into use" when
+     * the record of where it came from is gone. So is one whose recorded value reads `QUARANTINED`,
+     * since restoring that would leave the release doing nothing.
      *
-     * Both metadata keys are cleared, so releasing twice is safe: the second call finds nothing
-     * quarantined and answers `null`.
+     * The status move is announced as a [com.embabel.dice.common.PropositionStatusChanged], the same
+     * way [applyQuarantine] announces the move in.
+     *
+     * Which propositions are held is decided by status alone, so releasing twice is safe: the second
+     * call finds a proposition that isn't quarantined and answers `null`.
      *
      * @param propositionId The proposition to release.
      * @return The released proposition, or `null` when no proposition has that id, or when the one
-     *   that does was never quarantined.
+     *   that does is not quarantined.
      */
     fun releaseFromQuarantine(propositionId: String): Proposition?
 

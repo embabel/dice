@@ -19,7 +19,6 @@ import com.embabel.agent.core.Cardinality
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.metamodel.support.DefaultDriftCheckRunner
 import com.embabel.dice.metamodel.support.StructuralMetamodelDiffer
-import com.embabel.dice.proposition.PropositionStore
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -254,12 +253,15 @@ class DriftCheckRunnerTest {
     @Test
     fun `the runner is built with no proposition store at all`() {
         // The structural half of "a check changes nothing": there is no collaborator through which
-        // a check could reach a proposition, so no amount of drift can move one.
+        // a check could reach a proposition, so no amount of drift can move one. Matched on package
+        // name, because this module no longer depends on dice core and so has no proposition type to
+        // name here -- which is a stronger statement than the one this assertion used to make: not
+        // one proposition-shaped collaborator of any kind can appear in the constructor.
         val parameterTypes = DefaultDriftCheckRunner::class.java.constructors
             .flatMap { it.parameterTypes.asIterable() }
 
         assertTrue(
-            parameterTypes.none { PropositionStore::class.java.isAssignableFrom(it) },
+            parameterTypes.none { it.name.startsWith("com.embabel.dice.proposition.") },
             "a drift check must have no way to reach propositions, but found: $parameterTypes",
         )
     }
