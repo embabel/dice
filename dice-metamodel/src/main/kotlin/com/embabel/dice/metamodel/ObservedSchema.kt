@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.metamodel
 
+import org.jetbrains.annotations.ApiStatus
+
 import java.time.Instant
 import java.util.Objects
 
@@ -38,6 +40,7 @@ import java.util.Objects
  * @property relationshipTypeNames Relationship type names observed in the graph.
  * @property capturedAt When this snapshot was taken.
  */
+@ApiStatus.Experimental
 class ObservedSchema(
     entityTypeNames: Set<String>,
     relationshipTypeNames: Set<String>,

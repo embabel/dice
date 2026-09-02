@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.metamodel
 
+import org.jetbrains.annotations.ApiStatus
+
 /**
  * How a host says which declared entity type an outside name means.
  *
@@ -87,6 +89,7 @@ package com.embabel.dice.metamodel
  * holds the contract so the host mapping has a written shape to be built against, and the slice
  * that reads it lands separately. Experimental: shape may change before 1.0.
  */
+@ApiStatus.Experimental
 interface TypeIdentity {
 
     /**

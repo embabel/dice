@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.metamodel
 
+import org.jetbrains.annotations.ApiStatus
+
 import com.embabel.agent.core.DataDictionary
 
 /**
@@ -28,6 +30,7 @@ import com.embabel.agent.core.DataDictionary
  * application stamps at ingestion time and stores the stamp, so the older side comes back out of a
  * [MetamodelVersionStore] rather than being recomputed from a dictionary that has since moved on.
  */
+@ApiStatus.Experimental
 interface MetamodelDiffer {
 
     /**

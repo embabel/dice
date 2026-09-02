@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.metamodel
 
+import org.jetbrains.annotations.ApiStatus
+
 import com.embabel.agent.core.ContextId
 
 /**
@@ -34,6 +36,7 @@ import com.embabel.agent.core.ContextId
  * Kotlin default argument. It is also all Java gets: `ContextId` is a Kotlin value class, so the
  * scoped form compiles to a mangled JVM name Java can't call.
  */
+@ApiStatus.Experimental
 interface ObservedSchemaSource {
 
     /**

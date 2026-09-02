@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 package com.embabel.dice.metamodel
+import org.jetbrains.annotations.ApiStatus
+
 
 import java.util.Objects
 
@@ -458,6 +460,7 @@ sealed interface MetamodelChange {
  *   [MetamodelChange.PropertySignatureChanged] by property name. The same pair of versions
  *   always produces the same list.
  */
+@ApiStatus.Experimental
 class MetamodelDiff(
     val fromVersion: MetamodelVersion,
     val toVersion: MetamodelVersion,
@@ -607,6 +610,7 @@ class MetamodelDiff(
  * @property unobservedEntityTypes Declared entity type names with no observed instances.
  * @property unobservedRelationshipTypes Declared relationship type names with no observed instances.
  */
+@ApiStatus.Experimental
 class DeclaredObservedDiff(
     val declared: DeclaredSchema,
     val observedSchema: ObservedSchema,
