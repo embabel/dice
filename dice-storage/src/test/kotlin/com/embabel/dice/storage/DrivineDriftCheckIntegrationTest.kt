@@ -17,6 +17,7 @@ package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.common.DiceMetadataKeys
+import com.embabel.dice.spi.DriftQuarantineKeys
 import com.embabel.dice.metamodel.DeclaredSchema
 import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.metamodel.DriftCheckRunner
@@ -36,6 +37,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -190,6 +192,33 @@ class DrivineDriftCheckIntegrationTest {
         val reason = reloaded.metadata[DiceMetadataKeys.QUARANTINE_REASON] as? String
         assertNotNull(reason, "quarantine must say why; metadata was ${reloaded.metadata}")
         assertTrue(reason!!.contains("Ghost"), "the reason must name the drifted type, but was: $reason")
+    }
+
+    @Test
+    fun `a release restores the prior status and takes both quarantine keys off the node`() {
+        val stranded = repository.save(
+            Proposition(
+                contextId = contextId,
+                text = "The ghost walks the halls",
+                mentions = listOf(EntityMention(span = "the ghost", type = "Ghost", role = MentionRole.SUBJECT)),
+                confidence = 0.9,
+            ),
+        )
+        val result = runner.run(contextId)
+        sweep.sweep(result.quarantineDiff, policy, contextId)
+        assertEquals(setOf(previousStatusProperty, reasonProperty), quarantineProperties(stranded.id))
+
+        val released = sweep.releaseFromQuarantine(stranded.id)
+
+        assertNotNull(released)
+        assertEquals(PropositionStatus.ACTIVE, released!!.status)
+        val reloaded = repository.findById(stranded.id)
+        assertEquals(PropositionStatus.ACTIVE, reloaded?.status)
+        assertNull(reloaded?.metadata?.get(DriftQuarantineKeys.PREVIOUS_STATUS))
+        assertNull(reloaded?.metadata?.get(DiceMetadataKeys.QUARANTINE_REASON))
+        // The node itself, read raw: the release's save must have taken the flattened properties off,
+        // since a metadata map that merely omits a key used to leave the old property in place.
+        assertEquals(emptySet<String>(), quarantineProperties(stranded.id))
     }
 
     @Test
@@ -371,6 +400,23 @@ class DrivineDriftCheckIntegrationTest {
     private fun rawLabels(): Set<String> = persistenceManager
         .query(
             QuerySpecification.withStatement("CALL db.labels() YIELD label RETURN label")
+                .transform(String::class.java),
+        )
+        .filterNotNull()
+        .toSet()
+
+    private val previousStatusProperty = "metadata.${DriftQuarantineKeys.PREVIOUS_STATUS}"
+    private val reasonProperty = "metadata.${DiceMetadataKeys.QUARANTINE_REASON}"
+
+    /** The two flattened quarantine properties as they sit on the node itself, whichever are present. */
+    private fun quarantineProperties(propositionId: String): Set<String> = persistenceManager
+        .query(
+            QuerySpecification
+                .withStatement(
+                    "MATCH (p:Proposition {id: \$id}) UNWIND keys(p) AS k " +
+                        "WITH k WHERE k IN \$watched RETURN k",
+                )
+                .bind(mapOf("id" to propositionId, "watched" to listOf(previousStatusProperty, reasonProperty)))
                 .transform(String::class.java),
         )
         .filterNotNull()

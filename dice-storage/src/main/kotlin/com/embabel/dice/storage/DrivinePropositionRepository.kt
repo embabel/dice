@@ -209,6 +209,7 @@ class DrivinePropositionRepository(
     private fun doPersist(proposition: Proposition): Proposition {
         val embedding = embeddingFor(proposition)
         graphObjectManager.save(PropositionGraphMapper.toView(proposition, embedding), CascadeType.DELETE_ORPHAN)
+        dropMetadataKeysNotIn(proposition)
         if (proposition.provenanceEntries.isNotEmpty()) {
             graphObjectManager.save(
                 PropositionGraphMapper.toProvenanceView(proposition, embedding),
@@ -216,6 +217,31 @@ class DrivinePropositionRepository(
             )
         }
         return proposition
+    }
+
+    /**
+     * A saved proposition's metadata map is the whole map, the same way its status and text are the
+     * whole value. Drivine spreads the bag over `metadata.<key>` node properties and only ever adds
+     * or overwrites, so a key the caller took out of the map (a released quarantine's
+     * `previousStatus` and reason, say) stayed on the node. This removes every `metadata.*`
+     * property the saved map no longer carries. Needs dynamic property removal (`REMOVE n[k]`),
+     * which Neo4j has had since 5.24.
+     */
+    private fun dropMetadataKeysNotIn(proposition: Proposition) {
+        persistenceManager.execute(
+            QuerySpecification
+                .withStatement(
+                    "MATCH (p:Proposition {id: \$id}) " +
+                        "UNWIND [k IN keys(p) WHERE k STARTS WITH 'metadata.' AND NONE(x IN \$kept WHERE x = k)] AS k " +
+                        "REMOVE p[k]",
+                )
+                .bind(
+                    mapOf(
+                        "id" to proposition.id,
+                        "kept" to proposition.metadata.keys.map { "metadata.$it" },
+                    ),
+                ),
+        )
     }
 
     private fun embeddingFor(proposition: Proposition): List<Float>? =
