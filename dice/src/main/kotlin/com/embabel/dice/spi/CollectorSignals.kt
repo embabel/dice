@@ -22,6 +22,7 @@ import com.embabel.dice.projection.lineage.CollectorRecordStore
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.proposition.ProvenanceSubtractionCapable
 import com.fasterxml.jackson.annotation.JsonIgnore
 import org.slf4j.LoggerFactory
 import java.time.Instant
@@ -182,27 +183,98 @@ data class CollapseUndoResult(
 )
 
 /**
+ * Names one collapse to undo, inside the context that owns it.
+ *
+ * The context is required, and it is the reason this type exists. Undo used to take a survivor id
+ * and a retired id and nothing more, so ids picked up anywhere at all could reverse a collapse in a
+ * context the caller has no business writing to, and every deployment that cared about that had to
+ * bolt its own ownership check on in front. [undoSingleCollapse] now owns the check: both
+ * propositions have to live in [contextId], and an id from elsewhere is refused with
+ * [CollapseUndoContextMismatchException] before anything is written.
+ *
+ * @property contextId the context both propositions must belong to
+ * @property survivorId the collapse's survivor — must match the decision that retired [retiredId]
+ * @property retiredId the one retired member to restore
+ */
+data class CollapseUndoCommand(
+    val contextId: ContextId,
+    val survivorId: String,
+    val retiredId: String,
+) {
+
+    init {
+        require(survivorId.isNotBlank()) { "survivorId must not be blank" }
+        require(retiredId.isNotBlank()) { "retiredId must not be blank" }
+    }
+}
+
+/**
+ * A proposition the undo was told to touch lives in a different context. Thrown before any write,
+ * so the other context's graph is left exactly as it was.
+ *
+ * @property commandedContextId the context the undo was issued for
+ * @property propositionId the proposition that failed the check
+ * @property actualContextId the context that proposition really belongs to
+ */
+class CollapseUndoContextMismatchException(
+    val commandedContextId: ContextId,
+    val propositionId: String,
+    val actualContextId: ContextId,
+) : IllegalArgumentException(
+    "Proposition $propositionId belongs to context ${actualContextId.value}, and the undo was " +
+        "issued for context ${commandedContextId.value}; refusing to touch it",
+)
+
+/**
+ * The undo was wired with something it cannot work from: no audit records to authorize it, or a
+ * proposition store that cannot subtract evidence atomically. Both are configuration mistakes, and
+ * both are thrown before the undo reads or writes anything.
+ */
+class CollapseUndoConfigurationException(message: String) : IllegalStateException(message)
+
+/**
  * Undoes ONE collapse — a single survivor/retired-member pair — without disturbing the run's
  * other collapses. This is the targeted counterpart to a run-level undo: restore exactly the
- * member named by [retiredId] to its prior status, and subtract only what it (not some other
- * still-retired member of the same collapse) contributed to the survivor.
+ * member named by [CollapseUndoCommand.retiredId] to its prior status, and subtract only what it
+ * (no other still-retired member of the same collapse) contributed to the survivor.
+ *
+ * **Undo is destructive, so it fails closed.** Three things must be in place before it reads or
+ * writes anything, and a missing one refuses:
+ *
+ * 1. *The context that owns the collapse.* [command] carries it, and both propositions must live
+ *    in it. An id belonging to another context throws [CollapseUndoContextMismatchException] with
+ *    that context's graph untouched. The ids reach this function from wherever the caller found
+ *    them — a URL path, a UI card — so this is the boundary that keeps one tenant's ids off
+ *    another tenant's propositions.
+ * 2. *The run's audit records.* [collectorRecords] settles whether the collector really applied
+ *    this merge; a null one throws [CollapseUndoConfigurationException]. The trace store cannot
+ *    settle it, because it records that a collapse was *proposed*: the strategy writes the
+ *    decision during the mark phase, before the runner has decided anything. A dry run, a skipped
+ *    merge, and a merge the runner declined all leave a trace that reads exactly like an applied
+ *    fold, and reversing one of those strips evidence the survivor holds for its own reasons.
+ * 3. *A store that can subtract evidence atomically.* [propositions] must implement
+ *    [ProvenanceSubtractionCapable] and answer true to its
+ *    [ProvenanceSubtractionCapable.supportsProvenanceSubtraction]; a store that cannot throws
+ *    [CollapseUndoConfigurationException]. That interface carries the promise this depends on.
  *
  * Overlap-safe: if another member of the same [CollectorDecision] has not yet been undone and also
  * folded the same grounding/provenance/source id, that ref is left on the survivor — subtracting
- * [retiredId]'s copy would otherwise strip evidence a sibling merge still needs. Once that sibling
+ * this member's copy would otherwise strip evidence a sibling merge still needs. Once that sibling
  * is itself undone it holds its own copy again, so the last member to be undone takes the shared
  * ref with it and the survivor lands back on what it had before the collapse. This is why each
  * [RetiredProposition] carries its own folded set rather than the decision carrying one shared
  * union.
  *
- * Evidence comes off the survivor through [PropositionStore.subtractProvenance], which names the
- * refs to delete. A persistent backend's ordinary `save` appends provenance and never removes it, so
- * an undo that only saved the reduced proposition would leave the folded evidence on the graph. The
- * subtraction runs first and the survivor's `save` last; the write order below says why.
+ * Evidence comes off the survivor through [ProvenanceSubtractionCapable.subtractProvenance], which
+ * names the refs to delete. A persistent backend's ordinary `save` appends provenance and never
+ * removes it, so an undo that only saved the reduced proposition would leave the folded evidence on
+ * the graph. The subtraction runs first and the survivor's `save` last; the write order below says
+ * why. Because the subtraction names what goes and lands in one step, evidence another extraction
+ * adds to the survivor while this undo is running survives it.
  *
  * Both propositions are read before anything is written. A missing participant ends the undo with
- * nothing changed, rather than leaving a survivor whose evidence has been subtracted and a member
- * that was never restored. So does a collapse the collector never applied.
+ * nothing changed, leaving no survivor whose evidence has been subtracted and no member stranded
+ * unrestored. So does a collapse the collector never applied.
  *
  * A survivor deleted *between* that read and the subtraction is caught when the subtraction answers
  * null for a proposition the store no longer has. The undo ends there, writing nothing — saving the
@@ -211,38 +283,22 @@ data class CollapseUndoResult(
  * A caller left with a member retired into a survivor that no longer exists has to decide what that
  * member should be; this function will not guess.
  *
- * **How much of the run that covers depends on the store**, because it depends on when the
- * subtraction last looked.
- *
- * - The graph backend's override of [PropositionStore.subtractProvenance] deletes the edges in one
- *   statement and answers from a read taken after it, writing nothing to the proposition itself.
- *   Null there is exact, so every deletion up to that read is caught, and the window that stays open
- *   is the gap between it and the survivor's `save` below.
- * - The base contract's default is a read-modify-write, and it can recreate the survivor *itself*,
- *   before this function ever sees an answer. On a store inheriting both defaults it reads,
- *   delegates to [PropositionStore.setProvenance], which reads again and saves — a deletion landing
- *   after that second read is undone by that save. A store that overrides [PropositionStore.setProvenance]
- *   moves that last look to wherever its own write reads.
- *   Its other two exits — no refs to subtract, or none of them matching — hand back the proposition
- *   as its first read saw it, so a deletion after that read is invisible and the survivor's `save`
- *   recreates it. Both of those exits are reachable from here: a fold that added no new evidence
- *   subtracts nothing, and a retried undo matches nothing.
- *
- * So the guard is exact on the graph backend and best-effort on a read-modify-write store. Closing
- * the rest needs a conditional write the store contract does not have, and it would have to reach
- * every save in the chain rather than only the one below. The residual is written up in
+ * Every deletion up to the subtraction's own last look is caught this way, because
+ * [ProvenanceSubtractionCapable] promises a store never recreates a proposition it is subtracting
+ * from. The window that stays open is the gap between that answer and the survivor's `save` below,
+ * which upserts. Closing it needs a conditional write the store contract does not have, and it
+ * would have to reach every save in the chain. The residual is written up in
  * `docs/design/source-revisions.md`.
  *
- * **Authorization is two conditions, and both must hold.**
+ * **Authorization is three conditions, and all must hold.**
  *
- * 1. *The collector applied this merge, into this survivor.* Settled by [collectorRecords] when the
- *    caller has them, and unavailable otherwise — the trace store records that a collapse was
- *    *proposed*, since the strategy writes it during the mark phase before the runner decides
- *    anything. The records carry `CollectorRun.dryRun` and, on each member's record,
+ * 1. *The collector applied this merge, into this survivor.* Settled by [collectorRecords]. They
+ *    carry `CollectorRun.dryRun` on the run header and, on each member's record,
  *    `CollectorRecord.mergedIntoId`: the survivor the sweep really folded that member into, written
  *    after the merge was saved. A plain status transition, a skipped merge, and the fallback
  *    retirement a runner performs when a merge target has vanished all leave it null, so none of
- *    them can authorize an undo.
+ *    them can authorize an undo. A dry run's records name the target it *would* have used, and the
+ *    header's `dryRun` flag is what says nothing happened — so a preview never authorizes either.
  * 2. *The undo has not already run.* Settled by [collectorRecords] too: finishing an undo stamps
  *    `CollectorRecord.undoneAt` on the run's record for that member, and a stamped record never
  *    authorizes again. This is what makes a repeat undo a no-op even when the member has been
@@ -250,22 +306,12 @@ data class CollapseUndoResult(
  *    somewhere else. Without the stamp, immortal records plus any new retirement would re-arm the
  *    original undo and let it subtract that run's evidence a second time, taking evidence the
  *    survivor had since re-gained and clobbering the newer retirement.
- * 3. *The merge is still in force.* Settled by the member's status. Without [collectorRecords] it
- *    is the only signal available for conditions 1 and 2 as well, and it is much weaker: it says
- *    "this member is not at its prior status", which a later unrelated retirement also satisfies.
- *    See [isCurrentlyRetired].
+ * 3. *The merge is still in force.* Settled by the member's status. See [isCurrentlyRetired].
  *
- * Conditions 2 and 3 together make a second undo of the same collapse a no-op. On the records path
- * that holds however the member's status has moved since; on the status-only path it holds only
- * while the member sits at its prior status, so a caller without records should not rely on it.
+ * Conditions 2 and 3 together make a second undo of the same collapse a no-op, however the member's
+ * status has moved since.
  *
- * **Passing [collectorRecords] is strongly preferred.** Without them, condition 1 is simply not
- * checked, and condition 2 alone will accept a dry run's trace followed by an unrelated lifecycle
- * transition — a decay sweep moving the member ACTIVE → STALE — after which the undo strips a
- * revision the survivor holds for its own reasons. That is the older, weaker behaviour, kept for
- * existing callers.
- *
- * Three shapes of collapse are refused on the records path, all of them correctly, and all of them
+ * Three shapes of collapse are refused, all of them correctly, and all of them
  * silent apart from a log line:
  *
  * - *A chain-resolved merge.* With stacked strategies, a member marked into B while B is itself
@@ -305,45 +351,73 @@ data class CollapseUndoResult(
  *   Steps 1 and 2 are safe to repeat because the subtraction is recomputed from the survivor's
  *   *current* evidence by key, so a ref that is already gone removes nothing.
  *
+ * @param command the context, the survivor and the retired member this undo is for
  * @param traceQuery where the collapse decision (and its retired members) is looked up
  * @param propositions where the survivor and retired proposition are read and saved, where each
  *   sibling's current status is checked, and where the folded evidence is subtracted from the
- *   survivor by name
- * @param survivorId the collapse's survivor — must match the decision that retired [retiredId]
- * @param retiredId the one retired member to restore
- * @param collectorRecords the run's audit records, if the caller has them. Supplying them makes
- *   "was this collapse applied" a recorded fact rather than an inference from status; omitting
- *   them keeps the older, weaker behaviour described above.
+ *   survivor by name. Must be [ProvenanceSubtractionCapable].
+ * @param collectorRecords the run's audit records. Required: they are what makes "was this collapse
+ *   applied, and has it been reversed already" a recorded fact.
  * @return the updated survivor and restored proposition, or null if nothing was retired under
- *   [retiredId] (no trace of this collapse), if either proposition was already gone when this
- *   function read it, if the subtraction reports the survivor gone — every deletion up to that
- *   point on the graph backend, and up to the default's own last read on a read-modify-write
- *   store — or if the collapse cannot be shown to have been applied. A deletion landing later than
- *   that is not detected, and the survivor is recreated; see the paragraphs above.
- * @throws IllegalArgumentException if [retiredId] was retired into a different survivor than
- *   [survivorId] — a caller error, not a missing-data case
+ *   [CollapseUndoCommand.retiredId] (no trace of this collapse), if either proposition was already
+ *   gone when this function read it, if the subtraction reports the survivor gone, or if the
+ *   collapse cannot be shown to have been applied. A deletion landing after the subtraction's own
+ *   answer goes undetected and the survivor is recreated; see the paragraphs above.
+ * @throws CollapseUndoConfigurationException if [collectorRecords] is null, or if [propositions]
+ *   cannot subtract evidence atomically — wiring mistakes, caught before anything is read
+ * @throws CollapseUndoContextMismatchException if either proposition lives in some context other
+ *   than [CollapseUndoCommand.contextId] — caught before anything is written, and ahead of the
+ *   survivor-mismatch check, so a caller from another context learns only that it was refused
+ * @throws IllegalArgumentException if the retired member was retired into a different survivor from
+ *   the one [command] names — a caller error, and no missing-data case. Reached only once both
+ *   propositions have been shown to belong to the commanded context, since its message quotes the
+ *   survivor the decision names.
  */
-@JvmOverloads
 fun undoSingleCollapse(
+    command: CollapseUndoCommand,
     traceQuery: CollectorTraceQuery,
     propositions: PropositionStore,
-    survivorId: String,
-    retiredId: String,
-    collectorRecords: CollectorRecordStore? = null,
+    collectorRecords: CollectorRecordStore?,
 ): CollapseUndoResult? {
+    val survivorId = command.survivorId
+    val retiredId = command.retiredId
+    // Both configuration refusals come first, ahead of every read, so a misconfigured undo cannot
+    // get far enough to write. A caller with no records has no way to tell an applied merge from a
+    // preview of one, and a store that cannot subtract by name would have to reach for a wholesale
+    // replacement of the survivor's evidence, losing whatever arrived since it read.
+    val records = collectorRecords ?: throw CollapseUndoConfigurationException(
+        "Undoing the collapse of $retiredId into $survivorId needs a CollectorRecordStore to " +
+            "authorize it, and none was supplied",
+    )
+    val subtraction = (propositions as? ProvenanceSubtractionCapable)
+        ?.takeIf { it.supportsProvenanceSubtraction }
+        ?: throw CollapseUndoConfigurationException(
+            "Undoing the collapse of $retiredId into $survivorId needs a store implementing " +
+                "ProvenanceSubtractionCapable; ${propositions.javaClass.name} cannot subtract " +
+                "evidence atomically",
+        )
+
     val decision = traceQuery.findDecisionForProposition(retiredId) ?: return null
+    val retirement = decision.retired.firstOrNull { it.propositionId == retiredId } ?: return null
+
+    // Ownership is settled first, on both propositions this undo writes, and ahead of the
+    // survivor-mismatch check below. Order matters for what a foreign caller is told: the mismatch
+    // message quotes the survivor the decision really names, so running it first would hand
+    // somebody probing with a borrowed member id the id of the survivor in the context that owns
+    // it. Checking ownership first means a caller from elsewhere gets the mismatch refusal and
+    // nothing more.
+    val retiredProposition = propositions.findById(retiredId) ?: return null
+    retiredProposition.requireOwnedBy(command)
+    val survivor = propositions.findById(survivorId) ?: return null
+    survivor.requireOwnedBy(command)
+
     require(decision.survivorId == survivorId) {
         "Proposition $retiredId was retired into survivor ${decision.survivorId}, not $survivorId"
     }
-    val retirement = decision.retired.firstOrNull { it.propositionId == retiredId } ?: return null
-
-    val survivor = propositions.findById(survivorId) ?: return null
-    val retiredProposition = propositions.findById(retiredId) ?: return null
 
     // The member must still be retired, whatever else is true: nothing to reverse otherwise.
     if (!retirement.isCurrentlyRetired(retiredProposition)) return null
-    val authorization = collectorRecords?.authorize(decision.runId, survivorId, retiredId, retiredProposition)
-        ?: UndoAuthorization.Proceed(marker = null)
+    val authorization = records.authorize(decision.runId, survivorId, retiredId, retiredProposition)
     if (authorization is UndoAuthorization.Refuse) return null
 
     // Resuming an undo that was interrupted between its stamp and its restore: the evidence is
@@ -362,7 +436,7 @@ fun undoSingleCollapse(
     // reference forms count, because a sibling recorded before evidence keys existed names its
     // evidence by locator key alone.
     val others = decision.retired.filter {
-        it.propositionId != retiredId && it.stillHoldsAClaim(propositions, collectorRecords, decision.runId)
+        it.propositionId != retiredId && it.stillHoldsAClaim(propositions, records, decision.runId)
     }
     val stillNeededGrounding = others.flatMap { it.foldedGrounding }.toSet()
     val stillNeededProvenanceRefs = others
@@ -372,19 +446,17 @@ fun undoSingleCollapse(
 
     val refsToSubtract = retirement.provenanceRefsForUndo().filterNot { it in stillNeededProvenanceRefs }
 
-    // Evidence goes first and by name. subtractProvenance deletes exactly these refs, so on a store
-    // that can express that in one statement — the graph backend can — evidence another writer adds
-    // while this undo is running survives it. Naming what stays instead would replace it away. The
-    // base contract's default still reads and replaces, so it keeps that window; its own KDoc says
-    // so. The save then carries grounding and source ids over the survivor as the subtraction left
-    // it, and goes last because save is the write a decorator instruments: the event a listener
-    // receives describes the final state.
+    // Evidence goes first and by name. The capability deletes exactly these refs in one atomic
+    // step, so evidence another writer adds while this undo is running survives it. Naming what
+    // stays would replace it away, which is why the store has to promise this before undo will run
+    // at all. The save then carries grounding and source ids over the survivor as the subtraction
+    // left it, and goes last because save is the write a decorator instruments: the event a
+    // listener receives describes the final state.
     //
     // A null answer means the store has no such proposition, so the survivor went away after this
     // function read it. The copy read then is all that is left, and saving it back would recreate
-    // what the other writer deleted, folded evidence and all. The deletion wins. How late a deletion
-    // can land and still be reported this way is a per-store question — see the KDoc.
-    val subtracted = propositions.subtractProvenance(survivorId, refsToSubtract)
+    // what the other writer deleted, folded evidence and all. The deletion wins.
+    val subtracted = subtraction.subtractProvenance(survivorId, refsToSubtract)
     if (subtracted == null) {
         undoLogger.warn(
             "Abandoning the undo of {} in run {}: survivor {} was already gone when the subtraction " +
@@ -405,9 +477,7 @@ fun undoSingleCollapse(
     // window recoverable — see the KDoc's crash matrix. Losing it after the restore would leave a
     // finished undo still authorized, and an immediate retry could not repair that because the
     // member would already be back at its prior status.
-    if (undoMarker != null) {
-        collectorRecords?.record(undoMarker.copy(undoneAt = Instant.now()))
-    }
+    records.record(undoMarker.copy(undoneAt = Instant.now()))
 
     val restored = propositions.save(retiredProposition.withStatus(retirement.priorStatus))
 
@@ -460,8 +530,8 @@ private val WRITING_OUTCOMES = setOf(CollectorOutcome.TRANSITIONED, CollectorOut
 
 private sealed interface UndoAuthorization {
 
-    /** Run the whole undo. [marker] is the record to stamp, or null when no record store was given. */
-    data class Proceed(val marker: CollectorRecord?) : UndoAuthorization
+    /** Run the whole undo. [marker] is the live record that authorized it, and the one to stamp. */
+    data class Proceed(val marker: CollectorRecord) : UndoAuthorization
 
     /** An interrupted undo: the evidence is already off, only the member's restore is outstanding. */
     data object ResumeRestore : UndoAuthorization
@@ -540,9 +610,7 @@ private fun CollectorRecordStore.authorize(
  *
  * Note what it does *not* say: "still retired *by this collapse*". A member retired again later by
  * anything at all — a decay sweep, a second collector run folding it somewhere else — satisfies it
- * just as well. That is why the completion signal on the records path is the `undoneAt` stamp
- * rather than this, and why a caller without records has nothing stopping an unrelated retirement
- * from re-arming an undo that already ran.
+ * just as well. That is why the completion signal is the `undoneAt` stamp, which says so directly.
  *
  * The cost of leaning on it is one false refusal. A member that was genuinely retired, whose undo
  * has not run, and which has since revived to its prior status reads as never retired. Refusing
@@ -560,27 +628,48 @@ private fun RetiredProposition.isCurrentlyRetired(proposition: Proposition): Boo
 /**
  * Whether this sibling's fold still stands, so the survivor must keep holding what it contributed.
  *
- * With records, the answer is the sibling's own `undoneAt` for *this* run: once its undo has run it
- * holds its own copy again, and nothing that happens to it afterwards changes that. Status alone
- * gets this wrong in a way that pins evidence permanently — a sibling undone and then re-retired by
- * a later run reads as still participating, so the shared evidence is retained even though both
- * original folds are reversed and the survivor never returns to its pre-collapse state.
- *
- * Without records the fallback is status, which is what a legacy caller gets: it holds while the
- * sibling sits off its prior status, for whatever reason.
+ * The first answer is the sibling's own `undoneAt` for *this* run: once its undo has run it holds
+ * its own copy again, and nothing that happens to it afterwards changes that. Status alone gets this
+ * wrong in a way that pins evidence permanently — a sibling undone and then re-retired by a later
+ * run reads as still participating, so the shared evidence is retained even though both original
+ * folds are reversed and the survivor never returns to its pre-collapse state. Where the records say
+ * nothing about the sibling, status is the fallback: the claim holds while the sibling sits off its
+ * prior status, for whatever reason.
  *
  * A sibling that has been deleted counts as still holding its claim either way: the survivor's copy
- * of its evidence is then the only one left, and dropping it would erase the evidence rather than
- * return it to anyone.
+ * of its evidence is then the only one left, and dropping it would erase the evidence with nobody
+ * left to hand it back to.
  */
 private fun RetiredProposition.stillHoldsAClaim(
     propositions: PropositionStore,
-    collectorRecords: CollectorRecordStore?,
+    collectorRecords: CollectorRecordStore,
     runId: String,
 ): Boolean {
-    if (collectorRecords != null && collectorRecords.undoneInRun(propositionId, runId)) return false
+    if (collectorRecords.undoneInRun(propositionId, runId)) return false
     val current = propositions.findById(propositionId) ?: return true
     return isCurrentlyRetired(current)
+}
+
+/**
+ * Stops the undo unless this proposition lives in the context [command] names.
+ *
+ * Undo takes ids from whatever handed them to it, so without this a caller could name a survivor in
+ * one context and reverse a collapse in another. The check runs on both propositions before either
+ * is written, so a refusal leaves the other context exactly as it was.
+ */
+private fun Proposition.requireOwnedBy(command: CollapseUndoCommand) {
+    if (contextId != command.contextId) {
+        undoLogger.warn(
+            "Refusing to undo the collapse of {} into {}: proposition {} belongs to context {}, " +
+                "and the undo was issued for context {}",
+            command.retiredId, command.survivorId, id, contextId.value, command.contextId.value,
+        )
+        throw CollapseUndoContextMismatchException(
+            commandedContextId = command.contextId,
+            propositionId = id,
+            actualContextId = contextId,
+        )
+    }
 }
 
 /** Whether this run's fold of [propositionId] has already been reversed. */

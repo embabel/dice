@@ -68,7 +68,7 @@ import org.slf4j.LoggerFactory
 open class EventEmittingPropositionRepository(
     protected val delegate: PropositionRepository,
     private val listener: DiceEventListener = DiceEventListener.DEV_NULL,
-) : PropositionRepository by delegate {
+) : PropositionRepository by delegate, ProvenanceSubtractionCapable {
 
     private val logger = LoggerFactory.getLogger(EventEmittingPropositionRepository::class.java)
 
@@ -92,6 +92,10 @@ open class EventEmittingPropositionRepository(
                 EventEmittingPropositionRepository(delegate, listener)
             }
     }
+
+    /** The delegate's atomic evidence subtraction, if it has one. Resolved once at construction. */
+    private val delegateSubtraction: ProvenanceSubtractionCapable? =
+        delegate as? ProvenanceSubtractionCapable
 
     /**
      * Persists via the delegate, then emits one lifecycle event carrying the saved instance.
@@ -171,6 +175,28 @@ open class EventEmittingPropositionRepository(
         query: PropositionQuery,
     ): List<Cluster<Proposition>> =
         delegate.findClusters(similarityThreshold, topK, query)
+
+    /** True only when the delegate this decorator was handed can subtract atomically. */
+    override val supportsProvenanceSubtraction: Boolean
+        get() = delegateSubtraction?.supportsProvenanceSubtraction == true
+
+    /**
+     * Forwards the atomic subtraction to the delegate, which is where the atomicity lives.
+     *
+     * This decorator instruments [save] alone, so the subtraction passes through unannounced —
+     * the same treatment the other provenance operations get through `by delegate`. Carrying the
+     * capability type matters because Kotlin's interface delegation only covers
+     * [PropositionRepository]: without this, wrapping a capable store would hide the capability
+     * from every caller that probes for it, and collector undo would refuse.
+     */
+    override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? =
+        (
+            delegateSubtraction
+                ?: throw UnsupportedOperationException(
+                    "subtractProvenance needs a delegate that implements ProvenanceSubtractionCapable; " +
+                        "${delegate.javaClass.name} cannot subtract evidence atomically",
+                )
+            ).subtractProvenance(propositionId, provenanceRefs)
 }
 
 /**

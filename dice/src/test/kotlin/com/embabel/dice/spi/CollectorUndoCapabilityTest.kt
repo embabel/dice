@@ -34,11 +34,13 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.proposition.ProvenanceSubtractionCapable
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import com.embabel.dice.provenance.UriLocator
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -47,20 +49,63 @@ import java.time.Instant
 
 /**
  * What `undoSingleCollapse` owes a store: evidence really comes off the survivor, a fold of
- * revisioned evidence is reversed exactly, and a collapse whose participants have since gone
- * leaves nothing half-written.
+ * revisioned evidence is reversed exactly, a collapse whose participants have since gone leaves
+ * nothing half-written, and an undo the caller has no standing to ask for refuses without writing.
  */
 class CollectorUndoCapabilityTest {
 
     private val contextId = ContextId("ctx-undo-capability")
+    private val otherContextId = ContextId("ctx-somebody-else")
     private val locator = UriLocator("https://example.com/source")
     private val revisionOne = ProvenanceEntry(locator = locator, sourceRevision = "r1")
     private val revisionTwo = ProvenanceEntry(locator = locator, sourceRevision = "r2")
+
+    /**
+     * Calls the real entry point with a command for [context]. Every test goes through here, so the
+     * context and the record store are as visible in a test as they are to a caller.
+     */
+    private fun undo(
+        trace: CollectorTraceQuery,
+        store: PropositionStore,
+        survivorId: String,
+        retiredId: String,
+        records: CollectorRecordStore?,
+        context: ContextId = contextId,
+    ): CollapseUndoResult? = undoSingleCollapse(
+        command = CollapseUndoCommand(contextId = context, survivorId = survivorId, retiredId = retiredId),
+        traceQuery = trace,
+        propositions = store,
+        collectorRecords = records,
+    )
+
+    /** The audit trail a real merging sweep would leave: a live run header and an applied merge. */
+    private fun authorize(
+        records: InMemoryCollectorRecordStore,
+        runId: String,
+        memberId: String,
+        survivorId: String,
+        newStatus: PropositionStatus = PropositionStatus.STALE,
+    ) {
+        records.recordRun(CollectorRun(runId = runId, startedAt = Instant.now(), dryRun = false))
+        records.record(
+            CollectorRecord(
+                propositionId = memberId,
+                reason = MarkReason.Duplicate(survivorId = survivorId),
+                outcome = CollectorOutcome.TRANSITIONED,
+                strategyName = "multi-signal",
+                runId = runId,
+                previousStatus = PropositionStatus.ACTIVE,
+                newStatus = newStatus,
+                mergedIntoId = survivorId,
+            ),
+        )
+    }
 
     @Test
     fun `undo uses authoritative provenance replacement through a base store decorator`() {
         val store = AppendPreservingStore()
         val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
         val keep = ProvenanceEntry(UriLocator("https://example.com/keep"))
         val folded = ProvenanceEntry(UriLocator("https://example.com/folded"))
         val survivor = store.save(proposition("survivor", listOf(keep, folded)))
@@ -68,6 +113,7 @@ class CollectorUndoCapabilityTest {
             proposition("retired", listOf(folded), status = PropositionStatus.STALE),
         )
         val runId = "run-base-store-undo"
+        authorize(records, runId, retired.id, survivor.id)
         trace.recordRunContext(runId, contextId)
         trace.recordDecision(
             runId,
@@ -82,7 +128,7 @@ class CollectorUndoCapabilityTest {
             ),
         )
 
-        val result = undoSingleCollapse(trace, store, survivor.id, retired.id)
+        val result = undo(trace, store, survivor.id, retired.id, records)
 
         assertEquals(listOf(keep), result?.survivor?.provenanceEntries)
         assertEquals(listOf(keep), store.findById(survivor.id)?.provenanceEntries)
@@ -93,6 +139,7 @@ class CollectorUndoCapabilityTest {
     fun `folding a revisioned loser and undoing leaves the survivor's evidence as it was`() {
         val store = InMemoryPropositionRepository()
         val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
         val survivor = store.save(
             proposition("survivor-revision", listOf(revisionOne), text = "Acme signed the agreement"),
         )
@@ -101,7 +148,7 @@ class CollectorUndoCapabilityTest {
         )
         val evidenceBeforeTheFold = survivor.provenanceEntries
 
-        collapse(store, trace, "run-revision-undo", survivor, loser)
+        collapse(store, trace, records, "run-revision-undo", survivor, loser)
 
         // The fold under test: the survivor now also carries r2, and the trace names it exactly.
         assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
@@ -110,7 +157,7 @@ class CollectorUndoCapabilityTest {
             trace.findRetirement(loser.id)?.foldedProvenanceEvidenceKeys,
         )
 
-        val result = undoSingleCollapse(trace, store, survivor.id, loser.id)
+        val result = undo(trace, store, survivor.id, loser.id, records)
 
         assertEquals(evidenceBeforeTheFold, result?.survivor?.provenanceEntries)
         assertEquals(evidenceBeforeTheFold, store.findById(survivor.id)?.provenanceEntries)
@@ -124,11 +171,13 @@ class CollectorUndoCapabilityTest {
         // and never touches a revision it never saw.
         val store = InMemoryPropositionRepository()
         val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
         val survivor = store.save(proposition("survivor-legacy", listOf(revisionOne, revisionTwo)))
         val retired = store.save(
             proposition("retired-legacy", listOf(revisionTwo), status = PropositionStatus.STALE),
         )
         val runId = "run-legacy-trace"
+        authorize(records, runId, retired.id, survivor.id)
         trace.recordRunContext(runId, contextId)
         trace.recordDecision(
             runId,
@@ -143,7 +192,7 @@ class CollectorUndoCapabilityTest {
             ),
         )
 
-        undoSingleCollapse(trace, store, survivor.id, retired.id)
+        undo(trace, store, survivor.id, retired.id, records)
 
         assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
     }
@@ -155,12 +204,15 @@ class CollectorUndoCapabilityTest {
         // must take it, because by then nobody is.
         val store = InMemoryPropositionRepository()
         val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
         val evidenceBeforeTheCollapse = listOf(revisionOne)
         val survivor = store.save(proposition("survivor-siblings", listOf(revisionOne, revisionTwo)))
         store.save(proposition("loser-a", listOf(revisionTwo), status = PropositionStatus.STALE))
         store.save(proposition("loser-b", listOf(revisionTwo), status = PropositionStatus.STALE))
         val sharedRevision = ProvenanceEvidenceKey.encode(revisionTwo)
         val runId = "run-siblings"
+        authorize(records, runId, "loser-a", survivor.id)
+        authorize(records, runId, "loser-b", survivor.id)
         trace.recordRunContext(runId, contextId)
         trace.recordDecision(
             runId,
@@ -184,19 +236,19 @@ class CollectorUndoCapabilityTest {
             ),
         )
 
-        undoSingleCollapse(trace, store, survivor.id, "loser-a")
+        undo(trace, store, survivor.id, "loser-a", records)
 
         assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
         assertEquals(PropositionStatus.ACTIVE, store.findById("loser-a")?.status)
         assertEquals(PropositionStatus.STALE, store.findById("loser-b")?.status)
 
-        undoSingleCollapse(trace, store, survivor.id, "loser-b")
+        undo(trace, store, survivor.id, "loser-b", records)
 
         assertEquals(evidenceBeforeTheCollapse, store.findById(survivor.id)?.provenanceEntries)
         assertEquals(PropositionStatus.ACTIVE, store.findById("loser-b")?.status)
 
         // Undoing an already-restored member is a no-op, not a second subtraction.
-        assertNull(undoSingleCollapse(trace, store, survivor.id, "loser-a"))
+        assertNull(undo(trace, store, survivor.id, "loser-a", records))
         assertEquals(evidenceBeforeTheCollapse, store.findById(survivor.id)?.provenanceEntries)
     }
 
@@ -204,9 +256,10 @@ class CollectorUndoCapabilityTest {
     fun `a dry-run fold leaves the survivor untouched when undone`() {
         // The strategy records its trace during the mark phase, before the runner decides whether
         // to apply anything. A dry run therefore leaves a decision that looks exactly like an
-        // applied fold. The loser's status is what says otherwise: nothing retired it.
+        // applied fold. The run header's dryRun flag is what says nothing happened.
         val store = InMemoryPropositionRepository()
         val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
         val survivor = store.save(
             proposition("survivor-dry-run", listOf(revisionOne), text = "Acme signed the agreement"),
         )
@@ -219,6 +272,7 @@ class CollectorUndoCapabilityTest {
             store,
             CollectorRunContext("run-dry", contextId, dryRun = true),
         )
+        records.recordRun(CollectorRun(runId = "run-dry", startedAt = Instant.now(), dryRun = true))
 
         // The trace is there, and it names the evidence a real fold would have moved.
         assertEquals(
@@ -229,7 +283,7 @@ class CollectorUndoCapabilityTest {
         // Nothing was applied, and later the survivor is extracted with that revision on its own.
         store.save(store.findById(survivor.id)!!.withProvenanceEntries(listOf(revisionTwo)))
 
-        val result = undoSingleCollapse(trace, store, survivor.id, loser.id)
+        val result = undo(trace, store, survivor.id, loser.id, records)
 
         assertNull(result)
         assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
@@ -240,6 +294,8 @@ class CollectorUndoCapabilityTest {
     fun `a collapse whose retired member is gone writes nothing`() {
         val store = CountingStore()
         val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
+        authorize(records, "run-missing-retired", "gone-retired", "survivor-orphaned")
         store.seed(proposition("survivor-orphaned", listOf(revisionOne, revisionTwo)))
         trace.recordRunContext("run-missing-retired", contextId)
         trace.recordDecision(
@@ -247,7 +303,7 @@ class CollectorUndoCapabilityTest {
             decisionWith("component-missing-retired", "survivor-orphaned", foldedRevisionTwo("gone-retired")),
         )
 
-        val result = undoSingleCollapse(trace, store, "survivor-orphaned", "gone-retired")
+        val result = undo(trace, store, "survivor-orphaned", "gone-retired", records)
 
         assertNull(result)
         assertEquals(0, store.writes)
@@ -258,6 +314,8 @@ class CollectorUndoCapabilityTest {
     fun `a collapse whose survivor is gone writes nothing`() {
         val store = CountingStore()
         val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
+        authorize(records, "run-missing-survivor", "retired-orphaned", "gone-survivor")
         store.seed(proposition("retired-orphaned", listOf(revisionTwo), status = PropositionStatus.STALE))
         trace.recordRunContext("run-missing-survivor", contextId)
         trace.recordDecision(
@@ -265,7 +323,7 @@ class CollectorUndoCapabilityTest {
             decisionWith("component-missing-survivor", "gone-survivor", foldedRevisionTwo("retired-orphaned")),
         )
 
-        val result = undoSingleCollapse(trace, store, "gone-survivor", "retired-orphaned")
+        val result = undo(trace, store, "gone-survivor", "retired-orphaned", records)
 
         assertNull(result)
         assertEquals(0, store.writes)
@@ -278,12 +336,12 @@ class CollectorUndoCapabilityTest {
         // lands, and the store then answers null. Continuing from the copy read earlier would save
         // that copy back and recreate a proposition somebody else deleted, folded evidence and all.
         //
-        // Which branch this exercises, precisely: InMemoryPropositionRepository overrides neither
-        // `subtractProvenance` nor `setProvenance`, so the subtraction here is the base contract's
-        // default, and the deletion lands before its opening `findById`. That read misses and the default answers null on the spot.
-        // Deletions arriving later are a different matter on each store — the default can recreate
-        // the survivor inside its own read-modify-write, and either store's answer is followed by
-        // the undo's `save`, which upserts. The design note scopes both; neither is pinned here.
+        // Which branch this exercises, precisely: the deletion lands before the in-memory store's
+        // atomic subtraction reaches the map, so its `compute` finds no entry and answers null
+        // without writing one. `ProvenanceSubtractionCapable` requires exactly that of every
+        // implementation, so a store cannot resurrect a proposition inside its own subtraction.
+        // A deletion arriving after the subtraction's answer is a different matter: the undo's
+        // `save` upserts, so it recreates the survivor. The design note scopes that residual.
         val store = InMemoryPropositionRepository()
         val trace = InMemoryCollectorTraceStore()
         val records = InMemoryCollectorRecordStore()
@@ -297,7 +355,7 @@ class CollectorUndoCapabilityTest {
         assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
 
         val racing = DeletingOnSubtract(store, deletes = survivor.id)
-        val result = undoSingleCollapse(trace, racing, survivor.id, loser.id, records)
+        val result = undo(trace, racing, survivor.id, loser.id, records)
 
         assertNull(store.findById(survivor.id), "the deletion wins; the undo must not put the survivor back")
         assertNull(result, "an undo that could not subtract anything must not report a survivor")
@@ -346,7 +404,7 @@ class CollectorUndoCapabilityTest {
         store.save(store.findById(survivor.id)!!.withProvenanceEntries(listOf(revisionTwo)))
         store.save(store.findById(loser.id)!!.withStatus(PropositionStatus.STALE))
 
-        val result = undoSingleCollapse(trace, store, survivor.id, loser.id, records)
+        val result = undo(trace, store, survivor.id, loser.id, records)
 
         assertNull(result)
         assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
@@ -376,7 +434,7 @@ class CollectorUndoCapabilityTest {
             records.findByProposition(loser.id).filter { it.runId == runId }.map { it.mergedIntoId },
         )
 
-        val result = undoSingleCollapse(trace, store, survivor.id, loser.id, records)
+        val result = undo(trace, store, survivor.id, loser.id, records)
 
         assertEquals(listOf(revisionOne), result?.survivor?.provenanceEntries)
         assertEquals(listOf(revisionOne), store.findById(survivor.id)?.provenanceEntries)
@@ -398,13 +456,13 @@ class CollectorUndoCapabilityTest {
         )
         sweep(store, trace, records, survivor.id)
 
-        undoSingleCollapse(trace, store, survivor.id, loser.id, records)
+        undo(trace, store, survivor.id, loser.id, records)
         assertEquals(listOf(revisionOne), store.findById(survivor.id)?.provenanceEntries)
 
         // The survivor is later extracted with that revision again, on its own account.
         store.save(store.findById(survivor.id)!!.withProvenanceEntries(listOf(revisionTwo)))
 
-        val retry = undoSingleCollapse(trace, store, survivor.id, loser.id, records)
+        val retry = undo(trace, store, survivor.id, loser.id, records)
 
         assertNull(retry)
         assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
@@ -455,13 +513,13 @@ class CollectorUndoCapabilityTest {
             )
         }
 
-        undoSingleCollapse(trace, store, survivor.id, "loser-a", records)
+        undo(trace, store, survivor.id, "loser-a", records)
         assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
 
         // A later run retires A again, for reasons of its own.
         retireAgain(store, records, "loser-a")
 
-        undoSingleCollapse(trace, store, survivor.id, "loser-b", records)
+        undo(trace, store, survivor.id, "loser-b", records)
 
         assertEquals(evidenceBeforeTheCollapse, store.findById(survivor.id)?.provenanceEntries)
         assertEquals(PropositionStatus.ACTIVE, store.findById("loser-b")?.status)
@@ -485,7 +543,7 @@ class CollectorUndoCapabilityTest {
         )
         val runId = sweep(store, trace, records, survivor.id)
 
-        undoSingleCollapse(trace, store, survivor.id, loser.id, records)
+        undo(trace, store, survivor.id, loser.id, records)
         assertEquals(listOf(revisionOne), store.findById(survivor.id)?.provenanceEntries)
         assertTrue(
             records.findByProposition(loser.id).any { it.runId == runId && it.undoneAt != null },
@@ -497,7 +555,7 @@ class CollectorUndoCapabilityTest {
         store.save(store.findById(survivor.id)!!.withProvenanceEntries(listOf(revisionTwo)))
         retireAgain(store, records, loser.id)
 
-        val retry = undoSingleCollapse(trace, store, survivor.id, loser.id, records)
+        val retry = undo(trace, store, survivor.id, loser.id, records)
 
         assertNull(retry)
         assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
@@ -520,7 +578,7 @@ class CollectorUndoCapabilityTest {
         val runId = sweep(store, trace, records, survivor.id)
         val original = records.findByProposition(loser.id).first { it.runId == runId }
 
-        undoSingleCollapse(trace, store, survivor.id, loser.id, records)
+        undo(trace, store, survivor.id, loser.id, records)
 
         records.record(original)
         assertTrue(
@@ -531,7 +589,7 @@ class CollectorUndoCapabilityTest {
         store.save(store.findById(survivor.id)!!.withProvenanceEntries(listOf(revisionTwo)))
         retireAgain(store, records, loser.id)
 
-        assertNull(undoSingleCollapse(trace, store, survivor.id, loser.id, records))
+        assertNull(undo(trace, store, survivor.id, loser.id, records))
         assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
     }
 
@@ -575,7 +633,7 @@ class CollectorUndoCapabilityTest {
         val failing = FailingRecordStore(records)
 
         assertThrows(IllegalStateException::class.java) {
-            undoSingleCollapse(trace, store, survivor.id, loser.id, failing)
+            undo(trace, store, survivor.id, loser.id, failing)
         }
 
         // The survivor's evidence is already off; the member is still retired; nothing is stamped.
@@ -583,7 +641,7 @@ class CollectorUndoCapabilityTest {
         assertEquals(PropositionStatus.STALE, store.findById(loser.id)?.status)
         assertTrue(records.findByProposition(loser.id).none { it.undoneAt != null })
 
-        val result = undoSingleCollapse(trace, store, survivor.id, loser.id, records)
+        val result = undo(trace, store, survivor.id, loser.id, records)
 
         assertEquals(listOf(revisionOne), result?.survivor?.provenanceEntries)
         assertEquals(PropositionStatus.ACTIVE, store.findById(loser.id)?.status)
@@ -608,7 +666,7 @@ class CollectorUndoCapabilityTest {
         // Stand in for the crash: run the undo far enough to stamp, then stop before the restore.
         val stoppingBeforeRestore = FailingPropositionStore(store, failOnSaveOf = loser.id)
         assertThrows(IllegalStateException::class.java) {
-            undoSingleCollapse(trace, stoppingBeforeRestore, survivor.id, loser.id, records)
+            undo(trace, stoppingBeforeRestore, survivor.id, loser.id, records)
         }
         assertEquals(listOf(revisionOne), store.findById(survivor.id)?.provenanceEntries)
         assertEquals(PropositionStatus.STALE, store.findById(loser.id)?.status)
@@ -616,7 +674,7 @@ class CollectorUndoCapabilityTest {
         // The survivor legitimately re-gains that revision before anyone retries.
         store.save(store.findById(survivor.id)!!.withProvenanceEntries(listOf(revisionTwo)))
 
-        val result = undoSingleCollapse(trace, store, survivor.id, loser.id, records)
+        val result = undo(trace, store, survivor.id, loser.id, records)
 
         assertEquals(PropositionStatus.ACTIVE, store.findById(loser.id)?.status)
         assertEquals(
@@ -644,7 +702,7 @@ class CollectorUndoCapabilityTest {
 
         val stoppingBeforeRestore = FailingPropositionStore(store, failOnSaveOf = loser.id)
         assertThrows(IllegalStateException::class.java) {
-            undoSingleCollapse(trace, stoppingBeforeRestore, survivor.id, loser.id, records)
+            undo(trace, stoppingBeforeRestore, survivor.id, loser.id, records)
         }
 
         // Inside the crash window: a later real run skips the member, and a dry run previews it.
@@ -671,7 +729,7 @@ class CollectorUndoCapabilityTest {
             ),
         )
 
-        val result = undoSingleCollapse(trace, store, survivor.id, loser.id, records)
+        val result = undo(trace, store, survivor.id, loser.id, records)
 
         assertEquals(PropositionStatus.ACTIVE, store.findById(loser.id)?.status)
         assertEquals(listOf(revisionOne), result?.survivor?.provenanceEntries)
@@ -716,7 +774,7 @@ class CollectorUndoCapabilityTest {
             ),
         )
 
-        val result = undoSingleCollapse(trace, store, survivor.id, "loser-legacy-stamp", records)
+        val result = undo(trace, store, survivor.id, "loser-legacy-stamp", records)
 
         assertNull(result)
         assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
@@ -742,7 +800,7 @@ class CollectorUndoCapabilityTest {
 
         store.save(store.findById(loser.id)!!.withStatus(PropositionStatus.ACTIVE))
 
-        val result = undoSingleCollapse(trace, store, survivor.id, loser.id, records)
+        val result = undo(trace, store, survivor.id, loser.id, records)
 
         assertNull(result)
         assertEquals(foldedEvidence, store.findById(survivor.id)?.provenanceEntries)
@@ -772,7 +830,7 @@ class CollectorUndoCapabilityTest {
         // The survivor picks that revision up on its own afterwards.
         store.save(store.findById(survivor.id)!!.withProvenanceEntries(listOf(revisionTwo)))
 
-        val result = undoSingleCollapse(trace, store, survivor.id, loser.id, records)
+        val result = undo(trace, store, survivor.id, loser.id, records)
 
         assertNull(result)
         assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
@@ -856,10 +914,274 @@ class CollectorUndoCapabilityTest {
             records.findByProposition(loser.id).filter { it.runId == runId }.map { it.mergedIntoId },
         )
 
-        val result = undoSingleCollapse(trace, store, survivor.id, loser.id, records)
+        val result = undo(trace, store, survivor.id, loser.id, records)
 
         assertNull(result)
         assertEquals(listOf(revisionOne), store.findById(survivor.id)?.provenanceEntries)
+    }
+
+    @Test
+    fun `an undo with no record store refuses, and writes nothing`() {
+        // Without records nothing distinguishes an applied merge from a preview of one, so the
+        // undo declines to guess. It declines before it reads, so the store is never approached.
+        val fold = appliedFold("no-records")
+
+        val thrown = assertThrows(CollapseUndoConfigurationException::class.java) {
+            undo(fold.trace, fold.store, fold.survivorId, fold.retiredId, records = null)
+        }
+
+        assertTrue(
+            thrown.message!!.contains("CollectorRecordStore"),
+            "the refusal has to name the store that is missing: ${thrown.message}",
+        )
+        assertEquals(listOf(revisionOne, revisionTwo), fold.store.findById(fold.survivorId)?.provenanceEntries)
+        assertEquals(PropositionStatus.STALE, fold.store.findById(fold.retiredId)?.status)
+    }
+
+    @Test
+    fun `an undo backed only by a dry-run record refuses, and writes nothing`() {
+        // A dry run writes preview records carrying mergedIntoId and everything else a real merge
+        // would, and then changes nothing at all. The run header's dryRun flag is the marking that
+        // separates the two, and it is what the undo gates on. Same world state as the live-record
+        // test below; only the header differs.
+        val fold = appliedFold("dry-record")
+        val records = InMemoryCollectorRecordStore()
+        records.recordRun(CollectorRun(runId = fold.runId, startedAt = Instant.now(), dryRun = true))
+        records.record(
+            CollectorRecord(
+                propositionId = fold.retiredId,
+                reason = MarkReason.Duplicate(survivorId = fold.survivorId),
+                outcome = CollectorOutcome.TRANSITIONED,
+                strategyName = "multi-signal",
+                runId = fold.runId,
+                previousStatus = PropositionStatus.ACTIVE,
+                newStatus = PropositionStatus.STALE,
+                mergedIntoId = fold.survivorId,
+            ),
+        )
+
+        val result = undo(fold.trace, fold.store, fold.survivorId, fold.retiredId, records)
+
+        assertNull(result)
+        assertEquals(listOf(revisionOne, revisionTwo), fold.store.findById(fold.survivorId)?.provenanceEntries)
+        assertEquals(PropositionStatus.STALE, fold.store.findById(fold.retiredId)?.status)
+        assertTrue(records.all().none { it.undoneAt != null }, "a refused undo stamps nothing")
+    }
+
+    @Test
+    fun `an undo backed by a live record for the same collapse proceeds`() {
+        // The third of the discriminating trio: identical world state, a real run header, and the
+        // undo goes through.
+        val fold = appliedFold("live-record")
+        val records = InMemoryCollectorRecordStore()
+        authorize(records, fold.runId, fold.retiredId, fold.survivorId)
+
+        val result = undo(fold.trace, fold.store, fold.survivorId, fold.retiredId, records)
+
+        assertEquals(listOf(revisionOne), result?.survivor?.provenanceEntries)
+        assertEquals(listOf(revisionOne), fold.store.findById(fold.survivorId)?.provenanceEntries)
+        assertEquals(PropositionStatus.ACTIVE, fold.store.findById(fold.retiredId)?.status)
+        assertTrue(records.findByProposition(fold.retiredId).any { it.undoneAt != null })
+    }
+
+    @Test
+    fun `an undo against a store that cannot subtract atomically refuses, and writes nothing`() {
+        // Undo has to take evidence off by name. A store without that operation would leave the
+        // caller replacing the survivor's evidence wholesale, which silently drops whatever another
+        // extraction added since the read. Refusing is the only safe answer.
+        val fold = appliedFold("no-subtraction")
+        val records = InMemoryCollectorRecordStore()
+        authorize(records, fold.runId, fold.retiredId, fold.survivorId)
+
+        val thrown = assertThrows(CollapseUndoConfigurationException::class.java) {
+            undo(fold.trace, NoSubtractionStore(fold.store), fold.survivorId, fold.retiredId, records)
+        }
+
+        assertTrue(
+            thrown.message!!.contains("ProvenanceSubtractionCapable"),
+            "the refusal has to name the capability the store lacks: ${thrown.message}",
+        )
+        assertEquals(listOf(revisionOne, revisionTwo), fold.store.findById(fold.survivorId)?.provenanceEntries)
+        assertEquals(PropositionStatus.STALE, fold.store.findById(fold.retiredId)?.status)
+        assertTrue(records.all().none { it.undoneAt != null })
+    }
+
+    @Test
+    fun `a decorator carries its delegate's subtraction, and reports honestly when it has none`() {
+        // Kotlin's interface delegation only covers PropositionRepository, so a decorator has to
+        // carry the capability itself. Wrapping a capable store and losing the capability would
+        // turn every undo behind that decorator into a refusal.
+        val capable = appliedFold("decorated-capable")
+        val capableRecords = InMemoryCollectorRecordStore()
+        authorize(capableRecords, capable.runId, capable.retiredId, capable.survivorId)
+        val decorated = EventEmittingPropositionRepository(capable.store, DiceEventListener.DEV_NULL)
+        assertTrue(decorated.supportsProvenanceSubtraction)
+
+        val result = undo(capable.trace, decorated, capable.survivorId, capable.retiredId, capableRecords)
+
+        assertEquals(listOf(revisionOne), result?.survivor?.provenanceEntries)
+        assertEquals(listOf(revisionOne), capable.store.findById(capable.survivorId)?.provenanceEntries)
+
+        val incapable = appliedFold("decorated-incapable")
+        val incapableRecords = InMemoryCollectorRecordStore()
+        authorize(incapableRecords, incapable.runId, incapable.retiredId, incapable.survivorId)
+        val overIncapable = EventEmittingPropositionRepository(
+            NoSubtractionStore(incapable.store),
+            DiceEventListener.DEV_NULL,
+        )
+        assertFalse(overIncapable.supportsProvenanceSubtraction)
+
+        assertThrows(CollapseUndoConfigurationException::class.java) {
+            undo(incapable.trace, overIncapable, incapable.survivorId, incapable.retiredId, incapableRecords)
+        }
+        assertEquals(
+            listOf(revisionOne, revisionTwo),
+            incapable.store.findById(incapable.survivorId)?.provenanceEntries,
+        )
+    }
+
+    @Test
+    fun `an undo issued for one context refuses ids belonging to another, and leaves it untouched`() {
+        // The whole collapse lives in someone else's context, and the caller supplies its ids while
+        // acting in its own. Every check downstream would pass — the trace is there, the records
+        // authorize it, the member is retired — so ownership is the only thing standing in the way.
+        val store = InMemoryPropositionRepository()
+        val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
+        val runId = "run-other-context"
+        val survivor = store.save(
+            proposition("survivor-elsewhere", listOf(revisionOne, revisionTwo), context = otherContextId),
+        )
+        val loser = store.save(
+            proposition(
+                "loser-elsewhere",
+                listOf(revisionTwo),
+                status = PropositionStatus.STALE,
+                context = otherContextId,
+            ),
+        )
+        trace.recordRunContext(runId, otherContextId)
+        trace.recordDecision(runId, decisionWith("component-elsewhere", survivor.id, foldedRevisionTwo(loser.id)))
+        authorize(records, runId, loser.id, survivor.id)
+
+        val thrown = assertThrows(CollapseUndoContextMismatchException::class.java) {
+            undo(trace, store, survivor.id, loser.id, records, context = contextId)
+        }
+
+        // The retired member is checked first, so it is the one named. The order is deliberate: see
+        // `a foreign member with a guessed survivor is refused before the mismatch names anything`.
+        assertEquals(loser.id, thrown.propositionId)
+        assertEquals(otherContextId, thrown.actualContextId)
+        assertEquals(contextId, thrown.commandedContextId)
+        assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
+        assertEquals(PropositionStatus.STALE, store.findById(loser.id)?.status)
+        assertTrue(records.all().none { it.undoneAt != null })
+
+        // The same collapse reverses cleanly once the command names the context that owns it, so
+        // the refusal above is about ownership alone.
+        val result = undo(trace, store, survivor.id, loser.id, records, context = otherContextId)
+
+        assertEquals(listOf(revisionOne), result?.survivor?.provenanceEntries)
+        assertEquals(PropositionStatus.ACTIVE, store.findById(loser.id)?.status)
+    }
+
+    @Test
+    fun `a member from another context cannot be restored into this context's survivor`() {
+        // The mixed case: the survivor is the caller's, the member is not. Both propositions get
+        // the check, so naming a foreign member stops the undo before the survivor is written.
+        val store = InMemoryPropositionRepository()
+        val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
+        val runId = "run-mixed-contexts"
+        val survivor = store.save(proposition("survivor-here", listOf(revisionOne, revisionTwo)))
+        val loser = store.save(
+            proposition(
+                "loser-there",
+                listOf(revisionTwo),
+                status = PropositionStatus.STALE,
+                context = otherContextId,
+            ),
+        )
+        trace.recordRunContext(runId, contextId)
+        trace.recordDecision(runId, decisionWith("component-mixed", survivor.id, foldedRevisionTwo(loser.id)))
+        authorize(records, runId, loser.id, survivor.id)
+
+        val thrown = assertThrows(CollapseUndoContextMismatchException::class.java) {
+            undo(trace, store, survivor.id, loser.id, records)
+        }
+
+        assertEquals(loser.id, thrown.propositionId)
+        assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
+        assertEquals(PropositionStatus.STALE, store.findById(loser.id)?.status)
+        assertTrue(records.all().none { it.undoneAt != null })
+    }
+
+    @Test
+    fun `a foreign member with a guessed survivor is refused before the mismatch names anything`() {
+        // Probing shape: the caller has a member id from another context and guesses at a survivor.
+        // The survivor-mismatch check would answer that guess by quoting the survivor the decision
+        // really names — the other context's — so ownership is settled first and the caller is told
+        // only that the member is somebody else's.
+        val store = InMemoryPropositionRepository()
+        val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
+        val runId = "run-probe"
+        val survivor = store.save(
+            proposition("survivor-secret", listOf(revisionOne, revisionTwo), context = otherContextId),
+        )
+        val loser = store.save(
+            proposition(
+                "loser-borrowed",
+                listOf(revisionTwo),
+                status = PropositionStatus.STALE,
+                context = otherContextId,
+            ),
+        )
+        trace.recordRunContext(runId, otherContextId)
+        trace.recordDecision(runId, decisionWith("component-probe", survivor.id, foldedRevisionTwo(loser.id)))
+        authorize(records, runId, loser.id, survivor.id)
+
+        val thrown = assertThrows(CollapseUndoContextMismatchException::class.java) {
+            undo(trace, store, survivorId = "a-guess", retiredId = loser.id, records = records, context = contextId)
+        }
+
+        assertEquals(loser.id, thrown.propositionId)
+        assertFalse(
+            thrown.message!!.contains(survivor.id),
+            "the refusal must leak no id from the context that owns the collapse: ${thrown.message}",
+        )
+        assertEquals(listOf(revisionOne, revisionTwo), store.findById(survivor.id)?.provenanceEntries)
+        assertEquals(PropositionStatus.STALE, store.findById(loser.id)?.status)
+        assertTrue(records.all().none { it.undoneAt != null })
+    }
+
+    /** One collapse already applied in the store, with its trace, and no audit records yet. */
+    private class AppliedFold(
+        val store: InMemoryPropositionRepository,
+        val trace: InMemoryCollectorTraceStore,
+        val survivorId: String,
+        val retiredId: String,
+        val runId: String,
+    )
+
+    /**
+     * Seeds a survivor holding both revisions, a member retired into it, and the trace decision
+     * that describes the fold. The audit records are left to the caller, because what they say is
+     * exactly what the fail-closed tests vary.
+     */
+    private fun appliedFold(suffix: String): AppliedFold {
+        val store = InMemoryPropositionRepository()
+        val trace = InMemoryCollectorTraceStore()
+        val survivor = store.save(proposition("survivor-$suffix", listOf(revisionOne, revisionTwo)))
+        val retiredId = "loser-$suffix"
+        store.save(proposition(retiredId, listOf(revisionTwo), status = PropositionStatus.STALE))
+        val runId = "run-$suffix"
+        trace.recordRunContext(runId, contextId)
+        trace.recordDecision(
+            runId,
+            decisionWith("component-$suffix", survivor.id, foldedRevisionTwo(retiredId)),
+        )
+        return AppliedFold(store, trace, survivor.id, retiredId, runId)
     }
 
     /**
@@ -881,10 +1203,15 @@ class CollectorUndoCapabilityTest {
         listener = DiceEventListener.DEV_NULL,
     ).run(contextId, dryRun = dryRun).runId
 
-    /** Runs the real strategy over one pair, then applies the fold the way a sweep does. */
+    /**
+     * Runs the real strategy over one pair, applies the fold the way a sweep does, and writes the
+     * audit trail that fold would have left. Undo needs all three: the decision to know what moved,
+     * the store to hold the result, and a live record to say the merge really happened.
+     */
     private fun collapse(
         store: InMemoryPropositionRepository,
         trace: InMemoryCollectorTraceStore,
+        records: InMemoryCollectorRecordStore,
         runId: String,
         survivor: Proposition,
         loser: Proposition,
@@ -893,6 +1220,7 @@ class CollectorUndoCapabilityTest {
 
         store.save(store.findById(survivor.id)!!.absorbEvidence(loser))
         store.save(store.findById(loser.id)!!.withStatus(PropositionStatus.STALE))
+        authorize(records, runId, loser.id, survivor.id)
     }
 
     /** A deterministic one-pair strategy, so a trace under test comes from the real mark path. */
@@ -933,9 +1261,10 @@ class CollectorUndoCapabilityTest {
         provenance: List<ProvenanceEntry>,
         text: String = "$id proposition",
         status: PropositionStatus = PropositionStatus.ACTIVE,
+        context: ContextId = contextId,
     ) = Proposition(
         id = id,
-        contextId = contextId,
+        contextId = context,
         text = text,
         mentions = emptyList(),
         confidence = 0.9,
@@ -946,7 +1275,10 @@ class CollectorUndoCapabilityTest {
     /** Models a persistent backend whose ordinary save path never removes unloaded evidence. */
     private class AppendPreservingStore(
         private val delegate: InMemoryPropositionRepository = InMemoryPropositionRepository(),
-    ) : PropositionRepository by delegate {
+    ) : PropositionRepository by delegate, ProvenanceSubtractionCapable {
+
+        override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? =
+            delegate.subtractProvenance(propositionId, provenanceRefs)
 
         override fun save(proposition: Proposition): Proposition {
             val existing = delegate.findById(proposition.id) ?: return delegate.save(proposition)
@@ -985,7 +1317,7 @@ class CollectorUndoCapabilityTest {
     private class DeletingOnSubtract(
         private val delegate: InMemoryPropositionRepository,
         private val deletes: String,
-    ) : PropositionRepository by delegate {
+    ) : PropositionRepository by delegate, ProvenanceSubtractionCapable {
 
         override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? {
             delegate.delete(deletes)
@@ -997,18 +1329,30 @@ class CollectorUndoCapabilityTest {
     private class FailingPropositionStore(
         private val delegate: InMemoryPropositionRepository,
         private val failOnSaveOf: String,
-    ) : PropositionRepository by delegate {
+    ) : PropositionRepository by delegate, ProvenanceSubtractionCapable {
 
         override fun save(proposition: Proposition): Proposition {
             if (proposition.id == failOnSaveOf) error("simulated crash before the member was restored")
             return delegate.save(proposition)
         }
+
+        override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? =
+            delegate.subtractProvenance(propositionId, provenanceRefs)
     }
+
+    /**
+     * A store with no atomic subtraction at all. Kotlin's interface delegation covers
+     * [PropositionRepository], which no longer carries the operation, so this class simply is not
+     * [ProvenanceSubtractionCapable] — which is the state the undo has to refuse on.
+     */
+    private class NoSubtractionStore(
+        delegate: InMemoryPropositionRepository,
+    ) : PropositionRepository by delegate
 
     /** Counts every write an undo attempts, so "nothing was written" is an assertion. */
     private class CountingStore(
         private val delegate: InMemoryPropositionRepository = InMemoryPropositionRepository(),
-    ) : PropositionStore by delegate {
+    ) : PropositionStore by delegate, ProvenanceSubtractionCapable {
 
         var writes = 0
             private set
