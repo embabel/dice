@@ -29,11 +29,11 @@ import java.time.Instant
 internal object ExtractionRunFixtures {
 
     /**
-     * The source text the sanitization tests extract from.
+     * The source text the privacy tests extract from.
      *
      * It carries a person's name, an organisation, an email address and a case number on purpose:
-     * those are the shapes that survive into a provider's exception message and then into a stored
-     * failure record if anything writes `e.message` into one.
+     * those are the shapes that survive into a provider's exception message and would reach a
+     * stored failure record if a failure had anywhere to put them.
      */
     const val SOURCE_TEXT: String =
         "Marguerite Okonkwo confirmed the Q3 renewal for Acme Holdings on 12 March 2026; " +
@@ -77,8 +77,9 @@ internal object ExtractionRunFixtures {
     /**
      * A run with every field populated, which is what the privacy assertions dump.
      *
-     * The failure on it is built the way DICE builds one — from a throwable whose message quotes
-     * [SOURCE_TEXT], exactly as a provider's would.
+     * Its failure is the one an extraction over [SOURCE_TEXT] would record: the provider threw the
+     * exception [providerFailureQuotingSource] builds, and what the run keeps is the code, the
+     * stage, the status, the size, and which attempt it belonged to.
      */
     fun populatedRun(): ExtractionRun = ExtractionRun(
         contextId = CONTEXT,
@@ -165,9 +166,11 @@ internal object ExtractionRunFixtures {
             ),
         ),
         failures = listOf(
-            ExtractionFailure.fromThrowable(
+            ExtractionFailure(
                 code = ExtractionFailureCode.DECODE_FAILED,
-                throwable = providerFailureQuotingSource(),
+                stage = ExtractionFailureStage.RESPONSE_DECODE,
+                providerStatus = 502,
+                measure = ExtractionFailureMeasure(ExtractionFailureQuantity.CHARACTER_COUNT, 4_128),
                 at = FINISHED_AT,
                 invocation = ExtractionInvocationId(invocationIndex = 1, attempt = 2),
             ),

@@ -148,7 +148,7 @@ class ExtractionRunContractTest {
         assertThatIllegalArgumentException().isThrownBy {
             runWith(
                 failures = (0..ExtractionRunLimits.MAX_FAILURES)
-                    .map { ExtractionFailure(ExtractionFailureCode.INTERNAL, "failure $it", STARTED_AT) },
+                    .map { ExtractionFailure(code = ExtractionFailureCode.INTERNAL, at = STARTED_AT) },
             )
         }.withMessageContaining("failures")
 
@@ -243,7 +243,11 @@ class ExtractionRunContractTest {
         assertThat(
             runWith(
                 failures = listOf(
-                    ExtractionFailure(ExtractionFailureCode.SOURCE_UNAVAILABLE, "source read failed", STARTED_AT),
+                    ExtractionFailure(
+                        code = ExtractionFailureCode.SOURCE_UNAVAILABLE,
+                        stage = ExtractionFailureStage.SOURCE_READ,
+                        at = STARTED_AT,
+                    ),
                 ),
             ).failures.single().invocation,
         ).isNull()
@@ -269,7 +273,7 @@ class ExtractionRunContractTest {
 
         revisions += REVISION_ONE
         invocations += ExtractionInvocationRecord.planned(0)
-        failures += ExtractionFailure(ExtractionFailureCode.INTERNAL, "later", STARTED_AT)
+        failures += ExtractionFailure(code = ExtractionFailureCode.INTERNAL, at = STARTED_AT)
 
         assertThat(run.sourceRevisions).isEmpty()
         assertThat(run.invocations).isEmpty()

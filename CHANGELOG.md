@@ -518,9 +518,13 @@ and the consumer PRs that deliver it).
 - **EXPERIMENTAL.** The extraction run model in `dice` core — the value types DICE #67's store,
   lineage and wiring slices build on. `ExtractionRun`, keyed by (`ContextId`, `ExtractionRunRef`)
   through the new `ExtractionRunKey`, records the profile version in force, the ordered source
-  revisions it read, its lineage, prompt/schema/metamodel fingerprints, extractor/host/runtime
+  revisions it read, its lineage, prompt/schema/metamodel fingerprints (the metamodel one is written
+  by the extraction coordinator in a later slice, which resolves the declared schema stamp from the
+  host's `DeclaredSchemaSource` and hashes it; per-proposition schema attribution is answered by
+  following a proposition back to its run through run lineage), extractor/host/runtime
   identity, requested model configuration, pseudonymous subject references, experiment and cohort
-  labels, status, timing, counts, invocation records, bounded sanitized failures, and an explicit
+  labels, status, timing, counts, invocation records, bounded failures in a closed vocabulary, and
+  an explicit
   replay-fidelity value. Nothing stores one yet: the lifecycle state machine and the store contract
   are the next slice, and no code constructs a run during extraction until the wiring slice.
   **Requested and observed model facts are separate types, structurally.**
@@ -565,12 +569,37 @@ and the consumer PRs that deliver it).
   email address, a URL, a file path, a JSON fragment and a human name outright. The KDoc states what
   that does not prove — a value type cannot tell a pseudonym from a username — rather than implying
   a guarantee. A token's `toString` shows eight characters and a validation message never quotes the
-  value it rejected. `ExtractionFailure` is a classified `ExtractionFailureCode` plus a bounded
-  single-line detail; `fromThrowable`, the path DICE itself uses, never reads `Throwable.message`
-  and records exception class names down a bounded cycle-safe cause chain, because a provider quotes
-  the prompt back in its message. Tests extract from a fixture whose source text is known and assert
-  no fragment of it, no address shape, no link shape and no long digit run survives into a
-  field-by-field dump of a fully populated run. **Replay fidelity never claims exact replay.**
+  value it rejected. **Free text cannot reach durable storage through `ExtractionFailure`.** The
+  record speaks a closed vocabulary and has no `String` parameter, property or field, and no factory
+  taking a `Throwable`: a classified `ExtractionFailureCode` (11 values), an optional
+  `ExtractionFailureStage` (10 values) saying where in the run's work it happened, an optional
+  provider status bounded to 100..599, and an optional `ExtractionFailureMeasure` pairing one number
+  with an `ExtractionFailureQuantity` that names its unit — `TOKEN_COUNT`, `ELAPSED_MILLIS`,
+  `RETRY_AFTER_SECONDS` — so 4096 can never be recorded without saying it is tokens. The earlier
+  shape, a code plus a bounded whitespace-flattened `detail` string, closed nothing a #95 review
+  comment cared about: a truncated prompt is still a prompt, and a credential, an email address or a
+  paragraph of protected text all fit in 512 characters. The vocabulary closes it at construction,
+  which is why `detail`, `of(code, detail, ...)`, `fromThrowable` and `MAX_FAILURE_DETAIL_LENGTH` are
+  all gone. "Chunk 3 of 12 exceeded the token budget" survives as `invocation.invocationIndex` plus a
+  `TOKEN_COUNT` measure; the sentence, the part nobody could vouch for, does not. A host that wants
+  the exception message keeps it under its own retention and access rules. Canary tests take raw
+  source text, a prompt fragment, an email address and two credential shapes a scanner recognises,
+  and assert no constructor, factory or method will take any of them, that no type a failure reaches
+  has a text field, and that every value a fully populated failure holds is an enum, a number or an
+  instant. Tests still extract from a fixture whose source text is known and assert no fragment of
+  it, no address shape, no link shape and no long digit run survives into a field-by-field dump of a
+  fully populated run.
+  **`ProtectedContentRef` ships as specification only.** One interface, two members — an opaque
+  `handle` and an `expiresAt` — and no implementation, no production reference, and nothing DICE
+  stores. It is the written contract for a host keeping detailed failure material of its own, and it
+  hands the host all three jobs: the writer, because DICE never sees the material; the reader,
+  because resolving a handle runs under the host's access rules and the handle grants no access on
+  its own; and retention, where `expiresAt` is the host's declaration and the host's own job is what
+  makes it true. The KDoc carries a worked example of a host writing an exception message into its
+  vault under a handle for ninety days. A type of this name shipped in an earlier #98 draft as a
+  stored value and was deleted during review, because nothing attached it to a run and DICE had no
+  writer, reader or retention behaviour behind it; a test now asserts the interface is abstract and
+  that no compiled DICE class mentions the type. **Replay fidelity never claims exact replay.**
   `ExtractionReplayFidelity` is `NONE`, `METADATA`, `APPROXIMATE`; the strongest value is still
   approximate and `strongest()` returns it so appending a value cannot quietly strengthen the claim.
   **`ExtractionRunStatus` ships the four values only** — `RUNNING`, `COMPLETED`, `FAILED`,
@@ -585,10 +614,9 @@ and the consumer PRs that deliver it).
   and a migration later. **One cap rule**: every bound is a named constant on `ExtractionRunLimits`,
   checked in the `init` block of the type that owns the value, and an over-long value is rejected
   rather than truncated, because a shortened identifier is a different identifier. Identifiers cap
-  at 256 characters, the one free-text failure detail at 512, and the three collections at 256
-  source revisions, 1024 invocation records and 64 failures. The failure detail is the single
-  exception to rejection and only on the way in: its factories clip it, the constructor still
-  rejects. `sourceKey` and `sourceRevision` carry no length bound on `ExtractionRun`: their one
+  at 256 characters, a provider status falls in 100..599, and the three collections cap at 256
+  source revisions, 1024 invocation records and 64 failures. The rule now has no exception, because
+  the model has no free-text field for one to apply to. `sourceKey` and `sourceRevision` carry no length bound on `ExtractionRun`: their one
   bound lives on `SourceRevisionRef`, the type that owns those strings, which checks both halves
   against `SourceIdentityBounds` at construction (`docs/design/source-revisions.md`). A run accepts
   whatever that type accepts and adds no cap of its own, so a revision a query worked with can
@@ -607,6 +635,8 @@ and the consumer PRs that deliver it).
   **Compatibility: additive, new types only.** Nothing existing changes. No existing class gains or
   loses a member, no signature moves, no default changes, and no behaviour differs — this slice adds
   types to `com.embabel.dice.proposition.extraction` and touches nothing that was already there.
+  `ExtractionFailure`'s reshape is inside this slice: the type is new here, so nothing released has
+  ever seen the `detail` field.
   Source, binary and Java compatibility are therefore all unaffected, and the scoped Kotlin ABI
   boundary the Wave A and B slices declared does not apply because no existing data class gained a
   field. No stored data changes and no migration is required: nothing serializes a run yet, and the
