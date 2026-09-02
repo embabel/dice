@@ -285,8 +285,8 @@ and the consumer PRs that deliver it).
   `QUARANTINED`, so an exhaustive `when` over the enum needs a new branch too; inside DICE there was
   exactly one (`DefaultDreamLoopOrchestrator.statusStrength`, where `QUARANTINED` now ranks above
   every automatic retirement, since letting one overwrite a governance hold would drop the reason and
-  the recorded prior status with it), and `me`'s status matching is the known external consumer, which
-  recompiles. Persistence is by enum *name* throughout (`PropositionGraphMapper`,
+  the recorded prior status with it), and a host that matches on status exhaustively is the known
+  consumer shape, which recompiles. Persistence is by enum *name* throughout (`PropositionGraphMapper`,
   `CollectorTraceRowMappers`, `LineageRowMappers`), so no stored value changes meaning. The
   quarantine types keep their names and move package, from `com.embabel.dice.metamodel` and
   `com.embabel.dice.metamodel.support` to `com.embabel.dice.spi`; they were added in this same
