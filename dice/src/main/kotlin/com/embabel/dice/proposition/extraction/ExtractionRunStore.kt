@@ -189,8 +189,9 @@ interface ExtractionRunStore {
      * @param run The run to record. Must be [ExtractionRunStatus.RUNNING] and carry no
      *   [ExtractionRun.finishedAt].
      * @return The stored run, including any invocation records already recorded against it through
-     *   [recordInvocation]. Its [ExtractionRun.version] is one higher than [run]'s when the header
-     *   changed, and unchanged when the save was a no-op.
+     *   [recordInvocation]. Its [ExtractionRun.version] is `0` after a first save (the version the
+     *   caller named, now confirmed by the store), the stored version plus one after an accepted
+     *   update, and the stored version unchanged when the save replayed as a no-op.
      * @throws IllegalArgumentException if [run] is not running, if it carries a finish time, or if
      *   it is a first save naming a version other than `0`. A terminal status reaches the store only
      *   through [transition], which is what keeps `COMPLETED` behind its precondition; a running run
