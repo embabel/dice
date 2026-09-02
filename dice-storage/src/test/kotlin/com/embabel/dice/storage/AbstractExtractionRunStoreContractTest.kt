@@ -931,6 +931,42 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
+    fun `a first save lands at version 0, an accepted update raises it by one, and a replay leaves it alone`() {
+        // The version a save returns is the store's word on what is now stored: a first save names 0
+        // and gets 0 back, a header change accepted at the stored version gets that version plus
+        // one, and a save whose content already matches keeps whatever is stored.
+        val store = store()
+        val run = running("contract-version-progression")
+        val inserted = store.save(run)
+        assertEquals(0L, inserted.version)
+        assertEquals(0L, store.findRun(run.key())?.version)
+
+        val changed = ExtractionRun(
+            contextId = tenant,
+            lineage = run.lineage,
+            status = ExtractionRunStatus.RUNNING,
+            startedAt = startedAt,
+            counts = ExtractionRunCounts(propositionsPersisted = 3),
+            version = 0,
+        )
+        val updated = store.save(changed)
+        assertEquals(1L, updated.version)
+        assertEquals(1L, store.findRun(run.key())?.version)
+
+        val replay = ExtractionRun(
+            contextId = tenant,
+            lineage = run.lineage,
+            status = ExtractionRunStatus.RUNNING,
+            startedAt = startedAt,
+            counts = ExtractionRunCounts(propositionsPersisted = 3),
+            version = 1,
+        )
+        val replayed = store.save(replay)
+        assertEquals(1L, replayed.version)
+        assertEquals(1L, store.findRun(run.key())?.version)
+    }
+
+    @Test
     fun `a stale header save is rejected, and the header it read is left in place`() {
         // Writer A reads the run at version 0, does real work, and saves what it found. That save
         // is accepted and the header moves to version 1. Writer B read the run before any of that
