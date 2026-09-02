@@ -58,7 +58,7 @@ import org.springframework.web.bind.annotation.RestController
  * So a host that imports [DiceRestConfiguration] and declared no schema resolves zero
  * `/api/v1/metamodel` URLs and starts cleanly, and a host that wants the governance loop through
  * agent tools or its own code with no endpoint open leaves the import out. See
- * [GovernanceControllerImport] for why the condition is asked late enough to see a service the
+ * [ConditionalControllerImport] for why the condition is asked late enough to see a service the
  * auto-configuration built.
  *
  * `@ConditionalOnMissingBean` lets a host put these operations somewhere else — a different path,

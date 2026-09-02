@@ -85,7 +85,7 @@ class GovernanceOperatorAutoConfigurationTest {
      * is read, and Spring Boot registers auto-configuration bean definitions after that. So a plain
      * entry in `DiceRestConfiguration`'s `@Import` list would answer "no service" for every host
      * whose loop came from `MetamodelAutoConfiguration` — which is every host that follows the
-     * documented wiring. `GovernanceControllerImport` defers the import to the end of the round,
+     * documented wiring. `ConditionalControllerImport` defers the import to the end of the round,
      * and this test is what would catch that deferral being dropped: the service below exists only
      * because the auto-configuration built it.
      */
