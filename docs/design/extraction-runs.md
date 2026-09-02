@@ -39,6 +39,24 @@ flowchart TD
 assumes it is unique across tenants, so the `ContextId` travels with it. Two tenants that both
 mint `run-1` have two runs.
 
+## How a run joins to the metamodel
+
+One field carries the join. `ExtractionRunFingerprints.metamodelFingerprint` holds the declared
+schema's content hash — the `contentHash` a `MetamodelVersion` fingerprints itself with, which
+`docs/design/metamodel-versioning.md` on the metamodel stack describes. DICE compares it and stores
+it and reads nothing out of it, the same as the other two fingerprints.
+
+The extraction coordinator writes it, and that coordinator is a later slice. It resolves the hash
+from the host's `DeclaredSchemaSource` and stamps it once per run. Nothing in this slice produces
+one, so a run built today carries whatever its caller passed.
+
+The fingerprint says what the whole run ran under. A proposition's schema attribution is answered
+through the run that produced it (`PRODUCED_BY_RUN`, the proposition-to-run relation a later slice
+adds); the run record carries the declared schema's content hash, resolved by the extraction
+coordinator from the host's `DeclaredSchemaSource`. That is why no per-proposition schema stamp
+exists. A per-proposition denormalized copy is a coordinator concern for a slice whose reads demand
+it.
+
 ## Requested and observed are different types
 
 The single most useful thing a run can tell an incident is which of these two it is looking at:
