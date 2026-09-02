@@ -31,10 +31,13 @@ import java.lang.reflect.Modifier
  * covered. `toString` gets its own, weaker check, because a run reaches logs that way.
  *
  * The honest limit of these tests: a value type can bound a string and restrict its characters, and
- * it can refuse to read an exception message. It cannot tell a pseudonym from a username. So the
- * assertions are about what the types enforce — shapes that cannot be stored, and the one path
- * DICE itself uses being incapable of carrying source text — not about a claim that no host can
- * ever put something regrettable in a token.
+ * a type with no string field at all can refuse every string. Neither can tell a pseudonym from a
+ * username. So the assertions are about what the types enforce — shapes that cannot be stored, and
+ * a failure record with nowhere to put source text — and they make no claim that a host cannot put
+ * something regrettable in a token.
+ *
+ * The failure vocabulary gets its own file, [ExtractionFailureVocabularyTest], which pins the
+ * closed shape itself.
  */
 class ExtractionRunPrivacyTest {
 
@@ -43,34 +46,44 @@ class ExtractionRunPrivacyTest {
     private val longDigitRun = Regex("\\d{9,}")
 
     @Test
-    fun `a failure built from a provider exception carries none of the source text`() {
+    fun `a provider exception quoting the source has no way into a failure record`() {
         // The leak this guards: extraction runs over known material, the provider throws, and its
         // message quotes the prompt — which is the source text — back at us.
         val thrown = runCatching { extractPropositionsFrom(SOURCE_TEXT) }.exceptionOrNull()!!
         assertThat(thrown.message).contains("Marguerite Okonkwo")
         assertThat(thrown.cause?.message).contains("AB-7741-XZ")
 
-        val failure = ExtractionFailure.fromThrowable(ExtractionFailureCode.DECODE_FAILED, thrown)
+        // No constructor takes that exception, and none takes a string pulled out of it.
+        val constructorParameters =
+            ExtractionFailure::class.java.declaredConstructors.flatMap { it.parameterTypes.asList() }
+        assertThat(constructorParameters)
+            .doesNotContain(Throwable::class.java, String::class.java, CharSequence::class.java)
 
-        assertThat(failure.detail)
-            .isEqualTo("java.lang.IllegalStateException <- java.lang.IllegalArgumentException")
+        // What the caller can record is the classification, and a dump of it holds no fragment.
+        val failure = ExtractionFailure(
+            code = ExtractionFailureCode.DECODE_FAILED,
+            stage = ExtractionFailureStage.RESPONSE_DECODE,
+            providerStatus = 502,
+        )
+        val row = serializedRow(failure)
         SOURCE_TEXT_FRAGMENTS.forEach { fragment ->
-            assertThat(failure.detail).doesNotContain(fragment)
+            assertThat(row).doesNotContain(fragment)
         }
+        assertThat(row).contains("DECODE_FAILED", "RESPONSE_DECODE", "502")
     }
 
     @Test
     fun `no fragment of the source text survives into a stored run`() {
         val row = serializedRow(ExtractionRunFixtures.populatedRun())
 
-        // The run's only failure was built from the exception above, so if any part of the message
-        // path leaked, one of these fragments would be in the row.
+        // The run's only failure records the provider exception above, so if any part of the
+        // message path leaked, one of these fragments would be in the row.
         SOURCE_TEXT_FRAGMENTS.forEach { fragment ->
             assertThat(row).doesNotContain(fragment)
         }
         assertThat(row).doesNotContain(SOURCE_TEXT)
         // The row really did reach the failure record, so the assertion above is not vacuous.
-        assertThat(row).contains("DECODE_FAILED", "java.lang.IllegalStateException")
+        assertThat(row).contains("DECODE_FAILED", "RESPONSE_DECODE", "CHARACTER_COUNT")
     }
 
     @Test
@@ -90,8 +103,9 @@ class ExtractionRunPrivacyTest {
 
         assertThat(rendered).contains("runId=run-01JAV7Q2N4", "rootRunId=run-01JAV6M0K1", "status=FAILED")
         assertThat(rendered).contains("sourceRevisions=2", "invocations=2", "failures=1")
-        // Not in the summary: the tokens, the digests, the failure detail.
-        assertThat(rendered).doesNotContain("actor:7f19aa02", "sha256:6d1f0a2b", "IllegalStateException")
+        // Left out of the summary: the tokens, the digests, and everything on a failure past its
+        // count.
+        assertThat(rendered).doesNotContain("actor:7f19aa02", "sha256:6d1f0a2b", "RESPONSE_DECODE")
         SOURCE_TEXT_FRAGMENTS.forEach { fragment -> assertThat(rendered).doesNotContain(fragment) }
     }
 
@@ -170,38 +184,25 @@ class ExtractionRunPrivacyTest {
     }
 
     @Test
-    fun `a caller-written failure detail is flattened and clipped, and DICE says it cannot vouch for it`() {
-        val wordy = "chunk 3 of 12\n exceeded the budget\t" + "x".repeat(1_000)
+    fun `the numbers on a failure are checked, and a rejection quotes only the number`() {
+        val failure = ExtractionFailure(
+            code = ExtractionFailureCode.RATE_LIMITED,
+            providerStatus = 429,
+            measure = ExtractionFailureMeasure(ExtractionFailureQuantity.RETRY_AFTER_SECONDS, 30),
+        )
 
-        val failure = ExtractionFailure.of(ExtractionFailureCode.SCHEMA_VIOLATION, wordy)
+        assertThat(failure.providerStatus).isEqualTo(429)
+        assertThat(failure.measure?.value).isEqualTo(30)
 
-        assertThat(failure.detail).hasSize(ExtractionRunLimits.MAX_FAILURE_DETAIL_LENGTH)
-        assertThat(failure.detail).startsWith("chunk 3 of 12 exceeded the budget x")
-        assertThat(failure.detail).doesNotContain("\n")
-
-        // The constructor is stricter than the factory: it rejects rather than clipping, so a
-        // failure record can never be constructed over the bound by accident.
-        assertThatIllegalArgumentException().isThrownBy {
-            ExtractionFailure(ExtractionFailureCode.SCHEMA_VIOLATION, "y".repeat(513))
-        }
-        assertThatIllegalArgumentException().isThrownBy {
-            ExtractionFailure(ExtractionFailureCode.SCHEMA_VIOLATION, "two\nlines")
-        }.withMessageContaining("single line")
-    }
-
-    @Test
-    fun `a cause chain is bounded and a self-referencing cause terminates`() {
-        val deep = (1..12).fold(RuntimeException("root") as Throwable) { cause, _ ->
-            IllegalStateException("wrapper", cause)
-        }
-        val failure = ExtractionFailure.fromThrowable(ExtractionFailureCode.INTERNAL, deep)
-
-        assertThat(failure.detail.split(" <- ")).hasSize(ExtractionFailure.MAX_CAUSE_CHAIN)
-
-        val selfCausing = SelfCausingException()
-        assertThat(
-            ExtractionFailure.fromThrowable(ExtractionFailureCode.INTERNAL, selfCausing).detail,
-        ).isEqualTo(SelfCausingException::class.java.name)
+        assertThatIllegalArgumentException()
+            .isThrownBy { ExtractionFailure(ExtractionFailureCode.RATE_LIMITED, providerStatus = 99) }
+            .withMessageContaining("HTTP status")
+        assertThatIllegalArgumentException()
+            .isThrownBy { ExtractionFailure(ExtractionFailureCode.RATE_LIMITED, providerStatus = 600) }
+            .withMessageContaining("HTTP status")
+        assertThatIllegalArgumentException()
+            .isThrownBy { ExtractionFailureMeasure(ExtractionFailureQuantity.TOKEN_COUNT, -1) }
+            .withMessageContaining("TOKEN_COUNT")
     }
 
     @Test
@@ -233,10 +234,6 @@ class ExtractionRunPrivacyTest {
             "decode failed for prompt: $sourceText",
             IllegalArgumentException("unexpected token near '$sourceText'"),
         )
-
-    private class SelfCausingException : RuntimeException("self") {
-        override val cause: Throwable get() = this
-    }
 
     /**
      * Renders every field of a value, recursively, the way a row writer would see it.

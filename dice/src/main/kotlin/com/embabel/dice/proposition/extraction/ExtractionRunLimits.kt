@@ -25,10 +25,9 @@ import org.jetbrains.annotations.ApiStatus
  * construction. Truncating an identifier would be worse than rejecting it — a shortened id is a
  * different id, and a store would then key rows on a value the caller never minted.
  *
- * A failure detail is the one exception, and only on the way in. It is the model's only free-text
- * field, so [ExtractionFailure.of] and [ExtractionFailure.fromThrowable] shorten it to
- * [MAX_FAILURE_DETAIL_LENGTH] before construction; keeping a clipped failure record beats losing
- * the failure. The constructor still rejects a longer one.
+ * The rule has no exception, because the model has no free-text field for one to apply to.
+ * [ExtractionFailure] says everything it says in enums and numbers, so the only bounds it needs
+ * are the range a provider status can fall in.
  *
  * Lengths count UTF-16 chars (`String.length`), so a 256-char identifier can be around 1 KB of
  * UTF-8. The bound is there to keep a run header finite.
@@ -56,11 +55,11 @@ object ExtractionRunLimits {
      */
     const val MAX_IDENTIFIER_LENGTH: Int = 256
 
-    /**
-     * Longest failure detail a run stores. Long enough for a classified one-line explanation,
-     * short enough that a run with the full [MAX_FAILURES] of them stays small.
-     */
-    const val MAX_FAILURE_DETAIL_LENGTH: Int = 512
+    /** Lowest status code a provider can report on a failure record. */
+    const val MIN_PROVIDER_STATUS: Int = 100
+
+    /** Highest status code a provider can report on a failure record. */
+    const val MAX_PROVIDER_STATUS: Int = 599
 
     /** Most source revisions one run may record. */
     const val MAX_SOURCE_REVISIONS: Int = 256
@@ -87,6 +86,21 @@ internal fun requireBoundedIdentifier(value: String?, field: String): String? {
     require(value.isNotBlank()) { "$field must not be blank when present" }
     require(value.length <= ExtractionRunLimits.MAX_IDENTIFIER_LENGTH) {
         "$field must be at most ${ExtractionRunLimits.MAX_IDENTIFIER_LENGTH} characters, was ${value.length}"
+    }
+    return value
+}
+
+/**
+ * Checks a provider status that may be absent and otherwise has to be a real HTTP status.
+ *
+ * The range is what makes the field unable to hold anything but a status: a caller with a number
+ * that means something else has nowhere to put it here.
+ */
+internal fun requireProviderStatus(value: Int?): Int? {
+    if (value == null) return null
+    require(value in ExtractionRunLimits.MIN_PROVIDER_STATUS..ExtractionRunLimits.MAX_PROVIDER_STATUS) {
+        "providerStatus must be an HTTP status between ${ExtractionRunLimits.MIN_PROVIDER_STATUS} " +
+            "and ${ExtractionRunLimits.MAX_PROVIDER_STATUS}, was $value"
     }
     return value
 }

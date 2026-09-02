@@ -63,8 +63,9 @@ data class ExtractionRunKey(
  * The second is that the run holds no content. No prompts, no source text, no responses, no
  * user or session objects, no provider SDK payloads, no extension maps. What a host would have
  * needed those for is covered by digests it can compare ([fingerprints]) and by bounded
- * pseudonymous tokens it can group by ([subjectRefs]). Failures are classified codes with a short
- * sanitized detail, and the path DICE itself uses never reads an exception message.
+ * pseudonymous tokens it can group by ([subjectRefs]). Failures are said in a closed vocabulary of
+ * codes, stages and numbers, so there is no text field on a run for an exception message to land
+ * in.
  *
  * **What is not decided here.** Which status transitions are legal, which are compare-and-set, and
  * what a store does with a repeated terminal write belong to the run store contract in the next
@@ -101,7 +102,7 @@ data class ExtractionRunKey(
  * @property replayFidelity How much of this run someone could set up again from what it recorded
  * @property counts How much the run got through
  * @property invocations One record per attempt at each planned model call
- * @property failures Bounded, sanitized record of what went wrong
+ * @property failures Bounded record of what went wrong, in the failure vocabulary
  */
 @ApiStatus.Experimental
 class ExtractionRun @JvmOverloads constructor(
@@ -132,7 +133,7 @@ class ExtractionRun @JvmOverloads constructor(
     val invocations: List<ExtractionInvocationRecord> =
         Collections.unmodifiableList(ArrayList(invocations))
 
-    /** What went wrong, bounded and sanitized. */
+    /** What went wrong, bounded and said in the failure vocabulary. */
     val failures: List<ExtractionFailure> =
         Collections.unmodifiableList(ArrayList(failures))
 
@@ -259,8 +260,8 @@ class ExtractionRun @JvmOverloads constructor(
     /**
      * A summary: identity, lineage, state, and sizes.
      *
-     * It leaves out the digests, the reference tokens and the failure details, so a run logged at
-     * an error site does not spread them. Anything that needs every field reads the properties.
+     * It leaves out the digests and the reference tokens, so a run logged at an error site does not
+     * spread them. Anything that needs every field reads the properties.
      */
     override fun toString(): String =
         "ExtractionRun(contextId=${contextId.value}, runId=${ref.runId}, rootRunId=${rootRef.runId}, " +

@@ -169,17 +169,26 @@ class ExtractionRunValueTypesTest {
         val bare = ExtractionFailure(ExtractionFailureCode.MODEL_TIMEOUT)
 
         assertThat(bare.code).isEqualTo(ExtractionFailureCode.MODEL_TIMEOUT)
-        assertThat(bare.detail).isEmpty()
+        assertThat(bare.stage).isNull()
+        assertThat(bare.providerStatus).isNull()
+        assertThat(bare.measure).isNull()
         assertThat(bare.invocation).isNull()
 
+        // "the provider's quota ran out on the second try at call 2" said in the vocabulary.
         val tied = ExtractionFailure.of(
             code = ExtractionFailureCode.RATE_LIMITED,
-            detail = "provider quota exhausted",
+            stage = ExtractionFailureStage.MODEL_CALL,
+            providerStatus = 429,
+            measure = ExtractionFailureMeasure(ExtractionFailureQuantity.RETRY_AFTER_SECONDS, 60),
             at = ExtractionRunFixtures.FINISHED_AT,
             invocation = ExtractionInvocationId(2, 3),
         )
         assertThat(tied.invocation).isEqualTo(ExtractionInvocationId(2, 3))
-        assertThat(tied.detail).isEqualTo("provider quota exhausted")
+        assertThat(tied.stage).isEqualTo(ExtractionFailureStage.MODEL_CALL)
+        assertThat(tied.providerStatus).isEqualTo(429)
+        assertThat(tied.measure)
+            .isEqualTo(ExtractionFailureMeasure.of(ExtractionFailureQuantity.RETRY_AFTER_SECONDS, 60))
+        assertThat(tied.measure.toString()).isEqualTo("RETRY_AFTER_SECONDS=60")
     }
 
     @Test
@@ -204,6 +213,10 @@ class ExtractionRunValueTypesTest {
             ExtractionProviderResponseFacts::class.java,
             ExtractionFailure::class.java,
             ExtractionFailureCode::class.java,
+            ExtractionFailureStage::class.java,
+            ExtractionFailureQuantity::class.java,
+            ExtractionFailureMeasure::class.java,
+            ProtectedContentRef::class.java,
             ExtractionOpaqueRef::class.java,
             ExtractionActorRef::class.java,
             ExtractionRequestRef::class.java,

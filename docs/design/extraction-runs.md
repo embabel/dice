@@ -26,7 +26,8 @@ flowchart TD
     RUN --> EXP["ExtractionExperimentRef<br/>ExtractionCohortRef"]
     RUN --> ST["ExtractionRunStatus<br/>ExtractionReplayFidelity<br/>ExtractionRunCounts"]
     RUN --> INV["List&lt;ExtractionInvocationRecord&gt;<br/><i>what was observed</i>"]
-    RUN --> FAIL["List&lt;ExtractionFailure&gt;<br/><i>bounded, sanitized</i>"]
+    RUN --> FAIL["List&lt;ExtractionFailure&gt;<br/><i>bounded, closed vocabulary</i>"]
+    FAIL --> FV["ExtractionFailureCode<br/>ExtractionFailureStage<br/>ExtractionFailureMeasure"]
     INV --> IID["ExtractionInvocationId<br/>plan ordinal + attempt"]
     INV --> USE["ExtractionModelUsage"]
     INV --> PRF["ExtractionProviderResponseFacts"]
@@ -173,29 +174,76 @@ characters, so a reference does not spread through logs in full. And a validatio
 field and the length and never quotes the value — an `IllegalArgumentException` propagates into
 logs, and the value that failed validation is exactly the one nobody vouched for.
 
-### Failures
+### Failures speak a closed vocabulary
 
-A failure record is a classified code plus a short single-line detail, and the run holds at most 64
-of them.
+A failure record is a classified code, an optional stage, an optional provider status, an optional
+number with its unit, a timestamp, and the attempt it belongs to. The run holds at most 64 of them.
+There is no text field anywhere in that list.
 
 Failure records are where source text leaks. A provider quotes the prompt back in its exception
 message; a decode error carries the fragment it choked on. Both land in a stored run header the
-moment someone writes `e.message` into one. So `ExtractionFailure.fromThrowable` — the path DICE
-itself uses — never reads `Throwable.message`. It records the exception class names down the cause
-chain, bounded to five links and cycle-safe, and nothing else. That detail cannot contain source
-text because it never touched any.
+moment someone writes `e.message` into a text field. A #95 review comment found that the earlier
+shape — a code plus a bounded, whitespace-flattened `detail` string — closed nothing: truncating a
+prompt still stores a prompt, and a credential, an email address or a paragraph of protected text
+all fit in 512 characters. The vocabulary closes it at construction. `ExtractionFailure` has no
+`String` parameter, property or field, and no factory that takes a `Throwable`, so free text has no
+route into durable storage through this type.
 
-`ExtractionFailure.of` exists for the case where a caller genuinely knows something useful
-("chunk 3 of 12 exceeded the token budget"). DICE cannot check what a caller puts there; it bounds
-it and flattens it to a single line so a pasted stack trace does not fit.
+What the vocabulary carries:
 
-The tests are built to match what is actually enforced. A fixture with known source text
-(a person, an organisation, an email address, a case number) is fed through a provider-shaped
-exception that quotes it; the resulting failure and a full field-by-field dump of the populated run
-are asserted to contain none of its fragments, no address shape, no link shape, and no long digit
-run. The dump is reflective rather than `toString`, so a field the summary omits is still covered —
-and `run.toString()` gets its own check that it shows identity, state and sizes and none of the
-tokens, digests or details.
+| Field | Type | Answers |
+| --- | --- | --- |
+| `code` | `ExtractionFailureCode` (11 values) | what went wrong |
+| `stage` | `ExtractionFailureStage` (10 values) | where in the run's work |
+| `providerStatus` | `Int?`, 100..599 | what the provider returned |
+| `measure` | `ExtractionFailureMeasure` | one "how much", with its unit |
+| `invocation` | `ExtractionInvocationId?` | which call and which attempt |
+
+`ExtractionFailureMeasure` pairs a number with an `ExtractionFailureQuantity` naming both the thing
+and its unit — `TOKEN_COUNT`, `ELAPSED_MILLIS`, `RETRY_AFTER_SECONDS`. A bare number on a failure
+record is a unit-mismatch bug waiting to happen, and pairing them in a type means 4096 can never be
+recorded without saying it is tokens. One measure per record: a failure answers one "how much".
+
+"Chunk 3 of 12 exceeded the token budget" survives the change, said in the vocabulary — the chunk
+is `invocation.invocationIndex`, which the call plan already allocated, and the budget is a
+`TOKEN_COUNT` measure. What is lost is the sentence, which is the part nobody could vouch for.
+
+A host that wants the exception message, the response body, or the fragment that failed to parse
+keeps that material itself. `ProtectedContentRef` is the written contract for the reference such a
+host passes around; see below.
+
+The tests match what is enforced. `ExtractionFailureVocabularyTest` takes four kinds of text a
+reviewer named — raw source text, a prompt fragment, an email address, and two credential shapes a
+scanner recognises — and asserts no constructor, factory or method on the type will take any of
+them, that no type a failure reaches has a text field, and that every value a fully populated
+failure holds is an enum, a number or an instant. The privacy suite still feeds a fixture with
+known source text (a person, an organisation, an email address, a case number) through a
+provider-shaped exception that quotes it, and asserts a full field-by-field dump of the populated
+run contains none of its fragments, no address shape, no link shape, and no long digit run. The
+dump is reflective, so a field the summary omits is still covered — and
+`run.toString()` gets its own check that it shows identity, state and sizes and none of the tokens,
+digests or failure fields.
+
+### The protected reference is a specification
+
+`ProtectedContentRef` is an interface with two members — an opaque `handle` and an `expiresAt` —
+and no implementation anywhere in DICE. It is the written contract for a host that keeps detailed
+failure material of its own.
+
+The host owns all three jobs. The **writer** is host code, because DICE never sees the material.
+The **reader** is host code, because resolving a handle is a host operation under the host's access
+rules; the handle names a row in the host's vault and grants no access to it, so a signed URL, a
+bearer token or a decryption key breaks the contract. **Retention** is the host's, and `expiresAt`
+is where the host writes it down — nothing in DICE sweeps, deletes, or checks it, and an erasure
+request reaches the material through the host's vault.
+
+A type of this name shipped in an earlier #98 draft as a stored value and was deleted during
+review, because nothing attached it to a run and DICE had no writer, no reader and no retention
+behaviour behind it. It returns as specification only, which is what it always was. The KDoc
+carries a worked example: a host minting a handle, writing an exception message into its own vault
+under it for ninety days, and running its own nightly retention job. A test asserts the interface
+is abstract and that no compiled DICE class mentions the type, so "zero implementations, zero
+production references" is a checked property.
 
 ## Replay is approximate, and named that way
 
@@ -255,14 +303,14 @@ different id, and a store would then key rows on a value the caller never minted
 | Constant | Value | Applies to |
 | --- | --- | --- |
 | `MAX_IDENTIFIER_LENGTH` | 256 | opaque tokens, fingerprints, model and role names, service names, provider response ids, runtime identifiers |
-| `MAX_FAILURE_DETAIL_LENGTH` | 512 | the one free-text field |
+| `MIN_PROVIDER_STATUS` / `MAX_PROVIDER_STATUS` | 100 / 599 | the status a failure records |
 | `MAX_SOURCE_REVISIONS` | 256 | source revisions per run |
 | `MAX_INVOCATIONS` | 1024 | invocation records per run, across every call and attempt |
 | `MAX_FAILURES` | 64 | failure records per run |
 
-The failure detail is the one exception to rejection, and only on the way in: the factories shorten
-it before construction, because keeping a clipped failure record beats losing the failure. The
-constructor still rejects a longer one.
+The rule has no exception now that the model has no free-text field for one to apply to. The
+failure detail used to be one, clipped by its factories on the way in; the closed vocabulary
+removed the field and the exception with it.
 
 Lengths count UTF-16 chars, so a 256-char identifier can be around 1 KB of UTF-8. The bound exists
 to keep a run header finite.

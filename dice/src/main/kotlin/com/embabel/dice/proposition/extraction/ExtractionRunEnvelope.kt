@@ -25,14 +25,24 @@ import org.jetbrains.annotations.ApiStatus
  * storing the prompt. A host that changes a template and forgets to change its fingerprint gets
  * runs it cannot tell apart, which is the host's contract to keep.
  *
- * Storing digests instead of the material is deliberate: a prompt template holds instructions and
- * often examples, and examples are where real content ends up.
+ * Storing a digest and leaving the material behind is deliberate: a prompt template holds
+ * instructions and often examples, and examples are where real content ends up.
+ *
+ * **Who writes [metamodelFingerprint].** The extraction coordinator, which arrives in a later
+ * slice. It reads the declared schema stamp from the host's `DeclaredSchemaSource`, hashes the
+ * content, and writes the hash here, once per run. Nothing in this slice produces one, so a run
+ * built today carries whatever its caller passed.
+ *
+ * The fingerprint says what the whole run ran under. Asking which schema a single proposition was
+ * extracted under is answered by following that proposition back to its run through run lineage,
+ * which is why no per-proposition schema stamp exists.
  *
  * EXPERIMENTAL. The shape may still change while extraction runs (DICE #67) land.
  *
  * @property promptTemplateFingerprint Digest of the prompt or template the run used
  * @property schemaFingerprint Digest of the output schema the run asked the model to satisfy
- * @property metamodelFingerprint Digest of the metamodel version in force
+ * @property metamodelFingerprint Content hash of the metamodel version in force, written by the
+ *   extraction coordinator from the host's declared schema source
  */
 @ApiStatus.Experimental
 data class ExtractionRunFingerprints @JvmOverloads constructor(
