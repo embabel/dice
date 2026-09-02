@@ -820,12 +820,12 @@ public surface.
 - **No proposition-to-run relation.** Attribution from a claim to the runs that produced or
   confirmed it is its own slice, on canonical saved ids, and run identity stays out of
   source-provenance equality.
-- **No protected-content reference type.** A first cut (`ProtectedContentRef`,
+- **Protected-content reference: specification only.** A first cut (`ProtectedContentRef`,
   `ProtectedContentClassification`, `ProtectedContentHandle`) landed and was removed again: nothing
-  in DICE attached one to an `ExtractionRun`, read one, or enforced its retention, so it was a shape
-  with no runtime path exercising it. It returns with the first runtime path that needs it — a
-  writer, a reader, or retention behaviour. A value type with no consumer does not stay on the
-  branch.
+  in DICE attached one to an `ExtractionRun`, read one, or enforced its retention. The interface
+  returned as a written contract — an opaque `handle` and an `expiresAt`, with the host owning
+  writer, reader and retention. DICE stores none of its content, and the first runtime path that
+  needs the reference brings its implementation.
 - **No per-invocation requested configuration.** The requested configuration is one record on the
   run header. A later slice that needs to vary settings per call adds a separate requested record
   keyed by invocation index rather than a field on the observed record, which would collapse the
