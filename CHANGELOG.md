@@ -999,7 +999,7 @@ and the consumer PRs that deliver it).
 
 - **EXPERIMENTAL.** Extraction-run lineage: a stored claim can now be traced to the runs that
   produced it, and the canonical id it was stored under is no longer thrown away. Two halves.
-  **The persistence-result seam.** `DrivinePropositionRepository.save` has always answered a fresh
+  **Canonical ids come back from a save.** `DrivinePropositionRepository.save` has always answered a fresh
   insert of text it already holds with the proposition it already holds — a different id from the one
   extraction minted — and `PropositionStore.saveAll` returns `Unit`, so callers never learned it. Any
   edge, projection or grounding link written afterwards against the minted id points at a node that
@@ -1015,8 +1015,8 @@ and the consumer PRs that deliver it).
   wiring, projection and grounding run over, so inputs that deduplicated together are one unit of
   downstream work rather than one per input, which would repeat idempotent edge writes and inflate
   the records written about them. `of` also rejects a canonical result carrying a different
-  `ContextId` from its input: lineage would refuse to link a foreign-tenant proposition, but lineage
-  is best-effort and refuses quietly, so the check belongs where the object enters the pipeline. It
+  `ContextId` from its input: a foreign-tenant proposition has no business reaching a link at all,
+  so the check belongs where the object enters the pipeline. It
   also rejects one stored id answered under two different contexts, which each per-position check
   would pass individually while the resolution step handed the earlier position the other tenant's
   object. When
@@ -1077,24 +1077,47 @@ and the consumer PRs that deliver it).
   `@JvmOverloads` arity, and that no constructor mentions the lineage store at all. The binding is
   **one-time**: a second `withRunLineage` call throws `IllegalStateException` rather than silently
   swapping or clearing the store an in-flight extraction is about to record against.
-  **Behavioural, run-present flows only:** when a `SourceAnalysisContext.currentRun` is present,
-  `persistAndProject` now wires structural relationships, graph projection and grounding against the
-  propositions the repository returned rather than the ones extraction minted, and writes the run
-  links. An analysis with no run takes the previous path unchanged, pre-save objects included, and
-  two tests pin that so "unchanged" fails if it stops being true. The switch is the run, not the
-  presence of a link store — a host that passes `currentRun` opted into #67's experimental surface in
-  the profiles slice, and gets correct edges whether or not it records lineage. Lineage is written
-  best-effort and **directly behind the save, ahead of structural wiring, projection and
-  grounding**: the claims are saved at that point and no fallible pass has run yet. That needed
-  `persistReturningCanonical` split into `persistCanonicalPropositions` and
-  `wireStructuralRelationships` — both published, the original preserved as their composition — so
-  lineage can run between them; structural wiring is the first fallible pass and used to sit inside
-  the save. Running attribution after any of them meant a throw could leave stored claims with no
-  record of the run that produced them — the one outcome the relation exists to
-  prevent, arriving exactly when the audit matters most. A link that cannot be written is logged
-  with its exception and the extraction stands.
-  **What best-effort covers, exactly.** The lineage write joins a caller's transaction rather than
-  opening its own: `REQUIRES_NEW` would suspend that transaction, and a suspended transaction's
+  **Compatibility: behavioral, every extraction flow — a fix.** `persistAndProject` now wires
+  structural relationships, graph projection and grounding against the propositions the repository
+  returned, on every call, with or without a run. It used to do that only when a
+  `SourceAnalysisContext.currentRun` was present and to use the pre-save objects otherwise, which
+  made an audit setting decide whether the graph was written correctly: a host that turned on
+  extraction runs silently got different edges, and a host that did not kept writing edges against
+  ids the store does not hold. Under dedup or merge those phantom pre-save ids reached projection and
+  grounding, so the edges pointed at nodes that were never stored — the same class of defect the
+  `POST /extract` response fix above closed, arriving here in the write path. Audit
+  metadata never changes product behaviour: a run now adds a lineage write and nothing else, and a
+  test runs the same extraction with and without one and compares everything except that write.
+  Hosts that never passed a run get corrected edges under dedup without changing a line. Lineage is
+  written **last, after structural wiring, projection and grounding have all completed**, so that a
+  failure it raises leaves a complete extraction behind: claims persisted, structural edges wired,
+  projection run, grounding run, and no `PRODUCED_BY_RUN` edge. That is the end state a `STRICT`
+  failure reports, and `LENIENT` reaches the same one and reports success. The split of
+  `persistReturningCanonical` into `persistCanonicalPropositions` and `wireStructuralRelationships`
+  stays — both published, the original preserved as their composition — because the canonical
+  propositions a save returns are what every later pass wires against.
+  An earlier cut wrote lineage directly behind the save, ahead of the three wiring passes, so a
+  throwing projector could not leave stored claims unattributed. That ordering cannot survive
+  failing loud: raising from behind the save returns through the middle of the pipeline with the
+  claims stored and projection and grounding silently skipped, which is a partial state nothing
+  declared. Attribution is a statement about finished work, so it is made when the work is finished;
+  the accepted trade is that a pass throwing before lineage means no attribution is written, and the
+  honest report of that is a failed extraction with no run edge.
+  **Attribution fails loud by policy.** A new `LineageFailurePolicy` says what happens when lineage
+  cannot be written, and `STRICT` is the default. Under it, two things fail the extraction: an
+  analysis carrying a run with no `PropositionRunLinkStore` bound, and a link write that throws. Both
+  used to be swallowed — the missing store returned quietly and every `RuntimeException` went to a
+  log line — so the two failures an operator most needs to hear about, lineage wired wrong and
+  lineage refusing writes, both reported success. An audit surface whose absence is silent is worth
+  nothing at the one moment it is consulted. `LENIENT` restores the old behaviour for a host that has
+  decided the claims outweigh their attribution and says so in configuration; the failure carries its
+  cause either way, so a scope rejection and an outage stay distinguishable. Bound with the store:
+  `withRunLineage(store, policy)` is a second overload, for the same descriptor reason the
+  one-argument form exists at all. Failures raise
+  `LineageNotRecordedException`. An analysis that saved nothing records nothing and fails under
+  neither policy.
+  **What joining a caller's transaction covers, exactly.** The lineage write joins a caller's
+  transaction and never opens its own: `REQUIRES_NEW` would suspend that transaction, and a suspended transaction's
   uncommitted propositions are invisible, so a host wrapping extraction in `@Transactional` would get
   fail-closed lineage on every extraction. Joining means Spring marks the participating transaction
   rollback-only when `link` throws — Drivine overrides `doSetRollbackOnly` and the flag is set — but
@@ -1103,7 +1126,9 @@ and the consumer PRs that deliver it).
   pinned by a test that goes red if either changes. The guarantee therefore covers the failures
   `link` raises itself, all of which are thrown after its statements succeeded. It does **not** cover
   a statement that fails at the server, which terminates the transaction beneath Spring where no
-  catch reaches; a test injects that and measures the cost. Hosts that do not wrap extraction in a
+  catch reaches; a test injects that and measures the cost. Under `STRICT` a raised failure reaches
+  the caller, so inside a host's `@Transactional` the claims and their lineage roll back together —
+  which is what strict attribution asks for. Hosts that do not wrap extraction in a
   transaction are unaffected, since each save has already committed. DICE #67 slice 10 closes the
   window by committing claims before recording lineage.
   **Behavioural for equality, on an unreleased type:** `ExtractionRun.invocations` is now normalized
@@ -1117,9 +1142,22 @@ and the consumer PRs that deliver it).
   because a caller comparing runs or reading `invocations[0]` would see it.
   **No new schema and no migration.** `ExtractionRunSchema.specs()` is unchanged: both endpoint
   labels already carry the uniqueness constraints these statements seek on, and a relationship has no
-  key of its own, since `MERGE` on a pattern between two matched nodes creates at most one edge.
-  `ExtractionRunSchema` gains a `PRODUCED_BY_RUN_REL` constant. Nothing is auto-configured, so a host
-  opts in by declaring `DrivinePropositionRunLinkStore` and passing it to
-  `IncrementalPropositionExtraction`. No released DICE ever wrote this relationship type. Every new
+  key of its own, since `MERGE` on a pattern between two matched nodes creates at most one edge and
+  Neo4j locks the endpoints when it decides to create. Duplicate `PRODUCED_BY_RUN` edges are pinned
+  from both sides: the in-memory store keeps the relation as a set behind one monitor and a
+  concurrency test drives eight threads at one pair, and the Drivine store counts the relationships
+  themselves after linking the same pair twice, because every read in the contract returns refs and
+  ids, so a duplicate edge is invisible to all of them. A relationship-level uniqueness
+  constraint is not available to back this up: Drivine's schema vocabulary is node-scoped
+  (`UniquenessConstraintSpec` takes a label), so there is nothing to declare in a `SchemaCatalog`.
+  `ExtractionRunSchema` gains a `PRODUCED_BY_RUN_REL` constant.
+  **Now auto-configured, on the graph backend, inert without a run.** `dice-storage-autoconfigure`
+  registers `DrivineExtractionRunStore`, `DrivinePropositionRunLinkStore` and the run schema catalog
+  under the same `embabel.dice.store.type=graph` condition and the same `@ConditionalOnMissingBean`
+  posture as every store beside them; they used to be declared only by `dice-storage`'s own
+  `TestApplication`, so the suite exercised them and no host could get them without writing the beans
+  by hand. Registering them changes nothing on its own — both are unreachable until a caller names a
+  run on an `ExtractionRequest`, and lineage additionally has to be bound with `withRunLineage` — and
+  a host that declares its own keeps them. No released DICE ever wrote this relationship type. Every new
   type carries `@ApiStatus.Experimental` and the shapes may still move while the remaining #67 slices
   land.

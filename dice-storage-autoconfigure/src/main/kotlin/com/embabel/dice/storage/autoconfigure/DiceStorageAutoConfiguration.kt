@@ -27,12 +27,17 @@ import com.embabel.dice.projection.lineage.ProjectionRecordStore
 import com.embabel.dice.proposition.DecayManager
 import com.embabel.dice.proposition.DecaySweepConfig
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.extraction.ExtractionRunStore
+import com.embabel.dice.proposition.extraction.PropositionRunLinkStore
 import com.embabel.dice.proposition.store.InMemoryDecayManager
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.storage.DrivineChunkHistoryStore
 import com.embabel.dice.storage.DrivineCollectorRecordStore
+import com.embabel.dice.storage.DrivineExtractionRunStore
 import com.embabel.dice.storage.DrivinePropositionRepository
+import com.embabel.dice.storage.DrivinePropositionRunLinkStore
 import com.embabel.dice.storage.DrivineProjectionRecordStore
+import com.embabel.dice.storage.ExtractionRunSchema
 import com.embabel.dice.storage.GraphDecayManager
 import org.drivine.manager.GraphObjectManager
 import org.drivine.manager.PersistenceManager
@@ -138,6 +143,48 @@ class DiceStorageAutoConfiguration {
     fun drivineCollectorRecordStore(
         persistenceManager: PersistenceManager,
     ): CollectorRecordStore = DrivineCollectorRecordStore(persistenceManager)
+
+    /**
+     * The durable extraction-run header store.
+     *
+     * Same graph-backend condition and the same opt-in posture as every store above: without
+     * `embabel.dice.store.type=graph` this is not registered at all, and with it the bean sits there
+     * doing nothing until a caller names a run on an `ExtractionRequest`. Registering it changes no
+     * behaviour on its own — a host that never passes a run cannot tell it apart from its absence.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnMissingBean(ExtractionRunStore::class)
+    fun drivineExtractionRunStore(
+        persistenceManager: PersistenceManager,
+        transactionManager: PlatformTransactionManager,
+    ): ExtractionRunStore = DrivineExtractionRunStore(persistenceManager, transactionManager)
+
+    /**
+     * Where `(proposition, run)` links go.
+     *
+     * Registered on the same terms as the run store. It is reached only by an extraction that
+     * carries a run, and binding it is still the host's move: `IncrementalPropositionExtraction`
+     * takes it through `withRunLineage`, so having the bean in the context does not by itself make
+     * anything record lineage.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnMissingBean(PropositionRunLinkStore::class)
+    fun drivinePropositionRunLinkStore(
+        persistenceManager: PersistenceManager,
+    ): PropositionRunLinkStore = DrivinePropositionRunLinkStore(persistenceManager)
+
+    /**
+     * The constraints and indexes the run store and the lineage relation need.
+     *
+     * Separate from [lineageRecordSchema] because that one is the projection and collector audit
+     * trail, which has its own labels and its own lifecycle. Both are ensured on startup by
+     * Drivine's schema manager.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    fun extractionRunSchema(): SchemaCatalog = SchemaCatalog.of(ExtractionRunSchema.specs())
 
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")

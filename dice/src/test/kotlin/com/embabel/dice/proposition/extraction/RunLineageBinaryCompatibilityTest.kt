@@ -170,18 +170,28 @@ class RunLineageBinaryCompatibilityTest {
 
     @Test
     fun `withRunLineage is the binding point and returns the same instance`() {
-        val extraction = IncrementalPropositionExtraction::class.java.methods
+        val bindingPoints = IncrementalPropositionExtraction::class.java.methods
             .filter { it.name == "withRunLineage" }
 
-        assertEquals(1, extraction.size, "exactly one binding point")
+        // Two overloads and no more. The failure policy arrived as a second method, precisely so
+        // the original descriptor did not move: a default argument on the first would have rewritten
+        // it, which is the whole reason lineage binds by method and no constructor mentions it. A third entry here means someone added a binding shape
+        // without deciding what it does to callers of the other two.
         assertEquals(
-            listOf(PropositionRunLinkStore::class.java),
-            extraction.single().parameterTypes.toList(),
+            setOf(
+                listOf(PropositionRunLinkStore::class.java),
+                listOf(PropositionRunLinkStore::class.java, LineageFailurePolicy::class.java),
+            ),
+            bindingPoints.map { it.parameterTypes.toList() }.toSet(),
+            "the binding points are the one-argument form and the policy-carrying form",
         )
-        assertEquals(
-            IncrementalPropositionExtraction::class.java,
-            extraction.single().returnType,
-            "returns the receiver so a bean method can bind it in one expression",
-        )
+        assertEquals(2, bindingPoints.size, "no synthetic or defaulted extra binding point")
+        bindingPoints.forEach {
+            assertEquals(
+                IncrementalPropositionExtraction::class.java,
+                it.returnType,
+                "returns the receiver so a bean method can bind it in one expression",
+            )
+        }
     }
 }

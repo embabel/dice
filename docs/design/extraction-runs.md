@@ -983,7 +983,7 @@ proposition it already holds — a different id from the one extraction minted. 
 true and callers have never been able to see it, because `saveAll` returns `Unit`. Any edge written
 afterwards against the minted id points at a node that was never stored.
 
-So the seam is a second save call that keeps the answer:
+So a second save call keeps the answer:
 
 - `PropositionStore.saveAllReturningCanonical` — the same writes as `saveAll`, returning a
   `PropositionPersistenceResult`: the stored proposition per input, in input order, plus the
@@ -1075,24 +1075,27 @@ like evidence from two documents, and it would change what `SourceLocator.key()`
 `:Source` node's key. "Where did this come from" and "which execution wrote it down" are different
 questions with different answers, and the second one lives in the relation.
 
-### Which flows consume canonical results, and which do not
+### Canonical persistence is the only path
 
-`IncrementalPropositionExtraction.persistAndProject` switches on whether the analysis carries a
-`SourceAnalysisContext.currentRun`:
+`IncrementalPropositionExtraction.persistAndProject` wires everything downstream of the save against
+what the repository returned, on every call:
 
 | | structural wiring | projection | grounding | run links |
 |---|---|---|---|---|
 | run present | canonical | canonical | canonical | canonical |
-| no run (legacy) | pre-save | pre-save | pre-save | none |
+| no run | canonical | canonical | canonical | none |
 
-The canonical column is the correct one. The legacy row is wrong in the way it has always been
-wrong, and this slice does not fix it there, because a host that never asked for extraction runs
-should not have its graph start being written differently. Two tests pin the legacy row so that
-"unchanged" fails if it stops being true.
+**A run adds a row to the last column and changes nothing else.** An earlier cut of this slice made
+the run the switch: canonical ids with one, pre-save ids without. Both rows were defensible on their
+own terms — the canonical one is correct, and leaving the other alone avoided changing behaviour for
+hosts that never asked for extraction runs — but together they meant an audit setting decided whether
+the graph was written correctly. Turning on lineage silently changed which nodes the edges pointed
+at; leaving it off kept writing edges against ids the store does not hold whenever dedup or a merge
+substituted a canonical proposition.
 
-**The switch is the run, not the link store.** An analysis attributed to a run gets correct edges
-whether or not anyone is recording lineage. A host that passes `currentRun` is a host that opted
-into #67's experimental surface.
+Audit metadata never changes product behaviour. So the correct row became the only row, and the
+no-run change is declared as the behavioural fix it is. A test runs the same extraction with and
+without a run and compares everything except the lineage write.
 
 Lineage's write joins a caller's transaction rather than opening its own. `REQUIRES_NEW` would
 guarantee a failure could never touch the caller, but it suspends that transaction, and a suspended
@@ -1121,8 +1124,8 @@ unaffected, because each save has already committed. It closes when the run coor
 claims before recording lineage (slice 10), which makes lineage a write that does not share a
 caller's fate.
 
-Lineage is written best-effort, and **directly behind the save rather than at the end** — before
-structural wiring, projection and grounding, all three of which can throw. That needed
+Lineage is written **last, after structural wiring, projection and grounding have all
+completed**. That needed
 `persistReturningCanonical` split in two: `persistCanonicalPropositions` writes the claims and
 `wireStructuralRelationships` writes the chunk/entity edges, so lineage can run between them.
 Structural wiring is the *first* fallible pass, and while it sat inside the same call as the save
@@ -1131,9 +1134,64 @@ point — committed with the caller's transaction where one wraps the call, imme
 and attribution is a statement about them, not a reward for the rest of the pipeline succeeding. Running
 it last meant a failing projector left stored claims with no record of the run that produced them,
 which is the one outcome the relation exists to prevent and arrives exactly when the audit is worth
-most. A link that cannot be written is logged with its exception and the extraction stands: a
-missing link is a truthful gap in the audit, where a throw would surface as an extraction that
-appears to have produced nothing.
+most.
+
+### Attribution fails loud
+
+A link that cannot be written fails the extraction, under the default `LineageFailurePolicy.STRICT`.
+Two cases: an analysis carrying a run with no `PropositionRunLinkStore` bound, and a link write that
+throws.
+
+The first cut logged both and carried on, reasoning that a missing link is a truthful gap in the
+audit where a throw would surface as an extraction that appears to have produced nothing. The
+argument does not survive asking who reads the gap. A host binds lineage because it wants every
+stored claim traceable to the run that produced it; the moment that property is worth something is
+after an incident, reconstructing what a run wrote, and a gap discovered then is indistinguishable
+from "no run produced this claim". A warning logged weeks earlier by an extraction that reported
+success is not a control. The missing-store case is worse still: it is a wiring mistake, identical on
+every call, and silence means a host can run for months believing it has an audit trail it never had.
+
+`LineageFailurePolicy.LENIENT` is the documented downgrade for a host that has weighed the claims
+against their attribution and chosen the claims. It is chosen once, in configuration, in the open.
+
+#### The end state a lineage failure leaves behind
+
+This is the reason lineage is the last step of `persistAndProject`.
+
+When a `STRICT` lineage failure raises, the extraction it was attributing is **complete and
+consistent**:
+
+| | state after a STRICT lineage failure |
+|---|---|
+| canonical claims | persisted |
+| structural edges | wired |
+| graph projection | run |
+| grounding | run |
+| `PRODUCED_BY_RUN` edge | **absent** |
+| operation | **reported as failed** |
+
+So the only thing missing is the audit edge, which is exactly what the raised
+`LineageNotRecordedException` is about. A caller that catches it knows precisely what it has: a
+finished extraction that nothing attributes to a run.
+
+`LENIENT` reaches that same end state and reports success, with the failure in the log.
+
+An earlier cut of this slice recorded lineage directly behind the save, ahead of the three wiring
+passes, so that a throwing projector could not leave stored claims unattributed. That ordering is
+incompatible with failing loud. Once a lineage failure can raise, raising it from behind the save
+means returning through the middle of the pipeline with the claims stored and structural wiring,
+projection and grounding all silently skipped — a partial state no caller was told about and no
+test described. Attribution is a statement about work that is finished, so it is made once the work
+is finished. The trade is accepted deliberately: a pass that throws before lineage now means no
+attribution is written, and the honest report of that is a failed extraction with no run edge.
+
+Under a host's ambient transaction the whole extraction and its lineage share one fate, so a STRICT
+failure rolls all of it back, which is what a host running strict attribution is asking for.
+
+The policy binds with the store — `withRunLineage(store, policy)` — and failures raise
+`LineageNotRecordedException` carrying the store's own exception as its cause, so a scope rejection
+and a database outage stay distinguishable. An analysis that saved nothing records nothing and fails
+under neither policy: there is no claim for the audit to be missing.
 
 ### The invocation order fix that rides here
 
@@ -1159,9 +1217,10 @@ public surface.
 
 ## What is not here yet
 
-- **No auto-configuration.** `DrivineExtractionRunStore` is a bean a host declares itself, along
-  with the `SchemaCatalog` carrying `ExtractionRunSchema.specs()`. An `ExtractionRunAutoConfiguration`
-  arrives with the coordinator.
+- **Auto-configured, and still inert.** `dice-storage-autoconfigure` registers
+  `DrivineExtractionRunStore`, `DrivinePropositionRunLinkStore` and the `SchemaCatalog` carrying
+  `ExtractionRunSchema.specs()` under the graph-backend condition, each behind
+  `@ConditionalOnMissingBean`. Having the beans changes nothing until a caller names a run.
 - **No coordinator.** Nothing constructs an `ExtractionRun` during extraction yet, and nothing calls
   `save` or `transition` outside tests. Which means the `COMPLETED` precondition is documented and
   structurally narrowed, not observed: the wiring slice is where "the coordinator really does wait
@@ -1179,6 +1238,9 @@ public surface.
   replay material to the header is a later slice.
 - **No REST exposure for lineage.** Nothing surfaces run lineage over HTTP. That arrives with the
   coordinator.
+- **No per-run policy override.** `LineageFailurePolicy` is bound once on the extractor, so a host
+  runs every extraction under one posture. Choosing strict attribution for one run and lenient for
+  the next needs the coordinator, which is where a run's own settings will live.
 - **Nothing writes lineage for a run the host did not mint.** `persistAndProject` links what it
   persisted when the analysis carries a `currentRun`, but nothing constructs or terminalizes the run
   around it yet — the host supplies the ref and owns the run's lifecycle until the coordinator lands.
