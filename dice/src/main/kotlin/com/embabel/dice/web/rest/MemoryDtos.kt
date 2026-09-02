@@ -147,6 +147,17 @@ data class ExtractResponse(
 )
 
 /**
+ * Body of a 400 from the extraction endpoints.
+ *
+ * @property error the reason the request was refused, in the words of the check that refused it.
+ *   A length rejection names the [com.embabel.dice.provenance.SourceIdentityBounds] limit it broke
+ *   and the length that broke it, so a caller can see what to stay under.
+ */
+data class ExtractErrorResponse(
+    val error: String,
+)
+
+/**
  * Response from file extraction endpoint.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)

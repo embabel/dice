@@ -33,7 +33,9 @@ import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.pipeline.PropositionResults
 import com.embabel.dice.proposition.*
 import com.embabel.dice.proposition.revision.RevisionResult
+import com.embabel.dice.provenance.ConnectorRef
 import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.SourceIdentityBounds
 import com.embabel.dice.provenance.UriLocator
 import com.fasterxml.jackson.annotation.JsonClassDescription
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -42,8 +44,12 @@ import com.fasterxml.jackson.module.kotlin.KotlinModule
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import org.hamcrest.Matchers.containsString
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
@@ -51,6 +57,7 @@ import org.springframework.http.converter.StringHttpMessageConverter
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter
 import org.springframework.mock.web.MockMultipartFile
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.MvcResult
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
@@ -378,7 +385,6 @@ class PropositionPipelineControllerTest {
             """{"text":"fact","sourceLocator":{"kind":"unknown","value":"x"}}""",
             """{"text":"fact","sourceLocator":{"kind":"uri","value":"https://example.com","connectorId":"gmail"}}""",
             """{"text":"fact","sourceLocator":{"kind":"connector","value":"message-42"}}""",
-            """{"text":"fact","sourceLocator":{"kind":"connector","value":"c","connectorId":"a:b"}}""",
             """{"text":"fact","sourceLocator":{"kind":"uri","value":"   "}}""",
         )
 
@@ -727,5 +733,450 @@ class PropositionPipelineControllerTest {
                 },
             )
         }
+    }
+
+    // ========================================================================
+    // What the answer names must be what the store holds
+    // ========================================================================
+
+    @Test
+    fun `POST extract answers with the canonical id a dedup save handed back`() {
+        val contextId = "test-context"
+        val dedupRepository = DedupOnTextRepository()
+        val mvc = mockMvcFor(dedupRepository)
+
+        // Each run of the pipeline mints a fresh proposition for the same sentence, which is what a
+        // second POST of the same text produces.
+        val mintedIds = mutableListOf<String>()
+        every { propositionPipeline.processChunk(any(), any()) } answers {
+            val chunk = firstArg<Chunk>()
+            val context = secondArg<SourceAnalysisContext>()
+            val extracted = Proposition(
+                contextId = context.contextId,
+                text = "Brahms wrote a requiem",
+                mentions = emptyList(),
+                confidence = 0.9,
+                grounding = listOf(chunk.id),
+            )
+            mintedIds += extracted.id
+            ChunkPropositionResult.Success(
+                chunkId = chunk.id,
+                suggestedPropositions = SuggestedPropositions(chunkId = chunk.id, propositions = emptyList()),
+                entityResolutions = Resolutions(chunkIds = setOf(chunk.id), resolutions = emptyList()),
+                propositions = listOf(extracted),
+                revisionResults = emptyList(),
+            )
+        }
+
+        fun extract(): MvcResult = mvc.perform(
+            post("/api/v1/contexts/$contextId/extract")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"text":"Brahms wrote a requiem","sourceId":"s1"}""")
+        ).andExpect(status().isOk).andReturn()
+
+        val first = extract()
+        val second = extract()
+
+        assertNotEquals(mintedIds[0], mintedIds[1], "the pipeline must mint a second id for the retry")
+        assertEquals(1, dedupRepository.count(), "the store collapses the retry onto the first row")
+
+        assertEquals(listOf(mintedIds[0]), propositionIdsIn(first))
+        // The second answer must name the row the store kept, which is the first id.
+        assertEquals(listOf(mintedIds[0]), propositionIdsIn(second))
+        assertNull(dedupRepository.findById(mintedIds[1]), "the second id was never stored")
+        assertEveryIdResolves(second, dedupRepository)
+    }
+
+    @Test
+    fun `POST extract answers with the merged row the store holds`() {
+        val contextId = "test-context"
+        val extracted = Proposition(
+            contextId = ContextId(contextId),
+            text = "Brahms wrote a requiem",
+            mentions = emptyList(),
+            confidence = 0.9,
+        )
+        val original = Proposition(
+            id = "canonical-1",
+            contextId = ContextId(contextId),
+            text = "Brahms wrote a requiem",
+            mentions = emptyList(),
+            confidence = 0.8,
+        )
+        val merged = original.copy(confidence = 0.95)
+        every { propositionPipeline.processChunk(any(), any()) } returns ChunkPropositionResult.Success(
+            chunkId = "chunk-merge",
+            suggestedPropositions = SuggestedPropositions(chunkId = "chunk-merge", propositions = emptyList()),
+            entityResolutions = Resolutions(chunkIds = setOf("chunk-merge"), resolutions = emptyList()),
+            // A merge writes `revised` and leaves `extracted` unwritten, so `extracted.id` names
+            // nothing a caller could fetch.
+            propositions = listOf(extracted),
+            revisionResults = listOf(RevisionResult.Merged(original = original, revised = merged)),
+        )
+
+        val result = mockMvc.perform(
+            post("/api/v1/contexts/$contextId/extract")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"text":"Brahms wrote a requiem","sourceId":"s1"}""")
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.propositions.length()").value(1))
+            .andExpect(jsonPath("$.propositions[0].id").value("canonical-1"))
+            .andExpect(jsonPath("$.propositions[0].action").value("MERGED"))
+            .andExpect(jsonPath("$.propositions[0].confidence").value(0.95))
+            .andReturn()
+
+        assertNull(propositionRepository.findById(extracted.id), "the extracted proposition was never stored")
+        assertEveryIdResolves(result, propositionRepository)
+    }
+
+    @Test
+    fun `every proposition id in an extract answer resolves through findById`() {
+        val contextId = "test-context"
+        val dedupRepository = DedupOnTextRepository()
+        val mvc = mockMvcFor(dedupRepository)
+
+        val original = Proposition(
+            id = "orig-1",
+            contextId = ContextId(contextId),
+            text = "Brahms was born in 1830",
+            mentions = emptyList(),
+            confidence = 0.3,
+            status = PropositionStatus.CONTRADICTED,
+        )
+        val newProp = Proposition(
+            contextId = ContextId(contextId),
+            text = "Brahms was born in 1833",
+            mentions = emptyList(),
+            confidence = 0.95,
+        )
+        val reinforcedOriginal = Proposition(
+            id = "orig-2",
+            contextId = ContextId(contextId),
+            text = "Brahms wrote a requiem",
+            mentions = emptyList(),
+            confidence = 0.8,
+        )
+        val reinforced = reinforcedOriginal.copy(confidence = 0.9, reinforceCount = 1)
+        val extractedTwin = Proposition(
+            contextId = ContextId(contextId),
+            text = "Brahms wrote a requiem",
+            mentions = emptyList(),
+            confidence = 0.9,
+        )
+        every { propositionPipeline.processChunk(any(), any()) } returns ChunkPropositionResult.Success(
+            chunkId = "chunk-mixed",
+            suggestedPropositions = SuggestedPropositions(chunkId = "chunk-mixed", propositions = emptyList()),
+            entityResolutions = Resolutions(chunkIds = setOf("chunk-mixed"), resolutions = emptyList()),
+            propositions = listOf(newProp, extractedTwin),
+            revisionResults = listOf(
+                RevisionResult.Contradicted(original = original, new = newProp),
+                RevisionResult.Reinforced(original = reinforcedOriginal, revised = reinforced),
+            ),
+        )
+
+        val result = mvc.perform(
+            post("/api/v1/contexts/$contextId/extract")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"text":"Brahms","sourceId":"s1"}""")
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.propositions.length()").value(2))
+            .andReturn()
+
+        assertEquals(listOf(newProp.id, "orig-2"), propositionIdsIn(result))
+        assertEveryIdResolves(result, dedupRepository)
+    }
+
+    // ========================================================================
+    // Connector ids are free text, colons included
+    // ========================================================================
+
+    @Test
+    fun `POST extract accepts a connector id holding a colon and keys it the way ConnectorRef does`() {
+        val contextId = "test-context"
+        val capturedContexts = mutableListOf<SourceAnalysisContext>()
+        every { propositionPipeline.processChunk(any(), any()) } answers {
+            val chunk = firstArg<Chunk>()
+            val context = secondArg<SourceAnalysisContext>()
+            capturedContexts += context
+            ChunkPropositionResult.Success(
+                chunkId = chunk.id,
+                suggestedPropositions = SuggestedPropositions(chunkId = chunk.id, propositions = emptyList()),
+                entityResolutions = Resolutions(chunkIds = setOf(chunk.id), resolutions = emptyList()),
+                propositions = listOf(
+                    Proposition(
+                        contextId = context.contextId,
+                        text = "Fact from a colon-bearing connector",
+                        mentions = emptyList(),
+                        confidence = 0.9,
+                        provenanceEntries = listOf(
+                            ProvenanceEntry(
+                                locator = requireNotNull(context.sourceLocator),
+                                chunkId = chunk.id,
+                                sourceRevision = context.sourceRevision?.sourceRevision,
+                            ),
+                        ),
+                    ),
+                ),
+                revisionResults = emptyList(),
+            )
+        }
+
+        fun extract(connectorId: String, externalId: String) = mockMvc.perform(
+            post("/api/v1/contexts/$contextId/extract")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                        "text": "Fact from a colon-bearing connector",
+                        "sourceLocator": {"kind":"connector","value":"$externalId","connectorId":"$connectorId"},
+                        "sourceRevision": "r1"
+                    }
+                    """.trimIndent()
+                )
+        ).andExpect(status().isOk)
+
+        val regionQualified = ConnectorRef("gmail:eu-west", "message-42")
+        val plain = ConnectorRef("gmail", "eu-west:message-42")
+
+        // The domain type's own escaping, and the two readings of the same colons stay apart under it.
+        assertEquals("""connector:gmail\:eu-west:message-42""", regionQualified.key())
+        assertNotEquals(regionQualified.key(), plain.key())
+
+        extract("gmail:eu-west", "message-42")
+            .andExpect(
+                jsonPath("$.propositions[0].provenance[0].locator")
+                    .value("""connector:gmail\:eu-west:message-42""")
+            )
+        extract("gmail", "eu-west:message-42")
+            .andExpect(
+                jsonPath("$.propositions[0].provenance[0].locator")
+                    .value("connector:gmail:eu-west:message-42")
+            )
+
+        // The connector id survives the wire intact, and the key the request produced is the one
+        // ConnectorRef renders for the same pair.
+        val fromWire = capturedContexts[0].sourceLocator as ConnectorRef
+        assertEquals("gmail:eu-west", fromWire.connectorId)
+        assertEquals("message-42", fromWire.externalId)
+        assertEquals(regionQualified.key(), fromWire.key())
+        assertEquals(regionQualified.key(), capturedContexts[0].sourceRevision?.sourceKey)
+        assertEquals(plain.key(), capturedContexts[1].sourceLocator?.key())
+        assertNotEquals(capturedContexts[0].sourceLocator?.key(), capturedContexts[1].sourceLocator?.key())
+
+        // And the key the store was handed is the escaped one.
+        val stored = propositionRepository.findAll().first { prop ->
+            prop.provenanceEntries.any { it.locator == regionQualified }
+        }
+        assertEquals(regionQualified.key(), stored.provenanceEntries.single().locator.key())
+    }
+
+    // ========================================================================
+    // Identity length ceilings, answered at the edge
+    // ========================================================================
+
+    @Test
+    fun `POST extract refuses an over-limit source revision with a 400 naming the bound`() {
+        val overLimit = "r".repeat(SourceIdentityBounds.MAX_SOURCE_REVISION_LENGTH + 1)
+
+        mockMvc.perform(
+            post("/api/v1/contexts/test-context/extract")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                        "text": "fact",
+                        "sourceLocator": {"kind":"uri","value":"https://example.com/source"},
+                        "sourceRevision": "$overLimit"
+                    }
+                    """.trimIndent()
+                )
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value(containsString("MAX_SOURCE_REVISION_LENGTH")))
+            .andExpect(
+                jsonPath("$.error")
+                    .value(containsString(SourceIdentityBounds.MAX_SOURCE_REVISION_LENGTH.toString()))
+            )
+
+        verify(exactly = 0) { propositionPipeline.processChunk(any(), any()) }
+    }
+
+    @Test
+    fun `POST extract refuses an over-limit source key with a 400 naming the bound`() {
+        // No revision here, so nothing downstream would have checked the key until the first
+        // ProvenanceEntry was built, deep inside extraction.
+        val overLimitUri = "https://example.com/" + "p".repeat(SourceIdentityBounds.MAX_SOURCE_KEY_LENGTH)
+
+        mockMvc.perform(
+            post("/api/v1/contexts/test-context/extract")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"text":"fact","sourceLocator":{"kind":"uri","value":"$overLimitUri"}}""")
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value(containsString("MAX_SOURCE_KEY_LENGTH")))
+            .andExpect(
+                jsonPath("$.error")
+                    .value(containsString(SourceIdentityBounds.MAX_SOURCE_KEY_LENGTH.toString()))
+            )
+
+        verify(exactly = 0) { propositionPipeline.processChunk(any(), any()) }
+    }
+
+    @Test
+    fun `POST extract file refuses an over-limit source revision with a 400 naming the bound`() {
+        val reader = mockk<HierarchicalContentReader>()
+        val chunker = mockk<ContentChunker>()
+        val fileController = PropositionPipelineController(
+            propositionPipeline = propositionPipeline,
+            propositionRepository = propositionRepository,
+            entityResolver = entityResolver,
+            schemaRegistry = schemaRegistry,
+            contentReader = reader,
+            contentChunker = chunker,
+            objectMapper = objectMapper,
+        )
+        val mvc = MockMvcBuilders.standaloneSetup(fileController)
+            .setMessageConverters(
+                StringHttpMessageConverter(),
+                MappingJackson2HttpMessageConverter(objectMapper),
+            )
+            .build()
+        val overLimit = "r".repeat(SourceIdentityBounds.MAX_SOURCE_REVISION_LENGTH + 1)
+
+        mvc.perform(
+            multipart("/api/v1/contexts/test-context/extract/file")
+                .file(MockMultipartFile("file", "mail.txt", "text/plain", "content".toByteArray()))
+                .file(
+                    MockMultipartFile(
+                        "sourceLocator",
+                        "",
+                        "application/json",
+                        """{"kind":"uri","value":"https://example.com/source"}""".toByteArray(),
+                    )
+                )
+                .file(MockMultipartFile("sourceRevision", "", "text/plain", overLimit.toByteArray()))
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value(containsString("MAX_SOURCE_REVISION_LENGTH")))
+
+        verify(exactly = 0) { reader.parseContent(any(), any()) }
+        verify(exactly = 0) { propositionPipeline.process(any(), any()) }
+    }
+
+    @Test
+    fun `POST extract carries a source key and revision at the limit end to end`() {
+        val contextId = "test-context"
+        val atLimitRevision = "r".repeat(SourceIdentityBounds.MAX_SOURCE_REVISION_LENGTH)
+        val uriPrefix = "https://example.com/"
+        val keyPrefix = "uri:$uriPrefix"
+        val atLimitUri = uriPrefix + "p".repeat(SourceIdentityBounds.MAX_SOURCE_KEY_LENGTH - keyPrefix.length)
+
+        val capturedContexts = mutableListOf<SourceAnalysisContext>()
+        every { propositionPipeline.processChunk(any(), any()) } answers {
+            val chunk = firstArg<Chunk>()
+            val context = secondArg<SourceAnalysisContext>()
+            capturedContexts += context
+            ChunkPropositionResult.Success(
+                chunkId = chunk.id,
+                suggestedPropositions = SuggestedPropositions(chunkId = chunk.id, propositions = emptyList()),
+                entityResolutions = Resolutions(chunkIds = setOf(chunk.id), resolutions = emptyList()),
+                propositions = listOf(
+                    Proposition(
+                        contextId = context.contextId,
+                        text = "Fact at the ceiling",
+                        mentions = emptyList(),
+                        confidence = 0.9,
+                        // Building this entry runs the same bounds check the store side relies on.
+                        provenanceEntries = listOf(
+                            ProvenanceEntry(
+                                locator = requireNotNull(context.sourceLocator),
+                                chunkId = chunk.id,
+                                sourceRevision = context.sourceRevision?.sourceRevision,
+                            ),
+                        ),
+                    ),
+                ),
+                revisionResults = emptyList(),
+            )
+        }
+
+        val result = mockMvc.perform(
+            post("/api/v1/contexts/$contextId/extract")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                        "text": "Fact at the ceiling",
+                        "sourceLocator": {"kind":"uri","value":"$atLimitUri"},
+                        "sourceRevision": "$atLimitRevision"
+                    }
+                    """.trimIndent()
+                )
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.propositions[0].provenance[0].sourceRevision").value(atLimitRevision))
+            .andReturn()
+
+        val revision = requireNotNull(capturedContexts.single().sourceRevision)
+        assertEquals(SourceIdentityBounds.MAX_SOURCE_KEY_LENGTH, revision.sourceKey.length)
+        assertEquals(SourceIdentityBounds.MAX_SOURCE_REVISION_LENGTH, revision.sourceRevision.length)
+
+        val stored = propositionRepository.findAll().single()
+        assertEquals(atLimitRevision, stored.provenanceEntries.single().sourceRevision)
+        assertEveryIdResolves(result, propositionRepository)
+    }
+
+    // ========================================================================
+    // Helpers
+    // ========================================================================
+
+    private fun mockMvcFor(repository: PropositionRepository): MockMvc =
+        MockMvcBuilders.standaloneSetup(
+            PropositionPipelineController(
+                propositionPipeline = propositionPipeline,
+                propositionRepository = repository,
+                entityResolver = entityResolver,
+                schemaRegistry = schemaRegistry,
+                objectMapper = objectMapper,
+            )
+        )
+            .setMessageConverters(
+                StringHttpMessageConverter(),
+                MappingJackson2HttpMessageConverter(objectMapper),
+            )
+            .build()
+
+    private fun propositionIdsIn(result: MvcResult): List<String> =
+        objectMapper.readTree(result.response.contentAsString)
+            .path("propositions")
+            .map { it.path("id").asText() }
+
+    private fun assertEveryIdResolves(result: MvcResult, repository: PropositionRepository) {
+        val ids = propositionIdsIn(result)
+        assertTrue(ids.isNotEmpty(), "the answer must name at least one proposition")
+        ids.forEach { id ->
+            assertNotNull(repository.findById(id), "id $id in the answer is absent from the store")
+        }
+    }
+}
+
+/**
+ * A store that collapses a second save of the same text in the same context onto the row already
+ * there, the way the graph store's exact-text dedup does. `save` answers with the row a caller will
+ * find later, under whatever id that row already carries.
+ */
+private class DedupOnTextRepository(
+    private val delegate: TestPropositionRepository = TestPropositionRepository(),
+) : PropositionRepository by delegate {
+
+    override fun save(proposition: Proposition): Proposition {
+        val existing = delegate.findAll().firstOrNull { stored ->
+            stored.id != proposition.id &&
+                    stored.contextId == proposition.contextId &&
+                    stored.text == proposition.text
+        }
+        return delegate.save(existing ?: proposition)
     }
 }

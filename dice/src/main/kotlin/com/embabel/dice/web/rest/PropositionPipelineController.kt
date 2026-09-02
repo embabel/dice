@@ -32,11 +32,13 @@ import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.support.Sha256ContentHasher
 import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
+import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.revision.RevisionResult
 import com.embabel.dice.provenance.ConnectorRef
 import com.embabel.dice.provenance.ContentAddressedLocator
 import com.embabel.dice.provenance.FileLocator
+import com.embabel.dice.provenance.SourceIdentityBounds
 import com.embabel.dice.provenance.SourceLocator
 import com.embabel.dice.provenance.SourceRevisionRef
 import com.embabel.dice.provenance.UriLocator
@@ -85,7 +87,9 @@ class PropositionPipelineController(
      * Extract propositions from a single text chunk.
      *
      * Runs the extraction pipeline on the supplied text, persists the resulting propositions,
-     * and returns them together with entity resolution and revision summaries.
+     * and returns them together with entity resolution and revision summaries. The propositions
+     * that come back are the ones the store now holds, so every id in the response can be fetched
+     * again by id.
      */
     @PostMapping("/extract")
     fun extract(
@@ -103,7 +107,7 @@ class PropositionPipelineController(
             resolveSourceProvenance(request.sourceLocator, request.sourceRevision)
         } catch (e: IllegalArgumentException) {
             logger.warn("Rejecting extract request for context {}: {}", contextId, e.message)
-            return ResponseEntity.badRequest().build()
+            throw InvalidSourceProvenanceException(e.message ?: DEFAULT_REJECTION_REASON)
         }
         val context = buildContext(
             contextId = contextId,
@@ -126,11 +130,16 @@ class PropositionPipelineController(
 
         // Persist what revision says to keep — both the freshly extracted propositions and any
         // revised originals (e.g. an existing proposition retired to CONTRADICTED), not just the new ones.
-        result.propositionsToPersist().forEach { proposition ->
-            propositionRepository.save(proposition)
+        //
+        // save() is the store's answer about what it now holds, and that can be a different row from
+        // the one offered: exact-text dedup hands back the existing canonical proposition under its
+        // own id. Keep each answer against the id we offered, so the response can name what a caller
+        // will actually find on a later read.
+        val storedByOfferedId = result.propositionsToPersist().associate { proposition ->
+            proposition.id to propositionRepository.save(proposition)
         }
 
-        return ResponseEntity.ok(buildExtractResponse(chunk.id, contextId, result))
+        return ResponseEntity.ok(buildExtractResponse(chunk.id, contextId, result, storedByOfferedId))
     }
 
     /**
@@ -160,7 +169,7 @@ class PropositionPipelineController(
             return ResponseEntity.badRequest().build()
         } catch (e: IllegalArgumentException) {
             logger.warn("Rejecting file extract request for context {}: {}", contextId, e.message)
-            return ResponseEntity.badRequest().build()
+            throw InvalidSourceProvenanceException(e.message ?: DEFAULT_REJECTION_REASON)
         }
 
         // Parse file content using Tika
@@ -290,8 +299,12 @@ class PropositionPipelineController(
 
     /**
      * Turns the request's locator and revision fields into the typed pair the context wants.
-     * A revision with no locator is rejected here rather than deeper in, so the caller gets a
-     * 400 before the pipeline or Tika is touched.
+     *
+     * Everything that would otherwise fail deep inside extraction is checked here, so the caller
+     * gets a 400 before the pipeline or Tika is touched: a revision with no locator has nothing to
+     * attach to, and a source key or revision longer than [SourceIdentityBounds] allows would blow
+     * up when the first [com.embabel.dice.provenance.ProvenanceEntry] was built. The length checks
+     * throw with the broken limit named, and that text is what the caller gets back.
      */
     private fun resolveSourceProvenance(
         sourceLocatorInput: SourceLocatorInputDto?,
@@ -301,6 +314,9 @@ class PropositionPipelineController(
             "sourceRevision requires sourceLocator"
         }
         val sourceLocator = sourceLocatorInput?.toSourceLocator()
+        // A revisionless request never builds a SourceRevisionRef, so the key ceiling has to be
+        // checked on its own here to cover that case too.
+        sourceLocator?.let { SourceIdentityBounds.requireSourceKeyWithinBounds(it.key()) }
         val sourceRevision = revision?.let {
             SourceRevisionRef(sourceLocator!!.key(), it)
         }
@@ -385,10 +401,19 @@ class PropositionPipelineController(
         return context
     }
 
+    /**
+     * Turns one chunk's extraction result into the response body.
+     *
+     * [storedByOfferedId] maps the id each proposition was offered to the store under to whatever
+     * the store answered with, and every proposition named in the response goes through it. That is
+     * what keeps the response honest: an id a caller reads here is an id
+     * [PropositionRepository.findById] will resolve.
+     */
     private fun buildExtractResponse(
         chunkId: String,
         contextId: String,
         result: ChunkPropositionResult,
+        storedByOfferedId: Map<String, Proposition>,
     ): ExtractResponse {
         // entityResolutions is a Success-only field; a Failed chunk yields an empty response
         // carrying the failed chunkId.
@@ -422,11 +447,14 @@ class PropositionPipelineController(
             }
 
         val propositionDtos = if (result.revisionResults.isNotEmpty()) {
-            result.propositions.zip(result.revisionResults).map { (prop, rev) ->
-                PropositionDto.from(prop, rev)
+            // One entry per extracted proposition, which is what `take` bounds the list to when
+            // the pipeline hands back a different number of revision results.
+            result.revisionResults.take(result.propositions.size).map { revisionResult ->
+                val written = storedForm(revisionResult.writtenProposition(), storedByOfferedId)
+                PropositionDto.from(written, revisionResult)
             }
         } else {
-            result.propositions.map { PropositionDto.from(it, "CREATED") }
+            result.propositions.map { PropositionDto.from(storedForm(it, storedByOfferedId), "CREATED") }
         }
 
         val revisionSummary = if (result.revisionResults.isNotEmpty()) {
@@ -453,10 +481,48 @@ class PropositionPipelineController(
     }
 
     /**
+     * The proposition [proposition] became once the store had it, falling back to [proposition]
+     * itself when the store said nothing about it.
+     */
+    private fun storedForm(proposition: Proposition, storedByOfferedId: Map<String, Proposition>): Proposition =
+        storedByOfferedId[proposition.id] ?: proposition
+
+    /**
+     * The proposition a revision outcome writes to the store.
+     *
+     * A merge or a reinforcement folds the new claim into an existing proposition and writes that
+     * one; the freshly extracted proposition is never stored, so its id would resolve to nothing.
+     * A contradiction writes both sides and this names the new claim, which is the one the caller
+     * asked for; the retired original is counted in the revision summary.
+     */
+    private fun RevisionResult.writtenProposition(): Proposition = when (this) {
+        is RevisionResult.New -> proposition
+        is RevisionResult.Merged -> revised
+        is RevisionResult.Reinforced -> revised
+        is RevisionResult.Contradicted -> new
+        is RevisionResult.Generalized -> proposition
+    }
+
+    /**
+     * Answers 400 with the reason a request was refused, so a caller can read which check it broke
+     * — a length ceiling names its limit. Declared on this controller alone, so nothing else in a
+     * host application changes shape.
+     */
+    @ExceptionHandler(InvalidSourceProvenanceException::class)
+    fun handleInvalidSourceProvenance(
+        e: InvalidSourceProvenanceException,
+    ): ResponseEntity<ExtractErrorResponse> =
+        ResponseEntity.badRequest().body(ExtractErrorResponse(e.message ?: DEFAULT_REJECTION_REASON))
+
+    /**
      * Builds the locator the request names, rejecting any field combination that would silently
-     * mean something else. `connectorId` belongs to `connector` locators alone, and it may not
-     * contain a colon: `ConnectorRef.key()` joins its parts on colons, so a colon inside one part
-     * could make two different connector records produce the same key.
+     * mean something else. `connectorId` belongs to `connector` locators alone; the other three
+     * kinds refuse it.
+     *
+     * A connector id may hold any character, colons included. [ConnectorRef] escapes its own
+     * connector id when it renders a key, so `"a:b"` and `"a"` stay distinguishable and the key
+     * round-trips to the same string every time. Screening colons out here would refuse ids the
+     * domain type handles perfectly well, such as a region-qualified `gmail:eu-west`.
      */
     private fun SourceLocatorInputDto.toSourceLocator(): SourceLocator {
         require(value.isNotBlank()) { "sourceLocator.value must not be blank" }
@@ -478,9 +544,6 @@ class PropositionPipelineController(
 
             "connector" -> {
                 require(!connectorId.isNullOrBlank()) { "connector sourceLocator requires connectorId" }
-                require(':' !in connectorId) {
-                    "connector sourceLocator connectorId must not contain ':'"
-                }
                 ConnectorRef(connectorId, value, display)
             }
 
@@ -488,3 +551,15 @@ class PropositionPipelineController(
         }
     }
 }
+
+/** What a refused request is called when the check that refused it left no message. */
+private const val DEFAULT_REJECTION_REASON = "invalid source provenance"
+
+/**
+ * A request whose source locator or revision the extraction endpoints refuse.
+ *
+ * It carries the text of the check that failed, and [PropositionPipelineController] hands that text
+ * back in the 400 body, so a caller reading a length rejection sees which ceiling it broke and by
+ * how much.
+ */
+class InvalidSourceProvenanceException(message: String) : RuntimeException(message)

@@ -617,13 +617,31 @@ before the pipeline runs and before Tika reads the upload:
 | unknown `kind` | the union is closed |
 | `connectorId` on a `uri`, `file`, or `content` locator | those kinds have no connector, so the field would be silently dropped |
 | `connector` with no `connectorId` | `ConnectorRef` needs both halves |
-| `connectorId` containing `:` | `ConnectorRef.key()` joins on colons, so a colon inside a component lets two different connector records produce one key |
 | blank `value` | a locator with no identifier identifies nothing |
+| a source key over `MAX_SOURCE_KEY_LENGTH`, or a `sourceRevision` over `MAX_SOURCE_REVISION_LENGTH` | both strings are hashed into evidence and written to an indexed property, and `ProvenanceEntry` refuses them anyway; measuring here answers the caller at the edge |
 
-`PropositionPipelineControllerTest` posts the first five in one batch and asserts 400 with zero
-pipeline invocations; the blank-`value` guard is enforced by the same `require` chain and is not in
-that batch. A separate multipart test asserts the file endpoint rejects a revision with no locator
-without calling the reader. The happy path posts all four locator kinds with a revision containing
+A `connectorId` holding a colon is accepted. `ConnectorRef` escapes its own connector id when it
+renders a key, so `ConnectorRef("gmail:eu-west", "message-42")` keys as
+`connector:gmail\:eu-west:message-42` and stays distinct from
+`ConnectorRef("gmail", "eu-west:message-42")`. Screening colons out at the REST edge would refuse
+connector ids the domain type handles perfectly well, a region-qualified one among them, so the
+controller carries no such check.
+
+Every 400 from these checks carries a body, `{"error": "<what the check said>"}`. That is what makes
+a length rejection actionable: the message names the ceiling that was broken and the length that
+broke it. Without it an over-long value surfaced as an `IllegalArgumentException` deep inside
+extraction, which the caller met as a 500.
+
+`PropositionPipelineControllerTest` posts all five field-combination cases in one batch and asserts
+400 with zero pipeline invocations. A separate multipart test asserts the file endpoint rejects a
+revision with no locator without calling the reader. The ceilings have tests of their own on both
+endpoints, each asserting the body names the bound; a paired test posts a source key of exactly 2048
+characters with a revision of exactly 1024 and follows both through to the stored `ProvenanceEntry`.
+Another posts both readings of the same colons — `gmail:eu-west` + `message-42`, and `gmail` +
+`eu-west:message-42` — and asserts the connector id survives the wire, the keys differ, and the
+stored key is the one `ConnectorRef` renders.
+
+The happy path posts all four locator kinds with a revision containing
 both a colon and a non-ASCII character (`rev:opaque|雪`) and asserts the value comes back on the
 response byte for byte, with the locator's `sourceKey` absent from the wire — the key is derived
 from the locator, so sending it back would be a second, forgeable copy of the same fact.
@@ -649,6 +667,22 @@ revision after a chunker configuration change re-mints the ids and grounds onto 
 old ones. And the id is derived from the request, so it says nothing about whether the bytes behind a
 revision changed: a provider that reuses one revision string for different content gets one id for
 both.
+
+**What the extract response names.** `POST /extract` answers with the propositions the store holds
+once the writes have run. `save` is the authority on that, and it can answer with a different row
+from the one it was offered: exact-text dedup hands back the existing canonical proposition under
+its own id. Revision does the same thing a layer up — a merge or a reinforcement writes the revised
+proposition and leaves the freshly extracted one unwritten, so the extracted id names nothing. The
+controller keeps what each `save` returned, keyed by the id it offered, and every proposition the
+response names goes through that map. The property is simple to state and simple to test: every
+proposition id in an extract response resolves through `findById`.
+
+`PropositionPipelineControllerTest` pins it with a store double that collapses a second save of the
+same text onto the row already there, the way the graph store's exact-text dedup does. Posting one
+sentence twice makes the pipeline mint two ids while the store keeps one row, and the second
+response must name the row that survived. A second test drives the merge path and asserts the
+response carries the merged row's id with the extracted id absent from the store; a third runs a
+contradiction and a reinforcement together and asserts every id in the answer resolves.
 
 **On the way out.** `ProvenanceEntryDto` gains `sourceRevision`, and the discovery `/why` response
 grows a `provenance` array of `DiscoveryProvenanceDto` — locator key, revision, chunk id, offsets,
@@ -814,8 +848,11 @@ issuing no write statements at all.
 
 Two details make that union safe. **Structural source identity is validated before the no-op check,
 not after.** A locator's equality is its key, and `ConnectorRef` builds its key by joining on colons,
-so `("a:b", "c")` and `("a", "b:c")` produce one key and their entries compare equal. An entry can
-therefore look like one the winner already holds while naming a different connector. Validating
+escaping `:` and `\` in the connector id first, so `("a:b", "c")` keys as `connector:a\:b:c` and
+stays distinct from `("a", "b:c")` — a segment holding a colon round-trips without collision. That
+escaping is what closes the hole; while the key was a plain join those two pairs shared one key and
+their entries compared equal, so an entry could look like one the winner already held while naming a
+different connector. Validating
 first — with a read, so the replay stays write-free — rejects that instead of filing the evidence
 under the wrong source. **Recovery from a uniqueness race runs in its own transaction.** A losing
 writer learns it lost by having the database reject its insert, which leaves that transaction dead;

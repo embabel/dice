@@ -324,9 +324,14 @@ and the consumer PRs that deliver it).
   takes the same two as multipart parts. Combinations that would quietly mean something else are
   rejected with 400 before the pipeline runs and before Tika reads an upload: a revision with no
   locator, an unknown `kind`, a `connectorId` on a `uri`/`file`/`content` locator, a `connector`
-  locator without one, a blank `value`, and a `connectorId` containing `:` — `ConnectorRef.key()`
-  joins on colons, so a colon inside a component would let two different connector records produce
-  one key. A revisioned request also derives each chunk's id from the source key, the revision, the
+  locator without one, and a blank `value`. A colon inside a `connectorId` is accepted, because
+  `ConnectorRef` escapes its own connector id when it renders a key: `gmail:eu-west` and `gmail`
+  stay distinguishable, and a region-qualified connector id round-trips through `key()` unharmed.
+  The same 400 also covers a source key or a source revision longer than the `SourceIdentityBounds`
+  ceilings (2048 and 1024). Both are measured while the request is being read, and the response body
+  names the limit that was broken along with the length that broke it, so an over-long value is
+  answered at the edge where a caller can act on it.
+  A revisioned request also derives each chunk's id from the source key, the revision, the
   chunk's ordinal, and its text, so re-posting the same revision lands on the same grounding rows
   instead of accumulating a fresh set per replay, while a different revision of the same source stays
   separately traceable. Those ids are context-scoped: the context id is part of the hashed identity,
@@ -334,7 +339,14 @@ and the consumer PRs that deliver it).
   without it two contexts ingesting one document at one revision would mint one id and a grounding
   lookup in either could reach the other's propositions. They also assume a stable chunker: the chunk
   text and ordinal are in the identity, so re-posting one revision after a chunker configuration
-  change re-mints the ids and grounds onto fresh rows beside the old ones. `ProvenanceEntryDto` gains `sourceRevision`, and the discovery `/why`
+  change re-mints the ids and grounds onto fresh rows beside the old ones. `POST /extract` answers
+  with the propositions the store holds once the writes have run. `save` is the authority on what is
+  there: exact-text dedup hands back an existing canonical row under its own id, and a merge or a
+  reinforcement writes the revised proposition while the freshly extracted one is never stored at
+  all. Both cases used to leave the response naming an id no read could resolve. Every proposition
+  id in an extract response now resolves through `findById`, and a test asserts exactly that over the
+  dedup, merge, contradiction and reinforcement paths.
+  `ProvenanceEntryDto` gains `sourceRevision`, and the discovery `/why`
   response grows a `provenance` array of primitive-only `DiscoveryProvenanceDto` values built from
   the lineage's own entries and sorted by evidence key. The sort is what makes the field
   deterministic: provenance is read as raw Cypher over `DERIVED_FROM` edges and comes back in planner
@@ -353,7 +365,12 @@ and the consumer PRs that deliver it).
   rather than swapped in. `SourceRevisionBinaryCompatibilityTest` runs the pinned legacy client and
   asserts exactly that split — both concrete constructors link, both `copy` descriptors raise
   `NoSuchMethodError` — with a negative control that removes the approved constructor and checks the
-  same call site then fails. Three behavioural notes for hosts. The `/why` response gains a
+  same call site then fails. Four behavioural notes for hosts. **`POST /extract` answers with
+  canonical stored ids.** This is a behavioural fix to the response content: the propositions the
+  response names are the ones the store ended up with, so a merged or deduplicated extraction reports
+  the canonical row's id where it used to report a pre-save extraction id that no read could resolve.
+  The wire shape is unchanged — same fields, same types, same arity — and an extraction that creates
+  fresh propositions answers exactly as it did. The `/why` response gains a
   `provenance` field, so a consumer that rejects unknown JSON properties needs to allow it; existing
   fields are unchanged, and the post-Wave-A shape is the baseline any later byte-for-byte `/why`
   promise re-bases onto. A revisioned REST request produces different chunk ids from the same request
