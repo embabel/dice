@@ -16,7 +16,7 @@ DICE is a multi-module Maven build. Each module's intent, and what it's allowed 
 | `dice-storage-autoconfigure` | Spring Boot autoconfiguration that wires `dice-storage`'s beans (repository, projectors, trust scorer) into a host application. Depends on `dice-storage`. |
 | `dice-ingestion` | Content-hash dedup ledger and source adapters that sit in front of `PropositionPipeline`, so the same artifact is never extracted twice concurrently. Depends on `dice`. |
 | `dice-report` | Rationale and structured report generation over propositions and their lineage. Depends on `dice`. |
-| `dice-metamodel` | Schema governance: content-hash stamps over the governed part of a `DataDictionary`, the declared-schema seam, the version and drift-report store contracts, diffing, drift checking, and non-destructive quarantine. Depends on `dice`, plus `embabel-agent-api` at provided scope. `dice-storage` implements its store contracts. |
+| `dice-metamodel` | Schema governance: content-hash stamps over the governed part of a `DataDictionary`, the declared-schema seam, the version and drift-report store contracts, diffing, drift checking, and non-destructive quarantine. A leaf over `embabel-agent-api`, with no dependency on `dice`; `dice-storage` implements its store contracts. |
 | `dice-integration-tests` | End-to-end tests exercising the real Neo4j backend and full pipeline across module boundaries. Depends on `dice`, `dice-ingestion`, `dice-report` (and transitively `dice-storage`). Not shipped. |
 
 ```mermaid
@@ -31,7 +31,7 @@ flowchart TB
 
     storage --> dice
     storage --> metamodel
-    metamodel --> dice
+    dice --> metamodel
     autoconf --> storage
     ingestion --> dice
     report --> dice
@@ -40,11 +40,11 @@ flowchart TB
     itest --> report
 ```
 
-`dice` never depends on any other DICE module — it's the leaf of the graph, so every other module
-can be added or removed without touching core logic. `dice-metamodel` depends on `dice`, because
-quarantine marks a stranded proposition `STALE` and that touches the proposition model. Beyond
-`dice` it takes no storage, no Spring, and no graph driver. One DICE module depends on it:
-`dice-storage`, which implements its `MetamodelVersionStore` and `DriftReportStore` against Neo4j.
+`dice-metamodel` is a leaf with no dependency on `dice` — it takes no storage, no Spring, and no
+graph driver. `dice` depends on `dice-metamodel` to read a `MetamodelDiff`. One DICE module depends on both:
+`dice-storage`, which implements the `MetamodelVersionStore` and `DriftReportStore` contracts against Neo4j.
+Quarantine marks a proposition `PropositionStatus.QUARANTINED` and is declared in `dice`, so the machinery
+stays in core logic without back-depending to the schema model.
 `dice-storage-autoconfigure` is the only module that knows about Spring Boot autoconfiguration;
 plain `dice-storage` stays framework-neutral so it can be wired by hand outside Spring Boot.
 

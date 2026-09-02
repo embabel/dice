@@ -173,7 +173,8 @@ and the consumer PRs that deliver it).
   a host declaring fully qualified type names, a drift check that reported such a type in both
   buckets at once reports it in neither. A host whose declared names hold no dots sees no change.
 - Drift checking and quarantine contracts in `dice-metamodel`, plus the default runner and a
-  reference sweep. **A drift check reports and changes nothing.** `DriftCheckRunner` has one mode:
+  reference sweep. **EXPERIMENTAL** (shape may change before 1.0) — opt-in: a host calls `DriftSweepCapable.sweep()`; nothing quarantines until then.
+  **A drift check reports and changes nothing.** `DriftCheckRunner` has one mode:
   `run()` declares, stamps, observes, compares and persists a `DriftReport`, and holds no quarantine
   policy and no proposition store, so no path through it can move a proposition or the swept
   baseline. `DefaultDriftCheckRunner` stamps the declared version into the `MetamodelVersionStore` on

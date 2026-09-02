@@ -19,13 +19,20 @@ stateDiagram-v2
     ACTIVE --> CONTRADICTED : a newer fact clashes with it (revision or ContradictionResolutionPass)
     ACTIVE --> SUPERSEDED : folded into a higher-level abstraction (AbstractionPass)
     ACTIVE --> STALE : DecayStatusPolicy.evaluate — utility drops below stalenessThreshold
+    ACTIVE --> QUARANTINED : DriftSweepCapable.sweep — schema drift detected (see metamodel-drift.md)
     STALE --> ACTIVE : DecayStatusPolicy.evaluate — utility recovers above recoveryThreshold
+    QUARANTINED --> ACTIVE : releaseFromQuarantine — operator releases the hold
     STALE --> [*] : deliberately retired by hard delete
     CONTRADICTED --> [*] : kept for audit, no auto-revival
     SUPERSEDED --> [*] : kept for audit, no auto-revival
+    QUARANTINED --> [*] : deliberately retired by hard delete
     note right of ACTIVE
         pinned=true: immune to STALE transition
         and contradiction demotion
+    end note
+    note right of QUARANTINED
+        immune to decay and contradiction;
+        exited only by releaseFromQuarantine
     end note
 ```
 
