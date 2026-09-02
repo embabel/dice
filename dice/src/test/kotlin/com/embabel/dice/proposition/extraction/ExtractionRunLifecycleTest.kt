@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.proposition.extraction
 
+import com.embabel.dice.common.DiceEvent
+import com.embabel.dice.common.ExtractionRunTransitioned
 import com.embabel.dice.proposition.extraction.ExtractionRunFixtures.CONTEXT
 import com.embabel.dice.proposition.extraction.ExtractionRunFixtures.FINISHED_AT
 import com.embabel.dice.proposition.extraction.ExtractionRunFixtures.OTHER_CONTEXT
@@ -172,17 +174,14 @@ class ExtractionRunLifecycleTest {
 
     @Test
     fun `an incompatible terminal rewrite is rejected rather than overwriting`() {
+        // Incompatible means a write naming a different transition: another terminal status, or
+        // another finish time. What the write carries is data it delivers and is decided by
+        // `a retry carrying different counts and failures replays` below.
         val incompatible = listOf(
             "a different status" to ExtractionRunTransition.failed(FINISHED_AT),
+            "the third status" to ExtractionRunTransition.cancelled(FINISHED_AT),
             "a different finish time" to ExtractionRunTransition.completed(FINISHED_AT.plusSeconds(1)),
-            "different counts" to ExtractionRunTransition.completed(
-                finishedAt = FINISHED_AT,
-                counts = ExtractionRunCounts(propositionsPersisted = 12),
-            ),
-            "a different failure list" to ExtractionRunTransition.completed(
-                finishedAt = FINISHED_AT,
-                failures = listOf(ExtractionFailure(ExtractionFailureCode.RATE_LIMITED)),
-            ),
+            "a finish time a nanosecond later" to ExtractionRunTransition.completed(FINISHED_AT.plusNanos(1)),
         )
         val recorded = ExtractionRunTransition.completed(
             finishedAt = FINISHED_AT,
@@ -205,26 +204,66 @@ class ExtractionRunLifecycleTest {
     }
 
     @Test
-    fun `keeping counts and replacing them with the same values are the same terminal write`() {
+    fun `a retry carrying different counts and failures replays, and the first write's outcome stands`() {
         val run = ExtractionRunFixtures.runningRun(
             lineage = ExtractionRunLineage.root(ExtractionRunRef("run-counts")),
             counts = ExtractionRunCounts(propositionsPersisted = 4),
         )
         store.save(run)
-        store.transition(run.key(), ExtractionRunTransition.completed(FINISHED_AT, counts = null))
+        val landed = store.transition(
+            run.key(),
+            ExtractionRunTransition.completed(FINISHED_AT, counts = null),
+        ).run
 
-        // Null means keep and a value means replace, so they are different claims even when they
-        // land on the same numbers. Rejecting the second is the honest answer: the store cannot
-        // tell a caller who meant "leave them" from one who meant "these are final".
-        assertThatThrownBy {
-            store.transition(
-                run.key(),
-                ExtractionRunTransition.completed(
-                    FINISHED_AT,
-                    counts = ExtractionRunCounts(propositionsPersisted = 4),
-                ),
-            )
-        }.isInstanceOf(ExtractionRunConflictException::class.java)
+        // The digest names the transition — this status, this finish time — so a second write
+        // agreeing on both is the same terminal write however different its numbers. A run's
+        // outcome is written once, and the retry gets back what already landed.
+        val retry = store.transition(
+            run.key(),
+            ExtractionRunTransition.completed(
+                FINISHED_AT,
+                counts = ExtractionRunCounts(propositionsPersisted = 99),
+                failures = listOf(ExtractionFailure(ExtractionFailureCode.RATE_LIMITED)),
+            ),
+        )
+
+        assertThat(retry.outcome).isEqualTo(ExtractionRunTransitionOutcome.REPLAYED)
+        assertThat(retry.run).isEqualTo(landed)
+        assertThat(store.findRun(run.key())?.counts?.propositionsPersisted).isEqualTo(4)
+        assertThat(store.findRun(run.key())?.failures).isEmpty()
+    }
+
+    // ---- announcing a run that ended ----
+
+    @Test
+    fun `the call that ends a run announces it once, and a replay announces nothing`() {
+        val received = mutableListOf<DiceEvent>()
+        val listening = InMemoryExtractionRunStore { event -> received += event }
+        val run = started("run-announce")
+        listening.save(run)
+        listening.recordInvocation(run.key(), ExtractionInvocationRecord.planned(0))
+        assertThat(received).describedAs("no write before the terminal one announces anything").isEmpty()
+
+        val transition = ExtractionRunTransition.completed(FINISHED_AT)
+        val applied = listening.transition(run.key(), transition)
+
+        assertThat(received).containsExactly(ExtractionRunTransitioned(applied.run, received.single().timestamp))
+
+        listening.transition(run.key(), transition)
+        listening.transition(run.key(), transition)
+        assertThat(received).describedAs("a replay changed nothing, so it announces nothing").hasSize(1)
+    }
+
+    @Test
+    fun `a store with nothing listening ends runs the same way`() {
+        // The listener has a no-op default, so a host that never wired one up constructs the store
+        // as it always did and every lifecycle rule above still holds.
+        val silent = InMemoryExtractionRunStore()
+        val run = started("run-no-listener")
+        silent.save(run)
+
+        assertThat(silent.transition(run.key(), ExtractionRunTransition.completed(FINISHED_AT)).outcome)
+            .isEqualTo(ExtractionRunTransitionOutcome.APPLIED)
     }
 
     // ---- nothing reaches COMPLETED except through the transition ----

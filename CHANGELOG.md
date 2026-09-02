@@ -859,3 +859,50 @@ and the consumer PRs that deliver it).
   that update land through `save` and has to call `recordInvocation` directly instead; no shipped
   caller does this today, since nothing outside a test calls `save` with a non-empty invocation list
   yet. Design note: [docs/design/extraction-runs.md](docs/design/extraction-runs.md).
+
+- **EXPERIMENTAL, reworks the two entries above.** The terminal fingerprint now covers the
+  transition's identity alone, and a run that ends announces itself. **The digest narrowed, and
+  `ExtractionRunFingerprint.TERMINAL_VERSION` moved from `xrun-terminal:v1` to `xrun-terminal:v2`
+  with it.** `ofTerminal` takes the terminal status and the finish time; the counts and failures a
+  transition carries no longer reach the hashed bytes, and `ofTerminal`'s two payload parameters are
+  gone. Two writes that agree on status and finish time are the same terminal write, so the second
+  replays whatever numbers it names, and the run keeps what the first accepted terminal write
+  delivered — a run's outcome is written once. **Why.** Folding the outcome into the digest made
+  every difference in the payload an incompatible rewrite, which reads as safe and buys an audit
+  nothing: the first write had already landed and the second changed nothing either way, so the only
+  thing the wider digest decided was whether the caller heard "conflict" or "replay". What it cost
+  was the persisted format. The digest is stored beside a run and compared against every retry, and
+  under `v1` it moved whenever the outcome payload gained a field — so DICE #69's typed product
+  outcomes would have changed a format already written to disk. Under `v2` every field #69 adds
+  lands in the counts-and-failures half, reaches none of the hashed bytes, and no recorded digest
+  stops matching. Counts and failures still travel on the transition and still reach the terminal
+  run: `null` keeps what the run recorded and a value replaces it, exactly as before. What changed
+  is that the distinction decides the row a store writes, and the digest never sees it. **A run that ends emits a
+  `DiceEvent`, exactly once.** `ExtractionRunTransitioned` carries the run in its terminal state and
+  fires from the store for the call that ended it. A `REPLAYED` transition emits nothing, because a
+  coordinator retrying a terminal write whose answer it never saw would otherwise notify every
+  downstream consumer a second time for a run that ended once; a rejected write, a `save` and a
+  `recordInvocation` emit nothing either. The listener reaches the store as a constructor
+  collaborator defaulting to `DiceEventListener.DEV_NULL`, the shape
+  `EventEmittingPropositionRepository` already uses — nothing is wired automatically, and a host
+  with nothing listening constructs the store as it always did. The announcement is made after the
+  write has landed and outside the store's own lock, so a listener that blocks or reads the run back
+  holds up no other writer. **The contract suite carries both promises.** Its store factory now
+  takes a `DiceEventListener`, since a suite that could not observe the announcement could not hold
+  a backend to it, and the no-argument `store()` forwards to it with `DEV_NULL`. New cases: a retry
+  carrying different counts and failures replays and the first write's outcome stands; keeping
+  counts and replacing them are different claims on the run that lands, and the digest sees neither;
+  one announcement per applied transition and none for a replay; every terminal status announces the
+  run it ended; a rejected terminal write announces nothing; a `save` and a `recordInvocation`
+  announce nothing; and eight threads racing to end one run produce one announcement between them.
+  The cases that pinned counts and failures as part of the compared payload are gone, because the
+  digest no longer covers them. **Compatibility: breaking for two callers, neither of which exists
+  yet.** `ExtractionRunFingerprint.ofTerminal` loses its `counts` and `failures` parameters, so a
+  caller passing them stops compiling; nothing outside `dice`'s own tests calls it. Every recorded
+  `v1` digest becomes unmatchable, and nothing durable holds one — no store outside the in-memory
+  reference has written a run — so no migration follows. `InMemoryExtractionRunStore` gains an
+  optional first constructor parameter with `@JvmOverloads`, so its no-argument construction keeps
+  working from Kotlin and Java alike. `ExtractionRunStore`'s interface is unchanged.
+  `ExtractionRunTransitioned` is new and carries `@ApiStatus.Experimental` like every other type in
+  this train, added to the same class-file assertion. Design note:
+  [docs/design/extraction-runs.md](docs/design/extraction-runs.md).

@@ -356,9 +356,11 @@ version included` and `null counts and failures on a transition keep what the st
 values replace them`.
 
 `counts` and `failures` are nullable and follow one rule: null keeps what the run recorded, a value
-replaces it. An empty failure list is a value. That distinction reaches the fingerprint, so
-"leave the counts alone" and "these counts are final" are two different terminal writes even when
-they land on the same numbers.
+replaces it. An empty failure list is a value. The distinction decides what the terminal run holds;
+it stays out of the fingerprint, which names the transition and leaves the outcome it delivers to the
+run. See
+["The digest covers the transition's identity"](#the-digest-covers-the-transitions-identity-and-the-outcome-rides-beside-it)
+below.
 
 Invocation records do not travel on a transition. They arrive through `recordInvocation` while the
 run is still running, keyed by `(invocationIndex, attempt)`, and a terminal run takes no more —
@@ -436,7 +438,7 @@ header generation.
 
 ### Idempotency: insert-or-compare, never overwrite
 
-Every terminal write carries a fingerprint of its payload. A store records the fingerprint of the
+Every terminal write carries a fingerprint of its identity. A store records the fingerprint of the
 write that terminalized a run, and a second write against that run is decided by comparison:
 
 | Second write | Result |
@@ -454,6 +456,42 @@ The fingerprint covers the terminal write and not the run. A coordinator that re
 attempt between a terminal write it never saw the answer to and its retry made the same terminal
 write both times, and folding the run's invocation list in would turn that correct retry into a
 rejected conflict.
+
+#### The digest covers the transition's identity, and the outcome rides beside it
+
+Two fields reach the digest: the terminal status, and the finish time. Two writes that agree on both
+are the same terminal write.
+
+The counts and failures a transition carries stay outside it. They are the outcome a run reports,
+and a run's outcome is written once — the first accepted terminal write is what the audit keeps, and
+a retry naming the same status and finish time replays against it whatever numbers it carries. A
+coordinator holding better numbers than the ones that landed records them before it ends the run;
+after the run has ended there is nothing left to correct, which is the same promise `transition`
+makes about everything else on a finished run.
+
+This is what keeps the persisted format still. DICE #69 adds typed product outcomes to what a
+terminal write reports, and every field it adds lands in the counts-and-failures half. None of them
+reaches these bytes, so no digest recorded beside a run stops matching and no migration follows #69
+into this store.
+
+A worked contrast, since the two halves are easy to conflate. `counts = null` means keep what the
+run recorded and `counts = <value>` means replace it, and those really are different claims — the
+terminal run they produce holds different numbers. What they are not is different *writes*: both
+name the same status and the same finish time, so whichever arrives second replays. The cross-backend
+suite pins both halves in `keeping counts and replacing them are different claims on the run that
+lands, and the digest sees neither`, and pins the outcome-once rule in `a retry carrying different
+counts and failures replays, and the first write's outcome stands`.
+
+An earlier version of this rule folded counts and failures into the digest. It made every difference
+in the payload an incompatible rewrite, which reads as safe and buys nothing an audit wants: the
+first write had already landed and the second was rejected either way, so the only thing the wider
+digest changed was whether the caller learned about it as a conflict or as a replay. What it cost
+was the persisted format, which moved whenever the outcome payload grew a field.
+
+`TERMINAL_VERSION` moved from `xrun-terminal:v1` to `xrun-terminal:v2` when the payload narrowed.
+The tag is part of the hashed input, so a digest recorded under `v1` matches nothing written now.
+Nothing durable holds one — no store outside the in-memory reference has written a run yet — so the
+bump costs nothing and the version is what would have made the migration statable if it had.
 
 `save` is the one method that updates in place, and only on a run that is still running. Even there
 it is fenced four ways:
@@ -534,7 +572,28 @@ key and their own compare-and-set, entirely off the header's generation. Run sta
 the way lineage systems such as OpenLineage model a run: independent writers contribute rows, and
 no write rewrites a row another writer owns.
 
-**Replay needs the identical payload, finish time included.** A coordinator retrying after a crash
+#### A run that ends announces itself once
+
+`transition` hands an `ExtractionRunTransitioned` to the store's listener for the call that ended
+the run, carrying the run in its terminal state. A replay announces nothing, and so does a rejected
+write. A coordinator retrying a terminal write whose answer it never saw would otherwise notify
+every downstream consumer a second time for a run that ended once — which is the whole reason
+`REPLAYED` is a distinct outcome at all.
+
+The listener arrives the way every other DICE listener does: a constructor collaborator defaulting
+to `DiceEventListener.DEV_NULL`, the same shape `EventEmittingPropositionRepository` uses. Nothing
+is wired automatically. A host that has nothing listening builds the store exactly as it did before,
+and a host that wants the signal passes a listener in. Handlers run inline on the calling thread and
+throw isolation belongs to the listener, so a host that needs graceful degradation wraps its
+listener in `SafeDiceEventListener`.
+
+The announcement happens after the write has landed and outside the store's own lock, so a listener
+that blocks, or that reads the run back, holds up no other writer and sees the terminal run already
+committed. The cross-backend suite pins the count directly — one announcement per applied
+transition, none for a replay, none for a rejection, none for a `save` or a `recordInvocation`, and
+one between eight threads racing to end the same run.
+
+**Replay needs the identical finish time.** A coordinator retrying after a crash
 it never saw the answer to must reuse the transition it built the first time, or read the run back
 with `findRun` and stop if it has already ended. Minting a fresh `finishedAt` on the retry produces
 a different fingerprint, which is an incompatible rewrite and is rejected. That is safe and it is
@@ -556,17 +615,11 @@ payload:
 - every token is length-prefixed, `<length>:<token>`, because a delimiter-joined encoding lets
   `["a;b"]` and `["a", "b"]` hash the same, and a length prefix keeps two tokens apart whatever
   characters either one carries;
-- every collection is preceded by its element count, so a shorter list cannot be a prefix of a
+- a field set is preceded by how many fields it holds, so a shorter one cannot be a prefix of a
   longer one;
 - fields are emitted as `(name, value)` pairs sorted by name;
-- a collection whose order carries no meaning is sorted, which is what makes two coordinators
-  recording the same failures in a different order the same terminal write — the order is Kotlin's
-  natural `String` order, comparing UTF-16 code units, not UTF-8 byte order and not a locale
-  collation, and it is named because a backend re-implementing the sort in a query would pick a
-  different one and get a different digest;
 - instants render as `<epochSecond>.<nanos padded to 9>` — fixed width, and independent of
   `java.time`'s own formatting, whose precision varies with the value;
-- absent is its own marker, so null and empty stay distinguishable;
 - SHA-256, lowercase hex, with a version tag on the input so a reader meeting a version it does not
   know matches nothing rather than guessing.
 

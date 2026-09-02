@@ -257,12 +257,24 @@ interface ExtractionRunStore {
     /**
      * Ends a run: compare-and-set from `RUNNING` to the transition's terminal status.
      *
-     * **A replay needs the identical payload, finish time included.** A coordinator retrying after a
-     * crash it never saw the answer to must reuse the transition it built the first time, or read
-     * the run back with [findRun] and stop if it has already ended. Minting a fresh `finishedAt` on
-     * the retry produces a different fingerprint, which is an incompatible rewrite and is rejected —
-     * safe, and the opposite of what a caller expecting idempotency would predict. It is the
+     * **A replay needs the identical finish time.** A coordinator retrying after a crash it never
+     * saw the answer to must reuse the transition it built the first time, or read the run back
+     * with [findRun] and stop if it has already ended. Minting a fresh `finishedAt` on the retry
+     * produces a different fingerprint, which is an incompatible rewrite and is rejected — safe,
+     * and the opposite of what a caller expecting idempotency would predict. It is the
      * transition-side twin of the rule [save] states for start times.
+     *
+     * **A run's outcome is written once.** The fingerprint covers the terminal status and the
+     * finish time; the counts and failures a transition carries stay outside it. A retry that
+     * agrees on status and finish time replays whatever numbers it names, and the run keeps what
+     * the first accepted terminal write delivered. A coordinator with better numbers than the ones
+     * that landed has to record them before it ends the run.
+     *
+     * **An applied transition emits one [com.embabel.dice.common.ExtractionRunTransitioned], a
+     * replay emits none.** A store notifies its listener after the write it just made, once, for
+     * the call that ended the run. A replay changed nothing, so it announces nothing: a coordinator
+     * retrying a call whose answer it never saw would otherwise notify every downstream consumer a
+     * second time for a run that ended once. A rejected write announces nothing either.
      *
      * @param key The run to end.
      * @param transition What the run ended as.
