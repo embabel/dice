@@ -19,7 +19,6 @@ import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.provenance.ProvenanceEntry
-import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import org.slf4j.LoggerFactory
 import java.time.Instant
 
@@ -206,36 +205,6 @@ interface PropositionStore {
      */
     fun setProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? =
         findById(propositionId)?.let { save(it.withProvenance(entries)) }
-
-    /**
-     * Remove exactly the evidence named by [provenanceRefs], leaving everything else alone.
-     *
-     * Refs follow the shared evidence-key contract: one minted by
-     * [com.embabel.dice.provenance.ProvenanceEvidenceKey] names a single entry, and a bare locator
-     * key from before revisions existed matches revisionless entries for that source only.
-     *
-     * This is the subtractive counterpart of [addProvenance], and it exists because
-     * [setProvenance] cannot express "remove these" safely. Naming what stays means reading the
-     * entries first, and anything that arrives between that read and the write is silently
-     * dropped by the replace — a concurrent extraction adding evidence to this proposition loses
-     * it. Naming what goes has no such window.
-     *
-     * The default implementation is that read-modify-write, so it carries the race it describes.
-     * It is written this way for compatibility: an existing store keeps working, and a single-JVM
-     * in-memory store has nothing to race with. A backend that can delete evidence in one
-     * statement should override, and the graph backend does.
-     *
-     * @return the updated proposition, or null if no proposition with that id exists.
-     */
-    fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? {
-        val current = findById(propositionId) ?: return null
-        if (provenanceRefs.isEmpty()) return current
-        val remaining = current.provenanceEntries.filterNot { entry ->
-            provenanceRefs.any { ProvenanceEvidenceKey.matches(entry, it) }
-        }
-        if (remaining.size == current.provenanceEntries.size) return current
-        return setProvenance(propositionId, remaining)
-    }
 
     /**
      * Remove all provenance from a proposition.

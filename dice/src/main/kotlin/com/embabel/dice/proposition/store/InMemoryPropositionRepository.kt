@@ -24,10 +24,13 @@ import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.ProvenanceScanningSourceRevisionQueries
+import com.embabel.dice.proposition.ProvenanceSubtractionCapable
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.matchesFilters
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -46,7 +49,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class InMemoryPropositionRepository(
     private val embeddingService: EmbeddingService? = null,
-) : PropositionRepository, ProvenanceScanningSourceRevisionQueries {
+) : PropositionRepository, ProvenanceScanningSourceRevisionQueries, ProvenanceSubtractionCapable {
 
     private val logger = LoggerFactory.getLogger(InMemoryPropositionRepository::class.java)
 
@@ -189,6 +192,50 @@ class InMemoryPropositionRepository(
     }
 
     override fun count(): Int = propositions.size
+
+    // ========================================================================
+    // Provenance management
+    // ========================================================================
+
+    /**
+     * Takes the named evidence off in one atomic step, honouring
+     * [ProvenanceSubtractionCapable]'s contract.
+     *
+     * `ConcurrentHashMap.compute` holds the bin for this id while the remapping function runs, and
+     * every other write here goes through the same map, so a concurrent [addProvenance] or [save]
+     * on this proposition waits its turn. Whichever of the two lands first, both effects are on the
+     * proposition when they finish.
+     *
+     * Handing back null for an absent id also leaves the map alone, so a proposition another writer
+     * has deleted stays deleted. Embeddings are keyed on text, which a subtraction never changes,
+     * so the embedding cache needs no attention here.
+     */
+    override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? =
+        propositions.compute(propositionId) { _, current ->
+            when {
+                current == null -> null
+                provenanceRefs.isEmpty() -> current
+                else -> {
+                    val remaining = current.provenanceEntries.filterNot { entry ->
+                        provenanceRefs.any { ProvenanceEvidenceKey.matches(entry, it) }
+                    }
+                    if (remaining.size == current.provenanceEntries.size) current else current.withProvenance(remaining)
+                }
+            }
+        }
+
+    /**
+     * Appends evidence in one atomic step, so an entry added while a [subtractProvenance] is in
+     * flight survives it.
+     *
+     * The base contract's default reads through [findById] and writes through [save], which leaves
+     * a window where a subtraction running alongside can replace the append away. Both operations
+     * go through `compute` here, which closes it — and makes the pair testable under real threads.
+     */
+    override fun addProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? =
+        propositions.compute(propositionId) { _, current ->
+            current?.withProvenanceEntries(entries)
+        }
 
     /**
      * Clear all propositions and cached embeddings. Useful for testing.

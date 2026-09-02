@@ -18,6 +18,7 @@ package com.embabel.dice.storage
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.projection.lineage.CollectorOutcome
 import com.embabel.dice.projection.lineage.CollectorRecord
+import com.embabel.dice.projection.lineage.CollectorRecordStore
 import com.embabel.dice.projection.lineage.CollectorRun
 import com.embabel.dice.projection.memory.collector.CollectorRunContext
 import com.embabel.dice.projection.memory.collector.CollectorSurvivorPolicy
@@ -26,10 +27,12 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.proposition.ProvenanceSubtractionCapable
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.spi.CandidatePair
+import com.embabel.dice.spi.CollapseUndoCommand
 import com.embabel.dice.spi.CandidatePairSource
 import com.embabel.dice.spi.CollectorCandidateEdge
 import com.embabel.dice.spi.CollectorComponent
@@ -78,6 +81,35 @@ class DrivineCollectorTraceStoreIntegrationTest {
         propositionRepository.clearAll()
     }
 
+    /** The context every fixture proposition below is built in, and the one an undo is issued for. */
+    private val undoContextId = ContextId("ctx-undo")
+
+    /**
+     * Calls the real entry point. Undo requires a context and an audit record store, so every test
+     * here goes through one place that supplies both.
+     */
+    private fun undo(
+        propositions: PropositionStore,
+        survivorId: String,
+        retiredId: String,
+        records: CollectorRecordStore? = recordStore,
+        context: ContextId = undoContextId,
+    ) = undoSingleCollapse(
+        command = CollapseUndoCommand(contextId = context, survivorId = survivorId, retiredId = retiredId),
+        traceQuery = traceStore,
+        propositions = propositions,
+        collectorRecords = records,
+    )
+
+    /**
+     * The audit trail a real merging sweep leaves behind: a live run header and a transition record
+     * naming the survivor it folded this member into. That pair is what authorizes an undo.
+     */
+    private fun authorize(runId: String, memberId: String, survivorId: String) {
+        recordStore.recordRun(CollectorRun(runId = runId, startedAt = Instant.now(), dryRun = false))
+        recordStore.record(collectorRecord(runId, memberId, proposed = survivorId, applied = survivorId))
+    }
+
     private fun prop(
         id: String,
         text: String,
@@ -117,8 +149,8 @@ class DrivineCollectorTraceStoreIntegrationTest {
 
     /** Counts the writes an undo attempts, so "nothing was written" is an assertion. */
     private class RecordingPropositionRepository(
-        private val delegate: PropositionRepository,
-    ) : PropositionRepository by delegate {
+        private val delegate: DrivinePropositionRepository,
+    ) : PropositionRepository by delegate, ProvenanceSubtractionCapable {
 
         var writes = 0
             private set
@@ -132,10 +164,25 @@ class DrivineCollectorTraceStoreIntegrationTest {
             writes++
             return delegate.setProvenance(propositionId, entries)
         }
+
+        override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? {
+            writes++
+            return delegate.subtractProvenance(propositionId, provenanceRefs)
+        }
     }
 
-    /** A caller holding nothing richer than the base store contract. */
-    private class BaseStoreView(delegate: PropositionRepository) : PropositionStore by delegate
+    /**
+     * What a caller holding no repository type sees: the base store contract plus the one capability
+     * undo insists on. The subtraction forwards to the Drivine repository, so this pins that undo
+     * needs nothing richer than that pair.
+     */
+    private class BaseStoreView(
+        private val delegate: DrivinePropositionRepository,
+    ) : PropositionStore by delegate, ProvenanceSubtractionCapable {
+
+        override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? =
+            delegate.subtractProvenance(propositionId, provenanceRefs)
+    }
 
     private fun edge(anchorId: String, memberId: String, vetoed: Boolean = false, score: Double = 0.9) = CollectorCandidateEdge(
         anchorId = anchorId,
@@ -313,13 +360,9 @@ class DrivineCollectorTraceStoreIntegrationTest {
             ),
         )
         traceStore.recordDecision(runId, decision)
+        authorize(runId, "loserA-5", survivor.id)
 
-        val result = undoSingleCollapse(
-            traceQuery = traceStore,
-            propositions = propositionRepository,
-            survivorId = survivor.id,
-            retiredId = "loserA-5",
-        )
+        val result = undo(propositionRepository, survivor.id, "loserA-5")
 
         assertTrue(result != null)
         assertEquals(PropositionStatus.ACTIVE, result!!.restored.status)
@@ -384,13 +427,9 @@ class DrivineCollectorTraceStoreIntegrationTest {
         val retired = decision.retired.single { it.propositionId == loser.id }
         // The fix under test: only the delta the loser actually contributed is recorded.
         assertEquals(listOf("loser-exclusive"), retired.foldedGrounding)
+        authorize(runId, loser.id, survivor.id)
 
-        val result = undoSingleCollapse(
-            traceQuery = traceStore,
-            propositions = propositionRepository,
-            survivorId = survivor.id,
-            retiredId = loser.id,
-        )
+        val result = undo(propositionRepository, survivor.id, loser.id)
 
         assertTrue(result != null)
         assertEquals(PropositionStatus.ACTIVE, result!!.restored.status)
@@ -440,13 +479,9 @@ class DrivineCollectorTraceStoreIntegrationTest {
             listOf(ProvenanceEvidenceKey.encode(revisionTwo)),
             traceStore.findRetirement(loser.id)?.foldedProvenanceEvidenceKeys,
         )
+        authorize(runId, loser.id, survivor.id)
 
-        undoSingleCollapse(
-            traceQuery = traceStore,
-            propositions = propositionRepository,
-            survivorId = survivor.id,
-            retiredId = loser.id,
-        )
+        undo(propositionRepository, survivor.id, loser.id)
 
         assertEquals(evidenceBeforeTheFold, propositionRepository.findById(survivor.id)?.provenanceEntries)
         assertEquals(1L, derivedFromEdges(survivor.id))
@@ -454,7 +489,7 @@ class DrivineCollectorTraceStoreIntegrationTest {
     }
 
     @Test
-    fun `undo removes folded evidence for a caller holding only the base store`() {
+    fun `undo removes folded evidence for a caller holding the base store and the subtraction`() {
         val runId = "run-base-store-undo"
         val keep = ProvenanceEntry(UriLocator("https://example.com/base-store-undo/keep"))
         val folded = ProvenanceEntry(UriLocator("https://example.com/base-store-undo/remove"))
@@ -488,12 +523,9 @@ class DrivineCollectorTraceStoreIntegrationTest {
             ),
         )
 
-        undoSingleCollapse(
-            traceQuery = traceStore,
-            propositions = BaseStoreView(propositionRepository),
-            survivorId = survivor.id,
-            retiredId = "retired-base-store",
-        )
+        authorize(runId, "retired-base-store", survivor.id)
+
+        undo(BaseStoreView(propositionRepository), survivor.id, "retired-base-store")
 
         assertEquals(listOf(keep), propositionRepository.findById(survivor.id)?.provenanceEntries)
         assertEquals(1L, derivedFromEdges(survivor.id))
@@ -541,8 +573,10 @@ class DrivineCollectorTraceStoreIntegrationTest {
             ),
         )
         assertEquals(2L, derivedFromEdges(survivor.id))
+        authorize(runId, "loser-a-shared", survivor.id)
+        authorize(runId, "loser-b-shared", survivor.id)
 
-        undoSingleCollapse(traceStore, propositionRepository, survivor.id, "loser-a-shared")
+        undo(propositionRepository, survivor.id, "loser-a-shared")
 
         assertEquals(
             setOf(kept, shared),
@@ -550,7 +584,7 @@ class DrivineCollectorTraceStoreIntegrationTest {
         )
         assertEquals(2L, derivedFromEdges(survivor.id))
 
-        undoSingleCollapse(traceStore, propositionRepository, survivor.id, "loser-b-shared")
+        undo(propositionRepository, survivor.id, "loser-b-shared")
 
         assertEquals(listOf(kept), propositionRepository.findById(survivor.id)?.provenanceEntries)
         assertEquals(1L, derivedFromEdges(survivor.id))
@@ -611,7 +645,7 @@ class DrivineCollectorTraceStoreIntegrationTest {
         assertEquals(bystander.id, (stored.reason as MarkReason.Duplicate).survivorId)
         assertEquals(appliedSurvivor.id, stored.mergedIntoId)
 
-        val result = undoSingleCollapse(traceStore, propositionRepository, bystander.id, "loser-overwrite", recordStore)
+        val result = undo(propositionRepository, bystander.id, "loser-overwrite")
 
         assertNull(result)
         assertEquals(
@@ -649,12 +683,9 @@ class DrivineCollectorTraceStoreIntegrationTest {
         val before = propositionRepository.findAll().sortedBy { it.id }
         val recording = RecordingPropositionRepository(propositionRepository)
 
-        val result = undoSingleCollapse(
-            traceQuery = traceStore,
-            propositions = recording,
-            survivorId = survivor.id,
-            retiredId = "missing-retired",
-        )
+        authorize(runId, "missing-retired", survivor.id)
+
+        val result = undo(recording, survivor.id, "missing-retired")
 
         assertNull(result)
         assertEquals(0, recording.writes)
@@ -676,12 +707,9 @@ class DrivineCollectorTraceStoreIntegrationTest {
         val before = propositionRepository.findAll().sortedBy { it.id }
         val recording = RecordingPropositionRepository(propositionRepository)
 
-        val result = undoSingleCollapse(
-            traceQuery = traceStore,
-            propositions = recording,
-            survivorId = "missing-survivor",
-            retiredId = retired.id,
-        )
+        authorize(runId, retired.id, "missing-survivor")
+
+        val result = undo(recording, "missing-survivor", retired.id)
 
         assertNull(result)
         assertEquals(0, recording.writes)

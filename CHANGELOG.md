@@ -131,13 +131,13 @@ and the consumer PRs that deliver it).
   survivor already cited at `r1` shares that survivor's locator key, so the fold recorded nothing and
   `r2` stayed on the survivor after an undo; and a bare locator key matches revisionless evidence
   only, so a recorded ref could not reach a revisioned entry either. `undoSingleCollapse` now
-  subtracts evidence through a new `PropositionStore.subtractProvenance`, which names the refs to
+  subtracts evidence through `subtractProvenance`, which names the refs to
   remove — the ordinary `save` on the graph backend appends provenance and deletes no edge, so the
   folded rows used to outlive the undo, and the authoritative replace that would remove them has to
   name what *stays*, silently discarding evidence a concurrent extraction added since the read.
-  `subtractProvenance` ships with that read-modify-write as its default, documented, and
-  `DrivinePropositionRepository` overrides it with one statement that deletes the named edges and
-  prunes only their orphaned sources. Undo also reads both the survivor and the retired proposition
+  `DrivinePropositionRepository` performs it with one statement that deletes the named edges and
+  prunes only their orphaned sources; the entry below moves the operation onto its own capability
+  interface and states its atomicity. Undo also reads both the survivor and the retired proposition
   before writing anything, so a collapse whose participants have since been deleted leaves nothing
   half-written. It also authorizes on two conditions rather than trusting the trace: the collapse
   must be one the collector applied *into this survivor*, and it must still be in force.
@@ -152,7 +152,7 @@ and the consumer PRs that deliver it).
   run writes for a proposition, which matters because `DrivineCollectorRecordStore` MERGEs on
   (`propositionId`, `runId`) and keeps one row per member per run while the in-memory store keeps
   one per mark — reading a merge target off a mark gave different answers on the two stores.
-  `undoSingleCollapse` takes an optional `CollectorRecordStore` and, given one, requires a non-dry
+  `undoSingleCollapse` takes a `CollectorRecordStore` and requires a non-dry
   run and a record naming this survivor as the applied target.
 
   The second condition is that the undo has not already run, which needed a second new field:
@@ -212,11 +212,9 @@ and the consumer PRs that deliver it).
   and can hand back a proposition its first read saw. A
   deletion later than the store's last look is not detected, and the survivor is recreated by an
   upserting `save`; the design note records the residual per path and what closing it would take. An undo
-  interrupted after its stamp resumes by restoring the member only, without re-deriving evidence. `undoSingleCollapse` gains a trailing optional
-  `CollectorRecordStore` parameter and `@JvmOverloads`, so the existing four-argument descriptor
-  survives for both Kotlin and Java callers; the four-argument form keeps the weaker status-based
-  check, documented as such in its KDoc. `PropositionStore` gains `subtractProvenance` with a
-  default implementation, so every existing store compiles and behaves as before.
+  interrupted after its stamp resumes by restoring the member only, without re-deriving evidence.
+  `undoSingleCollapse` gains a `CollectorRecordStore` parameter; the entry below makes it required
+  and reshapes the parameter list, so read that entry for the call-site impact.
   `CollectorRecord` gains trailing optional `mergedIntoId` and
   `undoneAt` fields, keeping every existing constructor and `of(...)` descriptor through the
   `@JvmOverloads` already on both; audit rows written before this change carry neither property and
@@ -224,3 +222,80 @@ and the consumer PRs that deliver it).
   now reads each sibling of a collapse, so a decision with many retired members
   costs one extra read per
   member.
+
+- Collapse undo fails closed (fourth slice of DICE #64). Three ways it could previously act on
+  something the caller had no standing to reverse are shut, and the store operation it depends on
+  becomes an explicit promise.
+
+  **The undo names its context.** `undoSingleCollapse` took a survivor id and a retired id, so ids
+  found anywhere at all could reverse a collapse in a context the caller has no business writing to,
+  and every deployment that cared had to write its own ownership check in front of the call — the
+  assistant does exactly that today. The parameters are now a `CollapseUndoCommand(contextId,
+  survivorId, retiredId)`, and both propositions must live in that context. One that does not throws
+  `CollapseUndoContextMismatchException`, which carries the commanded context, the offending
+  proposition and the context that really owns it, and is thrown before either proposition is
+  written, so the other context is left as it was.
+
+  **A record store is required, and a dry-run record never authorizes.** Passing no
+  `CollectorRecordStore` used to skip the "did the collector really apply this merge" question
+  entirely and fall back on the member's status, which a later unrelated retirement satisfies just
+  as well — a decay sweep moving the member ACTIVE to STALE after a dry-run preview was enough to
+  arm an undo that then stripped a revision the survivor held for its own reasons. A null store now
+  throws `CollapseUndoConfigurationException` naming the missing store, before any read. The
+  authorizing record has to be live: `CollectorRun.dryRun` on the run header is how a preview is
+  marked, and a dry-run header refuses whatever its records say. Three tests share one world state
+  and vary only the audit trail — no store refuses, a dry-run record refuses, a live record
+  proceeds — and each refusal asserts the survivor's evidence, the member's status and the absence
+  of an `undoneAt` stamp.
+
+  **Evidence subtraction becomes an atomic capability.** `PropositionStore.subtractProvenance` and
+  its read-modify-write default are removed, replaced by `ProvenanceSubtractionCapable`, an opt-in
+  interface alongside `SourceRevisionQueryCapable`. Its contract states what a shared default body
+  could never deliver: the read of the current entries and the write of what survives land as one
+  step, evidence another writer adds while a subtraction is in flight survives it, and subtracting
+  the last entry from a proposition somebody already deleted answers null and writes nothing.
+  `supportsProvenanceSubtraction` reports the runtime truth for a decorator that forwards.
+  `InMemoryPropositionRepository` implements it over `ConcurrentHashMap.compute`, which holds the
+  key for the whole operation, and gets an `addProvenance` override on the same primitive so the
+  pair is race-free; `EventEmittingPropositionRepository` carries the capability type and forwards
+  to its delegate, reporting false when the delegate it was handed lacks it. Undo requires the
+  capability and refuses with `CollapseUndoConfigurationException` when the store cannot answer.
+  `ProvenanceSubtractionAtomicityTest` races a subtraction against an addition on one proposition
+  over 200 rounds with real threads and a start latch, and asserts both effects survive; the
+  read-modify-write shape it replaced loses the addition on the first round.
+
+  **Compatibility: BREAKING.** Two source-level breaks, both deliberate, and both with a mechanical
+  migration.
+
+  *`undoSingleCollapse`'s parameter list.* The four-argument form is gone. Migration:
+
+  ```kotlin
+  // before
+  undoSingleCollapse(traceQuery, propositionStore, survivorId, retiredId)
+  // after
+  undoSingleCollapse(
+      command = CollapseUndoCommand(contextId, survivorId, retiredId),
+      traceQuery = traceQuery,
+      propositions = propositionStore,   // must be ProvenanceSubtractionCapable
+      collectorRecords = collectorRecordStore,
+  )
+  ```
+
+  A caller with no `ContextId` to hand has to obtain one, which is the point: without it the call
+  had no way to say whose collapse it was reversing. A caller with no `CollectorRecordStore` has to
+  wire one; passing null compiles and throws, so the gap surfaces immediately. The known consumer is
+  the assistant's `MemoryUnmergeService`, which already resolves the user's context and checks both
+  propositions against it before calling in — the migration hands the SPI work that service was
+  doing by hand, and its own checks can stay or go.
+
+  *`PropositionStore.subtractProvenance`.* Removed along with its read-modify-write default. A store
+  that declared `override fun subtractProvenance` stops compiling until it declares
+  `ProvenanceSubtractionCapable` and drops the `override`. `DrivinePropositionRepository` is adapted
+  in this change: its body already deleted the named `DERIVED_FROM` edges in one statement and read
+  once afterwards, so it satisfied the new contract before the contract existed, and only the
+  supertype list moved. A store that never mentioned the operation compiles unchanged, and gains
+  nothing at runtime: absent the capability, undo refuses, where a racy fallback would have written
+  silently.
+
+  No stored data changes, and nothing in the provenance, trace or audit record shapes moves. Design
+  note: [docs/design/source-revisions.md](docs/design/source-revisions.md).

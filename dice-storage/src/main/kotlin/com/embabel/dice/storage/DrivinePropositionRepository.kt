@@ -27,6 +27,7 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionQuery.OrderBy
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.ProvenanceSubtractionCapable
 import com.embabel.dice.proposition.GraphQueryCapable
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.SourceRevisionQueryCapable
@@ -126,7 +127,7 @@ class DrivinePropositionRepository(
      * [findClusters] Cypher. Defaults to the canonical [VECTOR_INDEX]; overridable only for tests.
      */
     private val vectorIndexName: String = VECTOR_INDEX,
-) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable {
+) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable {
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
 
@@ -510,10 +511,13 @@ class DrivinePropositionRepository(
     /**
      * Subtract exactly the named evidence in one statement, without reading the proposition first.
      *
-     * The base contract's default has to name what stays, so it reads the entries, filters, and
-     * replaces — and evidence another writer adds in between is replaced away. Naming what goes
-     * closes that window: this deletes edges by their own identity and leaves every other edge on
-     * the proposition untouched, whenever it arrived.
+     * This is how the store honours [ProvenanceSubtractionCapable]: naming what stays would mean
+     * reading the entries, filtering, and replacing, and evidence another writer adds in between
+     * would be replaced away. Naming what goes closes that window. One `MATCH`/`DELETE` deletes the
+     * edges by their own identity and leaves every other edge on the proposition untouched, whenever
+     * it arrived, and Neo4j runs it as one transaction — so the read and the write the contract
+     * talks about land together. Nothing is written to the proposition node itself, so a proposition
+     * another writer has already deleted stays deleted.
      *
      * Two ref forms, matching the evidence-key contract. A minted key is compared against the
      * edge's `entryKey`, so it removes one entry. A bare locator key predates revisions and matches

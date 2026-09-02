@@ -1693,76 +1693,36 @@ class DrivinePropositionStoreIntegrationTest {
 
     @Test
     fun `evidence the subtraction does not name survives it on the graph backend`() {
-        // The property the subtractive operation exists for: only named evidence goes. The second
-        // half is the one that carries weight — a newcomer added before the call survives the
-        // override because its one delete statement names what goes and touches nothing else. The
-        // add completes before the subtraction starts, so this pins preservation, not concurrent
-        // interleaving; evidence is only ever at risk when it lands after the read that determines
-        // the remainder, which no sequential schedule reaches.
+        // The property the operation exists for, and the one `ProvenanceSubtractionCapable` asks
+        // every implementation to promise: only named evidence goes. A newcomer added before the
+        // call survives, because the one delete statement names what goes and touches nothing else.
+        // The add completes before the subtraction starts, so this pins preservation on a
+        // sequential schedule; the true concurrent interleaving is pinned in memory by
+        // `evidence added while a subtraction is running survives it`, which needs threads the
+        // testcontainer schedule here cannot give deterministically.
         //
-        // The first half does NOT currently demonstrate the default losing that newcomer, and the
-        // comment here used to claim it did. Kotlin interface delegation generates a forwarder for
-        // `subtractProvenance`, so `ConcurrentAddOnRead` hands the call straight to the delegate and
-        // its overridden `findById` is never reached: nothing is injected, and the assertion below
-        // holds for the ordinary reason that the subtraction removed `folded`. Exercising the
-        // default needs a store that does not override it at all, which delegation cannot give.
+        // This used to have a second half aimed at the base contract's read-modify-write default,
+        // through a decorator that injected evidence on read. It never demonstrated the loss —
+        // Kotlin interface delegation forwarded the call straight past the decorator's `findById` —
+        // and the default it aimed at no longer exists, so it is gone with it.
         val locator = UriLocator("https://example.com/subtract/race")
         val original = evidence(locator, null)
         val folded = evidence(locator, "r1")
         val concurrent = evidence(locator, "r2")
         val refsToRemove = listOf(ProvenanceEvidenceKey.encode(folded))
 
-        val viaDefault = repository.save(
-            prop("default subtract", context = "ctx-subtract-race", provenance = listOf(original, folded)),
-        )
-        ConcurrentAddOnRead(repository, viaDefault.id, concurrent).subtractProvenance(viaDefault.id, refsToRemove)
-
-        assertEquals(
-            setOf(original),
-            repository.findById(viaDefault.id)?.provenanceEntries?.toSet(),
-            "the subtraction removes the folded entry; see the note above about what this half does " +
-                "not show",
-        )
-
-        val viaOverride = repository.save(
+        val subject = repository.save(
             prop("atomic subtract", context = "ctx-subtract-race", provenance = listOf(original, folded)),
         )
-        repository.addProvenance(viaOverride.id, listOf(concurrent))
-        repository.subtractProvenance(viaOverride.id, refsToRemove)
+        repository.addProvenance(subject.id, listOf(concurrent))
+        repository.subtractProvenance(subject.id, refsToRemove)
 
         assertEquals(
             setOf(original, concurrent),
-            repository.findById(viaOverride.id)?.provenanceEntries?.toSet(),
+            repository.findById(subject.id)?.provenanceEntries?.toSet(),
             "the atomic subtraction removes the folded entry by name and leaves everything else",
         )
-        assertEquals(2L, edgeCount(viaOverride.id))
-    }
-
-    /**
-     * Lands [concurrent] on [propositionId] the first time anything reads it through this
-     * decorator, which is where a read-modify-write subtraction would be vulnerable.
-     *
-     * It does not reach the subtraction, though: interface delegation forwards
-     * `subtractProvenance` to [delegate], so the default never runs against this decorator and
-     * [findById] here is not called during that path. Kept because the injection point is the right
-     * one and a harness that can invoke the default would use it unchanged.
-     */
-    private class ConcurrentAddOnRead(
-        private val delegate: DrivinePropositionRepository,
-        private val propositionId: String,
-        private val concurrent: ProvenanceEntry,
-    ) : PropositionRepository by delegate {
-
-        private var injected = false
-
-        override fun findById(id: String): Proposition? {
-            val current = delegate.findById(id)
-            if (id == propositionId && !injected) {
-                injected = true
-                delegate.addProvenance(propositionId, listOf(concurrent))
-            }
-            return current
-        }
+        assertEquals(2L, edgeCount(subject.id))
     }
 
     @Test
