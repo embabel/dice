@@ -35,6 +35,7 @@ import com.embabel.dice.temporal.TemporalMetadata
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -861,46 +862,45 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     /**
-     * `ConnectorRef` builds its key by joining on colons, so `("a:b", "c")` and `("a", "b:c")` produce
-     * one key, and locator equality is key-based — the two entries compare *equal*. The novelty check
-     * therefore finds nothing new and would take the no-op path, filing the second connector's
-     * evidence under the first connector's source. Structural validation runs ahead of that path, so
-     * the write is rejected instead.
+     * `ConnectorRef` used to build its key by joining on a bare colon, so `("a:b", "c")` and
+     * `("a", "b:c")` rendered one key and, because locator equality is key-based, the two entries
+     * compared *equal*. Without the defensive guard that ran ahead of it, a second write naming the
+     * same fact and the once-colliding locator would have looked like an exact replay and taken the
+     * no-op path — the second connector's evidence would never have been persisted, silently. With
+     * the keys distinct there's no guard needed for this pair any more: the entries no longer compare
+     * equal, so the second write's locator is recognised as new evidence and folds onto the winner.
      */
     @Test
-    fun `dedup rejects a colliding connector source even when the entry looks already known`() {
+    fun `dedup no longer mistakes a source that used to collide for one it already knows`() {
         val original = ConnectorRef("a:b", "c")
-        val colliding = ConnectorRef("a", "b:c")
-        assertEquals(original.key(), colliding.key(), "the fixture depends on these keys colliding")
-        assertEquals(
+        val formerlyColliding = ConnectorRef("a", "b:c")
+        assertNotEquals(original.key(), formerlyColliding.key(), "the fixture used to depend on these keys colliding")
+        assertNotEquals(
             ProvenanceEntry(original),
-            ProvenanceEntry(colliding),
-            "and on the entries comparing equal, which is what reaches the no-op path",
+            ProvenanceEntry(formerlyColliding),
+            "and on the entries no longer comparing equal, which is what lets the second write's evidence count as new",
         )
         val stored = repository.save(
             prop("collision-prone fact", context = "ctx-collide", provenance = listOf(ProvenanceEntry(original))),
         )
 
-        val thrown = assertThrows<Exception> {
-            repository.save(
-                prop("collision-prone fact", context = "ctx-collide", provenance = listOf(ProvenanceEntry(colliding))),
-            )
-        }
-        assertTrue(
-            generateSequence(thrown as Throwable?) { it.cause }.any {
-                it is IllegalArgumentException && it.message?.contains("Source key collision") == true
-            },
-            "the colliding write must report the structural Source key collision; got: $thrown",
+        val second = repository.save(
+            prop(
+                "collision-prone fact",
+                context = "ctx-collide",
+                provenance = listOf(ProvenanceEntry(formerlyColliding)),
+            ),
         )
 
+        assertEquals(1, repository.count(), "dedup still collapses onto one proposition")
+        assertEquals(stored.id, second.id)
         val survivor = repository.findById(stored.id)!!
-        assertEquals(1, repository.count(), "the rejected write must not add a proposition")
         assertEquals(
-            listOf("a:b"),
-            survivor.provenanceEntries.map { (it.locator as ConnectorRef).connectorId },
-            "the stored source keeps its own identity",
+            setOf(original.key(), formerlyColliding.key()),
+            survivor.provenanceEntries.map { it.locator.key() }.toSet(),
+            "both tuples' evidence lands on the one proposition rather than the second replacing nothing",
         )
-        assertEquals(1L, edgeCount(stored.id))
+        assertEquals(2L, edgeCount(stored.id))
     }
 
     /**
