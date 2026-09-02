@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.storage
 
+import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.proposition.extraction.ExtractionRunStore
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
@@ -33,6 +34,10 @@ import org.springframework.boot.test.context.SpringBootTest
  * [DrivinePropositionStoreContractIntegrationTest] uses. The suite calls [store] more than once
  * inside a few cases and expects a store holding nothing for its tenants each time; it gets that
  * because those cases mint a distinct run id per iteration and only ever read by key.
+ *
+ * The suite also asks for a store announcing to a listener it just made, and this one store was
+ * built with its listener at context startup. [RedirectableEventListener] is what reconciles those:
+ * the bean holds one, and [store] aims it at whichever listener the case handed over.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivineExtractionRunStoreContractIntegrationTest : AbstractExtractionRunStoreContractTest() {
@@ -41,12 +46,19 @@ class DrivineExtractionRunStoreContractIntegrationTest : AbstractExtractionRunSt
     private lateinit var graphStore: DrivineExtractionRunStore
 
     @Autowired
+    private lateinit var eventListener: RedirectableEventListener
+
+    @Autowired
     private lateinit var persistenceManager: PersistenceManager
 
-    override fun store(): ExtractionRunStore = graphStore
+    override fun store(listener: DiceEventListener): ExtractionRunStore {
+        eventListener.redirectTo(listener)
+        return graphStore
+    }
 
     @AfterEach
     fun cleanUp() {
+        eventListener.redirectTo(DiceEventListener.DEV_NULL)
         ExtractionRunSchema.LABELS.forEach { label ->
             persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:$label) DETACH DELETE n"))
         }

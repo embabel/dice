@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.storage
 
+import com.embabel.dice.common.DiceEventListener
+import com.embabel.dice.common.ExtractionRunTransitioned
 import com.embabel.dice.proposition.extraction.ExtractionInvocationOutcome
 import com.embabel.dice.proposition.extraction.ExtractionInvocationRecord
 import com.embabel.dice.proposition.extraction.ExtractionRun
@@ -33,6 +35,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
@@ -134,17 +137,35 @@ import java.util.UUID
  * in-memory reference does and the two are held to one suite. The cost is bounded — at most `limit`
  * runs times the run model's cap of 1024 attempts — but it is a real cost on a wide page.
  *
+ * ## A run that ends announces itself once
+ *
+ * [transition] hands an [ExtractionRunTransitioned] to [listener] for the call that ended the run,
+ * and for no other call: a replay, a rejected write, a [save] and a [recordInvocation] all announce
+ * nothing. Exactly one call per run reaches the applied branch, because reaching it means having
+ * created the run's terminal-write node, and the uniqueness constraint lets one transaction do that.
+ *
+ * The announcement waits for the write to be durable. When this store owns the transaction, that
+ * point is where the template returns, and the listener runs there. When a caller's transaction is
+ * active the write is durable when that caller commits, so the announcement is registered against
+ * the commit and never happens at all if the caller rolls back — a listener told a run ended by a
+ * transaction that was thrown away would be reporting a run nothing can read.
+ *
  * @param persistenceManager Drivine's handle on the `neo` datasource.
  * @param transactionManager used to own a transaction when no caller has one, so a lost
  *   compare-and-set race can be recovered in a transaction the race did not already poison.
  * @param clock supplies the instant a terminal write is recorded at. Informational, and injectable
  *   so a test can pin it; nothing sorts or compares on it.
+ * @param listener Notified when a run ends. Defaults to [DiceEventListener.DEV_NULL], so a host
+ *   that has nothing listening constructs the store the way it always did. Handlers run inline on
+ *   whichever thread the announcement happens on, and throw isolation belongs to the listener —
+ *   wrap it in `SafeDiceEventListener` for graceful degradation.
  */
 @Transactional
-open class DrivineExtractionRunStore(
+open class DrivineExtractionRunStore @JvmOverloads constructor(
     private val persistenceManager: PersistenceManager,
     transactionManager: PlatformTransactionManager,
     private val clock: Clock = Clock.systemUTC(),
+    private val listener: DiceEventListener = DiceEventListener.DEV_NULL,
 ) : ExtractionRunStore {
 
     private val logger = LoggerFactory.getLogger(DrivineExtractionRunStore::class.java)
@@ -328,7 +349,7 @@ open class DrivineExtractionRunStore(
     ): ExtractionRunTransitionResult {
         ExtractionRunSchema.requireStorableTenant(key.contextId)
         if (TransactionSynchronizationManager.isActualTransactionActive()) {
-            return endRun(key, transition)
+            return announce(endRun(key, transition))
         }
 
         var lostRace: RuntimeException? = null
@@ -339,7 +360,7 @@ open class DrivineExtractionRunStore(
             lostRace = e
             null
         }
-        if (result != null) return result
+        if (result != null) return announce(result)
 
         logger.debug(
             "Terminal write for run {} in context {} lost the race; re-reading the recorded write",
@@ -428,12 +449,41 @@ open class DrivineExtractionRunStore(
         violation: RuntimeException,
     ): ExtractionRunTransitionResult {
         val row = singleRow(TERMINAL_WRITE_BY_KEY, keyBindings(key)) ?: throw violation
+        // Nothing announced here: the writer that lost the race created no terminal-write node, so
+        // this path answers replayed or conflict and never applied.
         return replayOrConflict(
             key,
             transition,
             row["fingerprint"]?.toString(),
             row["status"]?.toString(),
         )
+    }
+
+    /**
+     * Tells [listener] about a run this call ended, once the write is durable, and returns [result]
+     * so a caller can announce and return in one line.
+     *
+     * A replay and a rejected write reach neither branch below — a rejected write throws before
+     * getting here, and a replay is not applied. Inside a caller's transaction the write becomes
+     * durable at that caller's commit, so the announcement rides on it and is dropped with the
+     * transaction if the caller rolls back. Otherwise the commit has already happened by the time
+     * this runs, and the listener is called on the spot.
+     */
+    private fun announce(result: ExtractionRunTransitionResult): ExtractionRunTransitionResult {
+        if (!result.isApplied) return result
+        val event = ExtractionRunTransitioned(result.run)
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(
+                object : TransactionSynchronization {
+                    override fun afterCommit() {
+                        listener.onEvent(event)
+                    }
+                },
+            )
+            return result
+        }
+        listener.onEvent(event)
+        return result
     }
 
     // ---- reads ----
