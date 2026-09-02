@@ -26,6 +26,7 @@ import com.embabel.dice.query.graph.GraphNeighborhood
 import com.embabel.dice.query.graph.GraphPath
 import com.embabel.dice.query.graph.PropositionLineage
 import com.fasterxml.jackson.annotation.JsonInclude
+import org.jetbrains.annotations.ApiStatus
 
 /**
  * Outward-facing discovery DTOs — the trust boundary between domain internals and external callers.
@@ -149,6 +150,7 @@ data class NeighborhoodDto(
  * @property endOffset character offset where the supporting span ends, when known
  * @property contentHash hash of the source content, when known
  */
+@ApiStatus.Experimental
 @JsonInclude(JsonInclude.Include.NON_NULL)
 data class DiscoveryProvenanceDto(
     val locator: String,
