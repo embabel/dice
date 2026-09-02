@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.spi
 
+import org.jetbrains.annotations.ApiStatus
+
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.DiceMetadataKeys
@@ -50,6 +52,7 @@ import java.time.Instant
  *   without depending on whichever concrete [propositions] store happens to be wired in. Defaults to
  *   a no-op: everything else here holds with nobody listening.
  */
+@ApiStatus.Experimental
 class PropositionStoreDriftSweep @JvmOverloads constructor(
     private val propositions: PropositionStore,
     private val listener: DiceEventListener = DiceEventListener.DEV_NULL,

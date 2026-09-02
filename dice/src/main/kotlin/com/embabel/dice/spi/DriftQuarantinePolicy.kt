@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.spi
 
+import org.jetbrains.annotations.ApiStatus
+
 import com.embabel.dice.metamodel.MetamodelDiff
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
@@ -27,6 +29,7 @@ import com.embabel.dice.proposition.PropositionStatus
  * proposition model has no business knowing about schema versioning. The naming follows the same
  * `dice.<area>.<name>` convention, so nothing collides with a consumer's own keys.
  */
+@ApiStatus.Experimental
 object DriftQuarantineKeys {
 
     /**

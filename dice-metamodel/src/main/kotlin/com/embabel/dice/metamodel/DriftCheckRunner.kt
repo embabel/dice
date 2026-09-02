@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.metamodel
 
+import org.jetbrains.annotations.ApiStatus
+
 import com.embabel.agent.core.ContextId
 import java.util.Objects
 
@@ -32,6 +34,7 @@ import java.util.Objects
  *   stamp's [MetamodelVersion.contentHash], and holding the stamp itself is what lets [quarantineDiff]
  *   answer without a second trip to the version store.
  */
+@ApiStatus.Experimental
 class DriftCheckResult(
     val report: DriftReport,
     val declaredVersion: MetamodelVersion,

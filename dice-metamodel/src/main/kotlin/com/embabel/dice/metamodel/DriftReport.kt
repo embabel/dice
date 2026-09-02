@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.metamodel
 
+import org.jetbrains.annotations.ApiStatus
+
 import com.embabel.agent.core.ContextId
 import java.time.Instant
 import java.util.Objects
@@ -60,6 +62,7 @@ import java.util.Objects
  *   above. `null` when the store tracked no baseline to compare against, which is the state of every
  *   schema before its first sweep finishes.
  */
+@ApiStatus.Experimental
 class DriftReport @JvmOverloads constructor(
     val schemaName: String,
     val versionHash: String,

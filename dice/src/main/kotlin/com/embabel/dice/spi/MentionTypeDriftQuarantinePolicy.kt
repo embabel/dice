@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.spi
 
+import org.jetbrains.annotations.ApiStatus
+
 import com.embabel.agent.core.Cardinality
 import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.metamodel.DeclaredSchema
@@ -123,6 +125,7 @@ import org.slf4j.LoggerFactory
  *
  * Rename awareness and the widening allow-list are experimental: behavior may change before 1.0.
  */
+@ApiStatus.Experimental
 class MentionTypeDriftQuarantinePolicy : DriftQuarantinePolicy {
 
     private val logger = LoggerFactory.getLogger(MentionTypeDriftQuarantinePolicy::class.java)

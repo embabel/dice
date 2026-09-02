@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.spi
 
+import org.jetbrains.annotations.ApiStatus
+
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.metamodel.DriftCheckResult
 import com.embabel.dice.metamodel.DriftCheckRunner
@@ -68,6 +70,7 @@ import com.embabel.dice.proposition.PropositionStatus
  * restores the status the proposition carried before quarantine and clears both quarantine keys in
  * one write.
  */
+@ApiStatus.Experimental
 interface DriftSweepCapable {
 
     /**
