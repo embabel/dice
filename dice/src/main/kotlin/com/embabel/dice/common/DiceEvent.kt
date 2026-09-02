@@ -20,7 +20,9 @@ import com.embabel.common.core.types.Timestamped
 import com.embabel.dice.pipeline.PropositionExtractionStats
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.extraction.ExtractionRun
 import com.fasterxml.jackson.annotation.JsonTypeInfo
+import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
 
 /**
@@ -157,6 +159,30 @@ data class ProjectionBatchCompleted @JvmOverloads constructor(
  */
 data class ExtractionBatchCompleted @JvmOverloads constructor(
     val stats: PropositionExtractionStats,
+    override val timestamp: Instant = Instant.now(),
+) : DiceEvent
+
+/**
+ * An extraction run ended, and this is the call that ended it.
+ *
+ * It fires once per run, from the store, after the terminal write has landed. A coordinator
+ * retrying a terminal write it never saw the answer to gets a replay, and a replay fires nothing —
+ * so a listener counting finished runs, or kicking off work behind one, sees each run once however
+ * many times its terminal write was sent.
+ *
+ * The run carries everything there is to know about how it ended: the tenant, the lineage, the
+ * terminal status, the finish time, the counts, and the failures in their closed vocabulary. There
+ * is no source text or provider message anywhere in it, so this event is safe to hand to a listener
+ * that logs or forwards what it receives.
+ *
+ * EXPERIMENTAL. The shape may still change while extraction runs (DICE #67) land.
+ *
+ * @property run The run in its terminal state.
+ * @property timestamp When the event was created.
+ */
+@ApiStatus.Experimental
+data class ExtractionRunTransitioned @JvmOverloads constructor(
+    val run: ExtractionRun,
     override val timestamp: Instant = Instant.now(),
 ) : DiceEvent
 

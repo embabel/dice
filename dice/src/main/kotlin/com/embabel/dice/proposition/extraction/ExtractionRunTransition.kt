@@ -37,8 +37,12 @@ import java.util.Collections
  * for the same reason from the other side: a run that retried past a failed attempt and finished
  * still happened.
  *
- * [fingerprint] is what a store compares a retry against; see [ExtractionRunFingerprint] for the
- * encoding and why it is specified rather than left to a serializer.
+ * **[fingerprint] names the write, and the counts and failures ride beside it.** A store compares a
+ * repeated terminal write against the digest of [status] and [finishedAt] alone. Two transitions
+ * that agree on those are the same write, so the second replays and the run keeps the counts and
+ * failures the first one delivered — a run's outcome is written once. See
+ * [ExtractionRunFingerprint] for the encoding, and for why a payload that grows leaves the digest
+ * where it is.
  *
  * EXPERIMENTAL. The shape may still change while extraction runs (DICE #67) land.
  *
@@ -74,9 +78,11 @@ class ExtractionRunTransition @JvmOverloads constructor(
 
     /**
      * The digest a store compares a repeated terminal write against, computed once at construction.
+     *
+     * It covers this transition's identity — [status] and [finishedAt] — and nothing else. See
+     * [ExtractionRunFingerprint] for why [counts] and [failures] travel as data beside it.
      */
-    val fingerprint: String =
-        ExtractionRunFingerprint.ofTerminal(status, finishedAt, counts, this.failures)
+    val fingerprint: String = ExtractionRunFingerprint.ofTerminal(status, finishedAt)
 
     /**
      * Derives the terminal run this transition produces from the running one it is applied to.

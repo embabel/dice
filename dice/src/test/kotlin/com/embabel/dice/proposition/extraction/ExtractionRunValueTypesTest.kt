@@ -292,6 +292,7 @@ class ExtractionRunValueTypesTest {
             ExtractionRunFingerprint::class.java,
             ExtractionRunNotFoundException::class.java,
             ExtractionRunConflictException::class.java,
+            com.embabel.dice.common.ExtractionRunTransitioned::class.java,
         ).forEach { type ->
             assertThat(isMarkedExperimental(type))
                 .describedAs("%s is marked experimental", type.simpleName)

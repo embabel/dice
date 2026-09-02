@@ -16,6 +16,9 @@
 package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.common.DiceEvent
+import com.embabel.dice.common.DiceEventListener
+import com.embabel.dice.common.ExtractionRunTransitioned
 import com.embabel.dice.proposition.extraction.ExtractionActorRef
 import com.embabel.dice.proposition.extraction.ExtractionCohortRef
 import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef
@@ -66,8 +69,34 @@ import java.time.Instant
  */
 abstract class AbstractExtractionRunStoreContractTest {
 
-    /** A store holding nothing for the tenants below. */
-    protected abstract fun store(): ExtractionRunStore
+    /**
+     * A store holding nothing for the tenants below, announcing what it does to [listener].
+     *
+     * The listener is the one construction argument every backend has to accept, because "a run
+     * that ends announces itself once" is part of the contract and a suite that could not observe
+     * the announcement could not hold a backend to it.
+     */
+    protected abstract fun store(listener: DiceEventListener): ExtractionRunStore
+
+    /** A store holding nothing for the tenants below, with nothing listening. */
+    protected fun store(): ExtractionRunStore = store(DiceEventListener.DEV_NULL)
+
+    /** Keeps every event a store hands it, so a test can count them. */
+    private class RecordingListener : DiceEventListener {
+
+        private val received = mutableListOf<DiceEvent>()
+
+        override fun onEvent(event: DiceEvent) {
+            synchronized(received) { received += event }
+        }
+
+        /** Everything received so far, as a snapshot the caller can read at its leisure. */
+        fun events(): List<DiceEvent> = synchronized(received) { received.toList() }
+
+        /** The runs announced as ended, in the order they were announced. */
+        fun transitioned(): List<ExtractionRun> =
+            events().filterIsInstance<ExtractionRunTransitioned>().map { it.run }
+    }
 
     private val tenant = ContextId("contract-tenant")
     private val neighbour = ContextId("contract-neighbour")
@@ -236,6 +265,9 @@ abstract class AbstractExtractionRunStoreContractTest {
 
     @Test
     fun `an incompatible terminal rewrite is rejected and changes nothing`() {
+        // Incompatible means a different transition identity: another terminal status, or another
+        // finish time. Both are checked here; the finish-time half gets its own per-status test
+        // below, because this one varies status while holding finish time fixed.
         val store = store()
         val run = running("contract-rewrite")
         store.save(run)
@@ -251,13 +283,177 @@ abstract class AbstractExtractionRunStoreContractTest {
         assertThrows(ExtractionRunConflictException::class.java) {
             store.transition(
                 run.key(),
-                ExtractionRunTransition.completed(
-                    finishedAt = finishedAt,
-                    counts = ExtractionRunCounts(propositionsPersisted = 8),
-                ),
+                ExtractionRunTransition.completed(finishedAt.plusSeconds(1)),
             )
         }
         assertEquals(applied, store.findRun(run.key()))
+    }
+
+    @Test
+    fun `a retry carrying different counts and failures replays, and the first write's outcome stands`() {
+        // The fingerprint covers the transition's identity — the terminal status and the finish
+        // time — so a second write agreeing on both is the same terminal write however different
+        // the numbers it carries. It replays, and the run keeps what the write that landed first
+        // delivered: a run's outcome is written once. A backend folding counts or failures into its
+        // own digest would reject this as an incompatible rewrite, and one that took the retry's
+        // payload would overwrite an outcome that had already been announced.
+        val store = store()
+        val run = running("contract-outcome-once")
+        store.save(run)
+        val landed = store.transition(
+            run.key(),
+            ExtractionRunTransition.completed(
+                finishedAt,
+                counts = ExtractionRunCounts(propositionsPersisted = 7),
+                failures = emptyList(),
+            ),
+        )
+
+        val retry = store.transition(
+            run.key(),
+            ExtractionRunTransition.completed(
+                finishedAt,
+                counts = ExtractionRunCounts(propositionsPersisted = 99, entitiesResolved = 4),
+                failures = listOf(
+                    ExtractionFailure.of(ExtractionFailureCode.INTERNAL, ExtractionFailureStage.PERSISTENCE),
+                ),
+            ),
+        )
+
+        assertEquals(ExtractionRunTransitionOutcome.APPLIED, landed.outcome)
+        assertEquals(ExtractionRunTransitionOutcome.REPLAYED, retry.outcome)
+        assertEquals(landed.run, retry.run)
+        assertEquals(landed.run, store.findRun(run.key()))
+        assertEquals(7, store.findRun(run.key())?.counts?.propositionsPersisted)
+        assertEquals(emptyList<ExtractionFailure>(), store.findRun(run.key())?.failures)
+    }
+
+    // ---- announcing a run that ended ----
+
+    @Test
+    fun `an applied transition announces the run once, and a replay announces nothing`() {
+        val listener = RecordingListener()
+        val store = store(listener)
+        val run = running("contract-announce-once")
+        store.save(run)
+        val transition = ExtractionRunTransition.completed(
+            finishedAt,
+            counts = ExtractionRunCounts(propositionsPersisted = 7),
+        )
+
+        val applied = store.transition(run.key(), transition)
+        assertEquals(ExtractionRunTransitionOutcome.APPLIED, applied.outcome)
+        assertEquals(
+            listOf(applied.run),
+            listener.transitioned(),
+            "the call that ended the run must announce it exactly once, carrying the terminal run",
+        )
+
+        store.transition(run.key(), transition)
+        store.transition(run.key(), transition)
+        assertEquals(
+            listOf(applied.run),
+            listener.transitioned(),
+            "a replay changed nothing and must announce nothing; a run that ended once is announced once",
+        )
+    }
+
+    @Test
+    fun `every terminal status announces the run it ended`() {
+        listOf(
+            ExtractionRunStatus.COMPLETED to ExtractionRunTransition.completed(finishedAt),
+            ExtractionRunStatus.FAILED to ExtractionRunTransition.failed(finishedAt),
+            ExtractionRunStatus.CANCELLED to ExtractionRunTransition.cancelled(finishedAt),
+        ).forEach { (expected, transition) ->
+            val listener = RecordingListener()
+            val store = store(listener)
+            val run = running("contract-announce-$expected")
+            store.save(run)
+
+            store.transition(run.key(), transition)
+
+            assertEquals(
+                listOf(expected),
+                listener.transitioned().map { it.status },
+                "$expected must be announced like every other terminal status",
+            )
+            assertEquals(
+                listOf(run.key()),
+                listener.transitioned().map { it.key() },
+                "the announced run must be the one that ended, tenant included",
+            )
+        }
+    }
+
+    @Test
+    fun `writes that do not end a run announce nothing`() {
+        // A backend announcing on every write would pass the exactly-once test above and still
+        // notify a downstream consumer about a run that has not finished.
+        val listener = RecordingListener()
+        val store = store(listener)
+        val run = running("contract-announce-silence")
+
+        store.save(run)
+        store.recordInvocation(run.key(), ExtractionInvocationRecord.planned(0))
+        store.save(store.findRun(run.key())!!.let { stored -> headerVariant(stored, counts = ExtractionRunCounts(sourcesRead = 1)) })
+        store.findRun(run.key())
+        store.runsInContext(tenant, 10, null)
+
+        assertEquals(emptyList<DiceEvent>(), listener.events())
+    }
+
+    @Test
+    fun `a rejected terminal write announces nothing`() {
+        val listener = RecordingListener()
+        val store = store(listener)
+        val run = running("contract-announce-rejected")
+        store.save(run)
+        val applied = store.transition(run.key(), ExtractionRunTransition.completed(finishedAt)).run
+
+        assertThrows(ExtractionRunConflictException::class.java) {
+            store.transition(run.key(), ExtractionRunTransition.failed(finishedAt))
+        }
+
+        assertEquals(
+            listOf(applied),
+            listener.transitioned(),
+            "the rejected write announced nothing, so the applied one's announcement stands alone",
+        )
+    }
+
+    @Test
+    fun `concurrent terminal writers announce the run exactly once between them`() {
+        // The race that makes exactly-once worth pinning: many threads send the same terminal
+        // write, one applies it and the rest replay. A backend announcing outside its own
+        // compare-and-set, or on the replay path, notifies a consumer once per caller.
+        val listener = RecordingListener()
+        val store = store(listener)
+        val run = running("contract-announce-race")
+        store.save(run)
+        val transition = ExtractionRunTransition.completed(finishedAt)
+        val writers = 8
+        val ready = java.util.concurrent.CountDownLatch(writers)
+        val go = java.util.concurrent.CountDownLatch(1)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(writers)
+        try {
+            val outcomes = (1..writers).map {
+                pool.submit<ExtractionRunTransitionOutcome> {
+                    ready.countDown()
+                    go.await()
+                    store.transition(run.key(), transition).outcome
+                }
+            }
+            ready.await()
+            go.countDown()
+            val results = outcomes.map { it.get() }
+
+            assertEquals(1, results.count { it == ExtractionRunTransitionOutcome.APPLIED })
+            assertEquals(writers - 1, results.count { it == ExtractionRunTransitionOutcome.REPLAYED })
+        } finally {
+            pool.shutdownNow()
+        }
+
+        assertEquals(1, listener.transitioned().size, "$writers writers, one run that ended, one announcement")
     }
 
     @Test
@@ -336,43 +532,66 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `keeping counts and replacing them with the same values are different terminal writes`() {
-        // Null means keep and a value means replace, so they are different claims even when they
-        // land on the same numbers. A backend that normalised null to the run's stored counts before
-        // fingerprinting would replay the second as the first.
-        val store = store()
-        val run = ExtractionRun(
+    fun `keeping counts and replacing them are different claims on the run that lands, and the digest sees neither`() {
+        // Null means keep and a value means replace, and the difference shows in what the terminal
+        // run holds. The digest sees neither: both writes name the same status and finish time, so
+        // whichever arrives second replays. A backend has to get both halves right — apply the
+        // distinction to the row it writes, and keep it out of the string it compares retries by.
+        val keepStore = store()
+        val keepRun = ExtractionRun(
             contextId = tenant,
             lineage = ExtractionRunLineage.root(ExtractionRunRef("contract-kept")),
             status = ExtractionRunStatus.RUNNING,
             startedAt = startedAt,
             counts = ExtractionRunCounts(propositionsPersisted = 4),
         )
-        store.save(run)
-        val originalTransition = ExtractionRunTransition.completed(finishedAt, counts = null)
-        val kept = store.transition(run.key(), originalTransition).run
+        keepStore.save(keepRun)
+        val keptTerminal = keepStore.transition(
+            keepRun.key(),
+            ExtractionRunTransition.completed(finishedAt, counts = null),
+        ).run
+        assertEquals(4, keptTerminal.counts.propositionsPersisted)
 
-        assertThrows(ExtractionRunConflictException::class.java) {
-            store.transition(
-                run.key(),
+        val replaceStore = store()
+        val replaceRun = ExtractionRun(
+            contextId = tenant,
+            lineage = ExtractionRunLineage.root(ExtractionRunRef("contract-replaced")),
+            status = ExtractionRunStatus.RUNNING,
+            startedAt = startedAt,
+            counts = ExtractionRunCounts(propositionsPersisted = 4),
+        )
+        replaceStore.save(replaceRun)
+        val replacedTerminal = replaceStore.transition(
+            replaceRun.key(),
+            ExtractionRunTransition.completed(
+                finishedAt,
+                counts = ExtractionRunCounts(entitiesResolved = 9),
+            ),
+        ).run
+        assertEquals(0, replacedTerminal.counts.propositionsPersisted)
+        assertEquals(9, replacedTerminal.counts.entitiesResolved)
+        assertEquals(replacedTerminal, replaceStore.findRun(replaceRun.key()))
+
+        // The digest half: against the run that kept its counts, a write naming the same status and
+        // finish time replays, whether it repeats "keep" or asks to replace.
+        assertEquals(
+            ExtractionRunTransitionOutcome.REPLAYED,
+            keepStore.transition(
+                keepRun.key(),
+                ExtractionRunTransition.completed(finishedAt, counts = null),
+            ).outcome,
+        )
+        assertEquals(
+            ExtractionRunTransitionOutcome.REPLAYED,
+            keepStore.transition(
+                keepRun.key(),
                 ExtractionRunTransition.completed(
                     finishedAt,
                     counts = ExtractionRunCounts(propositionsPersisted = 4),
                 ),
-            )
-        }
-        // The rejected second write must not have touched storage, even though it names the same
-        // numbers the first write kept.
-        assertEquals(kept, store.findRun(run.key()))
-        // findRun alone cannot tell which fingerprint is actually stored: both transitions produce
-        // the same visible counts, so a backend that recorded the rejected write's fingerprint
-        // internally, while still throwing and leaving the visible run alone, would pass the
-        // assertion above. Replaying the original transition surfaces the stored fingerprint
-        // directly: it must still be recognised as the same write that already landed.
-        assertEquals(
-            ExtractionRunTransitionOutcome.REPLAYED,
-            store.transition(run.key(), originalTransition).outcome,
+            ).outcome,
         )
+        assertEquals(keptTerminal, keepStore.findRun(keepRun.key()))
     }
 
     @Test

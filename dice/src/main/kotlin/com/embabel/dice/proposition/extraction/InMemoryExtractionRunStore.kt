@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.proposition.extraction
 
+import com.embabel.dice.common.DiceEventListener
+import com.embabel.dice.common.ExtractionRunTransitioned
 import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
 
@@ -54,12 +56,23 @@ import java.time.Instant
  * contract is neither — and a host running the shipped in-memory backend would have one. The tests
  * read through the contract like any other caller.
  *
+ * **A run that ends announces itself once.** `transition` hands an [ExtractionRunTransitioned] to
+ * [listener] for the call that ended the run, after the write has landed and outside the monitor,
+ * so a slow listener holds up no other writer. A replay and a rejected write announce nothing.
+ *
  * Nothing here survives the JVM, and two instances know nothing about each other.
  *
  * EXPERIMENTAL. The shape may still change while extraction runs (DICE #67) land.
+ *
+ * @property listener Notified when a run ends. Defaults to [DiceEventListener.DEV_NULL], so a host
+ *   that has nothing listening constructs the store the same way it always did. Handlers run inline
+ *   on the calling thread, and throw isolation belongs to the listener — wrap it in
+ *   `SafeDiceEventListener` for graceful degradation.
  */
 @ApiStatus.Experimental
-class InMemoryExtractionRunStore : ExtractionRunStore {
+class InMemoryExtractionRunStore @JvmOverloads constructor(
+    private val listener: DiceEventListener = DiceEventListener.DEV_NULL,
+) : ExtractionRunStore {
 
     private val lock = Any()
 
@@ -162,27 +175,32 @@ class InMemoryExtractionRunStore : ExtractionRunStore {
         key: ExtractionRunKey,
         transition: ExtractionRunTransition,
     ): ExtractionRunTransitionResult {
-        synchronized(lock) {
+        val result = synchronized(lock) {
             val stored = runs[key] ?: throw ExtractionRunNotFoundException(key)
             if (stored.status.isTerminal) {
                 val recorded = terminalWrites[key]
-                if (recorded == transition.fingerprint) {
-                    return ExtractionRunTransitionResult(
-                        stored,
-                        ExtractionRunTransitionOutcome.REPLAYED,
+                if (recorded != transition.fingerprint) {
+                    throw ExtractionRunConflictException(
+                        key,
+                        "already ended as ${stored.status} under a different terminal write; " +
+                            "this one claims ${transition.status}",
                     )
                 }
-                throw ExtractionRunConflictException(
-                    key,
-                    "already ended as ${stored.status} under a different terminal write; " +
-                        "this one claims ${transition.status}",
-                )
+                ExtractionRunTransitionResult(stored, ExtractionRunTransitionOutcome.REPLAYED)
+            } else {
+                val terminal = transition.applyTo(stored)
+                runs[key] = terminal
+                terminalWrites[key] = transition.fingerprint
+                ExtractionRunTransitionResult(terminal, ExtractionRunTransitionOutcome.APPLIED)
             }
-            val terminal = transition.applyTo(stored)
-            runs[key] = terminal
-            terminalWrites[key] = transition.fingerprint
-            return ExtractionRunTransitionResult(terminal, ExtractionRunTransitionOutcome.APPLIED)
         }
+        // Announced outside the monitor, so a listener that blocks or reads the store back holds up
+        // no other writer and sees the terminal run already committed. Exactly one call per run
+        // reaches the applied branch above; a replay reports the run and stays silent.
+        if (result.isApplied) {
+            listener.onEvent(ExtractionRunTransitioned(result.run))
+        }
+        return result
     }
 
     override fun findRun(key: ExtractionRunKey): ExtractionRun? = synchronized(lock) { runs[key] }

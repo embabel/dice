@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.storage
 
+import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.proposition.extraction.ExtractionRunStore
 import com.embabel.dice.proposition.extraction.InMemoryExtractionRunStore
 
@@ -24,5 +25,6 @@ import com.embabel.dice.proposition.extraction.InMemoryExtractionRunStore
  * Drivine run store completes when it lands.
  */
 class InMemoryExtractionRunStoreContractTest : AbstractExtractionRunStoreContractTest() {
-    override fun store(): ExtractionRunStore = InMemoryExtractionRunStore()
+    override fun store(listener: DiceEventListener): ExtractionRunStore =
+        InMemoryExtractionRunStore(listener)
 }

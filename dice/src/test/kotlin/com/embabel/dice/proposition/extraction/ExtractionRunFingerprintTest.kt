@@ -23,10 +23,14 @@ import java.time.Instant
 /**
  * The canonical encoding behind terminal-write idempotency.
  *
- * Two things have to hold. Two payloads that mean the same must produce the same digest, or a
- * correct retry is rejected as an incompatible rewrite. Two payloads that differ must produce
- * different digests, or an incompatible rewrite is accepted as a retry — which is the failure that
- * loses audit evidence.
+ * Two things have to hold. Two writes that mean the same must produce the same digest, or a correct
+ * retry is rejected as an incompatible rewrite. Two writes that name different transitions must
+ * produce different digests, or an incompatible rewrite is accepted as a retry — which is the
+ * failure that loses audit evidence.
+ *
+ * What "mean the same" covers is the terminal status and the finish time, and nothing else. The
+ * counts and failures a transition delivers stay outside the digest, which is what lets DICE #69
+ * grow the outcome payload without moving a digest already stored beside a run.
  */
 class ExtractionRunFingerprintTest {
 
@@ -46,101 +50,10 @@ class ExtractionRunFingerprintTest {
         invocation = invocation,
     )
 
-    // ---- order independence ----
+    // ---- what the digest covers ----
 
     @Test
-    fun `the failure list's order does not move the fingerprint`() {
-        val one = failure(ExtractionFailureCode.RATE_LIMITED, ExtractionFailureStage.MODEL_CALL)
-        val two = failure(ExtractionFailureCode.DECODE_FAILED, ExtractionFailureStage.RESPONSE_DECODE)
-        val three = failure(ExtractionFailureCode.MODEL_TIMEOUT, invocation = ExtractionInvocationId(1, 2))
-
-        val forwards = ExtractionRunTransition.failed(FINISHED_AT, failures = listOf(one, two, three))
-        val backwards = ExtractionRunTransition.failed(FINISHED_AT, failures = listOf(three, two, one))
-        val shuffled = ExtractionRunTransition.failed(FINISHED_AT, failures = listOf(two, three, one))
-
-        assertThat(forwards.fingerprint).isEqualTo(backwards.fingerprint)
-        assertThat(forwards.fingerprint).isEqualTo(shuffled.fingerprint)
-    }
-
-    @Test
-    fun `two failures that differ only in one field still differ`() {
-        val base = failure(
-            ExtractionFailureCode.MODEL_TIMEOUT,
-            ExtractionFailureStage.MODEL_CALL,
-            FINISHED_AT,
-            ExtractionInvocationId(1, 2),
-        )
-        val variants = listOf(
-            "code" to failure(
-                ExtractionFailureCode.RATE_LIMITED,
-                ExtractionFailureStage.MODEL_CALL,
-                FINISHED_AT,
-                ExtractionInvocationId(1, 2),
-            ),
-            "stage" to failure(
-                ExtractionFailureCode.MODEL_TIMEOUT,
-                ExtractionFailureStage.RESPONSE_DECODE,
-                FINISHED_AT,
-                ExtractionInvocationId(1, 2),
-            ),
-            "no stage" to failure(
-                ExtractionFailureCode.MODEL_TIMEOUT,
-                null,
-                FINISHED_AT,
-                ExtractionInvocationId(1, 2),
-            ),
-            "providerStatus" to failure(
-                ExtractionFailureCode.MODEL_TIMEOUT,
-                ExtractionFailureStage.MODEL_CALL,
-                FINISHED_AT,
-                ExtractionInvocationId(1, 2),
-                providerStatus = 504,
-            ),
-            "measure" to failure(
-                ExtractionFailureCode.MODEL_TIMEOUT,
-                ExtractionFailureStage.MODEL_CALL,
-                FINISHED_AT,
-                ExtractionInvocationId(1, 2),
-                measure = ExtractionFailureMeasure(ExtractionFailureQuantity.ELAPSED_MILLIS, 30_000),
-            ),
-            "at" to failure(
-                ExtractionFailureCode.MODEL_TIMEOUT,
-                ExtractionFailureStage.MODEL_CALL,
-                FINISHED_AT.plusNanos(1),
-                ExtractionInvocationId(1, 2),
-            ),
-            "invocation index" to failure(
-                ExtractionFailureCode.MODEL_TIMEOUT,
-                ExtractionFailureStage.MODEL_CALL,
-                FINISHED_AT,
-                ExtractionInvocationId(2, 2),
-            ),
-            "attempt" to failure(
-                ExtractionFailureCode.MODEL_TIMEOUT,
-                ExtractionFailureStage.MODEL_CALL,
-                FINISHED_AT,
-                ExtractionInvocationId(1, 3),
-            ),
-            "no invocation" to failure(
-                ExtractionFailureCode.MODEL_TIMEOUT,
-                ExtractionFailureStage.MODEL_CALL,
-                FINISHED_AT,
-                null,
-            ),
-        )
-        val baseline = ExtractionRunTransition.failed(FINISHED_AT, failures = listOf(base)).fingerprint
-
-        variants.forEach { (name, variant) ->
-            assertThat(ExtractionRunTransition.failed(FINISHED_AT, failures = listOf(variant)).fingerprint)
-                .describedAs("a failure differing in %s", name)
-                .isNotEqualTo(baseline)
-        }
-    }
-
-    // ---- the whole payload ----
-
-    @Test
-    fun `changing any component of a terminal write changes its fingerprint`() {
+    fun `changing the transition's identity changes its fingerprint`() {
         val baseline = ExtractionRunTransition.completed(
             finishedAt = FINISHED_AT,
             counts = ExtractionRunCounts(propositionsExtracted = 3, propositionsPersisted = 3),
@@ -152,20 +65,15 @@ class ExtractionRunFingerprintTest {
                 counts = baseline.counts,
                 failures = baseline.failures,
             ),
+            "the other status" to ExtractionRunTransition.failed(
+                finishedAt = FINISHED_AT,
+                counts = baseline.counts,
+                failures = baseline.failures,
+            ),
             "finishedAt" to ExtractionRunTransition.completed(
                 finishedAt = FINISHED_AT.plusNanos(1),
                 counts = baseline.counts,
                 failures = baseline.failures,
-            ),
-            "counts" to ExtractionRunTransition.completed(
-                finishedAt = FINISHED_AT,
-                counts = ExtractionRunCounts(propositionsExtracted = 3, propositionsPersisted = 2),
-                failures = baseline.failures,
-            ),
-            "failures" to ExtractionRunTransition.completed(
-                finishedAt = FINISHED_AT,
-                counts = baseline.counts,
-                failures = emptyList(),
             ),
         )
 
@@ -177,38 +85,59 @@ class ExtractionRunFingerprintTest {
     }
 
     @Test
-    fun `absent and empty are different claims`() {
-        // Null means keep what the run recorded and a value means replace it, so the encoding has
-        // to tell them apart or a store would replay one as the other.
-        val keptCounts = ExtractionRunTransition.completed(FINISHED_AT, counts = null)
-        val zeroCounts = ExtractionRunTransition.completed(FINISHED_AT, counts = ExtractionRunCounts())
-        assertThat(keptCounts.fingerprint).isNotEqualTo(zeroCounts.fingerprint)
+    fun `the outcome a transition carries never moves its fingerprint`() {
+        // The property DICE #69 rests on. A run's counts and failures are data the terminal write
+        // delivers; the digest names which terminal write it is. A payload that grows a field, or
+        // a retry that carries better numbers, leaves every recorded digest matchable.
+        val identity = ExtractionRunTransition.completed(FINISHED_AT).fingerprint
 
-        val keptFailures = ExtractionRunTransition.completed(FINISHED_AT, failures = null)
-        val noFailures = ExtractionRunTransition.completed(FINISHED_AT, failures = emptyList())
-        assertThat(keptFailures.fingerprint).isNotEqualTo(noFailures.fingerprint)
+        val carrying = listOf(
+            "counts" to ExtractionRunTransition.completed(
+                FINISHED_AT,
+                counts = ExtractionRunCounts(propositionsExtracted = 3, propositionsPersisted = 3),
+            ),
+            "zero counts" to ExtractionRunTransition.completed(FINISHED_AT, counts = ExtractionRunCounts()),
+            "no failures" to ExtractionRunTransition.completed(FINISHED_AT, failures = emptyList()),
+            "one failure" to ExtractionRunTransition.completed(
+                FINISHED_AT,
+                failures = listOf(failure(ExtractionFailureCode.RATE_LIMITED, ExtractionFailureStage.MODEL_CALL)),
+            ),
+            "several failures" to ExtractionRunTransition.completed(
+                FINISHED_AT,
+                counts = ExtractionRunCounts(entitiesResolved = 9),
+                failures = listOf(
+                    failure(ExtractionFailureCode.INTERNAL, ExtractionFailureStage.CHUNKING),
+                    failure(
+                        ExtractionFailureCode.MODEL_TIMEOUT,
+                        ExtractionFailureStage.MODEL_CALL,
+                        providerStatus = 504,
+                        measure = ExtractionFailureMeasure(ExtractionFailureQuantity.ELAPSED_MILLIS, 30_000),
+                    ),
+                ),
+            ),
+        )
+
+        carrying.forEach { (name, transition) ->
+            assertThat(transition.fingerprint)
+                .describedAs("a terminal write carrying %s names the same transition", name)
+                .isEqualTo(identity)
+        }
     }
 
     @Test
-    fun `one failure never collides with two that carry the same field values between them`() {
-        // Length-prefixing and the count prefix are what make this hold. A delimiter-joined
-        // encoding would render ["a|b"] and ["a", "b"] the same way, and a list with no count
-        // in front of it lets a shorter list be a prefix of a longer one.
-        val single = ExtractionRunTransition.failed(
-            FINISHED_AT,
-            failures = listOf(
-                failure(ExtractionFailureCode.INTERNAL, ExtractionFailureStage.CHUNKING, providerStatus = 500),
-            ),
-        )
-        val split = ExtractionRunTransition.failed(
-            FINISHED_AT,
-            failures = listOf(
-                failure(ExtractionFailureCode.INTERNAL, ExtractionFailureStage.CHUNKING),
-                failure(ExtractionFailureCode.INTERNAL, providerStatus = 500),
-            ),
-        )
+    fun `counts and failures still reach the run, even though they stay out of the digest`() {
+        // The other half of the rule, so "outside the digest" is never read as "dropped". What a
+        // transition carries is what the terminal run holds; equality on the transition sees it too.
+        val running = ExtractionRunFixtures.runningRun("run-outcome-data")
+        val counts = ExtractionRunCounts(propositionsExtracted = 3, propositionsPersisted = 2)
+        val failures = listOf(failure(ExtractionFailureCode.RATE_LIMITED, ExtractionFailureStage.MODEL_CALL))
 
-        assertThat(single.fingerprint).isNotEqualTo(split.fingerprint)
+        val terminal = ExtractionRunTransition.completed(FINISHED_AT, counts, failures).applyTo(running)
+
+        assertThat(terminal.counts).isEqualTo(counts)
+        assertThat(terminal.failures).isEqualTo(failures)
+        assertThat(ExtractionRunTransition.completed(FINISHED_AT, counts, failures))
+            .isNotEqualTo(ExtractionRunTransition.completed(FINISHED_AT))
     }
 
     @Test
@@ -266,7 +195,7 @@ class ExtractionRunFingerprintTest {
         )
 
         assertThat(pinned.fingerprint)
-            .isEqualTo("66e8ef75aeb2c1f12b241aebd9f943dc26c654fb18cb4181ed8cecd4994c4309")
+            .isEqualTo("b32bd0dd33ff0fe21397e0601f91b9f149250af9822d5fce633ad621baa44611")
     }
 
     @Test
@@ -279,20 +208,20 @@ class ExtractionRunFingerprintTest {
 
     @Test
     fun `the encoding carries a version tag`() {
-        // A reader meeting a version it does not know matches nothing rather than guessing.
-        assertThat(ExtractionRunFingerprint.TERMINAL_VERSION).isEqualTo("xrun-terminal:v1")
+        // A reader meeting a version it does not know matches nothing at all, with no guessing. The
+        // tag moved to v2 when the payload narrowed to the transition's identity, so a digest
+        // recorded under v1 matches nothing written now.
+        assertThat(ExtractionRunFingerprint.TERMINAL_VERSION).isEqualTo("xrun-terminal:v2")
     }
 
     @Test
-    fun `the fingerprint is a function of the payload and nothing else`() {
+    fun `the fingerprint is a function of the transition's identity and nothing else`() {
         val transition = ExtractionRunTransition.completed(FINISHED_AT)
 
         assertThat(transition.fingerprint).isEqualTo(
             ExtractionRunFingerprint.ofTerminal(
                 status = ExtractionRunStatus.COMPLETED,
                 finishedAt = FINISHED_AT,
-                counts = null,
-                failures = null,
             ),
         )
     }

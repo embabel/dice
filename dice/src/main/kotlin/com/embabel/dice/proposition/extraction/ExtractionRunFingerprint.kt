@@ -27,6 +27,17 @@ import java.time.Instant
  * whole mechanism rests on two payloads that mean the same thing producing the same bytes, so the
  * encoding is specified here rather than left to whatever a serializer happens to emit.
  *
+ * ## What the digest covers
+ *
+ * The transition's identity: the terminal status, and when the run finished. Two writes that agree
+ * on those two things are the same terminal write, and the second replays.
+ *
+ * The counts and failures a transition carries are data it delivers, and they stay outside the
+ * digest. A run's outcome is written once — the first accepted terminal write wins, and a retry
+ * carrying different numbers replays against what is already stored. Keeping them out of the digest
+ * is what lets the outcome payload grow: DICE #69 adds typed product outcomes to what a terminal
+ * write reports, and no field it adds can move a digest already recorded beside a run.
+ *
  * ## Why not JSON
  *
  * RFC 8785 exists because naive JSON serialization is not byte-stable. Three failure modes, all of
@@ -40,39 +51,31 @@ import java.time.Instant
  *   bytes without moving the meaning.
  *
  * This encoding is the one DICE already uses for `MetamodelVersion.contentHash`, applied to a
- * different payload: length-prefixed tokens, count-prefixed collections, sorted where order carries
- * no meaning, SHA-256, lowercase hex.
+ * different payload: length-prefixed tokens, count-prefixed field sets, SHA-256, lowercase hex.
  *
  * ## The rules
  *
  * 1. **Every token is length-prefixed**, `<length>:<token>`. A delimiter-joined encoding lets
  *    `["a;b"]` and `["a", "b"]` hash the same, which hides a real difference. Length prefixes make
  *    that collision unreachable whatever characters a token happens to carry.
- * 2. **Every collection is preceded by its element count**, so a shorter list can never be a prefix
- *    of a longer one.
+ * 2. **A field set is preceded by how many fields it holds**, so a shorter one can never be a
+ *    prefix of a longer one.
  * 3. **Fields are emitted as `(name, value)` pairs sorted by name**, so the bytes do not depend on
  *    the order the fields happen to be declared in.
- * 4. **A collection whose order carries no meaning is sorted.** The failure list is the case that
- *    matters: two coordinators that recorded the same failures in a different order made the same
- *    terminal write. The order is Kotlin's natural `String` order, which compares UTF-16 code units
- *    — not UTF-8 byte order, and not a locale collation. Any total order would do for correctness;
- *    naming this one matters because a backend re-implementing the sort in a query would pick a
- *    different one and produce a different digest. It should not re-implement it at all: the store
- *    records the string the transition already computed.
- * 5. **Instants render as `<epochSecond>.<nanos padded to 9>`.** Fixed width, and independent of
+ * 4. **Instants render as `<epochSecond>.<nanos padded to 9>`.** Fixed width, and independent of
  *    `java.time`'s own formatting. `Instant.toString()` varies its precision with the value —
  *    `…:47Z` for a whole second, `…:47.500Z` for half of one — so the encoded length moves with the
  *    data and a persisted digest would depend on a formatting rule DICE does not own. Number
  *    rendering is the equivalent hazard in JSON and is most of what RFC 8785 is about.
- * 6. **Absent is its own marker.** A null renders as `-`, never as an empty string, so "the caller
- *    said nothing" and "the caller said empty" stay distinguishable.
- * 7. **The digest is SHA-256, rendered lowercase hex**, and the encoded input carries a version
+ * 5. **The digest is SHA-256, rendered lowercase hex**, and the encoded input carries a version
  *    tag. A reader meeting a version it does not know matches nothing rather than guessing.
  *
  * ## This is a persisted format
  *
  * The digest is stored beside the run. Changing the encoding makes every recorded fingerprint
  * unmatchable, so a correct retry against an old run would be rejected as an incompatible rewrite.
+ * That is what [TERMINAL_VERSION] is for, and it is why the payload is the transition's identity
+ * alone: a field added to what a terminal write reports never reaches these bytes.
  * `ExtractionRunFingerprintTest` pins the digest of a fixed payload with a literal assertion:
  * changing the encoding means changing that literal deliberately.
  *
@@ -81,68 +84,31 @@ import java.time.Instant
 @ApiStatus.Experimental
 object ExtractionRunFingerprint {
 
-    /** Version tag on the terminal-write encoding. */
-    const val TERMINAL_VERSION: String = "xrun-terminal:v1"
-
-    /** What an absent value encodes as, kept distinct from any value a caller could supply. */
-    private const val ABSENT = "-"
+    /**
+     * Version tag on the terminal-write encoding.
+     *
+     * `v2` narrowed the payload to the transition's identity. `v1` also folded in the counts and
+     * the failures a transition carried, which made the digest move whenever the outcome payload
+     * gained a field.
+     */
+    const val TERMINAL_VERSION: String = "xrun-terminal:v2"
 
     /**
-     * The digest of one terminal write: the status it asserts, when the run finished, the counts it
-     * records, and the failures it records.
+     * The digest of one terminal write: the status it asserts, and when the run finished.
      *
-     * The run itself is deliberately not part of this. A coordinator that records another invocation
-     * between a failed terminal write and its retry made the same terminal write both times, and
-     * folding the run's invocation list in would turn that correct retry into a rejected conflict.
+     * Two things stay out of it deliberately. The run, because a coordinator that records another
+     * invocation between a terminal write and its retry made the same terminal write both times,
+     * and folding the run's invocation list in would turn that correct retry into a rejected
+     * conflict. And the counts and failures the transition carries, because those are the outcome
+     * a run reports, while the digest names which terminal write this is — see the class doc.
      */
     @JvmStatic
-    fun ofTerminal(
-        status: ExtractionRunStatus,
-        finishedAt: Instant,
-        counts: ExtractionRunCounts?,
-        failures: List<ExtractionFailure>?,
-    ): String {
+    fun ofTerminal(status: ExtractionRunStatus, finishedAt: Instant): String {
         val payload = fields(
-            "counts" to (counts?.let(::encodeCounts) ?: ABSENT),
-            "failures" to (failures?.let(::encodeFailures) ?: ABSENT),
             "finishedAt" to encodeInstant(finishedAt),
             "status" to status.name,
         )
         return digest(TERMINAL_VERSION + "|" + payload)
-    }
-
-    private fun encodeCounts(counts: ExtractionRunCounts): String = fields(
-        "chunksProcessed" to counts.chunksProcessed.toString(),
-        "entitiesResolved" to counts.entitiesResolved.toString(),
-        "propositionsExtracted" to counts.propositionsExtracted.toString(),
-        "propositionsPersisted" to counts.propositionsPersisted.toString(),
-        "propositionsRejected" to counts.propositionsRejected.toString(),
-        "sourcesRead" to counts.sourcesRead.toString(),
-    )
-
-    private fun encodeFailures(failures: List<ExtractionFailure>): String {
-        val encoded = failures.map { failure ->
-            fields(
-                "at" to encodeInstant(failure.at),
-                "code" to failure.code.name,
-                "invocation" to (
-                    failure.invocation
-                        ?.let { "${it.invocationIndex}/${it.attempt}" }
-                        ?: ABSENT
-                    ),
-                "measure" to (
-                    failure.measure
-                        ?.let { "${it.quantity.name}=${it.value}" }
-                        ?: ABSENT
-                    ),
-                "providerStatus" to (failure.providerStatus?.toString() ?: ABSENT),
-                "stage" to (failure.stage?.name ?: ABSENT),
-            )
-        }.sorted()
-        return buildString {
-            append(encoded.size).append('|')
-            encoded.forEach { appendSized(it) }
-        }
     }
 
     /**
