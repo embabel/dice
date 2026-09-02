@@ -16,6 +16,8 @@
 package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.common.DiceEvent
+import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.proposition.extraction.ExtractionActorRef
 import com.embabel.dice.proposition.extraction.ExtractionCohortRef
 import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef
@@ -23,6 +25,9 @@ import com.embabel.dice.proposition.extraction.ExtractionDeploymentRef
 import com.embabel.dice.proposition.extraction.ExtractionExperimentRef
 import com.embabel.dice.proposition.extraction.ExtractionFailure
 import com.embabel.dice.proposition.extraction.ExtractionFailureCode
+import com.embabel.dice.proposition.extraction.ExtractionFailureMeasure
+import com.embabel.dice.proposition.extraction.ExtractionFailureQuantity
+import com.embabel.dice.proposition.extraction.ExtractionFailureStage
 import com.embabel.dice.proposition.extraction.ExtractionInvocationId
 import com.embabel.dice.proposition.extraction.ExtractionInvocationOutcome
 import com.embabel.dice.proposition.extraction.ExtractionInvocationRecord
@@ -46,6 +51,7 @@ import com.embabel.dice.proposition.extraction.ExtractionRunTransitionOutcome
 import com.embabel.dice.proposition.extraction.ExtractionRuntimeIdentity
 import com.embabel.dice.proposition.extraction.ExtractionSessionRef
 import com.embabel.dice.provenance.SourceRevisionRef
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
@@ -93,6 +99,9 @@ class DrivineExtractionRunStoreIntegrationTest {
     @Autowired
     private lateinit var transactionManager: PlatformTransactionManager
 
+    @Autowired
+    private lateinit var eventListener: RedirectableEventListener
+
     private val tenant = ContextId("graph-tenant")
     private val neighbour = ContextId("graph-neighbour")
     private val startedAt: Instant = Instant.parse("2026-08-31T10:15:30.123456789Z")
@@ -100,6 +109,7 @@ class DrivineExtractionRunStoreIntegrationTest {
 
     @AfterEach
     fun cleanUp() {
+        eventListener.redirectTo(DiceEventListener.DEV_NULL)
         ExtractionRunSchema.LABELS.forEach { label ->
             persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:$label) DETACH DELETE n"))
         }
@@ -454,7 +464,15 @@ class DrivineExtractionRunStoreIntegrationTest {
         val transition = ExtractionRunTransition.completed(
             finishedAt = finishedAt,
             counts = ExtractionRunCounts(propositionsPersisted = 99),
-            failures = listOf(ExtractionFailure(ExtractionFailureCode.RATE_LIMITED, "slow down", finishedAt)),
+            failures = listOf(
+                ExtractionFailure(
+                    code = ExtractionFailureCode.RATE_LIMITED,
+                    stage = ExtractionFailureStage.MODEL_CALL,
+                    providerStatus = 429,
+                    measure = ExtractionFailureMeasure(ExtractionFailureQuantity.RETRY_AFTER_SECONDS, 30),
+                    at = finishedAt,
+                ),
+            ),
         )
 
         val ended = store.transition(run.key(), transition)
@@ -547,8 +565,7 @@ class DrivineExtractionRunStoreIntegrationTest {
     fun `nothing a run was never given reaches the stored bytes`() {
         // The privacy contract, asserted over the properties actually written rather than over a
         // test-local dumper. Everything DICE holds about a run is a token, a digest, or a
-        // classified code, so a secret the host never handed over cannot be in the row — and the
-        // one place it could leak in is a failure built from an exception whose message quotes it.
+        // classified code, so a secret the host never handed over cannot be in the row.
         val secret = "patient-9f2a-had-a-consultation-on-tuesday"
         val run = ExtractionRun(
             contextId = tenant,
@@ -560,10 +577,11 @@ class DrivineExtractionRunStoreIntegrationTest {
                 session = ExtractionSessionRef("session-token-1"),
             ),
             failures = listOf(
-                ExtractionFailure.fromThrowable(
-                    ExtractionFailureCode.DECODE_FAILED,
-                    IllegalStateException("could not decode: $secret"),
-                    startedAt,
+                ExtractionFailure(
+                    code = ExtractionFailureCode.DECODE_FAILED,
+                    stage = ExtractionFailureStage.RESPONSE_DECODE,
+                    measure = ExtractionFailureMeasure(ExtractionFailureQuantity.CHARACTER_COUNT, 4096),
+                    at = startedAt,
                 ),
             ),
         )
@@ -572,7 +590,105 @@ class DrivineExtractionRunStoreIntegrationTest {
 
         val written = nodeProperties("ExtractionRun", "graph-privacy").values.joinToString(" ") { it.toString() }
         assertTrue(secret !in written, "a source-text substring reached the stored row")
-        assertTrue("IllegalStateException" in written, "the classified cause chain is what is stored instead")
+    }
+
+    @Test
+    fun `a terminal write its caller rolls back announces nothing and leaves the run running`() {
+        // The half of exactly-once the contract suite cannot reach. Every case there runs with no
+        // ambient transaction, so the store owns the commit and announces inline. Here the caller
+        // owns it, the write is durable only if that caller commits, and this one does not. A store
+        // announcing at the point of the write would have told a listener a run ended, and the run
+        // is still running.
+        val received = mutableListOf<DiceEvent>()
+        eventListener.redirectTo(DiceEventListener { event -> synchronized(received) { received += event } })
+        val run = running("graph-announce-rollback")
+        store.save(run)
+
+        val ambient = TransactionTemplate(transactionManager)
+        ambient.execute { status ->
+            val ended = store.transition(run.key(), ExtractionRunTransition.completed(finishedAt))
+            assertEquals(ExtractionRunTransitionOutcome.APPLIED, ended.outcome)
+            status.setRollbackOnly()
+        }
+
+        assertEquals(
+            emptyList<DiceEvent>(),
+            synchronized(received) { received.toList() },
+            "the caller rolled back, so no run ended and nothing may be announced",
+        )
+        assertEquals(
+            ExtractionRunStatus.RUNNING,
+            store.findRun(run.key())?.status,
+            "the rolled-back terminal write left the run where it was",
+        )
+        assertNull(store.findRun(run.key())?.finishedAt)
+        assertEquals(0, terminalWriteCount(run.key()), "the terminal-write node rolled back with it")
+    }
+
+    @Test
+    fun `a stored failure holds the closed vocabulary's fields and nothing else`() {
+        // The route a provider message used to take into a durable row was a failure record's text
+        // field, and the record has none left. This is what holds the store to that: the keys the
+        // writer actually put on the node must match the allowlist below exactly, so a
+        // detail column, a message, a response body — anything shaped to hold what a person typed or
+        // a provider said — fails here and never reaches Neo4j. The allowlist is written out in
+        // full on purpose. Reading it from the writer would let one edit move both sides at once.
+        val allowed = setOf(
+            "code",
+            "stage",
+            "providerStatus",
+            "measureQuantity",
+            "measureValue",
+            "at",
+            "invocationIndex",
+            "attempt",
+        )
+        val failures = listOf(
+            ExtractionFailure(
+                code = ExtractionFailureCode.RATE_LIMITED,
+                stage = ExtractionFailureStage.MODEL_CALL,
+                providerStatus = 429,
+                measure = ExtractionFailureMeasure(ExtractionFailureQuantity.RETRY_AFTER_SECONDS, 30),
+                at = startedAt.plusSeconds(5),
+            ),
+            // Every optional field absent. The stored keys have to be the same set, or the exact
+            // comparison above would only be an upper bound on what a fully populated one carries.
+            ExtractionFailure(code = ExtractionFailureCode.INTERNAL, at = startedAt.plusSeconds(6)),
+        )
+        val run = ExtractionRun(
+            contextId = tenant,
+            lineage = ExtractionRunLineage.root(ExtractionRunRef("graph-failure-fields")),
+            status = ExtractionRunStatus.RUNNING,
+            startedAt = startedAt,
+            failures = failures,
+        )
+        store.save(run)
+
+        assertStoredFailureKeys("graph-failure-fields", 2, allowed, "the save door")
+        // The allowlist is over the encoding the store really uses, so the same run has to read back
+        // whole — an allowlist held by a writer nothing round-trips would prove nothing.
+        assertEquals(failures, store.findRun(run.key())!!.failures)
+
+        // The other door onto the same property. `transition` builds its own bind map and writes
+        // failures through `SET n += $terminal`, so a text field could be added there alone and the
+        // save-door assertion above would stay green. Both doors, one allowlist.
+        val terminalFailures = listOf(
+            ExtractionFailure(
+                code = ExtractionFailureCode.MODEL_TIMEOUT,
+                stage = ExtractionFailureStage.MODEL_CALL,
+                providerStatus = 504,
+                measure = ExtractionFailureMeasure(ExtractionFailureQuantity.ELAPSED_MILLIS, 90_000),
+                at = finishedAt,
+            ),
+        )
+        val ended = store.transition(
+            run.key(),
+            ExtractionRunTransition.completed(finishedAt, failures = terminalFailures),
+        )
+
+        assertEquals(ExtractionRunTransitionOutcome.APPLIED, ended.outcome)
+        assertStoredFailureKeys("graph-failure-fields", 1, allowed, "the transition door")
+        assertEquals(terminalFailures, store.findRun(run.key())!!.failures)
     }
 
     // ---- corrupt and oversized ----
@@ -675,7 +791,9 @@ class DrivineExtractionRunStoreIntegrationTest {
         failures: List<ExtractionFailure> = listOf(
             ExtractionFailure(
                 code = ExtractionFailureCode.MODEL_TIMEOUT,
-                detail = "timed out after 90s",
+                stage = ExtractionFailureStage.MODEL_CALL,
+                providerStatus = 504,
+                measure = ExtractionFailureMeasure(ExtractionFailureQuantity.ELAPSED_MILLIS, 90_000),
                 at = startedAt.plusSeconds(90),
                 invocation = ExtractionInvocationId(0, 1),
             ),
@@ -776,6 +894,32 @@ class DrivineExtractionRunStoreIntegrationTest {
     ).single()["fingerprint"]?.toString()
 
     /** Every property actually written on one node, read back raw rather than through the mapper. */
+    /**
+     * Reads the `failures` property Neo4j actually holds for [runId] and checks every stored
+     * failure's key set matches [allowed] exactly.
+     *
+     * Reading the raw property is the whole point. Going through `findRun` would hand back
+     * [ExtractionFailure] objects, which cannot carry a stray field by construction, so a text
+     * column written to the node would be invisible to it.
+     */
+    private fun assertStoredFailureKeys(
+        runId: String,
+        expectedCount: Int,
+        allowed: Set<String>,
+        door: String,
+    ) {
+        val stored = nodeProperties("ExtractionRun", runId)
+        val decoded = ObjectMapper().readValue(stored["failures"].toString(), List::class.java)
+        assertEquals(expectedCount, decoded.size, "every failure written through $door reached the node")
+        decoded.forEach { element ->
+            assertEquals(
+                allowed,
+                (element as Map<*, *>).keys.map { it.toString() }.toSet(),
+                "a failure stored through $door carries exactly the fields the closed vocabulary names",
+            )
+        }
+    }
+
     private fun nodeProperties(label: String, runId: String): Map<String, Any?> = rows(
         "MATCH (n:$label {contextId: \$contextId, runId: \$runId}) RETURN properties(n) AS row",
         mapOf("contextId" to tenant.value, "runId" to runId),

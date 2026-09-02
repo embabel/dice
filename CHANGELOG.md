@@ -934,7 +934,26 @@ and the consumer PRs that deliver it).
   **The fingerprint is stored verbatim and compared verbatim, never re-derived.** The node carries the
   exact string `ExtractionRunTransition.fingerprint` computed, so a correct retry that happened after
   another attempt was recorded still replays; a store deriving a digest from the stored run would
-  reject it.
+  reject it. That string is the `xrun-terminal:v2` digest of the transition's identity, so the counts
+  and failures a terminal write carries ride into the header beside it and reach none of the compared
+  bytes; the store keeps no comparison of its own that could fall out of step.
+  **A run that ends announces itself once, when the write is durable.** `transition` hands an
+  `ExtractionRunTransitioned` to the listener the store was constructed with, defaulting to
+  `DiceEventListener.DEV_NULL` the way the in-memory reference's does. Exactly one call per run
+  reaches that branch, for the schema reason above: reaching it means having created the
+  terminal-write node. A replay, a rejected write, a `save`, a `recordInvocation`, and the writer that
+  lost the race all announce nothing. When the store owns the transaction the listener runs once the
+  template has committed; when a caller's transaction is active the announcement is registered against
+  that caller's commit, so a rollback drops it and no consumer hears about a run nothing can read back. The
+  six event cases the contract suite added run against Neo4j unmodified.
+  **Failures are stored in the closed vocabulary and nothing else fits.** A run's failures are one
+  JSON array on the header node, each element carrying `code`, `stage`, `providerStatus`, a measure as
+  a quantity and a value, `at`, and the attempt it names as an index and an attempt — eight fields,
+  written flat, with optional ones stored as nulls so every failure stores the same keys. No property
+  holds free text, because `ExtractionFailure` has no text-shaped field to write from. A round-trip
+  test reads the properties Neo4j actually holds and checks the key set it finds matches an allowlist
+  the test states itself, so an added `detail` column fails the build before it reaches a graph, and a stored
+  failure holding half a measure or half an invocation id is refused on read.
   **A header write cannot touch a child row.** Invocation records are their own nodes, so `save` has
   no way to delete one — the contract's merge-don't-replace rule falls out of the graph model instead
   of being implemented. One consequence: a durable store keeps identified rows rather than the order a

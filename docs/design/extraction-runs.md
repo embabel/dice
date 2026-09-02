@@ -784,6 +784,49 @@ digest from the stored run would reject a correct retry whenever an attempt had 
 between, because the run it derived from would have changed while the terminal write did not. The
 encoding has one implementation, in `dice`, and the graph holds its output.
 
+The string the graph holds is the `xrun-terminal:v2` digest, which covers the terminal status and
+the finish time and nothing else. The counts and failures a transition carries ride into the header
+`SET` beside it and reach none of the hashed bytes, so a retry that agrees on status and finish time
+replays whatever numbers it names and the run keeps what the first accepted terminal write
+delivered. The store has no comparison of its own to keep in step with that: it stores one string
+and compares one string.
+
+### Announcing a run that ended, once the write is durable
+
+`transition` hands an `ExtractionRunTransitioned` to the store's listener for the call that ended the
+run. Exactly one call per run reaches that branch, and the reason is the same schema fact the
+compare-and-set rests on: reaching it means having created the run's terminal-write node, and the
+uniqueness constraint lets one transaction do that. A replay announces nothing, a rejected write
+announces nothing, and the writer that lost the race announces nothing — it created no node, so it
+answers replayed or conflict and never applied.
+
+Where the durable store differs from the in-memory reference is *when*. The reference announces
+after the write has landed and outside its monitor. Here "landed" means committed, and which commit
+that is depends on who owns the transaction. When the store owns it, the commit has already happened
+by the time the template returns, and the listener runs there. When a caller's transaction is active
+the write is durable only when that caller commits, so the announcement is registered against the
+commit and is dropped with the transaction if the caller rolls back. A listener told that a run ended
+by a transaction that was thrown away would be reporting a run nothing can read back.
+
+### Failures are stored in the vocabulary, and nothing else fits
+
+A run's failures are one JSON array on the header node, and each element carries eight fields: the
+`code`, the `stage`, the `providerStatus`, the two halves of one measure, the `at`, and the two
+halves of the attempt it names. Every optional field is always present and written as a null when
+it has no value, so a bare failure and a fully populated one store the same keys.
+
+The shape is flat and the halves are deliberate. Putting the measure and the invocation id at the
+same level as everything else means every key a stored failure can carry is visible at once, which is
+what lets a test check the whole key set it finds matches an allowlist, in one assertion.
+`DrivineExtractionRunStoreIntegrationTest` round-trips a run carrying failures, reads the properties
+Neo4j actually holds, and asserts that set exactly — with the allowlist written out in the test
+and never read from the writer, so one edit cannot move both sides. That is the check standing
+between a durable row and a `detail` column: `ExtractionFailure` has no text-shaped field to write
+from, and if someone adds one to the encoding, this fails before it reaches a graph.
+
+Reads are strict about the halves too. A stored failure holding a measure quantity with no value, or
+an invocation index with no attempt, is refused; nothing here fills in a missing half.
+
 ### A header write cannot touch a child row
 
 Invocation records are their own nodes on their own key, so `save` has no way to delete one. The
@@ -836,45 +879,6 @@ write mid-extraction with a message about bytes rather than about the tenant. Th
 named argument rejection before anything is written. Reads are not capped, because a read for a
 tenant longer than the cap matches nothing by construction, which is the fail-closed answer and the
 only one a read could give.
-
-## Protected-content references
-
-An extraction run holds no content. Where a host wants replay material — a prompt as it was
-rendered, a source document as it was read — it keeps that material itself and gives DICE a
-`ProtectedContentRef`: what kind of material it is, when it stops being available, and an opaque
-handle for looking it up.
-
-The handle is a `ProtectedContentHandle`, an eighth member of the `ExtractionOpaqueRef` family, so
-it inherits the enforced floor the other seven have — bounded, character-restricted, truncating
-`toString`, and a validation message that never quotes the value it rejected. That matters more here
-than elsewhere: a host holding material in object storage has a link to hand and no reason to think
-DICE minds, and the character set rejects one outright.
-
-What a host owes a reference it mints:
-
-- **The handle is not dereferenceable.** It names material in the host's own store and carries no
-  way to reach it: no signed URL, no pre-authenticated link, no bearer token, no decryption key, no
-  filename on a share. Holding one grants nothing. The rule is broader than the character check, and
-  the part the check cannot see is the host's to keep.
-- **Expiry is the host's to honour.** `expiresAt` is a declaration about the host's store. DICE acts
-  on none of it — it does not sweep, does not delete, and does not refuse to hand back a reference
-  whose expiry has passed. `isExpiredAt` is the whole of what DICE offers. Keeping the expired
-  reference is deliberate: a run that was replayable until March and is not replayable now is a fact
-  about the run, and deleting the reference would make it look as though it never had replay
-  material.
-- **The classification is a claim.** DICE stores it and carries it into the audit surface, and
-  verifies none of it.
-
-`ProtectedContentClassification` runs `INTERNAL`, `CONFIDENTIAL`, `PERSONAL`, least to most
-restrictive. There is no "unknown" value: a host that cannot classify material classifies it
-`PERSONAL`, because guessing low means personal data treated as operational logging and guessing
-high means something operational looked after more carefully than it needed to be.
-
-Blob storage, key management and retention enforcement are outside #67 by that issue's own text.
-This is the reference and its contract; there is no DICE-side store behind it. Nothing attaches a
-reference to an `ExtractionRun` yet either, and `ExtractionReplayFidelity` still tops out at
-`APPROXIMATE` — a run that carries replay material is a later slice's change to the run header, and
-a test asserts the run holds no such field today.
 
 ## OpenTelemetry GenAI naming, not adopted
 

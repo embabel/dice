@@ -17,6 +17,8 @@ package com.embabel.dice.storage
 
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.ai.model.PricingModel
+import com.embabel.dice.common.DiceEvent
+import com.embabel.dice.common.DiceEventListener
 import org.drivine.autoconfigure.EnableDrivine
 import org.drivine.autoconfigure.EnableDrivineTestConfig
 import org.drivine.manager.GraphObjectManager
@@ -48,6 +50,29 @@ class FakeEmbeddingService(override val dimensions: Int = 16) : EmbeddingService
         FloatArray(dimensions) { i -> Random(text.hashCode().toLong() * 1_000_003L + i).nextDouble(-1.0, 1.0).toFloat() }
 
     override fun embed(texts: List<String>): List<FloatArray> = texts.map(::embed)
+}
+
+/**
+ * A listener the extraction-run store is built with once, pointing wherever a test aims it.
+ *
+ * The store is a Spring bean built when the context starts and shared by every case, and it is
+ * transaction-proxied, so a case cannot build its own to get a listener attached. The contract suite
+ * asks for a store announcing to a listener it just made, so this sits in between: the store is
+ * constructed with one of these, and a case redirects it at the listener it wants to watch.
+ */
+class RedirectableEventListener : DiceEventListener {
+
+    @Volatile
+    private var target: DiceEventListener = DiceEventListener.DEV_NULL
+
+    /** Sends everything from here on to [listener]. */
+    fun redirectTo(listener: DiceEventListener) {
+        target = listener
+    }
+
+    override fun onEvent(event: DiceEvent) {
+        target.onEvent(event)
+    }
 }
 
 /**
@@ -131,10 +156,18 @@ open class TestApplication {
     open fun extractionRunSchema(): SchemaCatalog = SchemaCatalog.of(ExtractionRunSchema.specs())
 
     @Bean
+    open fun extractionRunEventListener(): RedirectableEventListener = RedirectableEventListener()
+
+    @Bean
     open fun extractionRunStore(
         persistenceManager: PersistenceManager,
         transactionManager: PlatformTransactionManager,
-    ): DrivineExtractionRunStore = DrivineExtractionRunStore(persistenceManager, transactionManager)
+        eventListener: RedirectableEventListener,
+    ): DrivineExtractionRunStore = DrivineExtractionRunStore(
+        persistenceManager = persistenceManager,
+        transactionManager = transactionManager,
+        listener = eventListener,
+    )
 
     @Bean
     open fun decayManager(

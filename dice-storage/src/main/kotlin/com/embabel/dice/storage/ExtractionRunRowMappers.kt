@@ -23,6 +23,9 @@ import com.embabel.dice.proposition.extraction.ExtractionDeploymentRef
 import com.embabel.dice.proposition.extraction.ExtractionExperimentRef
 import com.embabel.dice.proposition.extraction.ExtractionFailure
 import com.embabel.dice.proposition.extraction.ExtractionFailureCode
+import com.embabel.dice.proposition.extraction.ExtractionFailureMeasure
+import com.embabel.dice.proposition.extraction.ExtractionFailureQuantity
+import com.embabel.dice.proposition.extraction.ExtractionFailureStage
 import com.embabel.dice.proposition.extraction.ExtractionInvocationId
 import com.embabel.dice.proposition.extraction.ExtractionInvocationOutcome
 import com.embabel.dice.proposition.extraction.ExtractionInvocationRecord
@@ -388,39 +391,74 @@ private fun deserializeSourceRevisions(serialized: String): List<SourceRevisionR
     }
 
 /**
- * Failures as a list of objects, in the order the run recorded them, each with its classified code,
- * its sanitized detail, when it happened, and the attempt it names if it names one.
+ * Failures as a list of objects, in the order the run recorded them, each holding eight fields: the
+ * classified code, the stage, the provider's status, the two halves of one measure, when it
+ * happened, and the two halves of the attempt it names.
  *
- * `detail` is written as it stands. [ExtractionFailure] has already bounded it to 512 characters and
- * stripped it to a single line, and re-sanitizing here would let this mapper and that type disagree
- * about what a stored detail is.
+ * **Every field is a code, a number or a timestamp.** [ExtractionFailure] carries no `String` and no
+ * `Throwable`, so there is nothing free-text to write, and this writer names its fields one at a
+ * time, so a field added to the failure record cannot arrive here on its own. A text field could
+ * only get into a stored row through an edit to the list below, and
+ * `DrivineExtractionRunStoreIntegrationTest` round-trips a run carrying failures and compares the
+ * stored object's keys against an allowlist it states itself, so such an edit fails the build.
+ *
+ * The shape is flat. A failure's measure and the attempt it names are two fields each, flattened
+ * into the same object, which puts every key a stored failure can carry at one level where that
+ * exact-set comparison can see all of them at once. Every optional field is always present and
+ * written as a null when it has no value, so a bare failure and a fully populated one store the
+ * same keys. Both halves of each pair are
+ * written together or not at all, and [deserializeFailures] refuses a stored object holding half of
+ * one.
+ *
+ * **A reader tolerates a key it does not recognise.** [deserializeFailures] asks the stored object
+ * for the fields it knows about and ignores anything else sitting beside them, so a node written by
+ * a later build, or corrupted by something outside DICE, still reads back as the fields this build
+ * understands. Refusing a whole run's failure list over one unexpected key would make an audit
+ * record unreadable at the moment someone needs to read it. Keeping DICE's own writer from putting a
+ * stray key there is the allowlist test's job; this is what a reader does when it meets one anyway,
+ * and the two are separate concerns.
  */
 private fun serializeFailures(failures: List<ExtractionFailure>): String =
     objectMapper.writeValueAsString(
         failures.map { failure ->
             linkedMapOf<String, Any?>(
                 "code" to failure.code.name,
-                "detail" to failure.detail,
+                "stage" to failure.stage?.name,
+                "providerStatus" to failure.providerStatus,
+                "measureQuantity" to failure.measure?.quantity?.name,
+                "measureValue" to failure.measure?.value,
                 "at" to failure.at.toString(),
-                "invocation" to failure.invocation?.let {
-                    linkedMapOf("invocationIndex" to it.invocationIndex, "attempt" to it.attempt)
-                },
+                "invocationIndex" to failure.invocation?.invocationIndex,
+                "attempt" to failure.invocation?.attempt,
             )
         },
     )
 
 private fun deserializeFailures(serialized: String): List<ExtractionFailure> =
     jsonObjects(serialized, "failures").map { fields ->
+        val quantity = fields.jsonStrOrNull("measureQuantity")
+            ?.let { jsonEnum<ExtractionFailureQuantity>(it, "failures", "measureQuantity") }
+        val value = fields.jsonLongOrNull("failures", "measureValue")
+        require((quantity == null) == (value == null)) {
+            "an entry of the stored 'failures' holds half a measure: a quantity and a value are " +
+                "written together or not at all"
+        }
+
+        val invocationIndex = fields.jsonIntOrNull("failures", "invocationIndex")
+        val attempt = fields.jsonIntOrNull("failures", "attempt")
+        require((invocationIndex == null) == (attempt == null)) {
+            "an entry of the stored 'failures' holds half an invocation id: an index and an " +
+                "attempt are written together or not at all"
+        }
+
         ExtractionFailure(
             code = jsonEnum<ExtractionFailureCode>(fields.jsonStr("failures", "code"), "failures", "code"),
-            detail = fields.jsonStr("failures", "detail"),
+            stage = fields.jsonStrOrNull("stage")
+                ?.let { jsonEnum<ExtractionFailureStage>(it, "failures", "stage") },
+            providerStatus = fields.jsonIntOrNull("failures", "providerStatus"),
+            measure = quantity?.let { ExtractionFailureMeasure(it, value!!) },
             at = Instant.parse(fields.jsonStr("failures", "at")),
-            invocation = (fields["invocation"] as? Map<*, *>)?.let {
-                ExtractionInvocationId(
-                    invocationIndex = it.jsonInt("failures", "invocationIndex"),
-                    attempt = it.jsonInt("failures", "attempt"),
-                )
-            },
+            invocation = invocationIndex?.let { ExtractionInvocationId(it, attempt!!) },
         )
     }
 
@@ -599,14 +637,18 @@ private fun Map<*, *>.jsonStr(field: String, name: String): String =
 
 private fun Map<*, *>.jsonStrOrNull(name: String): String? = this[name]?.toString()
 
-private fun Map<*, *>.jsonInt(field: String, name: String): Int =
-    jsonIntOrNull(field, name) ?: throw IllegalArgumentException(
-        "an entry of the stored '$field' is missing its '$name'"
-    )
-
 private fun Map<*, *>.jsonIntOrNull(field: String, name: String): Int? = when (val value = this[name]) {
     null -> null
     is Number -> value.toInt()
+    else -> throw IllegalArgumentException(
+        "the '$name' of the stored '$field' is a ${value.javaClass.simpleName} where a number was expected"
+    )
+}
+
+/** Reads an optional whole number wide enough for a measure, which counts bytes and milliseconds. */
+private fun Map<*, *>.jsonLongOrNull(field: String, name: String): Long? = when (val value = this[name]) {
+    null -> null
+    is Number -> value.toLong()
     else -> throw IllegalArgumentException(
         "the '$name' of the stored '$field' is a ${value.javaClass.simpleName} where a number was expected"
     )
