@@ -1151,13 +1151,26 @@ and the consumer PRs that deliver it).
   constraint is not available to back this up: Drivine's schema vocabulary is node-scoped
   (`UniquenessConstraintSpec` takes a label), so there is nothing to declare in a `SchemaCatalog`.
   `ExtractionRunSchema` gains a `PRODUCED_BY_RUN_REL` constant.
-  **Now auto-configured, on the graph backend, inert without a run.** `dice-storage-autoconfigure`
-  registers `DrivineExtractionRunStore`, `DrivinePropositionRunLinkStore` and the run schema catalog
-  under the same `embabel.dice.store.type=graph` condition and the same `@ConditionalOnMissingBean`
-  posture as every store beside them; they used to be declared only by `dice-storage`'s own
-  `TestApplication`, so the suite exercised them and no host could get them without writing the beans
-  by hand. Registering them changes nothing on its own — both are unreachable until a caller names a
-  run on an `ExtractionRequest`, and lineage additionally has to be bound with `withRunLineage` — and
-  a host that declares its own keeps them. No released DICE ever wrote this relationship type. Every new
-  type carries `@ApiStatus.Experimental` and the shapes may still move while the remaining #67 slices
-  land.
+  **Auto-configured behind an off-by-default property.** `dice-storage-autoconfigure` registers
+  `DrivineExtractionRunStore`, `DrivinePropositionRunLinkStore` and the run schema catalog on two
+  conditions: `embabel.dice.store.type=graph`, and a new
+  `embabel.dice.extraction.runs.enabled=true`. The property defaults to false, so a host that
+  upgrades gets none of the three until it asks for them. They used to be declared only by
+  `dice-storage`'s own `TestApplication`, so the suite exercised them and no host could get them
+  without writing the beans by hand; a host that declares its own keeps them, under the same
+  `@ConditionalOnMissingBean` posture as every store beside them.
+
+  The property exists because of what registration writes. The schema catalog goes to Drivine's
+  schema manager, which ensures it on startup, so turning the flag on adds three uniqueness
+  constraints and five range indexes to the host's database. The constraints are
+  `ExtractionRun(contextId, runId)`,
+  `ExtractionRunInvocation(contextId, runId, invocationIndex, attempt)` and
+  `ExtractionRunTerminalWrite(contextId, runId)`. The indexes are `ExtractionRun(contextId)`,
+  `ExtractionRun(contextId, rootRunId)`, `ExtractionRun(contextId, parentRunId)`,
+  `ExtractionRun(contextId, startedAtEpochSecond)` and `ExtractionRunInvocation(contextId, runId)`.
+  The two stores stay unreachable until a caller names a run on an `ExtractionRequest`, and lineage
+  additionally has to be bound with `withRunLineage`. With the flag off the schema manager is handed
+  no run specs at all, and a test asserts that across every `SchemaCatalog` bean in the context. A
+  host constructing `InMemoryExtractionRunStore` for itself is untouched by the flag either way. No
+  released DICE ever wrote this relationship type. Every new type carries `@ApiStatus.Experimental`
+  and the shapes may still move while the remaining #67 slices land.
