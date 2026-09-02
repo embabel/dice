@@ -21,6 +21,7 @@ import com.embabel.dice.storage.LineageSchema
 import org.assertj.core.api.Assertions.assertThat
 import org.drivine.manager.GraphObjectManager
 import org.drivine.manager.PersistenceManager
+import org.springframework.transaction.PlatformTransactionManager
 import org.drivine.schema.SchemaCatalog
 import org.drivine.schema.SchemaItemSpec
 import org.junit.jupiter.api.Test
@@ -123,6 +124,10 @@ class DiceStorageSchemaRegistrationTest {
 
         @Bean
         open fun graphObjectManager(): GraphObjectManager = mock()
+
+        /** Store beans that manage their own transactions ask for one of these at wiring time. */
+        @Bean
+        open fun transactionManager(): PlatformTransactionManager = mock()
     }
 
     /** Every `DiceStorageSchema` singleton on this module's classpath. */

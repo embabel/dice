@@ -533,7 +533,7 @@ class DrivineObservedSchemaSourceIntegrationTest {
     /**
      * A proposition node carrying every property dice's own writer always writes, which is how the
      * observer recognises it as dice's own where a domain node shares the label. The list is
-     * [DiceOwnedSchema.NODE_SHAPES] for `Proposition`, read off `PropositionNode`'s required
+     * [DiceOwnedSchema.nodeShapes] for `Proposition`, read off `PropositionNode`'s required
      * constructor parameters.
      */
     private fun writeProposition(id: String, contextId: ContextId) {

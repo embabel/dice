@@ -31,6 +31,12 @@ import org.drivine.schema.SchemaItemSpec
  * Adding a store is therefore a two-file job in the slice that adds it: declare its schema object
  * beside the store, and register it where the application wires its stores. Nothing in the drift
  * machinery has to hear about it.
+ *
+ * Registering a bean of this type is a declaration with a consequence: every label and
+ * relationship type the schema names is storage bookkeeping, and the drift observation stops
+ * reporting it. That is the point for a store's own nodes and exactly wrong for domain data — a
+ * domain type belongs in the [DataDictionary], where governance can see it. A host
+ * that registers its own schema object takes on that trade knowingly.
  */
 interface DiceStorageSchema {
 
