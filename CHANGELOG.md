@@ -264,10 +264,12 @@ and the consumer PRs that deliver it).
   over 200 rounds with real threads and a start latch, and asserts both effects survive; the
   read-modify-write shape it replaced loses the addition on the first round.
 
-  **Compatibility: BREAKING.** Two source-level breaks, both deliberate, and both with a mechanical
-  migration.
+  **Compatibility: one deprecation and one source-level break**, both with a mechanical migration.
 
-  *`undoSingleCollapse`'s parameter list.* The four-argument form is gone. Migration:
+  *`undoSingleCollapse`'s parameter list.* The four-argument form stays, marked `@Deprecated`, with
+  the body it shipped with: it checks neither context ownership nor the audit records, so a caller
+  still on it keeps the behavior it had and gets a compiler warning naming the guarded form. It is
+  removed in the next minor release. Migration:
 
   ```kotlin
   // before
@@ -283,10 +285,10 @@ and the consumer PRs that deliver it).
 
   A caller with no `ContextId` to hand has to obtain one, which is the point: without it the call
   had no way to say whose collapse it was reversing. A caller with no `CollectorRecordStore` has to
-  wire one; passing null compiles and throws, so the gap surfaces immediately. The known consumer is
-  the assistant's `MemoryUnmergeService`, which already resolves the user's context and checks both
-  propositions against it before calling in — the migration hands the SPI work that service was
-  doing by hand, and its own checks can stay or go.
+  wire one; passing null compiles and throws, so the gap surfaces immediately. The known downstream
+  caller already resolves the user's context and checks both propositions against it before calling
+  in — the migration hands the SPI the work that service was doing by hand, and its own checks can
+  stay or go.
 
   *`PropositionStore.subtractProvenance`.* Removed along with its read-modify-write default. A store
   that declared `override fun subtractProvenance` stops compiling until it declares

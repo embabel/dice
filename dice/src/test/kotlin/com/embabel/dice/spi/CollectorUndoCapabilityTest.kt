@@ -1208,6 +1208,30 @@ class CollectorUndoCapabilityTest {
      * audit trail that fold would have left. Undo needs all three: the decision to know what moved,
      * the store to hold the result, and a live record to say the merge really happened.
      */
+    /**
+     * The four-argument form stays callable for one release: it restores the member and takes the
+     * folded refs back off the survivor on the trace's word alone, exactly as it shipped.
+     */
+    @Suppress("DEPRECATION")
+    @Test
+    fun `the deprecated four-argument undo still restores a member and subtracts its folded refs`() {
+        val store = InMemoryPropositionRepository()
+        val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
+        val other = ProvenanceEntry(locator = UriLocator("https://example.com/other"))
+        val survivor = store.save(proposition("survivor-legacy", listOf(revisionOne)))
+        val loser = store.save(proposition("loser-legacy", listOf(other)))
+
+        collapse(store, trace, records, "run-legacy-undo", survivor, loser)
+        assertEquals(listOf(revisionOne, other), store.findById(survivor.id)?.provenanceEntries)
+
+        val result = undoSingleCollapse(trace, store, survivor.id, loser.id)
+
+        assertEquals(listOf(revisionOne), result?.survivor?.provenanceEntries)
+        assertEquals(listOf(revisionOne), store.findById(survivor.id)?.provenanceEntries)
+        assertEquals(PropositionStatus.ACTIVE, store.findById(loser.id)?.status)
+    }
+
     private fun collapse(
         store: InMemoryPropositionRepository,
         trace: InMemoryCollectorTraceStore,
