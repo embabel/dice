@@ -328,9 +328,10 @@ and the consumer PRs that deliver it).
   `ConnectorRef` escapes its own connector id when it renders a key: `gmail:eu-west` and `gmail`
   stay distinguishable, and a region-qualified connector id round-trips through `key()` unharmed.
   The same 400 also covers a source key or a source revision longer than the `SourceIdentityBounds`
-  ceilings (2048 and 1024). Both are measured while the request is being read, and the response body
-  names the limit that was broken along with the length that broke it, so an over-long value is
-  answered at the edge where a caller can act on it.
+  ceilings (2048 and 1024), both measured while the request is being read, so an over-long value is
+  answered at the edge where a caller can act on it. Every one of these refusals now returns a body
+  saying why, a new `ExtractErrorResponse`; the compatibility note below states what that changes for
+  a caller.
   A revisioned request also derives each chunk's id from the source key, the revision, the
   chunk's ordinal, and its text, so re-posting the same revision lands on the same grounding rows
   instead of accumulating a fresh set per replay, while a different revision of the same source stays
@@ -365,12 +366,28 @@ and the consumer PRs that deliver it).
   rather than swapped in. `SourceRevisionBinaryCompatibilityTest` runs the pinned legacy client and
   asserts exactly that split — both concrete constructors link, both `copy` descriptors raise
   `NoSuchMethodError` — with a negative control that removes the approved constructor and checks the
-  same call site then fails. Four behavioural notes for hosts. **`POST /extract` answers with
+  same call site then fails. Five behavioural notes for hosts. **`POST /extract` answers with
   canonical stored ids.** This is a behavioural fix to the response content: the propositions the
   response names are the ones the store ended up with, so a merged or deduplicated extraction reports
   the canonical row's id where it used to report a pre-save extraction id that no read could resolve.
   The wire shape is unchanged — same fields, same types, same arity — and an extraction that creates
-  fresh propositions answers exactly as it did. The `/why` response gains a
+  fresh propositions answers exactly as it did.
+  **The 400 responses of the extraction endpoints now carry a body.** `POST /extract` and
+  `POST /extract/file` are endpoints that existed before this slice, and every 400 either of them
+  returned had an empty body: a caller got the status code and no explanation with it. Every
+  rejection raised by the new source-provenance validation now answers 400 with
+  `application/json` holding a single string field — `{"error": "sourceRevision requires
+  sourceLocator"}`, the new `ExtractErrorResponse`. That covers all six of those refusals on both
+  endpoints: a revision with no locator, an unknown locator `kind`, a `connectorId` on a
+  `uri`/`file`/`content` locator, a `connector` locator missing its `connectorId`, a blank locator
+  `value`, and a source key or revision over the `SourceIdentityBounds` ceilings. The text is the
+  wording of the check that refused, so a length rejection names the limit it broke and the length
+  that broke it. Two older refusals keep the empty body they always had: blank `text` on
+  `POST /extract`, and unparseable `sourceLocator` JSON on `POST /extract/file`. Who this affects:
+  any client that reads the 400 responses of these two endpoints. A client that expected an empty
+  body now receives JSON, and a client that deserializes 400 bodies has to accept the `error` field.
+  A client that reads only the status code is unaffected, and no 2xx response shape moves.
+  The `/why` response gains a
   `provenance` field, so a consumer that rejects unknown JSON properties needs to allow it; existing
   fields are unchanged, and the post-Wave-A shape is the baseline any later byte-for-byte `/why`
   promise re-bases onto. A revisioned REST request produces different chunk ids from the same request

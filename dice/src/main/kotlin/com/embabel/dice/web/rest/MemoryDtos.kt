@@ -23,6 +23,7 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.revision.RevisionResult
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.fasterxml.jackson.annotation.JsonInclude
+import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
 
 // ============================================================================
@@ -60,6 +61,7 @@ data class ExtractRequest @JvmOverloads constructor(
  * @param connectorId the connecting system's id, for `connector` locators only
  * @param display an optional human-readable label
  */
+@ApiStatus.Experimental
 data class SourceLocatorInputDto(
     val kind: String,
     val value: String,
@@ -153,6 +155,7 @@ data class ExtractResponse(
  *   A length rejection names the [com.embabel.dice.provenance.SourceIdentityBounds] limit it broke
  *   and the length that broke it, so a caller can see what to stay under.
  */
+@ApiStatus.Experimental
 data class ExtractErrorResponse(
     val error: String,
 )

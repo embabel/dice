@@ -46,6 +46,7 @@ import com.fasterxml.jackson.core.JsonProcessingException
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.http.MediaType
@@ -562,4 +563,5 @@ private const val DEFAULT_REJECTION_REASON = "invalid source provenance"
  * back in the 400 body, so a caller reading a length rejection sees which ceiling it broke and by
  * how much.
  */
+@ApiStatus.Experimental
 class InvalidSourceProvenanceException(message: String) : RuntimeException(message)
