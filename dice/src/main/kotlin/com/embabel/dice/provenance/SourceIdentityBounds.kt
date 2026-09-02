@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.provenance
 
+import org.jetbrains.annotations.ApiStatus
+
 /**
  * Length ceilings for the two strings that arrive from outside DICE and end up inside stored
  * identity: the canonical source key from [SourceLocator.key], and a provider-defined source
@@ -30,6 +32,7 @@ package com.embabel.dice.provenance
  * stop a runaway or hostile value, and they are stated as constants so a caller can check its own
  * input against the same number DICE will.
  */
+@ApiStatus.Experimental
 object SourceIdentityBounds {
 
     /**

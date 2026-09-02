@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.provenance
 
+import org.jetbrains.annotations.ApiStatus
+
 /**
  * Identifies an opaque revision of a source.
  *
@@ -24,6 +26,7 @@ package com.embabel.dice.provenance
  * @property sourceKey Canonical source identity produced by [SourceLocator.key]
  * @property sourceRevision Provider-defined opaque revision value
  */
+@ApiStatus.Experimental
 data class SourceRevisionRef(
     val sourceKey: String,
     val sourceRevision: String,

@@ -18,6 +18,7 @@ package com.embabel.dice.proposition
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.provenance.SourceLocator
 import com.embabel.dice.provenance.SourceRevisionRef
+import org.jetbrains.annotations.ApiStatus
 
 /**
  * Opt-in capability for asking which propositions were read from a source, and from which revision
@@ -48,6 +49,7 @@ import com.embabel.dice.provenance.SourceRevisionRef
  * A store whose reads already carry every provenance entry can pick up all three String variants
  * from [ProvenanceScanningSourceRevisionQueries].
  */
+@ApiStatus.Experimental
 interface SourceRevisionQueryCapable {
 
     /**
@@ -115,6 +117,7 @@ interface SourceRevisionQueryCapable {
  * proposition itself, so scanning them is exact. A backend with a lean context read implements
  * [SourceRevisionQueryCapable] directly and pushes each predicate into its own query language.
  */
+@ApiStatus.Experimental
 interface ProvenanceScanningSourceRevisionQueries : SourceRevisionQueryCapable, PropositionStore {
 
     override fun findBySourceKey(contextIdValue: String, sourceKey: String): List<Proposition> =
