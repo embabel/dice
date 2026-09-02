@@ -576,8 +576,8 @@ and the consumer PRs that deliver it).
   module's `SchemaCatalog` bean supplies, and a `PersistenceManager` on the context; a
   `PropositionStore` brings the sweep with it, and its absence leaves the rest of the loop working.
 
-- An operator surface for schema governance. Until now the loop produced two kinds of inspectable
-  state — drift reports and quarantined propositions — and offered no way to reach either outside a
+- An operator surface for schema governance. **EXPERIMENTAL** (shape may change before 1.0) — opt-in: wired when `DeclaredSchemaSource` is present and the application is a servlet web app.
+  Until now the loop produced two kinds of inspectable state — drift reports and quarantined propositions — and offered no way to reach either outside a
   debugger. `GovernanceOperationsService` in `dice` is the one way in: `latestReports` and
   `reportsInContext` read the drift log, `currentDeclaredVersion` reports the declaration in force
   along with whether it has been stamped and which version the last completed sweep reconciled

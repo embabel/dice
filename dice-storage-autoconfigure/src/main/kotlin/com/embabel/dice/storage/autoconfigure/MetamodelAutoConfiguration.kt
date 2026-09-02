@@ -37,6 +37,8 @@ import com.embabel.dice.spi.MentionTypeDriftQuarantinePolicy
 import com.embabel.dice.spi.PropositionStoreDriftSweep
 import com.embabel.dice.storage.DrivineDriftReportStore
 import com.embabel.dice.storage.DrivineMetamodelVersionStore
+import com.embabel.dice.storage.DiceOwnedSchema
+import com.embabel.dice.storage.DiceStorageSchema
 import com.embabel.dice.storage.DrivineObservedSchemaSource
 import com.embabel.dice.storage.MetamodelSchema
 import org.drivine.manager.PersistenceManager
@@ -147,6 +149,15 @@ class MetamodelAutoConfiguration {
     fun metamodelSchema(): SchemaCatalog = SchemaCatalog.of(MetamodelSchema.specs())
 
     /**
+     * The metamodel store schema, registered so ownership derivation sees it: the drift
+     * observation excludes what the registered [DiceStorageSchema] beans declare, and without
+     * this bean governance would observe its own report bookkeeping as drift.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    fun metamodelStorageSchema(): DiceStorageSchema = MetamodelSchema
+
+    /**
      * The version store, returned as a [SweptBaselineStore] on purpose.
      *
      * Both shipped stores track the reconciled baseline, and a host needs that capability by name:
@@ -171,12 +182,22 @@ class MetamodelAutoConfiguration {
         return DrivineDriftReportStore(persistenceManager)
     }
 
+    /** What dice owns in this application, derived from the registered storage schemas. */
+    @Bean
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnMissingBean(DiceOwnedSchema::class)
+    fun diceOwnedSchema(schemas: List<DiceStorageSchema>): DiceOwnedSchema =
+        DiceOwnedSchema.of(schemas)
+
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
     @ConditionalOnMissingBean(ObservedSchemaSource::class)
-    fun drivineObservedSchemaSource(persistenceManager: PersistenceManager): ObservedSchemaSource {
+    fun drivineObservedSchemaSource(
+        persistenceManager: PersistenceManager,
+        ownedSchema: DiceOwnedSchema,
+    ): ObservedSchemaSource {
         logger.debug("Wiring graph ObservedSchemaSource: DrivineObservedSchemaSource")
-        return DrivineObservedSchemaSource(persistenceManager)
+        return DrivineObservedSchemaSource(persistenceManager, ownedSchema)
     }
 
     // ---- In-memory backend (default) ----
