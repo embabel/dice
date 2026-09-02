@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.storage
 
+import org.drivine.schema.RangeIndexSpec
 import org.drivine.schema.SchemaItemSpec
 import org.drivine.schema.UniquenessConstraintSpec
 
@@ -24,17 +25,17 @@ import org.drivine.schema.UniquenessConstraintSpec
  *
  * Three things read this and have to agree. [DrivineProjectionRecordStore] and
  * [DrivineCollectorRecordStore] build their MERGE patterns from [mergePattern], so a record is
- * always upserted on the key named here. A host, and the integration-test harness, declares [specs]
- * so those MERGEs are race-free: a MERGE on an unconstrained key lets concurrent writers all miss
- * the match, all create, and fill the lineage table with duplicates. [DiceOwnedSchema] reads the
- * same keys to work out which `(:ProjectionRecord)` and `(:CollectorRecord)` nodes in a graph are
- * dice's own.
+ * always upserted on the key named here. A host, and the integration-test harness, registers this
+ * object as a [DiceStorageSchema] bean, which is what makes those MERGEs race-free: a MERGE on an
+ * unconstrained key lets concurrent writers all miss the match, all create, and fill the lineage
+ * table with duplicates. The same registration tells [DiceOwnedSchema] which
+ * `(:ProjectionRecord)` and `(:CollectorRecord)` nodes in a graph are dice's own.
  *
  * Keeping all three off one map is what stops them drifting apart. A key that appears in a store's
  * Cypher and nowhere else can lose its constraint, or stop matching the shape an observation
  * recognises, with nothing failing to say so.
  */
-object LineageSchema {
+object LineageSchema : DiceStorageSchema {
 
     /** One node per projection outcome. */
     const val PROJECTION_RECORD: String = "ProjectionRecord"
@@ -58,10 +59,21 @@ object LineageSchema {
     /** Every node label the lineage stores write, for test cleanup and for drift exclusion. */
     val LABELS: List<String> = NATURAL_KEYS.keys.toList()
 
-    /** A uniqueness constraint per natural key, which is what makes the stores' MERGEs race-free. */
-    fun specs(): List<SchemaItemSpec> = NATURAL_KEYS.map { (label, key) ->
+    /**
+     * A uniqueness constraint per natural key, which is what makes the stores' MERGEs race-free,
+     * plus the range indexes the lineage reads look records up by.
+     *
+     * The lookup indexes live here alongside the constraints so one registration covers everything
+     * these stores need. A host that ensures the constraints while missing the indexes gets correct
+     * answers off full scans, which is the kind of gap a hand-copied schema list produces.
+     */
+    override fun specs(): List<SchemaItemSpec> = NATURAL_KEYS.map { (label, key) ->
         UniquenessConstraintSpec(label = label, properties = key)
-    }
+    } + listOf(
+        RangeIndexSpec(PROJECTION_RECORD, "propositionId"),
+        RangeIndexSpec(PROJECTION_RECORD, "lifecycle"),
+        RangeIndexSpec(COLLECTOR_RECORD, "propositionId"),
+    )
 
     /**
      * The `(alias:Label {property: $property, ...})` pattern a store MERGEs on.

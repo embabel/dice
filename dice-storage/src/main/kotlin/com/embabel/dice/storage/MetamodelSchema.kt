@@ -21,13 +21,12 @@ import org.drivine.schema.UniquenessConstraintSpec
 /**
  * The constraints and node labels the metamodel governance stores need, as plain data.
  *
- * Two things depend on this list and have to agree. A host, and the integration-test harness,
- * declares [specs] so the stores' MERGEs are race-free; [LABELS] is what
- * [DrivineObservedSchemaSource] subtracts from an observation, which keeps governance from reporting
- * its own bookkeeping as domain drift. Keeping both here makes adding a governance node label a
- * single edit in one module.
+ * A host, and the integration-test harness, registers this object as a [DiceStorageSchema] bean.
+ * That one registration makes the stores' MERGEs race-free, because Drivine ensures [specs] from it,
+ * and tells [DiceOwnedSchema] these labels are dice's own, which keeps governance from reporting its
+ * own bookkeeping as domain drift.
  */
-object MetamodelSchema {
+object MetamodelSchema : DiceStorageSchema {
 
     /**
      * Every MERGE these stores perform needs its key to be unique, because a MERGE is race-free
@@ -38,7 +37,7 @@ object MetamodelSchema {
      * a position impossible to store, so a lost counter update fails with a constraint violation the
      * caller can retry.
      */
-    fun specs(): List<SchemaItemSpec> = listOf(
+    override fun specs(): List<SchemaItemSpec> = listOf(
         // Version stamps -- see DrivineMetamodelVersionStore.
         UniquenessConstraintSpec(label = "MetamodelVersion", properties = listOf("schemaName", "contentHash")),
         UniquenessConstraintSpec(label = "MetamodelSchemaCounter", property = "schemaName"),

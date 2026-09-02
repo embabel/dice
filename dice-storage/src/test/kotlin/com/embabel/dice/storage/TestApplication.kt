@@ -24,6 +24,7 @@ import org.drivine.manager.GraphObjectManagerFactory
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.PersistenceManagerFactory
 import org.drivine.schema.SchemaCatalog
+import org.drivine.schema.SchemaItemSpec
 import org.drivine.schema.SimilarityFunction
 import org.drivine.schema.UniquenessConstraintSpec
 import org.drivine.schema.VectorIndexSpec
@@ -133,7 +134,7 @@ open class TestApplication {
      * same list. A host wires it the same way.
      */
     @Bean
-    open fun lineageSchema(): SchemaCatalog = SchemaCatalog.of(LineageSchema.specs())
+    open fun lineageSchema(): DiceStorageSchema = LineageSchema
 
     @Bean
     open fun projectionRecordStore(
@@ -146,7 +147,7 @@ open class TestApplication {
     ): DrivineCollectorRecordStore = DrivineCollectorRecordStore(persistenceManager)
 
     @Bean
-    open fun collectorTraceSchema(): SchemaCatalog = SchemaCatalog.of(CollectorTraceSchema.specs())
+    open fun collectorTraceSchema(): DiceStorageSchema = CollectorTraceSchema
 
     @Bean
     open fun collectorTraceStore(
@@ -169,11 +170,35 @@ open class TestApplication {
      * The two `sequence` constraints back the ordering. They make two records of one schema sharing
      * a position impossible to store, so a lost counter update fails with a constraint violation the
      * caller can retry. `DrivineMetamodelVersionStoreIntegrationTest` and
-     * `DrivineDriftReportStoreIntegrationTest` pin them. The list lives in [MetamodelSchema], which
-     * keeps the constraints and the label list the observed-schema source excludes in one place.
+     * `DrivineDriftReportStoreIntegrationTest` pin them. The list lives in [MetamodelSchema], and
+     * registering it here is also what tells the observed-schema source these labels are dice's own.
      */
     @Bean
-    open fun metamodelSchema(): SchemaCatalog = SchemaCatalog.of(MetamodelSchema.specs())
+    open fun metamodelSchema(): DiceStorageSchema = MetamodelSchema
+
+    /**
+     * A store this harness declares and never writes to, standing in for a dice store some other
+     * slice adds. It reaches the drift exclusion purely by being registered below, with no edit to
+     * [DiceOwnedSchema] or [DrivineObservedSchemaSource] — which is the property the union of two
+     * branches broke when the exclusion was a hand-written list of schema objects.
+     */
+    @Bean
+    open fun probeStoreSchema(): DiceStorageSchema = ProbeStoreSchema
+
+    /**
+     * Every dice storage schema this context registered, gathered into the one catalog Drivine
+     * ensures on startup. The same bean list builds [diceOwnedSchema], which is the property the
+     * whole design rests on: a store's constraints and its drift exclusion cannot come apart,
+     * because one registration produces both.
+     */
+    @Bean
+    open fun diceStorageSchemaCatalog(schemas: List<DiceStorageSchema>): SchemaCatalog =
+        diceStorageCatalog(schemas)
+
+    /** What dice owns in this context, derived from the same registrations. */
+    @Bean
+    open fun diceOwnedSchema(schemas: List<DiceStorageSchema>): DiceOwnedSchema =
+        DiceOwnedSchema.of(schemas)
 
     @Bean
     open fun metamodelClock(): PinnableClock = PinnableClock()
@@ -197,5 +222,26 @@ open class TestApplication {
     @Bean
     open fun observedSchemaSource(
         persistenceManager: PersistenceManager,
-    ): DrivineObservedSchemaSource = DrivineObservedSchemaSource(persistenceManager)
+        ownedSchema: DiceOwnedSchema,
+    ): DrivineObservedSchemaSource = DrivineObservedSchemaSource(persistenceManager, ownedSchema)
+}
+
+/**
+ * A test-only dice store schema, standing in for one a later slice adds.
+ *
+ * Nothing writes `(:ProbeRecord)` nodes in ordinary running, so the label exists in the database
+ * through this constraint alone — which is exactly the state that used to be reported as permanent
+ * whole-graph drift. `DrivineObservedSchemaSourceIntegrationTest` covers both halves: the label with
+ * no nodes is no observation at all, and once a node wears it, ownership derived from this
+ * registration keeps it out of drift.
+ */
+object ProbeStoreSchema : DiceStorageSchema {
+
+    const val PROBE_RECORD: String = "ProbeRecord"
+
+    override val bookkeepingRelationshipTypes: Set<String> = setOf("PROBED_BY")
+
+    override fun specs(): List<SchemaItemSpec> = listOf(
+        UniquenessConstraintSpec(label = PROBE_RECORD, property = "probeId"),
+    )
 }

@@ -20,11 +20,11 @@ import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.metamodel.DeclaredSchema
 import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.metamodel.DriftCheckRunner
-import com.embabel.dice.metamodel.DriftSweepCapable
+import com.embabel.dice.spi.DriftSweepCapable
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.support.DefaultDriftCheckRunner
-import com.embabel.dice.metamodel.support.MentionTypeDriftQuarantinePolicy
-import com.embabel.dice.metamodel.support.PropositionStoreDriftSweep
+import com.embabel.dice.spi.MentionTypeDriftQuarantinePolicy
+import com.embabel.dice.spi.PropositionStoreDriftSweep
 import com.embabel.dice.metamodel.support.StructuralMetamodelDiffer
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
@@ -186,7 +186,7 @@ class DrivineDriftCheckIntegrationTest {
         //    quarantine reason.
         val reloaded = repository.findById(stranded.id)
         assertNotNull(reloaded)
-        assertEquals(PropositionStatus.STALE, reloaded!!.status)
+        assertEquals(PropositionStatus.QUARANTINED, reloaded!!.status)
         val reason = reloaded.metadata[DiceMetadataKeys.QUARANTINE_REASON] as? String
         assertNotNull(reason, "quarantine must say why; metadata was ${reloaded.metadata}")
         assertTrue(reason!!.contains("Ghost"), "the reason must name the drifted type, but was: $reason")
@@ -314,7 +314,7 @@ class DrivineDriftCheckIntegrationTest {
         val swept = sweep.sweep(result.quarantineDiff, policy, contextId)
 
         assertEquals(listOf(stranded.id), swept.quarantined.map { it.proposition.id })
-        assertEquals(PropositionStatus.STALE, repository.findById(stranded.id)!!.status)
+        assertEquals(PropositionStatus.QUARANTINED, repository.findById(stranded.id)!!.status)
     }
 
     @Test
@@ -359,7 +359,7 @@ class DrivineDriftCheckIntegrationTest {
         assertEquals(setOf("Agent"), result.report.driftedEntityTypes)
         val swept = sweep.sweep(result.quarantineDiff, policy, contextId)
         assertEquals(listOf(stranded.id), swept.quarantined.map { it.proposition.id })
-        assertEquals(PropositionStatus.STALE, repository.findById(stranded.id)!!.status)
+        assertEquals(PropositionStatus.QUARANTINED, repository.findById(stranded.id)!!.status)
     }
 
     /** A projected entity node carrying a governed `Person`'s whole label hierarchy. */

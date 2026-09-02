@@ -33,7 +33,9 @@ import com.embabel.dice.spi.ConnectedComponentsFinder
 import com.embabel.dice.spi.InMemoryCollectorTraceStore
 import com.embabel.dice.spi.InMemoryConnectedComponentsFinder
 import com.embabel.dice.storage.CollectorTraceSchema
+import com.embabel.dice.storage.DiceStorageSchema
 import com.embabel.dice.storage.DrivineCollectorTraceStore
+import com.embabel.dice.storage.diceStorageCatalog
 import org.drivine.manager.PersistenceManager
 import org.drivine.schema.SchemaCatalog
 import org.slf4j.LoggerFactory
@@ -101,9 +103,18 @@ class CollectorAutoConfiguration(
         return InMemoryCollectorTraceStore()
     }
 
+    /**
+     * The trace store's schema, registered as a [DiceStorageSchema] so one bean answers both
+     * questions about it: Drivine ensures its constraints and indexes, and dice's drift observation
+     * reads the same object to recognise the trace store's nodes and edges as its own.
+     */
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
-    fun collectorTraceSchema(): SchemaCatalog = SchemaCatalog.of(*CollectorTraceSchema.specs().toTypedArray())
+    fun collectorTraceStorageSchema(): DiceStorageSchema = CollectorTraceSchema
+
+    @Bean
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    fun collectorTraceSchema(): SchemaCatalog = diceStorageCatalog(listOf(CollectorTraceSchema))
 
     // ---- Built-in pair source ----
 

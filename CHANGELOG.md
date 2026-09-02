@@ -445,6 +445,59 @@ and the consumer PRs that deliver it).
   check's answer is unchanged. Hosts declaring the lineage constraints by hand can swap in
   `LineageSchema.specs()`.
 
+- The bookkeeping exclusion in the Drivine drift slice above is now derived from the storage
+  schemas an application registers, and a whole-graph observation counts only labels that carry at
+  least one node. **EXPERIMENTAL** (shape may change before 1.0): the whole exclusion surface —
+  `DiceStorageSchema`, `diceStorageCatalog`, and `DiceOwnedSchema`'s instance form — is opt-in
+  governance wiring that only a host running drift checks touches.
+  The exclusion used to come off a hand-enumerated list of three schema objects named in
+  `DiceOwnedSchema`, with a KDoc claiming a new node fragment was the one case needing a line. That
+  claim held for the three objects named and failed for the fourth object anyone added: a dice store
+  arriving in another slice got its labels reported as domain drift on every unscoped check, forever,
+  and both guard tests were built from the same list, so neither could see it. `DiceStorageSchema` is
+  the contract each store's schema object now implements (`MetamodelSchema`, `CollectorTraceSchema`,
+  `LineageSchema`), carrying its specs and the relationship types it writes for itself.
+  `DiceOwnedSchema.of(registered)` reads the beans an application registered, and
+  `DrivineObservedSchemaSource` takes the result as a required constructor argument, so a store
+  landing in a later slice takes part by being registered and needs no edit to the drift machinery.
+  `diceStorageCatalog` builds the Drivine catalog off that same bean list, which is what keeps a
+  store's constraints and its exclusion from coming apart: one registration produces both.
+  The KDoc now states the invariant the design can keep — the exclusion covers every schema the
+  application registered, and a store whose schema is registered nowhere stays visible to
+  observation, which is the right answer for nodes the application never declared. The four
+  `@NodeFragment` classes of the core proposition store, and their `HAS_MENTION`/`DERIVED_FROM`
+  edges, are owned unconditionally, since the observation reads propositions and mentions through
+  their shapes to answer at all. `INFRASTRUCTURE_LABELS` stays an enumerated list, because a
+  library's own bookkeeping has no dice schema to derive from.
+  Second, the label side of a whole-graph observation now keeps only labels some node wears.
+  `db.labels()` is a catalogue of label *tokens*, and on the `neo4j:2026.05` image these run against
+  a uniqueness constraint mints its label there on an empty graph, probed directly. So a host
+  declaring constraints for a type it has not populated reported that type as drift on its first
+  check after first boot, having stored nothing. Constraint DDL is schema machinery an application
+  declared; an observation reports what data the graph holds. The check is one label lookup per
+  label, each stopping at the first node it finds.
+  Third, both blind guards are replaced by `DiceStorageSchemaRegistrationTest`, in `dice-storage` and
+  again in `dice-storage-autoconfigure`. It compares two independent things — every
+  `DiceStorageSchema` singleton a classpath scan finds, and the beans the running Spring context
+  registered — so a schema object that exists and is wired nowhere fails the build in the slice that
+  adds it, and a hand-written `SchemaCatalog.of(SomeSchema.specs())` that ensures a dice store's DDL
+  while leaving it out of the exclusion fails too. A matching scan holds
+  `DiceOwnedSchema.CORE_NODE_FRAGMENTS` to every `@NodeFragment` in the storage model package. Four
+  integration cases discriminate the two rules apart: a registered store's constraint-only label is
+  not observed, its own nodes are excluded once they exist, a label no registered schema declares
+  still drifts once nodes wear it, and a constraint-minted label nothing wears is not observed even
+  though dice owns none of it.
+  **Compatibility: behavioral.** `DrivineObservedSchemaSource` gains a required second constructor
+  parameter; the top-level `DICE_BOOKKEEPING_RELATIONSHIP_TYPES` is gone, folded into
+  `DiceOwnedSchema.bookkeepingRelationshipTypes`, and `DiceOwnedSchema` is a class with `of` where it
+  was an object with `NODE_SHAPES`/`LABELS`. All three arrived in this same Unreleased block, so no
+  published build carries them. A host wiring the observer registers its dice storage schemas as
+  `DiceStorageSchema` beans and passes `DiceOwnedSchema.of(schemas)`; `TestApplication` shows the
+  shape. A whole-graph check reports less than it did in one specific way — labels no node wears
+  stop appearing — and reports no less about data the graph actually holds. `LineageSchema.specs()`
+  gained the three lineage range indexes `DiceStorageAutoConfiguration` used to declare separately,
+  so the DDL a graph-backed host ensures is unchanged and the two lists can no longer disagree.
+
 - `dice-storage-autoconfigure` now depends on `spring-boot-transaction`. On Spring Boot 4, a
   `PlatformTransactionManager` bean alone does not activate `@Transactional`: the interceptor that
   reads the annotation lives in that separate module, which was missing here. Every `@Transactional`

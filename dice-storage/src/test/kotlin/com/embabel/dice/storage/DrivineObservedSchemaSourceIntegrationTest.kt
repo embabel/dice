@@ -74,6 +74,10 @@ class DrivineObservedSchemaSourceIntegrationTest {
     @Autowired
     private lateinit var chunkHistoryStore: DrivineChunkHistoryStore
 
+    /** What dice owns in this context, derived from the schemas [TestApplication] registered. */
+    @Autowired
+    private lateinit var ownedSchema: DiceOwnedSchema
+
     private val tenantA = ContextId("tenant-a")
     private val tenantB = ContextId("tenant-b")
 
@@ -235,8 +239,8 @@ class DrivineObservedSchemaSourceIntegrationTest {
         val observed = source.observe()
 
         assertTrue(
-            observed.entityTypeNames.none { it in DiceOwnedSchema.LABELS },
-            "bookkeeping leaked into the observation: ${observed.entityTypeNames intersect DiceOwnedSchema.LABELS}",
+            observed.entityTypeNames.none { it in ownedSchema.labels },
+            "bookkeeping leaked into the observation: ${observed.entityTypeNames intersect ownedSchema.labels}",
         )
     }
 
@@ -292,9 +296,9 @@ class DrivineObservedSchemaSourceIntegrationTest {
         val observed = source.observe()
 
         assertTrue(
-            observed.relationshipTypeNames.none { it in DICE_BOOKKEEPING_RELATIONSHIP_TYPES },
+            observed.relationshipTypeNames.none { it in ownedSchema.bookkeepingRelationshipTypes },
             "bookkeeping edges leaked: " +
-                "${observed.relationshipTypeNames intersect DICE_BOOKKEEPING_RELATIONSHIP_TYPES}",
+                "${observed.relationshipTypeNames intersect ownedSchema.bookkeepingRelationshipTypes}",
         )
     }
 
@@ -439,17 +443,89 @@ class DrivineObservedSchemaSourceIntegrationTest {
         )
     }
 
+    // ---- Ownership follows what the application registered ----
+
     @Test
-    fun `every label a dice store declares has an ownership shape`() {
-        // The shapes are derived from these same schema objects, so this is a pin on the derivation
-        // reaching all of them: a label declared by a store and missing here would stop being
-        // excluded.
-        (CollectorTraceSchema.LABELS + MetamodelSchema.LABELS + LineageSchema.LABELS).forEach { label ->
-            assertTrue(
-                DiceOwnedSchema.NODE_SHAPES.containsKey(label),
-                "'$label' is written by a dice store and carries no ownership shape",
-            )
-        }
+    fun `a registered store's label with no nodes is not observed`() {
+        // The union-branch case exactly: a dice store declared at startup whose records nothing has
+        // written yet. Its constraint mints the label in `db.labels()` on an empty graph, and the
+        // old observation reported all such labels as domain drift on the host's very first check.
+        assertTrue(
+            rawLabels().contains(ProbeStoreSchema.PROBE_RECORD),
+            "precondition: the constraint alone must put the label in the catalogue, but was ${rawLabels()}",
+        )
+        assertEquals(0L, nodeCount(ProbeStoreSchema.PROBE_RECORD), "precondition: no probe node exists")
+
+        val observed = source.observe()
+
+        assertFalse(
+            observed.entityTypeNames.contains(ProbeStoreSchema.PROBE_RECORD),
+            "a registered store's empty label was reported as drift; got ${observed.entityTypeNames}",
+        )
+    }
+
+    @Test
+    fun `a registered store's own nodes are excluded from drift`() {
+        // The half a node-bearing rule alone cannot carry: once real records exist, only ownership
+        // keeps them out. `ProbeStoreSchema` is declared in the test wiring and named nowhere in
+        // `DiceOwnedSchema`, so passing this proves the exclusion is derived from the registration.
+        persistenceManager.execute(
+            QuerySpecification.withStatement("CREATE (:ProbeRecord {probeId: 'probe-1'})"),
+        )
+        assertEquals(1L, nodeCount(ProbeStoreSchema.PROBE_RECORD), "precondition: a probe node exists")
+
+        val observed = source.observe()
+
+        assertFalse(
+            observed.entityTypeNames.contains(ProbeStoreSchema.PROBE_RECORD),
+            "a registered store's own nodes were reported as domain drift; got ${observed.entityTypeNames}",
+        )
+    }
+
+    @Test
+    fun `an unregistered label carrying nodes is still drift`() {
+        // The acceptance boundary. Deriving ownership from registrations must widen nothing: a label
+        // no registered schema declares is domain data, and its nodes are exactly what a drift check
+        // exists to report.
+        persistenceManager.execute(
+            QuerySpecification.withStatement("CREATE (:UnregisteredRecord {recordId: 'r-1'})"),
+        )
+
+        val observed = source.observe()
+
+        assertTrue(
+            observed.entityTypeNames.contains("UnregisteredRecord"),
+            "a label dice owns nothing of stopped being drift; got ${observed.entityTypeNames}",
+        )
+    }
+
+    @Test
+    fun `a label a constraint minted and no node wears is not observed`() {
+        // The node-bearing rule on its own, held apart from ownership: this label belongs to no dice
+        // store, so nothing subtracts it. `db.labels()` reports it because a constraint names it,
+        // and constraint DDL is schema machinery an application declared. An observation reports
+        // what data the graph holds, and there is no data here.
+        persistenceManager.execute(
+            QuerySpecification.withStatement(
+                "CREATE CONSTRAINT constraint_only_probe IF NOT EXISTS " +
+                    "FOR (n:ConstraintOnlyDomainLabel) REQUIRE n.id IS UNIQUE",
+            ),
+        )
+        assertTrue(
+            rawLabels().contains("ConstraintOnlyDomainLabel"),
+            "precondition: the constraint alone must put the label in the catalogue, but was ${rawLabels()}",
+        )
+
+        val observed = source.observe()
+
+        assertFalse(
+            observed.entityTypeNames.contains("ConstraintOnlyDomainLabel"),
+            "a label no node wears was reported as drift; got ${observed.entityTypeNames}",
+        )
+
+        persistenceManager.execute(
+            QuerySpecification.withStatement("DROP CONSTRAINT constraint_only_probe IF EXISTS"),
+        )
     }
 
     // ---- helpers ----
@@ -544,6 +620,11 @@ class DrivineObservedSchemaSourceIntegrationTest {
         .query(QuerySpecification.withStatement(statement).transform(String::class.java))
         .filterNotNull()
         .toSet()
+
+    /** How many nodes wear a label, straight from the database. */
+    private fun nodeCount(label: String): Long = persistenceManager.maybeGetOne(
+        QuerySpecification.withStatement("MATCH (n:$label) RETURN count(n) AS c").transform(Long::class.java),
+    ) ?: 0L
 
     private fun governanceNodeCount(): Int = MetamodelSchema.LABELS.count { label ->
         (

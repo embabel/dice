@@ -23,29 +23,34 @@ import org.junit.jupiter.api.assertThrows
 
 /**
  * Unit tests for [DiceOwnedSchema]: no database, just the shapes it reads out of the storage
- * definitions.
+ * definitions it was given.
  *
  * These pin the derivation itself. `DrivineObservedSchemaSourceIntegrationTest` pins the thing that
  * matters downstream — nodes dice really wrote stay out of an observation, and domain nodes sharing
  * a label stay in it — which is what would catch a shape that drifted away from the writers.
+ * `DiceStorageSchemaRegistrationTest` pins that every dice store on the classpath is in the list an
+ * application passes to [DiceOwnedSchema.of].
  */
 class DiceOwnedSchemaTest {
+
+    /** The registered set a graph-backed application wiring every dice store would hand over. */
+    private val owned = DiceOwnedSchema.of(listOf(MetamodelSchema, CollectorTraceSchema, LineageSchema))
 
     @Test
     fun `a source's shape holds every property dice writes on one`() {
         // The reviewer's case in one line: `key` alone is dice's uniqueness key, and a host is free
         // to key its own Source type the same way. `kind` is what dice also always writes.
-        assertEquals(listOf("key", "kind"), DiceOwnedSchema.NODE_SHAPES["Source"])
+        assertEquals(listOf("key", "kind"), owned.nodeShapes["Source"])
     }
 
     @Test
     fun `a mention's shape is what an extractor always records`() {
-        assertEquals(listOf("id", "span", "type", "role"), DiceOwnedSchema.NODE_SHAPES["Mention"])
+        assertEquals(listOf("id", "span", "type", "role"), owned.nodeShapes["Mention"])
     }
 
     @Test
     fun `a property dice can leave out stays out of the shape`() {
-        val proposition = DiceOwnedSchema.NODE_SHAPES.getValue("Proposition")
+        val proposition = owned.nodeShapes.getValue("Proposition")
 
         assertEquals(listOf("id", "contextId", "text", "confidence", "created"), proposition)
         assertFalse(proposition.contains("status"), "status carries a default, so an older node can lack it")
@@ -60,23 +65,69 @@ class DiceOwnedSchemaTest {
         // version node takes its sequence in the same statement that creates it.
         assertEquals(
             listOf("schemaName", "contentHash", "sequence"),
-            DiceOwnedSchema.NODE_SHAPES["MetamodelVersion"],
+            owned.nodeShapes["MetamodelVersion"],
         )
         assertEquals(
             listOf("propositionId", "runId", "target"),
-            DiceOwnedSchema.NODE_SHAPES["ProjectionRecord"],
+            owned.nodeShapes["ProjectionRecord"],
         )
-        assertEquals(listOf("runId"), DiceOwnedSchema.NODE_SHAPES["CollectorTraceRun"])
+        assertEquals(listOf("runId"), owned.nodeShapes["CollectorTraceRun"])
     }
 
     @Test
-    fun `every label a dice store declares has a shape`() {
-        // The derivation has to reach all three schema objects. A label declared by a store and
-        // missing here would be reported as domain drift on every whole-graph check.
+    fun `the core proposition store is owned whatever an application registered`() {
+        // The four node fragments are how the observer reads propositions and mentions at all, so
+        // they are in every ownership set, including one built from no registrations.
+        val bare = DiceOwnedSchema.of(emptyList())
+
+        assertEquals(
+            setOf("Proposition", "Mention", "Source", "ProcessedChunk"),
+            bare.labels,
+        )
+        assertEquals(setOf("HAS_MENTION", "DERIVED_FROM"), bare.bookkeepingRelationshipTypes)
+    }
+
+    @Test
+    fun `a store the application registered is owned, and one it did not is not`() {
+        // The whole fix in one assertion pair. Ownership follows the registered list, so a schema
+        // this application wired is dice's own, and the same schema left out of another
+        // application's wiring stays visible to that application's observation.
+        val withCollectorTrace = DiceOwnedSchema.of(listOf(CollectorTraceSchema))
+        val withoutCollectorTrace = DiceOwnedSchema.of(listOf(MetamodelSchema))
+
+        CollectorTraceSchema.LABELS.forEach { label ->
+            assertTrue(
+                withCollectorTrace.nodeShapes.containsKey(label),
+                "'$label' was registered and carries no ownership shape",
+            )
+            assertFalse(
+                withoutCollectorTrace.nodeShapes.containsKey(label),
+                "'$label' was never registered, so this application knows nothing about it",
+            )
+        }
+    }
+
+    @Test
+    fun `a registered store contributes its bookkeeping edges too`() {
+        assertEquals(
+            setOf("HAS_MENTION", "DERIVED_FROM", "SCORED", "RETIRED_IN"),
+            DiceOwnedSchema.of(listOf(CollectorTraceSchema)).bookkeepingRelationshipTypes,
+        )
+        assertEquals(
+            setOf("HAS_MENTION", "DERIVED_FROM"),
+            DiceOwnedSchema.of(listOf(MetamodelSchema)).bookkeepingRelationshipTypes,
+            "an unregistered trace store's edges are nothing this application can vouch for",
+        )
+    }
+
+    @Test
+    fun `every label a registered store declares has a shape`() {
+        // A label a registered store declares and this map misses would be reported as domain drift
+        // on every whole-graph check, which is the failure this derivation exists to rule out.
         (CollectorTraceSchema.LABELS + MetamodelSchema.LABELS + LineageSchema.LABELS).forEach { label ->
             assertTrue(
-                DiceOwnedSchema.NODE_SHAPES.containsKey(label),
-                "'$label' is written by a dice store and carries no ownership shape",
+                owned.nodeShapes.containsKey(label),
+                "'$label' is written by a registered dice store and carries no ownership shape",
             )
         }
     }
@@ -85,13 +136,13 @@ class DiceOwnedSchemaTest {
     fun `the ownership predicate asks for every property of the shape`() {
         assertEquals(
             "s.key IS NOT NULL AND s.kind IS NOT NULL",
-            DiceOwnedSchema.ownedNodePredicate("s", "Source"),
+            owned.ownedNodePredicate("s", "Source"),
         )
     }
 
     @Test
     fun `a label dice never writes has no ownership predicate`() {
-        val thrown = assertThrows<IllegalArgumentException> { DiceOwnedSchema.ownedNodePredicate("n", "Ghost") }
+        val thrown = assertThrows<IllegalArgumentException> { owned.ownedNodePredicate("n", "Ghost") }
 
         assertTrue(thrown.message!!.contains("Ghost"), "got ${thrown.message}")
     }
