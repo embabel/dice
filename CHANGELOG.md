@@ -78,6 +78,23 @@ and the consumer PRs that deliver it).
 
 ### Fixed
 
+- `DuplicateCollectorStrategy` records a `CollectorDecision` for every component it collapses, given
+  a `CollectorTraceStore`. It takes the store as a third, optional constructor argument, the same
+  way `MultiSignalCollectorStrategy` does, and implements `RunAwareCollectorStrategy` so it sees the
+  run id. Before this, a sweep run with the duplicate strategy wrote `CollectorRecord` rows naming
+  the survivor and no decision at all, so `undoSingleCollapse` and anything reading
+  `CollectorTraceQuery.findDecisionForProposition` found nothing to reverse: the collapse was
+  applied and could not be undone. Each decision carries one `RetiredProposition` per loser with the
+  grounding, provenance refs, evidence keys, source ids and prior status the merging sweep folds
+  onto the survivor, computed by the same rule the multi-signal strategy uses (only what the
+  survivor did not already hold). The cluster similarities are recorded as candidate edges and the
+  union-find components as components, so a duplicate run reads back through the trace endpoint
+  like a multi-signal one. A blank run id (the read-only `collect()` path) still records nothing.
+  **Compatibility: additive.** The existing one- and two-argument constructors are unchanged via
+  `@JvmOverloads`, and a strategy built without a trace store behaves exactly as before. A host that
+  wants duplicate collapses to be undoable passes its `CollectorTraceStore` bean when it builds the
+  strategy.
+
 - `:Source.display` in the graph projection is write-once. A `:Source` node is global — one locator
   key is one node across every context that cites it — and `display` used to be refreshed on every
   write, so whichever writer ran last owned the label every other context read. It is now set on

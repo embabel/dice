@@ -113,7 +113,9 @@ in a graph and collapsing each connected component to one survivor. It uses unio
 overlapping pairs (A≈B, B≈C) resolve to a single cluster {A,B,C} rather than fighting over who merges
 with whom — the result is deterministic regardless of the order pairs are discovered. Within a cluster
 the survivor is the strongest member (highest effective confidence, ties broken by id), and everyone
-else is marked `Duplicate`.
+else is marked `Duplicate`. Given a `CollectorTraceStore`, it also records a `CollectorDecision` per
+collapsed cluster (survivor, and what each loser folds in), which is what `undoSingleCollapse` reads;
+without one, a duplicate sweep cannot be undone.
 
 ```mermaid
 flowchart TB
