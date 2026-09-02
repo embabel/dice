@@ -17,9 +17,9 @@ package com.embabel.dice.storage.autoconfigure
 
 import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.metamodel.DriftCheckRunner
-import com.embabel.dice.metamodel.DriftQuarantinePolicy
+import com.embabel.dice.spi.DriftQuarantinePolicy
 import com.embabel.dice.metamodel.DriftReportStore
-import com.embabel.dice.metamodel.DriftSweepCapable
+import com.embabel.dice.spi.DriftSweepCapable
 import com.embabel.dice.metamodel.MetamodelVersionStore
 import com.embabel.dice.metamodel.support.DefaultDriftCheckRunner
 import com.embabel.dice.proposition.PropositionStatus
@@ -130,7 +130,7 @@ class MetamodelAutoConfigurationIntegrationTest {
 
         // The check moved nothing. Every proposition is where it was.
         assertThat(propositionStore.findByStatus(PropositionStatus.ACTIVE)).hasSize(2)
-        assertThat(propositionStore.findByStatus(PropositionStatus.STALE)).isEmpty()
+        assertThat(propositionStore.findByStatus(PropositionStatus.QUARANTINED)).isEmpty()
     }
 
     /**
@@ -150,7 +150,7 @@ class MetamodelAutoConfigurationIntegrationTest {
 
         // The proposition mentioning Ghost is quarantined, the one mentioning Person is left alone.
         assertThat(swept.quarantined).hasSize(1)
-        assertThat(propositionStore.findByStatus(PropositionStatus.STALE)).hasSize(1)
+        assertThat(propositionStore.findByStatus(PropositionStatus.QUARANTINED)).hasSize(1)
         assertThat(propositionStore.findByStatus(PropositionStatus.ACTIVE)).hasSize(1)
     }
 

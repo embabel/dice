@@ -575,3 +575,47 @@ and the consumer PRs that deliver it).
   declares a schema and selects the graph backend needs the metamodel constraints, which the
   module's `SchemaCatalog` bean supplies, and a `PersistenceManager` on the context; a
   `PropositionStore` brings the sweep with it, and its absence leaves the rest of the loop working.
+
+- An operator surface for schema governance. Until now the loop produced two kinds of inspectable
+  state — drift reports and quarantined propositions — and offered no way to reach either outside a
+  debugger. `GovernanceOperationsService` in `dice` is the one way in: `latestReports` and
+  `reportsInContext` read the drift log, `currentDeclaredVersion` reports the declaration in force
+  along with whether it has been stamped and which version the last completed sweep reconciled
+  against, `runCheck` runs a check, and `releaseProposition` lifts one quarantine hold.
+  `GovernanceController` puts it on HTTP under `/api/v1/metamodel` and `GovernanceTools` exposes the
+  same five operations as `@LlmTool` agent tools; both call the one service, so the two front ends
+  cannot answer differently.
+  Reads are bounded: `limit` defaults to 20, must fall between 1 and 200, and a value outside that
+  answers `400` naming the bound. `since` takes an ISO-8601 instant. A check reports and moves no
+  proposition, so its response carries the full impact a sweep would evaluate — both drift sets, the
+  declaration's own movement in `declaredDiff`, and the two merged into `sweepImpact`. A release is
+  scoped by the context in its path before it writes, so a proposition in another context answers
+  `404` untouched; a successful release restores the status the proposition carried before quarantine
+  and answers the state it is in afterwards.
+  Wiring: `MetamodelAutoConfiguration` registers the service and the tools under the governance
+  conditions plus a `DriftReportStore`, `DriftCheckRunner`, `DriftSweepCapable` and
+  `PropositionStore` on the context, and the new `GovernanceHttpAutoConfiguration` registers the
+  controller when the application is a servlet web application with Spring MVC on the classpath. All
+  three are `@ConditionalOnMissingBean`. A host that wants the loop with no HTTP surface excludes one
+  auto-configuration by name:
+  `spring.autoconfigure.exclude: com.embabel.dice.storage.autoconfigure.GovernanceHttpAutoConfiguration`.
+  Building the context stamps nothing, writes no report and moves no proposition.
+  There is deliberately no "release everything this report quarantined" operation. Nothing in the
+  model ties a quarantined proposition back to the report whose application held it: a `DriftReport`
+  has no identity beyond its natural key, and the reason a sweep writes names the two schemas and
+  nothing about the check. See `docs/design/metamodel-wiring.md`.
+  **Compatibility: additive.** New types and one new auto-configuration; no existing symbol changes
+  shape or behavior, and an application with no `DeclaredSchemaSource` bean sees no change. The
+  controller is not component-scanned, so nothing appears on an application's HTTP surface unless the
+  governance loop is wired.
+
+### Fixed
+
+- `MetamodelAutoConfiguration` and the metamodel wiring tests referenced the drift quarantine types
+  at their former home in `com.embabel.dice.metamodel(.support)`. They moved to
+  `com.embabel.dice.spi` in the `dice` module when quarantine was given its own
+  `PropositionStatus.QUARANTINED`, and the wiring was left pointing at the old package, so
+  `dice-storage-autoconfigure` did not compile from clean. The affected tests also still asserted
+  `PropositionStatus.STALE` after a drift sweep. Imports corrected and the post-sweep assertions
+  moved to `QUARANTINED`. **Compatibility: additive.** No shipped symbol changes; the module now
+  builds from a clean tree.

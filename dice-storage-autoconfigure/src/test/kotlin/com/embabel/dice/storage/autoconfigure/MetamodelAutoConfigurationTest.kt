@@ -22,9 +22,9 @@ import com.embabel.dice.metamodel.DeclaredSchema
 import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.metamodel.DriftCheckResult
 import com.embabel.dice.metamodel.DriftCheckRunner
-import com.embabel.dice.metamodel.DriftQuarantinePolicy
+import com.embabel.dice.spi.DriftQuarantinePolicy
 import com.embabel.dice.metamodel.DriftReportStore
-import com.embabel.dice.metamodel.DriftSweepCapable
+import com.embabel.dice.spi.DriftSweepCapable
 import com.embabel.dice.metamodel.InMemoryMetamodelVersionStore
 import com.embabel.dice.metamodel.MetamodelChange
 import com.embabel.dice.metamodel.MetamodelDiff
@@ -33,10 +33,10 @@ import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.MetamodelVersionStore
 import com.embabel.dice.metamodel.ObservedSchema
 import com.embabel.dice.metamodel.ObservedSchemaSource
-import com.embabel.dice.metamodel.QuarantineResult
+import com.embabel.dice.spi.QuarantineResult
 import com.embabel.dice.metamodel.support.DefaultDriftCheckRunner
-import com.embabel.dice.metamodel.support.MentionTypeDriftQuarantinePolicy
-import com.embabel.dice.metamodel.support.PropositionStoreDriftSweep
+import com.embabel.dice.spi.MentionTypeDriftQuarantinePolicy
+import com.embabel.dice.spi.PropositionStoreDriftSweep
 import com.embabel.dice.metamodel.support.StructuralMetamodelDiffer
 import com.embabel.dice.projection.lineage.InMemoryProjectionRecordStore
 import com.embabel.dice.projection.lineage.ProjectionLifecycle
@@ -215,7 +215,7 @@ class MetamodelAutoConfigurationTest {
                 )
 
                 assertThat(result.quarantined).hasSize(1)
-                assertThat(propositions.findById(ghost.id)!!.status).isEqualTo(PropositionStatus.STALE)
+                assertThat(propositions.findById(ghost.id)!!.status).isEqualTo(PropositionStatus.QUARANTINED)
                 // The point of the test: the cascade heard the transition, so the projection record
                 // derived from that proposition is stale too.
                 assertThat(records.findByProposition(ghost.id).single().lifecycle)
@@ -237,7 +237,7 @@ class MetamodelAutoConfigurationTest {
                 )
 
                 assertThat(result.quarantined).hasSize(1)
-                assertThat(propositions.findByStatus(PropositionStatus.STALE)).hasSize(1)
+                assertThat(propositions.findByStatus(PropositionStatus.QUARANTINED)).hasSize(1)
             }
     }
 
@@ -723,7 +723,7 @@ internal class CustomSweep : DriftSweepCapable {
         afterId: String?,
     ): List<Proposition> = emptyList()
 
-    override fun applyQuarantine(decision: com.embabel.dice.metamodel.QuarantineDecision.Quarantined): Proposition =
+    override fun applyQuarantine(decision: com.embabel.dice.spi.QuarantineDecision.Quarantined): Proposition =
         decision.proposition
 
     override fun releaseFromQuarantine(propositionId: String): Proposition? = null

@@ -15,24 +15,26 @@
  */
 package com.embabel.dice.storage.autoconfigure
 
+import com.embabel.dice.agent.GovernanceTools
 import com.embabel.dice.common.CompositeDiceEventListener
 import com.embabel.dice.common.DiceEventListener
+import com.embabel.dice.governance.GovernanceOperationsService
 import com.embabel.dice.metamodel.DeclaredObservedDiffer
 import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.metamodel.DriftCheckRunner
-import com.embabel.dice.metamodel.DriftQuarantinePolicy
 import com.embabel.dice.metamodel.DriftReportStore
-import com.embabel.dice.metamodel.DriftSweepCapable
 import com.embabel.dice.metamodel.InMemoryMetamodelVersionStore
 import com.embabel.dice.metamodel.MetamodelDiffer
 import com.embabel.dice.metamodel.MetamodelVersionStore
 import com.embabel.dice.metamodel.ObservedSchemaSource
 import com.embabel.dice.metamodel.SweptBaselineStore
 import com.embabel.dice.metamodel.support.DefaultDriftCheckRunner
-import com.embabel.dice.metamodel.support.MentionTypeDriftQuarantinePolicy
-import com.embabel.dice.metamodel.support.PropositionStoreDriftSweep
 import com.embabel.dice.metamodel.support.StructuralMetamodelDiffer
 import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.spi.DriftQuarantinePolicy
+import com.embabel.dice.spi.DriftSweepCapable
+import com.embabel.dice.spi.MentionTypeDriftQuarantinePolicy
+import com.embabel.dice.spi.PropositionStoreDriftSweep
 import com.embabel.dice.storage.DrivineDriftReportStore
 import com.embabel.dice.storage.DrivineMetamodelVersionStore
 import com.embabel.dice.storage.DrivineObservedSchemaSource
@@ -84,7 +86,7 @@ import org.springframework.context.annotation.Bean
  *
  * ## Status transitions reach the application's listeners
  *
- * A sweep moves a proposition to `STALE`, and things downstream need to hear about it —
+ * A sweep moves a proposition to `QUARANTINED`, and things downstream need to hear about it —
  * `ProjectionLineageStaleCascade` marks the projection records derived from that proposition stale,
  * and it can only do so if the transition is announced. So the sweep is built with every
  * `DiceEventListener` bean the application registered, fanned out through a
@@ -316,6 +318,72 @@ class MetamodelAutoConfiguration {
             metamodelDiffer = metamodelDiffer,
             driftReportStore = driftReportStore,
         )
+    }
+
+    // ---- The operator surface ----
+
+    /**
+     * The one object a person or an agent reaches the loop through: read the drift log and the
+     * current declaration, run a check, release a quarantined proposition.
+     *
+     * Declared last on purpose. `@ConditionalOnBean` is evaluated in declaration order within a
+     * configuration class, so the runner and the sweep above are already registered when this
+     * condition is tested.
+     *
+     * The conditions are the loop's own: with no drift log there are no reports to read, with no
+     * runner there is no check to run, and with no sweep there is no hold to lift. Under the default
+     * in-memory backend, and under `drift.mode=off`, none of those exist and neither does this bean.
+     *
+     * Registering it runs nothing. It is the object a host calls, or hands to
+     * `GovernanceController` and [GovernanceTools].
+     */
+    @Bean
+    @ConditionalOnBean(
+        value = [
+            DriftReportStore::class,
+            DriftCheckRunner::class,
+            DriftSweepCapable::class,
+            PropositionStore::class,
+        ],
+    )
+    @ConditionalOnMissingBean(GovernanceOperationsService::class)
+    fun governanceOperationsService(
+        declaredSchemaSource: DeclaredSchemaSource,
+        versionStore: MetamodelVersionStore,
+        driftReportStore: DriftReportStore,
+        driftCheckRunner: DriftCheckRunner,
+        driftSweep: DriftSweepCapable,
+        propositionStore: PropositionStore,
+    ): GovernanceOperationsService {
+        logger.info(
+            "Metamodel operator surface wired: drift reports and the declared version are readable, " +
+                "a check can be run, and a quarantined proposition can be released. Nothing here runs " +
+                "on its own.",
+        )
+        return GovernanceOperationsService(
+            declaredSchemaSource = declaredSchemaSource,
+            versionStore = versionStore,
+            driftReportStore = driftReportStore,
+            driftCheckRunner = driftCheckRunner,
+            driftSweep = driftSweep,
+            propositions = propositionStore,
+        )
+    }
+
+    /**
+     * The governance operations as agent tools, for a host that registers them with its own MCP
+     * server or tool set.
+     *
+     * No web application is needed, so this sits beside the service and outside
+     * `GovernanceHttpAutoConfiguration`. A host that wants no agent surface supplies its own bean of
+     * this type, or takes the tools and registers none of them.
+     */
+    @Bean
+    @ConditionalOnBean(GovernanceOperationsService::class)
+    @ConditionalOnMissingBean(GovernanceTools::class)
+    fun governanceTools(operations: GovernanceOperationsService): GovernanceTools {
+        logger.debug("Wiring the metamodel governance agent tools")
+        return GovernanceTools(operations)
     }
 
     /**

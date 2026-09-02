@@ -176,6 +176,88 @@ of governance over capabilities it is never asked to use, and would do so as a m
 `PropositionRepository` bean at startup. A `PropositionRepository` satisfies the narrow parameter,
 so asking for less costs nothing.
 
+## The operator surface
+
+Everything above wires capabilities that sit still. The operator surface is how a person or an agent
+reaches them: read the drift log, read the current declaration, run a check, release a quarantined
+proposition.
+
+### One service, two front ends
+
+`GovernanceOperationsService` (in `dice`) is the whole surface. `GovernanceController` puts it on
+HTTP and `GovernanceTools` exposes it as agent tools, and both call the one service, so an operator
+reading over HTTP and an agent reading through tools can never see different answers.
+
+| Operation | HTTP | Tool |
+| --- | --- | --- |
+| Current declaration | `GET /api/v1/metamodel/declared-version` | `declared_schema_version` |
+| Whole-graph drift reports | `GET /api/v1/metamodel/drift-reports` | `latest_drift_reports` |
+| One context's drift reports | `GET /api/v1/metamodel/contexts/{contextId}/drift-reports` | `drift_reports_in_context` |
+| Run a check | `POST /api/v1/metamodel/drift-checks` | `run_drift_check` |
+| Run a check in one context | `POST /api/v1/metamodel/contexts/{contextId}/drift-checks` | `run_drift_check` |
+| Release a quarantined proposition | `POST /api/v1/metamodel/contexts/{contextId}/quarantine/{propositionId}/release` | `release_quarantined_proposition` |
+
+Reads are bounded. `limit` defaults to 20 and must fall between 1 and 200; a value outside that
+answers `400` with the bound named in the body, so an operator who asked for too much can see what to
+ask for. Page backwards with `since`, an ISO-8601 instant.
+
+`declared-version` answers two things beyond the declaration itself: whether that exact content hash
+has ever been stamped, and which version the last completed sweep reconciled against. A baseline
+differing from the current hash says there is a declared change nobody has acted on yet. A version
+store that tracks no baseline answers `null` there.
+
+A check still reports and moves nothing, so its response is a preview and carries the whole
+comparison a sweep would act on: both drift sets, the declaration's own movement in `declaredDiff`,
+and the two merged into `sweepImpact`. A response carrying only the drift sets could read clean while
+a sweep on the same state quarantined.
+
+Releasing is scoped before it writes. The context in the path is an access-control bound: a
+proposition belonging to another context answers `404` and is left exactly as it was. A successful
+release restores the status the proposition carried before quarantine, clears the quarantine
+metadata, and answers the state the proposition is in afterwards.
+
+There is no operation that releases a whole report's worth of propositions. Nothing in the model ties
+a quarantined proposition back to the report whose application quarantined it — a `DriftReport` has
+no identity beyond its natural key, and the reason a sweep writes names the two schemas and nothing
+about the check that produced them.
+
+### Conditions
+
+The service and the tools are registered by `MetamodelAutoConfiguration`, under the loop's own
+conditions plus the three collaborators the surface needs:
+
+| Bean | Registered when |
+| --- | --- |
+| `GovernanceOperationsService` | the governance loop is wired, and a `DriftReportStore`, a `DriftCheckRunner`, a `DriftSweepCapable` and a `PropositionStore` are all on the context |
+| `GovernanceTools` | a `GovernanceOperationsService` is on the context |
+| `GovernanceController` | a `GovernanceOperationsService` is on the context, the application is a servlet web application, and Spring MVC is on the classpath |
+
+So `enabled=false`, no `DeclaredSchemaSource`, `drift.mode=off`, and the default in-memory backend
+each remove the surface along with the rest of the loop. With no runner there is no check to run, and
+a surface that could answer only half its own routes would be worse than none.
+
+All three are `@ConditionalOnMissingBean`, so an application that defines its own service, tools or
+controller keeps it — that is how a host puts the routes on a different path or behind extra
+authorization.
+
+Registering these beans runs nothing. Building the context stamps no version, writes no report and
+moves no proposition; a check happens when somebody calls one.
+
+### Turning the HTTP surface off
+
+The surface is worth having through agent tools or a host's own code without opening an endpoint.
+`GovernanceController` therefore has its own auto-configuration, so switching it off is one line and
+leaves the service and the tools wired:
+
+```yaml
+spring:
+  autoconfigure:
+    exclude: com.embabel.dice.storage.autoconfigure.GovernanceHttpAutoConfiguration
+```
+
+The release route changes stored data, so put it behind whatever authorization the host uses for its
+administrative endpoints.
+
 ## Property reference
 
 | Property | Default | Meaning |

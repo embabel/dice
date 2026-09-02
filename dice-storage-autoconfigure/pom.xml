@@ -118,6 +118,17 @@
         </dependency>
 
         <!--
+          Test: WebApplicationContextRunner needs a servlet API to build its mock context, and that
+          is how the governance REST bean's web condition is checked. Runtime needs nothing new: the
+          controller lives in dice, which already declares the servlet API itself.
+        -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
           Test: the metamodel autoconfiguration IT drives the whole governance loop against a real
           Neo4j. Drivine's test support wires transactions; Neo4jTestContainer supplies the database.
         -->
