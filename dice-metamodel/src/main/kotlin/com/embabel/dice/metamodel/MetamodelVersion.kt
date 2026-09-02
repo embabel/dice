@@ -20,6 +20,7 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.core.DomainTypePropertyDefinition
 import com.embabel.agent.core.NamedPropertyDefinition
 import com.embabel.agent.core.PropertyDefinition
+import org.jetbrains.annotations.ApiStatus
 import java.security.MessageDigest
 import java.util.Objects
 
@@ -48,6 +49,7 @@ import java.util.Objects
  *   takes a signature, and a signature that never reaches a stamp keeps whatever set it was built
  *   with. Experimental: shape may change before 1.0.
  */
+@ApiStatus.Experimental
 data class PropertySignature @JvmOverloads constructor(
     val name: String,
     val kind: Kind,
@@ -153,6 +155,7 @@ data class PropertySignature @JvmOverloads constructor(
  *   restarts. Any structural change produces a different hash, including a property's type changing
  *   on a type whose name is unchanged.
  */
+@ApiStatus.Experimental
 class MetamodelVersion @JvmOverloads constructor(
     schemaName: String,
     entityTypeNames: List<String>,

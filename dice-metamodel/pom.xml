@@ -24,6 +24,17 @@
             <scope>provided</scope>
         </dependency>
 
+        <!--
+            https://mvnrepository.com/artifact/org.jetbrains/annotations
+            For Experimental annotation
+        -->
+        <dependency>
+            <groupId>org.jetbrains</groupId>
+            <artifactId>annotations</artifactId>
+            <version>26.0.2</version>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

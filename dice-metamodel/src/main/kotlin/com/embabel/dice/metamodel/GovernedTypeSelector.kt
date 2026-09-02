@@ -16,6 +16,7 @@
 package com.embabel.dice.metamodel
 
 import com.embabel.agent.core.DomainType
+import org.jetbrains.annotations.ApiStatus
 
 /**
  * Decides which domain types a [MetamodelVersion] stamp covers.
@@ -37,6 +38,7 @@ import com.embabel.agent.core.DomainType
  * ungoverned type to the dictionary leaves the content hash as it was, while touching a governed
  * one changes it.
  */
+@ApiStatus.Experimental
 fun interface GovernedTypeSelector {
 
     /**

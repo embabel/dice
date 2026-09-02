@@ -16,6 +16,7 @@
 package com.embabel.dice.metamodel
 
 import com.embabel.agent.core.DataDictionary
+import org.jetbrains.annotations.ApiStatus
 
 /**
  * The schema as declared: the stamped [version] plus the bare relationship type names it allows.
@@ -31,6 +32,7 @@ import com.embabel.agent.core.DataDictionary
  * @property version The stamped declared schema.
  * @property relationshipTypeNames The bare relationship type names [version] allows.
  */
+@ApiStatus.Experimental
 class DeclaredSchema(
     val version: MetamodelVersion,
     relationshipTypeNames: Set<String>,
@@ -116,6 +118,7 @@ class DeclaredSchema(
  * already uses to define its types (a `DataDictionary`, a config file, a registry...) and wires it
  * as a bean. There is no default implementation, because there is no default declared schema.
  */
+@ApiStatus.Experimental
 fun interface DeclaredSchemaSource {
 
     /**

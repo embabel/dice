@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.metamodel
 
+import org.jetbrains.annotations.ApiStatus
+
 /**
  * The former names a schema's types and properties have gone by, declared alongside the schema
  * itself.
@@ -42,6 +44,7 @@ package com.embabel.dice.metamodel
  * @property propertyAliases Entity type name, then current property name, to the names that
  *   property used to have.
  */
+@ApiStatus.Experimental
 class SchemaAliases @JvmOverloads constructor(
     typeAliases: Map<String, Set<String>> = emptyMap(),
     propertyAliases: Map<String, Map<String, Set<String>>> = emptyMap(),

@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.metamodel
 
+import org.jetbrains.annotations.ApiStatus
+
 /**
  * Durable store for metamodel version stamps. Keeping every stamp a schema has ever had is what
  * later lets you say when a shape changed and what knowledge was extracted under which version.
@@ -32,6 +34,7 @@ package com.embabel.dice.metamodel
  * This contract covers stamping and recall. Comparing a declaration against a live graph is a
  * separate concern with its own store contract.
  */
+@ApiStatus.Experimental
 interface MetamodelVersionStore {
 
     /**
