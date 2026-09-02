@@ -26,6 +26,7 @@ import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver;
 import com.embabel.dice.incremental.IncrementalSource;
 import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef;
 import com.embabel.dice.proposition.extraction.ExtractionPerspective;
+import com.embabel.dice.proposition.extraction.ExtractionRequest;
 import com.embabel.dice.proposition.extraction.IncrementalPropositionExtraction;
 import com.embabel.dice.provenance.ContentAddressedLocator;
 import com.embabel.dice.provenance.SourceLocator;
@@ -44,10 +45,9 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * Java's view of the profile contract, with and without a profile present.
- * {@code @JvmOverloads} means the remember entry points keep every descriptor a Java caller
- * could already have compiled against, and the profile argument only ever adds a descriptor
- * on the end.
+ * Java's view of the profile contract, with and without a profile present. A profile travels on an
+ * {@link ExtractionRequest}, so the remember entry points keep every descriptor a Java caller could
+ * already have compiled against and each name gains exactly one more, taking the request.
  */
 class ExtractionProfileJavaInteropTest {
 
@@ -85,7 +85,7 @@ class ExtractionProfileJavaInteropTest {
     }
 
     @Test
-    void retainsEveryLegacyRememberDescriptorAndAddsProfileAwareOnes() throws Exception {
+    void retainsEveryLegacyRememberDescriptorAndAddsRequestAwareOnes() throws Exception {
         Class<?>[][] legacyTextParameters = {
                 {String.class, String.class, NamedEntity.class},
                 {String.class, String.class, NamedEntity.class, List.class},
@@ -99,14 +99,7 @@ class ExtractionProfileJavaInteropTest {
         IncrementalPropositionExtraction.class.getMethod(
                 "rememberText",
                 String.class, String.class, NamedEntity.class, List.class,
-                ExtractionPerspective.class, Boolean.class, ExtractionContentProfileRef.class
-        );
-
-        IncrementalPropositionExtraction.class.getMethod(
-                "rememberTextFromSource",
-                String.class, String.class, NamedEntity.class, SourceLocator.class,
-                SourceRevisionRef.class, List.class, ExtractionPerspective.class, Boolean.class,
-                ExtractionContentProfileRef.class
+                ExtractionPerspective.class, Boolean.class, ExtractionRequest.class
         );
 
         IncrementalPropositionExtraction.class.getMethod(
@@ -114,16 +107,11 @@ class ExtractionProfileJavaInteropTest {
         );
         IncrementalPropositionExtraction.class.getMethod(
                 "rememberFile",
-                InputStream.class, String.class, NamedEntity.class,
-                ExtractionContentProfileRef.class
-        );
-        IncrementalPropositionExtraction.class.getMethod(
-                "rememberFileFromSource",
-                InputStream.class, String.class, NamedEntity.class, SourceLocator.class,
-                SourceRevisionRef.class, ExtractionContentProfileRef.class
+                InputStream.class, String.class, NamedEntity.class, ExtractionRequest.class
         );
 
-        // A profile never lands where a legacy caller already fills every argument.
+        // A profile reaches extraction on the request, so no entry point takes one directly and
+        // none lands where a caller filling every legacy argument already is.
         assertThrows(
                 NoSuchMethodException.class,
                 () -> IncrementalPropositionExtraction.class.getMethod(
@@ -132,6 +120,46 @@ class ExtractionProfileJavaInteropTest {
                         ExtractionContentProfileRef.class
                 )
         );
+        assertThrows(
+                NoSuchMethodException.class,
+                () -> IncrementalPropositionExtraction.class.getMethod(
+                        "rememberText",
+                        String.class, String.class, NamedEntity.class, List.class,
+                        ExtractionPerspective.class, Boolean.class, ExtractionContentProfileRef.class
+                )
+        );
+        assertThrows(
+                NoSuchMethodException.class,
+                () -> IncrementalPropositionExtraction.class.getMethod(
+                        "rememberFile",
+                        InputStream.class, String.class, NamedEntity.class,
+                        ExtractionContentProfileRef.class
+                )
+        );
+    }
+
+    @Test
+    void javaCallersBuildAndReadProfileBearingRequests() throws Exception {
+        ExtractionContentProfileRef profile = new ExtractionContentProfileRef("house-style", "v1");
+        SourceLocator locator = new ContentAddressedLocator("java-profile-source");
+        SourceRevisionRef revision = new SourceRevisionRef(locator.key(), "r1");
+
+        ExtractionRequest.class.getConstructor(
+                SourceLocator.class, SourceRevisionRef.class, ExtractionContentProfileRef.class
+        );
+
+        // A profile needs no source of its own: the two dimensions stay independent on a request.
+        ExtractionRequest profileOnly = new ExtractionRequest(null, null, profile);
+        assertSame(profile, profileOnly.getProfile());
+        assertNull(profileOnly.getSourceLocator());
+
+        ExtractionRequest everything = new ExtractionRequest(locator, revision, profile);
+        assertSame(profile, everything.getProfile());
+        assertSame(revision, everything.getSourceRevision());
+
+        // The copy helper is a copy: the request it was called on is untouched.
+        assertSame(profile, ExtractionRequest.NONE.withProfile(profile).getProfile());
+        assertNull(ExtractionRequest.NONE.getProfile());
     }
 
     @Test
@@ -202,9 +230,9 @@ class ExtractionProfileJavaInteropTest {
     }
 
     @Test
-    void javaSubclassesStillOverrideThePreProfileSignatures() throws Exception {
+    void javaSubclassesStillOverrideTheSignaturesThatPredateRequests() throws Exception {
         // The proof is that this file compiles: javac rejects @Override on a final method, so
-        // LegacyOverridingJavaExtraction would not build if adding the profile arguments had
+        // LegacyOverridingJavaExtraction would not build if adding the request argument had
         // turned the six-argument rememberText or the three-argument rememberFile into the
         // final bridges @JvmOverloads emits for reduced arities.
         assertFalse(
@@ -235,7 +263,7 @@ class ExtractionProfileJavaInteropTest {
     }
 
     /**
-     * A Java subclass written before profiles existed, overriding the entry-point signatures
+     * A Java subclass written before requests existed, overriding the entry-point signatures
      * that were open then. It is never instantiated; compiling it is the assertion.
      */
     @SuppressWarnings("unused")
@@ -275,31 +303,6 @@ class ExtractionProfileJavaInteropTest {
         public void rememberFile(InputStream inputStream, String filename, NamedEntity user) {
             // A host's interception point; deliberately does nothing.
         }
-
-        @Override
-        public void rememberFileFromSource(
-                InputStream inputStream,
-                String filename,
-                NamedEntity user,
-                SourceLocator sourceLocator,
-                SourceRevisionRef sourceRevision
-        ) {
-            // A host's interception point; deliberately does nothing.
-        }
-
-        @Override
-        public void rememberTextFromSource(
-                String text,
-                String sourceId,
-                NamedEntity user,
-                SourceLocator sourceLocator,
-                SourceRevisionRef sourceRevision,
-                List<String> additionalGrounding,
-                ExtractionPerspective perspective,
-                Boolean mintNewEntities
-        ) {
-            // A host's interception point; deliberately does nothing.
-        }
     }
 
     /**
@@ -318,16 +321,18 @@ class ExtractionProfileJavaInteropTest {
     ) {
         extraction.rememberText("legacy", "legacy-id", user);
         extraction.rememberText("legacy", "legacy-id", user, List.of(), null, null);
-        extraction.rememberText("profiled", "profiled-id", user, List.of(), null, null, profile);
-        extraction.rememberFile(input, "legacy.txt", user);
-        extraction.rememberFile(input, "profiled.txt", user, profile);
-        extraction.rememberTextFromSource("source", "source-id", user, locator);
-        extraction.rememberTextFromSource(
-                "source", "source-id", user, locator, revision, List.of(), null, null, profile
+        extraction.rememberText(
+                "profiled", "profiled-id", user, List.of(), null, null,
+                new ExtractionRequest(null, null, profile)
         );
-        extraction.rememberFileFromSource(input, "source.txt", user, locator);
-        extraction.rememberFileFromSource(
-                input, "source.txt", user, locator, revision, profile
+        extraction.rememberFile(input, "legacy.txt", user);
+        extraction.rememberFile(input, "profiled.txt", user, new ExtractionRequest(null, null, profile));
+        extraction.rememberText(
+                "source", "source-id", user, List.of(), null, null,
+                new ExtractionRequest(locator, revision, profile)
+        );
+        extraction.rememberFile(
+                input, "source.txt", user, new ExtractionRequest(locator, revision, profile)
         );
     }
 

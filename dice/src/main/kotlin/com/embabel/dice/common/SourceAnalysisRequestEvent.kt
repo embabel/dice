@@ -29,10 +29,10 @@ import org.springframework.context.ApplicationEvent
  * (e.g., UrbotUser, Customer) can be used directly.
  *
  * A publisher that knows where its material came from can say so by overriding
- * [sourceLocator] and [sourceRevision]. The extraction listener puts both onto the
- * `SourceAnalysisContext` it builds, so the async path grounds propositions exactly
- * the way a direct `rememberTextFromSource` call does. Both default to null, so an
- * existing subclass carries no provenance and behaves as it always did.
+ * [sourceLocator] and [sourceRevision]. The extraction listener collects both into an
+ * `ExtractionRequest` and puts them onto the `SourceAnalysisContext` it builds, so the async path
+ * grounds propositions exactly the way a direct `rememberText` call carrying a request does. Both
+ * default to null, so an existing subclass carries no provenance and behaves as it always did.
  *
  * [profile] works the same way and reaches the same context through the same call, so an async
  * publisher can attribute its extraction to a content profile without the listener growing a

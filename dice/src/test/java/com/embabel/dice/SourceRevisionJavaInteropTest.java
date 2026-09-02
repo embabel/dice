@@ -21,6 +21,7 @@ import com.embabel.dice.common.SourceAnalysisRequestEvent;
 import com.embabel.dice.incremental.IncrementalSource;
 import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.proposition.extraction.ExtractionPerspective;
+import com.embabel.dice.proposition.extraction.ExtractionRequest;
 import com.embabel.dice.proposition.extraction.IncrementalPropositionExtraction;
 import com.embabel.dice.provenance.ContentAddressedLocator;
 import com.embabel.dice.provenance.ProvenanceEntry;
@@ -48,8 +49,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@link RetiredProposition}, {@link ExtractRequest}, {@link ProvenanceEntryDto} and
  * {@link LineageDto} means every constructor descriptor a Java caller could already have
  * compiled against survives, and each new argument arrives as one extra descriptor on the end.
- * The remember entry points work the other way round: the revision-aware calls are separate
- * methods, so the old {@code rememberText} and {@code rememberFile} descriptors never move.
+ * The remember entry points carry a revision on an {@link ExtractionRequest}, so the
+ * {@code rememberText} and {@code rememberFile} descriptors a Java caller already had never move
+ * and each name gains exactly one more.
  */
 class SourceRevisionJavaInteropTest {
 
@@ -160,7 +162,7 @@ class SourceRevisionJavaInteropTest {
     }
 
     @Test
-    void retainsEveryLegacyRememberDescriptorAndAddsDistinctSourceDescriptors() throws Exception {
+    void retainsEveryLegacyRememberDescriptorAndAddsOneRequestDescriptorPerName() throws Exception {
         Class<?>[][] legacyTextParameters = {
                 {String.class, String.class, NamedEntity.class},
                 {String.class, String.class, NamedEntity.class, List.class},
@@ -171,20 +173,24 @@ class SourceRevisionJavaInteropTest {
         for (Class<?>[] parameters : legacyTextParameters) {
             IncrementalPropositionExtraction.class.getMethod("rememberText", parameters);
         }
+        IncrementalPropositionExtraction.class.getMethod(
+                "rememberText",
+                String.class, String.class, NamedEntity.class, List.class,
+                ExtractionPerspective.class, Boolean.class, ExtractionRequest.class
+        );
+        IncrementalPropositionExtraction.class.getMethod(
+                "rememberFile",
+                InputStream.class,
+                String.class,
+                NamedEntity.class
+        );
+        IncrementalPropositionExtraction.class.getMethod(
+                "rememberFile",
+                InputStream.class, String.class, NamedEntity.class, ExtractionRequest.class
+        );
 
-        Class<?>[][] sourceAwareTextParameters = {
-                {String.class, String.class, NamedEntity.class, SourceLocator.class},
-                {String.class, String.class, NamedEntity.class, SourceLocator.class, SourceRevisionRef.class},
-                {String.class, String.class, NamedEntity.class, SourceLocator.class, SourceRevisionRef.class,
-                        List.class},
-                {String.class, String.class, NamedEntity.class, SourceLocator.class, SourceRevisionRef.class,
-                        List.class, ExtractionPerspective.class},
-                {String.class, String.class, NamedEntity.class, SourceLocator.class, SourceRevisionRef.class,
-                        List.class, ExtractionPerspective.class, Boolean.class},
-        };
-        for (Class<?>[] parameters : sourceAwareTextParameters) {
-            IncrementalPropositionExtraction.class.getMethod("rememberTextFromSource", parameters);
-        }
+        // A locator reaches extraction on the request, so it never appears as a loose argument
+        // and there is no second method name carrying it.
         assertThrows(
                 NoSuchMethodException.class,
                 () -> IncrementalPropositionExtraction.class.getMethod(
@@ -195,28 +201,6 @@ class SourceRevisionJavaInteropTest {
                         SourceLocator.class
                 )
         );
-
-        IncrementalPropositionExtraction.class.getMethod(
-                "rememberFile",
-                InputStream.class,
-                String.class,
-                NamedEntity.class
-        );
-        IncrementalPropositionExtraction.class.getMethod(
-                "rememberFileFromSource",
-                InputStream.class,
-                String.class,
-                NamedEntity.class,
-                SourceLocator.class
-        );
-        IncrementalPropositionExtraction.class.getMethod(
-                "rememberFileFromSource",
-                InputStream.class,
-                String.class,
-                NamedEntity.class,
-                SourceLocator.class,
-                SourceRevisionRef.class
-        );
         assertThrows(
                 NoSuchMethodException.class,
                 () -> IncrementalPropositionExtraction.class.getMethod(
@@ -225,6 +209,29 @@ class SourceRevisionJavaInteropTest {
                         String.class,
                         NamedEntity.class,
                         SourceLocator.class
+                )
+        );
+    }
+
+    @Test
+    void javaCallersBuildRequestsAtEveryArityAndAreHeldToThePairingRule() throws Exception {
+        SourceLocator locator = new ContentAddressedLocator("java-request-source");
+        SourceRevisionRef revision = new SourceRevisionRef(locator.key(), "opaque-r1");
+
+        ExtractionRequest.class.getConstructor();
+        ExtractionRequest.class.getConstructor(SourceLocator.class);
+        ExtractionRequest.class.getConstructor(SourceLocator.class, SourceRevisionRef.class);
+
+        assertTrue(ExtractionRequest.NONE.isEmpty());
+        assertNull(new ExtractionRequest().getSourceLocator());
+        assertSame(locator, new ExtractionRequest(locator).getSourceLocator());
+        assertSame(revision, new ExtractionRequest(locator, revision).getSourceRevision());
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new ExtractionRequest(
+                        new ContentAddressedLocator("some-other-source"),
+                        revision
                 )
         );
     }
@@ -266,22 +273,24 @@ class SourceRevisionJavaInteropTest {
             SourceRevisionRef revision
     ) {
         extraction.rememberFile(input, "legacy.txt", user);
-        extraction.rememberFileFromSource(input, "source.txt", user, locator);
-        extraction.rememberFileFromSource(input, "revisioned.txt", user, locator, revision);
         extraction.rememberText("legacy", "legacy-id", user);
         extraction.rememberText("legacy", "legacy-id", user, List.of());
         extraction.rememberText("legacy", "legacy-id", user, List.of(), null);
         extraction.rememberText("legacy", "legacy-id", user, List.of(), null, null);
-        extraction.rememberTextFromSource("revisioned", "revisioned-id", user, locator);
-        extraction.rememberTextFromSource("revisioned", "revisioned-id", user, locator, revision);
-        extraction.rememberTextFromSource(
-                "revisioned", "revisioned-id", user, locator, revision, List.of()
+
+        // Java's view of the request: @JvmOverloads publishes it at every arity, and the
+        // locator-and-revision pairing is checked while it is being built.
+        extraction.rememberFile(input, "source.txt", user, new ExtractionRequest(locator));
+        extraction.rememberFile(
+                input, "revisioned.txt", user, new ExtractionRequest(locator, revision)
         );
-        extraction.rememberTextFromSource(
-                "revisioned", "revisioned-id", user, locator, revision, List.of(), null
+        extraction.rememberText(
+                "revisioned", "revisioned-id", user, List.of(), null, null,
+                new ExtractionRequest(locator, revision)
         );
-        extraction.rememberTextFromSource(
-                "revisioned", "revisioned-id", user, locator, revision, List.of(), null, null
+        extraction.rememberText(
+                "revisioned", "revisioned-id", user, List.of(), null, null,
+                ExtractionRequest.NONE
         );
     }
 
