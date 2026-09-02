@@ -608,6 +608,13 @@ and the consumer PRs that deliver it).
   shape or behavior, and an application with no `DeclaredSchemaSource` bean sees no change. The
   controller is not component-scanned, so nothing appears on an application's HTTP surface unless the
   governance loop is wired.
+  Correction: registration of the whole operator surface requires the host's own
+  `DeclaredSchemaSource` bean, which `GovernanceHttpAutoConfiguration` now states for itself along
+  with `embabel.dice.metamodel.enabled`. An application that declares no schema resolves zero
+  `/api/v1/metamodel` URLs and holds no `GovernanceOperationsService` and no `GovernanceTools`; for
+  that application the surface does not exist. Note that `GovernanceController` still ships in the
+  `dice` jar, so a consumer contract test that scans the classpath for `@RestController` classes sees
+  its six routes whether or not any context registers them.
 
 ### Fixed
 

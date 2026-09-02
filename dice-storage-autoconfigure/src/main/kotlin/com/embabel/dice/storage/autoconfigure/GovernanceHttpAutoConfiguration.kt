@@ -16,23 +16,46 @@
 package com.embabel.dice.storage.autoconfigure
 
 import com.embabel.dice.governance.GovernanceOperationsService
+import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.web.rest.GovernanceController
 import org.slf4j.LoggerFactory
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication
 import org.springframework.context.annotation.Bean
 
 /**
  * Puts the governance operator surface on HTTP.
  *
- * It registers one bean, [GovernanceController], and only when there is something for it to serve:
- * the governance loop wired a [GovernanceOperationsService], the application is a servlet web
- * application, and Spring MVC is on the classpath. Since the service itself carries the loop's own
- * conditions, a host with no declared schema, `embabel.dice.metamodel.enabled=false`, or
- * `drift.mode=off` gets no controller either.
+ * It registers one bean, [GovernanceController], and it registers it only for a host that asked for
+ * the governance loop. Four things have to hold at once: the application supplies a
+ * [DeclaredSchemaSource] bean, `embabel.dice.metamodel.enabled` is absent or `true`, the loop wired
+ * a [GovernanceOperationsService], and this is a servlet web application with Spring MVC on the
+ * classpath. Miss any one of them and the routes under `/api/v1/metamodel` do not exist. Under
+ * `drift.mode=off` there is no check to run, so there is no service and no controller either.
+ *
+ * ## The opt-in is stated here as well as on the loop
+ *
+ * A declared schema and the kill switch are the gate on [MetamodelAutoConfiguration], which is where
+ * the service comes from, so a context that reaches this class has satisfied them once already. They
+ * are repeated because this is the part of governance a host meets from outside — six public routes,
+ * one of them a write — and leaning on the service alone leaves those routes one hand-wired
+ * `GovernanceOperationsService` bean away from appearing in an application that declared no schema.
+ * The condition that opens a public surface belongs on the class that opens it.
+ *
+ * ## How the ordering is guaranteed
+ *
+ * `@ConditionalOnBean` sees only the bean definitions registered by the time it runs, so an
+ * auto-configuration asking about a bean that another auto-configuration contributes has to run
+ * afterwards. `@AutoConfiguration(after = [MetamodelAutoConfiguration::class])` is what arranges
+ * that: Spring Boot sorts auto-configuration classes on those declarations before it evaluates a
+ * single condition, so [MetamodelAutoConfiguration] has already had its say about
+ * [GovernanceOperationsService] when this class is asked. The [DeclaredSchemaSource] half needs no
+ * ordering, because it is the host's own bean and Spring Boot registers every application bean
+ * definition before it processes any auto-configuration at all.
  *
  * ## Turning the HTTP surface off
  *
@@ -60,7 +83,13 @@ import org.springframework.context.annotation.Bean
 @AutoConfiguration(after = [MetamodelAutoConfiguration::class])
 @ConditionalOnClass(name = [REST_CONTROLLER])
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
-@ConditionalOnBean(GovernanceOperationsService::class)
+@ConditionalOnBean(value = [DeclaredSchemaSource::class, GovernanceOperationsService::class])
+@ConditionalOnProperty(
+    prefix = "embabel.dice.metamodel",
+    name = ["enabled"],
+    havingValue = "true",
+    matchIfMissing = true,
+)
 class GovernanceHttpAutoConfiguration {
 
     private val logger = LoggerFactory.getLogger(GovernanceHttpAutoConfiguration::class.java)

@@ -27,9 +27,11 @@ import org.springframework.beans.factory.getBean
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner
+import org.springframework.context.ApplicationContext
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping
 
 /**
  * Wiring tests for the governance operator surface: the service and the agent tools from
@@ -53,7 +55,7 @@ class GovernanceOperatorAutoConfigurationTest {
 
     private val webRunner = WebApplicationContextRunner()
         .withConfiguration(autoConfigurations)
-        .withUserConfiguration(InMemoryGovernanceConfig::class.java)
+        .withUserConfiguration(InMemoryGovernanceConfig::class.java, EndpointMappingConfig::class.java)
 
     // ---- Present when the loop is ----
 
@@ -66,12 +68,18 @@ class GovernanceOperatorAutoConfigurationTest {
         }
     }
 
+    /**
+     * The happy path, pinned as URLs. A host that declared a schema and runs a servlet web
+     * application gets exactly these six routes, which is the surface an operator is offered and the
+     * surface a consumer's endpoint snapshot records.
+     */
     @Test
-    fun `the REST controller appears in a servlet web application`() {
+    fun `the REST controller appears in a servlet web application, with all six routes`() {
         webRunner.run { ctx ->
             assertThat(ctx).hasNotFailed()
             assertThat(ctx).hasSingleBean(GovernanceOperationsService::class.java)
             assertThat(ctx).hasSingleBean(GovernanceController::class.java)
+            assertThat(metamodelEndpoints(ctx)).containsExactlyInAnyOrder(*ALL_SIX_ROUTES)
         }
     }
 
@@ -89,16 +97,49 @@ class GovernanceOperatorAutoConfigurationTest {
 
     // ---- Absent when the loop is ----
 
+    /**
+     * The consumer smoke test's own scenario: a servlet web application that declared no schema and
+     * opted into nothing, holding the whole DICE classpath. It must resolve zero `/api/v1/metamodel`
+     * URLs, and hold none of the three operator beans.
+     *
+     * The endpoint assertion is the load-bearing one. A `doesNotHaveBean(GovernanceController)`
+     * check answers a narrower question — whether one bean type is on the context — and stays green
+     * while a route reaches a handler by some path this test never named.
+     */
     @Test
     fun `no DeclaredSchemaSource means no operator surface at all`() {
         WebApplicationContextRunner()
             .withConfiguration(autoConfigurations)
             .withPropertyValues(GRAPH_BACKEND)
-            .withUserConfiguration(NoDeclaredSchemaConfig::class.java)
+            .withUserConfiguration(NoDeclaredSchemaConfig::class.java, EndpointMappingConfig::class.java)
             .run { ctx ->
                 assertThat(ctx).hasNotFailed()
+                assertThat(metamodelEndpoints(ctx)).isEmpty()
                 assertThat(ctx).doesNotHaveBean(GovernanceOperationsService::class.java)
                 assertThat(ctx).doesNotHaveBean(GovernanceTools::class.java)
+                assertThat(ctx).doesNotHaveBean(GovernanceController::class.java)
+            }
+    }
+
+    /**
+     * The declared schema is required on its own account. A host that hand-wired a
+     * `GovernanceOperationsService` for its own code has said nothing about what it governs, so the
+     * HTTP surface stays closed until it declares a schema.
+     *
+     * This is what the opt-in condition on [GovernanceHttpAutoConfiguration] buys. Take that
+     * condition away and the controller here comes back, because a service bean exists and the
+     * remaining conditions are all satisfied.
+     */
+    @Test
+    fun `a hand-wired operator service without a declared schema opens no HTTP surface`() {
+        WebApplicationContextRunner()
+            .withConfiguration(autoConfigurations)
+            .withUserConfiguration(ServiceWithoutDeclaredSchemaConfig::class.java, EndpointMappingConfig::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx).doesNotHaveBean(DeclaredSchemaSource::class.java)
+                assertThat(ctx).hasSingleBean(GovernanceOperationsService::class.java)
+                assertThat(metamodelEndpoints(ctx)).isEmpty()
                 assertThat(ctx).doesNotHaveBean(GovernanceController::class.java)
             }
     }
@@ -109,6 +150,7 @@ class GovernanceOperatorAutoConfigurationTest {
             .withPropertyValues("embabel.dice.metamodel.enabled=false")
             .run { ctx ->
                 assertThat(ctx).hasNotFailed()
+                assertThat(metamodelEndpoints(ctx)).isEmpty()
                 assertThat(ctx).doesNotHaveBean(GovernanceOperationsService::class.java)
                 assertThat(ctx).doesNotHaveBean(GovernanceTools::class.java)
                 assertThat(ctx).doesNotHaveBean(GovernanceController::class.java)
@@ -269,10 +311,62 @@ class GovernanceOperatorAutoConfigurationTest {
             .run(assertions)
     }
 
+    /**
+     * The `/api/v1/metamodel` URLs this context actually resolves, as `METHOD /path`.
+     *
+     * Read off a live [RequestMappingHandlerMapping], which is the object Spring MVC dispatches
+     * through, so an empty answer means a client calling those paths gets a 404.
+     */
+    private fun metamodelEndpoints(ctx: ApplicationContext): List<String> =
+        ctx.getBean(RequestMappingHandlerMapping::class.java).handlerMethods.keys
+            .flatMap { info ->
+                val verbs = info.methodsCondition.methods.map { it.name }.ifEmpty { listOf("ANY") }
+                info.pathPatternsCondition?.patternValues.orEmpty()
+                    .flatMap { path -> verbs.map { verb -> "$verb $path" } }
+            }
+            .filter { METAMODEL_PREFIX in it }
+            .sorted()
+
     private companion object {
 
         const val GRAPH_BACKEND = "embabel.dice.store.type=graph"
+
+        const val METAMODEL_PREFIX = "/api/v1/metamodel"
+
+        /** Every route the operator surface exposes. Changing this list changes a public API. */
+        val ALL_SIX_ROUTES = arrayOf(
+            "GET $METAMODEL_PREFIX/declared-version",
+            "GET $METAMODEL_PREFIX/drift-reports",
+            "GET $METAMODEL_PREFIX/contexts/{contextId}/drift-reports",
+            "POST $METAMODEL_PREFIX/drift-checks",
+            "POST $METAMODEL_PREFIX/contexts/{contextId}/drift-checks",
+            "POST $METAMODEL_PREFIX/contexts/{contextId}/quarantine/{propositionId}/release",
+        )
     }
+}
+
+/**
+ * A live Spring MVC handler mapping, so a test can ask which URLs a context resolves.
+ *
+ * It builds its table from the controller bean definitions the context holds, and it reads their
+ * types without creating them, so a context carrying one stays as inert as it was.
+ */
+@Configuration(proxyBeanMethods = false)
+internal open class EndpointMappingConfig {
+
+    @Bean
+    open fun requestMappingHandlerMapping(): RequestMappingHandlerMapping = RequestMappingHandlerMapping()
+}
+
+/**
+ * An application that built a [GovernanceOperationsService] by hand for its own code and declared no
+ * schema. Everything the HTTP surface needs is here apart from the opt-in itself.
+ */
+@Configuration(proxyBeanMethods = false)
+internal open class ServiceWithoutDeclaredSchemaConfig {
+
+    @Bean
+    open fun handWiredGovernanceOperations(): GovernanceOperationsService = CustomOperationsConfig().singleton
 }
 
 /** An application that brought its own operator service. */
