@@ -93,6 +93,30 @@
             <version>5.4.0</version>
             <scope>test</scope>
         </dependency>
+
+        <!--
+          Test: WebApplicationContextRunner needs a servlet API to build its mock context, and that
+          is how the REST controllers' web conditions are checked. Runtime needs nothing new: the
+          controllers live in dice, which already declares the servlet API itself.
+        -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+          Test: the REST wiring tests read the URLs a context really exposes off a live
+          RequestMappingHandlerMapping, which lives in spring-webmvc. `dice` declares spring-webmvc
+          optional, so it stops there and never reaches this module's classpath. Asking whether a
+          controller bean exists is a weaker question than asking which routes resolve, and the
+          second one is what a host's endpoint snapshot is about.
+        -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webmvc</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
