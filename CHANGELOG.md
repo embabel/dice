@@ -10,7 +10,7 @@ and the consumer PRs that deliver it).
 
 ### Added
 
-- Optional source revisions in the `dice` core provenance model, the first slice of DICE #64.
+- Optional source revisions in the `dice` core provenance model, the first slice of DICE #64. **EXPERIMENTAL** (shape may change before 1.0) — opt-in: a store implements `SourceRevisionQueryCapable`.
   `ProvenanceEntry` gains a sixth field, `sourceRevision`: an opaque, provider-defined string,
   non-blank when present, recording which version of a source a claim was read from.
   `SourceLocator.key()` is untouched, so one document read at two revisions is still one source
