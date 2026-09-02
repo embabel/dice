@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.storage
 
+import org.jetbrains.annotations.ApiStatus
+
 import org.drivine.schema.SchemaCatalog
 import org.drivine.schema.SchemaItemSpec
 
@@ -38,6 +40,7 @@ import org.drivine.schema.SchemaItemSpec
  * domain type belongs in the [DataDictionary], where governance can see it. A host
  * that registers its own schema object takes on that trade knowingly.
  */
+@ApiStatus.Experimental
 interface DiceStorageSchema {
 
     /** The constraints and indexes this store's writes depend on. */

@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.storage
 
+import org.jetbrains.annotations.ApiStatus
+
 import org.drivine.schema.RangeIndexSpec
 import org.drivine.schema.SchemaItemSpec
 import org.drivine.schema.UniquenessConstraintSpec
@@ -35,6 +37,7 @@ import org.drivine.schema.UniquenessConstraintSpec
  * Cypher and nowhere else can lose its constraint, or stop matching the shape an observation
  * recognises, with nothing failing to say so.
  */
+@ApiStatus.Experimental
 object LineageSchema : DiceStorageSchema {
 
     /** One node per projection outcome. */

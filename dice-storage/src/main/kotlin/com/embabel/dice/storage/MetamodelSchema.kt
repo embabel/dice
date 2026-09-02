@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.storage
 
+import org.jetbrains.annotations.ApiStatus
+
 import org.drivine.schema.SchemaItemSpec
 import org.drivine.schema.UniquenessConstraintSpec
 
@@ -26,6 +28,7 @@ import org.drivine.schema.UniquenessConstraintSpec
  * and tells [DiceOwnedSchema] these labels are dice's own, which keeps governance from reporting its
  * own bookkeeping as domain drift.
  */
+@ApiStatus.Experimental
 object MetamodelSchema : DiceStorageSchema {
 
     /**

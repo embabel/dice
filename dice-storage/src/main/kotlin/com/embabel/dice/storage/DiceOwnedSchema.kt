@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.storage
 
+import org.jetbrains.annotations.ApiStatus
+
 import com.embabel.dice.storage.model.Mention
 import com.embabel.dice.storage.model.ProcessedChunkNode
 import com.embabel.dice.storage.model.PropositionNode
@@ -98,6 +100,7 @@ import kotlin.reflect.full.primaryConstructor
  *   carrying that label as dice's own. A node missing any of them was written by somebody else.
  * @property bookkeepingRelationshipTypes Every relationship type dice writes for itself.
  */
+@ApiStatus.Experimental
 class DiceOwnedSchema private constructor(
     val nodeShapes: Map<String, List<String>>,
     val bookkeepingRelationshipTypes: Set<String>,

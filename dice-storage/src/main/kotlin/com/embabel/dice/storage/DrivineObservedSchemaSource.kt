@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.storage
 
+import org.jetbrains.annotations.ApiStatus
+
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.metamodel.ObservedSchema
 import com.embabel.dice.metamodel.ObservedSchemaSource
