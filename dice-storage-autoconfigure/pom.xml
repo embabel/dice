@@ -81,6 +81,17 @@
             <version>${kotlin.version}</version>
         </dependency>
 
+        <!--
+          JetBrains annotations for @ApiStatus, declared the same way dice/pom.xml declares it.
+          It has to be declared here: another path reaches the same artifact at provided scope,
+          which wins the resolution and stops dice's own compile-scope copy travelling downstream.
+        -->
+        <dependency>
+            <groupId>org.jetbrains</groupId>
+            <artifactId>annotations</artifactId>
+            <version>26.0.1</version>
+        </dependency>
+
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>

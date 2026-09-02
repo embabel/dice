@@ -23,6 +23,7 @@ import com.embabel.dice.metamodel.MetamodelVersionStore
 import com.embabel.dice.metamodel.SweptBaselineStore
 import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.spi.DriftSweepCapable
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import java.time.Instant
 
@@ -74,6 +75,7 @@ import java.time.Instant
  *   is used here; nothing in this class sweeps.
  * @param propositions Read to confirm a proposition's context before a release touches it.
  */
+@ApiStatus.Experimental
 class GovernanceOperationsService(
     private val declaredSchemaSource: DeclaredSchemaSource,
     private val versionStore: MetamodelVersionStore,

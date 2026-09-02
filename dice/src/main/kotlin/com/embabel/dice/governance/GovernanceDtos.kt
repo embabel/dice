@@ -23,6 +23,7 @@ import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.PropertySignature
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
+import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
 
 /**
@@ -45,6 +46,7 @@ import java.time.Instant
  *   `Company LIST`.
  * @property after How it looks now, the same way.
  */
+@ApiStatus.Experimental
 data class PropertyChangeDto(
     val typeName: String,
     val propertyName: String,
@@ -59,6 +61,7 @@ data class PropertyChangeDto(
  * @property before The name it went by.
  * @property after The name it goes by now.
  */
+@ApiStatus.Experimental
 data class TypeRenameDto(
     val before: String,
     val after: String,
@@ -82,6 +85,7 @@ data class TypeRenameDto(
  * @property addedRelationships Rendered `From-[name]->To` descriptors the newer version adds.
  * @property removedRelationships Descriptors the newer version drops.
  */
+@ApiStatus.Experimental
 data class MetamodelDiffDto(
     val fromVersionHash: String,
     val toVersionHash: String,
@@ -150,6 +154,7 @@ data class MetamodelDiffDto(
  * @property declaredDiff How the declaration itself moved since the last completed sweep, or `null`
  *   when no baseline had been reconciled yet.
  */
+@ApiStatus.Experimental
 data class DriftReportDto(
     val schemaName: String,
     val versionHash: String,
@@ -193,6 +198,7 @@ data class DriftReportDto(
  * @property sweptVersionHash The hash the last completed sweep reconciled against. `null` when no
  *   sweep has completed, and also when the version store tracks no baseline at all.
  */
+@ApiStatus.Experimental
 data class DeclaredVersionDto(
     val schemaName: String,
     val contentHash: String,
@@ -241,6 +247,7 @@ data class DeclaredVersionDto(
  *   there was no baseline to compare against.
  * @property sweepImpact The merged comparison a sweep evaluates propositions against.
  */
+@ApiStatus.Experimental
 data class DriftCheckDto(
     val schemaName: String,
     val versionHash: String,
@@ -287,6 +294,7 @@ data class DriftCheckDto(
  * @property quarantineReason The explanation still on it, `null` once the release cleared it.
  * @property metadataRevised When its metadata last moved, ISO-8601.
  */
+@ApiStatus.Experimental
 data class ReleasedPropositionDto(
     val propositionId: String,
     val contextId: String,
@@ -318,6 +326,7 @@ data class ReleasedPropositionDto(
  * on the generic path. The message names the bound that was broken, since an operator reading a bare
  * `400` has nothing to correct.
  */
+@ApiStatus.Experimental
 class GovernanceRequestException(message: String) : RuntimeException(message)
 
 /**

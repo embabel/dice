@@ -46,9 +46,13 @@ There is no scheduler and no startup hook. A check happens when the application 
 stamps, observes, runs both comparisons and writes a `DriftReport`, and no path through it moves a
 proposition.
 
-Acting on what a check found is a second, deliberate step. The application reads
-`DriftCheckResult.quarantineDiff`, decides, and calls `DriftSweepCapable.sweep` once per context it
-means to reconcile. The wiring supplies the object that performs a sweep and never calls it.
+**Quarantine is applied by exactly one thing: a host calling `DriftSweepCapable.sweep`.** That is a
+deliberate narrowing, and it is worth stating plainly because the obvious alternatives were all
+available. Nothing quarantines on a schedule, nothing quarantines while the context starts, no
+property switches quarantining on, and a drift check that found everything wrong still moves no
+proposition. The application reads `DriftCheckResult.quarantineDiff`, decides, and calls
+`DriftSweepCapable.sweep` once per context it means to reconcile. The wiring supplies the object
+that performs a sweep and leaves the calling to the host.
 
 ```kotlin
 val result = runner.run()
@@ -75,7 +79,7 @@ propositions by itself would be exactly the surprise this shape exists to remove
 
 ## Status transitions reach your listeners
 
-A sweep moves a proposition to `STALE`, and things downstream need to hear about it.
+A sweep moves a proposition to `QUARANTINED`, and things downstream need to hear about it.
 `ProjectionLineageStaleCascade` marks every projection record derived from that proposition stale,
 and it can only do so if the transition is announced.
 
@@ -186,7 +190,9 @@ proposition.
 
 `GovernanceOperationsService` (in `dice`) is the whole surface. `GovernanceController` puts it on
 HTTP and `GovernanceTools` exposes it as agent tools, and both call the one service, so an operator
-reading over HTTP and an agent reading through tools can never see different answers.
+reading over HTTP and an agent reading through tools can never see different answers. The service is
+the only one of the three the wiring supplies; the host decides about the other two, by importing
+the DICE REST surface and by building the tools.
 
 | Operation | HTTP | Tool |
 | --- | --- | --- |
@@ -216,47 +222,82 @@ proposition belonging to another context answers `404` and is left exactly as it
 release restores the status the proposition carried before quarantine, clears the quarantine
 metadata, and answers the state the proposition is in afterwards.
 
-There is no operation that releases a whole report's worth of propositions. Nothing in the model ties
-a quarantined proposition back to the report whose application quarantined it — a `DriftReport` has
-no identity beyond its natural key, and the reason a sweep writes names the two schemas and nothing
-about the check that produced them.
+**Release works one proposition at a time, by design.** An operator who wants twenty propositions
+back makes twenty calls. The narrowing follows from what the model records: a `DriftReport` carries
+no identity a reason could name — its natural key is the schema name, the version hash, the context
+and the capture instant — and the reason a sweep writes on a held proposition names the two schemas
+and nothing about the check that produced them. So there is no honest way to ask for "everything
+this report quarantined", and inventing a report id to make the bulk route possible would put a
+promise in the API that the stored data cannot keep.
 
-### Conditions
+### What the wiring supplies, and what the host supplies
 
-The service and the tools are registered by `MetamodelAutoConfiguration`, under the loop's own
-conditions plus the three collaborators the surface needs:
+`MetamodelAutoConfiguration` registers one thing here: the service.
 
-| Bean | Registered when |
+| Piece | Where it comes from |
 | --- | --- |
-| `GovernanceOperationsService` | the governance loop is wired, and a `DriftReportStore`, a `DriftCheckRunner`, a `DriftSweepCapable` and a `PropositionStore` are all on the context |
-| `GovernanceTools` | a `GovernanceOperationsService` is on the context |
-| `GovernanceController` | a `GovernanceOperationsService` is on the context, the application is a servlet web application, and Spring MVC is on the classpath |
+| `GovernanceOperationsService` | the auto-configuration, when the governance loop is wired and a `DriftReportStore`, a `DriftCheckRunner`, a `DriftSweepCapable` and a `PropositionStore` are all on the context |
+| `GovernanceController` | `@Import(DiceRestConfiguration.class)` in the host's own configuration, when a `GovernanceOperationsService` is on the context |
+| `GovernanceTools` | the host, calling `GovernanceTools.asTools(service)` |
 
 So `enabled=false`, no `DeclaredSchemaSource`, `drift.mode=off`, and the default in-memory backend
-each remove the surface along with the rest of the loop. With no runner there is no check to run, and
-a surface that could answer only half its own routes would be worse than none.
+each remove the service along with the rest of the loop, and the two front ends go with it. With no
+runner there is no check to run, and a surface that could answer only half its own routes would be
+worse than none.
 
-All three are `@ConditionalOnMissingBean`, so an application that defines its own service, tools or
-controller keeps it — that is how a host puts the routes on a different path or behind extra
-authorization.
+The service is `@ConditionalOnMissingBean`, so an application that defines its own keeps it and both
+front ends then run through that one.
 
-Registering these beans runs nothing. Building the context stamps no version, writes no report and
+Registering the service runs nothing. Building the context stamps no version, writes no report and
 moves no proposition; a check happens when somebody calls one.
 
-### Turning the HTTP surface off
+### HTTP switches on with the rest of the DICE REST surface
 
-The surface is worth having through agent tools or a host's own code without opening an endpoint.
-`GovernanceController` therefore has its own auto-configuration, so switching it off is one line and
-leaves the service and the tools wired:
+`GovernanceController` has no auto-configuration. It goes on the context through
+`DiceRestConfiguration`, the single import that opens any DICE REST surface, which is how
+`PropositionPipelineController`, `MemoryController` and `DiscoveryController` have always arrived:
 
-```yaml
-spring:
-  autoconfigure:
-    exclude: com.embabel.dice.storage.autoconfigure.GovernanceHttpAutoConfiguration
+```java
+@Configuration
+@Import(DiceRestConfiguration.class)
+public class MyAppConfiguration { }
 ```
+
+Two host decisions therefore have to line up before a `/api/v1/metamodel` URL resolves: import DICE
+REST, and wire the governance loop. Leave the import out and the loop still works through the agent
+tools and the host's own code, with no endpoint open. Import it with no schema declared and the
+application starts clean, publishing its other DICE routes and none of these.
+
+There is one wrinkle worth knowing, because it decides where the controller can be named.
+`@ConditionalOnBean` on an imported class is answered while Spring reads the configuration class
+that imported it, and Spring Boot registers auto-configuration bean definitions after that point. A
+plain entry in `DiceRestConfiguration`'s `@Import` list would therefore see no
+`GovernanceOperationsService` in any application whose loop came from the auto-configuration —
+which is every application following this note. `GovernanceControllerImport`, a
+`DeferredImportSelector` with the lowest precedence, is what puts the question after Spring Boot's
+own auto-configuration selector has answered. `GovernanceOperatorAutoConfigurationTest` pins all
+four combinations of import and loop, reading the live handler mapping so an empty answer means a
+client gets a 404.
+
+A host that wants these operations somewhere else — a different path, extra authorization, a shape
+of its own — declares its own `GovernanceController` bean and keeps the import for the other
+controllers; the shipped one is `@ConditionalOnMissingBean` and backs off.
 
 The release route changes stored data, so put it behind whatever authorization the host uses for its
 administrative endpoints.
+
+### The agent tools are yours to build
+
+Nothing registers a `GovernanceTools` bean. No DICE tool object is a bean — `DiscoveryTools`,
+`GraphQueryTools` and `Memory` are all constructed by the application that wants them, because a
+tool object is only useful once it has been registered with a particular agent or MCP server, and
+that registration is the host's call:
+
+```kotlin
+@Bean
+fun governanceTools(operations: GovernanceOperationsService): List<Tool> =
+    GovernanceTools.asTools(operations)
+```
 
 ## Property reference
 

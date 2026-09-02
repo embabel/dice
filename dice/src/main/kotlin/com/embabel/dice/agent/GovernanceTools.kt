@@ -21,6 +21,7 @@ import com.embabel.dice.governance.GovernanceOperationsService
 import com.embabel.dice.governance.GovernanceRequestException
 import com.embabel.dice.governance.parseSince
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 
 /**
@@ -30,6 +31,20 @@ import org.slf4j.LoggerFactory
  * Framework-light, the same way `DiscoveryTools` is: only `@LlmTool` annotations already on the
  * classpath, no MCP SDK and no servlet dependency. A consuming application calls [asTools] and
  * registers the returned `List<Tool>` with its own MCP server or agent tool set.
+ *
+ * ## The host builds these
+ *
+ * No DICE auto-configuration registers a `GovernanceTools` bean, which is how every other DICE tool
+ * object works — `DiscoveryTools`, `GraphQueryTools` and `Memory` are all constructed by the
+ * application that wants them. A tool object is only useful once it is registered with a particular
+ * agent or MCP server, and that registration is the host's call, so the host also decides when the
+ * object exists:
+ *
+ * ```kotlin
+ * @Bean
+ * fun governanceTools(operations: GovernanceOperationsService): List<Tool> =
+ *     GovernanceTools.asTools(operations)
+ * ```
  *
  * Every tool runs through one [GovernanceOperationsService], the same object `GovernanceController`
  * calls over HTTP, so an agent and an operator reading the same state get one answer. Results are
@@ -50,6 +65,7 @@ import org.slf4j.LoggerFactory
  *
  * @param operations The single governance service every tool delegates to.
  */
+@ApiStatus.Experimental
 class GovernanceTools(
     private val operations: GovernanceOperationsService,
 ) {
@@ -164,6 +180,9 @@ class GovernanceTools(
 
         /**
          * Create [Tool] instances exposing the governance operator surface.
+         *
+         * The returned tools can be registered with an agent's tool set or an MCP server, e.g.
+         * alongside `DiscoveryTools` and `Memory`.
          *
          * ```kotlin
          * val tools = GovernanceTools.asTools(governanceOperationsService)

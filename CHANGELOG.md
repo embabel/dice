@@ -576,7 +576,7 @@ and the consumer PRs that deliver it).
   module's `SchemaCatalog` bean supplies, and a `PersistenceManager` on the context; a
   `PropositionStore` brings the sweep with it, and its absence leaves the rest of the loop working.
 
-- An operator surface for schema governance. **EXPERIMENTAL** (shape may change before 1.0) — opt-in: wired when `DeclaredSchemaSource` is present and the application is a servlet web app.
+- An operator surface for schema governance. **EXPERIMENTAL** (shape may change before 1.0) — every new public type this change adds is marked `@ApiStatus.Experimental`, the way the extraction stack marks its own unsettled types. Opt-in twice over: the service is wired when a `DeclaredSchemaSource` bean is present, and the HTTP routes appear only when the host also imports `DiceRestConfiguration`.
   Until now the loop produced two kinds of inspectable state — drift reports and quarantined propositions — and offered no way to reach either outside a
   debugger. `GovernanceOperationsService` in `dice` is the one way in: `latestReports` and
   `reportsInContext` read the drift log, `currentDeclaredVersion` reports the declaration in force
@@ -592,29 +592,31 @@ and the consumer PRs that deliver it).
   scoped by the context in its path before it writes, so a proposition in another context answers
   `404` untouched; a successful release restores the status the proposition carried before quarantine
   and answers the state it is in afterwards.
-  Wiring: `MetamodelAutoConfiguration` registers the service and the tools under the governance
-  conditions plus a `DriftReportStore`, `DriftCheckRunner`, `DriftSweepCapable` and
-  `PropositionStore` on the context, and the new `GovernanceHttpAutoConfiguration` registers the
-  controller when the application is a servlet web application with Spring MVC on the classpath. All
-  three are `@ConditionalOnMissingBean`. A host that wants the loop with no HTTP surface excludes one
-  auto-configuration by name:
-  `spring.autoconfigure.exclude: com.embabel.dice.storage.autoconfigure.GovernanceHttpAutoConfiguration`.
-  Building the context stamps nothing, writes no report and moves no proposition.
-  There is deliberately no "release everything this report quarantined" operation. Nothing in the
-  model ties a quarantined proposition back to the report whose application held it: a `DriftReport`
-  has no identity beyond its natural key, and the reason a sweep writes names the two schemas and
-  nothing about the check. See `docs/design/metamodel-wiring.md`.
-  **Compatibility: additive.** New types and one new auto-configuration; no existing symbol changes
-  shape or behavior, and an application with no `DeclaredSchemaSource` bean sees no change. The
-  controller is not component-scanned, so nothing appears on an application's HTTP surface unless the
-  governance loop is wired.
-  Correction: registration of the whole operator surface requires the host's own
-  `DeclaredSchemaSource` bean, which `GovernanceHttpAutoConfiguration` now states for itself along
-  with `embabel.dice.metamodel.enabled`. An application that declares no schema resolves zero
-  `/api/v1/metamodel` URLs and holds no `GovernanceOperationsService` and no `GovernanceTools`; for
-  that application the surface does not exist. Note that `GovernanceController` still ships in the
-  `dice` jar, so a consumer contract test that scans the classpath for `@RestController` classes sees
-  its six routes whether or not any context registers them.
+  Wiring: `MetamodelAutoConfiguration` registers the service, under the governance conditions plus a
+  `DriftReportStore`, `DriftCheckRunner`, `DriftSweepCapable` and `PropositionStore` on the context.
+  It is `@ConditionalOnMissingBean`, so an application that defines its own keeps it and both front
+  ends run through that one. Building the context stamps nothing, writes no report and moves no
+  proposition.
+  `GovernanceController` has no auto-configuration. It joins `DiceRestConfiguration`, the single
+  `@Import` a host uses to open any DICE REST surface, and switches itself on when a
+  `GovernanceOperationsService` is there to answer the routes — so the governance endpoints follow
+  the one REST activation idiom the proposition-pipeline, memory and discovery controllers already
+  follow. A host that imports DICE REST and declared no schema starts clean and resolves zero
+  `/api/v1/metamodel` URLs; a host that wants the loop with no endpoint open leaves the import out.
+  A consumer that declares its own `GovernanceController` bean keeps it, and the shipped one backs
+  off. Note that `GovernanceController` still ships in the `dice` jar, so a consumer contract test
+  that scans the classpath for `@RestController` classes sees its six routes whether or not any
+  context registers them.
+  `GovernanceTools` is constructed by the host — `GovernanceTools.asTools(service)` — the way every
+  other DICE tool object is. No DICE auto-configuration registers a tool bean.
+  Release works one proposition at a time, by design. Nothing in the model ties a quarantined
+  proposition back to the report whose application held it: a `DriftReport` carries no identity a
+  reason could name, and the reason a sweep writes names the two schemas and nothing about the check.
+  Quarantine itself is applied by exactly one thing, a host calling `DriftSweepCapable.sweep`; no
+  schedule and no property does it. See `docs/design/metamodel-wiring.md`.
+  **Compatibility: additive.** New types only; no existing symbol changes shape or behavior, and an
+  application with no `DeclaredSchemaSource` bean sees no change. Nothing appears on an application's
+  HTTP surface until it imports `DiceRestConfiguration`.
 
 ### Fixed
 

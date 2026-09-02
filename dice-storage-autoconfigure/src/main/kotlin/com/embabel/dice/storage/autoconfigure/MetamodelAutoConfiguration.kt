@@ -15,7 +15,6 @@
  */
 package com.embabel.dice.storage.autoconfigure
 
-import com.embabel.dice.agent.GovernanceTools
 import com.embabel.dice.common.CompositeDiceEventListener
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.governance.GovernanceOperationsService
@@ -43,6 +42,7 @@ import com.embabel.dice.storage.DrivineObservedSchemaSource
 import com.embabel.dice.storage.MetamodelSchema
 import org.drivine.manager.PersistenceManager
 import org.drivine.schema.SchemaCatalog
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.boot.autoconfigure.AutoConfiguration
@@ -120,6 +120,7 @@ import org.springframework.context.annotation.Bean
  * lineage constraints do; Drivine's `SchemaManager` applies them idempotently on startup. The
  * stores' MERGEs are only race-free under them, so they are required wherever the graph stores are.
  */
+@ApiStatus.Experimental
 @AutoConfiguration(after = [DiceStorageAutoConfiguration::class])
 @ConditionalOnBean(DeclaredSchemaSource::class)
 @ConditionalOnProperty(
@@ -355,8 +356,13 @@ class MetamodelAutoConfiguration {
      * runner there is no check to run, and with no sweep there is no hold to lift. Under the default
      * in-memory backend, and under `drift.mode=off`, none of those exist and neither does this bean.
      *
-     * Registering it runs nothing. It is the object a host calls, or hands to
-     * `GovernanceController` and [GovernanceTools].
+     * Registering it runs nothing. It is the object a host calls, or hands to `GovernanceController`
+     * and `GovernanceTools`.
+     *
+     * It is also the only governance bean either front end needs. `GovernanceController` arrives
+     * with `DiceRestConfiguration`, the one import that opens any DICE REST surface, and switches
+     * itself on when this bean exists. `GovernanceTools` is constructed by the host, the way every
+     * DICE tool object is; nothing here registers one.
      */
     @Bean
     @ConditionalOnBean(
@@ -389,22 +395,6 @@ class MetamodelAutoConfiguration {
             driftSweep = driftSweep,
             propositions = propositionStore,
         )
-    }
-
-    /**
-     * The governance operations as agent tools, for a host that registers them with its own MCP
-     * server or tool set.
-     *
-     * No web application is needed, so this sits beside the service and outside
-     * `GovernanceHttpAutoConfiguration`. A host that wants no agent surface supplies its own bean of
-     * this type, or takes the tools and registers none of them.
-     */
-    @Bean
-    @ConditionalOnBean(GovernanceOperationsService::class)
-    @ConditionalOnMissingBean(GovernanceTools::class)
-    fun governanceTools(operations: GovernanceOperationsService): GovernanceTools {
-        logger.debug("Wiring the metamodel governance agent tools")
-        return GovernanceTools(operations)
     }
 
     /**

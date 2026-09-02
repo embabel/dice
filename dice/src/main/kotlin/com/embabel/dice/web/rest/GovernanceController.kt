@@ -22,7 +22,10 @@ import com.embabel.dice.governance.GovernanceOperationsService
 import com.embabel.dice.governance.GovernanceRequestException
 import com.embabel.dice.governance.ReleasedPropositionDto
 import com.embabel.dice.governance.parseSince
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.ExceptionHandler
@@ -45,16 +48,22 @@ import org.springframework.web.bind.annotation.RestController
  * settings use, and a per-context operation names its context in the path the way
  * [DiscoveryController] does. `GET` reads, `POST` runs a check or performs a release.
  *
- * This controller is not component-scanned. `MetamodelAutoConfiguration` in
- * `dice-storage-autoconfigure` registers it, under the same conditions as the rest of the governance
- * loop plus a servlet web application and Spring MVC on the classpath. A host that wants the
- * governance loop with no HTTP surface at all switches this one auto-configuration off:
+ * ## How it switches on
  *
- * ```yaml
- * spring:
- *   autoconfigure:
- *     exclude: com.embabel.dice.storage.autoconfigure.GovernanceHttpAutoConfiguration
- * ```
+ * This controller is not component-scanned, and it has no auto-configuration of its own. It goes on
+ * the context through [DiceRestConfiguration], the one import a host uses to open any DICE REST
+ * surface, and only when a [GovernanceOperationsService] bean is there to answer the routes. Two
+ * decisions, both the host's: import DICE REST, and wire the governance loop.
+ *
+ * So a host that imports [DiceRestConfiguration] and declared no schema resolves zero
+ * `/api/v1/metamodel` URLs and starts cleanly, and a host that wants the governance loop through
+ * agent tools or its own code with no endpoint open leaves the import out. See
+ * [GovernanceControllerImport] for why the condition is asked late enough to see a service the
+ * auto-configuration built.
+ *
+ * `@ConditionalOnMissingBean` lets a host put these operations somewhere else — a different path,
+ * extra authorization, a shape of its own — by declaring its own `GovernanceController` bean and
+ * still importing [DiceRestConfiguration] for the other controllers. This one then backs off.
  *
  * Every read is bounded. `limit` is clamped by the service, and a value outside its range answers
  * `400` with the bound named in the body, so an operator who asked for too much can see what to ask
@@ -63,8 +72,11 @@ import org.springframework.web.bind.annotation.RestController
  *
  * @param operations The single governance service every route delegates to.
  */
+@ApiStatus.Experimental
 @RestController
 @RequestMapping("/api/v1/metamodel")
+@ConditionalOnBean(GovernanceOperationsService::class)
+@ConditionalOnMissingBean(GovernanceController::class)
 class GovernanceController(
     private val operations: GovernanceOperationsService,
 ) {

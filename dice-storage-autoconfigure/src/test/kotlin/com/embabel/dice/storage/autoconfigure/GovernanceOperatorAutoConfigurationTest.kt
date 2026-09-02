@@ -20,9 +20,13 @@ import com.embabel.dice.governance.GovernanceOperationsService
 import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.metamodel.DriftCheckRunner
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository
+import com.embabel.dice.web.rest.DiceRestConfiguration
 import com.embabel.dice.web.rest.GovernanceController
 import org.assertj.core.api.Assertions.assertThat
+import org.drivine.manager.PersistenceManager
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.mock
 import org.springframework.beans.factory.getBean
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
@@ -30,51 +34,42 @@ import org.springframework.boot.test.context.runner.WebApplicationContextRunner
 import org.springframework.context.ApplicationContext
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.context.annotation.Import
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping
 
 /**
- * Wiring tests for the governance operator surface: the service and the agent tools from
- * [MetamodelAutoConfiguration], and the REST controller from [GovernanceHttpAutoConfiguration].
+ * Wiring tests for the governance operator surface: the service from [MetamodelAutoConfiguration],
+ * and the REST controller that arrives with a host's `@Import(DiceRestConfiguration)`.
  *
- * What the wiring alone can get wrong is whether the surface appears when there is something behind
- * it, disappears with the rest of the loop, backs off for a consumer's own bean, and stays inert —
- * registering these beans must never run a check or write to a store.
+ * Two host decisions have to line up before an operator can reach governance over HTTP — import the
+ * DICE REST surface, and wire the governance loop — and these tests pin all four combinations. The
+ * agent tools are here too, for the opposite reason: no context may hold a `GovernanceTools` bean,
+ * because a host builds those itself.
  */
 class GovernanceOperatorAutoConfigurationTest {
 
-    private val autoConfigurations = AutoConfigurations.of(
-        MetamodelAutoConfiguration::class.java,
-        GovernanceHttpAutoConfiguration::class.java,
-    )
+    private val autoConfigurations = AutoConfigurations.of(MetamodelAutoConfiguration::class.java)
 
-    /** A host with the whole loop in memory: stores, an observed schema, propositions. */
+    /** A host with the whole loop in memory and no REST import at all. */
     private val runner = ApplicationContextRunner()
         .withConfiguration(autoConfigurations)
         .withUserConfiguration(InMemoryGovernanceConfig::class.java)
 
+    /** The same loop in a servlet web application that imported the DICE REST surface. */
     private val webRunner = WebApplicationContextRunner()
         .withConfiguration(autoConfigurations)
-        .withUserConfiguration(InMemoryGovernanceConfig::class.java, EndpointMappingConfig::class.java)
+        .withUserConfiguration(RestImportingGovernanceConfig::class.java, EndpointMappingConfig::class.java)
 
-    // ---- Present when the loop is ----
-
-    @Test
-    fun `the governance loop brings the operator service and the agent tools with it`() {
-        runner.run { ctx ->
-            assertThat(ctx).hasNotFailed()
-            assertThat(ctx).hasSingleBean(GovernanceOperationsService::class.java)
-            assertThat(ctx).hasSingleBean(GovernanceTools::class.java)
-        }
-    }
+    // ---- Import plus a wired loop ----
 
     /**
-     * The happy path, pinned as URLs. A host that declared a schema and runs a servlet web
-     * application gets exactly these six routes, which is the surface an operator is offered and the
+     * The happy path, pinned as URLs. A host that imported [DiceRestConfiguration] and declared a
+     * schema gets exactly these six routes, which is the surface an operator is offered and the
      * surface a consumer's endpoint snapshot records.
      */
     @Test
-    fun `the REST controller appears in a servlet web application, with all six routes`() {
+    fun `importing DICE REST with the loop wired opens all six routes`() {
         webRunner.run { ctx ->
             assertThat(ctx).hasNotFailed()
             assertThat(ctx).hasSingleBean(GovernanceOperationsService::class.java)
@@ -84,8 +79,27 @@ class GovernanceOperatorAutoConfigurationTest {
     }
 
     /**
-     * The service and the tools are useful to a host with no HTTP at all, so only the controller is
-     * gated on a servlet web application.
+     * The condition is asked late enough to see a bean the auto-configuration contributed.
+     *
+     * `@ConditionalOnBean` on an imported class is answered while the importing configuration class
+     * is read, and Spring Boot registers auto-configuration bean definitions after that. So a plain
+     * entry in `DiceRestConfiguration`'s `@Import` list would answer "no service" for every host
+     * whose loop came from `MetamodelAutoConfiguration` — which is every host that follows the
+     * documented wiring. `GovernanceControllerImport` defers the import to the end of the round,
+     * and this test is what would catch that deferral being dropped: the service below exists only
+     * because the auto-configuration built it.
+     */
+    @Test
+    fun `the controller sees a service the auto-configuration contributed`() {
+        webRunner.run { ctx ->
+            assertThat(ctx.getBeanDefinitionNames()).contains("governanceOperationsService")
+            assertThat(ctx).hasSingleBean(GovernanceController::class.java)
+        }
+    }
+
+    /**
+     * The service is useful to a host with no HTTP at all, and the tools run anywhere, so only the
+     * controller depends on a servlet web application and on the REST import.
      */
     @Test
     fun `outside a web application there is a service and no controller`() {
@@ -95,64 +109,61 @@ class GovernanceOperatorAutoConfigurationTest {
         }
     }
 
-    // ---- Absent when the loop is ----
+    // ---- Import without a wired loop ----
 
     /**
-     * The consumer smoke test's own scenario: a servlet web application that declared no schema and
-     * opted into nothing, holding the whole DICE classpath. It must resolve zero `/api/v1/metamodel`
-     * URLs, and hold none of the three operator beans.
+     * A host that imported the DICE REST surface and declared no schema. It must resolve zero
+     * `/api/v1/metamodel` URLs and start cleanly — the other DICE controllers it asked for are
+     * unaffected.
      *
      * The endpoint assertion is the load-bearing one. A `doesNotHaveBean(GovernanceController)`
      * check answers a narrower question — whether one bean type is on the context — and stays green
      * while a route reaches a handler by some path this test never named.
      */
     @Test
-    fun `no DeclaredSchemaSource means no operator surface at all`() {
+    fun `importing DICE REST with no declared schema opens no route and starts cleanly`() {
         WebApplicationContextRunner()
             .withConfiguration(autoConfigurations)
             .withPropertyValues(GRAPH_BACKEND)
-            .withUserConfiguration(NoDeclaredSchemaConfig::class.java, EndpointMappingConfig::class.java)
+            .withUserConfiguration(RestImportingNoSchemaConfig::class.java, EndpointMappingConfig::class.java)
             .run { ctx ->
                 assertThat(ctx).hasNotFailed()
                 assertThat(metamodelEndpoints(ctx)).isEmpty()
                 assertThat(ctx).doesNotHaveBean(GovernanceOperationsService::class.java)
-                assertThat(ctx).doesNotHaveBean(GovernanceTools::class.java)
                 assertThat(ctx).doesNotHaveBean(GovernanceController::class.java)
             }
     }
 
     /**
-     * The declared schema is required on its own account. A host that hand-wired a
-     * `GovernanceOperationsService` for its own code has said nothing about what it governs, so the
-     * HTTP surface stays closed until it declares a schema.
+     * A declared schema on its own is short of a service: the in-memory backend has no drift log and
+     * nothing to observe, so there is no runner and no operator service. The import is in place and
+     * the routes still have to stay shut, with a context that starts.
      *
-     * This is what the opt-in condition on [GovernanceHttpAutoConfiguration] buys. Take that
-     * condition away and the controller here comes back, because a service bean exists and the
-     * remaining conditions are all satisfied.
+     * This is the degradation that matters. The controller takes a `GovernanceOperationsService` in
+     * its constructor, so a condition that let it register here would fail the context outright.
      */
     @Test
-    fun `a hand-wired operator service without a declared schema opens no HTTP surface`() {
+    fun `a declared schema with no service behind it opens no route and starts cleanly`() {
         WebApplicationContextRunner()
             .withConfiguration(autoConfigurations)
-            .withUserConfiguration(ServiceWithoutDeclaredSchemaConfig::class.java, EndpointMappingConfig::class.java)
+            .withUserConfiguration(RestImportingNoGraphConfig::class.java, EndpointMappingConfig::class.java)
             .run { ctx ->
                 assertThat(ctx).hasNotFailed()
-                assertThat(ctx).doesNotHaveBean(DeclaredSchemaSource::class.java)
-                assertThat(ctx).hasSingleBean(GovernanceOperationsService::class.java)
+                assertThat(ctx).hasSingleBean(DeclaredSchemaSource::class.java)
+                assertThat(ctx).doesNotHaveBean(GovernanceOperationsService::class.java)
                 assertThat(metamodelEndpoints(ctx)).isEmpty()
                 assertThat(ctx).doesNotHaveBean(GovernanceController::class.java)
             }
     }
 
     @Test
-    fun `enabled=false removes the operator surface with the rest of the loop`() {
+    fun `enabled=false shuts the routes with the rest of the loop`() {
         webRunner
             .withPropertyValues("embabel.dice.metamodel.enabled=false")
             .run { ctx ->
                 assertThat(ctx).hasNotFailed()
                 assertThat(metamodelEndpoints(ctx)).isEmpty()
                 assertThat(ctx).doesNotHaveBean(GovernanceOperationsService::class.java)
-                assertThat(ctx).doesNotHaveBean(GovernanceTools::class.java)
                 assertThat(ctx).doesNotHaveBean(GovernanceController::class.java)
                 // The application's own DeclaredSchemaSource stays; only the metamodel beans go.
                 assertThat(ctx).hasSingleBean(DeclaredSchemaSource::class.java)
@@ -165,53 +176,148 @@ class GovernanceOperatorAutoConfigurationTest {
      * offering it.
      */
     @Test
-    fun `drift mode off leaves no runner and therefore no operator surface`() {
+    fun `drift mode off leaves no runner and therefore no routes`() {
         webRunner
             .withPropertyValues("embabel.dice.metamodel.drift.mode=off")
             .run { ctx ->
                 assertThat(ctx).hasNotFailed()
                 assertThat(ctx).doesNotHaveBean(DriftCheckRunner::class.java)
                 assertThat(ctx).doesNotHaveBean(GovernanceOperationsService::class.java)
+                assertThat(metamodelEndpoints(ctx)).isEmpty()
+                assertThat(ctx).doesNotHaveBean(GovernanceController::class.java)
+            }
+    }
+
+    // ---- A wired loop without the import ----
+
+    /**
+     * The whole governance loop, in a servlet web application, with no `@Import` of the DICE REST
+     * surface. The service is there for the host's own code and zero URLs are published.
+     *
+     * This is the test the operator comment is about: HTTP used to switch itself on as soon as a
+     * schema existed, and now it takes the same explicit import every other DICE controller takes.
+     */
+    @Test
+    fun `a wired loop publishes no route until the host imports DICE REST`() {
+        WebApplicationContextRunner()
+            .withConfiguration(autoConfigurations)
+            .withUserConfiguration(InMemoryGovernanceConfig::class.java, EndpointMappingConfig::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx).hasSingleBean(GovernanceOperationsService::class.java)
+                assertThat(metamodelEndpoints(ctx)).isEmpty()
                 assertThat(ctx).doesNotHaveBean(GovernanceController::class.java)
             }
     }
 
     /**
-     * The default in-memory backend has no drift log and no observed-schema source, so no runner and
-     * no operator surface. The rest of the loop still starts.
+     * The same with the graph backend selected and no schema declared: still no import, still no
+     * routes. The import is the only thing that publishes them.
      */
     @Test
-    fun `a host with no graph gets the loop without the operator surface`() {
+    fun `no import means no route whatever the host declared`() {
         WebApplicationContextRunner()
             .withConfiguration(autoConfigurations)
-            .withUserConfiguration(InMemoryBackendConfig::class.java)
+            .withPropertyValues(GRAPH_BACKEND)
+            .withUserConfiguration(NoDeclaredSchemaConfig::class.java, EndpointMappingConfig::class.java)
             .run { ctx ->
                 assertThat(ctx).hasNotFailed()
-                assertThat(ctx).doesNotHaveBean(GovernanceOperationsService::class.java)
+                assertThat(metamodelEndpoints(ctx)).isEmpty()
                 assertThat(ctx).doesNotHaveBean(GovernanceController::class.java)
             }
+    }
+
+    /**
+     * No entry in the auto-configuration imports file may register the controller. That file is the
+     * list Spring Boot applies to every application on the classpath, so a name in it is the one way
+     * governance HTTP could come back without a host asking for it.
+     */
+    @Test
+    fun `no auto-configuration is registered for the governance HTTP surface`() {
+        val declared = PathMatchingResourcePatternResolver()
+            .getResources("classpath*:META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports")
+            .flatMap { it.inputStream.bufferedReader().readLines() }
+            .map { it.trim() }
+            .filter { it.startsWith("com.embabel.dice") }
+
+        assertThat(declared).contains(MetamodelAutoConfiguration::class.java.name)
+        assertThat(declared).noneMatch { "Governance" in it }
+    }
+
+    // ---- The agent tools are the host's to build ----
+
+    /**
+     * No autoconfigured context holds a `GovernanceTools` bean, in any of the shapes above. DICE
+     * registers no tool object as a bean — `DiscoveryTools`, `GraphQueryTools` and `Memory` are all
+     * constructed by the application that wants them, and governance follows that.
+     */
+    @Test
+    fun `no autoconfigured context holds a GovernanceTools bean`() {
+        runner.run { ctx ->
+            assertThat(ctx).hasSingleBean(GovernanceOperationsService::class.java)
+            assertThat(ctx).doesNotHaveBean(GovernanceTools::class.java)
+        }
+        webRunner.run { ctx ->
+            assertThat(ctx).hasSingleBean(GovernanceController::class.java)
+            assertThat(ctx).doesNotHaveBean(GovernanceTools::class.java)
+        }
+        WebApplicationContextRunner()
+            .withConfiguration(autoConfigurations)
+            .withPropertyValues(GRAPH_BACKEND)
+            .withUserConfiguration(NoDeclaredSchemaConfig::class.java)
+            .run { ctx ->
+                assertThat(ctx).doesNotHaveBean(GovernanceTools::class.java)
+            }
+    }
+
+    /**
+     * And the host can build them in one line from the service the wiring did supply, which is what
+     * makes the missing bean a design choice a consumer can live with. `GovernanceToolsTest` pins
+     * which five tools come back.
+     */
+    @Test
+    fun `a host builds the agent tools from the wired service`() {
+        runner.run { ctx ->
+            val tools = GovernanceTools.asTools(ctx.getBean<GovernanceOperationsService>())
+            assertThat(tools).hasSize(5)
+        }
     }
 
     // ---- A consumer's own bean wins ----
 
     @Test
     fun `a consumer operator service wins whether it is registered before or after`() {
-        bothOrders(CustomOperationsConfig::class.java) { ctx ->
-            assertThat(ctx).hasNotFailed()
-            assertThat(ctx).hasSingleBean(GovernanceOperationsService::class.java)
-            assertThat(ctx.getBean<GovernanceOperationsService>())
-                .isSameAs(ctx.getBean(CustomOperationsConfig::class.java).singleton)
-        }
+        WebApplicationContextRunner()
+            .withUserConfiguration(InMemoryGovernanceConfig::class.java, CustomOperationsConfig::class.java)
+            .withConfiguration(autoConfigurations)
+            .run(::assertConsumerServiceWon)
+
+        WebApplicationContextRunner()
+            .withConfiguration(autoConfigurations)
+            .withUserConfiguration(InMemoryGovernanceConfig::class.java, CustomOperationsConfig::class.java)
+            .run(::assertConsumerServiceWon)
     }
 
+    /**
+     * A host that wants these operations on a different path, or behind extra authorization, brings
+     * its own controller bean and still imports [DiceRestConfiguration] for the other DICE
+     * controllers. The shipped one backs off, so the two never compete for the same URLs.
+     */
     @Test
-    fun `a consumer controller wins whether it is registered before or after`() {
-        bothOrders(CustomControllerConfig::class.java) { ctx ->
-            assertThat(ctx).hasNotFailed()
-            assertThat(ctx).hasSingleBean(GovernanceController::class.java)
-            assertThat(ctx.getBean<GovernanceController>())
-                .isSameAs(ctx.getBean(CustomControllerConfig::class.java).singleton)
-        }
+    fun `a consumer controller wins and the shipped one backs off`() {
+        WebApplicationContextRunner()
+            .withConfiguration(autoConfigurations)
+            .withUserConfiguration(
+                RestImportingGovernanceConfig::class.java,
+                CustomControllerConfig::class.java,
+                EndpointMappingConfig::class.java,
+            )
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx).hasSingleBean(GovernanceController::class.java)
+                assertThat(ctx.getBean<GovernanceController>())
+                    .isSameAs(ctx.getBean(CustomControllerConfig::class.java).singleton)
+            }
     }
 
     // ---- Inertness ----
@@ -229,7 +335,7 @@ class GovernanceOperatorAutoConfigurationTest {
 
             assertThat(ctx.getBean<RecordingDriftReportStore>().saved).isEmpty()
             assertThat(ctx.getBean<RecordingMetamodelVersionStore>().saved).isEmpty()
-            assertThat(ctx.getBean<MapPropositionStore>().findAll())
+            assertThat(ctx.getBean<InMemoryPropositionRepository>().findAll())
                 .isNotEmpty
                 .allMatch { it.status == PropositionStatus.ACTIVE }
 
@@ -252,63 +358,18 @@ class GovernanceOperatorAutoConfigurationTest {
             assertThat(check.driftedEntityTypes).containsExactly("Ghost")
             assertThat(reports.saved).hasSize(1)
             // A check reports and moves nothing.
-            assertThat(ctx.getBean<MapPropositionStore>().findAll())
+            assertThat(ctx.getBean<InMemoryPropositionRepository>().findAll())
                 .allMatch { it.status == PropositionStatus.ACTIVE }
         }
     }
 
-    // ---- Registration ----
-
-    /**
-     * The HTTP surface is registered as an auto-configuration of its own. That entry is what makes
-     * `spring.autoconfigure.exclude: com.embabel.dice.storage.autoconfigure.GovernanceHttpAutoConfiguration`
-     * a knob at all: Spring Boot's exclusion filter works on the names in this file, so a controller
-     * declared inside [MetamodelAutoConfiguration] could not have been switched off on its own.
-     */
-    @Test
-    fun `the HTTP surface is its own auto-configuration, so a host can exclude it by name`() {
-        val declared = PathMatchingResourcePatternResolver()
-            .getResources("classpath*:META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports")
-            .flatMap { it.inputStream.bufferedReader().readLines() }
-            .map { it.trim() }
-
-        assertThat(declared).contains(GovernanceHttpAutoConfiguration::class.java.name)
-        assertThat(declared).contains(MetamodelAutoConfiguration::class.java.name)
-    }
-
-    /**
-     * What that exclusion leaves behind: the governance loop, the operator service and the agent
-     * tools, all in a servlet web application, with no controller. This is the same context an
-     * excluded [GovernanceHttpAutoConfiguration] produces, built by registering the other
-     * auto-configuration alone.
-     */
-    @Test
-    fun `without the HTTP auto-configuration the service and the tools still stand`() {
-        WebApplicationContextRunner()
-            .withConfiguration(AutoConfigurations.of(MetamodelAutoConfiguration::class.java))
-            .withUserConfiguration(InMemoryGovernanceConfig::class.java)
-            .run { ctx ->
-                assertThat(ctx).hasNotFailed()
-                assertThat(ctx).hasSingleBean(GovernanceOperationsService::class.java)
-                assertThat(ctx).hasSingleBean(GovernanceTools::class.java)
-                assertThat(ctx).doesNotHaveBean(GovernanceController::class.java)
-            }
-    }
-
-    /** Runs [assertions] with [userConfiguration] registered before and after the auto-configurations. */
-    private fun bothOrders(
-        userConfiguration: Class<*>,
-        assertions: (org.springframework.boot.test.context.assertj.AssertableWebApplicationContext) -> Unit,
+    private fun assertConsumerServiceWon(
+        ctx: org.springframework.boot.test.context.assertj.AssertableWebApplicationContext,
     ) {
-        WebApplicationContextRunner()
-            .withUserConfiguration(InMemoryGovernanceConfig::class.java, userConfiguration)
-            .withConfiguration(autoConfigurations)
-            .run(assertions)
-
-        WebApplicationContextRunner()
-            .withConfiguration(autoConfigurations)
-            .withUserConfiguration(InMemoryGovernanceConfig::class.java, userConfiguration)
-            .run(assertions)
+        assertThat(ctx).hasNotFailed()
+        assertThat(ctx).hasSingleBean(GovernanceOperationsService::class.java)
+        assertThat(ctx.getBean<GovernanceOperationsService>())
+            .isSameAs(ctx.getBean(CustomOperationsConfig::class.java).singleton)
     }
 
     /**
@@ -359,14 +420,60 @@ internal open class EndpointMappingConfig {
 }
 
 /**
- * An application that built a [GovernanceOperationsService] by hand for its own code and declared no
- * schema. Everything the HTTP surface needs is here apart from the opt-in itself.
+ * A host that imported the DICE REST surface and wired the whole governance loop in memory. The
+ * observed schema holds a `Ghost` type the declaration never mentions, so a check has real drift to
+ * report.
+ *
+ * Its proposition store is an `InMemoryPropositionRepository`, which is what a host importing
+ * [DiceRestConfiguration] already has: `MemoryController` comes with that import and needs a
+ * `PropositionRepository` on the context.
  */
 @Configuration(proxyBeanMethods = false)
-internal open class ServiceWithoutDeclaredSchemaConfig {
+@Import(DiceRestConfiguration::class)
+internal open class RestImportingGovernanceConfig {
 
     @Bean
-    open fun handWiredGovernanceOperations(): GovernanceOperationsService = CustomOperationsConfig().singleton
+    open fun declaredSchemaSource(): DeclaredSchemaSource = FixedDeclaredSchemaSource()
+
+    @Bean
+    open fun versionStore(): RecordingMetamodelVersionStore = RecordingMetamodelVersionStore()
+
+    @Bean
+    open fun driftReportStore(): RecordingDriftReportStore = RecordingDriftReportStore()
+
+    @Bean
+    open fun observedSchemaSource(): FixedObservedSchemaSource = FixedObservedSchemaSource()
+
+    @Bean
+    open fun propositionStore(): InMemoryPropositionRepository = seededRepository()
+}
+
+/** The same host with its declaration taken away, so governance never wires. */
+@Configuration(proxyBeanMethods = false)
+@Import(DiceRestConfiguration::class)
+internal open class RestImportingNoSchemaConfig {
+
+    @Bean
+    open fun persistenceManager(): PersistenceManager = mock()
+
+    @Bean
+    open fun propositionStore(): InMemoryPropositionRepository = seededRepository()
+}
+
+/**
+ * A host that imported the DICE REST surface and declared a schema on the default in-memory backend.
+ * Governance wires as far as it can, and stops short of a drift log, an observed schema, a runner
+ * and therefore an operator service.
+ */
+@Configuration(proxyBeanMethods = false)
+@Import(DiceRestConfiguration::class)
+internal open class RestImportingNoGraphConfig {
+
+    @Bean
+    open fun declaredSchemaSource(): DeclaredSchemaSource = FixedDeclaredSchemaSource()
+
+    @Bean
+    open fun propositionStore(): InMemoryPropositionRepository = seededRepository()
 }
 
 /** An application that brought its own operator service. */
@@ -401,3 +508,10 @@ internal object ThrowingDriftCheckRunner : DriftCheckRunner {
     override fun run(contextId: com.embabel.agent.core.ContextId?) =
         throw UnsupportedOperationException("never called; these tests only ask which bean won")
 }
+
+/** Two propositions, one of them mentioning the `Ghost` type the declaration never governs. */
+internal fun seededRepository(): InMemoryPropositionRepository =
+    InMemoryPropositionRepository().apply {
+        save(MetamodelTestFixtures.proposition("Ada haunts the archive", mentionType = "Ghost"))
+        save(MetamodelTestFixtures.proposition("Ada wrote the notes", mentionType = "Person"))
+    }

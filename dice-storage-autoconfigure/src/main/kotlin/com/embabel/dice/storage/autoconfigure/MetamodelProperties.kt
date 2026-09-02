@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.storage.autoconfigure
 
+import org.jetbrains.annotations.ApiStatus
 import org.springframework.boot.context.properties.ConfigurationProperties
 
 /**
@@ -25,6 +26,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
  * check reads, compares and writes a report, and moving a proposition is a separate call a host
  * makes on `DriftSweepCapable` at a moment it picks.
  */
+@ApiStatus.Experimental
 enum class DriftMode {
 
     /**
@@ -49,6 +51,7 @@ enum class DriftMode {
  * supplies a `DeclaredSchemaSource` bean, whatever these properties say. They control what happens
  * once one exists.
  */
+@ApiStatus.Experimental
 @ConfigurationProperties(prefix = "embabel.dice.metamodel")
 data class MetamodelProperties(
 
