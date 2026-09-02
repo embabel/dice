@@ -45,13 +45,6 @@ and the consumer PRs that deliver it).
   metadata key is removed; lineage answers per-proposition attribution.
   **Compatibility: breaking.** The key is no longer available; code holding it
   must migrate to extraction-run queries.
-- `DiceMetadataKeys.METAMODEL_VERSION` metadata key and stamping contract.
-  Propositions can carry the declared schema version hash under this key to
-  record which schema governed their extraction. The key is defined here with
-  its contract; production wiring that stamps propositions at persistence time
-  lands in a follow-up slice after the extraction-run stack merges.
-  **Compatibility: additive.** New metadata key only; no existing API or code
-  touched.
 - Drivine/Neo4j-backed `MetamodelVersionStore` in `dice-storage`
   (`DrivineMetamodelVersionStore`): stamps persist as `(:MetamodelVersion)` nodes,
   MERGEd on the natural key `(schemaName, contentHash)`, so a re-stamp updates in
