@@ -34,8 +34,6 @@ import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.projection.graph.GraphProjectionService
 import com.embabel.dice.proposition.PropositionRepository
-import com.embabel.dice.provenance.SourceLocator
-import com.embabel.dice.provenance.SourceRevisionRef
 import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Async
@@ -164,7 +162,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * Extract propositions from a file via Tika and persist them.
      * Requires `embabel-agent-rag-tika` on the classpath.
      *
-     * This is the signature that existed before profiles, kept as its own declaration so it
+     * This is the signature that existed before requests, kept as its own declaration so it
      * stays overridable — see the note on [rememberText].
      */
     open fun rememberFile(
@@ -172,26 +170,26 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         filename: String,
         user: NamedEntity,
     ) = withRememberedFileText(inputStream, filename) { text ->
-        // Deliberately the pre-profile text signature, not the wide one. This is the dispatch
-        // this method had before profiles existed, so a subclass that overrides only that
-        // signature still intercepts file ingestion the way it always did.
+        // Deliberately the three-argument-era text signature. This is the dispatch this method
+        // had before requests existed, so a subclass that overrides only that signature still
+        // intercepts file ingestion the way it always did.
         rememberText(text, "remember:$filename", user, emptyList(), null, null)
     }
 
     /**
-     * Extract propositions from a file via Tika, attributed to an extraction content profile.
-     * EXPERIMENTAL; see [rememberText] for what the reference means.
+     * Extract propositions from a file via Tika, on the terms the [request] sets — the source it
+     * was read from, the revision of that source, the content profile it runs under.
      *
-     * With no profile to carry this hands straight back to the three-argument form, so a call
-     * that looks like a pre-profile call also dispatches like one.
+     * A [request] that carries nothing hands straight back to the three-argument form, so a call
+     * that looks like a pre-request call also dispatches like one.
      */
     open fun rememberFile(
         inputStream: InputStream,
         filename: String,
         user: NamedEntity,
-        profile: ExtractionContentProfileRef?,
+        request: ExtractionRequest,
     ) {
-        if (profile == null) {
+        if (request.isEmpty) {
             rememberFile(inputStream, filename, user)
             return
         }
@@ -203,81 +201,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 emptyList(),
                 null,
                 null,
-                profile,
-            )
-        }
-    }
-
-    /**
-     * Extract propositions from a file and ground them in the caller's typed source.
-     *
-     * Passing a [sourceRevision] asserts that the locator's revision covers the whole file, all
-     * of it, as extracted here. DICE reads the file as one aggregate and has no way to work out
-     * whether a provider's revision really spans it, so the host has to know that and say so.
-     *
-     * This is the signature that existed before profiles, kept as its own declaration so it
-     * stays overridable — see the note on [rememberText].
-     */
-    @JvmOverloads
-    open fun rememberFileFromSource(
-        inputStream: InputStream,
-        filename: String,
-        user: NamedEntity,
-        sourceLocator: SourceLocator,
-        sourceRevision: SourceRevisionRef? = null,
-    ) {
-        require(sourceRevision == null || sourceRevision.sourceKey == sourceLocator.key()) {
-            "sourceRevision source key must match sourceLocator source key"
-        }
-        withRememberedFileText(inputStream, filename) { text ->
-            // The pre-profile text signature, for the same reason as [rememberFile].
-            rememberTextFromSource(
-                text,
-                "remember:$filename",
-                user,
-                sourceLocator,
-                sourceRevision,
-                emptyList(),
-                null,
-                null,
-            )
-        }
-    }
-
-    /**
-     * Extract propositions from a file, ground them in the caller's typed source, and attribute
-     * them to an extraction content profile. EXPERIMENTAL; see [rememberText] for what the
-     * reference means. The profile is independent of the locator and the revision.
-     *
-     * With no profile to carry this hands straight back to the five-argument form, so a call
-     * that looks like a pre-profile call also dispatches like one.
-     */
-    open fun rememberFileFromSource(
-        inputStream: InputStream,
-        filename: String,
-        user: NamedEntity,
-        sourceLocator: SourceLocator,
-        sourceRevision: SourceRevisionRef?,
-        profile: ExtractionContentProfileRef?,
-    ) {
-        if (profile == null) {
-            rememberFileFromSource(inputStream, filename, user, sourceLocator, sourceRevision)
-            return
-        }
-        require(sourceRevision == null || sourceRevision.sourceKey == sourceLocator.key()) {
-            "sourceRevision source key must match sourceLocator source key"
-        }
-        withRememberedFileText(inputStream, filename) { text ->
-            rememberTextFromSource(
-                text,
-                "remember:$filename",
-                user,
-                sourceLocator,
-                sourceRevision,
-                emptyList(),
-                null,
-                null,
-                profile,
+                request,
             )
         }
     }
@@ -320,14 +244,15 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      *   be persisted as NEW entities. `null` (default) uses the extractor
      *   instance's default; see [SourceAnalysisContext.mintNewEntities].
      *
-     * This is the signature that existed before profiles, and it stays its own declaration
-     * rather than growing a defaulted parameter. `@JvmOverloads` emits every reduced-arity
-     * overload as `final`, so folding the new argument into this method would have turned the
-     * six-argument form — the one a subclass overrides — into a final bridge. Declaring the two
-     * shapes separately keeps both open. Unintercepted, every call lands on the seven-argument
+     * This is the signature that existed before requests, and it stays its own declaration.
+     * Growing it with a defaulted parameter would break subclasses: `@JvmOverloads` emits every
+     * reduced-arity overload as `final`, so folding the new argument into this method would have
+     * turned the six-argument form — the one a subclass overrides — into a final bridge.
+     * Declaring the two shapes separately keeps both open. Unintercepted, every call lands on the
+     * seven-argument
      * form below, so overriding that one sees everything; overriding this one sees everything a
-     * pre-profile subclass used to see, including file ingestion, which still routes through
-     * here rather than jumping to the wide form.
+     * subclass written before requests used to see, including file ingestion, which still
+     * routes through here.
      */
     @JvmOverloads
     open fun rememberText(
@@ -337,123 +262,44 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         additionalGrounding: List<String> = emptyList(),
         perspective: ExtractionPerspective? = null,
         mintNewEntities: Boolean? = null,
-    ) = rememberText(text, sourceId, user, additionalGrounding, perspective, mintNewEntities, null)
-
-    /**
-     * Extract propositions from raw text, attributed to an extraction content profile.
-     *
-     * Every other text entry point funnels here, so this is the one method to override to see
-     * every call.
-     *
-     * @param profile extraction content profile this call should be attributed to, or null.
-     *   EXPERIMENTAL. DICE puts it on the context and does nothing else with it: no provider,
-     *   model, or credential is selected from it, and extraction runs exactly as it would
-     *   without one.
-     */
-    open fun rememberText(
-        text: String,
-        sourceId: String,
-        user: NamedEntity,
-        additionalGrounding: List<String>,
-        perspective: ExtractionPerspective?,
-        mintNewEntities: Boolean?,
-        profile: ExtractionContentProfileRef?,
-    ) =
-        rememberTextInternal(
-            text = text,
-            sourceId = sourceId,
-            user = user,
-            additionalGrounding = additionalGrounding,
-            perspective = perspective,
-            mintNewEntities = mintNewEntities,
-            profile = profile,
-        )
-
-    /**
-     * Extract propositions from raw text and ground them in the caller's typed source.
-     *
-     * A separate method rather than more optional arguments on [rememberText]: a locator is
-     * required here, so the two entry points have genuinely different contracts, and Kotlin and
-     * Java call sites both stay unambiguous.
-     *
-     * [sourceId] keeps its old meaning — the exact caller-supplied chunk and grounding
-     * identifier. Passing a [sourceRevision] asserts that [sourceLocator]'s revision covers the
-     * whole text. DICE cannot read revision coverage out of an untyped [sourceId] or out of
-     * [additionalGrounding], so the host has to know that and say so.
-     *
-     * This is the signature that existed before profiles, kept as its own declaration so it
-     * stays overridable — see the note on [rememberText].
-     */
-    @JvmOverloads
-    open fun rememberTextFromSource(
-        text: String,
-        sourceId: String,
-        user: NamedEntity,
-        sourceLocator: SourceLocator,
-        sourceRevision: SourceRevisionRef? = null,
-        additionalGrounding: List<String> = emptyList(),
-        perspective: ExtractionPerspective? = null,
-        mintNewEntities: Boolean? = null,
-    ) = rememberTextFromSource(
+    ) = rememberText(
         text,
         sourceId,
         user,
-        sourceLocator,
-        sourceRevision,
         additionalGrounding,
         perspective,
         mintNewEntities,
-        null,
+        ExtractionRequest.NONE,
     )
 
     /**
-     * Extract propositions from raw text, ground them in the caller's typed source, and
-     * attribute them to an extraction content profile. EXPERIMENTAL; see [rememberText] for what
-     * the reference means. A profile is independent of the locator and the revision — it says
-     * what extraction should do, they say what it is reading.
+     * Extract propositions from raw text on the terms the [request] sets — the source it was read
+     * from, the revision of that source, the content profile it runs under.
+     *
+     * Every other entry point funnels here, so this is the one method to override to see every
+     * call. It is also where a new extraction dimension shows up: it arrives as a field on
+     * [ExtractionRequest] and this signature stays as it is.
+     *
+     * [sourceId] keeps its old meaning — the exact caller-supplied chunk and grounding
+     * identifier. DICE cannot read source identity or revision coverage out of an untyped
+     * [sourceId] or out of [additionalGrounding], which is why the [request] carries them
+     * explicitly.
      */
-    open fun rememberTextFromSource(
+    open fun rememberText(
         text: String,
         sourceId: String,
         user: NamedEntity,
-        sourceLocator: SourceLocator,
-        sourceRevision: SourceRevisionRef?,
         additionalGrounding: List<String>,
         perspective: ExtractionPerspective?,
         mintNewEntities: Boolean?,
-        profile: ExtractionContentProfileRef?,
-    ) =
-        rememberTextInternal(
-            text = text,
-            sourceId = sourceId,
-            user = user,
-            sourceLocator = sourceLocator,
-            sourceRevision = sourceRevision,
-            additionalGrounding = additionalGrounding,
-            perspective = perspective,
-            mintNewEntities = mintNewEntities,
-            profile = profile,
-        )
-
-    private fun rememberTextInternal(
-        text: String,
-        sourceId: String,
-        user: NamedEntity,
-        sourceLocator: SourceLocator? = null,
-        sourceRevision: SourceRevisionRef? = null,
-        additionalGrounding: List<String> = emptyList(),
-        perspective: ExtractionPerspective? = null,
-        mintNewEntities: Boolean? = null,
-        profile: ExtractionContentProfileRef? = null,
+        request: ExtractionRequest,
     ) {
         val context = buildContext(
             user = user,
             sourceId = sourceId,
             perspective = perspective,
             mintNewEntities = mintNewEntities,
-            sourceLocator = sourceLocator,
-            sourceRevision = sourceRevision,
-            profile = profile,
+            request = request,
         )
         val result = propositionPipeline.processOnce(
             text, sourceId, context, additionalGrounding = additionalGrounding,
@@ -501,15 +347,16 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 return
             }
 
-            // The async path grounds propositions exactly the way rememberTextFromSource does:
-            // whatever provenance and profile the event carries goes through the same
-            // buildContext call.
+            // The async path grounds propositions exactly the way a direct call does: whatever the
+            // event carries becomes a request and goes through the same buildContext call.
             val context = buildContext(
                 user = event.user,
                 sourceId = source.id,
-                sourceLocator = event.sourceLocator(),
-                sourceRevision = event.sourceRevision(),
-                profile = event.profile(),
+                request = ExtractionRequest(
+                    sourceLocator = event.sourceLocator(),
+                    sourceRevision = event.sourceRevision(),
+                    profile = event.profile(),
+                ),
             )
             logger.info(
                 "Context relations count: {}, injected relations count: {}",
@@ -541,9 +388,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         sourceId: String = "",
         perspective: ExtractionPerspective? = null,
         mintNewEntities: Boolean? = null,
-        sourceLocator: SourceLocator? = null,
-        sourceRevision: SourceRevisionRef? = null,
-        profile: ExtractionContentProfileRef? = null,
+        request: ExtractionRequest = ExtractionRequest.NONE,
     ): SourceAnalysisContext {
         val aliases = try {
             currentUserAliasesProvider(user)
@@ -603,17 +448,13 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 ctx = ctx.withMintedEntityProperties(stamped)
             }
         }
-        if (sourceLocator != null) {
-            ctx = ctx.withSourceLocator(sourceLocator)
-        }
-        if (sourceRevision != null) {
-            ctx = ctx.withSourceRevision(sourceRevision)
-        }
+        // The request is the one door everything the caller asked for comes through, so the
+        // context and the request always agree about a call.
+        request.sourceLocator?.let { ctx = ctx.withSourceLocator(it) }
+        request.sourceRevision?.let { ctx = ctx.withSourceRevision(it) }
         // Carried, never consulted. Nothing downstream of here reads it — that is what "DICE
         // holds profile identity and the host binds policy" means in code.
-        if (profile != null) {
-            ctx = ctx.withProfile(profile)
-        }
+        request.profile?.let { ctx = ctx.withProfile(it) }
         return ctx
     }
 

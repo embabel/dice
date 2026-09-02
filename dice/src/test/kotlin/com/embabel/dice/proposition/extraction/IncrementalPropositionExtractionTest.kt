@@ -66,26 +66,12 @@ import java.util.concurrent.atomic.AtomicInteger
 class IncrementalPropositionExtractionTest {
 
     @Test
-    fun `legacy and source aware JVM descriptors are exact`() {
-        val rememberTextParameters = IncrementalPropositionExtraction::class.java.declaredMethods
-            .filter { it.name == "rememberText" && !it.isSynthetic }
-            .map { it.parameterTypes.toList() }
-            .toSet()
-        val rememberFileParameters = IncrementalPropositionExtraction::class.java.declaredMethods
-            .filter { it.name == "rememberFile" && !it.isSynthetic }
-            .map { it.parameterTypes.toList() }
-            .toSet()
-        val rememberTextFromSourceParameters = IncrementalPropositionExtraction::class.java.declaredMethods
-            .filter { it.name == "rememberTextFromSource" && !it.isSynthetic }
-            .map { it.parameterTypes.toList() }
-            .toSet()
-        val rememberFileFromSourceParameters = IncrementalPropositionExtraction::class.java.declaredMethods
-            .filter { it.name == "rememberFileFromSource" && !it.isSynthetic }
-            .map { it.parameterTypes.toList() }
-            .toSet()
+    fun `entry point JVM descriptors are exact`() {
+        val rememberTextParameters = declaredParameterLists("rememberText")
+        val rememberFileParameters = declaredParameterLists("rememberFile")
 
-        // Every descriptor that existed before profiles is still here, and the profile
-        // argument only ever adds one descriptor on the end of each name.
+        // Every descriptor that existed before requests is still here, and the request argument
+        // only ever adds one descriptor on the end of each name.
         val legacyTextPrefix = listOf(
             String::class.java,
             String::class.java,
@@ -96,8 +82,8 @@ class IncrementalPropositionExtractionTest {
             ExtractionPerspective::class.java,
             Boolean::class.javaObjectType,
         )
-        val profileOnly = listOf(
-            ExtractionContentProfileRef::class.java,
+        val requestOnly = listOf(
+            ExtractionRequest::class.java,
         )
         assertEquals(
             setOf(
@@ -105,32 +91,9 @@ class IncrementalPropositionExtractionTest {
                 legacyTextPrefix + List::class.java,
                 legacyTextPrefix + listOf(List::class.java, ExtractionPerspective::class.java),
                 legacyTextFull,
-                legacyTextFull + profileOnly,
+                legacyTextFull + requestOnly,
             ),
             rememberTextParameters,
-        )
-
-        val sourceTextPrefix = legacyTextPrefix + SourceLocator::class.java
-        val sourceTextFull = sourceTextPrefix + listOf(
-            SourceRevisionRef::class.java,
-            List::class.java,
-            ExtractionPerspective::class.java,
-            Boolean::class.javaObjectType,
-        )
-        assertEquals(
-            setOf(
-                sourceTextPrefix,
-                sourceTextPrefix + SourceRevisionRef::class.java,
-                sourceTextPrefix + listOf(SourceRevisionRef::class.java, List::class.java),
-                sourceTextPrefix + listOf(
-                    SourceRevisionRef::class.java,
-                    List::class.java,
-                    ExtractionPerspective::class.java,
-                ),
-                sourceTextFull,
-                sourceTextFull + profileOnly,
-            ),
-            rememberTextFromSourceParameters,
         )
 
         val legacyFile = listOf(
@@ -139,34 +102,49 @@ class IncrementalPropositionExtractionTest {
             NamedEntity::class.java,
         )
         assertEquals(
-            setOf(legacyFile, legacyFile + profileOnly),
+            setOf(legacyFile, legacyFile + requestOnly),
             rememberFileParameters,
         )
-        val sourceFileFull =
-            legacyFile + listOf(SourceLocator::class.java, SourceRevisionRef::class.java)
-        assertEquals(
-            setOf(
-                legacyFile + SourceLocator::class.java,
-                sourceFileFull,
-                sourceFileFull + profileOnly,
-            ),
-            rememberFileFromSourceParameters,
-        )
 
-        // A profile-aware call can never collapse onto a legacy one: a profile always arrives
-        // on the end, at an arity a legacy caller never fills.
-        val everyRememberParameterList = rememberTextParameters + rememberFileParameters +
-            rememberTextFromSourceParameters + rememberFileFromSourceParameters
-        everyRememberParameterList.forEach { parameters ->
-            val hasProfile = ExtractionContentProfileRef::class.java in parameters
-            if (hasProfile) {
+        // Two entry points, and no third and fourth name to keep in step with them. Everything a
+        // caller supplies beyond the arguments these methods always took rides on the request, so
+        // a locator, a revision and a profile add no method names and no arities.
+        assertEquals(emptySet<List<Class<*>>>(), declaredParameterLists("rememberTextFromSource"))
+        assertEquals(emptySet<List<Class<*>>>(), declaredParameterLists("rememberFileFromSource"))
+
+        // A request-carrying call can never collapse onto one written without a request: the
+        // request always arrives on the end, at an arity the other caller never fills.
+        (rememberTextParameters + rememberFileParameters).forEach { parameters ->
+            if (ExtractionRequest::class.java in parameters) {
                 assertEquals(
-                    profileOnly,
+                    requestOnly,
                     parameters.takeLast(1),
-                    "profile must be the last parameter: $parameters",
+                    "the request must be the last parameter: $parameters",
                 )
             }
         }
+    }
+
+    @Test
+    fun `no field, parameter or return type outside the request carries what the request carries`() {
+        // The point of the request object: a locator, a revision and a profile reach extraction
+        // through it and through nothing else. A future dimension added as a loose parameter on an
+        // entry point would put the surface back where it started, so this sweeps the whole class.
+        val carried = setOf(
+            SourceLocator::class.java,
+            SourceRevisionRef::class.java,
+            ExtractionContentProfileRef::class.java,
+        )
+        IncrementalPropositionExtraction::class.java.declaredMethods
+            .filter { it.name.startsWith("remember") && '$' !in it.name }
+            .forEach { method ->
+                method.parameterTypes.forEach { parameter ->
+                    assertFalse(
+                        parameter in carried,
+                        "${method.name} takes ${parameter.simpleName} directly; it belongs on the request",
+                    )
+                }
+            }
     }
 
     @Test
@@ -198,7 +176,7 @@ class IncrementalPropositionExtractionTest {
         // A run reference under another name (runRef, runId, AnalysisRunRef, ...) would satisfy a
         // sweep that only recognizes "currentRun"/"extractionRun" literally, so this checks every
         // declared member's name for "run" as a substring, not a fixed set of spellings. Verified
-        // before writing this: none of the four carriers has a legitimate declared method, field,
+        // before writing this: none of the five carriers has a legitimate declared method, field,
         // or constructor parameter whose name contains "run" today, confirmed by a throwaway
         // reflection dump run against the built classes, so this sweep starts from a clean
         // baseline and any future match is either a reintroduced run reference or something that
@@ -216,8 +194,12 @@ class IncrementalPropositionExtractionTest {
         // as arg0, arg1, ...), so a name-based check on a constructor parameter would silently
         // never fire; claiming otherwise here would be the same overclaim this test exists to
         // avoid making about other code.
+        // ExtractionRequest is swept alongside the rest: it is where a run reference would land
+        // once the store that consumes it arrives, so it is the likeliest place for one to
+        // reappear early.
         val carriers = listOf(
             IncrementalPropositionExtraction::class.java,
+            ExtractionRequest::class.java,
             SourceAnalysisContext::class.java,
             SourceAnalysisRequestEvent::class.java,
             ConversationAnalysisRequestEvent::class.java,
@@ -246,13 +228,13 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
-    fun `the entry point signatures that were overridable before profiles still are`() {
+    fun `the entry point signatures that were overridable before requests still are`() {
         // @JvmOverloads emits every reduced-arity overload as final. Folding the new argument
         // into the existing declarations would therefore have turned each method's pre-change
         // maximum arity — the signature a subclass overrides — into a final bridge. Callers
         // would not have noticed; a subclass would have stopped compiling, and one already
-        // compiled could fail verification at load. Each shape is its own declaration instead,
-        // and this is the assertion that keeps it that way.
+        // compiled could fail verification at load. Each shape is its own declaration, and this
+        // is the assertion that keeps it that way.
         val stillOpen = mapOf(
             "rememberText" to listOf(
                 String::class.java,
@@ -267,23 +249,6 @@ class IncrementalPropositionExtractionTest {
                 String::class.java,
                 NamedEntity::class.java,
             ),
-            "rememberTextFromSource" to listOf(
-                String::class.java,
-                String::class.java,
-                NamedEntity::class.java,
-                SourceLocator::class.java,
-                SourceRevisionRef::class.java,
-                List::class.java,
-                ExtractionPerspective::class.java,
-                Boolean::class.javaObjectType,
-            ),
-            "rememberFileFromSource" to listOf(
-                InputStream::class.java,
-                String::class.java,
-                NamedEntity::class.java,
-                SourceLocator::class.java,
-                SourceRevisionRef::class.java,
-            ),
         )
         stillOpen.forEach { (name, parameters) ->
             val method = IncrementalPropositionExtraction::class.java
@@ -294,40 +259,40 @@ class IncrementalPropositionExtractionTest {
             )
         }
 
-        // The new maximum-arity forms are the single override point every call funnels through,
-        // so they have to be open too.
-        val profileOnly = arrayOf(
-            ExtractionContentProfileRef::class.java,
+        // The request-taking forms are the single override point every call funnels through, so
+        // they have to be open too.
+        val requestOnly = arrayOf(
+            ExtractionRequest::class.java,
         )
         stillOpen.forEach { (name, parameters) ->
             val method = IncrementalPropositionExtraction::class.java
-                .getMethod(name, *(parameters.toTypedArray() + profileOnly))
+                .getMethod(name, *(parameters.toTypedArray() + requestOnly))
             assertFalse(
                 Modifier.isFinal(method.modifiers),
-                "the profile-aware $name must be overridable",
+                "the request-taking $name must be overridable",
             )
         }
 
         // The reduced-arity overloads @JvmOverloads generates were final before this slice and
-        // still are. Stating it pins that the fix restored the previous surface exactly rather
-        // than widening it.
+        // still are. Stating it pins that the surface is the one that was there, plus a request.
         val generatedBridges = listOf(
             "rememberText" to arrayOf<Class<*>>(
                 String::class.java,
                 String::class.java,
                 NamedEntity::class.java,
             ),
-            "rememberTextFromSource" to arrayOf<Class<*>>(
+            "rememberText" to arrayOf<Class<*>>(
                 String::class.java,
                 String::class.java,
                 NamedEntity::class.java,
-                SourceLocator::class.java,
+                List::class.java,
             ),
-            "rememberFileFromSource" to arrayOf<Class<*>>(
-                InputStream::class.java,
+            "rememberText" to arrayOf<Class<*>>(
+                String::class.java,
                 String::class.java,
                 NamedEntity::class.java,
-                SourceLocator::class.java,
+                List::class.java,
+                ExtractionPerspective::class.java,
             ),
         )
         generatedBridges.forEach { (name, parameters) ->
@@ -340,7 +305,7 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
-    fun `a subclass overriding the pre-profile signatures still intercepts every call`() {
+    fun `a subclass overriding the signatures that predate requests still intercepts every call`() {
         val pipeline = pipelineReturningNoResult()
         val seen = mutableListOf<String>()
         val extraction = object : IncrementalPropositionExtraction(
@@ -386,12 +351,12 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
-    fun `a subclass overriding only the pre-profile text methods still intercepts file ingestion`() {
-        // Before profiles, the file entry points read the file and handed the text to the
-        // pre-profile text methods, so a subclass overriding only those intercepted file
-        // ingestion too. Routing the file paths to the wide text methods would have quietly
-        // taken that away: the override would still compile, still be called for direct text
-        // calls, and silently stop seeing files.
+    fun `a subclass overriding only the text entry points still intercepts file ingestion`() {
+        // Before requests, the file entry point read the file and handed the text to the
+        // six-argument text method, so a subclass overriding only that one intercepted file
+        // ingestion too. Routing every file call to the request-taking text method would have
+        // quietly taken that away: the override would still compile, still be called for direct
+        // text calls, and silently stop seeing files.
         val pipeline = pipelineReturningNoResult()
         val seen = mutableListOf<String>()
         val extraction = object : IncrementalPropositionExtraction(
@@ -416,17 +381,16 @@ class IncrementalPropositionExtractionTest {
                 seen += "text:$sourceId"
             }
 
-            override fun rememberTextFromSource(
+            override fun rememberText(
                 text: String,
                 sourceId: String,
                 user: NamedEntity,
-                sourceLocator: SourceLocator,
-                sourceRevision: SourceRevisionRef?,
                 additionalGrounding: List<String>,
                 perspective: ExtractionPerspective?,
                 mintNewEntities: Boolean?,
+                request: ExtractionRequest,
             ) {
-                seen += "textFromSource:$sourceId"
+                seen += "request:$sourceId"
             }
         }
         val locator = UriLocator("file:///notes/dispatch.txt")
@@ -437,35 +401,25 @@ class IncrementalPropositionExtractionTest {
             "legacy.txt",
             user(),
         )
-        // A wide call carrying no reference dispatches like the pre-profile call it resembles.
+        // A request that carries nothing dispatches like the call it resembles.
         extraction.rememberFile(
             ByteArrayInputStream("legacy file text".toByteArray()),
-            "wide-null.txt",
+            "empty-request.txt",
             user(),
-            null,
+            ExtractionRequest.NONE,
         )
-        extraction.rememberFileFromSource(
+        extraction.rememberFile(
             ByteArrayInputStream("source file text".toByteArray()),
             "source.txt",
             user(),
-            locator,
-            revision,
-        )
-        extraction.rememberFileFromSource(
-            ByteArrayInputStream("source file text".toByteArray()),
-            "wide-null-source.txt",
-            user(),
-            locator,
-            revision,
-            null,
+            ExtractionRequest(sourceLocator = locator, sourceRevision = revision),
         )
 
         assertEquals(
             listOf(
                 "text:remember:legacy.txt",
-                "text:remember:wide-null.txt",
-                "textFromSource:remember:source.txt",
-                "textFromSource:remember:wide-null-source.txt",
+                "text:remember:empty-request.txt",
+                "request:remember:source.txt",
             ),
             seen,
         )
@@ -473,9 +427,9 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
-    fun `a file call that carries a profile goes to the wide text entry point`() {
-        // The other half of the routing rule: once there is a reference to carry, the legacy
-        // text signature cannot express it, so the call has to go wide.
+    fun `a file call that carries a request goes to the request text entry point`() {
+        // The other half of the routing rule: once there is something to carry, the six-argument
+        // text signature cannot express it, so the call goes to the one that can.
         val pipeline = pipelineReturningNoResult()
         val seen = mutableListOf<String>()
         val extraction = object : IncrementalPropositionExtraction(
@@ -497,7 +451,7 @@ class IncrementalPropositionExtractionTest {
                 perspective: ExtractionPerspective?,
                 mintNewEntities: Boolean?,
             ) {
-                seen += "legacy:$sourceId"
+                seen += "text:$sourceId"
             }
 
             override fun rememberText(
@@ -507,9 +461,9 @@ class IncrementalPropositionExtractionTest {
                 additionalGrounding: List<String>,
                 perspective: ExtractionPerspective?,
                 mintNewEntities: Boolean?,
-                profile: ExtractionContentProfileRef?,
+                request: ExtractionRequest,
             ) {
-                seen += "wide:$sourceId:${profile?.name}"
+                seen += "request:$sourceId:${request.profile?.name}"
             }
         }
 
@@ -517,37 +471,42 @@ class IncrementalPropositionExtractionTest {
             ByteArrayInputStream("legacy file text".toByteArray()),
             "profiled.txt",
             user(),
-            ExtractionContentProfileRef("house-style", "v1"),
+            ExtractionRequest(profile = ExtractionContentProfileRef("house-style", "v1")),
         )
 
-        assertEquals(listOf("wide:remember:profiled.txt:house-style"), seen)
+        assertEquals(listOf("request:remember:profiled.txt:house-style"), seen)
         verifyNoInteractions(pipeline)
     }
 
     @Test
-    fun `new text entry point retains exact typed and untyped inputs`() {
+    fun `the request text entry point retains exact typed and untyped inputs`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val user = user()
         val locator = UriLocator("https://example.com/source")
         val revision = SourceRevisionRef(locator.key(), "r7")
+        val profile = ExtractionContentProfileRef("house-style", "v1")
         val perspective = mock<ExtractionPerspective>()
         val grounding = listOf("record:one", "record:two")
 
-        extraction.rememberTextFromSource(
+        extraction.rememberText(
             text = "source text",
             sourceId = "caller:source:r7",
             user = user,
-            sourceLocator = locator,
-            sourceRevision = revision,
             additionalGrounding = grounding,
             perspective = perspective,
             mintNewEntities = true,
+            request = ExtractionRequest(
+                sourceLocator = locator,
+                sourceRevision = revision,
+                profile = profile,
+            ),
         )
 
         val context = capturedContext(pipeline, "source text", "caller:source:r7", grounding)
         assertSame(locator, context.sourceLocator)
         assertSame(revision, context.sourceRevision)
+        assertSame(profile, context.profile)
         assertSame(perspective, context.perspective)
         assertEquals(true, context.mintNewEntities)
     }
@@ -571,35 +530,24 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
-    fun `mismatched typed provenance fails before pipeline invocation`() {
+    fun `mismatched typed provenance fails before the entry point is even called`() {
+        // The request validates the pairing while it is being built, so a text call and a file
+        // call are both unreachable with a mismatched pair — the caller never gets a request to
+        // pass. That is stricter than checking inside each entry point, and it is why neither
+        // entry point repeats the check.
         val pipeline = pipelineReturningNoResult()
-        val extraction = extraction(pipeline)
-        val locator = UriLocator("https://example.com/source")
+        val textLocator = UriLocator("https://example.com/source")
+        val fileLocator = UriLocator("file:///notes/example.txt")
 
         assertThrows(IllegalArgumentException::class.java) {
-            extraction.rememberTextFromSource(
-                text = "source text",
-                sourceId = "exact-source",
-                user = user(),
-                sourceLocator = locator,
+            ExtractionRequest(
+                sourceLocator = textLocator,
                 sourceRevision = SourceRevisionRef("different-key", "r1"),
             )
         }
-        verifyNoInteractions(pipeline)
-    }
-
-    @Test
-    fun `mismatched file provenance fails before parsing or pipeline invocation`() {
-        val pipeline = pipelineReturningNoResult()
-        val extraction = extraction(pipeline)
-        val locator = UriLocator("file:///notes/example.txt")
-
         assertThrows(IllegalArgumentException::class.java) {
-            extraction.rememberFileFromSource(
-                inputStream = ByteArrayInputStream("file source text".toByteArray()),
-                filename = "example.txt",
-                user = user(),
-                sourceLocator = locator,
+            ExtractionRequest(
+                sourceLocator = fileLocator,
                 sourceRevision = SourceRevisionRef("different-key", "r1"),
             )
         }
@@ -631,18 +579,17 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
-    fun `source aware file retains remember source id and typed provenance`() {
+    fun `a file request retains remember source id and typed provenance`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val locator = UriLocator("file:///notes/example.txt")
         val revision = SourceRevisionRef(locator.key(), "file-r2")
 
-        extraction.rememberFileFromSource(
+        extraction.rememberFile(
             inputStream = ByteArrayInputStream("file source text".toByteArray()),
             filename = "example.txt",
             user = user(),
-            sourceLocator = locator,
-            sourceRevision = revision,
+            request = ExtractionRequest(sourceLocator = locator, sourceRevision = revision),
         )
 
         val contextCaptor = argumentCaptor<SourceAnalysisContext>()
@@ -676,75 +623,85 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
-    fun `Kotlin callable references and named calls distinguish legacy and source entry points`() {
+    fun `Kotlin callable references and named calls resolve to one entry point each`() {
         val extraction = mock<IncrementalPropositionExtraction>()
         val user = user()
         val locator = UriLocator("https://example.com/callable")
         val revision = SourceRevisionRef(locator.key(), "callable-r1")
+        val request = ExtractionRequest(sourceLocator = locator, sourceRevision = revision)
         val legacyText:
             (String, String, NamedEntity, List<String>, ExtractionPerspective?, Boolean?) -> Unit =
             extraction::rememberText
-        val sourceText:
+        val requestText:
             (
                 String,
                 String,
                 NamedEntity,
-                SourceLocator,
-                SourceRevisionRef?,
                 List<String>,
                 ExtractionPerspective?,
                 Boolean?,
-            ) -> Unit = extraction::rememberTextFromSource
+                ExtractionRequest,
+            ) -> Unit = extraction::rememberText
         val legacyFile: (InputStream, String, NamedEntity) -> Unit = extraction::rememberFile
-        val sourceFile:
-            (InputStream, String, NamedEntity, SourceLocator, SourceRevisionRef?) -> Unit =
-            extraction::rememberFileFromSource
+        val requestFile: (InputStream, String, NamedEntity, ExtractionRequest) -> Unit =
+            extraction::rememberFile
 
         legacyText("callable legacy", "callable-legacy", user, emptyList(), null, null)
-        sourceText("callable source", "callable-source", user, locator, revision, emptyList(), null, null)
+        requestText("callable request", "callable-request", user, emptyList(), null, null, request)
         legacyFile(ByteArrayInputStream(byteArrayOf()), "callable-legacy.txt", user)
-        sourceFile(ByteArrayInputStream(byteArrayOf()), "callable-source.txt", user, locator, revision)
+        requestFile(ByteArrayInputStream(byteArrayOf()), "callable-request.txt", user, request)
         extraction.rememberText(text = "named legacy", sourceId = "named-legacy", user = user)
-        extraction.rememberTextFromSource(
-            text = "named source",
-            sourceId = "named-source",
+        extraction.rememberText(
+            text = "named request",
+            sourceId = "named-request",
             user = user,
-            sourceLocator = locator,
+            additionalGrounding = emptyList(),
+            perspective = null,
+            mintNewEntities = null,
+            request = request,
         )
         extraction.rememberFile(
             inputStream = ByteArrayInputStream(byteArrayOf()),
             filename = "named-legacy.txt",
             user = user,
         )
-        extraction.rememberFileFromSource(
+        extraction.rememberFile(
             inputStream = ByteArrayInputStream(byteArrayOf()),
-            filename = "named-source.txt",
+            filename = "named-request.txt",
             user = user,
-            sourceLocator = locator,
+            request = request,
         )
 
         verify(extraction).rememberText("callable legacy", "callable-legacy", user, emptyList(), null, null)
-        verify(extraction).rememberTextFromSource(
-            "callable source",
-            "callable-source",
+        verify(extraction).rememberText(
+            "callable request",
+            "callable-request",
             user,
-            locator,
-            revision,
             emptyList(),
             null,
             null,
+            request,
         )
         verify(extraction).rememberText("named legacy", "named-legacy", user)
-        verify(extraction).rememberTextFromSource("named source", "named-source", user, locator)
+        verify(extraction).rememberText(
+            "named request",
+            "named-request",
+            user,
+            emptyList(),
+            null,
+            null,
+            request,
+        )
     }
 
     @Test
-    fun `legacy and source file entry points dispatch through their open text entry points`() {
+    fun `both file entry points dispatch through an open text entry point`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = spy(extraction(pipeline))
         val user = user()
         val locator = UriLocator("file:///notes/dispatch.txt")
         val revision = SourceRevisionRef(locator.key(), "dispatch-r1")
+        val request = ExtractionRequest(sourceLocator = locator, sourceRevision = revision)
         doNothing().whenever(extraction).rememberText(
             any(),
             any(),
@@ -752,18 +709,15 @@ class IncrementalPropositionExtractionTest {
             any(),
             anyOrNull(),
             anyOrNull(),
-            anyOrNull(),
         )
-        doNothing().whenever(extraction).rememberTextFromSource(
+        doNothing().whenever(extraction).rememberText(
             any(),
             any(),
             any(),
             any(),
             anyOrNull(),
+            anyOrNull(),
             any(),
-            anyOrNull(),
-            anyOrNull(),
-            anyOrNull(),
         )
 
         extraction.rememberFile(
@@ -771,16 +725,16 @@ class IncrementalPropositionExtractionTest {
             "legacy-dispatch.txt",
             user,
         )
-        extraction.rememberFileFromSource(
-            ByteArrayInputStream("source dispatch".toByteArray()),
-            "source-dispatch.txt",
+        extraction.rememberFile(
+            ByteArrayInputStream("request dispatch".toByteArray()),
+            "request-dispatch.txt",
             user,
-            locator,
-            revision,
+            request,
         )
 
-        // Both file entry points land on the maximum-arity text method, which is the single
-        // override point every call funnels through.
+        // A file call carrying nothing lands on the six-argument text method, the one a subclass
+        // written before requests overrides. A file call carrying a request lands on the
+        // request-taking method, the single override point every call funnels through.
         verify(extraction).rememberText(
             "legacy dispatch",
             "remember:legacy-dispatch.txt",
@@ -788,18 +742,15 @@ class IncrementalPropositionExtractionTest {
             emptyList(),
             null,
             null,
-            null,
         )
-        verify(extraction).rememberTextFromSource(
-            "source dispatch",
-            "remember:source-dispatch.txt",
+        verify(extraction).rememberText(
+            "request dispatch",
+            "remember:request-dispatch.txt",
             user,
-            locator,
-            revision,
             emptyList(),
             null,
             null,
-            null,
+            request,
         )
         verifyNoInteractions(pipeline)
     }
@@ -887,7 +838,7 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
-    fun `profile reaches the context through both text entry points`() {
+    fun `a request carries profile and revision to the context with and without a source`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val user = user()
@@ -896,59 +847,67 @@ class IncrementalPropositionExtractionTest {
         val profile = ExtractionContentProfileRef("house-style", "v1")
 
         extraction.rememberText(
-            text = "legacy text",
-            sourceId = "legacy:profiled",
+            text = "untyped text",
+            sourceId = "untyped:profiled",
             user = user,
             additionalGrounding = emptyList(),
             perspective = null,
             mintNewEntities = null,
-            profile = profile,
+            request = ExtractionRequest(profile = profile),
         )
-        extraction.rememberTextFromSource(
+        extraction.rememberText(
             text = "source text",
             sourceId = "source:profiled",
             user = user,
-            sourceLocator = locator,
-            sourceRevision = revision,
             additionalGrounding = emptyList(),
             perspective = null,
             mintNewEntities = null,
-            profile = profile,
+            request = ExtractionRequest(
+                sourceLocator = locator,
+                sourceRevision = revision,
+                profile = profile,
+            ),
         )
 
-        val fromLegacy = capturedContext(pipeline, "legacy text", "legacy:profiled", emptyList())
-        assertSame(profile, fromLegacy.profile)
-        assertNull(fromLegacy.sourceLocator)
+        // A profile needs no source of its own: the two dimensions stay independent on the way in.
+        val fromUntyped = capturedContext(pipeline, "untyped text", "untyped:profiled", emptyList())
+        assertSame(profile, fromUntyped.profile)
+        assertNull(fromUntyped.sourceLocator)
+        assertNull(fromUntyped.sourceRevision)
 
         val fromSource = capturedContext(pipeline, "source text", "source:profiled", emptyList())
         assertSame(profile, fromSource.profile)
+        assertSame(locator, fromSource.sourceLocator)
         assertSame(revision, fromSource.sourceRevision)
     }
 
     @Test
-    fun `profile reaches the context through both file entry points`() {
+    fun `a request reaches the context through the file entry point`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val user = user()
         val locator = UriLocator("file:///notes/profiled.txt")
+        val revision = SourceRevisionRef(locator.key(), "r1")
         val profile = ExtractionContentProfileRef("house-style", "v1")
 
         extraction.rememberFile(
-            inputStream = ByteArrayInputStream("legacy file text".toByteArray()),
-            filename = "legacy-profiled.txt",
+            inputStream = ByteArrayInputStream("plain file text".toByteArray()),
+            filename = "profile-only.txt",
             user = user,
-            profile = profile,
+            request = ExtractionRequest(profile = profile),
         )
-        extraction.rememberFileFromSource(
+        extraction.rememberFile(
             inputStream = ByteArrayInputStream("source file text".toByteArray()),
             filename = "source-profiled.txt",
             user = user,
-            sourceLocator = locator,
-            sourceRevision = SourceRevisionRef(locator.key(), "r1"),
-            profile = profile,
+            request = ExtractionRequest(
+                sourceLocator = locator,
+                sourceRevision = revision,
+                profile = profile,
+            ),
         )
-        // Both file calls land on the profile-aware text entry point, so the two contexts the
-        // pipeline sees are the proof that carriage survives the file hop.
+        // Both file calls hand their text to the request-taking entry point, so the two contexts
+        // the pipeline sees are the proof that carriage survives the file hop.
 
         val contextCaptor = argumentCaptor<SourceAnalysisContext>()
         verify(pipeline, times(2)).processOnce(
@@ -962,10 +921,13 @@ class IncrementalPropositionExtractionTest {
         contextCaptor.allValues.forEach { context ->
             assertSame(profile, context.profile)
         }
+        val fromSource = contextCaptor.allValues.single { it.sourceLocator != null }
+        assertSame(locator, fromSource.sourceLocator)
+        assertSame(revision, fromSource.sourceRevision)
     }
 
     @Test
-    fun `legacy calls carry no profile`() {
+    fun `calls written without a request carry no profile`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val user = user()
@@ -1014,7 +976,7 @@ class IncrementalPropositionExtractionTest {
             additionalGrounding = grounding,
             perspective = ExtractionPerspective.USER,
             mintNewEntities = true,
-            profile = profile,
+            request = ExtractionRequest(profile = profile),
         )
 
         val contextCaptor = argumentCaptor<SourceAnalysisContext>()
@@ -1064,6 +1026,56 @@ class IncrementalPropositionExtractionTest {
         assertSame(profile, contextCaptor.firstValue.profile)
         assertNull(contextCaptor.firstValue.sourceLocator)
     }
+
+    @Test
+    fun `an empty request asks for exactly what a call without one asks for`() {
+        val pipeline = pipelineReturningNoResult()
+        val extraction = extraction(pipeline)
+        val user = user()
+        val grounding = listOf("record:one")
+
+        extraction.rememberText(
+            text = "same text",
+            sourceId = "same:id",
+            user = user,
+            additionalGrounding = grounding,
+            perspective = ExtractionPerspective.USER,
+            mintNewEntities = true,
+        )
+        extraction.rememberText(
+            text = "same text",
+            sourceId = "same:id",
+            user = user,
+            additionalGrounding = grounding,
+            perspective = ExtractionPerspective.USER,
+            mintNewEntities = true,
+            request = ExtractionRequest.NONE,
+        )
+
+        val contextCaptor = argumentCaptor<SourceAnalysisContext>()
+        verify(pipeline, times(2)).processOnce(
+            eq("same text"),
+            eq("same:id"),
+            contextCaptor.capture(),
+            anyOrNull(),
+            any(),
+            eq(grounding),
+        )
+        val (withoutRequest, withEmptyRequest) = contextCaptor.allValues
+
+        // Whole contexts again. The resolver is substituted because buildContext constructs a
+        // fresh one per call by design, so it is never the same instance twice.
+        assertEquals(
+            withoutRequest,
+            withEmptyRequest.copy(entityResolver = withoutRequest.entityResolver),
+        )
+    }
+
+    private fun declaredParameterLists(name: String): Set<List<Class<*>>> =
+        IncrementalPropositionExtraction::class.java.declaredMethods
+            .filter { it.name == name && !it.isSynthetic }
+            .map { it.parameterTypes.toList() }
+            .toSet()
 
     private fun event(
         sourceId: String,

@@ -5,8 +5,8 @@ kind of material do?" DICE carries its name and version and nothing else. It nev
 profile up, never reads policy out of it, and never routes on it. The host owns the catalog,
 authorizes who may use which profile, and binds it to whatever it actually means.
 
-This note covers DICE #66: `ExtractionContentProfileRef`, where it sits on
-`SourceAnalysisContext` and the extraction entry points, and why profile, perspective, schema and
+This note covers DICE #66: `ExtractionContentProfileRef`, the `ExtractionRequest` that carries it
+to `SourceAnalysisContext` through the extraction entry points, and why profile, perspective, schema and
 tenant are four independent dimensions rather than one knob with four names. An extraction run
 reference travelled with this slice for one PR round and was pulled back out on review — see
 [Why there is no run reference here](#why-there-is-no-run-reference-here) below.
@@ -96,7 +96,7 @@ for the same reason: parallel code in two places is where two paths start behavi
 
 ```mermaid
 flowchart TD
-    A["rememberText / rememberTextFromSource<br/>rememberFile / rememberFileFromSource"] --> C
+    A["rememberText / rememberFile<br/>with an ExtractionRequest"] --> C
     B["SourceAnalysisRequestEvent.profile()"] --> C
     C["IncrementalPropositionExtraction.buildContext"] --> CTX
     CTX["SourceAnalysisContext.profile"] --> X["carried, never consulted"]
@@ -104,70 +104,91 @@ flowchart TD
 
 | Path | How a profile arrives |
 | --- | --- |
-| `rememberText`, `rememberTextFromSource` | a trailing optional `profile` argument |
-| `rememberFile`, `rememberFileFromSource` | the same argument, forwarded to the text call |
-| async `SourceAnalysisRequestEvent` | `profile()`, open and null-defaulted |
+| `rememberText` | `ExtractionRequest.profile`, on the one overload that takes a request |
+| `rememberFile` | the same request, forwarded to the text call |
+| async `SourceAnalysisRequestEvent` | `profile()`, open and null-defaulted, which the listener puts on a request |
 | `ConversationAnalysisRequestEvent` | its longer constructor, whose `sourceLocator` is nullable so a publisher can name a profile for material it has no typed source for |
 
-The direct calls take an extra argument rather than getting their own method name, which is the
-opposite of what Wave A did for `rememberTextFromSource`. The reason is the difference in the
-contracts: a locator is *required* by the source-aware calls, so those are genuinely different
-methods and separate names keep every call site unambiguous. A profile is optional everywhere, so
-an extra name would buy nothing and double the surface.
+### Why the request object exists
+
+A profile is the third dimension to reach these entry points, after a source locator and a source
+revision, and it will not be the last: an extraction run reference, a pass index and a products
+list are all named by later slices. Adding each one as an argument means a wider signature and a
+new overload to keep the old shape callable, on every entry-point name — surface that grows once
+per feature and that a host has to track.
+
+`ExtractionRequest` holds them together:
+
+```kotlin
+data class ExtractionRequest @JvmOverloads constructor(
+    val sourceLocator: SourceLocator? = null,
+    val sourceRevision: SourceRevisionRef? = null,
+    val profile: ExtractionContentProfileRef? = null,
+)
+```
+
+The next dimension is a field here. `rememberText` and `rememberFile` keep the signatures they
+have, a host that overrides one keeps compiling, and the new value shows up in the override with
+no edit. `ExtractionRequest.NONE` is the empty request, and `isEmpty` compares against it, so the
+"carries nothing" test stays right as fields are added.
+
+The one coupling lives in the `init` block: a `sourceRevision` requires a `sourceLocator` whose key
+it matches. Checking it here means a caller finds out while building the request, before any entry
+point is called — a mismatched pair cannot be passed to extraction, because it cannot be built.
+`SourceAnalysisContext` repeats the same check for its own field, which covers the async path and
+the REST path; the two agree because they state the same rule.
 
 ### Why each entry point is two declarations
 
 Growing the existing declarations with a defaulted parameter would have been the obvious shape,
 and it is wrong. `@JvmOverloads` emits every reduced-arity overload as `final`, even on an `open`
-function — only the declared maximum arity stays open. So adding `profile` to `rememberText`
+function — only the declared maximum arity stays open. So adding the request to `rememberText`
 would have moved the open declaration from six arguments to seven and re-emitted the six-argument
 form as a final bridge. Callers would not have noticed. A subclass overriding the six-argument
 form would have stopped compiling, and one already compiled could fail verification at class
 load.
 
-Each entry point is therefore two declarations: the pre-profile signature exactly as it was
-(`@JvmOverloads` where it already had it), delegating to a new maximum-arity form that takes the
-reference and carries no default. The default is what forces the split — two overloads that both
-supply defaults for the same arity are ambiguous at a Kotlin call site, so the wide form spells
-every argument out.
+Each entry point is therefore two declarations: the signature that was already there, exactly as
+it was (`@JvmOverloads` where it already had it), delegating to a form that takes the request and
+carries no default. The default is what forces the split — two overloads that both supply defaults
+for the same arity are ambiguous at a Kotlin call site, so the request form spells every argument
+out.
 
 | Method | Overridable before | Overridable now |
 | --- | --- | --- |
 | `rememberText` | 6 args | 6 args, and 7 |
-| `rememberTextFromSource` | 8 args | 8 args, and 9 |
 | `rememberFile` | 3 args | 3 args, and 4 |
-| `rememberFileFromSource` | 5 args | 5 args, and 6 |
 
-The reduced arities `@JvmOverloads` generates were final before and still are — the fix restores
-the previous surface rather than widening it.
+The reduced arities `@JvmOverloads` generates were final before and still are — this is the
+previous surface with one overload added per name.
 
 ### Which chain a call takes
 
 Keeping the old signatures overridable is only half of it. They also have to still be *reached*.
-Before profiles, `rememberFile` read the file and handed the text to the six-argument
+Before requests, `rememberFile` read the file and handed the text to the six-argument
 `rememberText`, so a subclass overriding only that one intercepted file ingestion as well.
-Routing the file paths straight to the wide text methods would have taken that away silently: the
-override would still compile, still fire for direct text calls, and stop seeing files.
+Routing every file call straight to the request-taking text method would have taken that away
+silently: the override would still compile, still fire for direct text calls, and stop seeing
+files.
 
-So the rule is that a call dispatches like the call it resembles. A file call carrying no profile
-takes the pre-profile chain; one carrying a profile has to go wide, because the legacy text
-signature cannot express it.
+So the rule is that a call dispatches like the call it resembles. A file call carrying an empty
+request takes the older chain; one carrying anything at all goes to the request form, because the
+six-argument text signature cannot express it.
 
 ```mermaid
 flowchart LR
     F3["rememberFile(3)"] --> T6
-    F4["rememberFile(4)"] -->|"profile null"| F3
-    F4 -->|"profile present"| T7
-    T6["rememberText(6)"] --> T7["rememberText(7)"] --> I["rememberTextInternal"]
+    F4["rememberFile(4)"] -->|"request empty"| F3
+    F4 -->|"request carries something"| T7
+    T6["rememberText(6)"] --> T7["rememberText(7), terminal"]
 ```
 
-`rememberFileFromSource` and `rememberTextFromSource` mirror it at their own arities. The wide
-text forms are terminal and never route back to the legacy ones — that would be a cycle, since
-the legacy forms delegate forwards.
+The request text form is terminal and never routes back to the six-argument one — that would be a
+cycle, since the six-argument form delegates forwards.
 
-Two consequences worth stating. A subclass overriding only a pre-profile text method sees
-everything it used to, files included. And unintercepted, every call still ends at the wide text
-form, so a host that wants one place to see all traffic overrides that.
+Two consequences worth stating. A subclass overriding only the six-argument text method sees
+everything it used to, files included. And unintercepted, every call still ends at the request
+text form, so a host that wants one place to see all traffic overrides that.
 
 The async path reads the accessor exactly once, which a test asserts by counting: there is one
 `buildContext` call and nowhere else for a second read to happen.
@@ -180,21 +201,22 @@ The async path reads the accessor exactly once, which a test asserts by counting
   is still published. `@JvmOverloads` adds one new one on the end. A test enumerates arities
   3 through 12 (each with the trailing `DefaultConstructorMarker` Kotlin emits because `contextId`
   is a value class) and asserts every one resolves.
-- Every `rememberText`, `rememberTextFromSource`, `rememberFile` and `rememberFileFromSource`
-  descriptor survives, and the new argument adds exactly one descriptor per method name, on the
-  end. A test asserts the exact descriptor set of all four names, and that a profile is always the
-  last parameter.
+- Every `rememberText` and `rememberFile` descriptor survives, and the request adds exactly one
+  descriptor per method name, on the end. A test asserts the exact descriptor set of both names,
+  that the request is always the last parameter, and that no entry point takes a locator, a
+  revision or a profile as a loose argument — the last of those is what keeps the surface from
+  growing back one argument at a time.
 - **Subclass-override compatibility is claimed, and covers being reached as well as being
-  overridable.** Every signature that was overridable before this slice still is, and every
-  pre-profile call still dispatches through it. A reflection test asserts `Modifier.isFinal` is
-  false on all four pre-profile signatures and on the four new maximum-arity forms, and true on
-  the reduced arities that were final bridges already. A Java subclass in the compat suite
-  overrides all four pre-profile signatures; `javac` rejects `@Override` on a final method, so the
-  suite compiling is the second proof. A Kotlin test constructs a subclass overriding the
-  six-argument `rememberText` and the three-argument `rememberFile` and asserts a three-argument
-  call still reaches the override. Overridability alone is not enough, so two further tests pin
-  the dispatch: a subclass overriding only the pre-profile *text* methods still sees both file
-  entry points, and a file call that carries a profile goes to the wide text form instead.
+  overridable.** Every signature that was overridable before this slice still is, and every call
+  written before it still dispatches through one. A reflection test asserts `Modifier.isFinal` is
+  false on both earlier signatures and on the two request forms, and true on the reduced arities
+  that were final bridges already. A Java subclass in the compat suite overrides both earlier
+  signatures; `javac` rejects `@Override` on a final method, so the suite compiling is the second
+  proof. `PreRequestEntryPointPinTest` calls every shape a caller could have written against those
+  two signatures — every published arity, positional and named — from a subclass overriding both,
+  and asserts each call reaches the override. Overridability alone is not enough, so two further
+  tests pin the dispatch: a subclass overriding only the *text* entry points still sees file
+  ingestion, and a file call that carries a request goes to the request text form.
 - `ConversationAnalysisRequestEvent` keeps its five-argument constructor and gains a
   six-argument form. Its `sourceLocator` parameter relaxes from non-null to nullable, which
   accepts strictly more calls than before.
@@ -232,9 +254,10 @@ through the identical extension point, `PropositionExtractor.extract(chunk, cont
 `PropositionPipeline.withExtractor` seeds a pipeline with a host-implemented `PropositionExtractor`,
 and `extract` receives the whole context — `currentRun` included, back when it existed. No
 extractor DICE ships reads `context.profile` today, and nothing else downstream of `buildContext`
-does either (`IncrementalPropositionExtraction.kt:612`); the test `profile reaches the context
-through both text entry points` (and its file-entry counterpart) pins that the context reaching
-the pipeline carries `profile`, which is the reachability half of the claim, and stops there — it
+does either (`IncrementalPropositionExtraction.kt:457`); the test `a request carries profile and
+revision to the context with and without a source` (and its file-entry counterpart) pins that the
+context reaching the pipeline carries `profile`, which is the reachability half of the claim, and
+stops there — it
 does not exercise any reading of the value. The asymmetry is about what a host-authored
 `PropositionExtractor` has to act on once it does read the field. `profile` names the host's own
 content-policy identity, something a host already knows the meaning of and can build a reader for
@@ -256,9 +279,11 @@ in this note reflects a profile-only surface for that reason.
 
 Nothing on this branch called the parameter for anything (`grep` across this worktree found no
 caller of `currentRun`/`ExtractionRunRef` outside the profile slice's own code and tests), so
-there is nothing to migrate. The reference returns, unchanged in shape, once #67's store and a
-write that consumes it land together — at that point a run reference reaching
-`SourceAnalysisContext` will have somewhere to go.
+there is nothing to migrate. The reference returns once #67's store and a write that consumes it
+land together — at that point a run reference reaching `SourceAnalysisContext` will have somewhere
+to go. It returns as a field on `ExtractionRequest`, which is what the request object is here for:
+no entry-point signature moves when it arrives, and a host overriding one sees the new value with
+no edit.
 
 ## What this slice does not do
 
