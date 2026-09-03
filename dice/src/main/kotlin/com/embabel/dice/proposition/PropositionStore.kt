@@ -18,6 +18,7 @@ package com.embabel.dice.proposition
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.dice.common.DiceMetadataKeys
+import com.embabel.dice.provenance.ProvenanceEntry
 import org.slf4j.LoggerFactory
 import java.time.Instant
 
@@ -174,6 +175,44 @@ interface PropositionStore {
      * Get the total count of propositions.
      */
     fun count(): Int
+
+    // ========================================================================
+    // Provenance management — authoritative evidence replacement
+    // ========================================================================
+
+    /**
+     * The provenance entries of a proposition, or an empty list if it has none or does not exist.
+     */
+    fun provenanceOf(propositionId: String): List<ProvenanceEntry> =
+        findById(propositionId)?.provenanceEntries ?: emptyList()
+
+    /**
+     * Append provenance to a proposition (deduplicated); never removes existing entries.
+     *
+     * @return the updated proposition, or null if no proposition with that id exists.
+     */
+    fun addProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? =
+        findById(propositionId)?.let { save(it.withProvenanceEntries(entries)) }
+
+    /**
+     * Authoritatively set a proposition's provenance to exactly [entries], removing any not listed.
+     *
+     * Backends whose normal [save] path preserves unloaded provenance must override this operation.
+     * It lives on the base store contract so evidence-sensitive callers such as collector undo can
+     * ask for it directly, without probing for a richer repository type at runtime.
+     *
+     * @return the updated proposition, or null if no proposition with that id exists.
+     */
+    fun setProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? =
+        findById(propositionId)?.let { save(it.withProvenance(entries)) }
+
+    /**
+     * Remove all provenance from a proposition.
+     *
+     * @return the updated proposition, or null if no proposition with that id exists.
+     */
+    fun clearProvenance(propositionId: String): Proposition? =
+        setProvenance(propositionId, emptyList())
 
     /**
      * Refresh [Proposition.lastAccessed] to now for [ids] — the read-side reinforcement that lets a

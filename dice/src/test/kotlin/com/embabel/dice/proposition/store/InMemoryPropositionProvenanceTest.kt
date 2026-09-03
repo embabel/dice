@@ -18,7 +18,9 @@ package com.embabel.dice.proposition.store
 import com.embabel.agent.core.ContextId
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.SourceRevisionQueryCapable
 import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.SourceRevisionRef
 import com.embabel.dice.provenance.UriLocator
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -27,6 +29,132 @@ import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
+
+internal class PortableSourceQueryFixture {
+
+    val contextId = ContextId("portable-source-query")
+    private val foreignContextId = ContextId("portable-source-query-foreign")
+    val locator = UriLocator("https://example.com/shared-source")
+    val revisionOneRef = SourceRevisionRef(locator.key(), "r1")
+    val revisionTwoRef = SourceRevisionRef(locator.key(), "r2")
+
+    val revisionless = proposition(
+        contextId = contextId,
+        text = "revisionless",
+        entries = listOf(entry()),
+    )
+    val revisionOne = proposition(
+        contextId = contextId,
+        text = "r1",
+        entries = listOf(entry("r1")),
+    )
+    val revisionTwo = proposition(
+        contextId = contextId,
+        text = "r2",
+        entries = listOf(entry("r2")),
+    )
+    val duplicateRevisionOne = proposition(
+        contextId = contextId,
+        text = "duplicate r1 evidence",
+        entries = listOf(
+            entry("r1", "duplicate-r1-a"),
+            entry("r1", "duplicate-r1-b"),
+        ),
+    )
+    val foreignContext = proposition(
+        contextId = foreignContextId,
+        text = "foreign context",
+        entries = listOf(
+            entry(),
+            entry("r1", "foreign-r1-a"),
+            entry("r1", "foreign-r1-b"),
+            entry("r2"),
+        ),
+    )
+
+    val propositions = listOf(
+        revisionless,
+        revisionOne,
+        revisionTwo,
+        duplicateRevisionOne,
+        foreignContext,
+    )
+
+    private fun entry(
+        sourceRevision: String? = null,
+        chunkId: String? = null,
+    ): ProvenanceEntry =
+        ProvenanceEntry(
+            locator = locator,
+            sourceRevision = sourceRevision,
+            chunkId = chunkId,
+        )
+
+    private fun proposition(
+        contextId: ContextId,
+        text: String,
+        entries: List<ProvenanceEntry>,
+    ): Proposition =
+        Proposition(
+            contextId = contextId,
+            text = text,
+            mentions = emptyList(),
+            confidence = 0.9,
+            provenanceEntries = entries,
+        )
+}
+
+/**
+ * The portable behaviour every source-revision backend owes, run against one seeded store.
+ *
+ * The parameter type is the whole point of the capability split. This call site needs
+ * [SourceRevisionQueryCapable]; a store that only implements
+ * [com.embabel.dice.proposition.PropositionRepository] will not compile here, so nobody can reach
+ * these finders on a backend that never promised to answer them.
+ */
+internal fun assertPortableSourceQueries(
+    repository: SourceRevisionQueryCapable,
+    fixture: PortableSourceQueryFixture,
+) {
+    val allSourceVersions = repository.findBySourceKey(
+        fixture.contextId,
+        fixture.locator.key(),
+    )
+    val exactRevisionOne = repository.findBySourceRevision(
+        fixture.contextId,
+        fixture.revisionOneRef,
+    )
+    val exactRevisionTwo = repository.findBySourceRevision(
+        fixture.contextId,
+        fixture.revisionTwoRef,
+    )
+    val revisionless = repository.findRevisionlessBySourceLocator(
+        fixture.contextId,
+        fixture.locator,
+    )
+
+    assertEquals(
+        setOf(
+            fixture.revisionless.id,
+            fixture.revisionOne.id,
+            fixture.revisionTwo.id,
+            fixture.duplicateRevisionOne.id,
+        ),
+        allSourceVersions.map { it.id }.toSet(),
+    )
+    assertEquals(
+        setOf(fixture.revisionOne.id, fixture.duplicateRevisionOne.id),
+        exactRevisionOne.map { it.id }.toSet(),
+    )
+    assertEquals(setOf(fixture.revisionTwo.id), exactRevisionTwo.map { it.id }.toSet())
+    assertEquals(setOf(fixture.revisionless.id), revisionless.map { it.id }.toSet())
+
+    listOf(allSourceVersions, exactRevisionOne, exactRevisionTwo, revisionless).forEach { result ->
+        assertEquals(result.size, result.map { it.id }.toSet().size)
+        assertEquals(setOf(fixture.contextId), result.map { it.contextId }.toSet())
+        assertEquals(false, result.any { it.id == fixture.foreignContext.id })
+    }
+}
 
 /**
  * The provenance-management defaults on [com.embabel.dice.proposition.PropositionRepository] over the
@@ -88,5 +216,13 @@ class InMemoryPropositionProvenanceTest {
         assertNull(repo.addProvenance("missing", listOf(uri("https://example.com/a"))))
         assertNull(repo.setProvenance("missing", listOf(uri("https://example.com/a"))))
         assertEquals(emptyList<ProvenanceEntry>(), repo.provenanceOf("missing"))
+    }
+
+    @Test
+    fun `portable source queries distinguish revisions without duplicates or context leaks`() {
+        val fixture = PortableSourceQueryFixture()
+        repo.saveAll(fixture.propositions)
+
+        assertPortableSourceQueries(repo, fixture)
     }
 }

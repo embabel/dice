@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.proposition
 
+import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.model.Retrievable
 import com.embabel.agent.rag.service.CoreSearchOperations
 import com.embabel.common.core.types.SimilarityResult
@@ -141,31 +142,31 @@ interface PropositionRepository :
     /**
      * The provenance entries of a proposition, or an empty list if it has none or does not exist.
      */
-    fun provenanceOf(propositionId: String): List<ProvenanceEntry> =
-        findById(propositionId)?.provenanceEntries ?: emptyList()
+    override fun provenanceOf(propositionId: String): List<ProvenanceEntry> =
+        super<PropositionStore>.provenanceOf(propositionId)
 
     /**
      * Append provenance to a proposition (deduplicated); never removes existing entries.
      *
      * @return the updated proposition, or null if no proposition with that id exists.
      */
-    fun addProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? =
-        findById(propositionId)?.let { save(it.withProvenanceEntries(entries)) }
+    override fun addProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? =
+        super<PropositionStore>.addProvenance(propositionId, entries)
 
     /**
      * Authoritatively set a proposition's provenance to exactly [entries], removing any not listed.
      *
      * @return the updated proposition, or null if no proposition with that id exists.
      */
-    fun setProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? =
-        findById(propositionId)?.let { save(it.withProvenance(entries)) }
+    override fun setProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? =
+        super<PropositionStore>.setProvenance(propositionId, entries)
 
     /**
      * Remove all provenance from a proposition.
      *
      * @return the updated proposition, or null if no proposition with that id exists.
      */
-    fun clearProvenance(propositionId: String): Proposition? =
+    override fun clearProvenance(propositionId: String): Proposition? =
         setProvenance(propositionId, emptyList())
 
     // RAG VectorSearch bridge — only Proposition is supported

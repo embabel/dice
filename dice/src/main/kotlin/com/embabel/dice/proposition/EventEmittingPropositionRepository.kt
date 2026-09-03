@@ -22,6 +22,8 @@ import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.PropositionPersisted
 import com.embabel.dice.common.PropositionStatusChanged
+import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
 import org.slf4j.LoggerFactory
 
 /**
@@ -63,9 +65,13 @@ import org.slf4j.LoggerFactory
 class EventEmittingPropositionRepository(
     private val delegate: PropositionRepository,
     private val listener: DiceEventListener = DiceEventListener.DEV_NULL,
-) : PropositionRepository by delegate {
+) : PropositionRepository by delegate, SourceRevisionQueryCapable {
 
     private val logger = LoggerFactory.getLogger(EventEmittingPropositionRepository::class.java)
+
+    /** The delegate's source-revision capability, if it has one. Resolved once at construction. */
+    private val delegateRevisionQueries: SourceRevisionQueryCapable? =
+        delegate as? SourceRevisionQueryCapable
 
     /**
      * Persists via the delegate, then emits one lifecycle event carrying the saved instance.
@@ -145,4 +151,41 @@ class EventEmittingPropositionRepository(
         query: PropositionQuery,
     ): List<Cluster<Proposition>> =
         delegate.findClusters(similarityThreshold, topK, query)
+
+    // ========================================================================
+    // Source-revision capability forwarding
+    //
+    // The delegate is typed as PropositionRepository, which carries no source-revision surface, so
+    // this decorator can only forward what the concrete delegate happens to bring. A decorator that
+    // silently answered empty would reintroduce the false negative the capability split exists to
+    // remove, so an unable delegate is reported two ways: supportsSourceRevisionQueries goes false,
+    // and a call that gets through anyway throws with the delegate named.
+    // ========================================================================
+
+    /** True when the wrapped repository can genuinely answer source-revision queries. */
+    override val supportsSourceRevisionQueries: Boolean
+        get() = delegateRevisionQueries?.supportsSourceRevisionQueries == true
+
+    override fun findBySourceKey(contextIdValue: String, sourceKey: String): List<Proposition> =
+        requireRevisionQueries("findBySourceKey").findBySourceKey(contextIdValue, sourceKey)
+
+    override fun findBySourceRevision(contextIdValue: String, ref: SourceRevisionRef): List<Proposition> =
+        requireRevisionQueries("findBySourceRevision").findBySourceRevision(contextIdValue, ref)
+
+    override fun findRevisionlessBySourceLocator(
+        contextIdValue: String,
+        locator: SourceLocator,
+    ): List<Proposition> =
+        requireRevisionQueries("findRevisionlessBySourceLocator")
+            .findRevisionlessBySourceLocator(contextIdValue, locator)
+
+    /**
+     * The delegate's capability, or a thrown explanation naming the delegate that lacks it.
+     */
+    private fun requireRevisionQueries(operation: String): SourceRevisionQueryCapable =
+        delegateRevisionQueries?.takeIf { it.supportsSourceRevisionQueries }
+            ?: throw UnsupportedOperationException(
+                "$operation needs a delegate that implements SourceRevisionQueryCapable; " +
+                    "${delegate.javaClass.name} cannot answer source-revision queries",
+            )
 }

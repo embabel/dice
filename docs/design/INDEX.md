@@ -29,6 +29,10 @@ you need.
 - [grounding-and-conflicts.md](grounding-and-conflicts.md) — how propositions stay anchored to
   source material (grounding) and how the conflict/policy SPI resolves disagreements between
   propositions.
+- [source-revisions.md](source-revisions.md) — carrying an opaque source version beside a stable
+  locator: where the revision sits on the evidence, what it does to equality and dedup, the
+  evidence-key codec that makes a fold precisely undoable, and what stays true for evidence that
+  carries no revision.
 
 ## Projections
 

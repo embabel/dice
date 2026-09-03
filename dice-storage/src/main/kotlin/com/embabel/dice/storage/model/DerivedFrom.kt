@@ -21,12 +21,24 @@ import org.drivine.annotation.RelationshipFragment
  * The `DERIVED_FROM` edge from a proposition to a shared [SourceNode]. The per-proposition span
  * (`chunkId`, offsets, the entry's own content hash) rides on the relationship; the source itself is
  * the shared node. Together they reconstitute a dice `ProvenanceEntry`.
+ *
+ * `sourceRevision` rides here too, for the same reason the span does: which version of a source a
+ * claim was read from is a fact about this citation, and the `:Source` node stays shared across
+ * every revision of it.
+ *
+ * `entryKey` is the edge's own identity, a length-framed encoding of the whole evidence tuple. The
+ * relationship needs one because a proposition can cite one source at several revisions, and an
+ * edge identified only by its two endpoints would collapse those into a single row. Writes MERGE on
+ * it. Edges written before revisions existed have no `entryKey`; they are adopted on first touch by
+ * an exactly matching revisionless entry.
  */
 @RelationshipFragment
-data class DerivedFrom(
+data class DerivedFrom @JvmOverloads constructor(
     val chunkId: String? = null,
     val startOffset: Int? = null,
     val endOffset: Int? = null,
     val contentHash: String? = null,
     val source: SourceNode,
+    val sourceRevision: String? = null,
+    val entryKey: String? = null,
 )
