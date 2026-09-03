@@ -87,13 +87,11 @@ data class PropertySignature @JvmOverloads constructor(
 
         /** Compare two alias sets as sorted lists: element by element, then by size. */
         private fun compareAliases(left: Set<String>, right: Set<String>): Int {
-            val sortedLeft = left.sorted()
-            val sortedRight = right.sorted()
-            for (i in 0 until minOf(sortedLeft.size, sortedRight.size)) {
-                val comparison = sortedLeft[i].compareTo(sortedRight[i])
+            left.sorted().zip(right.sorted()).forEach { (leftAlias, rightAlias) ->
+                val comparison = leftAlias.compareTo(rightAlias)
                 if (comparison != 0) return comparison
             }
-            return sortedLeft.size.compareTo(sortedRight.size)
+            return left.size.compareTo(right.size)
         }
 
         /**

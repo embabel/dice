@@ -48,6 +48,11 @@
             and reference it from the surefire system properties below.
         -->
         <testcontainers.docker.api.version>1.41</testcontainers.docker.api.version>
+        <!--
+            JetBrains annotations, for @ApiStatus on experimental API. Not managed by
+            embabel-agent-dependencies, so the version is set here and every module inherits it.
+        -->
+        <jetbrains.annotations.version>26.0.2</jetbrains.annotations.version>
     </properties>
 
     <dependencyManagement>
@@ -92,6 +97,12 @@
                 <groupId>org.drivine</groupId>
                 <artifactId>drivine4j-spring-boot-starter</artifactId>
                 <version>${drivine.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.jetbrains</groupId>
+                <artifactId>annotations</artifactId>
+                <version>${jetbrains.annotations.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

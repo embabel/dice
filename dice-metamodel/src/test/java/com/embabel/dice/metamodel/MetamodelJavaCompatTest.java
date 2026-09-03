@@ -19,6 +19,7 @@ import com.embabel.agent.core.Cardinality;
 import com.embabel.agent.core.DataDictionary;
 import com.embabel.agent.core.DomainType;
 import com.embabel.agent.core.DynamicType;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -51,6 +52,7 @@ class MetamodelJavaCompatTest {
     }
 
     @Test
+    @DisplayName("the four-argument property signature constructor still exists")
     void theFourArgumentPropertySignatureConstructorStillExists() {
         PropertySignature signature = new PropertySignature(
                 "age", PropertySignature.Kind.VALUE, "string", Cardinality.ONE);
@@ -60,6 +62,7 @@ class MetamodelJavaCompatTest {
     }
 
     @Test
+    @DisplayName("the property signature constructor also takes aliases")
     void thePropertySignatureConstructorAlsoTakesAliases() {
         PropertySignature signature = new PropertySignature(
                 "emailAddress", PropertySignature.Kind.VALUE, "string", Cardinality.ONE, Set.of("email"));
@@ -68,6 +71,7 @@ class MetamodelJavaCompatTest {
     }
 
     @Test
+    @DisplayName("the five-argument metamodel version constructor still exists")
     void theFiveArgumentMetamodelVersionConstructorStillExists() {
         MetamodelVersion version = new MetamodelVersion(
                 "test",
@@ -81,6 +85,7 @@ class MetamodelJavaCompatTest {
     }
 
     @Test
+    @DisplayName("the metamodel version constructor also takes aliases")
     void theMetamodelVersionConstructorAlsoTakesAliases() {
         MetamodelVersion version = new MetamodelVersion(
                 "test",
@@ -94,6 +99,7 @@ class MetamodelJavaCompatTest {
     }
 
     @Test
+    @DisplayName("the one and two-argument stamping factories still exist")
     void theOneAndTwoArgumentStampingFactoriesStillExist() {
         MetamodelVersion whole = MetamodelVersion.from(goldenSchema());
         MetamodelVersion governed = MetamodelVersion.from(goldenSchema(), GovernedTypeSelector.ALL);
@@ -103,6 +109,7 @@ class MetamodelJavaCompatTest {
     }
 
     @Test
+    @DisplayName("the stamping factory also takes aliases")
     void theStampingFactoryAlsoTakesAliases() {
         MetamodelVersion version = MetamodelVersion.from(
                 goldenSchema(),
@@ -113,6 +120,7 @@ class MetamodelJavaCompatTest {
     }
 
     @Test
+    @DisplayName("the one and two-argument declaration factories still exist")
     void theOneAndTwoArgumentDeclarationFactoriesStillExist() {
         DeclaredSchema whole = DeclaredSchema.from(goldenSchema());
         DeclaredSchema governed = DeclaredSchema.from(goldenSchema(), GovernedTypeSelector.ALL);
@@ -122,6 +130,7 @@ class MetamodelJavaCompatTest {
     }
 
     @Test
+    @DisplayName("the declaration factory also takes aliases")
     void theDeclarationFactoryAlsoTakesAliases() {
         DeclaredSchema declared = DeclaredSchema.from(
                 goldenSchema(),
@@ -132,12 +141,14 @@ class MetamodelJavaCompatTest {
     }
 
     @Test
+    @DisplayName("the no-argument alias constructor exists")
     void theNoArgumentAliasConstructorExists() {
         assertEquals(Map.of(), new SchemaAliases().getTypeAliases());
         assertEquals(Map.of(), SchemaAliases.NONE.getPropertyAliases());
     }
 
     @Test
+    @DisplayName("the collections a stamp hands back refuse mutation from Java")
     void theCollectionsAStampHandsBackRefuseMutationFromJava() {
         MetamodelVersion version = MetamodelVersion.from(
                 goldenSchema(),
@@ -149,6 +160,7 @@ class MetamodelJavaCompatTest {
     }
 
     @Test
+    @DisplayName("the shipped Kotlin default synthetic keeps its descriptor")
     void theShippedKotlinDefaultSyntheticKeepsItsDescriptor() throws Exception {
         // A Kotlin caller that omits a defaulted argument links against the $default synthetic
         // rather than the function itself. DeclaredSchema.from shipped with one defaulted
@@ -168,6 +180,7 @@ class MetamodelJavaCompatTest {
     }
 
     @Test
+    @DisplayName("the stamping factories take no defaulted parameters")
     void theStampingFactoriesTakeNoDefaultedParameters() throws Exception {
         // MetamodelVersion.from shipped as two overloads with no defaults, so it has no $default
         // synthetic to preserve. Keeping it that way means the alias overload can never widen one.
