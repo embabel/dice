@@ -32,6 +32,18 @@ import org.springframework.transaction.annotation.Transactional
  * [recordRun]) and readers ([all], [runs]) are supplied here. Writes MERGE on the natural key so a
  * retried record updates in place rather than duplicating. Every statement is parameterized; user-
  * derived values are never interpolated into Cypher.
+ *
+ * The natural key is (`propositionId`, `runId`), so one proposition marked by several strategies in
+ * one run keeps **one** row here and the last write wins — where the in-memory store keeps one row
+ * per mark. Anything a reader needs to trust across both stores has to be identical on every record
+ * a run writes for a proposition, which is why `mergedIntoId` carries the survivor the sweep
+ * actually merged into rather than the one an individual mark proposed.
+ *
+ * `undoneAt` is the exception to last-write-wins, and it has to be: replaying an outcome is
+ * supported, and a replayed record carries no stamp, so a plain `SET` would clear one already
+ * stored and re-authorize a collapse that was undone. It is written through `coalesce` instead, so
+ * a stamp arriving wins and a replay preserves whatever is there. The append-only in-memory store
+ * gets the same property for free, since the stamped record stays beside the replayed one.
  */
 @Transactional
 class DrivineCollectorRecordStore(
@@ -53,7 +65,9 @@ class DrivineCollectorRecordStore(
                     n.strategyName   = ${'$'}strategyName,
                     n.at             = ${'$'}at,
                     n.previousStatus = ${'$'}previousStatus,
-                    n.newStatus      = ${'$'}newStatus
+                    n.newStatus      = ${'$'}newStatus,
+                    n.mergedIntoId   = ${'$'}mergedIntoId,
+                    n.undoneAt       = coalesce(${'$'}undoneAt, n.undoneAt)
                 """.trimIndent(),
             ).bind(CollectorRecordRowMapper.bindMap(record)),
         )

@@ -26,9 +26,11 @@ import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
+import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.provenance.ConnectorRef
 import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import com.embabel.dice.provenance.SourceRevisionRef
 import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.temporal.TemporalMetadata
@@ -1659,6 +1661,113 @@ class DrivinePropositionStoreIntegrationTest {
             endOffset = endOffset,
             contentHash = contentHash,
             sourceRevision = revision,
+        )
+
+    @Test
+    fun `subtractProvenance removes exactly the named evidence and prunes only its orphaned source`() {
+        val kept = UriLocator("https://example.com/subtract/kept")
+        val dropped = UriLocator("https://example.com/subtract/dropped")
+        val keptRevisionOne = evidence(kept, "r1")
+        val keptRevisionTwo = evidence(kept, "r2")
+        val droppedEvidence = evidence(dropped, null)
+        val saved = repository.save(
+            prop(
+                "subtract exactly",
+                context = "ctx-subtract",
+                provenance = listOf(keptRevisionOne, keptRevisionTwo, droppedEvidence),
+            ),
+        )
+        assertEquals(3L, edgeCount(saved.id))
+
+        val updated = repository.subtractProvenance(
+            saved.id,
+            listOf(ProvenanceEvidenceKey.encode(keptRevisionTwo), ProvenanceEvidenceKey.encode(droppedEvidence)),
+        )
+
+        assertEquals(listOf(keptRevisionOne), updated?.provenanceEntries)
+        assertEquals(listOf(keptRevisionOne), repository.findById(saved.id)?.provenanceEntries)
+        assertEquals(1L, edgeCount(saved.id))
+        assertEquals(1L, sourceCount(kept.key()), "the shared source keeps its remaining revision")
+        assertEquals(0L, sourceCount(dropped.key()), "the source nothing cites any more is pruned")
+    }
+
+    @Test
+    fun `evidence the subtraction does not name survives it on the graph backend`() {
+        // The property the operation exists for, and the one `ProvenanceSubtractionCapable` asks
+        // every implementation to promise: only named evidence goes. A newcomer added before the
+        // call survives, because the one delete statement names what goes and touches nothing else.
+        // The add completes before the subtraction starts, so this pins preservation on a
+        // sequential schedule; the true concurrent interleaving is pinned in memory by
+        // `evidence added while a subtraction is running survives it`, which needs threads the
+        // testcontainer schedule here cannot give deterministically.
+        //
+        // This used to have a second half aimed at the base contract's read-modify-write default,
+        // through a decorator that injected evidence on read. It never demonstrated the loss —
+        // Kotlin interface delegation forwarded the call straight past the decorator's `findById` —
+        // and the default it aimed at no longer exists, so it is gone with it.
+        val locator = UriLocator("https://example.com/subtract/race")
+        val original = evidence(locator, null)
+        val folded = evidence(locator, "r1")
+        val concurrent = evidence(locator, "r2")
+        val refsToRemove = listOf(ProvenanceEvidenceKey.encode(folded))
+
+        val subject = repository.save(
+            prop("atomic subtract", context = "ctx-subtract-race", provenance = listOf(original, folded)),
+        )
+        repository.addProvenance(subject.id, listOf(concurrent))
+        repository.subtractProvenance(subject.id, refsToRemove)
+
+        assertEquals(
+            setOf(original, concurrent),
+            repository.findById(subject.id)?.provenanceEntries?.toSet(),
+            "the atomic subtraction removes the folded entry by name and leaves everything else",
+        )
+        assertEquals(2L, edgeCount(subject.id))
+    }
+
+    @Test
+    fun `subtractProvenance takes a legacy locator ref off revisionless evidence only`() {
+        val locator = UriLocator("https://example.com/subtract/legacy")
+        val revisionless = evidence(locator, null)
+        val revisioned = evidence(locator, "r1")
+        val saved = repository.save(
+            prop("legacy subtract", context = "ctx-subtract-legacy", provenance = listOf(revisionless, revisioned)),
+        )
+
+        val updated = repository.subtractProvenance(saved.id, listOf(locator.key()))
+
+        assertEquals(listOf(revisioned), updated?.provenanceEntries)
+        assertEquals(1L, edgeCount(saved.id))
+    }
+
+    @Test
+    fun `subtractProvenance answers null for a proposition that is not there`() {
+        // Undo leans on this: a null answer is how it learns the survivor was deleted after it read
+        // it, and it stops there instead of saving its copy back. The override holds no earlier
+        // read to fall back on: the empty-refs branch is nothing but a fresh read, and the matched
+        // branch reads again after its delete statement — this pins that both answer null, and
+        // for an id the store never held.
+        val locator = UriLocator("https://example.com/subtract/deleted")
+        val entry = evidence(locator, "r1")
+        val saved = repository.save(
+            prop("deleted before subtract", context = "ctx-subtract-deleted", provenance = listOf(entry)),
+        )
+        assertTrue(repository.delete(saved.id))
+
+        assertNull(repository.subtractProvenance(saved.id, listOf(ProvenanceEvidenceKey.encode(entry))))
+        assertNull(
+            repository.subtractProvenance(saved.id, emptyList()),
+            "the empty-refs shortcut has to answer the same way",
+        )
+        assertNull(repository.subtractProvenance("never-existed-at-all", listOf(locator.key())))
+    }
+
+    private fun sourceCount(sourceKey: String): Long =
+        persistenceManager.getOne(
+            QuerySpecification
+                .withStatement("MATCH (s:Source {key: \$sourceKey}) RETURN count(s) AS c")
+                .bind(mapOf("sourceKey" to sourceKey))
+                .transform(Long::class.java),
         )
 
     private fun edgeCount(propositionId: String): Long =

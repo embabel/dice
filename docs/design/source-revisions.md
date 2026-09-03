@@ -213,21 +213,313 @@ flowchart TD
     E["ProvenanceEntry"]
     E -->|"structural equality, all six fields"| DD["list dedup:<br/>withProvenanceEntries, withProvenance,<br/>absorbEvidence"]
     E -->|"ProvenanceEvidenceKey.encode"| K["opaque ref string<br/>dice-provenance:v1:..."]
-    K --> T["recorded with the fold<br/>(collector trace, slice 3)"]
-    T -->|"undo passes refs to<br/>Proposition.withoutFoldedEvidence"| M["ProvenanceEvidenceKey.matches"]
+    K --> T["recorded with the fold<br/>(collector trace)"]
+    T -->|"undo passes refs to<br/>PropositionStore.subtractProvenance"| M["ProvenanceEvidenceKey.matches"]
     M --> Q{"carries the<br/>dice-provenance: prefix?"}
     Q -->|"yes, and it parses"| R1["remove the single entry<br/>whose six fields match"]
     Q -->|"yes, and it does not parse"| R2["match nothing;<br/>evidence is left alone"]
     Q -->|"no: a legacy locator key"| R3["remove only revisionless entries<br/>with that locator key"]
 ```
 
-### The interim gap, until the collector slice lands
+### Recording a fold, and undoing it
 
-Storage keys its edges by `encode`, but no *collapse* records an encoded ref yet. Until slice 3
-rewires `MultiSignalCollectorStrategy`, a collapse still writes down plain locator keys, so undoing
-one that folded revisioned evidence takes the legacy path and leaves those entries on the survivor.
-The direction of the gap is safe — evidence is retained, never wrongly deleted — and it closes when
-slice 3 starts recording encoded refs.
+A collapse records what each loser actually added to the survivor, and names that evidence by its
+evidence key. `MultiSignalCollectorStrategy` encodes every entry on both sides and subtracts; what
+is left is the evidence the fold introduced. `RetiredProposition.foldedProvenanceEvidenceKeys`
+carries it, and `undoSingleCollapse` hands those refs to `PropositionStore.subtractProvenance`,
+where each one matches a single full entry. (`Proposition.withoutFoldedEvidence` still runs on the
+survivor for grounding and source ids, and is given no provenance refs — the store removes evidence
+now. **Subtracting evidence by name** below says why the move was needed.)
+
+Locator keys alone could not do this, and failed in two ways. A loser citing `r2` of a document the
+survivor already cites at `r1` shares its locator key with the survivor, so the recorded fold
+subtracted to nothing and undo left `r2` behind. And a bare locator key matches revisionless
+evidence only, so even a ref that did get recorded could not reach a revisioned entry. Both are now
+pinned: `MultiSignalCollectorStrategyTest.records only the distinct evidence a fold actually adds`
+covers what gets written down, and `folding a revisioned loser and undoing leaves the survivor's
+evidence as it was` runs the whole round trip — in memory in `CollectorUndoCapabilityTest`, and
+against Neo4j in `DrivineCollectorTraceStoreIntegrationTest`, where the survivor's `DERIVED_FROM`
+edge count goes from one to two across the fold and back to one after the undo.
+
+`foldedProvenanceRefs` stays beside the evidence keys with its meaning unchanged: the locator keys
+of sources the survivor was not already citing. Trace readers display those, and an undo of a trace
+recorded before evidence keys existed falls back to them, matching revisionless evidence only — so
+an old trace removes exactly what it always removed. The two fields are the same fold stated at two
+granularities, and the finer one wins wherever it exists.
+
+Evidence keys are left out of the JSON view of a trace. A `RetiredProposition` written to JSON and
+read back carries its locator refs and no evidence keys, so it undoes at locator granularity;
+`SourceRevisionCompatibilityTest` asserts both halves of that. JSON is a readable projection of a
+trace, not a transport for one you intend to undo from.
+
+### Undo goes through the store, and writes nothing on a broken collapse
+
+`undoSingleCollapse` takes evidence off the survivor with
+`ProvenanceSubtractionCapable.subtractProvenance`, which names the refs to delete. Saving the
+reduced survivor is not enough on a persistent backend: `DrivinePropositionRepository.save` appends
+provenance and deletes no edge, so the folded rows would outlive the undo. The subtraction runs
+first and the save follows it, carrying grounding and source ids; **The order the writes go in**
+below says why that order is load-bearing in both directions. **Subtracting evidence by name**
+below says why the operation lives on its own capability and what implementing it promises;
+`CollectorUndoCapabilityTest` pins the undo against a store that models the append-only save.
+
+Both participants are read before anything is written. A survivor whose retired member has since
+been deleted would otherwise end up with the member's evidence already subtracted and no member to
+restore it to. Four tests count the writes an undo attempts against a missing survivor and a missing
+retired member, in memory and on Neo4j, and assert the count is zero.
+
+### Proving a collapse was applied before reversing it
+
+A retirement record says a collapse was *proposed*. `MultiSignalCollectorStrategy` writes it during
+the mark phase, and `DefaultCollectorRunner` only decides what to do afterwards, so a dry run, a
+skipped merge, or a merge the runner declines all leave a trace that reads exactly like an applied
+fold. Reversing one of those subtracts evidence the survivor holds for its own reasons. The record
+also survives its own undo — nothing consumes it — so a second undo has to be recognised too.
+
+So authorization is two conditions, and both have to hold.
+
+**Was the merge applied, into this survivor?** The trace cannot say, and neither could the audit
+records until this slice: they described *marks* and status changes, not the action the sweep took.
+Three different things produced the same record. `MergingSweepPolicy` merges into the first mark
+naming a survivor that is neither blank nor the member itself, while `DefaultCollectorRunner` writes
+a record for *every* mark, so a member marked duplicate by two strategies left two records naming
+two survivors with nothing to say which merge ran. `StatusTransitionSweepPolicy` retires a
+duplicate-marked member and folds nothing. And the runner itself retires a loser without merging
+when the target has vanished or is no longer ACTIVE. All three looked like an applied merge.
+
+Worse, the two record stores disagree about how many records survive. `DrivineCollectorRecordStore`
+MERGEs on the natural key (`propositionId`, `runId`), so a member marked by several strategies keeps
+**one** row and the last write wins; `InMemoryCollectorRecordStore` keeps one per mark. Any rule
+that reads the merge target off a mark therefore gives a different answer on the two stores, and on
+the production one it reports whichever mark was written last.
+
+So `CollectorRecord` gains `mergedIntoId`: the survivor the sweep actually folded this proposition
+into. `DefaultCollectorRunner` sets it only after the merge is saved, and sets the same value on
+every record it writes for that member — which is what makes the field survive the overwrite. One
+row or five, the answer is the same. A plain status transition, a skip, and a fallback retirement
+all leave it null, so none of them can authorize an undo. A dry run's preview records the target it
+would have used, and the run header's `dryRun` flag is what says nothing happened.
+
+`undoSingleCollapse` requires a `CollectorRecordStore`, a non-dry run and a `TRANSITIONED` record
+whose `mergedIntoId` names this survivor. No inference from marks remains, and the multi-survivor
+ambiguity that forced a conservative refusal is gone by construction. A defensive check for records
+that disagree about the applied target stays in place and logs, because the alternative on a broken
+invariant is silently picking one. **What undo refuses before it starts** below covers the case
+where the caller supplies no records at all.
+
+**Has the undo already run?** Audit records never expire, so nothing in them says a collapse has been
+reversed — and that is a false *accept* waiting to happen, not just a missing convenience. Judge
+completion by status alone and this sequence bites: run 1 merges the member into S1, the undo
+succeeds, and later anything at all retires the member again — a decay sweep, a second collector run
+folding it into S2. Run 1's records still say "applied" and the member is off its prior status
+again, so a retry of run 1's undo proceeds: it subtracts run 1's evidence from S1 a second time,
+deleting whatever S1 has legitimately re-gained since, and restores the member, clobbering the newer
+retirement.
+
+So `CollectorRecord` gains `undoneAt`, stamped by `undoSingleCollapse`. A store keyed by
+(proposition, run) updates that row in place; one that appends leaves the original beside the
+stamped copy, so a reader treats *any* stamped record for the pair as the whole collapse being
+undone. A stamped record never authorizes again, however the member's status has moved since.
+
+Two details make the stamp trustworthy rather than decorative.
+
+**Replay must not erase it.** Re-recording a collector outcome is supported, and a replayed record
+carries no stamp, so a plain `SET n.undoneAt = $undoneAt` would clear a stored one and re-authorize
+the collapse. `DrivineCollectorRecordStore` writes it through `coalesce($undoneAt, n.undoneAt)`
+instead: an arriving stamp wins, a replay preserves. The append-only in-memory store has the
+property for free, and `CollectorRecordStore.record` now states it as a contract on implementors.
+
+**Where the stamp sits in the write order is what makes a crash recoverable.** Undo writes in four
+steps — subtract the evidence, save the survivor, stamp, restore the member — and the stamp is
+deliberately third rather than last. Put it after the restore and a process that dies in between
+leaves a finished undo still authorized, which no retry can repair: the member is already back at
+its prior status, so the retry declines and the stamp is never written; a later re-retirement then
+re-arms the whole thing destructively. Third, every interruption is recoverable:
+
+| Interrupted after | State | What a retry does |
+| --- | --- | --- |
+| nothing | untouched | the whole undo |
+| subtract | evidence off, grounding on | re-derives against current evidence, so the subtraction is a no-op, then finishes |
+| save | survivor final, member retired, no stamp | same — re-subtracts nothing, stamps, restores |
+| stamp | stamped, member still retired | restores only, touching no evidence |
+| restore | complete | nothing; the stamp refuses |
+
+The subtraction is safe to repeat because it is recomputed from the survivor's *current* evidence by
+key, so a ref that is already gone removes nothing.
+
+That fourth row needs one more thing to be sound, because "stamped and still retired" also describes
+a collapse undone long ago whose member something has retired again since. Two signals separate
+them.
+
+The member must sit exactly where this collapse left it, per the record's `newStatus`. A record
+without one predates the mechanism and cannot say where that was, so it fails the signal instead of
+passing it vacuously — otherwise a stamped legacy record would resume against a re-retirement to any
+status at all.
+
+And no other run may have **written** the member at or after the stamp. That counts `TRANSITIONED`
+and `HARD_DELETED` records from non-dry runs only. The filter is load-bearing in the other
+direction: a `SKIPPED` record is the literal statement that a run left the member alone, and a dry
+run changes nothing, so counting either as action would refuse the resumption forever and strand a
+member whose undo is genuinely half-finished — evidence off the survivor, member retired, every
+retry declining. `a later run that skipped the member does not strand an interrupted undo` pins it.
+
+Both timestamps are written by whichever host produced them, so the comparison assumes roughly
+synchronized clocks. Several hosts sharing one store can order them wrongly: a re-retirement whose
+clock runs behind stamps `at` before `undoneAt` and slips past the check.
+
+What defeats both signals is a re-retirement that leaves no record and lands on the same status.
+Two deployments produce that: host code changing a proposition's status directly, and a collector
+runner wired without a record store at all, where `persistRun` no-ops and a whole re-retirement —
+or a re-*merge* into a different survivor — passes unrecorded. The consequence is bounded but wider
+than a status flip: the stamp gate still makes the full re-subtraction unreachable, so no evidence
+is lost, but a false resume can leave the member live while the newer survivor keeps the copy it
+folded, which is a merge-state desync someone has to reconcile.
+
+**Is the merge still in force?** The member's own status — and it is all a caller without records
+has for any of the three questions. Note what it does not say: "still retired *by this collapse*". A
+later unrelated retirement satisfies it just as well, which is exactly why the `undoneAt` stamp
+rather than status is what closes the retry.
+
+Leaning on status costs one false refusal, deliberately. A member that was genuinely retired, whose
+undo has not run, and which has since revived to its prior status reads as never retired. Refusing
+loses a legitimate undo and touches nothing; accepting would subtract evidence for a collapse that
+may never have been applied. Silent data loss is the worse outcome, so refusal wins the tie, and a
+caller that needs the undo can reinstate the fold or remove the evidence directly.
+
+Without the records only the status condition is checked, which is the older, weaker behaviour kept
+for existing callers: it accepts a dry run's trace followed by an unrelated decay transition, and it
+has nothing stopping the re-arm sequence above. The four-argument overload keeps that behaviour with
+the limitation stated in its KDoc; anything holding the records should pass them.
+
+Two further refusals are correct rather than conservative, and worth naming so they are not mistaken
+for defects. A **chain-resolved merge** — stacked strategies mark A into B while B is itself merged
+into C, so the runner folds A onto the terminal survivor C and records C while the trace decision
+still names B — can never be undone through the records: undoing against B fails the record check,
+and against C fails the caller-error `require`. That is right, because the folded evidence keys were
+computed against B's evidence, and subtracting them from C would remove the wrong set. And
+`findDecisionForProposition` returns an arbitrary first match on both shipped stores, so a dry-run
+preview of a collapse recorded before the real one can **shadow** the applied decision; the undo
+then evaluates the preview's run, meets a dry-run header, and declines.
+
+A sibling's folded refs are held on the survivor only until that sibling's own undo has run; after
+that it holds its own copy again, so the last member of a shared fold to be undone takes the shared
+evidence with it and the survivor lands back on its pre-collapse evidence. With records that is read
+off the sibling's `undoneAt` for this run, and it has to be: judged by status, a sibling that was
+undone and then retired again by a later run reads as still participating, so the shared evidence
+would be retained forever even though both original folds are reversed. Without records the fallback
+is status, which is what a legacy caller gets. A sibling that has been deleted counts as still
+holding its claim either way, since the survivor's copy is then the only one left.
+
+One limit remains, and it is inherent rather than missing data: an entry the survivor independently
+re-gains after a fold is indistinguishable from the folded one under structural dedup, so undo
+removes it. Grounding refs and source ids have always behaved that way and evidence now matches
+them. A different revision of the same source is a different key and is untouched.
+
+### What undo refuses before it starts
+
+Undo is destructive and takes ids from whatever handed them to it — a URL path, a card in a drawer,
+a script. Three preconditions are checked ahead of any write, and each missing one refuses.
+
+**The context that owns the collapse.** The parameters are a
+`CollapseUndoCommand(contextId, survivorId, retiredId)`, and both the survivor and the retired
+member have to live in that context. One that does not throws
+`CollapseUndoContextMismatchException`, carrying the commanded context, the offending proposition
+and the context that really owns it. Without this the ownership check was every caller's own
+problem: the assistant's `MemoryUnmergeService` resolves the user's context and compares both
+propositions against it before calling in, and a caller that forgot had a destructive operation
+reachable across contexts with two string ids. `an undo issued for one context refuses ids belonging
+to another, and leaves it untouched` sets a whole collapse up in a second context — trace, live
+records, retired member and all — issues the undo in the first, and asserts the refusal plus the
+second context's evidence, member status and absent stamp; it then undoes the same collapse cleanly
+under the right context, so the refusal is about ownership alone. `a member from another context
+cannot be restored into this context's survivor` covers the mixed case.
+
+**The run's audit records.** A null `CollectorRecordStore` throws
+`CollapseUndoConfigurationException` naming the missing store, before any read. This used to be
+optional, and omitting it dropped the "did the collector really apply this merge" question and fell
+back on the member's status — which a later unrelated retirement satisfies just as well. A dry-run
+preview followed by a decay sweep moving the member ACTIVE to STALE was enough to arm an undo that
+then stripped a revision the survivor held for its own reasons.
+
+**A live record, with previews excluded.** `CollectorRun.dryRun` on the run header is how a preview is
+marked, and a dry-run header refuses whatever its records say — a dry run writes records carrying
+`mergedIntoId` and a `newStatus` exactly like a merge that happened, so the header is the only
+signal that separates them. Three tests share one world state and vary only the audit trail: no
+store refuses, a dry-run record refuses, a live record proceeds. Each refusal asserts the survivor's
+evidence, the member's status and the absence of an `undoneAt` stamp, so "refused" means "wrote
+nothing" and never "wrote half of it".
+
+### Subtracting evidence by name, not by remainder
+
+Undo removes evidence through `ProvenanceSubtractionCapable.subtractProvenance`, which names the
+refs to delete. The obvious alternative — `setProvenance` with the entries that should remain — has
+a window that loses data: naming what stays means reading the entries first, and any evidence
+another extraction adds between that read and the write is replaced away. Nothing recovers it,
+because the `save` that follows is append-only.
+
+The operation lives on its own opt-in capability, beside `SourceRevisionQueryCapable`, for the very
+reason that window exists. A default body on `PropositionStore` would have to *be* that
+read-modify-write, and it would compile on every backend while quietly carrying the data loss the
+operation is there to prevent; a store with no way to delete by name would then look identical to
+one that can. The capability states the promise directly: the read of the current entries and the
+write of what survives land as one step, an entry another writer adds while a subtraction is in
+flight is still there when it finishes, and subtracting the last entry from a proposition somebody
+already deleted answers null and writes nothing. `supportsProvenanceSubtraction` carries the runtime
+half of that for a decorator that forwards to a delegate it discovers at construction. Undo probes
+for the capability and refuses with `CollapseUndoConfigurationException` when the store has none.
+
+`InMemoryPropositionRepository` implements it over `ConcurrentHashMap.compute`, which holds the key
+for the whole remapping function, and takes an `addProvenance` override on the same primitive so the
+two operations serialize against each other. `DrivinePropositionRepository` deletes `DERIVED_FROM`
+edges by ref in one statement and prunes only the sources those edges pointed at, reading nothing
+first. Refs come in the same two forms the codec defines: a minted key is matched against the edge's
+`entryKey`, and a bare locator key matches revisionless edges for that source only — which also
+reaches edges written before `entryKey` existed. `EventEmittingPropositionRepository` carries the
+capability type and forwards to its delegate, because Kotlin's interface delegation covers
+`PropositionRepository` alone: a decorator that stayed silent would hide a capable delegate and turn
+every undo behind it into a refusal.
+
+`evidence added while a subtraction is running survives it` races an addition against a subtraction
+on one proposition over 200 rounds, with two real threads released together on a latch, and asserts
+both effects are on the proposition at the end. The read-modify-write shape this replaced loses the
+addition on the first round. `evidence the subtraction does not name survives it on the graph
+backend` asserts the same property for the Drivine statement, with the add completing before the
+subtraction starts.
+
+A subtraction can also answer null, which is the store saying it holds no such proposition. Undo
+reads that as the survivor having been deleted between its own read and this call, and stops there
+having written nothing. Continuing from the copy it read would save that copy back and recreate the
+proposition another writer deleted, folded evidence and all — the `save` that follows the
+subtraction is an upsert on every backend here. The member stays retired, no stamp is written, and
+the null the undo returns says truthfully that no restore happened. What becomes of a member left
+retired into a survivor that no longer exists is the caller's decision; undo does not guess at it.
+`a survivor deleted before the subtraction is not recreated by the undo` pins that in memory, and
+`subtractProvenance answers null for a proposition that is not there` pins the graph backend's half.
+
+**A deletion can still arrive too late to be seen**, and this is a residual the capability leaves
+open. Every deletion up to the subtraction's own last look is caught, because no implementation may
+recreate what it is subtracting from: the in-memory `compute` finds no entry and writes none, and
+the Drivine override reads once after its delete statement. The window that stays open is between
+that answer and the survivor's `save`.
+
+The upsert is what does it. `PropositionStore.save` writes the proposition whether or not a row for
+it still exists, and nothing on the contract says "save only if it is still there". Closing the
+window needs a conditional write — a compare-and-set, or an existence-guarded save on the store
+contract that every backend then has to implement — and it would have to reach every save in the
+chain. That is more than an amendment to this slice should take on. It belongs with the other
+untransactional residuals here: no transaction spans the undo's four writes, and a caller needing
+strict exclusion against concurrent deletion needs a boundary the SPI does not offer yet.
+
+### The order the writes go in
+
+Evidence comes off first, and the survivor's `save` runs last. Both halves of that order are
+load-bearing. A persistent backend's `save` appends provenance and deletes nothing, so the
+subtraction is the only write that removes the folded evidence. And `save` is the write a decorator
+instruments — `EventEmittingPropositionRepository` publishes `PropositionPersisted` from it, while
+the provenance operations forward to the delegate unannounced. Saving first would fire the event
+while the folded evidence was still in the graph, handing a synchronous listener a survivor that no
+longer exists a moment later. `the survivor's persistence event carries its post-undo evidence` pins
+the ordering against the real decorator.
 
 ### Legacy evidence is unchanged, by construction
 
@@ -484,7 +776,14 @@ a runaway or hostile value.
 
 Stated with the same scope on every Wave A slice:
 
-- **Source compatibility: claimed.** Existing Kotlin and Java call sites compile unchanged.
+- **Source compatibility: claimed, with two carve-outs on the undo slice.** Existing Kotlin and
+  Java call sites compile unchanged, apart from these: `undoSingleCollapse`'s parameter list becomes
+  `(CollapseUndoCommand, CollectorTraceQuery, PropositionStore, CollectorRecordStore?)`, so each
+  call site needs a one-line edit, and `PropositionStore.subtractProvenance` is gone, so a store
+  that declared `override fun subtractProvenance` has to declare `ProvenanceSubtractionCapable` and
+  drop the `override`. Both are deliberate: the first is what makes the context and the audit records required,
+  and the second is what makes atomicity a promise a backend has to make. A store that never
+  mentioned the operation compiles unchanged, and calls nothing new.
 - **JSON compatibility: claimed.** Stored propositions written before this change load, and
   round-trip, with a null revision.
 - **Java constructor-descriptor compatibility: claimed.** `@JvmOverloads` preserves every concrete
@@ -512,9 +811,10 @@ Four slices, each green on its own, together equal to the reviewed
    Neo4j actually runs, the DERIVED_FROM edge-count proofs for repeated and concurrent writes of one
    revision, the delete cascade over parallel revisions, and the connector-collision and
    legacy-adoption cases around `:Source` identity.
-3. **Collector hardening** — the trace and undo half: `CollectorSignals` carrying evidence keys,
-   undo routed through the store SPI, `DrivineCollectorTraceStore`, and
-   `MultiSignalCollectorStrategy`.
+3. **Collector hardening** — the trace and undo half: a collapse records the evidence keys of what
+   it folded, undo subtracts them through `PropositionStore.subtractProvenance` and refuses to write
+   when a participant has gone, and `DrivineCollectorTraceStore` persists and reads the new field
+   with rows written before it still readable.
 4. **Entry points** — `IncrementalPropositionExtraction`, pipeline wiring, the REST surface, and
    the executed binary-compatibility fixture. The async `SourceAnalysisRequestEvent` path carries a
    revision the same way `rememberText` does, since both build `SourceAnalysisContext` through
