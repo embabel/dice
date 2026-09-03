@@ -545,6 +545,209 @@ properties hold for those, and slice 1's tests pin each one:
   `dice-provenance:`, and a ref that does carry the prefix but names an unknown version — the
   `dice-provenance:v2:` case in `ProvenanceEvidenceKeyTest` — fails closed and matches nothing.
 
+## Getting a revision in
+
+`SourceAnalysisContext.sourceRevision` is the only way a revision reaches provenance. Every entry
+point builds a context, the pipeline reads the revision off the context when it stamps evidence,
+and there is no other channel. That makes one check enough: the context's `init` block requires a
+`sourceLocator` whenever a `sourceRevision` is set, and requires the revision's `sourceKey` to equal
+that locator's key. A revision therefore cannot name a source the run is not reading, and the
+fallback `ContentAddressedLocator` the pipeline uses when no locator was supplied can never pick up
+somebody else's revision — there is no revision to pick up.
+
+```mermaid
+flowchart TD
+    A["rememberTextFromSource / rememberFileFromSource"] --> C
+    B["SourceAnalysisRequestEvent.sourceLocator() / sourceRevision()"] --> C
+    R["POST /extract, POST /extract/file"] --> C2
+    C["IncrementalPropositionExtraction.buildContext"] --> CTX
+    C2["PropositionPipelineController.buildContext"] --> CTX
+    CTX["SourceAnalysisContext<br/>init: locator required, keys must match"] --> P
+    P["PropositionPipeline.stampProvenance"] --> E["ProvenanceEntry.sourceRevision"]
+```
+
+### The three entry points
+
+**Direct calls.** `rememberTextFromSource` and `rememberFileFromSource` sit beside `rememberText`
+and `rememberFile` as separate methods. A locator is required on the source-aware pair and absent
+from the legacy pair, so the two have genuinely different contracts and every Kotlin and Java call
+site resolves to one of them without ambiguity. `IncrementalPropositionExtractionTest` enumerates
+the exact JVM descriptors of all four names and asserts the sets, so a legacy descriptor cannot
+quietly move and a source-aware call cannot collapse onto a legacy one; the same file exercises
+Kotlin callable references, named arguments, and Mockito-shaped call sites for the same reason.
+Both source-aware calls run through one private `rememberTextInternal`, and the file variants share
+one `withRememberedFileText` reader, so parsing and grounding behave identically with or without a
+revision.
+
+Passing a revision on either call is an assertion by the host that the locator's revision covers the
+whole aggregate being extracted — the whole text, or the whole file as Tika read it. DICE has no way
+to derive that: `sourceId` and `additionalGrounding` are untyped strings, and a file is read as one
+document. The KDoc on both methods says so.
+
+**The async event path.** `SourceAnalysisRequestEvent` gains two open methods, `sourceLocator()` and
+`sourceRevision()`, both returning null by default, so an existing subclass carries no provenance and
+behaves as it did. `ConversationAnalysisRequestEvent` gains a constructor that takes a locator and an
+optional revision. The listener passes whatever the event returns into the same `buildContext` call
+`rememberTextFromSource` uses, which is what makes the two paths carry a revision identically rather
+than similarly. Three tests pin it: `SourceAnalysisRequestEventRevisionTest` asserts the defaults, the
+exact values a provenance-aware event carries, and that a mismatched key is rejected when the context
+is built; `IncrementalPropositionExtractionTest.event provenance reaches the context observed by the
+pipeline` runs a real event through `extractPropositions` and captures the context the pipeline was
+handed; and `SourceRevisionJavaInteropTest` subclasses the event from Java in both shapes and asserts
+the base constructor descriptor is still `(Object, NamedEntity)`.
+
+**REST.** Covered below.
+
+### The REST surface
+
+`POST /extract` takes two new optional fields, and `POST /extract/file` takes the same two as
+multipart parts:
+
+| Field | Meaning |
+| --- | --- |
+| `sourceLocator` | `{kind, value, connectorId?, display?}`, where `kind` is `uri`, `file`, `content`, or `connector` |
+| `sourceRevision` | the provider's opaque revision string |
+
+Field combinations that would mean something other than what they look like are rejected with 400,
+before the pipeline runs and before Tika reads the upload:
+
+| Rejected | Reason |
+| --- | --- |
+| `sourceRevision` with no `sourceLocator` | there is nothing for the revision to be a revision of |
+| unknown `kind` | the union is closed |
+| `connectorId` on a `uri`, `file`, or `content` locator | those kinds have no connector, so the field would be silently dropped |
+| `connector` with no `connectorId` | `ConnectorRef` needs both halves |
+| blank `value` | a locator with no identifier identifies nothing |
+| a source key over `MAX_SOURCE_KEY_LENGTH`, or a `sourceRevision` over `MAX_SOURCE_REVISION_LENGTH` | both strings are hashed into evidence and written to an indexed property, and `ProvenanceEntry` refuses them anyway; measuring here answers the caller at the edge |
+
+A `connectorId` holding a colon is accepted. `ConnectorRef` escapes its own connector id when it
+renders a key, so `ConnectorRef("gmail:eu-west", "message-42")` keys as
+`connector:gmail\:eu-west:message-42` and stays distinct from
+`ConnectorRef("gmail", "eu-west:message-42")`. Screening colons out at the REST edge would refuse
+connector ids the domain type handles perfectly well, a region-qualified one among them, so the
+controller carries no such check.
+
+Every 400 from these checks carries a body, `{"error": "<what the check said>"}`. That is what makes
+a length rejection actionable: the message names the ceiling that was broken and the length that
+broke it. Without it an over-long value surfaced as an `IllegalArgumentException` deep inside
+extraction, which the caller met as a 500.
+
+`PropositionPipelineControllerTest` posts all five field-combination cases in one batch and asserts
+400 with zero pipeline invocations. A separate multipart test asserts the file endpoint rejects a
+revision with no locator without calling the reader. The ceilings have tests of their own on both
+endpoints, each asserting the body names the bound; a paired test posts a source key of exactly 2048
+characters with a revision of exactly 1024 and follows both through to the stored `ProvenanceEntry`.
+Another posts both readings of the same colons — `gmail:eu-west` + `message-42`, and `gmail` +
+`eu-west:message-42` — and asserts the connector id survives the wire, the keys differ, and the
+stored key is the one `ConnectorRef` renders.
+
+The happy path posts all four locator kinds with a revision containing
+both a colon and a non-ASCII character (`rev:opaque|雪`) and asserts the value comes back on the
+response byte for byte, with the locator's `sourceKey` absent from the wire — the key is derived
+from the locator, so sending it back would be a second, forgeable copy of the same fact.
+
+**Revision-stable chunk ids.** When a request carries a revision, the controller derives each chunk's
+id from the context id, the source key, the revision, the chunk's ordinal in the document, and the
+chunk text, framed by length and hashed. Re-posting the same revision then produces the same chunk ids
+and grounds onto the same rows; posting a different revision of the same source produces different
+ids, which is what keeps two versions separately traceable. A request with no revision keeps whatever
+id the chunk arrived with, so old callers see no change. Three tests cover it: one posts `r1` twice
+then `r2` and asserts two propositions with one grounding row and one evidence row each; the file test
+posts the same revisioned upload twice and asserts identical chunk ids both times; and a third posts
+identical text, locator, and revision into two contexts and asserts the ids differ.
+
+The context id is in the identity because a chunk id is what grounding is looked up by, and
+`findByGrounding` is not context-scoped. Without the tenant in the hash, two contexts ingesting the
+same document at the same revision would mint the same chunk id, and a grounding lookup in one
+context would reach the other's propositions.
+
+Two limits worth stating. The ids hold only as long as the chunker keeps producing the same chunks
+for the same input — the chunk text and its ordinal are both in the identity, so re-posting one
+revision after a chunker configuration change re-mints the ids and grounds onto fresh rows beside the
+old ones. And the id is derived from the request, so it says nothing about whether the bytes behind a
+revision changed: a provider that reuses one revision string for different content gets one id for
+both.
+
+**What the extract response names.** `POST /extract` answers with the propositions the store holds
+once the writes have run. `save` is the authority on that, and it can answer with a different row
+from the one it was offered: exact-text dedup hands back the existing canonical proposition under
+its own id. Revision does the same thing a layer up — a merge or a reinforcement writes the revised
+proposition and leaves the freshly extracted one unwritten, so the extracted id names nothing. The
+controller keeps what each `save` returned, keyed by the id it offered, and every proposition the
+response names goes through that map. The property is simple to state and simple to test: every
+proposition id in an extract response resolves through `findById`.
+
+`PropositionPipelineControllerTest` pins it with a store double that collapses a second save of the
+same text onto the row already there, the way the graph store's exact-text dedup does. Posting one
+sentence twice makes the pipeline mint two ids while the store keeps one row, and the second
+response must name the row that survived. A second test drives the merge path and asserts the
+response carries the merged row's id with the extracted id absent from the store; a third runs a
+contradiction and a reinforcement together and asserts every id in the answer resolves.
+
+**On the way out.** `ProvenanceEntryDto` gains `sourceRevision`, and the discovery `/why` response
+grows a `provenance` array of `DiscoveryProvenanceDto` — locator key, revision, chunk id, offsets,
+content hash, all primitives. Both DTOs are `NON_NULL`, so a revisionless entry serializes exactly
+as it did before: the field is absent, not null. `DiscoveryControllerTest` asserts the empty case,
+the revisionless case with the field absent, and two revisions of one locator arriving in order.
+`LineageDto.from` reads the lineage's own entries rather than the nested proposition's, because a
+lean read can return a proposition with no evidence attached while the lineage carries the full set;
+`DiscoveryDtoLeakTest` pins that and pins the DTO's primitive-only shape.
+
+The array is sorted by evidence key before serialization. Nothing upstream orders it: provenance is
+read as raw Cypher over `DERIVED_FROM` edges and comes back in whatever order the planner produced,
+so the same proposition could serialize its evidence differently from one read to the next. Sorting
+in `LineageDto.from` rather than adding an `ORDER BY` fixes it once for every backend, including the
+in-memory and JSON-file repositories, and costs one encode per entry on a list that is already
+bounded by how much evidence one proposition carries. The evidence key is the right sort key because
+it is the entry's durable identity — the same string the graph rows and collector traces are keyed
+by — so the order is stable across reads and across backends, and one source's revisions sort among
+themselves once their shared locator prefix matches. `DiscoveryDtoLeakTest` feeds one entry set in
+three arrival orders and asserts all three serialize identically.
+
+**This moved the `/why` baseline.** On `main`, `/why` returned six fields and dropped provenance
+entirely. It now carries a seventh, so any later promise that the `/why` response stays byte-for-byte
+identical re-baselines to the post-Wave-A shape rather than to `main`'s — the extraction-run train's
+audit work makes exactly that promise, and its golden test has to be written against what ships here.
+Nothing pins `/why` as a whole document today; `DiscoveryControllerTest` asserts individual JSON
+paths.
+
+### The binary-compatibility fixture, executed
+
+`SourceRevisionBinaryCompatibilityTest` runs a client jar compiled against `main` before any of this
+landed. It pins the jar and its source by SHA-256, checks the jar's manifest records the base commit
+it was built against, loads it in a child classloader over the candidate classes, and asserts the
+exact link outcome of eight probes:
+
+Every probe passes fully specified arguments, so what each one measures is a concrete JVM descriptor.
+None of them exercises Kotlin's synthetic defaulted constructor, and the fixture makes no claim about
+it.
+
+| Probe | What it calls | Outcome |
+| --- | --- | --- |
+| `ProvenanceEntry.constructor.full` / `.nullable` | the 5-argument descriptor, twice — once with values, once with nulls in the boxed positions | LINKED |
+| `ProvenanceEntry.copy`, direct and defaulted | the 5-argument `copy` and its `copy$default` synthetic | `NoSuchMethodError` |
+| `SourceAnalysisContext.constructor.full` / `.alternate` | the 10-argument descriptor, twice with different values | LINKED |
+| `SourceAnalysisContext.copy`, direct and defaulted | the 10-argument `copy` and its `copy$default` synthetic | `NoSuchMethodError` |
+
+That is the compatibility boundary below, measured rather than asserted. The fully specified
+constructor descriptors survive because `@JvmOverloads` keeps every concrete one and adds the new
+argument as one more descriptor on the end; the `copy` descriptors change because adding a field to a
+data class changes them, which is the part this note declines to claim.
+
+Two negative controls, one per probed type, keep the LINKED results honest. Each uses a classloader
+that redefines a single class with the approved constructor stripped out by ASM, then asserts that
+type's probe flips to `NoSuchMethodError` while the other type's stays LINKED. So a green run means
+each probe is measuring the constructor it names rather than merely finding the class.
+
+The context control reads its target descriptor out of the client jar's own bytecode. `ContextId` is
+a value class, so the constructor the fixture writes with ten arguments compiles to an eleven-parameter
+descriptor: the context id erases to `String`, and a trailing `DefaultConstructorMarker` separates
+this constructor from the one erasure would otherwise collide with. Neither fact is visible in the
+Kotlin signature, and reflection reports a *different* ten-parameter constructor the client never
+calls — a control built from reflection strips a constructor nobody uses, and passes while proving
+nothing. That was the first version of this control, and it is why the descriptor now comes from the
+call site rather than from the class.
+
 ## Querying by source
 
 Three finders land on `SourceRevisionQueryCapable`, all context-scoped:
@@ -645,8 +848,11 @@ issuing no write statements at all.
 
 Two details make that union safe. **Structural source identity is validated before the no-op check,
 not after.** A locator's equality is its key, and `ConnectorRef` builds its key by joining on colons,
-so `("a:b", "c")` and `("a", "b:c")` produce one key and their entries compare equal. An entry can
-therefore look like one the winner already holds while naming a different connector. Validating
+escaping `:` and `\` in the connector id first, so `("a:b", "c")` keys as `connector:a\:b:c` and
+stays distinct from `("a", "b:c")` — a segment holding a colon round-trips without collision. That
+escaping is what closes the hole; while the key was a plain join those two pairs shared one key and
+their entries compared equal, so an entry could look like one the winner already held while naming a
+different connector. Validating
 first — with a read, so the replay stays write-free — rejects that instead of filing the evidence
 under the wrong source. **Recovery from a uniqueness race runs in its own transaction.** A losing
 writer learns it lost by having the database reject its insert, which leaves that transaction dead;
@@ -815,10 +1021,11 @@ Four slices, each green on its own, together equal to the reviewed
    it folded, undo subtracts them through `PropositionStore.subtractProvenance` and refuses to write
    when a participant has gone, and `DrivineCollectorTraceStore` persists and reads the new field
    with rows written before it still readable.
-4. **Entry points** — `IncrementalPropositionExtraction`, pipeline wiring, the REST surface, and
-   the executed binary-compatibility fixture. The async `SourceAnalysisRequestEvent` path carries a
-   revision the same way `rememberText` does, since both build `SourceAnalysisContext` through
-   `buildContext`.
+4. **Entry points** — the whole write side above: `SourceAnalysisContext.sourceRevision` with its
+   locator-and-key invariant, `rememberTextFromSource` and `rememberFileFromSource`, the async
+   `SourceAnalysisRequestEvent` path through the same `buildContext` call, the pipeline stamp, the
+   REST request and response shapes with revision-stable chunk ids, and the binary-compatibility
+   fixture running as a test rather than sitting in the tree.
 
 Two things stay out of this train. Bundle round-trips for source revision depend on external issue
 #46, so DICE issue #64 stays open after Wave A lands and its follow-up is separate work. Extraction

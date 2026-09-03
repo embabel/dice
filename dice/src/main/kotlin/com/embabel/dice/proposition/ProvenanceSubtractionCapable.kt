@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.proposition
 
+import org.jetbrains.annotations.ApiStatus
+
 /**
  * Opt-in capability for taking named evidence off a proposition in one atomic step.
  *
@@ -51,6 +53,7 @@ package com.embabel.dice.proposition
  * A decorator wrapping a capable store carries this type and forwards to its delegate;
  * [EventEmittingPropositionRepository] is the worked example.
  */
+@ApiStatus.Experimental
 interface ProvenanceSubtractionCapable {
 
     /**

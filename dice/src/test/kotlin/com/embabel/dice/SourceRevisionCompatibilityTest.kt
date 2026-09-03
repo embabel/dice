@@ -15,6 +15,10 @@
  */
 package com.embabel.dice
 
+import com.embabel.agent.core.ContextId
+import com.embabel.agent.core.DataDictionary
+import com.embabel.dice.common.SourceAnalysisContext
+import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.provenance.ContentAddressedLocator
@@ -28,6 +32,7 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -49,6 +54,14 @@ class SourceRevisionCompatibilityTest {
         val provenance = ProvenanceEntry(locator).copy(contentHash = "updated")
         assertEquals("updated", provenance.contentHash)
         assertNull(provenance.sourceRevision)
+
+        val context = SourceAnalysisContext(
+            schema = DataDictionary.fromClasses("compatibility"),
+            entityResolver = AlwaysCreateEntityResolver,
+            contextId = ContextId("compatibility"),
+        ).copy(promptVariables = mapOf("legacy" to true))
+        assertEquals(true, context.promptVariables["legacy"])
+        assertNull(context.sourceRevision)
     }
 
     @Test
@@ -61,6 +74,16 @@ class SourceRevisionCompatibilityTest {
         ).copy(contentHash = "updated")
         assertEquals("opaque::r/1", provenance.sourceRevision)
         assertEquals("updated", provenance.contentHash)
+
+        val context = SourceAnalysisContext(
+            schema = DataDictionary.fromClasses("compatibility"),
+            entityResolver = AlwaysCreateEntityResolver,
+            contextId = ContextId("compatibility"),
+            sourceLocator = locator,
+            sourceRevision = revision,
+        ).copy(promptVariables = mapOf("revisioned" to true))
+        assertSame(revision, context.sourceRevision)
+        assertSame(locator, context.sourceLocator)
     }
 
     @Test

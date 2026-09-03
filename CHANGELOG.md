@@ -301,3 +301,99 @@ and the consumer PRs that deliver it).
 
   No stored data changes, and nothing in the provenance, trace or audit record shapes moves. Design
   note: [docs/design/source-revisions.md](docs/design/source-revisions.md).
+- Source revisions reach the extraction entry points, the pipeline stamp, and the REST surface
+  (fourth and last Wave A slice of DICE #64). `SourceAnalysisContext` gains `sourceRevision`, and it
+  is the only channel a revision travels on: every entry point builds a context, and the context's
+  `init` requires a `sourceLocator` whenever a revision is set and requires the revision's
+  `sourceKey` to equal that locator's key. One check therefore covers every caller, and the
+  content-hash locator the pipeline falls back to when no locator was supplied can never acquire a
+  revision. `PropositionPipeline` stamps the revision onto each `ProvenanceEntry` it writes.
+  `IncrementalPropositionExtraction` gains `rememberTextFromSource` and `rememberFileFromSource`
+  beside the existing `rememberText` and `rememberFile`. They are separate methods rather than more
+  optional arguments, because a locator is required on the source-aware pair and absent from the
+  legacy pair, which keeps every Kotlin and Java call site resolving to exactly one of them; a test
+  enumerates the JVM descriptors of all four names and asserts the sets. Passing a revision on either
+  call asserts that the locator's revision covers the whole text or the whole file as extracted —
+  DICE cannot derive that from an untyped `sourceId` or from `additionalGrounding`, and the KDoc says
+  so. `SourceAnalysisRequestEvent` gains `sourceLocator()` and `sourceRevision()`, both open and both
+  returning null, and `ConversationAnalysisRequestEvent` gains a constructor that takes a locator and
+  an optional revision; the listener feeds both into the same `buildContext` call the direct entry
+  points use, so the async path grounds propositions identically and a test captures the context the
+  pipeline was handed to prove it. On REST, `POST /extract` takes optional `sourceLocator`
+  (`{kind, value, connectorId?, display?}`) and `sourceRevision` fields and `POST /extract/file`
+  takes the same two as multipart parts. Combinations that would quietly mean something else are
+  rejected with 400 before the pipeline runs and before Tika reads an upload: a revision with no
+  locator, an unknown `kind`, a `connectorId` on a `uri`/`file`/`content` locator, a `connector`
+  locator without one, and a blank `value`. A colon inside a `connectorId` is accepted, because
+  `ConnectorRef` escapes its own connector id when it renders a key: `gmail:eu-west` and `gmail`
+  stay distinguishable, and a region-qualified connector id round-trips through `key()` unharmed.
+  The same 400 also covers a source key or a source revision longer than the `SourceIdentityBounds`
+  ceilings (2048 and 1024), both measured while the request is being read, so an over-long value is
+  answered at the edge where a caller can act on it. Every one of these refusals now returns a body
+  saying why, a new `ExtractErrorResponse`; the compatibility note below states what that changes for
+  a caller.
+  A revisioned request also derives each chunk's id from the source key, the revision, the
+  chunk's ordinal, and its text, so re-posting the same revision lands on the same grounding rows
+  instead of accumulating a fresh set per replay, while a different revision of the same source stays
+  separately traceable. Those ids are context-scoped: the context id is part of the hashed identity,
+  because a chunk id is what grounding is looked up by and `findByGrounding` is not context-scoped, so
+  without it two contexts ingesting one document at one revision would mint one id and a grounding
+  lookup in either could reach the other's propositions. They also assume a stable chunker: the chunk
+  text and ordinal are in the identity, so re-posting one revision after a chunker configuration
+  change re-mints the ids and grounds onto fresh rows beside the old ones. `POST /extract` answers
+  with the propositions the store holds once the writes have run. `save` is the authority on what is
+  there: exact-text dedup hands back an existing canonical row under its own id, and a merge or a
+  reinforcement writes the revised proposition while the freshly extracted one is never stored at
+  all. Both cases used to leave the response naming an id no read could resolve. Every proposition
+  id in an extract response now resolves through `findById`, and a test asserts exactly that over the
+  dedup, merge, contradiction and reinforcement paths.
+  `ProvenanceEntryDto` gains `sourceRevision`, and the discovery `/why`
+  response grows a `provenance` array of primitive-only `DiscoveryProvenanceDto` values built from
+  the lineage's own entries and sorted by evidence key. The sort is what makes the field
+  deterministic: provenance is read as raw Cypher over `DERIVED_FROM` edges and comes back in planner
+  order, so without it one proposition could serialize its evidence differently from one read to the
+  next. A pinned client jar compiled against `main` before any of this
+  landed now runs as a test, so the compatibility boundary below is measured rather than asserted.
+  Design note: [docs/design/source-revisions.md](docs/design/source-revisions.md).
+  **Compatibility: additive, with the same scoped ABI boundary as the earlier slices.** Source, JSON,
+  and Java constructor-descriptor compatibility are claimed. `@JvmOverloads` on `SourceAnalysisContext`
+  preserves every concrete Java constructor descriptor and adds one on the end, and the same holds for
+  `ExtractRequest`, `ProvenanceEntryDto`, and `LineageDto`; `rememberText` and `rememberFile` keep
+  every descriptor they had, because the revision-aware calls are separate method names rather than
+  extra parameters. Full Kotlin synthetic constructor and `copy` ABI is **not** claimed for
+  `SourceAnalysisContext`: adding a field to a data class changes `copy`/`componentN` and the
+  synthetic `$default` constructor, so Kotlin code compiled against an earlier jar must be recompiled
+  rather than swapped in. `SourceRevisionBinaryCompatibilityTest` runs the pinned legacy client and
+  asserts exactly that split — both concrete constructors link, both `copy` descriptors raise
+  `NoSuchMethodError` — with a negative control that removes the approved constructor and checks the
+  same call site then fails. Five behavioural notes for hosts. **`POST /extract` answers with
+  canonical stored ids.** This is a behavioural fix to the response content: the propositions the
+  response names are the ones the store ended up with, so a merged or deduplicated extraction reports
+  the canonical row's id where it used to report a pre-save extraction id that no read could resolve.
+  The wire shape is unchanged — same fields, same types, same arity — and an extraction that creates
+  fresh propositions answers exactly as it did.
+  **The 400 responses of the extraction endpoints now carry a body.** `POST /extract` and
+  `POST /extract/file` are endpoints that existed before this slice, and every 400 either of them
+  returned had an empty body: a caller got the status code and no explanation with it. Every
+  rejection raised by the new source-provenance validation now answers 400 with
+  `application/json` holding a single string field — `{"error": "sourceRevision requires
+  sourceLocator"}`, the new `ExtractErrorResponse`. That covers all six of those refusals on both
+  endpoints: a revision with no locator, an unknown locator `kind`, a `connectorId` on a
+  `uri`/`file`/`content` locator, a `connector` locator missing its `connectorId`, a blank locator
+  `value`, and a source key or revision over the `SourceIdentityBounds` ceilings. The text is the
+  wording of the check that refused, so a length rejection names the limit it broke and the length
+  that broke it. Two older refusals keep the empty body they always had: blank `text` on
+  `POST /extract`, and unparseable `sourceLocator` JSON on `POST /extract/file`. Who this affects:
+  any client that reads the 400 responses of these two endpoints. A client that expected an empty
+  body now receives JSON, and a client that deserializes 400 bodies has to accept the `error` field.
+  A client that reads only the status code is unaffected, and no 2xx response shape moves.
+  The `/why` response gains a
+  `provenance` field, so a consumer that rejects unknown JSON properties needs to allow it; existing
+  fields are unchanged, and the post-Wave-A shape is the baseline any later byte-for-byte `/why`
+  promise re-bases onto. A revisioned REST request produces different chunk ids from the same request
+  without a revision, so grounding rows written by the two are distinct; requests carrying no
+  revision keep the ids they always had. And the async event path now reads `sourceLocator()` and
+  `sourceRevision()` off the event, so a subclass that overrides them changes the provenance stamped
+  on its propositions — subclasses that do not override are unaffected, since both default to null.
+  No stored data migrates: `sourceRevision` stays absent from the JSON of a revisionless entry, which
+  is byte-identical to what was written before.

@@ -23,6 +23,7 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.revision.RevisionResult
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.fasterxml.jackson.annotation.JsonInclude
+import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
 
 // ============================================================================
@@ -36,13 +37,36 @@ import java.time.Instant
  * @param knownEntities Entities to associate with extracted propositions (e.g., the user)
  * @param schemaName Optional schema name for extraction. Uses default if not specified.
  * @param options Extraction options
+ * @param sourceLocator Optional typed pointer to where this text came from
+ * @param sourceRevision Optional opaque revision of [sourceLocator]. Requires [sourceLocator];
+ * the controller rejects a revision on its own, because there would be nothing to attach it to.
  */
-data class ExtractRequest(
+data class ExtractRequest @JvmOverloads constructor(
     val text: String,
     val sourceId: String? = null,
     val knownEntities: List<KnownEntityDto> = emptyList(),
     val schemaName: String? = null,
     val options: ExtractOptions = ExtractOptions(),
+    val sourceLocator: SourceLocatorInputDto? = null,
+    val sourceRevision: String? = null,
+)
+
+/**
+ * A source locator on the wire. [kind] picks which of the four locator types to build and
+ * decides what the other fields mean: `connector` is the only kind that takes a [connectorId],
+ * and the other three reject it rather than ignore it.
+ *
+ * @param kind one of `uri`, `file`, `content`, `connector`
+ * @param value the locator's own identifier — the URI, path, content hash, or external id
+ * @param connectorId the connecting system's id, for `connector` locators only
+ * @param display an optional human-readable label
+ */
+@ApiStatus.Experimental
+data class SourceLocatorInputDto(
+    val kind: String,
+    val value: String,
+    val connectorId: String? = null,
+    val display: String? = null,
 )
 
 data class ExtractOptions(
@@ -122,6 +146,18 @@ data class ExtractResponse(
     val propositions: List<PropositionDto>,
     val entities: EntitySummary,
     val revision: RevisionSummary?,
+)
+
+/**
+ * Body of a 400 from the extraction endpoints.
+ *
+ * @property error the reason the request was refused, in the words of the check that refused it.
+ *   A length rejection names the [com.embabel.dice.provenance.SourceIdentityBounds] limit it broke
+ *   and the length that broke it, so a caller can see what to stay under.
+ */
+@ApiStatus.Experimental
+data class ExtractErrorResponse(
+    val error: String,
 )
 
 /**
@@ -232,15 +268,18 @@ data class EntityMentionDto(
  * @property startOffset character offset where the supporting span begins, when known
  * @property endOffset character offset where the supporting span ends, when known
  * @property contentHash hash of the source content, when known
+ * @property sourceRevision the provider's opaque revision of this source, when known. Absent
+ *   from the JSON when null, so a revisionless entry serializes exactly as it always did.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
-data class ProvenanceEntryDto(
+data class ProvenanceEntryDto @JvmOverloads constructor(
     val locator: String,
     val display: String?,
     val chunkId: String?,
     val startOffset: Int?,
     val endOffset: Int?,
     val contentHash: String?,
+    val sourceRevision: String? = null,
 ) {
     companion object {
         fun from(entry: ProvenanceEntry): ProvenanceEntryDto = ProvenanceEntryDto(
@@ -250,6 +289,7 @@ data class ProvenanceEntryDto(
             startOffset = entry.startOffset,
             endOffset = entry.endOffset,
             contentHash = entry.contentHash,
+            sourceRevision = entry.sourceRevision,
         )
     }
 }
