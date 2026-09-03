@@ -7,7 +7,7 @@ and feature pages, and the rule that keeps pages current. Writing the pages is o
 
 | Directory | What goes there |
 |---|---|
-| `docs/README.md` | What DICE is, when to use it, links into the tree. |
+| `docs/README.adoc` | What DICE is, when to use it, links into the tree. |
 | `docs/quickstart/` | One page, one path: dependencies through first report in 15 minutes. |
 | `docs/concepts/` | Five pages, read in order, propositions through knowledge hygiene. |
 | `docs/how-to/` | Task-shaped pages titled by what the reader wants, prerequisites at the top. |
@@ -32,15 +32,15 @@ and feature pages, and the rule that keeps pages current. Writing the pages is o
 | What is DICE, benefits table, architecture overview, design notes (24-116) | Keep, trimmed. This is the landing page's job. |
 | Real-world example: Impromptu (117-126) | Keep, cut to a paragraph plus a link. |
 | Pipeline setup, conversation analysis (127-174) | Move to `docs/quickstart/`. |
-| Key features, proposition pipeline, content dedup, mention filtering (175-489) | Move to `docs/concepts/propositions.md`, `docs/how-to/extract-from-documents.md`, `docs/how-to/mention-filtering.md`. |
-| Entity extraction, entity resolution, resolution service (490-1225) | Move to `docs/concepts/entity-resolution.md` and `docs/how-to/tune-entity-resolution.md`. Largest block, split it. |
-| Source analysis context, `ContextId`, `PropositionQuery` (1226-1419) | Move to `docs/concepts/context-and-schema.md`, `docs/how-to/query-propositions.md`. |
-| Relations, projector architecture, graph and Prolog projection (1420-1647) | Move to `docs/concepts/storage-and-projections.md`, `docs/how-to/project-to-graph.md`, `docs/features/prolog-inference.md`. |
-| Agent memory, memory projection, memory maintenance (1648-1979) | Move to `docs/how-to/agent-memory.md`, `docs/concepts/knowledge-hygiene.md`. |
-| Proposition operations, Oracle (1980-2090) | Move to `docs/how-to/query-propositions.md`, `docs/how-to/oracle.md`. |
-| Package structure (2091-2205) | Move to `docs/reference/package-structure.md`. |
-| REST API and endpoints (2206-2334) | Move to `docs/features/web-api.md`. |
-| Spring Boot integration, graph-backed storage, API-key security (2335-2572) | Move to `docs/how-to/choose-a-backend.md`, `docs/reference/configuration-properties.md`, `docs/features/web-api.md`. |
+| Key features, proposition pipeline, content dedup, mention filtering (175-489) | Move to `docs/concepts/propositions.adoc`, `docs/how-to/extract-from-documents.adoc`, `docs/how-to/mention-filtering.adoc`. |
+| Entity extraction, entity resolution, resolution service (490-1225) | Move to `docs/concepts/entity-resolution.adoc` and `docs/how-to/tune-entity-resolution.adoc`. Largest block, split it. |
+| Source analysis context, `ContextId`, `PropositionQuery` (1226-1419) | Move to `docs/concepts/context-and-schema.adoc`, `docs/how-to/query-propositions.adoc`. |
+| Relations, projector architecture, graph and Prolog projection (1420-1647) | Move to `docs/concepts/storage-and-projections.adoc`, `docs/how-to/project-to-graph.adoc`, `docs/features/prolog-inference.adoc`. |
+| Agent memory, memory projection, memory maintenance (1648-1979) | Move to `docs/how-to/agent-memory.adoc`, `docs/concepts/knowledge-hygiene.adoc`. |
+| Proposition operations, Oracle (1980-2090) | Move to `docs/how-to/query-propositions.adoc`, `docs/how-to/oracle.adoc`. |
+| Package structure (2091-2205) | Move to `docs/reference/package-structure.adoc`. |
+| REST API and endpoints (2206-2334) | Move to `docs/features/web-api.adoc`. |
+| Spring Boot integration, graph-backed storage, API-key security (2335-2572) | Move to `docs/how-to/choose-a-backend.adoc`, `docs/reference/configuration-properties.adoc`, `docs/features/web-api.adoc`. |
 | Installation (2573-2585) | Keep as coordinates only. The working version lives in the quickstart. |
 | Technology stack, references, license (2586-2621) | Keep. |
 
@@ -53,11 +53,11 @@ One PR per destination page.
 Read in order. Each page uses terms the page before it defines, and ends with a "Try it now" block
 of five to ten lines that runs against the quickstart's setup, with the output to expect.
 
-1. `propositions.md`: claims as the system of record, with confidence, importance and decay.
-2. `entity-resolution.md`: mentions matched to entities or minted as new, and the resolver chain.
-3. `storage-and-projections.md`: the `PropositionStore` SPI, its repositories, and the views.
-4. `context-and-schema.md`: `ContextId` scoping, the `DataDictionary`, and `SchemaAdherence`.
-5. `knowledge-hygiene.md`: admission gates, reclamation and consolidation.
+1. `propositions.adoc`: claims as the system of record, with confidence, importance and decay.
+2. `entity-resolution.adoc`: mentions matched to entities or minted as new, and the resolver chain.
+3. `storage-and-projections.adoc`: the `PropositionStore` SPI, its repositories, and the views.
+4. `context-and-schema.adoc`: `ContextId` scoping, the `DataDictionary`, and `SchemaAdherence`.
+5. `knowledge-hygiene.adoc`: admission gates, reclamation and consolidation.
 
 ## Feature pages
 
@@ -125,7 +125,7 @@ column. Values get pinned at the 1.0 release.
 Every feature PR ships its developer-doc page and its design-doc delta. Consumer-visible behaviour
 updates the page under `docs/`, new rationale updates the `docs/design/` note, an opt-in feature
 gets a feature page carrying its activation condition, a new property updates
-`docs/reference/configuration-properties.md`, and a version-support change updates the compatibility
+`docs/reference/configuration-properties.adoc`, and a version-support change updates the compatibility
 matrix. Internal refactors with no consumer-visible change, test-only changes and build changes are
 exempt. Reviewers ask one question: with only this PR's docs, could a consumer use the feature? A no
 is a blocking finding. A promise of later docs does not clear it.
@@ -133,7 +133,11 @@ is a blocking finding. A promise of later docs does not clear it.
 ## Open questions
 
 - Starter module or two coordinates? Recommendation: two coordinates, which needs no release.
-- Rendered site or Markdown in the repo? Recommendation: Markdown, revisited once the tree fills.
+- Which format, and rendered where? Decided: AsciiDoc, matching the framework reference, which
+  builds from `embabel-agent-docs/src/main/asciidoc` through the asciidoctor Maven plugin. GitHub
+  renders `.adoc` in the repo, so the tree stays readable before any site exists, and the existing
+  Markdown under `docs/design/` converts as those notes get touched. Whether DICE renders its own
+  site or publishes into the framework's is still open.
 - Does DICE ship a CLI (schema validation, drift check)? Recommendation: no CLI before 1.0, and its
   own quickstart if one lands.
 - Promote `docs/design/` notes into concept pages? Recommendation: they stay contributor-facing,

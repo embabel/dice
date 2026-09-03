@@ -246,7 +246,10 @@ retrieval ranking all depend on.
 
 - **Which working-memory capabilities belong in DICE and which in the consuming application.**
   Recommendation: activation ranking and per-turn lifecycle events in DICE, prompt-region and budget
-  policy in the application, since only the application knows its token budget.
+  policy above it. `embabel-agent` already carries the budget: `Budget` on `ProcessOptions` sets
+  cost, action and token caps and turns them into an `EarlyTerminationPolicy`, and consumption is
+  visible through the tool loop callbacks and the invocation events. DICE reads that ceiling and
+  does not define its own.
 - **Whether to close the schema version-identity gap.** Recommendation: treat it as a candidate
   module. No surveyed system offers it and no surveyed vendor has published roadmap intent, so
   nothing external forces the timing.
@@ -261,7 +264,10 @@ retrieval ranking all depend on.
 - **LangMem's prompt optimisation.** Orthogonal to memory quality.
 - **Mem0's separate graph pipeline.** DICE has entity mentions plus a Neo4j projection over the same
   propositions.
-- **Google's multimodal extraction.** The proposition model is format-agnostic. Add on demand.
+- **Google's multimodal extraction.** Multimodal input is already available upstream
+  (`MultimodalContent` over images and documents, embabel/embabel-agent#43) and the proposition
+  model is format-agnostic, so feeding non-text material to extraction is wiring. Output support is
+  tracked upstream in embabel/embabel-agent#42. Add on demand.
 - **AWS's episodic reflection.** The abstraction pipeline already synthesises across propositions.
 - **Neo4j's POLE+O ontology.** Domain-specific subtypes. The proposition model is domain-agnostic.
 - **Neo4j's spaCy to GLiNER to LLM cascade.** Cost-effective and operationally heavy: model
