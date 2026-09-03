@@ -24,7 +24,6 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.chat.Message
-import com.embabel.dice.common.ConversationAnalysisRequestEvent
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.Relations
 import com.embabel.dice.common.SourceAnalysisContext
@@ -108,9 +107,20 @@ class IncrementalPropositionExtractionTest {
 
         // Two entry points, and no third and fourth name to keep in step with them. Everything a
         // caller supplies beyond the arguments these methods always took rides on the request, so
-        // a locator, a revision and a profile add no method names and no arities.
+        // a locator, a revision, a profile and a run reference add no method names and no arities.
         assertEquals(emptySet<List<Class<*>>>(), declaredParameterLists("rememberTextFromSource"))
         assertEquals(emptySet<List<Class<*>>>(), declaredParameterLists("rememberFileFromSource"))
+
+        // The descriptor sets above are the whole published surface, and the run reference is a
+        // field on the request, so no descriptor mentions it. This is the assertion that says the
+        // slice adding the run changed no signature: if it had, one of these lists would name the
+        // type.
+        (rememberTextParameters + rememberFileParameters).forEach { parameters ->
+            assertFalse(
+                ExtractionRunRef::class.java in parameters,
+                "a run reference must travel on the request, never as a parameter: $parameters",
+            )
+        }
 
         // A request-carrying call can never collapse onto one written without a request: the
         // request always arrives on the end, at an arity the other caller never fills.
@@ -127,13 +137,16 @@ class IncrementalPropositionExtractionTest {
 
     @Test
     fun `no field, parameter or return type outside the request carries what the request carries`() {
-        // The point of the request object: a locator, a revision and a profile reach extraction
-        // through it and through nothing else. A future dimension added as a loose parameter on an
-        // entry point would put the surface back where it started, so this sweeps the whole class.
+        // The point of the request object: a locator, a revision, a profile and a run reference
+        // reach extraction through it and through nothing else. A future dimension added as a
+        // loose parameter on an entry point would put the surface back where it started, so this
+        // sweeps the whole class. The run is here because it is the first dimension to arrive
+        // after the request existed, and it arrived without touching a single signature.
         val carried = setOf(
             SourceLocator::class.java,
             SourceRevisionRef::class.java,
             ExtractionContentProfileRef::class.java,
+            ExtractionRunRef::class.java,
         )
         IncrementalPropositionExtraction::class.java.declaredMethods
             .filter { it.name.startsWith("remember") && '$' !in it.name }
@@ -148,16 +161,16 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
-    fun `no entry point, context, constructor, or field anywhere carries a run reference`() {
-        // PR #94 review comment: buildContext accepted a currentRun and put it on the context.
-        // persistAndProject — the method that actually saves the extracted propositions — takes
-        // only a ChunkPropositionResult and never the context that would have carried it. No
-        // consuming write exists on this branch (the durable run store is DICE #67/#98/#99), so
-        // the fix removes the no-op parameter.
+    fun `the run reference reaches the context and nothing consumes it`() {
+        // PR #94's review comment was that buildContext accepted a currentRun and put it on the
+        // context while nothing read it, so the parameter came out and the type came out with it.
+        // The run is back now, on the request, and the same question applies: what reads it?
+        // Nothing does, and this pins the two facts that make that checkable.
         //
-        // persistAndProject has exactly one overload, and it is the one-argument shape: a second
-        // overload taking the context (a run reference's only possible route back in) would slip
-        // past a check that only confirms one particular arity exists.
+        // First: persistAndProject — the method that actually saves the extracted propositions —
+        // takes only a ChunkPropositionResult and never the context that would carry a run. It has
+        // exactly one overload, so a second one taking the context (a run reference's only route
+        // into a write) cannot hide behind a check that only confirms one particular arity exists.
         val persistAndProjectOverloads = IncrementalPropositionExtraction::class.java
             .declaredMethods.filter { it.name == "persistAndProject" }
         assertEquals(1, persistAndProjectOverloads.size, "persistAndProject must have exactly one overload")
@@ -167,64 +180,29 @@ class IncrementalPropositionExtractionTest {
             persistAndProjectOverloads.single().parameterTypes.single(),
         )
 
-        // The type itself is gone from the classpath, so there is nothing left for a caller to
-        // depend on — not even a reference to it, let alone a call to a member of it.
-        assertThrows(ClassNotFoundException::class.java) {
-            Class.forName("com.embabel.dice.proposition.extraction.ExtractionRunRef")
-        }
+        // Second: the run reaches the context by exactly one route, the request, and reaches it
+        // whole. A run named on a request is the run the pipeline sees, and nothing in between
+        // rewrites, defaults or drops it.
+        val pipeline = pipelineReturningNoResult()
+        val extraction = extraction(pipeline)
+        val run = ExtractionRunRef("run-1")
 
-        // A run reference under another name (runRef, runId, AnalysisRunRef, ...) would satisfy a
-        // sweep that only recognizes "currentRun"/"extractionRun" literally, so this checks every
-        // declared member's name for "run" as a substring, not a fixed set of spellings. Verified
-        // before writing this: none of the five carriers has a legitimate declared method, field,
-        // or constructor parameter whose name contains "run" today, confirmed by a throwaway
-        // reflection dump run against the built classes, so this sweep starts from a clean
-        // baseline and any future match is either a reintroduced run reference or something that
-        // needs an explicit, named exclusion (there are none right now).
-        //
-        // Types are checked via the *generic* signature (genericType / genericReturnType /
-        // genericParameterTypes), not the erased Class. An erased check sees `List` for a field
-        // declared `List<AnalysisRunRef>` and would miss it; `Type.toString()` on a generic
-        // signature includes the type argument, so the same substring match catches a run
-        // reference hidden inside a collection or other generic wrapper. Confirmed empirically,
-        // same as the name sweep: zero matches on the current classes.
-        //
-        // Constructor parameters are checked by type only, not name. The JVM does not preserve
-        // real parameter names in these classes' compiled constructors (reflection reports them
-        // as arg0, arg1, ...), so a name-based check on a constructor parameter would silently
-        // never fire; claiming otherwise here would be the same overclaim this test exists to
-        // avoid making about other code.
-        // ExtractionRequest is swept alongside the rest: it is where a run reference would land
-        // once the store that consumes it arrives, so it is the likeliest place for one to
-        // reappear early.
-        val carriers = listOf(
-            IncrementalPropositionExtraction::class.java,
-            ExtractionRequest::class.java,
-            SourceAnalysisContext::class.java,
-            SourceAnalysisRequestEvent::class.java,
-            ConversationAnalysisRequestEvent::class.java,
+        extraction.rememberText(
+            text = "run text",
+            sourceId = "run:only",
+            user = user(),
+            additionalGrounding = emptyList(),
+            perspective = null,
+            mintNewEntities = null,
+            request = ExtractionRequest(currentRun = run),
         )
-        val runInName = Regex("(?i)run")
-        fun suspectType(type: java.lang.reflect.Type) = runInName.containsMatchIn(type.toString())
-        carriers.forEach { type ->
-            type.declaredMethods.forEach { method ->
-                assertFalse(runInName.containsMatchIn(method.name), "${type.simpleName}.${method.name}: name mentions run")
-                assertFalse(
-                    method.genericParameterTypes.any(::suspectType) || suspectType(method.genericReturnType),
-                    "${type.simpleName}.${method.name}: a parameter or return type mentions run",
-                )
-            }
-            type.declaredFields.forEach { field ->
-                assertFalse(runInName.containsMatchIn(field.name), "${type.simpleName}.${field.name}: name mentions run")
-                assertFalse(suspectType(field.genericType), "${type.simpleName}.${field.name}: field type mentions run")
-            }
-            type.declaredConstructors.forEach { constructor ->
-                assertFalse(
-                    constructor.genericParameterTypes.any(::suspectType),
-                    "${type.simpleName} constructor $constructor: a parameter type mentions run",
-                )
-            }
-        }
+
+        val context = capturedContext(pipeline, "run text", "run:only", emptyList())
+        assertSame(run, context.currentRun)
+        // A run needs no source and no profile of its own: the dimensions stay independent.
+        assertNull(context.sourceLocator)
+        assertNull(context.sourceRevision)
+        assertNull(context.profile)
     }
 
     @Test
@@ -463,7 +441,7 @@ class IncrementalPropositionExtractionTest {
                 mintNewEntities: Boolean?,
                 request: ExtractionRequest,
             ) {
-                seen += "request:$sourceId:${request.profile?.name}"
+                seen += "request:$sourceId:${request.profile?.name}:${request.currentRun?.runId}"
             }
         }
 
@@ -473,8 +451,22 @@ class IncrementalPropositionExtractionTest {
             user(),
             ExtractionRequest(profile = ExtractionContentProfileRef("house-style", "v1")),
         )
+        // A run on its own is something to carry too, so a request holding nothing else still
+        // routes here and arrives whole.
+        extraction.rememberFile(
+            ByteArrayInputStream("legacy file text".toByteArray()),
+            "run-only.txt",
+            user(),
+            ExtractionRequest(currentRun = ExtractionRunRef("run-1")),
+        )
 
-        assertEquals(listOf("request:remember:profiled.txt:house-style"), seen)
+        assertEquals(
+            listOf(
+                "request:remember:profiled.txt:house-style:null",
+                "request:remember:run-only.txt:null:run-1",
+            ),
+            seen,
+        )
         verifyNoInteractions(pipeline)
     }
 
@@ -486,6 +478,7 @@ class IncrementalPropositionExtractionTest {
         val locator = UriLocator("https://example.com/source")
         val revision = SourceRevisionRef(locator.key(), "r7")
         val profile = ExtractionContentProfileRef("house-style", "v1")
+        val run = ExtractionRunRef("run-1")
         val perspective = mock<ExtractionPerspective>()
         val grounding = listOf("record:one", "record:two")
 
@@ -500,13 +493,16 @@ class IncrementalPropositionExtractionTest {
                 sourceLocator = locator,
                 sourceRevision = revision,
                 profile = profile,
+                currentRun = run,
             ),
         )
 
+        // Every field a request can hold, on one call, arriving on the context unchanged.
         val context = capturedContext(pipeline, "source text", "caller:source:r7", grounding)
         assertSame(locator, context.sourceLocator)
         assertSame(revision, context.sourceRevision)
         assertSame(profile, context.profile)
+        assertSame(run, context.currentRun)
         assertSame(perspective, context.perspective)
         assertEquals(true, context.mintNewEntities)
     }
@@ -838,13 +834,14 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
-    fun `a request carries profile and revision to the context with and without a source`() {
+    fun `a request carries profile, run and revision to the context with and without a source`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val user = user()
         val locator = UriLocator("https://example.com/profiled")
         val revision = SourceRevisionRef(locator.key(), "r1")
         val profile = ExtractionContentProfileRef("house-style", "v1")
+        val run = ExtractionRunRef("run-1")
 
         extraction.rememberText(
             text = "untyped text",
@@ -853,7 +850,7 @@ class IncrementalPropositionExtractionTest {
             additionalGrounding = emptyList(),
             perspective = null,
             mintNewEntities = null,
-            request = ExtractionRequest(profile = profile),
+            request = ExtractionRequest(profile = profile, currentRun = run),
         )
         extraction.rememberText(
             text = "source text",
@@ -866,17 +863,21 @@ class IncrementalPropositionExtractionTest {
                 sourceLocator = locator,
                 sourceRevision = revision,
                 profile = profile,
+                currentRun = run,
             ),
         )
 
-        // A profile needs no source of its own: the two dimensions stay independent on the way in.
+        // A profile and a run need no source of their own: the dimensions stay independent on the
+        // way in.
         val fromUntyped = capturedContext(pipeline, "untyped text", "untyped:profiled", emptyList())
         assertSame(profile, fromUntyped.profile)
+        assertSame(run, fromUntyped.currentRun)
         assertNull(fromUntyped.sourceLocator)
         assertNull(fromUntyped.sourceRevision)
 
         val fromSource = capturedContext(pipeline, "source text", "source:profiled", emptyList())
         assertSame(profile, fromSource.profile)
+        assertSame(run, fromSource.currentRun)
         assertSame(locator, fromSource.sourceLocator)
         assertSame(revision, fromSource.sourceRevision)
     }
@@ -889,12 +890,13 @@ class IncrementalPropositionExtractionTest {
         val locator = UriLocator("file:///notes/profiled.txt")
         val revision = SourceRevisionRef(locator.key(), "r1")
         val profile = ExtractionContentProfileRef("house-style", "v1")
+        val run = ExtractionRunRef("run-1")
 
         extraction.rememberFile(
             inputStream = ByteArrayInputStream("plain file text".toByteArray()),
             filename = "profile-only.txt",
             user = user,
-            request = ExtractionRequest(profile = profile),
+            request = ExtractionRequest(profile = profile, currentRun = run),
         )
         extraction.rememberFile(
             inputStream = ByteArrayInputStream("source file text".toByteArray()),
@@ -904,6 +906,7 @@ class IncrementalPropositionExtractionTest {
                 sourceLocator = locator,
                 sourceRevision = revision,
                 profile = profile,
+                currentRun = run,
             ),
         )
         // Both file calls hand their text to the request-taking entry point, so the two contexts
@@ -920,6 +923,7 @@ class IncrementalPropositionExtractionTest {
         )
         contextCaptor.allValues.forEach { context ->
             assertSame(profile, context.profile)
+            assertSame(run, context.currentRun)
         }
         val fromSource = contextCaptor.allValues.single { it.sourceLocator != null }
         assertSame(locator, fromSource.sourceLocator)
@@ -927,7 +931,7 @@ class IncrementalPropositionExtractionTest {
     }
 
     @Test
-    fun `calls written without a request carry no profile`() {
+    fun `calls written without a request carry no profile and no run`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val user = user()
@@ -950,16 +954,18 @@ class IncrementalPropositionExtractionTest {
         )
         contextCaptor.allValues.forEach { context ->
             assertNull(context.profile)
+            assertNull(context.currentRun)
         }
     }
 
     @Test
-    fun `a profile changes nothing else about what the pipeline is asked to do`() {
+    fun `a profile and a run change nothing else about what the pipeline is asked to do`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val user = user()
         val grounding = listOf("record:one")
         val profile = ExtractionContentProfileRef("house-style", "v1")
+        val run = ExtractionRunRef("run-1")
 
         extraction.rememberText(
             text = "same text",
@@ -976,7 +982,7 @@ class IncrementalPropositionExtractionTest {
             additionalGrounding = grounding,
             perspective = ExtractionPerspective.USER,
             mintNewEntities = true,
-            request = ExtractionRequest(profile = profile),
+            request = ExtractionRequest(profile = profile, currentRun = run),
         )
 
         val contextCaptor = argumentCaptor<SourceAnalysisContext>()
@@ -990,40 +996,48 @@ class IncrementalPropositionExtractionTest {
         )
         val (plain, profiled) = contextCaptor.allValues
 
-        // Comparing whole contexts is the point: they agree on every component but the one the
+        // Comparing whole contexts is the point: they agree on every component but the two the
         // second call set. The resolver is substituted because buildContext constructs a fresh
         // one per call by design, so it is never the same instance twice.
         assertEquals(
             plain,
-            profiled.copy(profile = null, entityResolver = plain.entityResolver),
+            profiled.copy(profile = null, currentRun = null, entityResolver = plain.entityResolver),
         )
         assertSame(profile, profiled.profile)
+        assertSame(run, profiled.currentRun)
     }
 
     @Test
-    fun `event profile reaches the context observed by the pipeline`() {
+    fun `event profile and run reach the context observed by the pipeline`() {
         val pipeline = pipelineReturningNoResult()
         val extraction = extraction(pipeline)
         val source = mock<IncrementalSource<Message>>()
         whenever(source.id).thenReturn("event-source")
         whenever(source.size).thenReturn(1)
         val profile = ExtractionContentProfileRef("house-style", "v1")
+        val run = ExtractionRunRef("run-1")
         val profileCalls = AtomicInteger()
+        val runCalls = AtomicInteger()
         val event = object : SourceAnalysisRequestEvent(this, user()) {
             override fun incrementalSource(): IncrementalSource<Message> = source
 
             override fun profile(): ExtractionContentProfileRef =
                 profile.also { profileCalls.incrementAndGet() }
+
+            override fun currentRun(): ExtractionRunRef =
+                run.also { runCalls.incrementAndGet() }
         }
 
         extraction.extractPropositions(event)
 
-        // One read: the async path builds one context through the same buildContext the direct
-        // calls use, so there is nowhere else for a second read to happen.
+        // One read each: the async path builds one context through the same buildContext the
+        // direct calls use, so there is nowhere else for a second read to happen.
         assertEquals(1, profileCalls.get())
+        assertEquals(1, runCalls.get())
         val contextCaptor = argumentCaptor<SourceAnalysisContext>()
         verify(pipeline).processChunk(any(), contextCaptor.capture())
         assertSame(profile, contextCaptor.firstValue.profile)
+        assertSame(run, contextCaptor.firstValue.currentRun)
         assertNull(contextCaptor.firstValue.sourceLocator)
     }
 
