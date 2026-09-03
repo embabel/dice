@@ -723,6 +723,163 @@ recorded" and fails "an incompatible terminal rewrite is rejected", a finder tha
 passes every single-tenant read and fails "a page scopes before it limits", and a chain walk written
 as a recursive Cypher pattern passes on a healthy graph and hangs on a cycle.
 
+## The Drivine store
+
+`DrivineExtractionRunStore` is the durable implementation. It writes three node labels:
+
+| Node | Key | Holds |
+| --- | --- | --- |
+| `(:ExtractionRun)` | `(contextId, runId)` | the header — lineage, envelope, requested configuration, counts, failures |
+| `(:ExtractionRunInvocation)` | `(contextId, runId, invocationIndex, attempt)` | one attempt at one planned model call |
+| `(:ExtractionRunTerminalWrite)` | `(contextId, runId)` | the fingerprint of the write that ended the run |
+
+The header reaches each child by `[:RECORDED]` and its terminal write by `[:ENDED_BY]`.
+
+Every key is tenant-qualified, and the tenant needs no encoding of the kind
+`DrivineDriftReportStore` gives its scope. That store's scope is nullable and a Cypher MERGE cannot
+key on a null, so a global report needed a non-null `ctx:`-prefixed stand-in no real context id
+could collide with. A run's tenant is never null, so the plain value is already an injective key.
+
+### Compare-and-set, and why it holds across processes
+
+`transition` is one Cypher statement, so it is one transaction, and it works two ways at once.
+
+**A lock.** The statement's first act after matching the run is `SET n.casLock = $lockToken`, before
+it reads anything. A property write takes an exclusive lock on the node and holds it to commit, so a
+second transaction reaching that line blocks. Neo4j reads at read-committed and the read of
+`n.status` is downstream of the `SET` in the same statement, so the second transaction reads the
+status after it took the lock and therefore after the first committed. It sees a terminal run and
+takes the no-op branch. `DrivineMetamodelVersionStore` uses the same write-lock-before-read idiom on
+its counter.
+
+Two details make that argument hold rather than nearly hold. The lock token is a fresh UUID on every
+call, so the write is always a real change and never a no-op a database is free to optimize away
+before taking the lock. And no index carries `status` or the terminal fingerprint, so the planner
+cannot serve the post-lock read from an index entry it read at MATCH time — which is the one way a
+lock-then-read reads stale.
+
+**A constraint.** That argument is about Neo4j's behaviour, and behaviour is a thing to be wrong
+about. So the terminal write is also a `CREATE` of an `(:ExtractionRunTerminalWrite)` node on the
+run's own key, under a uniqueness constraint. Two transactions that both read a run as `RUNNING`
+both try to create it, and the database refuses the second at commit. The loser's whole transaction
+rolls back, header included; the store catches the violation, re-reads the recorded fingerprint in a
+fresh transaction, and answers replayed or conflict. **Exactly one terminal write per run is a schema
+fact, not an inference.**
+
+The constraint's sufficiency is measured rather than assumed: removing the lock leaves every race
+test green — the constraint carries it alone. Removing both and letting the create become a merge
+produces six racing writers all reporting `APPLIED`, and, when they disagree about how the run
+ended, three contradictory endings recorded for one run. That is the multi-process failure the
+in-memory reference's monitor cannot speak to, reproduced and then closed. The lock's own
+sufficiency rests on the isolation argument above, unmeasured, which is why the constraint exists.
+The constraint backstops `transition` only: the status guards in `save` and `recordInvocation`
+rest on the lock argument alone, so a failed lock idiom could set a terminal header back to
+`RUNNING` beside its terminal write — the one-write audit fact would survive; the header would not.
+
+### The fingerprint is stored, never re-derived
+
+The terminal-write node carries the exact string `ExtractionRunTransition.fingerprint` computed, and
+a repeated terminal write is decided by comparing against that string. A store that re-derived a
+digest from the stored run would reject a correct retry whenever an attempt had been recorded in
+between, because the run it derived from would have changed while the terminal write did not. The
+encoding has one implementation, in `dice`, and the graph holds its output.
+
+The string the graph holds is the `xrun-terminal:v2` digest, which covers the terminal status and
+the finish time and nothing else. The counts and failures a transition carries ride into the header
+`SET` beside it and reach none of the hashed bytes, so a retry that agrees on status and finish time
+replays whatever numbers it names and the run keeps what the first accepted terminal write
+delivered. The store has no comparison of its own to keep in step with that: it stores one string
+and compares one string.
+
+### Announcing a run that ended, once the write is durable
+
+`transition` hands an `ExtractionRunTransitioned` to the store's listener for the call that ended the
+run. Exactly one call per run reaches that branch, and the reason is the same schema fact the
+compare-and-set rests on: reaching it means having created the run's terminal-write node, and the
+uniqueness constraint lets one transaction do that. A replay announces nothing, a rejected write
+announces nothing, and the writer that lost the race announces nothing — it created no node, so it
+answers replayed or conflict and never applied.
+
+Where the durable store differs from the in-memory reference is *when*. The reference announces
+after the write has landed and outside its monitor. Here "landed" means committed, and which commit
+that is depends on who owns the transaction. When the store owns it, the commit has already happened
+by the time the template returns, and the listener runs there. When a caller's transaction is active
+the write is durable only when that caller commits, so the announcement is registered against the
+commit and is dropped with the transaction if the caller rolls back. A listener told that a run ended
+by a transaction that was thrown away would be reporting a run nothing can read back.
+
+### Failures are stored in the vocabulary, and nothing else fits
+
+A run's failures are one JSON array on the header node, and each element carries eight fields: the
+`code`, the `stage`, the `providerStatus`, the two halves of one measure, the `at`, and the two
+halves of the attempt it names. Every optional field is always present and written as a null when
+it has no value, so a bare failure and a fully populated one store the same keys.
+
+The shape is flat and the halves are deliberate. Putting the measure and the invocation id at the
+same level as everything else means every key a stored failure can carry is visible at once, which is
+what lets a test check the whole key set it finds matches an allowlist, in one assertion.
+`DrivineExtractionRunStoreIntegrationTest` round-trips a run carrying failures, reads the properties
+Neo4j actually holds, and asserts that set exactly — with the allowlist written out in the test
+and never read from the writer, so one edit cannot move both sides. That is the check standing
+between a durable row and a `detail` column: `ExtractionFailure` has no text-shaped field to write
+from, and if someone adds one to the encoding, this fails before it reaches a graph.
+
+Reads are strict about the halves too. A stored failure holding a measure quantity with no value, or
+an invocation index with no attempt, is refused; nothing here fills in a missing half.
+
+### A header write cannot touch a child row
+
+Invocation records are their own nodes on their own key, so `save` has no way to delete one. The
+contract's rule that a save merges records rather than replacing them falls out of the graph model
+instead of being implemented: `save` MERGEs the records the incoming run carries, which upserts in
+place on a shared identity, and leaves every other child row alone.
+
+One consequence is worth naming. A durable store keeps identified rows, not the order a caller
+happened to list them in, so it hands attempts back in plan order — the order `invocationsOf`
+promises. `InMemoryExtractionRunStore` hands back the caller's order. `ExtractionRun.invocations` is
+documented as being in whatever order the caller supplied, and `ExtractionRun.equals` compares it
+element by element, so the two backends can return runs that are unequal for the same call sequence.
+The ordered read both agree on is `invocationsOf`.
+
+### Reads
+
+Each page puts its tenant in the MATCH pattern and its `LIMIT` after the `ORDER BY`, which is the
+drift-report store's rule carried over. A page also excludes rows with no sort key: Neo4j sorts null
+largest, so a node missing `startedAtEpochSecond` would sort to the front of a `DESC` order, spend a
+slot of the caller's `limit`, and then be dropped by the mapper — hiding a good run behind a broken
+one. Corrupt rows are logged and skipped rather than failing a whole audit read, so a page can come
+back shorter than asked for; reading further to backfill would break the bound the contract keeps.
+
+`runsOfRoot` is one indexed lookup on the denormalized root. The chain walk is client-side: a parent
+is a property rather than a relationship, because a run can name a parent that has not been stored
+yet and an edge cannot point at a node that does not exist. Without an edge there is no
+variable-length pattern to walk, and the APOC procedures that would do it in one round trip are not a
+dependency this module takes. So the walk is at most `limit` keyed lookups inside one read
+transaction, stopping on a run already seen and resolving every hop inside the starting tenant.
+
+Every read returns each run with its attempts attached, pages included, because the in-memory
+reference does and the two are held to one suite. The cost is bounded — at most `limit` runs times
+the model's cap of 1024 attempts — but it is real on a wide page.
+
+### Schema
+
+`ExtractionRunSchema.specs()` is the whole dependency, and a host declares it in a `SchemaCatalog`
+bean. Three uniqueness constraints — `ExtractionRun(contextId, runId)`,
+`ExtractionRunInvocation(contextId, runId, invocationIndex, attempt)`, and
+`ExtractionRunTerminalWrite(contextId, runId)` — and five range indexes: `ExtractionRun(contextId)`
+for the tenant page, `(contextId, rootRunId)` for the lineage read, `(contextId, parentRunId)` for
+the parent axis, `(contextId, startedAtEpochSecond)` for the paging sort key, and
+`ExtractionRunInvocation(contextId, runId)` for reading one run's attempts. The constraints are not
+tuning: a MERGE on a natural key is race-free only under one, and the third is the compare-and-set.
+
+`ContextId` accepts any non-blank string and the tenant is the leading property of every key here, so
+the store caps it at 1024 characters on the write path — the bound the run model already puts on a
+key-like string. An uncapped tenant id is an index entry of unbounded length, and Neo4j fails that
+write mid-extraction with a message about bytes rather than about the tenant. The cap turns it into a
+named argument rejection before anything is written. Reads are not capped, because a read for a
+tenant longer than the cap matches nothing by construction, which is the fail-closed answer and the
+only one a read could give.
+
 ## OpenTelemetry GenAI naming, not adopted
 
 OTel's GenAI semantic conventions cover the same ground — `gen_ai.request.*`, `gen_ai.response.*`,
@@ -810,9 +967,9 @@ public surface.
 
 ## What is not here yet
 
-- **No durable store.** `InMemoryExtractionRunStore` is the only implementation. The Drivine store
-  — the tenant-qualified natural key, the deterministic child key for invocation records, the
-  uniqueness constraints, and the Cypher that scopes before it limits — is the next slice.
+- **No auto-configuration.** `DrivineExtractionRunStore` is a bean a host declares itself, along
+  with the `SchemaCatalog` carrying `ExtractionRunSchema.specs()`. An `ExtractionRunAutoConfiguration`
+  arrives with the coordinator.
 - **No coordinator.** Nothing constructs an `ExtractionRun` during extraction yet, and nothing calls
   `save` or `transition` outside tests. Which means the `COMPLETED` precondition is documented and
   structurally narrowed, not observed: the wiring slice is where "the coordinator really does wait

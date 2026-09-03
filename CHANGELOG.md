@@ -906,3 +906,92 @@ and the consumer PRs that deliver it).
   `ExtractionRunTransitioned` is new and carries `@ApiStatus.Experimental` like every other type in
   this train, added to the same class-file assertion. Design note:
   [docs/design/extraction-runs.md](docs/design/extraction-runs.md).
+
+- **EXPERIMENTAL.** `DrivineExtractionRunStore` — the durable Neo4j implementation of
+  `ExtractionRunStore`, completing DICE #67's storage half. It writes three node labels:
+  `(:ExtractionRun)` keyed `(contextId, runId)` for the header,
+  `(:ExtractionRun)-[:RECORDED]->(:ExtractionRunInvocation)` keyed
+  `(contextId, runId, invocationIndex, attempt)` for one attempt at one planned model call, and
+  `(:ExtractionRun)-[:ENDED_BY]->(:ExtractionRunTerminalWrite)` keyed `(contextId, runId)` for the
+  fingerprint of the write that ended the run. Every key is tenant-qualified, and unlike
+  `DrivineDriftReportStore` the tenant needs no `ctx:`-prefixed stand-in: that store's scope is
+  nullable and a Cypher MERGE cannot key on a null, while a run's tenant never is, so the plain value
+  is already an injective key.
+  **Compare-and-set is one Cypher statement, and it holds across processes rather than only across
+  threads.** The statement takes an exclusive node lock with `SET n.casLock = $lockToken` before it
+  reads the run's status, so a second transaction blocks and then reads at read-committed — after the
+  first committed — and takes the no-op branch. The lock token is a fresh UUID on every call so the
+  write is always a real change rather than a no-op a database may optimize away before locking, and
+  no index carries `status` or the terminal fingerprint, so the planner cannot serve the post-lock
+  read from an index entry it read at MATCH time. Underneath that argument sits a fact: the terminal
+  write is a `CREATE` of the terminal-write node under a uniqueness constraint, so two writers that
+  both read a run as `RUNNING` cannot both commit. The loser's transaction rolls back whole, the
+  store catches the violation, re-reads the recorded fingerprint in a fresh transaction, and answers
+  replayed or conflict. The constraint's sufficiency is measured: removing the lock leaves every
+  race test green, and removing both produces six racing writers all reporting `APPLIED` and three
+  contradictory endings recorded for one run. The lock's rests on the documented isolation argument,
+  which is why the constraint exists.
+  **The fingerprint is stored verbatim and compared verbatim, never re-derived.** The node carries the
+  exact string `ExtractionRunTransition.fingerprint` computed, so a correct retry that happened after
+  another attempt was recorded still replays; a store deriving a digest from the stored run would
+  reject it. That string is the `xrun-terminal:v2` digest of the transition's identity, so the counts
+  and failures a terminal write carries ride into the header beside it and reach none of the compared
+  bytes; the store keeps no comparison of its own that could fall out of step.
+  **A run that ends announces itself once, when the write is durable.** `transition` hands an
+  `ExtractionRunTransitioned` to the listener the store was constructed with, defaulting to
+  `DiceEventListener.DEV_NULL` the way the in-memory reference's does. Exactly one call per run
+  reaches that branch, for the schema reason above: reaching it means having created the
+  terminal-write node. A replay, a rejected write, a `save`, a `recordInvocation`, and the writer that
+  lost the race all announce nothing. When the store owns the transaction the listener runs once the
+  template has committed; when a caller's transaction is active the announcement is registered against
+  that caller's commit, so a rollback drops it and no consumer hears about a run nothing can read back. The
+  six event cases the contract suite added run against Neo4j unmodified.
+  **Failures are stored in the closed vocabulary and nothing else fits.** A run's failures are one
+  JSON array on the header node, each element carrying `code`, `stage`, `providerStatus`, a measure as
+  a quantity and a value, `at`, and the attempt it names as an index and an attempt — eight fields,
+  written flat, with optional ones stored as nulls so every failure stores the same keys. No property
+  holds free text, because `ExtractionFailure` has no text-shaped field to write from. A round-trip
+  test reads the properties Neo4j actually holds and checks the key set it finds matches an allowlist
+  the test states itself, so an added `detail` column fails the build before it reaches a graph, and a stored
+  failure holding half a measure or half an invocation id is refused on read.
+  **A header write cannot touch a child row.** Invocation records are their own nodes, so `save` has
+  no way to delete one — the contract's merge-don't-replace rule falls out of the graph model instead
+  of being implemented. One consequence: a durable store keeps identified rows rather than the order a
+  caller listed them in, so it returns attempts in plan order where the in-memory reference returns
+  the caller's order. `invocationsOf` is plan order in both.
+  **Every page scopes in the query ahead of its `LIMIT`**, excludes rows with no sort key (Neo4j sorts
+  null largest, so one would sort to the front of a `DESC` order, spend a slot, and then be dropped by
+  the mapper), and skips corrupt rows with a warning rather than failing the whole read. `runsOfRoot`
+  is one indexed lookup on the denormalized root. The chain walk is client-side and bounded to `limit`
+  keyed lookups in one read transaction, cycle-safe and tenant-scoped at every hop: a parent is a
+  property rather than a relationship, because a run can name a parent not yet stored, and this module
+  takes no APOC dependency. The store passes the whole `AbstractExtractionRunStoreContractTest` suite
+  alongside the in-memory reference, plus Drivine-specific integration tests for multi-writer
+  compare-and-set, cross-tenant fail-closed with identical run ids in two tenants, full-fidelity row
+  round-trip, corrupt-row skip, and the privacy contract asserted over the properties actually
+  written. Design note:
+  [docs/design/extraction-runs.md](docs/design/extraction-runs.md).
+  **Compatibility: additive, and hosts must declare new schema.** No existing class loses a member and
+  no behaviour changes; `DrivineExtractionRunStore`, `ExtractionRunSchema`, `ExtractionRunRowMapper`
+  and `ExtractionInvocationRowMapper` are new types in `com.embabel.dice.storage`. Nothing is
+  auto-configured yet, so a host opts in by declaring the store bean and a `SchemaCatalog` carrying
+  `ExtractionRunSchema.specs()`. That catalog is **eight new schema items**, and the three constraints
+  are required rather than advisory — a MERGE on a natural key is race-free only under one, and the
+  third is what makes the compare-and-set a schema fact:
+  - `UniquenessConstraintSpec("ExtractionRun", ["contextId", "runId"])`
+  - `UniquenessConstraintSpec("ExtractionRunInvocation", ["contextId", "runId", "invocationIndex", "attempt"])`
+  - `UniquenessConstraintSpec("ExtractionRunTerminalWrite", ["contextId", "runId"])`
+  - `RangeIndexSpec("ExtractionRun", "contextId")` — the tenant page; a composite index cannot stand
+    in, because Neo4j will not use one for a predicate on only its leading property
+  - `RangeIndexSpec("ExtractionRun", ["contextId", "rootRunId"])` — the whole-lineage read
+  - `RangeIndexSpec("ExtractionRun", ["contextId", "parentRunId"])` — one hop down the parent axis
+  - `RangeIndexSpec("ExtractionRun", ["contextId", "startedAtEpochSecond"])` — the paging sort key
+  - `RangeIndexSpec("ExtractionRunInvocation", ["contextId", "runId"])` — one run's attempts
+
+  No stored data changes and no migration is required: no released DICE ever wrote these labels. One
+  new bound a host should know about — `ContextId` accepts any non-blank string and the tenant is the
+  leading property of every key here, so the store rejects a tenant id longer than 1024 characters on
+  the write path rather than letting Neo4j fail the write mid-extraction with an index-key-size error.
+  Reads are uncapped, because a read for a longer tenant matches nothing by construction. Every new
+  type carries `@ApiStatus.Experimental` and the shapes may still move while the remaining #67 slices
+  land.
