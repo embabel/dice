@@ -20,6 +20,7 @@ import com.embabel.chat.Conversation
 import com.embabel.chat.Message
 import com.embabel.dice.incremental.ConversationSource
 import com.embabel.dice.incremental.IncrementalSource
+import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef
 import com.embabel.dice.provenance.SourceLocator
 import com.embabel.dice.provenance.SourceRevisionRef
 
@@ -29,7 +30,14 @@ import com.embabel.dice.provenance.SourceRevisionRef
  *
  * The three-argument constructor is the one that has always existed and carries no
  * provenance. A publisher that has a typed source for the conversation — a thread in a
- * chat system, a transcript file — uses the longer constructor to say so.
+ * chat system, a transcript file — uses the longer constructor to say so, and the same
+ * constructor takes an extraction content [profile]. EXPERIMENTAL; see [ExtractionContentProfileRef]
+ * for what carrying it means and does not mean.
+ *
+ * [sourceLocator] is nullable there because profile and source provenance are two independent
+ * dimensions: a publisher can name a profile for a conversation it has no typed source for.
+ * Within source provenance, [sourceRevision] rides on [sourceLocator] — it names a version of
+ * that source, so it needs one.
  */
 class ConversationAnalysisRequestEvent(
     source: Any,
@@ -41,15 +49,20 @@ class ConversationAnalysisRequestEvent(
 
     private var eventSourceRevision: SourceRevisionRef? = null
 
+    private var eventProfile: ExtractionContentProfileRef? = null
+
+    @JvmOverloads
     constructor(
         source: Any,
         user: NamedEntity,
         conversation: Conversation,
-        sourceLocator: SourceLocator,
+        sourceLocator: SourceLocator?,
         sourceRevision: SourceRevisionRef? = null,
+        profile: ExtractionContentProfileRef? = null,
     ) : this(source, user, conversation) {
         eventSourceLocator = sourceLocator
         eventSourceRevision = sourceRevision
+        eventProfile = profile
     }
 
     override fun incrementalSource(): IncrementalSource<Message> =
@@ -58,4 +71,6 @@ class ConversationAnalysisRequestEvent(
     override fun sourceLocator(): SourceLocator? = eventSourceLocator
 
     override fun sourceRevision(): SourceRevisionRef? = eventSourceRevision
+
+    override fun profile(): ExtractionContentProfileRef? = eventProfile
 }

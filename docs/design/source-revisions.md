@@ -557,7 +557,7 @@ somebody else's revision — there is no revision to pick up.
 
 ```mermaid
 flowchart TD
-    A["rememberTextFromSource / rememberFileFromSource"] --> C
+    A["rememberText / rememberFile, with an ExtractionRequest"] --> C
     B["SourceAnalysisRequestEvent.sourceLocator() / sourceRevision()"] --> C
     R["POST /extract, POST /extract/file"] --> C2
     C["IncrementalPropositionExtraction.buildContext"] --> CTX
@@ -568,28 +568,28 @@ flowchart TD
 
 ### The three entry points
 
-**Direct calls.** `rememberTextFromSource` and `rememberFileFromSource` sit beside `rememberText`
-and `rememberFile` as separate methods. A locator is required on the source-aware pair and absent
-from the legacy pair, so the two have genuinely different contracts and every Kotlin and Java call
-site resolves to one of them without ambiguity. `IncrementalPropositionExtractionTest` enumerates
-the exact JVM descriptors of all four names and asserts the sets, so a legacy descriptor cannot
-quietly move and a source-aware call cannot collapse onto a legacy one; the same file exercises
-Kotlin callable references, named arguments, and Mockito-shaped call sites for the same reason.
-Both source-aware calls run through one private `rememberTextInternal`, and the file variants share
-one `withRememberedFileText` reader, so parsing and grounding behave identically with or without a
-revision.
+**Direct calls.** `rememberText` and `rememberFile` each take an `ExtractionRequest` on one extra
+overload, and the locator and the revision travel on it. See
+[extraction-profiles.md](extraction-profiles.md) for why the request exists and how the two
+declarations per entry point keep every earlier call and override working.
+`IncrementalPropositionExtractionTest` enumerates the exact JVM descriptors of both names and
+asserts the sets, so an earlier descriptor cannot quietly move and a request-carrying call cannot
+collapse onto one written without a request; the same file exercises Kotlin callable references,
+named arguments, and Mockito-shaped call sites for the same reason. Both file entry points share
+one `withRememberedFileText` reader and hand their text to a text entry point, so parsing and
+grounding behave identically with or without a revision.
 
-Passing a revision on either call is an assertion by the host that the locator's revision covers the
-whole aggregate being extracted — the whole text, or the whole file as Tika read it. DICE has no way
-to derive that: `sourceId` and `additionalGrounding` are untyped strings, and a file is read as one
-document. The KDoc on both methods says so.
+Passing a revision is an assertion by the host that the locator's revision covers the whole
+aggregate being extracted — the whole text, or the whole file as Tika read it. DICE has no way to
+derive that: `sourceId` and `additionalGrounding` are untyped strings, and a file is read as one
+document. The KDoc on `ExtractionRequest.sourceRevision` says so.
 
 **The async event path.** `SourceAnalysisRequestEvent` gains two open methods, `sourceLocator()` and
 `sourceRevision()`, both returning null by default, so an existing subclass carries no provenance and
 behaves as it did. `ConversationAnalysisRequestEvent` gains a constructor that takes a locator and an
-optional revision. The listener passes whatever the event returns into the same `buildContext` call
-`rememberTextFromSource` uses, which is what makes the two paths carry a revision identically rather
-than similarly. Three tests pin it: `SourceAnalysisRequestEventRevisionTest` asserts the defaults, the
+optional revision. The listener turns whatever the event returns into an `ExtractionRequest` and
+passes it into the same `buildContext` call the direct entry points use, which is what makes the two
+paths carry a revision identically. Three tests pin it: `SourceAnalysisRequestEventRevisionTest` asserts the defaults, the
 exact values a provenance-aware event carries, and that a mismatched key is rejected when the context
 is built; `IncrementalPropositionExtractionTest.event provenance reaches the context observed by the
 pipeline` runs a real event through `extractPropositions` and captures the context the pipeline was
@@ -1022,7 +1022,7 @@ Four slices, each green on its own, together equal to the reviewed
    when a participant has gone, and `DrivineCollectorTraceStore` persists and reads the new field
    with rows written before it still readable.
 4. **Entry points** — the whole write side above: `SourceAnalysisContext.sourceRevision` with its
-   locator-and-key invariant, `rememberTextFromSource` and `rememberFileFromSource`, the async
+   locator-and-key invariant, the `ExtractionRequest` the entry points take, the async
    `SourceAnalysisRequestEvent` path through the same `buildContext` call, the pipeline stamp, the
    REST request and response shapes with revision-stable chunk ids, and the binary-compatibility
    fixture running as a test rather than sitting in the tree.

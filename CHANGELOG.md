@@ -308,14 +308,13 @@ and the consumer PRs that deliver it).
   `sourceKey` to equal that locator's key. One check therefore covers every caller, and the
   content-hash locator the pipeline falls back to when no locator was supplied can never acquire a
   revision. `PropositionPipeline` stamps the revision onto each `ProvenanceEntry` it writes.
-  `IncrementalPropositionExtraction` gains `rememberTextFromSource` and `rememberFileFromSource`
-  beside the existing `rememberText` and `rememberFile`. They are separate methods rather than more
-  optional arguments, because a locator is required on the source-aware pair and absent from the
-  legacy pair, which keeps every Kotlin and Java call site resolving to exactly one of them; a test
-  enumerates the JVM descriptors of all four names and asserts the sets. Passing a revision on either
-  call asserts that the locator's revision covers the whole text or the whole file as extracted —
-  DICE cannot derive that from an untyped `sourceId` or from `additionalGrounding`, and the KDoc says
-  so. `SourceAnalysisRequestEvent` gains `sourceLocator()` and `sourceRevision()`, both open and both
+  `IncrementalPropositionExtraction` takes a locator and a revision on an `ExtractionRequest`,
+  described in the extraction-profiles entry below: `rememberText` and `rememberFile` each gain one
+  overload taking it, and the two signatures they already had are untouched. Supplying a revision
+  asserts that the locator's revision covers the whole text or the whole file as extracted — DICE
+  cannot derive that from an untyped `sourceId` or from `additionalGrounding`, and the KDoc says
+  so. The request refuses a revision with no locator, or one naming a different source key, while
+  it is being built, so a mismatched pair never reaches an entry point at all. `SourceAnalysisRequestEvent` gains `sourceLocator()` and `sourceRevision()`, both open and both
   returning null, and `ConversationAnalysisRequestEvent` gains a constructor that takes a locator and
   an optional revision; the listener feeds both into the same `buildContext` call the direct entry
   points use, so the async path grounds propositions identically and a test captures the context the
@@ -359,8 +358,7 @@ and the consumer PRs that deliver it).
   and Java constructor-descriptor compatibility are claimed. `@JvmOverloads` on `SourceAnalysisContext`
   preserves every concrete Java constructor descriptor and adds one on the end, and the same holds for
   `ExtractRequest`, `ProvenanceEntryDto`, and `LineageDto`; `rememberText` and `rememberFile` keep
-  every descriptor they had, because the revision-aware calls are separate method names rather than
-  extra parameters. Full Kotlin synthetic constructor and `copy` ABI is **not** claimed for
+  every descriptor they had, and each gains exactly one more, taking an `ExtractionRequest`. Full Kotlin synthetic constructor and `copy` ABI is **not** claimed for
   `SourceAnalysisContext`: adding a field to a data class changes `copy`/`componentN` and the
   synthetic `$default` constructor, so Kotlin code compiled against an earlier jar must be recompiled
   rather than swapped in. `SourceRevisionBinaryCompatibilityTest` runs the pinned legacy client and
@@ -397,3 +395,109 @@ and the consumer PRs that deliver it).
   on its propositions — subclasses that do not override are unaffected, since both default to null.
   No stored data migrates: `sourceRevision` stays absent from the JSON of a revisionless entry, which
   is byte-identical to what was written before.
+
+- **EXPERIMENTAL.** One request object for the extraction entry points, carrying source provenance
+  and versioned extraction content profiles (DICE #66). `ExtractionRequest` holds what a caller
+  wants to say about one extraction on top of the text and the user it belongs to: the source it
+  was read from, the revision of that source, and the content profile it runs under.
+  `rememberText` and `rememberFile` each gain exactly one overload taking it —
+  `rememberText(text, sourceId, user, additionalGrounding, perspective, mintNewEntities, request)`
+  and `rememberFile(inputStream, filename, user, request)` — and the signatures those two methods
+  already had are untouched, so every call and every override written against them keeps working.
+  The next dimension extraction learns about arrives as a field on the request while the
+  entry-point signatures stay where they are, so a host that overrides one keeps compiling and
+  sees the new value without touching its override. A request checks its own coupling as it is
+  built: a `sourceRevision` requires a `sourceLocator` whose key it matches, because a revision
+  names a version of one specific source. A mismatched pair is refused there, before any entry
+  point is called, so a caller can never reach extraction holding one. A profile is checked
+  against nothing, because it is independent of where the material came from.
+  `ExtractionRequest.NONE` is the empty request; a file call carrying it dispatches exactly as the
+  three-argument call it resembles, so a subclass overriding only the six-argument `rememberText`
+  still intercepts file ingestion the way it always did. Unintercepted, every call ends at the
+  request-taking text method, so a host that wants one place to see all traffic overrides that
+  one. `ExtractionContentProfileRef(name, version)` names a version of a host's
+  content profile — the host's durable answer to what extraction of this kind of material should
+  do. DICE carries the two strings and nothing else: it never looks a profile up, never reads
+  policy out of it, and **selects no provider, model, or credential from it**. The host owns the
+  catalog, authorizes the reference, and binds it to whatever it means. Identity is name and
+  version together, so republishing a profile under a new version yields a reference the host can
+  tell apart from the old one. The type validates non-blank components
+  and caps their lengths (256 for a name, 64 for a version), because a reference is an identifier
+  the host mints and no place to put a payload. It is not an authorization token, and may not
+  carry a direct identifier or a dereferenceable secret. `SourceAnalysisContext` gains an optional
+  `profile`, defaulting to null, with a `withProfile` copy helper. It is checked against no other
+  field: a `sourceRevision` is coupled to its `sourceLocator` because it names a version of a
+  specific source, while a profile is independent of everything else, and the `init` block says so
+  without inventing a relationship the contract does not have. The request is the single door onto
+  that field from the entry points, so nothing has to keep two copies of a profile in step. Adding
+  the request argument by growing the existing declarations would have broken subclasses:
+  `@JvmOverloads` emits every reduced-arity overload as `final` even on an `open` function, so
+  folding it into `rememberText` would have turned the six-argument form into a final bridge and
+  stopped a subclass overriding it from compiling. Each entry point is therefore two declarations,
+  the one that was already there and the one taking a request.
+  `SourceAnalysisRequestEvent` gains `profile()`, open and null-defaulted,
+  and `ConversationAnalysisRequestEvent` takes it on its longer constructor. Both paths feed one
+  `buildContext`, which is what makes the async path carry a profile identically; a test counts
+  the accessor being read exactly once. Nothing downstream consults the reference — a test
+  compares the whole context built with a profile against the one built without and asserts they
+  differ in exactly that field. Profile, perspective, schema and tenant stay four independent
+  dimensions: perspective describes conversational input, a profile is content policy, and a
+  64-cell matrix test asserts every combination is constructible, that every ordered pair of
+  dimensions realises its whole cross product, and that varying one leaves the other three
+  identical. Design note:
+  [docs/design/extraction-profiles.md](docs/design/extraction-profiles.md).
+  **Compatibility: additive, with the same scoped ABI boundary as the Wave A slices.** Source and
+  Java constructor-descriptor compatibility are claimed. `@JvmOverloads` on `SourceAnalysisContext`
+  preserves every published constructor descriptor and adds one on the end; a test enumerates
+  arities 3 through 12 (each with the trailing `DefaultConstructorMarker` Kotlin emits because
+  `contextId` is a value class) and asserts all of them resolve. Every `rememberText` and
+  `rememberFile` descriptor survives, with exactly one added per method name, on the end; a test
+  pins the exact descriptor set of both names, asserts the request is always the last parameter,
+  and asserts no entry point takes a locator, a revision or a profile as a loose argument.
+  **Subclass-override compatibility is part of the claimed surface**: every signature that was
+  overridable before this slice still is — `rememberText` at six arguments and `rememberFile` at
+  three — and each method's request-taking form is overridable too. It is proven twice: a
+  reflection test asserts `Modifier.isFinal` is false on all four and true on the reduced arities
+  that were already final bridges, and a Java subclass in the compat suite overrides both
+  signatures, so the suite compiling is the second proof (`javac` rejects `@Override` on a final
+  method). A Kotlin pin calls every shape a caller could have written against those two signatures
+  — every published arity, positional and named — from a subclass that overrides both, and asserts
+  each call reaches the override. Being overridable is not the whole guarantee — the override also
+  has to be reached — so two further tests pin the dispatch rule: a subclass overriding only the
+  text entry points still sees file ingestion, and a file call carrying a request goes to the
+  request-taking text method.
+  `ConversationAnalysisRequestEvent` keeps its five-argument constructor and gains a
+  six-argument form; its `sourceLocator` parameter relaxes from non-null to nullable, so a
+  publisher can name a profile for material it has no typed source for, and every call that
+  compiled before still compiles. Full Kotlin synthetic `copy` and `componentN` ABI is **not**
+  claimed for `SourceAnalysisContext`: an added field rewrites `copy`, adds a `componentN` method,
+  and changes the synthetic `$default` constructor, so Kotlin code compiled against an earlier jar
+  must be recompiled rather than swapped in — the same half of the boundary #64 declined, pinned
+  here by a test asserting exactly one `copy` remains and that it takes twelve arguments. No
+  stored data changes and no migration is required: nothing serializes a profile yet, and no
+  extractor DICE ships reads `context.profile` either. What exists is the means to build one: a
+  host-supplied `PropositionExtractor` — the pluggable interface every consumer of
+  `IncrementalPropositionExtraction` already wires in — receives the whole context on every
+  `extract()` call, `profile` included, so a host can build a reader for its own content-policy
+  identity today. DICE carries the profile to the extractor and stops there: every extractor DICE
+  ships is behaviour-identical with or without one, and a host extractor that chooses to read
+  `context.profile` is free to act on it however it defines. `ExtractionContentProfileRef` carries
+  `@ApiStatus.Experimental` and its shape may still move. A Kotlin `@RequiresOptIn` marker would
+  make that enforceable at the call site rather than advisory; DICE defines none today and the
+  design note records it as an open question.
+
+  **A run reference travelled with this slice for one round and was pulled back out** (PR #94
+  review). `ExtractionRunRef` shipped identity-only, ahead of the durable run store that would key
+  on it. Nothing on this branch consumes it: `persistAndProject`, the method that actually saves
+  extraction's output, takes only the pipeline's result and never sees the context that would have
+  carried a run reference, so a caller passing one got it silently accepted and then dropped.
+  `currentRun` reached the same `PropositionExtractor.extract` extension point `profile` does, so
+  the two were equally reachable; the difference was that a run id had no store to resolve against,
+  so a reader would have had nothing to act on even if one existed. Because that store does not
+  exist on this branch, `currentRun`/`ExtractionRunRef` are removed from this slice entirely —
+  `SourceAnalysisContext`, every `remember*` entry point, `SourceAnalysisRequestEvent`, and
+  `ConversationAnalysisRequestEvent` — and return together with the write that consumes them once
+  the durable run store lands (DICE #67 and the run-model slices above it). No caller outside this
+  slice's own code and tests used the parameter for anything, so there is nothing to migrate. When
+  the reference does return it arrives as a field on `ExtractionRequest`, which is what the request
+  object is for: the entry-point signatures will be the ones this entry describes.

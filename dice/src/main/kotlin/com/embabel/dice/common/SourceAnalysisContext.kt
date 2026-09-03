@@ -19,6 +19,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.dice.provenance.SourceLocator
 import com.embabel.dice.provenance.SourceRevisionRef
+import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef
 import com.embabel.dice.proposition.extraction.ExtractionPerspective
 
 /**
@@ -39,6 +40,11 @@ import com.embabel.dice.proposition.extraction.ExtractionPerspective
  * @param sourceRevision optional revision of [sourceLocator] — the provider's own identifier for
  * the version of that source this run reads. Setting it requires a [sourceLocator] whose key it
  * matches, so a revision can never name a source the run is not actually reading.
+ * @param profile optional extraction content profile the host wants this analysis attributed to.
+ * EXPERIMENTAL. DICE carries the reference and nothing else — it selects no provider, model, or
+ * credential, and no DICE code reads policy out of it. The host authorizes the profile and binds
+ * it to whatever it means. `null` (the default) is the whole of the existing behaviour.
+ * Independent of [perspective], [schema] and [contextId]: setting one never constrains another.
  * @param mintNewEntities whether a mention the resolver could NOT match to an existing entity may
  * be persisted as a NEW entity node. Default FALSE: unresolved mentions stay unresolved (the
  * proposition is still persisted; its mention simply carries no resolvedId), so extraction never
@@ -65,6 +71,7 @@ data class SourceAnalysisContext @JvmOverloads constructor(
      */
     val mintedEntityProperties: Map<String, Any> = emptyMap(),
     val sourceRevision: SourceRevisionRef? = null,
+    val profile: ExtractionContentProfileRef? = null,
 ) {
 
     init {
@@ -76,6 +83,10 @@ data class SourceAnalysisContext @JvmOverloads constructor(
                 "sourceRevision source key must match sourceLocator source key"
             }
         }
+        // [profile] is checked against nothing else here, deliberately. A revision has to name
+        // the source it was read from, which is why it is coupled to [sourceLocator]. A profile
+        // is independent of every other field, and validating it against one would invent a
+        // relationship the contract doesn't have.
     }
 
     companion object {
@@ -149,6 +160,13 @@ data class SourceAnalysisContext @JvmOverloads constructor(
      */
     fun withSourceRevision(sourceRevision: SourceRevisionRef): SourceAnalysisContext =
         copy(sourceRevision = sourceRevision)
+
+    /**
+     * Returns a copy attributed to the given extraction content [profile]. EXPERIMENTAL.
+     * Changes no other field and no extraction behaviour — see [profile].
+     */
+    fun withProfile(profile: ExtractionContentProfileRef): SourceAnalysisContext =
+        copy(profile = profile)
 
     /**
      * Returns a copy allowing (or forbidding) this analysis to persist NEW entities

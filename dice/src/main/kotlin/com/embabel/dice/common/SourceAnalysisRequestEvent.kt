@@ -18,6 +18,7 @@ package com.embabel.dice.common
 import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.chat.Message
 import com.embabel.dice.incremental.IncrementalSource
+import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef
 import com.embabel.dice.provenance.SourceLocator
 import com.embabel.dice.provenance.SourceRevisionRef
 import org.springframework.context.ApplicationEvent
@@ -28,10 +29,14 @@ import org.springframework.context.ApplicationEvent
  * (e.g., UrbotUser, Customer) can be used directly.
  *
  * A publisher that knows where its material came from can say so by overriding
- * [sourceLocator] and [sourceRevision]. The extraction listener puts both onto the
- * `SourceAnalysisContext` it builds, so the async path grounds propositions exactly
- * the way a direct `rememberTextFromSource` call does. Both default to null, so an
- * existing subclass carries no provenance and behaves as it always did.
+ * [sourceLocator] and [sourceRevision]. The extraction listener collects both into an
+ * `ExtractionRequest` and puts them onto the `SourceAnalysisContext` it builds, so the async path
+ * grounds propositions exactly the way a direct `rememberText` call carrying a request does. Both
+ * default to null, so an existing subclass carries no provenance and behaves as it always did.
+ *
+ * [profile] works the same way and reaches the same context through the same call, so an async
+ * publisher can attribute its extraction to a content profile without the listener growing a
+ * second code path. It also defaults to null.
  */
 abstract class SourceAnalysisRequestEvent(
     source: Any,
@@ -51,4 +56,10 @@ abstract class SourceAnalysisRequestEvent(
      * builds the context.
      */
     open fun sourceRevision(): SourceRevisionRef? = null
+
+    /**
+     * The extraction content profile this event's analysis should be attributed to, when the
+     * publisher has one. EXPERIMENTAL. DICE carries it and routes nothing on it.
+     */
+    open fun profile(): ExtractionContentProfileRef? = null
 }
