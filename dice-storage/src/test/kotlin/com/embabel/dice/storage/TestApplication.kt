@@ -23,6 +23,7 @@ import org.drivine.manager.GraphObjectManager
 import org.drivine.manager.GraphObjectManagerFactory
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.PersistenceManagerFactory
+import org.drivine.schema.RangeIndexSpec
 import org.drivine.schema.SchemaCatalog
 import org.drivine.schema.SimilarityFunction
 import org.drivine.schema.UniquenessConstraintSpec
@@ -79,6 +80,11 @@ open class TestApplication {
         // Cross-instance dedup backstop: the same fact minted by parallel writers as distinct ids
         // collapses to one node; save() catches the violation and reuses the existing node.
         UniquenessConstraintSpec(label = "Proposition", properties = listOf("contextId", "text")),
+        // What every tenant-scoped read seeks. The composite constraint above cannot stand in for it:
+        // Neo4j will not use a composite index for a predicate on only its first property, so without
+        // this the tenant predicate becomes a label scan. `dice-storage-autoconfigure` ships it, and
+        // the source-query plan assertions read the plans a real store gets.
+        RangeIndexSpec("Proposition", "contextId"),
     )
 
     @Bean

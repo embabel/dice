@@ -24,6 +24,7 @@ import com.embabel.dice.provenance.ConnectorRef
 import com.embabel.dice.provenance.ContentAddressedLocator
 import com.embabel.dice.provenance.FileLocator
 import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import com.embabel.dice.provenance.SourceLocator
 import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.storage.model.DerivedFrom
@@ -44,9 +45,11 @@ import com.embabel.dice.temporal.TemporalMetadata
  *   of every path. [toProposition] from it returns a [Proposition] with **empty**
  *   `provenanceEntries` (provenance isn't projected).
  * - [PropositionWithProvenanceView] — adds `DERIVED_FROM` → shared [SourceNode]. Sources are MERGEd
- *   by `SourceLocator.key()`, so a source cited by many propositions is one node. Its only remaining
- *   use is the cascade in `DrivinePropositionRepository.delete`: provenance writes and reads both
- *   moved to raw Cypher so parallel source revisions keep their own edges.
+ *   by `SourceLocator.key()`, so a source cited by many propositions is one node. Provenance writes
+ *   and reads moved to raw Cypher, keyed by evidence identity, so parallel source revisions keep
+ *   their own edges; what still runs through this view is the `DELETE_ORPHAN` cascade in
+ *   `DrivinePropositionRepository.delete`, which takes every edge a proposition has and prunes only
+ *   the sources left with no citations.
  *
  * The graph carries an `embedding` that is *not* part of [Proposition]; the repository owns it and
  * passes it in. `EntityMention.hints` is not yet persisted.
@@ -60,9 +63,10 @@ object PropositionGraphMapper {
     /**
      * Full view: mentions + provenance (`DERIVED_FROM` → shared [SourceNode]).
      *
-     * No production caller left once provenance writes moved to raw Cypher. Kept for now because
-     * `delete` still cascades through the view it builds; slice 2 of the source-revision work decides
-     * whether both go.
+     * Nothing in the repository builds one any more — provenance is written and read as raw Cypher.
+     * This is the public way to construct the view type `delete` cascades through, and the shape it
+     * produces is what `PropositionGraphMapperRevisionTest` pins: one shared source node however many
+     * revisions cite it, one edge per revision, each carrying its own evidence key.
      */
     fun toProvenanceView(p: Proposition, embedding: List<Float>? = null): PropositionWithProvenanceView =
         PropositionWithProvenanceView(
@@ -241,22 +245,20 @@ object PropositionGraphMapper {
 }
 
 /**
- * The storage identity of one `DERIVED_FROM` edge: every field of the evidence tuple, length-framed
- * so a `-1` stands for null and no value needs escaping.
+ * The storage identity of one `DERIVED_FROM` edge: the evidence key [ProvenanceEvidenceKey] mints,
+ * with no storage-specific encoding of its own.
  *
- * This is deliberately a separate encoding from the domain's `ProvenanceEvidenceKey`, which is
- * `internal` to the `dice` module and is the format collector traces record. Graph rows and fold
- * records have different lifetimes, and pinning one to the other would make a change to either a
- * migration of both.
+ * A graph row and a recorded fold reference name the same thing — one piece of evidence — so they use
+ * one string. Storage had its own copy of the encoding at first. The two framed the same six fields
+ * in the same order and differed only in that the storage copy omitted the `dice-provenance:v1:`
+ * prefix, which made them one format maintained in two places with nothing able to catch a drift,
+ * since each was `internal` to its own module.
+ *
+ * Adopting the prefix **changed the bytes stored on an edge**. That is safe here and nowhere else:
+ * `entryKey` itself is unreleased, arriving in the same train as this, so no released DICE ever wrote
+ * one. A graph written by an intermediate build of this train holds prefix-less keys that no longer
+ * match, and re-saving that evidence adds a second edge — the CHANGELOG says so. Once released, a
+ * format change means a new version prefix and a migration for the keys already written.
  */
 internal fun provenanceStorageEntryKey(entry: ProvenanceEntry): String =
-    listOf(
-        entry.locator.key(),
-        entry.sourceRevision,
-        entry.chunkId,
-        entry.startOffset?.toString(),
-        entry.endOffset?.toString(),
-        entry.contentHash,
-    ).joinToString(separator = "") { value ->
-        if (value == null) "-1:" else "${value.length}:$value"
-    }
+    ProvenanceEvidenceKey.encode(entry)
