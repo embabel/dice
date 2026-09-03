@@ -213,10 +213,10 @@ private fun deserializeMapOfSignatureSets(serialized: String): Map<String, Set<P
     return mapOfLists.mapValues { (typeName, encoded) ->
         encoded.map { element ->
             val fields = element as? Map<*, *>
-                ?: throw IllegalArgumentException(
-                    "entityTypeProperties for '$typeName' holds ${element?.javaClass?.simpleName ?: "null"} " +
-                        "where a property signature object was expected"
-                )
+            require(fields != null) {
+                "entityTypeProperties for '$typeName' holds ${element?.javaClass?.simpleName ?: "null"} " +
+                    "where a property signature object was expected"
+            }
             PropertySignature(
                 name = fields.signatureField(typeName, "name"),
                 kind = enumConstant(fields.signatureField(typeName, "kind"), typeName, "kind"),
@@ -230,9 +230,9 @@ private fun deserializeMapOfSignatureSets(serialized: String): Map<String, Set<P
 
 /** Read one field of a stored property signature, blowing up by name if it isn't there. */
 private fun Map<*, *>.signatureField(typeName: String, field: String): String =
-    this[field]?.toString() ?: throw IllegalArgumentException(
+    requireNotNull(this[field]) {
         "a property signature for '$typeName' is missing its '$field' field"
-    )
+    }.toString()
 
 /**
  * Read a stored signature's former names. An absent `aliases` field means none were declared, which
@@ -242,23 +242,24 @@ private fun Map<*, *>.signatureField(typeName: String, field: String): String =
  */
 private fun Map<*, *>.signatureAliases(typeName: String): Set<String> {
     val encoded = this["aliases"] ?: return emptySet()
-    val names = encoded as? List<*> ?: throw IllegalArgumentException(
+    val names = encoded as? List<*>
+    require(names != null) {
         "a property signature for '$typeName' has an 'aliases' field holding a " +
             "${encoded.javaClass.simpleName} where a list of former names was expected"
-    )
+    }
     return names.map { name ->
-        name?.toString() ?: throw IllegalArgumentException(
+        requireNotNull(name) {
             "a property signature for '$typeName' has a null entry in its 'aliases' field"
-        )
+        }.toString()
     }.toSet()
 }
 
 /** Turn a stored enum constant name back into the constant, naming what failed if it's unknown. */
 private inline fun <reified E : Enum<E>> enumConstant(stored: String, typeName: String, field: String): E =
-    enumValues<E>().firstOrNull { it.name == stored } ?: throw IllegalArgumentException(
+    requireNotNull(enumValues<E>().firstOrNull { it.name == stored }) {
         "a property signature for '$typeName' has '$field' = '$stored', which is not a known " +
-            "${E::class.simpleName} — the node was written by a different version of the schema model"
-    )
+            "${E::class.simpleName}. The node was written by a different version of the schema model"
+    }
 
 /**
  * Read a property that must be there, and blow up if it isn't.
@@ -269,7 +270,7 @@ private inline fun <reified E : Enum<E>> enumConstant(stored: String, typeName: 
  * is what gives that guard something to catch.
  */
 private fun Map<*, *>.str(key: String): String =
-    this[key]?.toString() ?: throw IllegalArgumentException("required property '$key' is missing from the stored node")
+    requireNotNull(this[key]) { "required property '$key' is missing from the stored node" }.toString()
 
 /**
  * Read a property that may legitimately not be there, where absent means the stamp declared nothing

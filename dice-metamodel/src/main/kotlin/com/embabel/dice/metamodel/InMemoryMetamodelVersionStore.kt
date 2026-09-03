@@ -38,10 +38,10 @@ class InMemoryMetamodelVersionStore : MetamodelVersionStore {
      */
     override fun saveVersion(version: MetamodelVersion) {
         synchronized(saved) {
-            val at = saved.indexOfFirst {
+            val existingIndex = saved.indexOfFirst {
                 it.schemaName == version.schemaName && it.contentHash == version.contentHash
             }
-            if (at < 0) saved += version else saved[at] = version
+            if (existingIndex < 0) saved += version else saved[existingIndex] = version
         }
     }
 
