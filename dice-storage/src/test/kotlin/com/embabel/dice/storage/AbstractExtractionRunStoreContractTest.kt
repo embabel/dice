@@ -1513,6 +1513,49 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
+    fun `a run with several attempts reads back equal to the run that was saved`() {
+        // The case that catches a backend disagreeing with the reference on invocation order. A
+        // durable store keeps identified rows and returns them in plan order; an in-memory one used
+        // to return the order the caller listed. Since `equals` compares the list, a run whose
+        // attempts arrived out of plan order came back unequal from one backend and equal from the
+        // other. `ExtractionRun` normalizes to plan order at construction, so both agree — and one
+        // attempt per call, which is all the rest of this suite uses, could never show it.
+        //
+        // The attempts arrive through recordInvocation, the door that owns invocation state. A
+        // header save carries none of them, so arrival order here is the order of the calls.
+        val store = store()
+        val arrivalOrder = listOf(
+            ExtractionInvocationRecord(id = ExtractionInvocationId(1, 2)),
+            ExtractionInvocationRecord(id = ExtractionInvocationId(0, 1)),
+            ExtractionInvocationRecord(id = ExtractionInvocationId(2, 1)),
+            ExtractionInvocationRecord(id = ExtractionInvocationId(1, 1)),
+        )
+        val run = ExtractionRun(
+            contextId = tenant,
+            lineage = ExtractionRunLineage.root(ExtractionRunRef("contract-multi-attempt")),
+            status = ExtractionRunStatus.RUNNING,
+            startedAt = startedAt,
+            invocations = arrivalOrder,
+        )
+
+        store.save(run)
+        arrivalOrder.forEach { store.recordInvocation(run.key(), it) }
+        val read = store.findRun(run.key())
+
+        assertEquals(run, read)
+        assertEquals(
+            listOf(
+                ExtractionInvocationId(0, 1),
+                ExtractionInvocationId(1, 1),
+                ExtractionInvocationId(1, 2),
+                ExtractionInvocationId(2, 1),
+            ),
+            read?.invocations?.map { it.id },
+        )
+        assertEquals(read?.invocations, store.invocationsOf(run.key()))
+    }
+
+    @Test
     fun `recording against a run nobody started is rejected`() {
         val store = store()
 

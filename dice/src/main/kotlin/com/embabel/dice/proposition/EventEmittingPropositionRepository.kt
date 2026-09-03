@@ -126,6 +126,21 @@ class EventEmittingPropositionRepository(
         propositions.forEach { save(it) }
     }
 
+    /**
+     * The same, keeping what each proposition landed on. Overridden for the same reason [saveAll]
+     * is: `by delegate` forwards an interface default straight to the delegate, so the default body
+     * would run the delegate's [save] and this decorator would emit nothing.
+     *
+     * @param propositions The propositions to persist.
+     * @return The stored proposition for each input, and the input-id to stored-id mapping.
+     */
+    override fun saveAllReturningCanonical(
+        propositions: Collection<Proposition>,
+    ): PropositionPersistenceResult {
+        val inputs = propositions.toList()
+        return PropositionPersistenceResult.of(inputs, inputs.map { save(it) })
+    }
+
     // ========================================================================
     // Explicit vector-capability forwarding
     //

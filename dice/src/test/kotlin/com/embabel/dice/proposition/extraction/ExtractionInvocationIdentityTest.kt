@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.proposition.extraction
 
+import com.embabel.dice.provenance.SourceRevisionRef
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 import org.junit.jupiter.api.Test
@@ -65,9 +66,72 @@ class ExtractionInvocationIdentityTest {
 
         val run = runWith(completed)
 
-        // Stored in arrival order, read back in plan order.
-        assertThat(run.invocations.map { it.invocationIndex }).containsExactly(2, 0, 3, 1)
+        // Handed to the run in arrival order, held in plan order. Arrival order is not a fact about
+        // the run — the same four calls answered in a different sequence are the same run — and
+        // equals compares this list, so normalizing at construction is what makes those two runs
+        // equal and what makes the two store backends agree.
+        assertThat(run.invocations.map { it.invocationIndex }).containsExactly(0, 1, 2, 3)
         assertThat(run.invocationsInPlanOrder().map { it.invocationIndex }).containsExactly(0, 1, 2, 3)
+    }
+
+    @Test
+    fun `two runs whose calls came back in different orders are equal`() {
+        // The whole reason invocations are normalized. Before, these two compared unequal, and a
+        // durable store — which keeps identified rows and reads them back in plan order — could not
+        // return a run equal to the one an in-memory store returned for the same call sequence.
+        val plan = ExtractionInvocationRecord.plan(3)
+        val answered = { order: List<Int> ->
+            runWith(
+                order.map { planIndex ->
+                    plan[planIndex].copy(
+                        outcome = ExtractionInvocationOutcome.SUCCEEDED,
+                        startedAt = startedAt,
+                        finishedAt = startedAt.plusSeconds(1),
+                    )
+                },
+            )
+        }
+
+        val arrivedForwards = answered(listOf(0, 1, 2))
+        val arrivedBackwards = answered(listOf(2, 1, 0))
+
+        assertThat(arrivedForwards).isEqualTo(arrivedBackwards)
+        assertThat(arrivedForwards.hashCode()).isEqualTo(arrivedBackwards.hashCode())
+        assertThat(arrivedForwards.toString()).isEqualTo(arrivedBackwards.toString())
+    }
+
+    @Test
+    fun `retries of one call sort after that call's first attempt and before the next call`() {
+        val run = runWith(
+            listOf(
+                ExtractionInvocationRecord.planned(1).retry(),
+                ExtractionInvocationRecord.planned(2),
+                ExtractionInvocationRecord.planned(0),
+                ExtractionInvocationRecord.planned(1),
+            ),
+        )
+
+        assertThat(run.invocations.map { it.id }).containsExactly(
+            ExtractionInvocationId(0, 1),
+            ExtractionInvocationId(1, 1),
+            ExtractionInvocationId(1, 2),
+            ExtractionInvocationId(2, 1),
+        )
+    }
+
+    @Test
+    fun `the order sources were read in is data and is left alone`() {
+        // Normalization is for invocations only. Two runs that read the same sources in different
+        // orders read them in different orders, and that is a fact about the run.
+        val first = SourceRevisionRef("source-a", "rev-1")
+        val second = SourceRevisionRef("source-b", "rev-1")
+
+        val forwards = runWith(emptyList(), sourceRevisions = listOf(first, second))
+        val backwards = runWith(emptyList(), sourceRevisions = listOf(second, first))
+
+        assertThat(forwards.sourceRevisions).containsExactly(first, second)
+        assertThat(backwards.sourceRevisions).containsExactly(second, first)
+        assertThat(forwards).isNotEqualTo(backwards)
     }
 
     @Test
@@ -268,11 +332,15 @@ class ExtractionInvocationIdentityTest {
         .map { it.name }
         .toSet()
 
-    private fun runWith(invocations: List<ExtractionInvocationRecord>): ExtractionRun = ExtractionRun(
+    private fun runWith(
+        invocations: List<ExtractionInvocationRecord>,
+        sourceRevisions: List<SourceRevisionRef> = emptyList(),
+    ): ExtractionRun = ExtractionRun(
         contextId = ExtractionRunFixtures.CONTEXT,
         lineage = ExtractionRunLineage.root(ExtractionRunFixtures.RUN),
         status = ExtractionRunStatus.RUNNING,
         startedAt = startedAt,
+        sourceRevisions = sourceRevisions,
         invocations = invocations,
     )
 }

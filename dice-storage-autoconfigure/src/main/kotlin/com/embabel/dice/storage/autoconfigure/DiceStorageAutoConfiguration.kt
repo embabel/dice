@@ -27,12 +27,17 @@ import com.embabel.dice.projection.lineage.ProjectionRecordStore
 import com.embabel.dice.proposition.DecayManager
 import com.embabel.dice.proposition.DecaySweepConfig
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.extraction.ExtractionRunStore
+import com.embabel.dice.proposition.extraction.PropositionRunLinkStore
 import com.embabel.dice.proposition.store.InMemoryDecayManager
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.storage.DrivineChunkHistoryStore
 import com.embabel.dice.storage.DrivineCollectorRecordStore
+import com.embabel.dice.storage.DrivineExtractionRunStore
 import com.embabel.dice.storage.DrivinePropositionRepository
+import com.embabel.dice.storage.DrivinePropositionRunLinkStore
 import com.embabel.dice.storage.DrivineProjectionRecordStore
+import com.embabel.dice.storage.ExtractionRunSchema
 import com.embabel.dice.storage.GraphDecayManager
 import org.drivine.manager.GraphObjectManager
 import org.drivine.manager.PersistenceManager
@@ -138,6 +143,82 @@ class DiceStorageAutoConfiguration {
     fun drivineCollectorRecordStore(
         persistenceManager: PersistenceManager,
     ): CollectorRecordStore = DrivineCollectorRecordStore(persistenceManager)
+
+    /**
+     * The durable extraction-run header store.
+     *
+     * Two conditions, both required. The graph backend has to be selected
+     * (`embabel.dice.store.type=graph`), and extraction runs have to be turned on with
+     * `embabel.dice.extraction.runs.enabled=true`. The property defaults to off, so an upgrading
+     * host gets none of this until it asks.
+     *
+     * The property is what carries the decision, because registering these beans is what puts the
+     * run schema in front of Drivine's schema manager, and that writes constraints and indexes to
+     * the host's database on startup. [extractionRunSchema] lists exactly what lands. A host that
+     * turns the flag on has consented to those writes; one that leaves it alone keeps a database
+     * with no run labels in it.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnProperty(
+        prefix = "embabel.dice.extraction.runs",
+        name = ["enabled"],
+        havingValue = "true",
+        matchIfMissing = false,
+    )
+    @ConditionalOnMissingBean(ExtractionRunStore::class)
+    fun drivineExtractionRunStore(
+        persistenceManager: PersistenceManager,
+        transactionManager: PlatformTransactionManager,
+    ): ExtractionRunStore = DrivineExtractionRunStore(persistenceManager, transactionManager)
+
+    /**
+     * Where `(proposition, run)` links go.
+     *
+     * Registered on the same two conditions as the run store: the graph backend, and
+     * `embabel.dice.extraction.runs.enabled=true`. It is reached only by an extraction that carries
+     * a run, and binding it is still the host's move: `IncrementalPropositionExtraction` takes it
+     * through `withRunLineage`, so having the bean in the context does not by itself make anything
+     * record lineage.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnProperty(
+        prefix = "embabel.dice.extraction.runs",
+        name = ["enabled"],
+        havingValue = "true",
+        matchIfMissing = false,
+    )
+    @ConditionalOnMissingBean(PropositionRunLinkStore::class)
+    fun drivinePropositionRunLinkStore(
+        persistenceManager: PersistenceManager,
+    ): PropositionRunLinkStore = DrivinePropositionRunLinkStore(persistenceManager)
+
+    /**
+     * The constraints and indexes the run store and the lineage relation need.
+     *
+     * Separate from [lineageRecordSchema] because that one is the projection and collector audit
+     * trail, which has its own labels and its own lifecycle. Both are ensured on startup by
+     * Drivine's schema manager.
+     *
+     * Behind the same `embabel.dice.extraction.runs.enabled` flag as the two stores, and for the
+     * reason the flag exists: this catalog is the part that writes to the host's database. Turning
+     * the flag on ensures three uniqueness constraints — on `ExtractionRun(contextId, runId)`,
+     * `ExtractionRunInvocation(contextId, runId, invocationIndex, attempt)` and
+     * `ExtractionRunTerminalWrite(contextId, runId)` — and five range indexes, four on
+     * `ExtractionRun` (`contextId`; `contextId, rootRunId`; `contextId, parentRunId`;
+     * `contextId, startedAtEpochSecond`) and one on `ExtractionRunInvocation(contextId, runId)`.
+     * Leaving it off keeps every one of them out of the catalog the schema manager sees.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnProperty(
+        prefix = "embabel.dice.extraction.runs",
+        name = ["enabled"],
+        havingValue = "true",
+        matchIfMissing = false,
+    )
+    fun extractionRunSchema(): SchemaCatalog = SchemaCatalog.of(ExtractionRunSchema.specs())
 
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")

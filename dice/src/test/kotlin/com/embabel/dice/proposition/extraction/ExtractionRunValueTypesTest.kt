@@ -234,6 +234,9 @@ class ExtractionRunValueTypesTest {
             ExtractionRunNotFoundException::class.java,
             ExtractionRunConflictException::class.java,
             com.embabel.dice.common.ExtractionRunTransitioned::class.java,
+            PropositionRunLinkStore::class.java,
+            InMemoryPropositionRunLinkStore::class.java,
+            PropositionRunLinkScopeException::class.java,
         ).forEach { type ->
             assertThat(isMarkedExperimental(type))
                 .describedAs("%s is marked experimental", type.simpleName)
