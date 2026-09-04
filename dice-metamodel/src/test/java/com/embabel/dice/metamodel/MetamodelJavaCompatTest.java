@@ -29,6 +29,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -177,6 +178,60 @@ class MetamodelJavaCompatTest {
                 GovernedTypeSelector.class,
                 int.class,
                 Object.class));
+    }
+
+    @Test
+    @DisplayName("the fluent stamping chain reads the same from Java")
+    void theFluentStampingChainReadsTheSameFromJava() {
+        SchemaAliases aliases = new SchemaAliases(
+                Map.of(), Map.of("Person", Map.of("age", Set.of("years"))));
+
+        MetamodelVersion chained = MetamodelVersion.stamping(goldenSchema())
+                .governedBy(Set.of("Person"))
+                .withAliases(aliases)
+                .stamp();
+
+        assertEquals(List.of("Person"), chained.getEntityTypeNames());
+        assertEquals(
+                MetamodelVersion.from(goldenSchema(), type -> type.getName().equals("Person"), aliases),
+                chained);
+    }
+
+    @Test
+    @DisplayName("a stamping finishes as a declaration from Java too")
+    void aStampingFinishesAsADeclarationFromJava() {
+        DeclaredSchema declared = MetamodelVersion.stamping(goldenSchema())
+                .governedBy(Set.of("Person"))
+                .declare();
+
+        assertEquals(List.of("Person"), declared.getVersion().getEntityTypeNames());
+        assertEquals(DeclaredSchema.from(goldenSchema(), type -> type.getName().equals("Person")), declared);
+    }
+
+    @Test
+    @DisplayName("a stamping step hands back a new value and leaves the old one alone")
+    void aStampingStepHandsBackANewValueAndLeavesTheOldOneAlone() {
+        MetamodelStamping base = MetamodelVersion.stamping(goldenSchema());
+
+        MetamodelStamping narrowed = base.governedBy(Set.of("Person"));
+
+        assertNotSame(base, narrowed);
+        assertEquals(List.of("Company", "Person"), base.stamp().getEntityTypeNames());
+        assertEquals(List.of("Person"), narrowed.stamp().getEntityTypeNames());
+    }
+
+    @Test
+    @DisplayName("the stamping constructor keeps a one-argument arity for Java")
+    void theStampingConstructorKeepsAOneArgumentArityForJava() throws Exception {
+        // @JvmOverloads on the data class constructor is what generates the shorter arities. A
+        // Java caller that builds a stamping directly links against this one, so losing it is a
+        // NoSuchMethodError rather than a compile error here.
+        assertNotNull(MetamodelStamping.class.getDeclaredConstructor(DataDictionary.class));
+
+        MetamodelStamping stamping = new MetamodelStamping(goldenSchema());
+
+        assertEquals(GovernedTypeSelector.ALL, stamping.getGovernedTypes());
+        assertEquals(SchemaAliases.NONE, stamping.getAliases());
     }
 
     @Test

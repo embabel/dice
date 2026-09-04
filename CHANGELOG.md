@@ -10,6 +10,31 @@ and the consumer PRs that deliver it).
 
 ### Added
 
+- A Kotlin DSL for stamping in `dice-metamodel`. **EXPERIMENTAL** (shape may change
+  before 1.0): `MetamodelVersion(dictionary) { }` and `DeclaredSchema(dictionary) { }`
+  take a receiver block, so the call site is a sequence of statements with no receiver
+  prefix and no chain. `governedBy` takes a selector, a set of names, or names written
+  out; `aliases { }` declares renames inline through `type(...)` and `property(...)`,
+  accumulating names so a rename chain keeps every older one. `@DslMarker` scopes the
+  builders, whose constructors are internal and whose lifetime is the block. What comes
+  back is immutable. The entries are `invoke` on each companion, the shape
+  `embabel-agent` uses for its configured constructors, and are `@JvmSynthetic`, so
+  Java sees only the chain.
+  **Compatibility: additive.** Two companion entries and two builders. The block
+  reaches the same stamp as the chain and as `MetamodelVersion.from`, asserted directly.
+
+- Chained stamping in `dice-metamodel`. **EXPERIMENTAL** (shape may change before
+  1.0): `MetamodelStamping`, reached through `MetamodelVersion.stamping(dictionary)`,
+  carries the dictionary, the governance selector and the aliases, and finishes as
+  either a stamp (`stamp()`) or a declaration (`declare()`). `governedBy` also takes
+  a set of type names directly. Every step returns a new stamping, so a partly built
+  one can be held and finished more than once.
+  **Compatibility: additive.** A new type and one new factory. The three
+  `MetamodelVersion.from` overloads and both `DeclaredSchema.from` overloads are
+  untouched, and the chain delegates to them, so both spellings produce the same
+  stamp. `MetamodelStamping` carries `@JvmOverloads` on its constructor, so Java
+  keeps the one, two and three-argument arities.
+
 - `dice-metamodel` module, first slice of schema versioning: `MetamodelVersion`
   content-hash stamping with per-type governance selection, the declared-schema
   opt-in contract, and the `MetamodelVersionStore` contract. Pure JVM.
