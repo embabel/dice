@@ -548,3 +548,83 @@ and the consumer PRs that deliver it).
     committed independently and stayed committed whatever happened next. Which exceptions trigger
     that rollback follows Spring's defaults: a `RuntimeException` or an `Error` rolls back and a
     checked exception commits, and custom rollback rules can override either behaviour.
+- Spring Boot auto-configuration for schema governance: `MetamodelAutoConfiguration` in
+  `dice-storage-autoconfigure`. It registers only when the application supplies a
+  `DeclaredSchemaSource` bean, and then wires the loop: version store, drift-report store,
+  observed-schema source, the two differ roles, quarantine policy, a `DriftSweepCapable`, the drift
+  runner, and a `SchemaCatalog` carrying the metamodel uniqueness constraints. Every wired
+  collaborator is `@ConditionalOnMissingBean`, so an application that defines its own keeps it.
+  Settings live under `embabel.dice.metamodel`: `enabled=false` removes the beans in one
+  environment while the declared-schema bean stays in place, and `drift.mode` is `off` or `observe`
+  (the default), which picks whether a `DriftCheckRunner` bean is registered.
+  Backend selection follows `embabel.dice.store.type`, the same switch the proposition store reads.
+  Under `graph` the Drivine/Neo4j version store, drift log and observed-schema source are wired.
+  Under the default in-memory backend an application that declares a schema still starts with no
+  `PersistenceManager` anywhere: it gets `InMemoryMetamodelVersionStore`, the differ, the policy and
+  the sweep, and it gets no drift log, no observed-schema source and no runner, because there is no
+  live graph to observe.
+  Nothing in the wiring runs a check or moves a proposition. A check happens when the application
+  calls `DriftCheckRunner.run()`, and it reads, compares and writes a `DriftReport` and touches no
+  proposition. Quarantine happens when the application calls `DriftSweepCapable.sweep` on a diff it
+  decided to act on; there is no scheduler and no property that makes DICE sweep by itself. The
+  wired sweep announces each status transition to every `DiceEventListener` bean on the context
+  through a `CompositeDiceEventListener`, so a registered `ProjectionLineageStaleCascade` marks the
+  projection records derived from a quarantined proposition stale.
+  **Compatibility: additive.** No symbol that exists on the previous release changes shape or
+  behavior. An application with no `DeclaredSchemaSource` bean sees no change at all. One that
+  declares a schema and selects the graph backend needs the metamodel constraints, which the
+  module's `SchemaCatalog` bean supplies, and a `PersistenceManager` on the context; a
+  `PropositionStore` brings the sweep with it, and its absence leaves the rest of the loop working.
+
+- An operator surface for schema governance. **EXPERIMENTAL** (shape may change before 1.0) — every new public type this change adds is marked `@ApiStatus.Experimental`, the way the extraction stack marks its own unsettled types. Opt-in twice over: the service is wired when a `DeclaredSchemaSource` bean is present, and the HTTP routes appear only when the host also imports `DiceRestConfiguration`.
+  Until now the loop produced two kinds of inspectable state — drift reports and quarantined propositions — and offered no way to reach either outside a
+  debugger. `GovernanceOperationsService` in `dice` is the one way in: `latestReports` and
+  `reportsInContext` read the drift log, `currentDeclaredVersion` reports the declaration in force
+  along with whether it has been stamped and which version the last completed sweep reconciled
+  against, `runCheck` runs a check, and `releaseProposition` lifts one quarantine hold.
+  `GovernanceController` puts it on HTTP under `/api/v1/metamodel` and `GovernanceTools` exposes the
+  same five operations as `@LlmTool` agent tools; both call the one service, so the two front ends
+  cannot answer differently.
+  Reads are bounded: `limit` defaults to 20, must fall between 1 and 200, and a value outside that
+  answers `400` naming the bound. `since` takes an ISO-8601 instant. A check reports and moves no
+  proposition, so its response carries the full impact a sweep would evaluate — both drift sets, the
+  declaration's own movement in `declaredDiff`, and the two merged into `sweepImpact`. A release is
+  scoped by the context in its path before it writes, so a proposition in another context answers
+  `404` untouched; a successful release restores the status the proposition carried before quarantine
+  and answers the state it is in afterwards.
+  Wiring: `MetamodelAutoConfiguration` registers the service, under the governance conditions plus a
+  `DriftReportStore`, `DriftCheckRunner`, `DriftSweepCapable` and `PropositionStore` on the context.
+  It is `@ConditionalOnMissingBean`, so an application that defines its own keeps it and both front
+  ends run through that one. Building the context stamps nothing, writes no report and moves no
+  proposition.
+  `GovernanceController` has no auto-configuration. It joins `DiceRestConfiguration`, the single
+  `@Import` a host uses to open any DICE REST surface, and switches itself on when a
+  `GovernanceOperationsService` is there to answer the routes — so the governance endpoints follow
+  the one REST activation idiom the proposition-pipeline, memory and discovery controllers already
+  follow. A host that imports DICE REST and declared no schema starts clean and resolves zero
+  `/api/v1/metamodel` URLs; a host that wants the loop with no endpoint open leaves the import out.
+  A consumer that declares its own `GovernanceController` bean keeps it, and the shipped one backs
+  off. Note that `GovernanceController` still ships in the `dice` jar, so a consumer contract test
+  that scans the classpath for `@RestController` classes sees its six routes whether or not any
+  context registers them.
+  `GovernanceTools` is constructed by the host — `GovernanceTools.asTools(service)` — the way every
+  other DICE tool object is. No DICE auto-configuration registers a tool bean.
+  Release works one proposition at a time, by design. Nothing in the model ties a quarantined
+  proposition back to the report whose application held it: a `DriftReport` carries no identity a
+  reason could name, and the reason a sweep writes names the two schemas and nothing about the check.
+  Quarantine itself is applied by exactly one thing, a host calling `DriftSweepCapable.sweep`; no
+  schedule and no property does it. See `docs/design/metamodel-wiring.md`.
+  **Compatibility: additive.** New types only; no existing symbol changes shape or behavior, and an
+  application with no `DeclaredSchemaSource` bean sees no change. Nothing appears on an application's
+  HTTP surface until it imports `DiceRestConfiguration`.
+
+### Fixed
+
+- `MetamodelAutoConfiguration` and the metamodel wiring tests referenced the drift quarantine types
+  at their former home in `com.embabel.dice.metamodel(.support)`. They moved to
+  `com.embabel.dice.spi` in the `dice` module when quarantine was given its own
+  `PropositionStatus.QUARANTINED`, and the wiring was left pointing at the old package, so
+  `dice-storage-autoconfigure` did not compile from clean. The affected tests also still asserted
+  `PropositionStatus.STALE` after a drift sweep. Imports corrected and the post-sweep assertions
+  moved to `QUARANTINED`. **Compatibility: additive.** No shipped symbol changes; the module now
+  builds from a clean tree.

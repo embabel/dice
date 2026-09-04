@@ -94,7 +94,9 @@ graph, and record what you find. The drift check sits here, and it is all `Drift
 **Quarantine.** Act on a lossy change by marking the affected propositions stale, which is a
 different thing from deleting them. A host does this through `DriftSweepCapable`, at a moment it
 chooses. This slice adds the contracts and a reference implementation; a durable store's own
-implementation, and any wiring, come later.
+implementation comes later. In a Boot app the wiring is described in
+[metamodel-wiring.md](metamodel-wiring.md). Nothing schedules a check, and nothing sweeps unless a
+host calls it.
 
 Each tier builds on the one below it, and each is useful on its own. You can stamp for a year
 without detecting, and detect for a year without quarantining. Rejecting undeclared types at write

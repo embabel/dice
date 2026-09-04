@@ -338,7 +338,9 @@ schema changes, so stamp with the `GovernedTypeSelector` first (or take both sta
 `DeclaredSchema.from(...)`) and use the `MetamodelVersion` overload.
 
 `StructuralMetamodelDiffer` is stateless and thread-safe; one shared instance is fine. This module
-has no Spring wiring, so it's an ordinary constructor call until the autoconfigure slice arrives.
+has no Spring wiring, so it's an ordinary constructor call. In a Boot app,
+`dice-storage-autoconfigure` registers one, resolvable as both a `MetamodelDiffer` and a
+`DeclaredObservedDiffer`; see [metamodel-wiring.md](metamodel-wiring.md).
 
 ## What comes next
 

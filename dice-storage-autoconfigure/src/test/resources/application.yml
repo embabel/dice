@@ -1,0 +1,21 @@
+spring:
+  main:
+    allow-bean-definition-overriding: true
+
+# Drivine datasource for the metamodel integration test. Host, port and password are replaced at
+# runtime by Neo4jTestContainer via @DynamicPropertySource; the rest has to be here because
+# Drivine's ConnectionProperties refuses to bind with any of its fields missing.
+database:
+  datasources:
+    neo:
+      host: localhost
+      port: 7687
+      username: neo4j
+      password: test
+      type: NEO4J
+      database-name: neo4j
+
+logging:
+  level:
+    org.drivine: INFO
+    com.embabel.dice.storage.autoconfigure: DEBUG

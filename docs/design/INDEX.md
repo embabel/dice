@@ -80,6 +80,9 @@ you need.
 - [metamodel-drift.md](metamodel-drift.md) — checking a live graph against a declared schema: the
   runner's declare, stamp, observe, diff, report sequence, the bounds on every read of the drift
   log, and quarantine, which marks affected propositions stale rather than deleting them.
+- [metamodel-wiring.md](metamodel-wiring.md) — turning governance on in a Spring Boot host: the
+  opt-in is supplying a `DeclaredSchemaSource` bean, the escalation tier is one property, and the
+  default tier reports drift without touching any proposition.
 
 ## Modules
 
@@ -90,9 +93,9 @@ dependency map. Quick pointer to where each is documented:
 | --- | --- |
 | `dice` (core) | most notes above — propositions, pipeline, projections, hygiene, retrieval |
 | `dice-storage` | [durable-storage.md](durable-storage.md), [graph-projection.md](graph-projection.md), [prolog-projection.md](prolog-projection.md) |
-| `dice-storage-autoconfigure` | [durable-storage.md](durable-storage.md) |
+| `dice-storage-autoconfigure` | [durable-storage.md](durable-storage.md), [metamodel-wiring.md](metamodel-wiring.md) |
 | `dice-ingestion` | [ingestion.md](ingestion.md) |
 | `dice-report` | [report.md](report.md) |
-| `dice-metamodel` | [metamodel-versioning.md](metamodel-versioning.md), [metamodel-diff.md](metamodel-diff.md), [metamodel-drift.md](metamodel-drift.md) |
+| `dice-metamodel` | [metamodel-versioning.md](metamodel-versioning.md), [metamodel-diff.md](metamodel-diff.md), [metamodel-drift.md](metamodel-drift.md), [metamodel-wiring.md](metamodel-wiring.md) |
 | `dice-integration-tests` | not separately documented — exercises the above end-to-end |
 </content>

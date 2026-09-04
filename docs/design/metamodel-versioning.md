@@ -172,9 +172,9 @@ class MyAppDeclaredSchemaSource(
 }
 ```
 
-Versioning starts here: with no declared schema, nothing is stamped. The Spring wiring that lands
-in a later slice activates only when a `DeclaredSchemaSource` bean is present, so an application
-that hasn't decided what it governs is left alone.
+Versioning starts here: with no declared schema, nothing is stamped. The Spring wiring activates
+only when a `DeclaredSchemaSource` bean is present, so an application that hasn't decided what it
+governs is left alone. See [metamodel-wiring.md](metamodel-wiring.md).
 
 ## Declared renames
 
