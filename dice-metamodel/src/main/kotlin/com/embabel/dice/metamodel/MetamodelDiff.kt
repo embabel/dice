@@ -500,6 +500,22 @@ class MetamodelDiff(
     val modifiedEntityTypes: List<MetamodelChange.EntityTypeModified>
         get() = changes.filterIsInstance<MetamodelChange.EntityTypeModified>()
 
+    /**
+     * Every [MetamodelChange.EntityTypeRenamed] entry, whole rather than as names: a rename has two
+     * of them, and a caller resolving old data against the new schema needs the pairing.
+     * [touchedEntityTypes] is where both names arrive flattened.
+     */
+    val renamedEntityTypes: List<MetamodelChange.EntityTypeRenamed>
+        get() = changes.filterIsInstance<MetamodelChange.EntityTypeRenamed>()
+
+    /** Every [MetamodelChange.EntityTypeAliasesChanged] entry. */
+    val entityTypeAliasChanges: List<MetamodelChange.EntityTypeAliasesChanged>
+        get() = changes.filterIsInstance<MetamodelChange.EntityTypeAliasesChanged>()
+
+    /** Every [MetamodelChange.PropertyRenamed] entry. */
+    val renamedProperties: List<MetamodelChange.PropertyRenamed>
+        get() = changes.filterIsInstance<MetamodelChange.PropertyRenamed>()
+
     /** Every [MetamodelChange.PropertySignatureChanged] entry. */
     val propertySignatureChanges: List<MetamodelChange.PropertySignatureChanged>
         get() = changes.filterIsInstance<MetamodelChange.PropertySignatureChanged>()

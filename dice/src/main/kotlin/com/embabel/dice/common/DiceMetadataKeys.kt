@@ -36,8 +36,8 @@ object DiceMetadataKeys {
     /**
      * Human-readable reason a proposition was quarantined due to schema drift.
      *
-     * The presence of this key (alongside `STALE` status) means the proposition was
-     * quarantined by a drift policy rather than ordinary confidence decay.
+     * The presence of this key (alongside `PropositionStatus.QUARANTINED`) means the proposition was
+     * quarantined by a drift policy. Cleared when the proposition is released via `releaseFromQuarantine`.
      */
     const val QUARANTINE_REASON = "dice.metamodel.quarantine.reason"
 }

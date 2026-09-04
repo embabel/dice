@@ -19,13 +19,26 @@ stateDiagram-v2
     ACTIVE --> CONTRADICTED : a newer fact clashes with it (revision or ContradictionResolutionPass)
     ACTIVE --> SUPERSEDED : folded into a higher-level abstraction (AbstractionPass)
     ACTIVE --> STALE : DecayStatusPolicy.evaluate — utility drops below stalenessThreshold
+    ACTIVE --> QUARANTINED : DriftSweepCapable.sweep — schema drift detected (see metamodel-drift.md)
+    STALE --> QUARANTINED : DriftSweepCapable.sweep — schema drift detected (see metamodel-drift.md)
+    CONTRADICTED --> QUARANTINED : DriftSweepCapable.sweep — schema drift detected (see metamodel-drift.md)
+    SUPERSEDED --> QUARANTINED : DriftSweepCapable.sweep — schema drift detected (see metamodel-drift.md)
     STALE --> ACTIVE : DecayStatusPolicy.evaluate — utility recovers above recoveryThreshold
+    QUARANTINED --> ACTIVE : releaseFromQuarantine — operator releases the hold (when prior status was ACTIVE)
+    QUARANTINED --> STALE : releaseFromQuarantine — operator releases the hold (when prior status was STALE)
+    QUARANTINED --> CONTRADICTED : releaseFromQuarantine — operator releases the hold (when prior status was CONTRADICTED)
+    QUARANTINED --> SUPERSEDED : releaseFromQuarantine — operator releases the hold (when prior status was SUPERSEDED)
     STALE --> [*] : deliberately retired by hard delete
     CONTRADICTED --> [*] : kept for audit, no auto-revival
     SUPERSEDED --> [*] : kept for audit, no auto-revival
+    QUARANTINED --> [*] : deliberately retired by hard delete
     note right of ACTIVE
         pinned=true: immune to STALE transition
         and contradiction demotion
+    end note
+    note right of QUARANTINED
+        immune to decay and contradiction;
+        exited only by releaseFromQuarantine
     end note
 ```
 
@@ -33,7 +46,12 @@ What triggers each transition:
 - **ACTIVE → CONTRADICTED**: `LlmPropositionReviser` at ingest time, or `ContradictionResolutionPass` during a dream-loop cycle.
 - **ACTIVE → SUPERSEDED**: `AbstractionPass` during a dream-loop cycle, when a cluster of facts is folded into a higher-level proposition.
 - **ACTIVE → STALE**: `StatusTransitionPolicy.evaluate` (default `DecayStatusPolicy`), run per-proposition by `DecayManager`/`DecaySweeper` (`sweep` / `sweepAll` / `tick`), or by a mark-and-sweep collector run.
+- **ACTIVE → QUARANTINED**: `DriftSweepCapable.sweep` (default `PropositionStoreDriftSweep`), run by `DriftCheckRunner` when schema drift is detected, evaluated with `DriftQuarantinePolicy`.
+- **STALE → QUARANTINED**: `DriftSweepCapable.sweep` (default `PropositionStoreDriftSweep`), run by `DriftCheckRunner` when schema drift is detected, evaluated with `DriftQuarantinePolicy`.
+- **CONTRADICTED → QUARANTINED**: `DriftSweepCapable.sweep` (default `PropositionStoreDriftSweep`), run by `DriftCheckRunner` when schema drift is detected, evaluated with `DriftQuarantinePolicy`.
+- **SUPERSEDED → QUARANTINED**: `DriftSweepCapable.sweep` (default `PropositionStoreDriftSweep`), run by `DriftCheckRunner` when schema drift is detected, evaluated with `DriftQuarantinePolicy`.
 - **STALE → ACTIVE**: the same `DecayStatusPolicy.evaluate` call, when a proposition's decayed utility recovers back above `recoveryThreshold`. The reviser itself never flips status — `reinforceProposition` only boosts confidence and resets the decay clock, which is what lets the next sweep's utility calculation cross back over the threshold.
+- **QUARANTINED → ACTIVE/STALE/CONTRADICTED/SUPERSEDED**: `DriftSweepCapable.releaseFromQuarantine` — operator releases the hold, restoring the status the proposition carried before quarantine (stored in `DriftQuarantineKeys.PREVIOUS_STATUS`).
 A projected proposition keeps its ACTIVE status so it stays retrievable — projection records the
 lineage on the graph side rather than moving the proposition off ACTIVE. `PROMOTED` is a reserved
 status in the enum for a projected fact, and the decay sweep and collector already exclude it from

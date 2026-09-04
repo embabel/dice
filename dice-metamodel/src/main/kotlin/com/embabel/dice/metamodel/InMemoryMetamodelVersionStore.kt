@@ -16,17 +16,23 @@
 package com.embabel.dice.metamodel
 
 /**
- * Reference [MetamodelVersionStore] that keeps stamps in a list.
+ * Reference [MetamodelVersionStore] that keeps stamps in a list, and the reference reading of
+ * [SweptBaselineStore]'s swept-state semantics.
  *
- * It is the executable statement of what the contract means, so a durable backend can be held to
+ * It is the executable statement of what both contracts mean, so a durable backend can be held to
  * the same suite of tests. It also lets a host stamp and compare schemas before it has a database,
  * which is most of what the first tier of versioning is for.
  *
  * Nothing here survives the JVM, and two instances know nothing about each other.
  */
-class InMemoryMetamodelVersionStore : MetamodelVersionStore {
+class InMemoryMetamodelVersionStore : SweptBaselineStore {
 
     private val saved = mutableListOf<MetamodelVersion>()
+
+    // Tracked apart from `saved`'s write order on purpose: the reconciled baseline a sweep last
+    // completed against is a *pointer*, one per schema, that moves only on markSwept, while
+    // versionHistory never forgets a stamp's original position. See sweptVersion's doc.
+    private val swept = mutableMapOf<String, MetamodelVersion>()
 
     /**
      * Upsert on `(schemaName, contentHash)`. A stamp that is already there keeps its place in the
@@ -50,4 +56,21 @@ class InMemoryMetamodelVersionStore : MetamodelVersionStore {
 
     override fun versionHistory(schemaName: String): List<MetamodelVersion> =
         synchronized(saved) { saved.filter { it.schemaName == schemaName }.reversed() }
+
+    /**
+     * Also saves [version] into the ordinary history, so a caller that only ever calls [markSwept]
+     * for a brand-new stamp still gets it stored. The reconciled-baseline pointer itself lives in
+     * [swept], last-write-wins per schema, which is what lets it answer correctly after a schema
+     * cycles back to an earlier stamp.
+     *
+     * Marking is always explicit. [saveVersion] leaves [swept] alone however many times it runs, so
+     * no amount of stamping ever looks like a finished sweep.
+     */
+    override fun markSwept(version: MetamodelVersion) {
+        saveVersion(version)
+        synchronized(swept) { swept[version.schemaName] = version }
+    }
+
+    override fun sweptVersion(schemaName: String): MetamodelVersion? =
+        synchronized(swept) { swept[schemaName] }
 }

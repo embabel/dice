@@ -205,10 +205,15 @@ data class DefaultDreamLoopOrchestrator(
      *
      * When two passes each hand back a copy of the same proposition with a different target status,
      * the order they happen to appear in the flat-mapped list must not decide what gets persisted.
-     * We pick a deterministic winner by status strength: a contradiction (the belief is now wrong)
-     * outranks a supersession (still true, just rolled up into an abstraction), which outranks a
-     * decay-to-STALE, and any retirement outranks leaving it ACTIVE. Freshly created propositions
-     * (new ids, e.g. abstractions) never collide, so they pass through untouched.
+     * We pick a deterministic winner by status strength: a quarantine (schema governance is holding
+     * this one, and only an explicit release lifts it) outranks a contradiction (the belief is now
+     * wrong), which outranks a supersession (still true, just rolled up into an abstraction), which
+     * outranks a decay-to-STALE, and any retirement outranks leaving it ACTIVE. Freshly created
+     * propositions (new ids, e.g. abstractions) never collide, so they pass through untouched.
+     *
+     * No dream-loop pass quarantines anything, so QUARANTINED reaches this ranking only if a
+     * consumer pass produces one. It ranks top because letting an automatic retirement overwrite a
+     * governance hold would drop the quarantine reason and the recorded prior status with it.
      */
     private fun reconcileSaves(toSave: List<Proposition>): List<Proposition> =
         toSave
@@ -216,6 +221,7 @@ data class DefaultDreamLoopOrchestrator(
             .map { (_, copies) -> copies.maxByOrNull { statusStrength(it.status) }!! }
 
     private fun statusStrength(status: PropositionStatus): Int = when (status) {
+        PropositionStatus.QUARANTINED -> 5
         PropositionStatus.CONTRADICTED -> 4
         PropositionStatus.SUPERSEDED -> 3
         PropositionStatus.STALE -> 2

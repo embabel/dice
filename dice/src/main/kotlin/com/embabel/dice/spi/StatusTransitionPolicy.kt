@@ -64,6 +64,13 @@ fun interface StatusTransitionPolicy {
  * oscillation around a single cut-off. Pinned propositions are sweep-exempt and always
  * return `null`.
  *
+ * So are quarantined ones. [PropositionStatus.QUARANTINED] means schema governance is holding a
+ * proposition until a person looks at it, and utility says nothing about whether the schema change
+ * that stranded it has been dealt with. A confident, recently-reinforced proposition can be
+ * quarantined, so a decay sweep that judged it on utility alone would hand it straight back to
+ * ACTIVE, the next drift sweep would quarantine it again, and the two sweeps would take turns
+ * forever. Release is the one way out.
+ *
  * Utility composite:
  * ```
  * utility = effectiveConfidence(kMultiplier)
@@ -98,6 +105,7 @@ class DecayStatusPolicy(
 
     override fun evaluate(proposition: Proposition): PropositionStatus? {
         if (proposition.pinned) return null
+        if (proposition.status == PropositionStatus.QUARANTINED) return null
         val utility = proposition.effectiveConfidence(kMultiplier) *
             (1 + importanceWeight * proposition.importance) *
             (1 + reinforceWeight * kotlin.math.ln(1.0 + proposition.reinforceCount.toDouble()))

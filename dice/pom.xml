@@ -26,6 +26,18 @@
             <scope>provided</scope>
         </dependency>
 
+        <!--
+            Schema governance: MetamodelDiff, MetamodelChange, DeclaredSchema, PropertySignature.
+            The drift quarantine policy and the sweep contract live here in dice core, beside the
+            other proposition lifecycle policies, and they read a diff to decide what a schema
+            change stranded. dice-metamodel itself is a leaf over the agent DataDictionary and
+            cannot see the proposition model at all, which is what keeps the direction one-way.
+        -->
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice-metamodel</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>com.embabel.agent</groupId>
             <artifactId>embabel-agent-rag-core</artifactId>

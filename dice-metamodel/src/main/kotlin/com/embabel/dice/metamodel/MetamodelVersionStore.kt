@@ -103,3 +103,71 @@ interface MetamodelVersionStore {
     fun findVersion(schemaName: String, contentHash: String): MetamodelVersion? =
         versionHistory(schemaName).firstOrNull { it.contentHash == contentHash }
 }
+
+/**
+ * A [MetamodelVersionStore] that can also remember which declaration a drift sweep last finished
+ * reconciling against.
+ *
+ * Split off from [MetamodelVersionStore] because it is a genuinely harder promise: a store keeps
+ * this pointer only when it can move it exactly once per completed sweep, and a store that can't do
+ * that keeps the plain version contract and implements nothing here. `DriftCheckRunner` reads the
+ * baseline through this interface when its store offers one, the same way DICE's other opt-in
+ * capabilities work, and reports no declared-vs-previous comparison at all when the store doesn't.
+ * Silence about a baseline nobody tracks is the honest answer; guessing one from write order is how
+ * a dry, scoped, or interrupted write gets mistaken for a finished sweep.
+ *
+ * Neither method has a default body, and that is the whole point. A forwarding default would make
+ * every store look like it tracked a baseline while answering with write order, so a host would
+ * read a confident wrong comparison and never know.
+ */
+interface SweptBaselineStore : MetamodelVersionStore {
+
+    /**
+     * The version the last COMPLETED drift sweep reconciled against — the baseline for the next
+     * declared-vs-previous comparison.
+     *
+     * This is a different question from [latestVersion], which answers "what's the newest stamp by
+     * write order" and gets the wrong answer once a declaration cycles back to a stamp that already
+     * exists: [saveVersion]'s own contract says a re-saved stamp keeps its *original* place in write
+     * order, so after a schema goes `A` → `B` → `A` again, [latestVersion] still answers `B`, even
+     * though the schema is back to declaring `A`. A drift check that diffed against [latestVersion]
+     * would compare the reverted `A` against `B` — the wrong pair — and could miss a lossy change
+     * that came back. [sweptVersion] tracks the reconciled baseline itself, moved forward only by
+     * [markSwept], so it always answers the version a sweep genuinely finished comparing against,
+     * whatever order the schema's stamps arrived in.
+     *
+     * [saveVersion] must never move this pointer. Stamping is a history write that happens on every
+     * drift check, and a drift check reports without changing a proposition, so treating a stamp as
+     * a sweep would retire a lossy declared change nobody had acted on yet.
+     *
+     * @param schemaName The schema to look up.
+     * @return The reconciled baseline, or `null` if no sweep has ever completed for it.
+     */
+    fun sweptVersion(schemaName: String): MetamodelVersion?
+
+    /**
+     * Record [version] as the new reconciled baseline for its schema.
+     *
+     * **A completed sweep is the only thing that may move the baseline.** Call this after a
+     * deliberate sweep has handled every candidate it was going to touch, across the whole schema,
+     * and nowhere else. Three writes look tempting and are all wrong:
+     *
+     * - a **drift check**, which reports and touches no proposition, so the lossy declared change it
+     *   found is still waiting for somebody to act on it;
+     * - a sweep **scoped to one context**, which reconciled that context alone and would strand
+     *   every other context against a change nothing ever swept them for;
+     * - an **interrupted** sweep, where marking before the last candidate is handled makes a crash
+     *   look like a finished reconciliation.
+     *
+     * Marking after a sweep that found nothing to quarantine is correct: "nothing needed doing" is a
+     * completed reconciliation against that declaration.
+     *
+     * Sweeps of one schema must not overlap. The store records whichever completion arrives last,
+     * so a sweep that started against an older declaration and finished after a newer one would
+     * move the baseline back to the older stamp, and the next check would report changes that were
+     * already swept. The call site runs sweeps of a schema one at a time.
+     *
+     * @param version The version to record as reconciled.
+     */
+    fun markSwept(version: MetamodelVersion)
+}

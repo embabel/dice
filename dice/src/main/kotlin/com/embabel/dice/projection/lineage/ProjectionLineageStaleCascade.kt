@@ -24,10 +24,15 @@ import org.slf4j.LoggerFactory
 /**
  * Listens for proposition status changes and marks the corresponding projection records stale.
  *
- * When a proposition moves to a terminal status (SUPERSEDED, CONTRADICTED, or STALE), every
- * [ProjectionRecord] derived from it is flipped to [ProjectionLifecycle.STALE] in the
+ * When a proposition moves to a terminal status (SUPERSEDED, CONTRADICTED, STALE, or QUARANTINED),
+ * every [ProjectionRecord] derived from it is flipped to [ProjectionLifecycle.STALE] in the
  * [recordStore]. Non-terminal transitions (ACTIVE, PROMOTED) are ignored, as is any event
  * type other than [PropositionStatusChanged].
+ *
+ * QUARANTINED belongs in that list for the same reason the other three do: the proposition has left
+ * ordinary use, so anything projected from it is no longer backed by a live belief. A release moves
+ * it back to a non-terminal status and fires its own event, which this cascade ignores; re-deriving
+ * the projection is the projector's job either way.
  *
  * Wire this up alongside your collector — either directly or as part of a composite listener.
  * Wrapping it in a safe listener is a good idea so a fault here can't abort the sweep that
@@ -56,6 +61,7 @@ class ProjectionLineageStaleCascade(
             PropositionStatus.SUPERSEDED,
             PropositionStatus.CONTRADICTED,
             PropositionStatus.STALE,
+            PropositionStatus.QUARANTINED,
         )
     }
 }
