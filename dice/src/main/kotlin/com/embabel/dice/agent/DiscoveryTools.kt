@@ -18,6 +18,7 @@ package com.embabel.dice.agent
 import com.embabel.agent.api.annotation.LlmTool
 import com.embabel.agent.api.tool.Tool
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.agent.DiscoveryTools.Companion.asTools
 import com.embabel.dice.projection.lineage.ProjectionRecordStore
 import com.embabel.dice.projection.memory.CollectorRunner
 import com.embabel.dice.query.discovery.CollectorDryRunDto
@@ -25,8 +26,8 @@ import com.embabel.dice.query.discovery.DiscoveryQuery
 import com.embabel.dice.query.discovery.ProjectionHealthDto
 import com.embabel.dice.query.discovery.RetrievalMode
 import com.embabel.dice.query.discovery.RetrievalRouter
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.slf4j.LoggerFactory
+import tools.jackson.module.kotlin.jacksonObjectMapper
 
 /**
  * LLM-invocable tools exposing the discovery surface — proposition query, graph path, why-explain,
