@@ -614,20 +614,114 @@ once, is fine. Two concurrent checks of the same schema don't corrupt anything, 
 its own complete snapshot, but they duplicate work; serialize at the scheduling layer if that
 matters.
 
+## Persistence
+
+Both storage-side contracts are implemented in `dice-storage`, against Neo4j via Drivine.
+
+`DrivineDriftReportStore` keeps each check as a `(:MetamodelDriftReport)` node, MERGEd on the
+natural key `(schemaName, versionHash, capturedAt, contextKey)`, where `contextKey` is `global` for
+an unscoped check and `ctx:<id>` for a scoped one, because a Cypher MERGE cannot key on a null. The
+prefix makes the encoding injective: `ContextId` accepts any non-blank string, so an unprefixed id
+plus a bare sentinel would let a context named after the sentinel share a key with the global bucket
+and rewrite its scope. Each of the three bounded reads is its own statement with its scope in the
+`WHERE` clause and the `LIMIT` after it. Filtering a page that has already been cut applies the limit
+ahead of the scope, and can report zero global drift while plenty sits in the store. Reports come
+back newest first by capture instant, compared to the nanosecond so a `since` window stays exact,
+with a per-schema counter breaking exact ties so a limited page is repeatable.
+
+`DrivineObservedSchemaSource` takes the snapshot. Unscoped, it reads the database's own catalogue
+(`db.labels()`, `db.relationshipTypes()`) **and** asks dice's own propositions for the distinct
+`Mention.type` values they carry, reporting those in their own set; scoped to a context, it derives
+entity types from that context's mentions and relationship types from the `sourcePropositions` each
+projected edge carries. Either way
+it subtracts dice's own storage: the proposition, mention, provenance, lineage, collector-trace and
+metamodel node labels, and the `HAS_MENTION`/`DERIVED_FROM`-style edges. That subtraction is
+load-bearing. Stamping a version and writing a report both add nodes to the graph the next check
+looks at, so without it every run reports the previous run as drift.
+
+The second question the unscoped path asks is there because a mention type reaches `db.labels()`
+only once something projects a node for it. An extraction that recorded `Ghost` and produced no
+`(:Ghost)` node left a graph full of undeclared data looking clean to every whole-graph check, while
+the context-scoped check on the same data reported it. The global query holds both ends to dice's
+own shape, so mention types come off dice's extraction records and a domain node wearing
+`:Proposition` contributes nothing.
+
+Ownership goes by node shape, so that a domain type called `Source` stays visible. A dice label is
+excluded only while every node carrying it matches dice's shape for it, and a dice relationship type
+only while no edge of that type carries `sourcePropositions`, the marker the graph writer stamps on
+every edge it projects from domain data. The context-scoped query selects on the same marker.
+
+The shapes are derived, in `DiceOwnedSchema`, from the storage definitions themselves. A node
+fragment's shape is every constructor parameter dice's writer cannot leave out — declared non-null
+with no default — so `Source` is `key` **and** `kind`, and a host's own `(:Source {key: ...})` stays
+observable where a key-only rule would have hidden it. A Cypher-backed store's shape is the union of
+the properties its uniqueness constraints name, which is what it MERGEs on. Adding a label to
+`MetamodelSchema`, `CollectorTraceSchema` or `LineageSchema` carries its shape along with it, and an
+integration test writes through the real stores and asserts dice never reports its own nodes.
+
+Three limits follow. Ownership is decided per label, so a graph mixing a domain `Source` with dice's
+own reports `Source` every run until the type is declared. Deciding it costs a scan of dice's own
+labels on each unscoped observation; context-scoped checks don't pay it. And a domain node carrying
+every property dice writes for a label they share is indistinguishable from dice's own; closing that
+last case needs an ownership marker written at persistence time, which is a data migration for
+existing graphs.
+
+`observe` runs its whole set of queries — bookkeeping-exclusion probes included — inside one Neo4j
+transaction, so the several reads that get assembled into one `ObservedSchema` come from a single
+transaction's view of the graph, closing the case where a concurrent write landing between separately
+transacted queries produces a combined observation the graph never actually held at any instant.
+Neo4j's default isolation level is read committed, and that guarantee holds per row, leaving both a
+statement and a transaction free to see the graph shift underneath them: a write that commits mid-statement can still land in that same statement's own
+result set, so a single statement can itself see a non-repeatable, missing, or double read of data
+it touches more than once while it runs, and its rows are not guaranteed to reflect one coherent
+instant of the graph, on top of the residual race between two different statements inside the same
+transaction. This narrows the exposure to the span of one transaction and rules out reads that were
+never even in the same transaction, and no more than that; the method's own KDoc states the residual
+plainly.
+
+The observation also tags what kind of name its entity types are: `ObservedSchema.EntityTypeBasis`,
+`GRAPH_LABELS` for the unscoped path and `MENTION_TYPES` for the context-scoped one. The two answer
+different questions. A Neo4j label carries a type's whole declared hierarchy — `Person` with parent
+`Agent` puts both labels on every `Person` node — so the differ's declared side for a `GRAPH_LABELS`
+observation widens to every label a declared type carries. `Mention.type` is domain data an extractor
+wrote, and a governed type's inherited label has no bearing on it, so the differ's declared side for a
+`MENTION_TYPES` observation stays on declared type names and their declared former names, with no
+widening. Tagging the two the same way let a mention typed `Agent` conform under a schema that only
+governs `Person` with parent `Agent` — an undeclared mention type escaping detection by riding a
+governed type's parent label — until the observation itself carried which comparison it needs.
+
+An unscoped observation holds both kinds of name, in two sets. `entityTypeNames` carries the labels
+and states its basis as before; `ObservedSchema.mentionTypeNames` carries the mention types, needs no
+tag, and is always judged by the `MENTION_TYPES` rule. `StructuralMetamodelDiffer.diffAgainstObserved`
+compares each set with the declared side its own rule calls for, and unions what drifted. One set for both would have
+to pick one rule: picking the label rule reopens exactly what the mention rule closes — a mention
+typed `Agent` passing under a schema that governs `Person` with parent label `Agent` and declares no
+`Agent` type — and picking the mention rule reports every inherited parent label in the graph as
+drift. An unscoped check and a context-scoped one now read mention types the same strict way. Any
+source that can only reach a label catalogue leaves `mentionTypeNames` empty, and the comparison is
+what it always was.
+
+Hosts declare the constraints these stores need (see `MetamodelSchema`); a MERGE is race-free only
+under a uniqueness constraint on the key it merges on.
+
 ## What comes next
 
-`DriftReportStore` and `ObservedSchemaSource` are contracts here with no implementation yet. They
-need a Drivine-backed report store — one that persists a report's `declaredDiff` alongside its drifted
-type sets — and an observer that asks Neo4j for its distinct labels and relationship types.
+`DriftReportStore` and `ObservedSchemaSource` now have Drivine implementations in `dice-storage`.
 
-`DriftSweepCapable` and `SweptBaselineStore` are the same: contracts with an in-memory reference
-implementation and no durable one. Until the graph-backed store implements `SweptBaselineStore`, a
-Drivine-backed host gets the graph-truth half of a report and a `null` declared comparison. Until it
-implements `DriftSweepCapable`, a host sweeps through `PropositionStoreDriftSweep`, which is correct
-and does its filtering in the JVM.
+`SweptBaselineStore` now has a durable implementation: `DrivineMetamodelVersionStore` declares it and
+keeps the reconciled baseline as `sweptContentHash` on the schema's own `(:MetamodelSchemaCounter)`
+node, moved by `markSwept` alone. A Drivine-backed host therefore gets the declared-vs-previous half
+of a report as soon as its first sweep completes, and the shared contract suite
+(`AbstractMetamodelVersionStoreContractTest`) runs against the graph store and the in-memory
+reference alike.
 
-There is no Spring configuration in `dice-metamodel` either, so a runner is an ordinary constructor
-call, and nothing sweeps unless a host calls it.
+`DriftSweepCapable` is still a contract with an in-memory reference implementation and no durable
+one. Until the graph-backed store implements it, a host sweeps through `PropositionStoreDriftSweep`,
+which is correct and does its filtering in the JVM.
+
+There is no Spring configuration in `dice-metamodel` or `dice-storage`, so a runner is an ordinary
+constructor call until the autoconfigure slice assembles one, and nothing sweeps unless a host
+calls it.
 
 **Registration-time compatibility evaluation** is deferred design, tracked under the metamodel epic
 (`embabel/dice#45`) until it gets its own issue. A registry-style compatibility check would grade a

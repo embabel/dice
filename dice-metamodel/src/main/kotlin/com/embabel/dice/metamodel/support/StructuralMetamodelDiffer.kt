@@ -33,6 +33,10 @@ import com.embabel.dice.metamodel.PropertySignature
  * content hash is built from, which is what makes an empty diff and an equal hash mean the same
  * thing.
  *
+ * An observation can carry two kinds of entity name, and [diffAgainstObserved] judges each by its
+ * own rule: graph labels against the declared side its basis calls for, mention types against
+ * declared type names and their declared former names alone. See [ObservedSchema.mentionTypeNames].
+ *
  * Two rules it keeps throughout. Sets are compared as sets, never as a delimiter-joined projection,
  * because a label or property name can contain a comma or a space, which is routine when names come
  * from LLM extraction, and joining would collapse two different sets into a false "unchanged".
@@ -138,35 +142,61 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         val declaredTypes = declared.version.entityTypeNames.toSet()
         val observedTypes = observed.entityTypeNames
 
-        // What a graph reports is labels, and a type carries every label in its hierarchy: declare
-        // `Person` with parent `Agent` and every Person node comes back carrying both. Comparing
-        // observed labels against type names alone would call `Agent` undeclared drift on a schema
-        // nobody had touched, so the declared side of the drift check is the type names plus every
-        // label those types declare.
+        // Declared former names count as declared on both bases below. Nodes written before a type
+        // was renamed keep the old label, and a mention extracted before the rename keeps the old
+        // type name, and either way the rename was declared, so the old name is known. Leaving it out
+        // would report a declared rename as drift on every check from then on.
         //
         // A declared name can also be fully qualified where the observed one is simple. The stamp
         // holds `com.example.Person` for a JVM-backed type, extraction records the mention as
-        // `Person`, and the graph reports `Person`. Both spellings of every declared type go on the
-        // declared side, through DeclaredSchema.entityTypeOwnLabels.
-        //
-        // Declared former names count as declared too. Nodes written before a type was renamed keep
-        // the old label, and the rename was declared, so the old label is known. Leaving it out
-        // would report a declared rename as drift on every check from then on. A former name is a
-        // declared name, so it brings its own label with it the same way.
+        // `Person`, and the graph reports `Person`. Both spellings of every declared type — and of
+        // every declared former name — go on the declared side, through
+        // DeclaredSchema.entityTypeOwnLabels and ownLabelsOf.
         val declaredAliases = declared.version.entityTypeAliases.values.flatten()
-        val declaredLabels = declaredTypes +
+        val declaredEitherSpelling = declaredTypes +
             declared.entityTypeOwnLabels +
-            declared.version.entityTypeLabels.values.flatten() +
             declaredAliases +
             ownLabelsOf(declaredAliases)
 
+        // What counts as "declared" on the observed side depends on what kind of name is being
+        // compared; see ObservedSchema.EntityTypeBasis.
+        val declaredEntityTypeBasis = when (observed.entityTypeBasis) {
+            // A graph reports labels, and a type carries every label in its hierarchy: declare
+            // `Person` with parent `Agent` and every Person node comes back carrying both. Comparing
+            // observed labels against type names alone would call `Agent` undeclared drift on a
+            // schema nobody had touched, so the declared side of the drift check is the type names
+            // plus every label those types declare.
+            ObservedSchema.EntityTypeBasis.GRAPH_LABELS ->
+                declaredEitherSpelling + declared.version.entityTypeLabels.values.flatten()
+            // A mention's `type` is domain data an extractor wrote, living in its own namespace
+            // apart from graph labels, so a
+            // governed type's inherited parent label has no bearing on it: a mention typed `Agent`
+            // only conforms when `Agent` is itself a declared type or former name, whatever labels a
+            // governed `Person` carries. Widening this to declared labels would let an undeclared
+            // mention type escape detection by riding a governed type's parent label.
+            ObservedSchema.EntityTypeBasis.MENTION_TYPES ->
+                declaredEitherSpelling
+        }
+
         // A type the host's dictionary names but the selector leaves outside governance is a known
         // type, and the drift check has to recognise it as such. It gets its own excluded set,
-        // separate from declaredLabels, because it must stay out of unobservedEntityTypes below: a
+        // separate from the declared basis, because it must stay out of unobservedEntityTypes below: a
         // governance-exempt type with no data isn't the informational case that bucket describes.
         // These names come off the same dictionary the governed ones do, so they can be fully
         // qualified in the same way, and their own labels are excluded alongside them.
-        val excludedFromDrift = declaredLabels +
+        val excludedFromDrift = declaredEntityTypeBasis +
+            declared.ungovernedEntityTypeNames +
+            ownLabelsOf(declared.ungovernedEntityTypeNames)
+
+        // Mention types arrive in their own set, and they are judged by the mention rule whatever
+        // basis the names above carry. A whole-graph observation reports both kinds at once — labels
+        // off the database catalogue, mention types off the stored propositions — and one basis tag
+        // can only describe one of them. Judging the pair together under GRAPH_LABELS would widen the
+        // declared side to inherited labels for the mention half too, which is the escape hatch
+        // MENTION_TYPES exists to close: a mention typed `Agent` would pass under a schema that
+        // governs `Person` with parent label `Agent` and declares no `Agent` type at all.
+        val observedMentionTypes = observed.mentionTypeNames
+        val mentionTypesExcludedFromDrift = declaredEitherSpelling +
             declared.ungovernedEntityTypeNames +
             ownLabelsOf(declared.ungovernedEntityTypeNames)
 
@@ -193,11 +223,19 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         return DeclaredObservedDiff(
             declared = declared,
             observedSchema = observed,
-            driftedEntityTypes = canonical(observedTypes - excludedFromDrift),
+            driftedEntityTypes = canonical(
+                (observedTypes - excludedFromDrift) + (observedMentionTypes - mentionTypesExcludedFromDrift),
+            ),
             driftedRelationshipTypes = canonical(observedRels - relsExcludedFromDrift),
+            // Data mentioning a declared type is that type being observed, the same as a graph label
+            // reporting it, so both sets answer this bucket.
             unobservedEntityTypes = canonical(
                 declaredTypes.filterNot {
-                    isObserved(it, declared.version.entityTypeAliases[it].orEmpty(), observedTypes)
+                    isObserved(
+                        it,
+                        declared.version.entityTypeAliases[it].orEmpty(),
+                        observedTypes + observedMentionTypes,
+                    )
                 },
             ),
             unobservedRelationshipTypes = canonical(declaredRels - observedRels),

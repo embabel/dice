@@ -17,14 +17,16 @@ package com.embabel.dice.storage
 
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.MetamodelVersionStore
+import com.embabel.dice.metamodel.SweptBaselineStore
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 /**
  * Cross-backend contract for [MetamodelVersionStore]: the upsert, history ordering, keyed lookup,
- * and schema isolation. Each subclass supplies a store and inherits the whole suite, so a backend
- * that disagrees with the in-memory reference fails at authoring time.
+ * schema isolation, and the swept baseline a [SweptBaselineStore] tracks alongside it. Each
+ * subclass supplies a store and inherits the whole suite, so a backend that disagrees with the
+ * in-memory reference fails at authoring time.
  *
  * The rules here matter because the drift check re-stamps its schema on every pass. A store that
  * treated each of those re-stamps as a new record would fill the history with copies of one version,
@@ -32,8 +34,14 @@ import org.junit.jupiter.api.Test
  */
 abstract class AbstractMetamodelVersionStoreContractTest {
 
-    /** A store holding nothing for the schema names below. */
-    protected abstract fun store(): MetamodelVersionStore
+    /**
+     * A store holding nothing for the schema names below.
+     *
+     * Typed as [SweptBaselineStore], since the swept-baseline half of this suite is a promise only
+     * a store that tracks the pointer durably can make. A backend that cannot keeps the plain
+     * [MetamodelVersionStore] contract and has no business inheriting these tests.
+     */
+    protected abstract fun store(): SweptBaselineStore
 
     /** A stamp of one entity type. */
     private fun version(
@@ -136,5 +144,89 @@ abstract class AbstractMetamodelVersionStoreContractTest {
     @Test
     fun `latestVersion is null for a schema with no versions`() {
         assertNull(store().latestVersion("contract-never-saved"))
+    }
+
+    // ---- the swept baseline, tracked apart from ordinary write order ----
+    //
+    // `SweptBaselineStore` gives neither method a default body, which is what these four hold a
+    // store to. A forwarding default answering from `latestVersion`/`saveVersion` would reopen the
+    // exact bug `DefaultDriftCheckRunner` relies on this pointer to close — see
+    // `SweptBaselineStore.sweptVersion`'s doc. Three of the four tests below catch a store that
+    // answers that way: the null-until-swept case, the independence-from-a-later-new-stamp case,
+    // and the independence-from-a-later-re-save case. The middle test, `markSwept moves the swept
+    // baseline to that version`, would pass against a forwarding store too — a schema with exactly
+    // one saved version has that version as both its `latestVersion` and its only swept candidate,
+    // so write order answers correctly there by coincidence. It stays in the suite as a positive
+    // check on the real behavior.
+
+    @Test
+    fun `sweptVersion is null until markSwept is called`() {
+        val store = store()
+        val schemaName = "contract-swept-null"
+
+        store.saveVersion(version(schemaName))
+
+        assertNull(
+            store.sweptVersion(schemaName),
+            "an ordinary save must not look like a completed sweep",
+        )
+    }
+
+    @Test
+    fun `markSwept moves the swept baseline to that version`() {
+        val store = store()
+        val schemaName = "contract-swept-moves"
+        val stamp = version(schemaName)
+        store.saveVersion(stamp)
+
+        store.markSwept(stamp)
+
+        assertEquals(stamp, store.sweptVersion(schemaName))
+    }
+
+    @Test
+    fun `saveVersion alone never moves an already-established swept baseline`() {
+        // The exact case a forwarding default gets wrong: every run re-stamps its declaration, dry,
+        // scoped, or crashed alike, and none of those is a completed reconciliation.
+        val store = store()
+        val schemaName = "contract-swept-independent"
+        val reconciled = version(schemaName, "Reconciled")
+        store.saveVersion(reconciled)
+        store.markSwept(reconciled)
+
+        store.saveVersion(version(schemaName, "NotYetReconciled"))
+
+        assertEquals(
+            reconciled,
+            store.sweptVersion(schemaName),
+            "an ordinary save must not advance the reconciled baseline on its own",
+        )
+    }
+
+    @Test
+    fun `re-saving an existing, unreconciled stamp never moves the swept baseline either`() {
+        // The case above saves `NotYetReconciled` exactly once, as a brand-new stamp; the only
+        // re-save it performs is of `reconciled` itself, through `markSwept`. Here `notYetReconciled`
+        // gets saved a second time — an ordinary re-save of a stamp that already exists but was never
+        // swept — which is the gap that case leaves open. A store that keys "advance the swept
+        // pointer" off any save landing on an existing key, mistaking an ordinary re-save for a sign
+        // that stamp is now reconciled, would pass that case and still be wrong: PR #86's design note
+        // calls out this exact re-save hazard for saveVersion's own history contract, and the swept
+        // pointer needs the same guard.
+        val store = store()
+        val schemaName = "contract-swept-resave"
+        val reconciled = version(schemaName, "Reconciled")
+        val notYetReconciled = version(schemaName, "NotYetReconciled")
+        store.saveVersion(reconciled)
+        store.markSwept(reconciled)
+        store.saveVersion(notYetReconciled)
+
+        store.saveVersion(notYetReconciled)
+
+        assertEquals(
+            reconciled,
+            store.sweptVersion(schemaName),
+            "re-saving an existing, unreconciled stamp must not advance the reconciled baseline",
+        )
     }
 }

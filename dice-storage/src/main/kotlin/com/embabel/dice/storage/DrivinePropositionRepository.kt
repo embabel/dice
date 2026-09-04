@@ -43,6 +43,7 @@ import org.drivine.query.QuerySpecification
 import org.drivine.query.dsl.*
 import org.slf4j.LoggerFactory
 import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
@@ -77,8 +78,26 @@ class DrivinePropositionRepository(
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
 
-    /** Runs the dedup find-then-insert as one programmatic transaction (see [save]). */
-    private val txTemplate = TransactionTemplate(transactionManager)
+    /**
+     * Runs the dedup find-then-insert as one programmatic transaction (see [save]).
+     *
+     * Set to [TransactionDefinition.PROPAGATION_REQUIRES_NEW], overriding `TransactionTemplate`'s own
+     * default of `PROPAGATION_REQUIRED`: this class also carries a class-level [Transactional], so an
+     * external call to [save] already has an ambient transaction by the time this template runs. A
+     * `REQUIRED` template would join that ambient transaction, and the actual commit would then
+     * happen only when the *outer* transaction commits — after `save`'s `synchronized` block has
+     * already released the stripe lock — which is exactly the window [save]'s own KDoc says cannot
+     * exist. `REQUIRES_NEW` suspends whatever ambient transaction is open and commits this one
+     * independently before `execute` returns, restoring that guarantee regardless of how [save] is
+     * called. It also keeps the constraint-violation recovery block usable: a `RuntimeException`
+     * thrown while participating in the ambient transaction marks it rollback-only, and a further
+     * `REQUIRED` use of this template would fail immediately with `UnexpectedRollbackException`,
+     * skipping the recovery read entirely; `REQUIRES_NEW` starts a fresh transaction unaffected by
+     * the doomed ambient one.
+     */
+    private val txTemplate = TransactionTemplate(transactionManager).apply {
+        propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
+    }
 
     /**
      * Striped locks for save-time exact-text dedup. Bounded (no per-key leak): a proposition's
@@ -190,6 +209,7 @@ class DrivinePropositionRepository(
     private fun doPersist(proposition: Proposition): Proposition {
         val embedding = embeddingFor(proposition)
         graphObjectManager.save(PropositionGraphMapper.toView(proposition, embedding), CascadeType.DELETE_ORPHAN)
+        dropMetadataKeysNotIn(proposition)
         if (proposition.provenanceEntries.isNotEmpty()) {
             graphObjectManager.save(
                 PropositionGraphMapper.toProvenanceView(proposition, embedding),
@@ -197,6 +217,31 @@ class DrivinePropositionRepository(
             )
         }
         return proposition
+    }
+
+    /**
+     * A saved proposition's metadata map is the whole map, the same way its status and text are the
+     * whole value. Drivine spreads the bag over `metadata.<key>` node properties and only ever adds
+     * or overwrites, so a key the caller took out of the map (a released quarantine's
+     * `previousStatus` and reason, say) stayed on the node. This removes every `metadata.*`
+     * property the saved map no longer carries. Needs dynamic property removal (`REMOVE n[k]`),
+     * which Neo4j has had since 5.24.
+     */
+    private fun dropMetadataKeysNotIn(proposition: Proposition) {
+        persistenceManager.execute(
+            QuerySpecification
+                .withStatement(
+                    "MATCH (p:Proposition {id: \$id}) " +
+                        "UNWIND [k IN keys(p) WHERE k STARTS WITH 'metadata.' AND NONE(x IN \$kept WHERE x = k)] AS k " +
+                        "REMOVE p[k]",
+                )
+                .bind(
+                    mapOf(
+                        "id" to proposition.id,
+                        "kept" to proposition.metadata.keys.map { "metadata.$it" },
+                    ),
+                ),
+        )
     }
 
     private fun embeddingFor(proposition: Proposition): List<Float>? =

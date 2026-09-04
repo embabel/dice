@@ -36,16 +36,61 @@ import java.util.Objects
  * contributing types that come and go, so what is in the graph can drift from what was declared,
  * and this module needs a way to talk about that without depending on a particular graph driver.
  *
- * @property entityTypeNames Entity type (label) names observed in the graph.
+ * A snapshot can carry both kinds of entity name at once, in two sets. A whole-graph observation
+ * reads labels off the database catalogue and mention types off the stored data, and those two
+ * questions have different declared sides, so keeping them apart is what lets each be judged by its
+ * own rule. [entityTypeBasis] says which kind [entityTypeNames] holds; [mentionTypeNames] is always
+ * mention types and needs no tag.
+ *
+ * @property entityTypeNames Entity type names observed. What counts as a name depends on
+ *   [entityTypeBasis]: a Neo4j graph label, or a mention's own `type` field.
  * @property relationshipTypeNames Relationship type names observed in the graph.
  * @property capturedAt When this snapshot was taken.
+ * @property entityTypeBasis What kind of name [entityTypeNames] holds, which decides what the
+ *   declared side of a comparison has to be. See [EntityTypeBasis].
+ * @property mentionTypeNames Types the stored data claims for its entity mentions, held apart from
+ *   [entityTypeNames] so a comparison can judge them by the mention rule whatever
+ *   [entityTypeBasis] says. Empty when the observation had no way to ask the data, which is the
+ *   case for any source that only reads a label catalogue.
  */
 @ApiStatus.Experimental
-class ObservedSchema(
+class ObservedSchema @JvmOverloads constructor(
     entityTypeNames: Set<String>,
     relationshipTypeNames: Set<String>,
     val capturedAt: Instant,
+    val entityTypeBasis: EntityTypeBasis = EntityTypeBasis.GRAPH_LABELS,
+    mentionTypeNames: Set<String> = emptySet(),
 ) {
+
+    /**
+     * What kind of name [ObservedSchema.entityTypeNames] holds. A [DeclaredObservedDiffer] needs to
+     * know this, because the two kinds of name compare against different declared sets.
+     */
+    enum class EntityTypeBasis {
+
+        /**
+         * A Neo4j label, read off `db.labels()` on a whole-graph observation. A node carries every
+         * label in its declared type's hierarchy, so declaring `Person` with parent `Agent` puts both
+         * labels on every `Person` node. The declared side of a comparison against this basis has to
+         * include every label the declaration's types carry, on top of the type names themselves, or
+         * an inherited parent label reads as undeclared drift on a schema nobody touched.
+         */
+        GRAPH_LABELS,
+
+        /**
+         * The `type` a mention was extracted as, read off `Mention.type` on a context-scoped
+         * observation. An observation that carries labels in [ObservedSchema.entityTypeNames] puts
+         * its mention types in [ObservedSchema.mentionTypeNames], where this same rule applies to
+         * them. This is domain data an extractor wrote, living in its own namespace apart from graph labels, and a graph's
+         * label hierarchy has no bearing on it: a mention typed `Agent` claimed to be an `Agent`, and
+         * that claim stands or falls on whether `Agent` is itself a declared type, whatever labels a
+         * governed `Person` happens to carry. The declared side of a comparison against this basis
+         * stays on declared type names (plus their declared former names — old data can still carry a
+         * type's pre-rename spelling); it must not widen to include inherited labels, or an undeclared
+         * mention type escapes detection by riding a governed type's parent label.
+         */
+        MENTION_TYPES,
+    }
 
     // Both sets are copied into immutable ones, keeping the order they arrived in. A snapshot
     // describes one moment and must not change afterwards, and a backend typically builds these from
@@ -57,17 +102,22 @@ class ObservedSchema(
 
     val relationshipTypeNames: Set<String> = immutableCopy(relationshipTypeNames)
 
+    val mentionTypeNames: Set<String> = immutableCopy(mentionTypeNames)
+
     override fun equals(other: Any?): Boolean =
         other is ObservedSchema &&
             entityTypeNames == other.entityTypeNames &&
             relationshipTypeNames == other.relationshipTypeNames &&
-            capturedAt == other.capturedAt
+            capturedAt == other.capturedAt &&
+            entityTypeBasis == other.entityTypeBasis &&
+            mentionTypeNames == other.mentionTypeNames
 
-    override fun hashCode(): Int = Objects.hash(entityTypeNames, relationshipTypeNames, capturedAt)
+    override fun hashCode(): Int =
+        Objects.hash(entityTypeNames, relationshipTypeNames, capturedAt, entityTypeBasis, mentionTypeNames)
 
     override fun toString(): String =
         "ObservedSchema(entityTypeNames=$entityTypeNames, relationshipTypeNames=$relationshipTypeNames, " +
-            "capturedAt=$capturedAt)"
+            "capturedAt=$capturedAt, entityTypeBasis=$entityTypeBasis, mentionTypeNames=$mentionTypeNames)"
 
     private companion object {
 

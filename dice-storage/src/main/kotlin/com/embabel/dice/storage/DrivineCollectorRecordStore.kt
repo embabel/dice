@@ -29,9 +29,10 @@ import org.springframework.transaction.annotation.Transactional
  * graph counterpart of the in-memory store, shipping here alongside [DrivinePropositionRepository].
  *
  * The query methods default to filtering [all] / [runs] in memory, so only the writers ([record],
- * [recordRun]) and readers ([all], [runs]) are supplied here. Writes MERGE on the natural key so a
- * retried record updates in place rather than duplicating. Every statement is parameterized; user-
- * derived values are never interpolated into Cypher.
+ * [recordRun]) and readers ([all], [runs]) are supplied here. Writes MERGE on the natural key
+ * [LineageSchema] declares, built from that same key, so a retried record updates the node already
+ * there and the uniqueness constraint protecting it always covers what the write matched on. Every
+ * statement is parameterized; user-derived values are never interpolated into Cypher.
  */
 @Transactional
 class DrivineCollectorRecordStore(
@@ -46,7 +47,7 @@ class DrivineCollectorRecordStore(
         persistenceManager.execute(
             QuerySpecification.withStatement(
                 """
-                MERGE (n:CollectorRecord {propositionId: ${'$'}propositionId, runId: ${'$'}runId})
+                MERGE ${LineageSchema.mergePattern("n", LineageSchema.COLLECTOR_RECORD)}
                 SET n.reason         = ${'$'}reason,
                     n.survivorId     = ${'$'}survivorId,
                     n.outcome        = ${'$'}outcome,
@@ -65,7 +66,7 @@ class DrivineCollectorRecordStore(
         persistenceManager.execute(
             QuerySpecification.withStatement(
                 """
-                MERGE (n:CollectorRun {runId: ${'$'}runId})
+                MERGE ${LineageSchema.mergePattern("n", LineageSchema.COLLECTOR_RUN)}
                 SET n.startedAt  = ${'$'}startedAt,
                     n.finishedAt = ${'$'}finishedAt,
                     n.dryRun     = ${'$'}dryRun

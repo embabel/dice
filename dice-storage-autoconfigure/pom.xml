@@ -40,6 +40,19 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-autoconfigure</artifactId>
         </dependency>
+        <!--
+          Boot 4 split transaction autoconfiguration out of spring-boot-autoconfigure into its own
+          module. Without it, a consuming application gets Drivine's PlatformTransactionManager bean
+          but no TransactionInterceptor advice, so every @Transactional in dice-storage is inert. This
+          module's own EnableTransactionManagementConfiguration already backs off when the consumer
+          declares its own @EnableTransactionManagement (@ConditionalOnMissingBean on
+          AbstractTransactionManagementConfiguration), so pulling it in here is safe for consumers who
+          already enable transaction management themselves.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-transaction</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-configuration-processor</artifactId>

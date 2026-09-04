@@ -48,6 +48,10 @@ import org.springframework.test.context.DynamicPropertySource
 import org.springframework.transaction.PlatformTransactionManager
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Integration tests for the graph storage stack against a Neo4j testcontainer. Not `@Transactional`:
@@ -184,6 +188,57 @@ class DrivinePropositionStoreIntegrationTest {
         repository.save(prop("Rod visited Sydney"))
         assertEquals(1, repository.count())
     }
+
+    /**
+     * The multi-waiter counterpart to the sequential dedup test above: many same-stripe callers, a
+     * different crowd size than `DrivinePropositionRepositoryDedupRaceIntegrationTest`'s
+     * deterministic race test pins. That other test is what proves the propagation regression
+     * window is closed — a two-party handshake, by design, since forcing a specific window needs
+     * an exact pair to pin. It says nothing on its own about a bigger crowd: whether the stripe
+     * lock genuinely serialises every waiter, beyond the one pair it controls, and whether
+     * throughput under contention still converges on one proposition. That is this test's job, run
+     * under ordinary scheduling, with no forced window.
+     */
+    @Test
+    fun `many concurrent saves of identical text still dedup to exactly one proposition`() {
+        val callers = 16
+        val startTogether = CountDownLatch(1)
+        val savedIds = CopyOnWriteArrayList<String>()
+        val failures = CopyOnWriteArrayList<Throwable>()
+        val pool = Executors.newFixedThreadPool(callers)
+        try {
+            repeat(callers) {
+                pool.submit {
+                    startTogether.await()
+                    runCatching { repository.save(prop("Rod visited Sydney")) }
+                        .onSuccess { savedIds += it.id }
+                        .onFailure { failures += it }
+                }
+            }
+            startTogether.countDown()
+            pool.shutdown()
+            assertTrue(pool.awaitTermination(60, TimeUnit.SECONDS), "concurrent saves did not finish in time")
+        } finally {
+            pool.shutdownNow()
+        }
+
+        assertTrue(
+            failures.isEmpty(),
+            "every save must resolve to a proposition without throwing, but $callers callers produced " +
+                "${failures.size} failure(s): ${failures.firstOrNull()}",
+        )
+        assertEquals(
+            1,
+            repository.count(),
+            "$callers concurrent saves of identical text must leave exactly one proposition; found " +
+                "${repository.count()} (ids returned: ${savedIds.toSet()})",
+        )
+    }
+
+    // The deterministic counterpart to both dedup tests above — the one that actually pins the
+    // propagation-regression window under a forced, controlled overlap — lives in
+    // DrivinePropositionRepositoryDedupRaceIntegrationTest.kt, which needs its own decorated
+    // PersistenceManager bean (a different Spring context) to force that window on demand.
 
     @Test
     fun `query pushes filters incl entity quantifier`() {

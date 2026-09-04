@@ -15,7 +15,7 @@
  */
 package com.embabel.dice.storage
 
-import com.embabel.dice.metamodel.MetamodelVersionStore
+import com.embabel.dice.metamodel.SweptBaselineStore
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
@@ -48,7 +48,7 @@ class DrivineMetamodelVersionStoreContractIntegrationTest : AbstractMetamodelVer
     @Autowired
     private lateinit var persistenceManager: PersistenceManager
 
-    override fun store(): MetamodelVersionStore = graphStore
+    override fun store(): SweptBaselineStore = graphStore
 
     @AfterEach
     fun cleanUp() {

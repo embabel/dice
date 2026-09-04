@@ -16,7 +16,7 @@
 package com.embabel.dice.storage
 
 import com.embabel.dice.metamodel.InMemoryMetamodelVersionStore
-import com.embabel.dice.metamodel.MetamodelVersionStore
+import com.embabel.dice.metamodel.SweptBaselineStore
 
 /**
  * Runs the [AbstractMetamodelVersionStoreContractTest] suite against the in-memory reference store.
@@ -24,5 +24,5 @@ import com.embabel.dice.metamodel.MetamodelVersionStore
  * the graph IT completes.
  */
 class InMemoryMetamodelVersionStoreContractTest : AbstractMetamodelVersionStoreContractTest() {
-    override fun store(): MetamodelVersionStore = InMemoryMetamodelVersionStore()
+    override fun store(): SweptBaselineStore = InMemoryMetamodelVersionStore()
 }

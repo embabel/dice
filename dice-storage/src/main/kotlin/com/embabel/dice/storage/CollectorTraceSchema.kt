@@ -20,13 +20,20 @@ import org.drivine.schema.SchemaItemSpec
 import org.drivine.schema.UniquenessConstraintSpec
 
 /**
- * The constraints and indexes [DrivineCollectorTraceStore] needs, factored out as plain data so
- * the integration-test harness and the autoconfigure module can share one source of truth
- * instead of redeclaring the schema twice.
+ * The constraints, indexes and edge types [DrivineCollectorTraceStore] needs, as plain data the
+ * integration-test harness and the autoconfigure module both register, so the schema is declared
+ * once for everyone who ensures it.
  */
-object CollectorTraceSchema {
+object CollectorTraceSchema : DiceStorageSchema {
 
-    fun specs(): List<SchemaItemSpec> = listOf(
+    /**
+     * The edges the trace store writes between its own nodes: a signal score points at the
+     * candidate edge it scored, and a retired proposition at the decision that retired it. Both sit
+     * entirely inside the trace store's own nodes, so a whole-graph observation hides them.
+     */
+    override val bookkeepingRelationshipTypes: Set<String> = setOf("SCORED", "RETIRED_IN")
+
+    override fun specs(): List<SchemaItemSpec> = listOf(
         // Natural-key uniqueness, one per node label.
         UniquenessConstraintSpec(label = "CollectorTraceRun", property = "runId"),
         UniquenessConstraintSpec(label = "CollectorCandidateEdge", property = "id"),

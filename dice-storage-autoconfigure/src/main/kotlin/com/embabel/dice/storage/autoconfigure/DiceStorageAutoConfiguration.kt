@@ -29,11 +29,14 @@ import com.embabel.dice.proposition.DecaySweepConfig
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.store.InMemoryDecayManager
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
+import com.embabel.dice.storage.DiceStorageSchema
 import com.embabel.dice.storage.DrivineChunkHistoryStore
 import com.embabel.dice.storage.DrivineCollectorRecordStore
 import com.embabel.dice.storage.DrivinePropositionRepository
 import com.embabel.dice.storage.DrivineProjectionRecordStore
 import com.embabel.dice.storage.GraphDecayManager
+import com.embabel.dice.storage.LineageSchema
+import com.embabel.dice.storage.diceStorageCatalog
 import org.drivine.manager.GraphObjectManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.schema.RangeIndexSpec
@@ -139,17 +142,23 @@ class DiceStorageAutoConfiguration {
         persistenceManager: PersistenceManager,
     ): CollectorRecordStore = DrivineCollectorRecordStore(persistenceManager)
 
+    /**
+     * The lineage stores' schema, registered as a [DiceStorageSchema] so one bean answers both
+     * questions about it: Drivine ensures its constraints and indexes, and dice's drift observation
+     * reads the same object to recognise `(:ProjectionRecord)` and `(:CollectorRecord)` nodes as its
+     * own. Registering the DDL by hand here, as this used to, left the second half to a separate
+     * list that could fall behind.
+     *
+     * Natural keys back the MERGE upserts, so a replayed record updates in place and never
+     * duplicates; the range indexes back the lineage lookups. Both live in [LineageSchema].
+     */
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
-    fun lineageRecordSchema(): SchemaCatalog = SchemaCatalog.of(
-        // Natural keys back the MERGE upserts: a replayed record updates in place, not duplicates.
-        UniquenessConstraintSpec(label = "ProjectionRecord", properties = listOf("propositionId", "runId", "target")),
-        UniquenessConstraintSpec(label = "CollectorRecord", properties = listOf("propositionId", "runId")),
-        UniquenessConstraintSpec(label = "CollectorRun", property = "runId"),
-        RangeIndexSpec("ProjectionRecord", "propositionId"),
-        RangeIndexSpec("ProjectionRecord", "lifecycle"),
-        RangeIndexSpec("CollectorRecord", "propositionId"),
-    )
+    fun lineageStorageSchema(): DiceStorageSchema = LineageSchema
+
+    @Bean
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    fun lineageRecordSchema(): SchemaCatalog = diceStorageCatalog(listOf(LineageSchema))
 
     @Bean
     @ConditionalOnBean(Ai::class)
