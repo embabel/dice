@@ -70,10 +70,13 @@ you need.
   layers, gated by an API-key filter.
 - [report.md](report.md) — `dice-report`'s pure projectors that turn queried propositions into
   human-facing artifacts: structured breakdowns, discovered links, LLM-generated rationale.
+- [metamodel-versioning.md](metamodel-versioning.md) — stamping a schema with a content hash so it
+  can be compared later: per-type governance, the declared-schema opt-in seam, and the version
+  store's accumulating history.
 
 ## Modules
 
-DICE ships as six Maven modules; [architecture.md](architecture.md#module-map) has the full
+DICE ships as seven Maven modules; [architecture.md](architecture.md#module-map) has the full
 dependency map. Quick pointer to where each is documented:
 
 | Module | Documented in |
@@ -83,5 +86,6 @@ dependency map. Quick pointer to where each is documented:
 | `dice-storage-autoconfigure` | [durable-storage.md](durable-storage.md) |
 | `dice-ingestion` | [ingestion.md](ingestion.md) |
 | `dice-report` | [report.md](report.md) |
+| `dice-metamodel` | [metamodel-versioning.md](metamodel-versioning.md) |
 | `dice-integration-tests` | not separately documented — exercises the above end-to-end |
 </content>

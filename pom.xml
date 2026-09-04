@@ -28,6 +28,7 @@
         <module>dice-storage-autoconfigure</module>
         <module>dice-report</module>
         <module>dice-ingestion</module>
+        <module>dice-metamodel</module>
         <module>dice-integration-tests</module>
     </modules>
 
@@ -47,6 +48,11 @@
             and reference it from the surefire system properties below.
         -->
         <testcontainers.docker.api.version>1.41</testcontainers.docker.api.version>
+        <!--
+            JetBrains annotations, for @ApiStatus on experimental API. Not managed by
+            embabel-agent-dependencies, so the version is set here and every module inherits it.
+        -->
+        <jetbrains.annotations.version>26.0.2</jetbrains.annotations.version>
     </properties>
 
     <dependencyManagement>
@@ -80,12 +86,23 @@
                 <artifactId>dice-report</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.embabel.dice</groupId>
+                <artifactId>dice-metamodel</artifactId>
+                <version>${project.version}</version>
+            </dependency>
 
             <!-- Drivine Spring Boot starter -->
             <dependency>
                 <groupId>org.drivine</groupId>
                 <artifactId>drivine4j-spring-boot-starter</artifactId>
                 <version>${drivine.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.jetbrains</groupId>
+                <artifactId>annotations</artifactId>
+                <version>${jetbrains.annotations.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

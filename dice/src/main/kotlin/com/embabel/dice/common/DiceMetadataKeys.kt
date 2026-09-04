@@ -34,14 +34,6 @@ object DiceMetadataKeys {
     const val TRUST_SCORE = "dice.trust.score"
 
     /**
-     * Content hash of the schema active at extraction time.
-     *
-     * Stamping a proposition with this key lets drift detection later identify which
-     * propositions were extracted under an older schema version.
-     */
-    const val METAMODEL_VERSION = "dice.metamodel.version"
-
-    /**
      * Human-readable reason a proposition was quarantined due to schema drift.
      *
      * The presence of this key (alongside `STALE` status) means the proposition was
