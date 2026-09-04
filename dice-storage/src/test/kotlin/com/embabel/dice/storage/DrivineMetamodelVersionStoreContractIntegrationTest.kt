@@ -15,7 +15,7 @@
  */
 package com.embabel.dice.storage
 
-import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.metamodel.MetamodelVersionStore
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
@@ -25,15 +25,16 @@ import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 
 /**
- * Runs the [AbstractPropositionStoreContractTest] suite against the Neo4j-backed
- * [DrivinePropositionRepository] (testcontainer). This is the half that catches a graph backend
- * silently disagreeing with the in-memory contract — substitutability enforced, not assumed.
+ * Runs the [AbstractMetamodelVersionStoreContractTest] suite against the Neo4j-backed
+ * [DrivineMetamodelVersionStore] (testcontainer). This is the half that catches the graph backend
+ * disagreeing with the in-memory reference on the upsert rules, which is easy to do: they live in a
+ * Cypher `MERGE` there and in a list index here.
  *
  * Uses the shared [Neo4jTestContainer]; see that class for why Drivine's built-in testcontainer
  * is bypassed.
  */
 @SpringBootTest(classes = [TestApplication::class])
-class DrivinePropositionStoreContractIntegrationTest : AbstractPropositionStoreContractTest() {
+class DrivineMetamodelVersionStoreContractIntegrationTest : AbstractMetamodelVersionStoreContractTest() {
 
     companion object {
         @JvmStatic
@@ -42,16 +43,17 @@ class DrivinePropositionStoreContractIntegrationTest : AbstractPropositionStoreC
     }
 
     @Autowired
-    private lateinit var repository: DrivinePropositionRepository
+    private lateinit var graphStore: DrivineMetamodelVersionStore
 
     @Autowired
     private lateinit var persistenceManager: PersistenceManager
 
-    override fun store(): PropositionStore = repository
+    override fun store(): MetamodelVersionStore = graphStore
 
     @AfterEach
     fun cleanUp() {
-        repository.clearAll()
-        persistenceManager.execute(QuerySpecification.withStatement("MATCH (s:Source) DETACH DELETE s"))
+        listOf("MetamodelVersion", "MetamodelSchemaCounter").forEach { label ->
+            persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:$label) DETACH DELETE n"))
+        }
     }
 }

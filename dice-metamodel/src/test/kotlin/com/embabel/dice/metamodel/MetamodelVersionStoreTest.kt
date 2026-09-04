@@ -24,27 +24,12 @@ import org.junit.jupiter.api.Test
  * Covers the one piece of behaviour the contract itself ships: the default [findVersion], which a
  * backend is free to override with a keyed lookup. A store implementation gets its own tests
  * wherever it lives.
+ *
+ * The upsert rules [MetamodelVersionStore.saveVersion] states are checked by
+ * `AbstractMetamodelVersionStoreContractTest`, which runs the same suite against
+ * [InMemoryMetamodelVersionStore] and the graph-backed store.
  */
 class MetamodelVersionStoreTest {
-
-    /** Minimal store honouring the contract: upsert on (schemaName, contentHash), newest first. */
-    private class InMemoryVersionStore : MetamodelVersionStore {
-
-        private val saved = mutableListOf<MetamodelVersion>()
-
-        override fun saveVersion(version: MetamodelVersion) {
-            // Idempotent: re-saving an existing version keeps its original position in write order.
-            if (saved.none { it.schemaName == version.schemaName && it.contentHash == version.contentHash }) {
-                saved.add(version)
-            }
-        }
-
-        override fun latestVersion(schemaName: String): MetamodelVersion? =
-            versionHistory(schemaName).firstOrNull()
-
-        override fun versionHistory(schemaName: String): List<MetamodelVersion> =
-            saved.filter { it.schemaName == schemaName }.reversed()
-    }
 
     private fun version(schemaName: String, vararg typeNames: String): MetamodelVersion =
         MetamodelVersion.from(
@@ -53,7 +38,7 @@ class MetamodelVersionStoreTest {
 
     @Test
     fun `findVersion returns the stamp with that hash`() {
-        val store = InMemoryVersionStore()
+        val store = InMemoryMetamodelVersionStore()
         val first = version("app", "Person")
         val second = version("app", "Person", "Company")
         store.saveVersion(first)
@@ -67,7 +52,7 @@ class MetamodelVersionStoreTest {
     fun `findVersion is scoped to the schema name`() {
         // Two schemas can hold structurally identical versions, because the hash excludes the
         // name, so the lookup has to match on both halves of the key.
-        val store = InMemoryVersionStore()
+        val store = InMemoryMetamodelVersionStore()
         val mine = version("mine", "Person")
         store.saveVersion(mine)
 
@@ -77,7 +62,7 @@ class MetamodelVersionStoreTest {
 
     @Test
     fun `findVersion returns null for an unknown hash`() {
-        val store = InMemoryVersionStore()
+        val store = InMemoryMetamodelVersionStore()
         store.saveVersion(version("app", "Person"))
 
         assertNull(store.findVersion("app", "not-a-hash"))
@@ -85,7 +70,7 @@ class MetamodelVersionStoreTest {
 
     @Test
     fun `re-saving a version leaves one record, not two`() {
-        val store = InMemoryVersionStore()
+        val store = InMemoryMetamodelVersionStore()
         val v = version("app", "Person")
         store.saveVersion(v)
         store.saveVersion(v)
@@ -96,7 +81,7 @@ class MetamodelVersionStoreTest {
 
     @Test
     fun `an empty store has no latest version and an empty history`() {
-        val store = InMemoryVersionStore()
+        val store = InMemoryMetamodelVersionStore()
 
         assertNull(store.latestVersion("app"))
         assertEquals(emptyList<MetamodelVersion>(), store.versionHistory("app"))

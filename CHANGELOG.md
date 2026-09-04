@@ -45,3 +45,34 @@ and the consumer PRs that deliver it).
   metadata key is removed; lineage answers per-proposition attribution.
   **Compatibility: breaking.** The key is no longer available; code holding it
   must migrate to extraction-run queries.
+- Drivine/Neo4j-backed `MetamodelVersionStore` in `dice-storage`
+  (`DrivineMetamodelVersionStore`): stamps persist as `(:MetamodelVersion)` nodes,
+  MERGEd on the natural key `(schemaName, contentHash)`, so a re-stamp updates in
+  place. `latestVersion`, `versionHistory` and `findVersion` all resolve in Cypher.
+  History is ordered by a persisted per-schema sequence, taken off a
+  `(:MetamodelSchemaCounter)` node in the same statement that creates the version;
+  `savedAt` and `savedAtEpochMillis` are informational, and nothing sorts on them.
+  An idempotent re-save leaves the counter and the sequence alone. Concurrent saves
+  of one version leave one node. Hosts must declare three uniqueness constraints:
+  `MetamodelVersion(schemaName, contentHash)`, `MetamodelSchemaCounter(schemaName)`,
+  and `MetamodelVersion(schemaName, sequence)`.
+  Declared aliases persist at both levels: the version-level `entityTypeAliases` map
+  as its own node property, and a property signature's former names as a fifth
+  `aliases` field inside the stored signature. Both are written only when they hold
+  something, so an alias-free stamp writes exactly the properties this mapper wrote
+  before aliases existed, and a node from that older build reads back as a stamp
+  declaring none. Aliases feed `contentHash`, and the mapper recomputes the hash from
+  the persisted fields, so a stamp that failed to store them would be unreadable for
+  good — pinned by an integration test that writes a row in the old four-field shape
+  through raw Cypher and reads it back, one that round-trips a stamp carrying both
+  alias kinds, and one that removes the stored alias map and asserts the integrity
+  check rejects the row.
+  `savedAt` and `savedAtEpochMillis` keep their existing behavior: set on create,
+  untouched by a re-save. `dice-metamodel` gains `InMemoryMetamodelVersionStore`, the
+  reference implementation of the store contract, promoted from a private class in
+  that module's own tests. `AbstractMetamodelVersionStoreContractTest` runs one suite
+  against both stores.
+  **Compatibility: additive.** New classes, and a new `dice-storage` → `dice-metamodel`
+  module dependency; no existing API touched. Stored nodes stay readable: every
+  property that existed before keeps its name, meaning, and encoding, and the two
+  new alias fields are absent when nothing declares them.

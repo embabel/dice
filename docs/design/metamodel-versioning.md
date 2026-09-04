@@ -14,7 +14,8 @@ stamp against a live graph, comes later — see [the tiers ahead](#the-tiers-ahe
 
 The types live in `dice-metamodel`, a small pure-JVM module: `MetamodelVersion`,
 `GovernedTypeSelector`, `DeclaredSchema`/`DeclaredSchemaSource`, `SchemaAliases`, and the
-`MetamodelVersionStore` contract. It depends on Embabel's agent core types and nothing else.
+`MetamodelVersionStore` contract with its `InMemoryMetamodelVersionStore` reference
+implementation. It depends on Embabel's agent core types and nothing else.
 `SchemaAliases` and the alias fields on `PropertySignature` and `MetamodelVersion` are
 experimental; their shape may change before 1.0.
 
@@ -332,9 +333,57 @@ built for.
 
 `findVersion` resolves a recorded hash back to the schema shape it named. The default scans
 `versionHistory`, which is correct for any implementation but reads the whole history to answer a
-keyed question; a backend that can push the lookup down to the database should override it. This
-module ships no implementation. Storage is a separate concern, and a stamp is useful in memory
-before anything durable exists.
+keyed question; a backend that can push the lookup down to the database should override it.
+
+The only implementation this module ships is `InMemoryMetamodelVersionStore`, which keeps stamps in
+a list. It exists so a host can stamp and compare schemas before it has a database, and so the
+contract has an executable statement of what its rules mean; durable storage is a separate concern.
+
+The durable implementation lives in `dice-storage`. `DrivineMetamodelVersionStore` keeps each stamp
+as a `(:MetamodelVersion)` node and MERGEs on `(schemaName, contentHash)`, so re-stamping an
+unchanged schema updates the node already there. Three things govern how it behaves:
+
+- **It needs three uniqueness constraints**, declared in a `SchemaCatalog` bean. A MERGE is
+  race-free only when what it merges on is unique, so `MetamodelVersion(schemaName, contentHash)`
+  and `MetamodelSchemaCounter(schemaName)` are both required. Without the first, concurrent saves of
+  one version all miss the match, all create, and history fills with copies. The third,
+  `MetamodelVersion(schemaName, sequence)`, guards the ordering described below.
+- **Ordered reads sort on a per-schema counter.** "Most recent" here means logical write order,
+  which no timestamp can express: two saves land in the same millisecond routinely, and an NTP
+  correction or a failover can move the clock backwards between them. Each schema owns a
+  `(:MetamodelSchemaCounter)` node, and a version takes the next number off it in the same statement
+  that creates the version node. `savedAt` and `savedAtEpochMillis` are informational; nothing sorts
+  on them. Because `(schemaName, sequence)` is unique, a lost counter update surfaces as a retryable
+  failure.
+- **A re-save updates content only.** Sequence, counter, and `savedAt` keep their existing values,
+  so an old stamp stays at its original position in the history. `InMemoryMetamodelVersionStore`,
+  the reference implementation `dice-metamodel` ships, behaves the same way.
+
+The structural fields are stored as JSON strings, since Neo4j properties are scalars and flat
+arrays. Property signatures get explicit named fields with enums by name
+(`{"name": "age", "kind": "VALUE", "type": "integer", "cardinality": "ONE"}`); an ordinal would
+re-point the day someone inserts a constant into `Cardinality`. The content hash is derived, so the
+`contentHash` on a node is a checksum: the store recomputes it on read and skips a node that
+disagrees with itself, logging a warning.
+
+### Aliases in storage
+
+Declared aliases land in two places on the node: the version-level `entityTypeAliases` map as its
+own property, and a property's former names as a fifth `aliases` field inside its stored signature.
+Both are written only when they hold something, so a stamp that declares no former names writes
+exactly the properties the store wrote before aliases existed, and a node from that older build
+reads back as a stamp declaring none.
+
+Getting that wrong is unrecoverable. Aliases feed `contentHash`, and the read side recomputes the
+hash from the persisted fields, so a writer that dropped the alias map would produce nodes that
+fail their own checksum on every read and can never be read back. Three tests pin it: one writes a
+row in the old four-field shape through raw Cypher and reads it back, one round-trips a stamp
+carrying both alias kinds, and one deletes the stored alias map and asserts the integrity check
+rejects the row.
+
+`AbstractMetamodelVersionStoreContractTest` runs one suite against the graph store and the in-memory
+reference, so the two can't drift apart on rules that live in Cypher on one side and Kotlin on the
+other.
 
 ## Plain classes, not data classes
 

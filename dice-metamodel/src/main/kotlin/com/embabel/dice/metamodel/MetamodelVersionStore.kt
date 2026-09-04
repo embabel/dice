@@ -49,6 +49,17 @@ interface MetamodelVersionStore {
      * Save a version stamp, keyed on `(schemaName, contentHash)`. Saving the same version twice
      * leaves one stored version.
      *
+     * Everything about a stored stamp is content the key already determines, so a re-save
+     * overwrites it with an identical value.
+     *
+     * Whatever an implementation records as the moment of the save keeps its existing value on a
+     * re-save, along with the stamp's place in the write order: a re-saved old stamp does not
+     * become the latest.
+     *
+     * An implementation may fail a save with its backend's own concurrency exception when two
+     * writers race to save the same schema at once. Since the write is idempotent, the caller can
+     * simply retry it.
+     *
      * @param version The version to save.
      */
     fun saveVersion(version: MetamodelVersion)
