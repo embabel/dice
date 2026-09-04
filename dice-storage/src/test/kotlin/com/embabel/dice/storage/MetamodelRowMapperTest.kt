@@ -178,6 +178,16 @@ class MetamodelRowMapperTest {
         assertEquals(empty, MetamodelVersionRowMapper.fromRow(MetamodelVersionRowMapper.bindMap(empty, savedAt)))
     }
 
+    @Test
+    fun `a required JSON field holding the empty string fails the read`() {
+        // The writer never produces "" for one of these fields: an empty list or map is written as
+        // "[]" or "{}". A bare empty string only shows up through corruption, and it has to fail
+        // loudly, not read back as an empty collection that hides the problem.
+        val corrupt = row().apply { put("entityTypeNames", "") }
+
+        assertThrows<Exception> { MetamodelVersionRowMapper.fromRow(corrupt) }
+    }
+
     // ---- Aliases: written only when declared, absent read as none ----
 
     @Test

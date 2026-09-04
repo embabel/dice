@@ -18,6 +18,7 @@ package com.embabel.dice.storage
 import com.embabel.agent.core.Cardinality
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.PropertySignature
+import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import java.time.Instant
 
@@ -45,7 +46,8 @@ private val objectMapper = ObjectMapper()
  *
  * Reads are strict. A property this mapper wrote must be present when it is read again; a node
  * missing one is corrupt, so the accessor throws and the store's surrounding guard skips the row
- * with a warning.
+ * with a warning. An empty string is corrupt too: an empty collection is written as `[]` or
+ * `{}`, so `""` never comes from this mapper, and it fails the read like any other bad JSON.
  *
  * Two things are optional, and absent means "no former names were declared": the version-level
  * `entityTypeAliases` property, and the `aliases` field inside a stored property signature. Writing
@@ -116,8 +118,7 @@ private fun serializeList(items: List<String>): String =
     objectMapper.writeValueAsString(items)
 
 private fun deserializeList(serialized: String): List<String> =
-    if (serialized.isEmpty()) emptyList()
-    else objectMapper.readValue(
+    objectMapper.readValue(
         serialized,
         objectMapper.typeFactory.constructCollectionType(List::class.java, String::class.java)
     )
@@ -146,16 +147,14 @@ private fun serializeAliasMap(aliases: Map<String, Set<String>>): String? =
 
 /** Inverse of [serializeAliasMap]; an absent property means no type declared a former name. */
 private fun deserializeAliasMap(serialized: String?): Map<String, Set<String>> =
-    if (serialized.isNullOrEmpty()) emptyMap() else deserializeMapOfLabelSets(serialized)
+    if (serialized == null) emptyMap() else deserializeMapOfLabelSets(serialized)
 
 /** Inverse of [serializeMapOfLabelSets]. */
 private fun deserializeMapOfLabelSets(serialized: String): Map<String, Set<String>> {
-    if (serialized.isEmpty()) return emptyMap()
-    @Suppress("UNCHECKED_CAST")
     val mapOfLists = objectMapper.readValue(
         serialized,
-        objectMapper.typeFactory.constructMapType(Map::class.java, String::class.java, List::class.java),
-    ) as Map<String, List<String>>
+        object : TypeReference<Map<String, List<String>>>() {},
+    )
     return mapOfLists.mapValues { (_, labels) -> labels.toSet() }
 }
 
@@ -204,12 +203,10 @@ private fun serializeMapOfSignatureSets(map: Map<String, Set<PropertySignature>>
  * whole row with a message about a hash mismatch that hides the real problem.
  */
 private fun deserializeMapOfSignatureSets(serialized: String): Map<String, Set<PropertySignature>> {
-    if (serialized.isEmpty()) return emptyMap()
-    @Suppress("UNCHECKED_CAST")
     val mapOfLists = objectMapper.readValue(
         serialized,
-        objectMapper.typeFactory.constructMapType(Map::class.java, String::class.java, List::class.java),
-    ) as Map<String, List<Any?>>
+        object : TypeReference<Map<String, List<Any?>>>() {},
+    )
     return mapOfLists.mapValues { (typeName, encoded) ->
         encoded.map { element ->
             val fields = element as? Map<*, *>

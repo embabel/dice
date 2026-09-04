@@ -46,7 +46,7 @@ class InMemoryMetamodelVersionStore : MetamodelVersionStore {
     }
 
     override fun latestVersion(schemaName: String): MetamodelVersion? =
-        versionHistory(schemaName).firstOrNull()
+        synchronized(saved) { saved.lastOrNull { it.schemaName == schemaName } }
 
     override fun versionHistory(schemaName: String): List<MetamodelVersion> =
         synchronized(saved) { saved.filter { it.schemaName == schemaName }.reversed() }

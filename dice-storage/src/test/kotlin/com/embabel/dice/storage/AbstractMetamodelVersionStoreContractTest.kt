@@ -18,12 +18,13 @@ package com.embabel.dice.storage
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.MetamodelVersionStore
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 /**
- * Cross-backend contract for [MetamodelVersionStore.saveVersion]'s upsert. Each subclass supplies a
- * store and inherits the whole suite, so a backend that disagrees with the in-memory reference fails
- * at authoring time.
+ * Cross-backend contract for [MetamodelVersionStore]: the upsert, history ordering, keyed lookup,
+ * and schema isolation. Each subclass supplies a store and inherits the whole suite, so a backend
+ * that disagrees with the in-memory reference fails at authoring time.
  *
  * The rules here matter because the drift check re-stamps its schema on every pass. A store that
  * treated each of those re-stamps as a new record would fill the history with copies of one version,
@@ -81,5 +82,59 @@ abstract class AbstractMetamodelVersionStoreContractTest {
             "a re-save must not make an old version the latest",
         )
         assertEquals(first, store.findVersion(schemaName, first.contentHash))
+    }
+
+    // ---- keyed lookup ----
+
+    @Test
+    fun `findVersion returns null for a hash the schema has never stored`() {
+        val store = store()
+        val schemaName = "contract-find-miss"
+        val stamp = version(schemaName)
+        store.saveVersion(stamp)
+
+        assertNull(store.findVersion(schemaName, "not-a-real-hash"))
+        assertNull(store.findVersion("contract-find-miss-other-schema", stamp.contentHash))
+    }
+
+    // ---- ordering ----
+
+    @Test
+    fun `versionHistory is newest first`() {
+        val store = store()
+        val schemaName = "contract-newest-first"
+
+        store.saveVersion(version(schemaName, "First"))
+        store.saveVersion(version(schemaName, "Second"))
+        store.saveVersion(version(schemaName, "Third"))
+
+        assertEquals(
+            listOf("Third", "Second", "First"),
+            store.versionHistory(schemaName).map { it.entityTypeNames.single() },
+        )
+        assertEquals("Third", store.latestVersion(schemaName)?.entityTypeNames?.single())
+    }
+
+    // ---- schema isolation ----
+
+    @Test
+    fun `one schema's writes are invisible to another`() {
+        val store = store()
+        val schemaA = "contract-isolation-a"
+        val schemaB = "contract-isolation-b"
+
+        store.saveVersion(version(schemaA))
+
+        assertEquals(emptyList<MetamodelVersion>(), store.versionHistory(schemaB))
+        assertNull(store.latestVersion(schemaB))
+
+        store.saveVersion(version(schemaB))
+
+        assertEquals(1, store.versionHistory(schemaA).size, "schema B's save must not touch schema A's history")
+    }
+
+    @Test
+    fun `latestVersion is null for a schema with no versions`() {
+        assertNull(store().latestVersion("contract-never-saved"))
     }
 }

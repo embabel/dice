@@ -58,11 +58,20 @@ import java.time.Clock
  *   versions sharing a position in the order unstorable, so a lost counter update fails with a
  *   constraint violation the caller can retry.
  *
+ * **Retrying a failed save.** If the counter's read-modify-write ever does lose an update, the
+ * second writer fails with a uniqueness-constraint violation on `(schemaName, sequence)`.
+ * [saveVersion] just lets that exception propagate; it doesn't retry internally, because the
+ * failure has already ended the surrounding Neo4j transaction, and a retry needs a new
+ * transaction, which only the caller can open. That's safe to do: the write is an idempotent
+ * upsert, so retrying a failed save never produces a duplicate or a wrong result. The drift check
+ * re-stamps its schema on every pass anyway, so for that caller the next pass already is the
+ * retry.
+ *
  * @param persistenceManager Drivine's handle on the `neo` datasource.
  * @param clock supplies the instant a version is stamped as saved at. Injectable so a test can pin
  *   the instants of two saves.
  */
-open class DrivineMetamodelVersionStore(
+class DrivineMetamodelVersionStore(
     private val persistenceManager: PersistenceManager,
     private val clock: Clock = Clock.systemUTC(),
 ) : MetamodelVersionStore {
@@ -174,7 +183,9 @@ open class DrivineMetamodelVersionStore(
      * A single corrupt or tampered node shouldn't take down a whole history read, so the row is
      * logged at warn and skipped. [MetamodelVersionRowMapper] throws on bad data so that this can
      * happen; the warning names the missing property or the failed integrity check, which is what
-     * an operator needs to go find the node.
+     * an operator needs to go find the node. A row that isn't even a `Map` is logged and skipped
+     * the same way, naming its runtime class, so a count mismatch against what was expected still
+     * shows up in the log.
      *
      * [latestVersion] deliberately keeps `LIMIT 1` out of the Cypher. If the newest node were the
      * corrupt one, a database-side limit would read it, drop it, and answer "this schema has no
@@ -185,7 +196,14 @@ open class DrivineMetamodelVersionStore(
     private fun readVersions(statement: String, bindings: Map<String, Any?>): List<MetamodelVersion> {
         @Suppress("UNCHECKED_CAST")
         val spec = QuerySpecification.withStatement(statement).bind(bindings) as QuerySpecification<Any>
-        return persistenceManager.query(spec).filterIsInstance<Map<*, *>>().mapNotNull { row ->
+        return persistenceManager.query(spec).mapNotNull { row ->
+            if (row !is Map<*, *>) {
+                logger.warn(
+                    "Skipping MetamodelVersion row: expected a Map, got {}",
+                    row?.javaClass?.name ?: "null",
+                )
+                return@mapNotNull null
+            }
             runCatching { MetamodelVersionRowMapper.fromRow(row) }
                 .onFailure { logger.warn("Skipping unreadable MetamodelVersion row: {}", it.message) }
                 .getOrNull()

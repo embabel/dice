@@ -56,6 +56,10 @@ interface MetamodelVersionStore {
      * re-save, along with the stamp's place in the write order: a re-saved old stamp does not
      * become the latest.
      *
+     * An implementation may fail a save with its backend's own concurrency exception when two
+     * writers race to save the same schema at once. Since the write is idempotent, the caller can
+     * simply retry it.
+     *
      * @param version The version to save.
      */
     fun saveVersion(version: MetamodelVersion)
