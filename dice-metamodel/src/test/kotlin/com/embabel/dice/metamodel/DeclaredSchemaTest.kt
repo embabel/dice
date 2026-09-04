@@ -58,6 +58,107 @@ class DeclaredSchemaTest {
     }
 
     @Test
+    fun `ungoverned types and their relationships are carried alongside the governed stamp`() {
+        // Sighting declares `about`, so leaving Sighting ungoverned takes its relationship with it.
+        val declared = DeclaredSchema.from(dictionary(), GovernedTypeSelector { it.name in setOf("Person", "Company") })
+
+        assertEquals(setOf("Sighting"), declared.ungovernedEntityTypeNames)
+        assertEquals(setOf("about"), declared.ungovernedRelationshipTypeNames)
+    }
+
+    @Test
+    fun `a selector governing everything leaves nothing ungoverned`() {
+        val declared = DeclaredSchema.from(dictionary())
+
+        assertTrue(declared.ungovernedEntityTypeNames.isEmpty())
+        assertTrue(declared.ungovernedRelationshipTypeNames.isEmpty())
+    }
+
+    @Test
+    fun `a selector governing nothing leaves every dictionary type ungoverned`() {
+        val declared = DeclaredSchema.from(dictionary(), GovernedTypeSelector { false })
+
+        assertEquals(setOf("Person", "Company", "Sighting"), declared.ungovernedEntityTypeNames)
+        assertEquals(setOf("worksAt", "about"), declared.ungovernedRelationshipTypeNames)
+        assertTrue(declared.version.entityTypeNames.isEmpty(), "the stamp itself must cover nothing")
+        assertTrue(declared.relationshipTypeNames.isEmpty())
+    }
+
+    /**
+     * A JVM-backed type is declared by its class name, and the graph reports the last segment of it.
+     * The own label is that segment, so the two sides of a drift check have a name in common.
+     */
+    @Test
+    fun `a fully qualified declared name yields its simple own label`() {
+        val declared = DeclaredSchema(
+            version = MetamodelVersion(
+                schemaName = "app",
+                entityTypeNames = listOf("com.example.Person"),
+                entityTypeLabels = mapOf("com.example.Person" to setOf("Person")),
+                entityTypeProperties = mapOf("com.example.Person" to emptySet()),
+                relationshipNames = emptyList(),
+            ),
+            relationshipTypeNames = emptySet(),
+        )
+
+        assertEquals(setOf("Person"), declared.entityTypeOwnLabels)
+        assertEquals(listOf("com.example.Person"), declared.version.entityTypeNames)
+    }
+
+    @Test
+    fun `an undotted declared name is its own label`() {
+        val declared = DeclaredSchema.from(dictionary())
+
+        assertEquals(setOf("Person", "Company", "Sighting"), declared.entityTypeOwnLabels)
+    }
+
+    /**
+     * Two packages, one simple name. The set holds `Person` once, which is all a graph can hold:
+     * a label carries no package, so a node written under either type comes back the same way.
+     * A drift check therefore accepts an observed `Person` for both, and the report says so.
+     */
+    @Test
+    fun `two declared names sharing a simple name collapse to one own label`() {
+        val declared = DeclaredSchema(
+            version = MetamodelVersion(
+                schemaName = "app",
+                entityTypeNames = listOf("com.example.Person", "com.other.Person"),
+                entityTypeLabels = mapOf(
+                    "com.example.Person" to setOf("Person"),
+                    "com.other.Person" to setOf("Person"),
+                ),
+                entityTypeProperties = mapOf(
+                    "com.example.Person" to emptySet(),
+                    "com.other.Person" to emptySet(),
+                ),
+                relationshipNames = emptyList(),
+            ),
+            relationshipTypeNames = emptySet(),
+        )
+
+        assertEquals(setOf("Person"), declared.entityTypeOwnLabels)
+        assertEquals(2, declared.version.entityTypeNames.size, "both types stay declared in full")
+    }
+
+    @Test
+    fun `a name ending in a dot stands as its own label`() {
+        // Nothing follows the dot, and an empty label would match every other name shaped this way.
+        assertEquals("com.example.", DeclaredSchema.ownLabelOf("com.example."))
+        assertEquals("Person", DeclaredSchema.ownLabelOf("com.example.Person"))
+        assertEquals("Person", DeclaredSchema.ownLabelOf("Person"))
+    }
+
+    @Test
+    fun `own labels cannot be mutated through the getter`() {
+        val declared = DeclaredSchema.from(dictionary())
+
+        @Suppress("UNCHECKED_CAST")
+        assertThrows<UnsupportedOperationException> {
+            (declared.entityTypeOwnLabels as MutableSet<String>).add("Sneaky")
+        }
+    }
+
+    @Test
     fun `a source is just a supplier of the declaration`() {
         val source = DeclaredSchemaSource { DeclaredSchema.from(dictionary()) }
 

@@ -10,7 +10,8 @@ integration that used to declare a type can be switched off while its data stays
 
 This note covers turning a mutable `DataDictionary` into an immutable stamp, deciding which types
 the stamp is about, and keeping the stamps so history is answerable. Comparing two stamps, or a
-stamp against a live graph, comes later — see [the tiers ahead](#the-tiers-ahead).
+stamp against a live graph, is [metamodel-diff.md](metamodel-diff.md); [the tiers
+ahead](#the-tiers-ahead) says how the two fit together.
 
 The types live in `dice-metamodel`, a small pure-JVM module: `MetamodelVersion`,
 `GovernedTypeSelector`, `DeclaredSchema`/`DeclaredSchemaSource`, `SchemaAliases`, and the
@@ -412,8 +413,11 @@ Versioning is the first of three escalating tiers, shipped in that order.
 
 **Stamp and observe** is this slice: identity and history.
 
-**Detect and report** comes next: comparing two declared stamps, comparing a declaration against
-what a live graph contains, and recording the result.
+**Detect and report** is underway. The comparison half has landed, in
+[metamodel-diff.md](metamodel-diff.md): `MetamodelDiffer` compares two declared stamps and reports
+a typed change list, and `DeclaredObservedDiffer` compares a declaration against an
+`ObservedSchema` snapshot of a live graph. Still to come on this tier: a drift check that sequences
+observe, declare, diff, and a store for the reports it produces.
 
 **Quarantine** is last: acting on a lossy change by marking affected propositions stale rather than
 deleting them.

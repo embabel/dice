@@ -19,7 +19,9 @@ import com.embabel.agent.core.DataDictionary
 import org.jetbrains.annotations.ApiStatus
 
 /**
- * The schema as declared: the stamped [version] plus the bare relationship type names it allows.
+ * The schema as declared: the stamped [version] plus the bare relationship type names it allows,
+ * and the entity type and relationship names the host declared but chose to leave outside
+ * governance.
  *
  * The bare names travel alongside the stamp rather than being recovered from it, because
  * [MetamodelVersion.relationshipNames] holds rendered `From-[name]->To` descriptors and
@@ -29,29 +31,95 @@ import org.jetbrains.annotations.ApiStatus
  * declared relationships against what a graph holds needs those bare names, and that comparison is
  * the next slice.
  *
+ * An ungoverned type is still a known one: the host's dictionary named it, and a
+ * [GovernedTypeSelector] simply chose not to version it. That is a different thing from a type
+ * nobody ever declared, and a drift check needs to tell the two apart — see
+ * [ungovernedEntityTypeNames].
+ *
  * @property version The stamped declared schema.
  * @property relationshipTypeNames The bare relationship type names [version] allows.
+ * @property ungovernedEntityTypeNames Entity type names the host's dictionary declares, left out of
+ *   [version] because the selector doesn't govern them. Still known types.
+ * @property ungovernedRelationshipTypeNames Relationship type names an ungoverned type declares,
+ *   left out of [relationshipTypeNames] the same way.
  */
 @ApiStatus.Experimental
 class DeclaredSchema(
     val version: MetamodelVersion,
     relationshipTypeNames: Set<String>,
+    ungovernedEntityTypeNames: Set<String> = emptySet(),
+    ungovernedRelationshipTypeNames: Set<String> = emptySet(),
 ) {
 
     /** Copied into a JVM-immutable set so the declaration can't drift from its stamped [version]. */
     val relationshipTypeNames: Set<String> = java.util.Set.copyOf(relationshipTypeNames)
 
+    val ungovernedEntityTypeNames: Set<String> = java.util.Set.copyOf(ungovernedEntityTypeNames)
+
+    val ungovernedRelationshipTypeNames: Set<String> = java.util.Set.copyOf(ungovernedRelationshipTypeNames)
+
+    /**
+     * The simple labels the declared entity types carry into a graph: each name in
+     * [MetamodelVersion.entityTypeNames] cut down to the part after its final dot.
+     *
+     * A declared name can be fully qualified. A JVM-backed type is named by its class name, so the
+     * stamp holds `com.example.Person`, while extraction records a mention of it as `Person` and a
+     * graph reports `Person` as the label on the node. A comparison that put those two spellings
+     * side by side would call every declared type unobserved and read a same-named observed type as
+     * drift, so the comparison runs on these labels.
+     *
+     * The cut is textual: it takes the name apart at its last dot and changes nothing else. Two
+     * spellings sit outside it — a JVM nested class carries its outer class in the class name after
+     * a `$`, and the agent platform uppercases the first character of a label it derives this way,
+     * where this keeps every character as declared. A host that meets either one maps its own
+     * names; the `TypeIdentity` SPI in this package specifies that mapping.
+     *
+     * Two declared names differing only in their package share one label, and this set holds it
+     * once. A graph does the same: a label carries no package, so nothing reading one back can tell
+     * those two types apart.
+     *
+     * Derived from [version], so [equals] and [toString] stay on the fields a caller handed in.
+     */
+    val entityTypeOwnLabels: Set<String> =
+        java.util.Set.copyOf(version.entityTypeNames.mapTo(mutableSetOf()) { ownLabelOf(it) })
+
     override fun equals(other: Any?): Boolean =
         other is DeclaredSchema &&
             version == other.version &&
-            relationshipTypeNames == other.relationshipTypeNames
+            relationshipTypeNames == other.relationshipTypeNames &&
+            ungovernedEntityTypeNames == other.ungovernedEntityTypeNames &&
+            ungovernedRelationshipTypeNames == other.ungovernedRelationshipTypeNames
 
-    override fun hashCode(): Int = 31 * version.hashCode() + relationshipTypeNames.hashCode()
+    override fun hashCode(): Int = java.util.Objects.hash(
+        version,
+        relationshipTypeNames,
+        ungovernedEntityTypeNames,
+        ungovernedRelationshipTypeNames,
+    )
 
     override fun toString(): String =
-        "DeclaredSchema(version=$version, relationshipTypeNames=$relationshipTypeNames)"
+        "DeclaredSchema(version=$version, relationshipTypeNames=$relationshipTypeNames, " +
+            "ungovernedEntityTypeNames=$ungovernedEntityTypeNames, " +
+            "ungovernedRelationshipTypeNames=$ungovernedRelationshipTypeNames)"
 
     companion object {
+
+        /**
+         * The label a declared entity type name writes onto a node: the part after its final dot,
+         * or the whole name when it holds no dot.
+         *
+         * This is the cut the agent platform makes when it turns a type name into a label, so a
+         * stamp holding `com.example.Person` lines up with the `Person` a graph reports. A name
+         * ending in a dot has nothing after it and stands as its own label; that spelling is
+         * malformed, and folding it into an empty label would quietly match every other malformed
+         * name.
+         *
+         * @param entityTypeName A declared entity type name.
+         * @return Its own label.
+         */
+        @JvmStatic
+        fun ownLabelOf(entityTypeName: String): String =
+            entityTypeName.substringAfterLast('.').ifEmpty { entityTypeName }
 
         /**
          * Declare the governed part of [dataDictionary]: stamp it and carry through the bare
@@ -103,6 +171,9 @@ class DeclaredSchema(
         ): DeclaredSchema = DeclaredSchema(
             version = MetamodelVersion.from(dataDictionary, selector, aliases),
             relationshipTypeNames = MetamodelVersion.governedRelationshipTypeNames(dataDictionary, selector),
+            ungovernedEntityTypeNames = MetamodelVersion.ungovernedEntityTypeNames(dataDictionary, selector),
+            ungovernedRelationshipTypeNames =
+                MetamodelVersion.ungovernedRelationshipTypeNames(dataDictionary, selector),
         )
     }
 }
