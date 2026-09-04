@@ -176,7 +176,10 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
         // names: "declared but with no data" is a statement about types, and a parent label listed
         // as an unobserved type would be noise about something that was never a type in its own
         // right. A declared type counts as observed under either spelling of its own name, so a
-        // fully qualified declaration is answered by the simple label a graph reports for it.
+        // fully qualified declaration is answered by the simple label a graph reports for it. A
+        // declared former name counts the same way: if a type's data still only carries the label
+        // from before it was renamed, that is the type being observed, not a type with no data at
+        // all, and this bucket has to agree with the drift check above on that.
         //
         // Relationships compare on the bare type name, because that is all a graph can report: a
         // `db.relationshipTypes()`-style query knows the type, not which node types an instance
@@ -192,7 +195,11 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
             observedSchema = observed,
             driftedEntityTypes = canonical(observedTypes - excludedFromDrift),
             driftedRelationshipTypes = canonical(observedRels - relsExcludedFromDrift),
-            unobservedEntityTypes = canonical(declaredTypes.filterNot { isObserved(it, observedTypes) }),
+            unobservedEntityTypes = canonical(
+                declaredTypes.filterNot {
+                    isObserved(it, declared.version.entityTypeAliases[it].orEmpty(), observedTypes)
+                },
+            ),
             unobservedRelationshipTypes = canonical(declaredRels - observedRels),
         )
     }
@@ -446,11 +453,17 @@ class StructuralMetamodelDiffer : MetamodelDiffer, DeclaredObservedDiffer {
             names.mapTo(mutableSetOf()) { DeclaredSchema.ownLabelOf(it) }
 
         /**
-         * Whether the graph reported a declared type, under either spelling of its name: the name
-         * as it was declared, or the label that name writes onto a node.
+         * Whether the graph reported a declared type, under any spelling of its current name or of
+         * a declared former name: as declared, or as the label that name writes onto a node.
          */
-        private fun isObserved(declaredTypeName: String, observedTypes: Set<String>): Boolean =
-            declaredTypeName in observedTypes || DeclaredSchema.ownLabelOf(declaredTypeName) in observedTypes
+        private fun isObserved(
+            declaredTypeName: String,
+            formerNames: Set<String>,
+            observedTypes: Set<String>,
+        ): Boolean =
+            (setOf(declaredTypeName) + formerNames).any {
+                it in observedTypes || DeclaredSchema.ownLabelOf(it) in observedTypes
+            }
 
         /** Old names and the new names claiming them, where no one claim is exclusive. */
         private class ContestedClaim(val formerNames: Set<String>, val candidates: Set<String>)

@@ -1782,6 +1782,39 @@ class MetamodelDifferTest {
                 "a former name was never a type of its own: ${diff.unobservedEntityTypes}",
             )
         }
+
+        @Test
+        fun `a type whose data is still labelled with its former name is observed`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(declared, observed("Person"))
+            assertFalse(diff.hasDrift, "the rename was declared, so the old label is known: ${diff.driftedEntityTypes}")
+            assertTrue(
+                diff.unobservedEntityTypes.isEmpty(),
+                "data under the declared former name is Human being seen, not a Human nobody wrote: ${diff.unobservedEntityTypes}",
+            )
+        }
+
+        @Test
+        fun `a qualified former name observed by its label counts as observed too`() {
+            val renamed = DeclaredSchema(
+                version = versionOf(
+                    listOf("com.example.Human"),
+                    aliases = mapOf("com.example.Human" to setOf("com.example.Person")),
+                ),
+                relationshipTypeNames = emptySet(),
+            )
+
+            val diff = declaredObservedDiffer.diffAgainstObserved(renamed, observed("Person"))
+
+            assertFalse(diff.hasDrift, "the rename was declared: ${diff.driftedEntityTypes}")
+            assertTrue(diff.unobservedEntityTypes.isEmpty())
+        }
+
+        @Test
+        fun `a type with no data under any of its names is still unobserved`() {
+            val diff = declaredObservedDiffer.diffAgainstObserved(declared, observed("Ghost"))
+            assertEquals(setOf("Human"), diff.unobservedEntityTypes)
+            assertEquals(setOf("Ghost"), diff.driftedEntityTypes)
+        }
     }
 
     /**
