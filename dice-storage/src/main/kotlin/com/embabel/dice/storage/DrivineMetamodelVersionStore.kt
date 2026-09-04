@@ -71,6 +71,7 @@ import java.time.Clock
  * @param clock supplies the instant a version is stamped as saved at. Injectable so a test can pin
  *   the instants of two saves.
  */
+@Transactional
 class DrivineMetamodelVersionStore(
     private val persistenceManager: PersistenceManager,
     private val clock: Clock = Clock.systemUTC(),
@@ -140,7 +141,6 @@ class DrivineMetamodelVersionStore(
         """.trimIndent()
     }
 
-    @Transactional
     override fun saveVersion(version: MetamodelVersion) {
         logger.debug(
             "Saving metamodel version schemaName={} contentHash={}",
