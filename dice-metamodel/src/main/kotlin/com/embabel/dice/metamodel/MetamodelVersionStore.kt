@@ -162,6 +162,11 @@ interface SweptBaselineStore : MetamodelVersionStore {
      * Marking after a sweep that found nothing to quarantine is correct: "nothing needed doing" is a
      * completed reconciliation against that declaration.
      *
+     * Sweeps of one schema must not overlap. The store records whichever completion arrives last,
+     * so a sweep that started against an older declaration and finished after a newer one would
+     * move the baseline back to the older stamp, and the next check would report changes that were
+     * already swept. The call site runs sweeps of a schema one at a time.
+     *
      * @param version The version to record as reconciled.
      */
     fun markSwept(version: MetamodelVersion)
