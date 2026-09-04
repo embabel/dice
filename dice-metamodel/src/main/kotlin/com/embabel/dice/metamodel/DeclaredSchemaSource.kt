@@ -122,6 +122,33 @@ class DeclaredSchema(
             entityTypeName.substringAfterLast('.').ifEmpty { entityTypeName }
 
         /**
+         * Declare the governed part of [dataDictionary], saying inside [block] whatever should
+         * differ from the defaults:
+         *
+         * ```kotlin
+         * val declared = DeclaredSchema(dictionary) {
+         *     governedBy("Person", "Company")
+         * }
+         * ```
+         *
+         * Both halves of the declaration, the stamp and the relationship names, come from the one
+         * block, so they cannot disagree about what is governed. An empty block declares the whole
+         * dictionary.
+         *
+         * Hidden from Java, which has [MetamodelVersion.stamping] finishing with `declare()`.
+         *
+         * @param dataDictionary The schema to declare.
+         * @param block Applied to the builder before the declaration is built.
+         * @return The declaration.
+         * @throws IllegalArgumentException when the declared aliases don't fit the governed types.
+         */
+        @JvmSynthetic
+        operator fun invoke(
+            dataDictionary: DataDictionary,
+            block: MetamodelStampingBuilder.() -> Unit = {},
+        ): DeclaredSchema = stampingOf(dataDictionary, block).declare()
+
+        /**
          * Declare the governed part of [dataDictionary]: stamp it and carry through the bare
          * relationship names the same governed types declare.
          *

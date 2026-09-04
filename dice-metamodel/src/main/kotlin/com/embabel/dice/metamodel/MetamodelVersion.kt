@@ -403,8 +403,38 @@ class MetamodelVersion @JvmOverloads constructor(
         }
 
         /**
-         * Start a stamping you finish by chaining, which is the readable way in when there is
-         * more than a dictionary to say:
+         * Stamp [dataDictionary], saying inside [block] whatever should differ from the defaults:
+         *
+         * ```kotlin
+         * val version = MetamodelVersion(dictionary) {
+         *     governedBy("Person", "Company")
+         *     aliases {
+         *         type("Organisation", formerly = setOf("Company"))
+         *     }
+         * }
+         * ```
+         *
+         * This is the Kotlin entry. The block is a sequence of statements against a
+         * [MetamodelStampingBuilder], so nothing needs a prefix or a chain, and an empty block is
+         * the whole-schema stamp [from] gives. What comes back is immutable.
+         *
+         * Hidden from Java, which has [stamping]: a receiver lambda from Java means returning
+         * `Unit.INSTANCE` by hand, so Java gets the chain and Kotlin gets the block.
+         *
+         * @param dataDictionary The schema to stamp.
+         * @param block Applied to the builder before the stamp is built.
+         * @return An immutable version stamp.
+         * @throws IllegalArgumentException when the declared aliases don't fit the governed types.
+         */
+        @JvmSynthetic
+        operator fun invoke(
+            dataDictionary: DataDictionary,
+            block: MetamodelStampingBuilder.() -> Unit = {},
+        ): MetamodelVersion = stampingOf(dataDictionary, block).stamp()
+
+        /**
+         * Start a stamping you finish by chaining, which is the Java entry and reads the same
+         * from Kotlin when a chain suits the call site better than a block:
          *
          * ```kotlin
          * MetamodelVersion.stamping(dictionary).governedBy(governed).withAliases(aliases).stamp()

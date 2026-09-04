@@ -179,6 +179,46 @@ MetamodelVersion version = MetamodelVersion.stamping(dataDictionary)
 
 The `from` overloads stay. They are the short forms, and the chain is the long one.
 
+### Saying it as a block
+
+Kotlin gets a receiver block, so the call site is a sequence of statements with no prefix and no
+chain:
+
+```kotlin
+val version = MetamodelVersion(dictionary) {
+    governedBy("Person", "Company")
+    aliases {
+        type("Organisation", formerly = setOf("Company"))
+        property("Person", "emailAddress", formerly = setOf("email"))
+    }
+}
+```
+
+The entry is `operator fun invoke` on the companion, which is how `embabel-agent` shapes its own
+configured constructors (`ActionContext`, `OperationContext`, `Tool.Definition`) and the same shape
+as `Json { }` and `HttpClient { }`. It reads as a constructor with a trailing block, which is what
+it is, and it stays on the class. `DeclaredSchema(dictionary) { }` is the same block finishing as a
+declaration, which is what keeps the stamp and the relationship names from disagreeing about what
+is governed. An empty block is the whole-schema stamp.
+
+The nested `aliases` block earns its place: `SchemaAliases` is two levels of map, and writing those
+literals at a call site is the least readable part of declaring a rename. Names accumulate there
+rather than replace, so a type renamed `A` to `B` to `C` declares both older names, which is what a
+comparison across non-adjacent stamps needs.
+
+`@DslMarker` scopes the two builders, so reaching the outer one from inside `aliases { }` is a
+compile error.
+
+The builders are mutable and live only for the block. Their constructors are internal, so one
+cannot be obtained outside a block, and what comes back is immutable. A block of statements against
+an immutable receiver would discard every call, which is why the mutability sits here and nowhere
+else.
+
+Java keeps the chain. A receiver lambda from Java means returning `Unit.INSTANCE` by hand, so the
+block is `@JvmSynthetic` and Java never sees it. Two entries off the one class, one per language:
+`MetamodelVersion(dictionary) { }` for Kotlin, `MetamodelVersion.stamping(dictionary)` for Java. A
+test asserts they reach the same stamp.
+
 Relationships follow the type that declares them. A governed type's outgoing relationship is part of
 that type's declared shape, so it stays in the stamp even when it points at an ungoverned type; a
 relationship declared *by* an ungoverned type is left out entirely. Without that rule, an
