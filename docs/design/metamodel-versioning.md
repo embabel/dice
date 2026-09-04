@@ -143,6 +143,42 @@ for a domain that is closed-world throughout.
 The model is Hibernate's `@Version`: governance is declared per entity, and nothing is versioned by
 default.
 
+### Saying it in steps
+
+Three positional arguments read poorly at the call site once all three are given, and the third is
+usually `SchemaAliases.NONE`. `MetamodelStamping` carries the same three and names each one as it
+is set:
+
+```kotlin
+val version = MetamodelVersion.stamping(dataDictionary)
+    .governedBy(governed)
+    .withAliases(aliases)
+    .stamp()
+```
+
+Every step returns a new stamping and leaves the one it was called on alone, so a partly built
+stamping is a value a caller can keep in a field and finish more than once. Governance by a set of
+names is common enough that `governedBy` takes one directly and builds the selector.
+
+The stamp and the declaration take the same three inputs, so one stamping finishes as either:
+`stamp()` for a `MetamodelVersion`, `declare()` for a `DeclaredSchema`. That makes the pairing rule
+below structural: both halves come from one set of arguments, so they cannot disagree about what is
+governed.
+
+Nothing is validated while chaining. The alias rules belong to the factories, so a bad declaration
+fails on the terminal call with the message the three-argument form gives.
+
+Every step is a plain method taking one argument, which is what keeps the chain identical from Java:
+
+```java
+MetamodelVersion version = MetamodelVersion.stamping(dataDictionary)
+        .governedBy(governed)
+        .withAliases(aliases)
+        .stamp();
+```
+
+The `from` overloads stay. They are the short forms, and the chain is the long one.
+
 Relationships follow the type that declares them. A governed type's outgoing relationship is part of
 that type's declared shape, so it stays in the stamp even when it points at an ungoverned type; a
 relationship declared *by* an ungoverned type is left out entirely. Without that rule, an

@@ -34,6 +34,13 @@ import org.jetbrains.annotations.ApiStatus
  * val version = MetamodelVersion.from(dataDictionary, GovernedTypeSelector { it.name in governed })
  * ```
  *
+ * A set of names is common enough that the chained form takes one directly, and builds the same
+ * selector:
+ *
+ * ```kotlin
+ * val version = MetamodelVersion.stamping(dataDictionary).governedBy(governed).stamp()
+ * ```
+ *
  * Selecting a subset changes which types the stamp covers, and leaves the encoding alone. Adding an
  * ungoverned type to the dictionary leaves the content hash as it was, while touching a governed
  * one changes it.

@@ -403,6 +403,25 @@ class MetamodelVersion @JvmOverloads constructor(
         }
 
         /**
+         * Start a stamping you finish by chaining, which is the readable way in when there is
+         * more than a dictionary to say:
+         *
+         * ```kotlin
+         * MetamodelVersion.stamping(dictionary).governedBy(governed).withAliases(aliases).stamp()
+         * ```
+         *
+         * The [from] overloads below stay: they are the short forms, and this is the long one that
+         * names its arguments as it goes. See [MetamodelStamping] for what each step does.
+         *
+         * @param dataDictionary The schema to stamp.
+         * @return A stamping over the whole dictionary, governing everything and declaring no
+         *   former names until told otherwise.
+         */
+        @JvmStatic
+        fun stamping(dataDictionary: DataDictionary): MetamodelStamping =
+            MetamodelStamping(dataDictionary)
+
+        /**
          * Create a [MetamodelVersion] stamp covering every type in [dataDictionary], which is the
          * right stamp for a domain that is closed-world throughout.
          *
