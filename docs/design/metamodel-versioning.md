@@ -336,6 +336,27 @@ keyed question; a backend that can push the lookup down to the database should o
 module ships no implementation. Storage is a separate concern, and a stamp is useful in memory
 before anything durable exists.
 
+## Plain classes, not data classes
+
+`MetamodelVersion`, `DeclaredSchema` and `SchemaAliases` each write their own `equals`, `hashCode`
+and `toString`. That is one deliberate pattern, for one reason: each of them copies what the
+constructor is handed into a JVM-immutable collection in its body, and a `data class` cannot do
+that. A constructor `val` takes no initialiser, so the generated `equals` and `copy` would read the
+raw arguments and skip the copy, and a stamp whose collections could still be changed from the
+outside would disagree with its own precomputed hash.
+
+`PropertySignature` is the exception that proves it. It is a `data class`, and its `aliases` set is
+therefore held as handed in; `MetamodelVersion` copies that set into an immutable one when it takes
+a signature. The KDoc on each class says as much, and this section is here so the pattern is read
+as a module decision and not raised class by class.
+
+Two notions of equality live on `MetamodelVersion`, and both are meant. `equals` compares the schema
+name along with the content, so a `Set<MetamodelVersion>` keys the way the store does. `contentHash`
+and `hasSameContentAs` leave the name out, so two schemas with the same shape under different names
+compare equal there. That is also why the store's natural key is `(schemaName, contentHash)` and not
+the hash alone: history is per schema, and one schema adopting a shape another had earlier must not
+land on the other schema's record.
+
 ## The tiers ahead
 
 Versioning is the first of three escalating tiers, shipped in that order.

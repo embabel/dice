@@ -206,8 +206,7 @@ class MetamodelVersion @JvmOverloads constructor(
                 "Drop the entry instead; it means the same thing and hashes the same as the types around it."
         }
 
-        requireNoTypeAliasReuse(known, this.entityTypeAliases)
-        requireNoAliasesOnDuplicateNames(this.entityTypeProperties)
+        requireDeclarable(known, this.entityTypeAliases, this.entityTypeProperties)
     }
 
     val contentHash: String = fingerprint()
@@ -216,6 +215,9 @@ class MetamodelVersion @JvmOverloads constructor(
      * Returns `true` when this version and [other] have the same structural content (entity types,
      * label sets, property signatures, and relationships), regardless of schema name. Compares
      * [contentHash].
+     *
+     * [equals] also compares [schemaName]; this does not. Use this to ask whether two schemas have
+     * the same shape, and [equals] to ask whether two stamps are the same stamp.
      */
     fun hasSameContentAs(other: MetamodelVersion): Boolean = contentHash == other.contentHash
 
@@ -266,7 +268,14 @@ class MetamodelVersion @JvmOverloads constructor(
         return hashBytes.joinToString("") { "%02x".format(it) }
     }
 
-    /** Structural equality: same schema name, types, labels, property signatures, relationships, and aliases. */
+    /**
+     * Structural equality: same schema name, types, labels, property signatures, relationships, and
+     * aliases.
+     *
+     * This compares [schemaName]; [hasSameContentAs] and [contentHash] leave it out. Two stamps of
+     * identically shaped schemas under different names are therefore unequal here and equal there,
+     * and a `Set<MetamodelVersion>` keys the way the store does, on schema and content both.
+     */
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is MetamodelVersion) return false
@@ -330,6 +339,21 @@ class MetamodelVersion @JvmOverloads constructor(
          */
         private fun withImmutableAliases(signature: PropertySignature): PropertySignature =
             signature.copy(aliases = java.util.Set.copyOf(signature.aliases))
+
+        /**
+         * The refusals a declaration has to pass, run as one so the constructor and [from] can't
+         * drift on which checks apply. [from] runs it first, so a declaration that can't be stamped
+         * fails at the call that stamped it; the constructor runs it again, so a stamp built by
+         * hand meets the same guard.
+         */
+        private fun requireDeclarable(
+            declaredTypeNames: Set<String>,
+            entityTypeAliases: Map<String, Set<String>>,
+            entityTypeProperties: Map<String, Set<PropertySignature>>,
+        ) {
+            requireNoTypeAliasReuse(declaredTypeNames, entityTypeAliases)
+            requireNoAliasesOnDuplicateNames(entityTypeProperties)
+        }
 
         /**
          * Reject a declared type name showing up in another type's alias set.
@@ -449,28 +473,26 @@ class MetamodelVersion @JvmOverloads constructor(
 
             // A DataDictionary can legally hold two domain types that share a name but differ in
             // shape (DynamicType is a data class, so same-named instances with different labels are
-            // not equal and both survive a set). Labels and properties are unioned per name.
-            // Keeping only the last would drop a label or property from the fingerprint, and
-            // removing it later wouldn't change the hash.
-            val entityTypeLabels = governedTypes
-                .groupBy { it.name }
-                .mapValues { (_, types) -> types.flatMap { it.labels }.toSet() }
+            // not equal and both survive a set). Labels and properties are unioned per name, off
+            // the one grouping. Keeping only the last would drop a label or property from the
+            // fingerprint, and removing it later wouldn't change the hash.
+            val typesByName = governedTypes.groupBy { it.name }
+
+            val entityTypeLabels = typesByName.mapValues { (_, types) -> types.flatMap { it.labels }.toSet() }
 
             // Decorating inside this loop is the only place it can happen: the stamp is immutable
             // and hashes at construction. Every signature sharing a property name picks up the same
             // declared alias set, so decoration can neither create nor collapse a duplicate, and
             // the constructor's duplicate-name guard sees exactly the duplicates the union holds.
-            val entityTypeProperties = governedTypes
-                .groupBy { it.name }
-                .mapValues { (typeName, types) ->
-                    types.flatMap { type ->
-                        type.properties.map { property ->
-                            val signature = PropertySignature.of(property)
-                            val declared = aliases.propertyAliasesFor(typeName, signature.name)
-                            if (declared.isEmpty()) signature else signature.copy(aliases = declared)
-                        }
-                    }.toSet()
-                }
+            val entityTypeProperties = typesByName.mapValues { (typeName, types) ->
+                types.flatMap { type ->
+                    type.properties.map { property ->
+                        val signature = PropertySignature.of(property)
+                        val declared = aliases.propertyAliasesFor(typeName, signature.name)
+                        if (declared.isEmpty()) signature else signature.copy(aliases = declared)
+                    }
+                }.toSet()
+            }
 
             // Splitting one type into two same-named declarations, or merging two back into one,
             // can render the same relationship descriptor twice. It is the same schema either way,
@@ -479,17 +501,16 @@ class MetamodelVersion @JvmOverloads constructor(
                 .filter { selector.governs(it.from) }
                 .map { rel -> "${rel.from.name}-[${rel.name}]->${rel.to.name}" }
 
-            val governedNames = governedTypes.map { it.name }.toSet()
+            val governedNames = typesByName.keys
             val entityTypeAliases = aliases.typeAliases.filterKeys { it in governedNames }
 
-            // The two refusals run here as well as in the constructor so a declaration that can't
-            // be stamped fails at the call that stamped it, naming the alias to retire.
-            requireNoTypeAliasReuse(governedNames, entityTypeAliases)
-            requireNoAliasesOnDuplicateNames(entityTypeProperties)
+            // Runs here as well as in the constructor so a declaration that can't be stamped fails
+            // at the call that stamped it, naming the alias to retire.
+            requireDeclarable(governedNames, entityTypeAliases, entityTypeProperties)
 
             return MetamodelVersion(
                 schemaName = dataDictionary.name,
-                entityTypeNames = governedTypes.map { it.name },
+                entityTypeNames = governedNames.toList(),
                 entityTypeLabels = entityTypeLabels,
                 entityTypeProperties = entityTypeProperties,
                 relationshipNames = relationshipNames,

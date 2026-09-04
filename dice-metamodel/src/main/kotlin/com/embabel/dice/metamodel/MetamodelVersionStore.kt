@@ -31,6 +31,14 @@ import org.jetbrains.annotations.ApiStatus
  * is deleted, and records with different keys always coexist, so history accumulates.
  * Implementations are not expected to reject a re-save.
  *
+ * **Why the schema name is in the key.** [MetamodelVersion.contentHash] excludes the schema name
+ * on purpose, so two schemas with the same shape share a hash: a schema and its staging copy, or a
+ * schema forked under a new name. History is per schema, which is what [latestVersion] and
+ * [versionHistory] answer, so the same content has to be a separate record under each name.
+ * Keyed on the hash alone, one schema adopting a shape another had earlier would land on the other
+ * schema's record and pull that schema's history into its own. The name in the key is what keeps
+ * two schemas' histories from bleeding into each other.
+ *
  * This contract covers stamping and recall. Comparing a declaration against a live graph is a
  * separate concern with its own store contract.
  */
@@ -71,9 +79,11 @@ interface MetamodelVersionStore {
      * Resolves a recorded hash, such as the one a proposition carries as the version it was
      * extracted under, back into the schema shape it stood for.
      *
-     * The default scans [versionHistory], which is correct for any implementation but reads the
-     * whole history to answer a keyed question. A backend that can push the lookup down to the
-     * database (a keyed `MATCH` rather than an in-memory `filter`) should override it.
+     * The default scans [versionHistory], which is correct for any implementation and reads the
+     * whole history to answer a keyed question. That is fine for the in-memory reference and for
+     * a test double. A durable backend should override it with a keyed lookup, since a long-lived
+     * schema's history only grows and this default grows with it; the Drivine store does, with a
+     * `MATCH` on the natural key.
      *
      * @param schemaName The schema the version belongs to.
      * @param contentHash The [MetamodelVersion.contentHash] to find.
