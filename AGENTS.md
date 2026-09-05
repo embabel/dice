@@ -66,7 +66,7 @@ The `dice` module is organized by responsibility:
 | `com.embabel.dice.provenance` | `ProvenanceEntry`, `SourceLocator` — rich evidence links from propositions back to source material |
 | `com.embabel.dice.query.oracle` | `Oracle`, `LlmOracle`, `PrologTools` — natural language question answering over propositions |
 | `com.embabel.dice.web.rest` | Optional REST endpoints for the pipeline and memory; activated by `spring-webmvc` on the classpath |
-| `com.embabel.dice.mcp` | `DiceMcpTools` — simplified MCP tool surface (`dice_recall`, `dice_list`, `dice_store`, `dice_get`); `context_id` on every call |
+| `com.embabel.dice.mcp` | `DiceMcpTools` — simplified MCP tool surface (`dice_recall`, `dice_list`, `dice_store`, `dice_get`); `context_id` on every call is a scope, not a credential |
 
 ## Conventions
 

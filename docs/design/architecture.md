@@ -248,8 +248,9 @@ isolated — agent tools bake it in at construction, REST takes it from the URL 
 of those surfaces accepts a context override in the request body.
 
 External MCP clients are stateless and may serve many sessions, so they cannot bake a context in
-at construction. `DiceMcpTools` takes `context_id` on every call and refuses `get` when the id
-belongs to another context. Export is opt-in (`dice-mcp-autoconfigure`,
+at construction. `DiceMcpTools` takes `context_id` on every call — a caller-supplied scope, not
+a credential — and `get` treats a missing id and a foreign-context id the same way. Authorization
+is the host MCP server's job. Export is opt-in (`dice-mcp-autoconfigure`,
 `embabel.dice.mcp.enabled=true`). Discovery and graph tools stay on the in-process `asTools()` path.
 
 ## Events

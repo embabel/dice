@@ -2,7 +2,8 @@
 
 Spring Boot wiring that exports [DiceMcpTools](../dice/src/main/kotlin/com/embabel/dice/mcp/DiceMcpTools.kt)
 over embabel-agent's MCP server. No domain logic — just an `@AutoConfiguration` that assembles beans
-from `dice`. The isolation rule (`context_id` on every tool) lives on `DiceMcpTools` itself.
+from `dice`. `context_id` on every tool is a caller-supplied scope, not a credential — the
+check lives on `DiceMcpTools` itself; authorization is the host MCP server's job.
 
 ## What's here
 

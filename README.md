@@ -2416,8 +2416,9 @@ Everything is pushed into the database rather than scanned in memory:
 
 Expose DICE recall/list/store/get to an MCP client (Claude Desktop, Cursor, etc.) with
 `dice-mcp-autoconfigure` and embabel-agent's MCP server starter. Off until you set
-`embabel.dice.mcp.enabled=true`. Every tool takes a `context_id` — MCP clients are stateless,
-unlike in-process `Memory` / `DiscoveryTools` which bake context in at construction.
+`embabel.dice.mcp.enabled=true`. Every tool takes a `context_id` — that is a scope, not a
+credential. It keeps one call from reading another context; authorization is the host MCP
+server's job. In-process `Memory` / `DiscoveryTools` bake context in at construction instead.
 
 ```xml
 <dependency>
@@ -2443,12 +2444,16 @@ embabel:
 |------|-------------|
 | `dice_recall` | Hybrid semantic + keyword search in a `context_id` |
 | `dice_list` | List active propositions for a context |
-| `dice_store` | Store a proposition directly |
-| `dice_get` | Fetch one proposition by id, refused if it belongs to another context |
+| `dice_store` | Store a proposition directly (no mentions or provenance — see below) |
+| `dice_get` | Fetch one proposition by id; a miss and a foreign-context id look the same |
 
 `dice_recall` and `dice_list` share one result format, each line carrying the `id=` that
 `dice_get` takes, so a client can search and then drill into a single fact. Their `limit` is
 clamped to 100.
+
+`dice_store` writes a fact with empty mentions and no provenance, so it is retrievable by
+vector and keyword only — not by entity expansion or graph projection. Use the ingestion
+pipeline when the fact needs to be wired into the rest of the knowledge flow.
 
 Discovery and graph tools stay on `DiscoveryTools.asTools(...)` / `GraphQueryTools.asTools(...)`.
 
