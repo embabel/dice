@@ -15,14 +15,20 @@
  */
 package com.embabel.dice.mcp.autoconfigure
 
+import com.embabel.agent.api.common.Ai
 import com.embabel.agent.api.tool.ToolObject
 import com.embabel.agent.mcpserver.McpToolExport
+import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.mcp.DiceMcpTools
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
+import com.embabel.dice.storage.autoconfigure.DiceStorageAutoConfiguration
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.getBean
+import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.test.context.FilteredClassLoader
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
@@ -112,6 +118,8 @@ class DiceMcpAutoConfigurationTest {
             )
             .run { ctx ->
                 assertThat(ctx).hasFailed()
+                assertThat(ctx.startupFailure)
+                    .hasStackTraceContaining("embabel.dice.mcp.min-confidence")
             }
     }
 
@@ -125,6 +133,83 @@ class DiceMcpAutoConfigurationTest {
             )
             .run { ctx ->
                 assertThat(ctx).hasFailed()
+                assertThat(ctx.startupFailure)
+                    .hasStackTraceContaining("embabel.dice.mcp.default-limit")
+            }
+    }
+
+    @Test
+    fun `afterName names DiceStorageAutoConfiguration so there is no compile dep`() {
+        val afterName = DiceMcpAutoConfiguration::class.java
+            .getAnnotation(AutoConfiguration::class.java)
+            .afterName
+        assertThat(afterName).containsExactly(
+            "com.embabel.dice.storage.autoconfigure.DiceStorageAutoConfiguration",
+        )
+    }
+
+    /**
+     * Runs [DiceStorageAutoConfiguration] and [DiceMcpAutoConfiguration] together, not the
+     * isolated stub the other tests use, to prove `afterName` on [DiceMcpAutoConfiguration]
+     * actually resolves `@ConditionalOnBean(PropositionRepository::class)`. MCP is listed
+     * first so a broken `afterName` cannot hide behind declaration order — without the wait,
+     * the store bean is not there yet and export silently drops out (the #102 failure).
+     */
+    @Test
+    fun `combining storage and MCP autoconfig wires tools from the store bean`() {
+        ApplicationContextRunner()
+            .withConfiguration(
+                AutoConfigurations.of(
+                    DiceMcpAutoConfiguration::class.java,
+                    DiceStorageAutoConfiguration::class.java,
+                )
+            )
+            .withUserConfiguration(StubAiConfig::class.java)
+            .withPropertyValues("embabel.dice.mcp.enabled=true")
+            .run { ctx ->
+                assertThat(ctx).hasSingleBean(PropositionRepository::class.java)
+                assertThat(ctx).hasSingleBean(DiceMcpTools::class.java)
+                assertThat(ctx).hasBean("diceMcpToolExport")
+
+                val export = ctx.getBean<McpToolExport>("diceMcpToolExport")
+                val names = export.toolCallbacks.map { it.toolDefinition.name() }.toSet()
+                assertThat(names).isEqualTo(DiceMcpTools.TOOL_NAMES)
+            }
+    }
+
+    @Test
+    fun `combining storage and MCP autoconfig stays dark when the switch is off`() {
+        ApplicationContextRunner()
+            .withConfiguration(
+                AutoConfigurations.of(
+                    DiceMcpAutoConfiguration::class.java,
+                    DiceStorageAutoConfiguration::class.java,
+                )
+            )
+            .withUserConfiguration(StubAiConfig::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasSingleBean(PropositionRepository::class.java)
+                assertThat(ctx).doesNotHaveBean(DiceMcpAutoConfiguration::class.java)
+                assertThat(ctx).doesNotHaveBean(DiceMcpTools::class.java)
+                assertThat(ctx).doesNotHaveBean(McpToolExport::class.java)
+            }
+    }
+
+    @Test
+    fun `combining storage and MCP autoconfig exports nothing when storage has no Ai`() {
+        ApplicationContextRunner()
+            .withConfiguration(
+                AutoConfigurations.of(
+                    DiceMcpAutoConfiguration::class.java,
+                    DiceStorageAutoConfiguration::class.java,
+                )
+            )
+            .withPropertyValues("embabel.dice.mcp.enabled=true")
+            .run { ctx ->
+                assertThat(ctx).doesNotHaveBean(PropositionRepository::class.java)
+                assertThat(ctx).hasSingleBean(DiceMcpAutoConfiguration::class.java)
+                assertThat(ctx).doesNotHaveBean(DiceMcpTools::class.java)
+                assertThat(ctx).doesNotHaveBean("diceMcpToolExport")
             }
     }
 
@@ -227,6 +312,21 @@ class DiceMcpAutoConfigurationTest {
             val INSTANCE: McpToolExport = McpToolExport.fromToolObject(
                 ToolObject(objects = listOf(DiceMcpTools(InMemoryPropositionRepository()))),
             )
+        }
+    }
+
+    /**
+     * Satisfies [DiceStorageAutoConfiguration]'s `@ConditionalOnBean(Ai::class)` gate on
+     * `inMemoryPropositionRepository`, so the real in-memory store bean is registered and
+     * the cross-auto-configuration ordering path is exercised.
+     */
+    @Configuration(proxyBeanMethods = false)
+    private class StubAiConfig {
+        @Bean
+        fun ai(): Ai {
+            val ai = mock<Ai>()
+            whenever(ai.withDefaultEmbeddingService()).thenReturn(mock<EmbeddingService>())
+            return ai
         }
     }
 }

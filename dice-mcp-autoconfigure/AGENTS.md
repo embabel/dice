@@ -36,5 +36,8 @@ Every collaborator is `@ConditionalOnMissingBean`, so an app's own `DiceMcpTools
 - MCP export is **opt-in**. Unlike the collector (`enabled` default true), this stays dark until
   `embabel.dice.mcp.enabled=true`.
 - Without a `PropositionRepository` bean the auto-config class may load but it exports nothing.
+- `afterName` is a string, not `after = [DiceStorageAutoConfiguration::class]`, so this module
+  has no compile dependency on `dice-storage-autoconfigure`. The combined wiring test (test-scope
+  only) is what proves the name is right and the store bean is visible.
 - Discovery and graph tools are not on this path. They bake context in at construction; use
   `DiscoveryTools.asTools(...)` / `GraphQueryTools.asTools(...)` for in-process agents.
