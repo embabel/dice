@@ -67,13 +67,14 @@ you need.
 - [events.md](events.md) — the domain events DICE emits (fact persisted, status changed, batch
   finished) and how they loosely couple the substrate to observers.
 - [web-api.md](web-api.md) — the opt-in REST surface over the pipeline, memory, and discovery
-  layers, gated by an API-key filter.
+  layers, gated by an API-key filter. MCP export (`DiceMcpTools`, `dice-mcp-autoconfigure`) is the
+  sibling opt-in for stateless MCP clients; see [architecture.md](architecture.md#expose-agent-tools-rest-and-mcp).
 - [report.md](report.md) — `dice-report`'s pure projectors that turn queried propositions into
   human-facing artifacts: structured breakdowns, discovered links, LLM-generated rationale.
 
 ## Modules
 
-DICE ships as six Maven modules; [architecture.md](architecture.md#module-map) has the full
+DICE ships as seven Maven modules; [architecture.md](architecture.md#module-map) has the full
 dependency map. Quick pointer to where each is documented:
 
 | Module | Documented in |
@@ -81,6 +82,7 @@ dependency map. Quick pointer to where each is documented:
 | `dice` (core) | most notes above — propositions, pipeline, projections, hygiene, retrieval |
 | `dice-storage` | [durable-storage.md](durable-storage.md), [graph-projection.md](graph-projection.md), [prolog-projection.md](prolog-projection.md) |
 | `dice-storage-autoconfigure` | [durable-storage.md](durable-storage.md) |
+| `dice-mcp-autoconfigure` | [architecture.md](architecture.md#expose-agent-tools-rest-and-mcp) |
 | `dice-ingestion` | [ingestion.md](ingestion.md) |
 | `dice-report` | [report.md](report.md) |
 | `dice-integration-tests` | not separately documented — exercises the above end-to-end |

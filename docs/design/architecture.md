@@ -11,9 +11,10 @@ DICE is a multi-module Maven build. Each module's intent, and what it's allowed 
 
 | Module | Intent |
 |---|---|
-| `dice` | The core: proposition model, pipeline, gates, projection interfaces, query facades, agent tools, REST controllers. In-memory implementations only — no database driver. |
+| `dice` | The core: proposition model, pipeline, gates, projection interfaces, query facades, agent tools, REST controllers, MCP tool surface (`DiceMcpTools`). In-memory implementations only — no database driver. |
 | `dice-storage` | The durable Neo4j backend: `Drivine`-based repository, graph/Prolog/lineage projectors, schema and index bootstrap. Depends on `dice`. |
 | `dice-storage-autoconfigure` | Spring Boot autoconfiguration that wires `dice-storage`'s beans (repository, projectors, trust scorer) into a host application. Depends on `dice-storage`. |
+| `dice-mcp-autoconfigure` | Spring Boot autoconfiguration that exports `DiceMcpTools` over embabel-agent MCP when `embabel.dice.mcp.enabled=true`. Depends on `dice`. |
 | `dice-ingestion` | Content-hash dedup ledger and source adapters that sit in front of `PropositionPipeline`, so the same artifact is never extracted twice concurrently. Depends on `dice`. |
 | `dice-report` | Rationale and structured report generation over propositions and their lineage. Depends on `dice`. |
 | `dice-integration-tests` | End-to-end tests exercising the real Neo4j backend and full pipeline across module boundaries. Depends on `dice`, `dice-ingestion`, `dice-report` (and transitively `dice-storage`). Not shipped. |
@@ -23,12 +24,14 @@ flowchart TB
     dice["dice<br/>(core)"]
     storage["dice-storage<br/>(Neo4j backend)"]
     autoconf["dice-storage-autoconfigure<br/>(Spring Boot wiring)"]
+    mcp["dice-mcp-autoconfigure<br/>(MCP export)"]
     ingestion["dice-ingestion<br/>(dedup ledger)"]
     report["dice-report<br/>(rationale/reports)"]
     itest["dice-integration-tests"]
 
     storage --> dice
     autoconf --> storage
+    mcp --> dice
     ingestion --> dice
     report --> dice
     itest --> dice
@@ -37,9 +40,9 @@ flowchart TB
 ```
 
 `dice` never depends on any other DICE module — it's the leaf of the graph, so every other module
-can be added or removed without touching core logic. `dice-storage-autoconfigure` is the only
-module that knows about Spring Boot autoconfiguration; plain `dice-storage` stays framework-neutral
-so it can be wired by hand outside Spring Boot.
+can be added or removed without touching core logic. Spring Boot autoconfiguration lives in
+dedicated `*-autoconfigure` modules (`dice-storage-autoconfigure`, `dice-mcp-autoconfigure`);
+plain `dice-storage` stays framework-neutral so it can be wired by hand outside Spring Boot.
 
 ### Subsystem design docs
 
@@ -214,7 +217,7 @@ sequenceDiagram
 
 See [retrieval-and-discovery](retrieval-and-discovery.md).
 
-### Expose: agent tools and REST
+### Expose: agent tools, REST, and MCP
 
 ```mermaid
 flowchart LR
@@ -228,17 +231,27 @@ flowchart LR
         PC["PropositionPipelineController"]
         MC["MemoryController"]
     end
+    subgraph mcp ["MCP (contextId per call)"]
+        MCP["DiceMcpTools<br/>recall, list, store, get"]
+    end
     GQT --> GQ[GraphQuery]
     DT --> RR[RetrievalRouter]
     DC --> RR
     MT --> PS[PropositionStore]
+    MCP --> PS
     PC --> PIPE[PropositionPipeline]
     MC --> PS
 ```
 
 Agent tools and REST share the same underlying routers and stores. The contextId is structurally
 isolated — agent tools bake it in at construction, REST takes it from the URL path only. Neither
-surface accepts a context override in the request body.
+of those surfaces accepts a context override in the request body.
+
+External MCP clients are stateless and may serve many sessions, so they cannot bake a context in
+at construction. `DiceMcpTools` takes `context_id` on every call — a caller-supplied scope, not
+a credential — and `get` treats a missing id and a foreign-context id the same way. Authorization
+is the host MCP server's job. Export is opt-in (`dice-mcp-autoconfigure`,
+`embabel.dice.mcp.enabled=true`). Discovery and graph tools stay on the in-process `asTools()` path.
 
 ## Events
 
@@ -287,6 +300,7 @@ and `CollectorRecord` MERGE on their natural keys so replayed writes are idempot
 | Retrieval router | `dice/query/discovery/RetrievalRouter.kt` |
 | Graph query facade | `dice/query/graph/GraphQuery.kt` |
 | Agent tools | `dice/agent/DiscoveryTools.kt`, `GraphQueryTools.kt` |
+| MCP tools | `dice/mcp/DiceMcpTools.kt` |
 | REST surface | `dice/web/rest/DiscoveryController.kt` |
 | Events | `dice/common/` (event types), `EventEmittingPropositionRepository` |
-| Spring Boot wiring | `dice-storage-autoconfigure/DiceStorageAutoConfiguration.kt` |
+| Spring Boot wiring | `dice-storage-autoconfigure/DiceStorageAutoConfiguration.kt`, `dice-mcp-autoconfigure/DiceMcpAutoConfiguration.kt` |

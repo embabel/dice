@@ -158,6 +158,11 @@ the request body has no context field, so a caller *cannot* ask one context's en
 context's data. Cross-context reads aren't forbidden by a check; they're structurally impossible, and
 an LLM given the agent tools can't wander across context boundaries either.
 
+The exception is external MCP: those clients are stateless, so `DiceMcpTools` takes `context_id` on
+every call and checks it on `get`. That is a parameter, not a body-level override of a baked-in
+context, and recall/list still start from `PropositionQuery.forContextId`. `context_id` is a scope,
+not a credential — any client can name any tenant; authorization is the host MCP server's job.
+
 Two concerns drive this: a stable external contract (internal types can evolve without breaking the
 wire, and a leak-check guards against a domain type sneaking into a DTO by accident) and that
 structural isolation.
