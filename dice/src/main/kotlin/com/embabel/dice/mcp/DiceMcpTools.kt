@@ -47,7 +47,7 @@ class DiceMcpTools(
 
     init {
         require(minConfidence in 0.0..1.0) { "minConfidence must be between 0.0 and 1.0" }
-        require(defaultLimit > 0) { "defaultLimit must be positive" }
+        require(defaultLimit in 1..MAX_LIMIT) { "defaultLimit must be between 1 and $MAX_LIMIT" }
     }
 
     /**
@@ -64,13 +64,13 @@ class DiceMcpTools(
         contextId: String,
         @LlmTool.Param(description = "What to recall, in natural language. Omit to list all memories.")
         query: String? = null,
-        @LlmTool.Param(description = "Maximum results (default 10).")
+        @LlmTool.Param(description = "Maximum results (default 10, capped at 100).")
         limit: Int = defaultLimit,
     ): String = DiceMcpSupport.recall(
         repository = repository,
         contextId = contextId,
         query = query,
-        limit = limit.coerceAtLeast(1),
+        limit = limit.coerceIn(1, MAX_LIMIT),
         minConfidence = minConfidence,
     )
 
@@ -84,23 +84,21 @@ class DiceMcpTools(
     fun listMemories(
         @LlmTool.Param(description = "Context to list.")
         contextId: String,
-        @LlmTool.Param(description = "Maximum results (default 10).")
+        @LlmTool.Param(description = "Maximum results (default 10, capped at 100).")
         limit: Int = defaultLimit,
     ): String {
         val scoped = DiceMcpSupport.requireContextId(contextId)
         val query = DiceMcpSupport.baseQuery(scoped, minConfidence)
             .orderedByEffectiveConfidence()
-            .withLimit(limit.coerceAtLeast(1))
+            .withLimit(limit.coerceIn(1, MAX_LIMIT))
         val propositions = repository.query(query)
         if (propositions.isEmpty()) {
             return "No memories in context '$scoped'."
         }
-        return buildString {
-            appendLine("Found ${propositions.size} memories in context '$scoped':")
-            propositions.forEachIndexed { index, proposition ->
-                appendLine("${index + 1}. ${DiceMcpSupport.formatProposition(proposition)}")
-            }
-        }.trimEnd()
+        return DiceMcpSupport.render(
+            "Found ${propositions.size} memories in context '$scoped':",
+            propositions,
+        )
     }
 
     /**
@@ -164,6 +162,15 @@ class DiceMcpTools(
 
         const val DEFAULT_MIN_CONFIDENCE = 0.5
         const val DEFAULT_LIMIT = 10
+
+        /**
+         * Hard ceiling on `limit` for recall/list. An MCP caller is external and its limit
+         * arrives as whatever number the client model wrote, so the bound is enforced here
+         * rather than trusted. Mirrors the `MAX_TOP_K` that
+         * [com.embabel.dice.query.discovery.RetrievalRouter] clamps to — that one is private,
+         * so the value is duplicated rather than referenced.
+         */
+        const val MAX_LIMIT = 100
 
         /**
          * Create [Tool] instances for agent runtimes that register tools by hand

@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.mcp.autoconfigure
 
+import com.embabel.dice.mcp.DiceMcpTools
 import org.springframework.boot.context.properties.ConfigurationProperties
 
 /**
@@ -29,11 +30,16 @@ data class DiceMcpProperties(
     val enabled: Boolean = false,
     /** Minimum effective confidence for recall/list tools (0.0–1.0). */
     val minConfidence: Double = 0.5,
-    /** Default result limit for recall/list tools. */
+    /**
+     * Default result limit for recall/list tools. Bounded by [DiceMcpTools.MAX_LIMIT]: a larger
+     * value would be silently clamped at call time, so it fails startup instead.
+     */
     val defaultLimit: Int = 10,
 ) {
     init {
         require(minConfidence in 0.0..1.0) { "embabel.dice.mcp.min-confidence must be between 0.0 and 1.0" }
-        require(defaultLimit > 0) { "embabel.dice.mcp.default-limit must be positive" }
+        require(defaultLimit in 1..DiceMcpTools.MAX_LIMIT) {
+            "embabel.dice.mcp.default-limit must be between 1 and ${DiceMcpTools.MAX_LIMIT}"
+        }
     }
 }

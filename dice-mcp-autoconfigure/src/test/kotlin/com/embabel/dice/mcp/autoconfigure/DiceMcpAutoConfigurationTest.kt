@@ -138,6 +138,40 @@ class DiceMcpAutoConfigurationTest {
             }
     }
 
+    /**
+     * The tools clamp `limit` to [DiceMcpTools.MAX_LIMIT], so a configured default above it
+     * would bind cleanly and then be silently truncated on every call. Fail at startup instead.
+     */
+    @Test
+    fun `defaultLimit above the clamp fails context startup`() {
+        runner
+            .withUserConfiguration(StubPropositionRepositoryConfig::class.java)
+            .withPropertyValues(
+                "embabel.dice.mcp.enabled=true",
+                "embabel.dice.mcp.default-limit=${DiceMcpTools.MAX_LIMIT + 1}",
+            )
+            .run { ctx ->
+                assertThat(ctx).hasFailed()
+                assertThat(ctx.startupFailure)
+                    .hasStackTraceContaining("embabel.dice.mcp.default-limit")
+            }
+    }
+
+    @Test
+    fun `defaultLimit at the clamp binds`() {
+        runner
+            .withUserConfiguration(StubPropositionRepositoryConfig::class.java)
+            .withPropertyValues(
+                "embabel.dice.mcp.enabled=true",
+                "embabel.dice.mcp.default-limit=${DiceMcpTools.MAX_LIMIT}",
+            )
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<DiceMcpProperties>().defaultLimit)
+                    .isEqualTo(DiceMcpTools.MAX_LIMIT)
+            }
+    }
+
     @Test
     fun `afterName names DiceStorageAutoConfiguration so there is no compile dep`() {
         val afterName = DiceMcpAutoConfiguration::class.java

@@ -2446,6 +2446,10 @@ embabel:
 | `dice_store` | Store a proposition directly |
 | `dice_get` | Fetch one proposition by id, refused if it belongs to another context |
 
+`dice_recall` and `dice_list` share one result format, each line carrying the `id=` that
+`dice_get` takes, so a client can search and then drill into a single fact. Their `limit` is
+clamped to 100.
+
 Discovery and graph tools stay on `DiscoveryTools.asTools(...)` / `GraphQueryTools.asTools(...)`.
 
 ### API Key Security

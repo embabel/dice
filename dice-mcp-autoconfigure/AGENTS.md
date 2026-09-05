@@ -19,7 +19,7 @@ from `dice`. The isolation rule (`context_id` on every tool) lives on `DiceMcpTo
 |---|---|---|
 | `embabel.dice.mcp.enabled` | `false` | Master switch. Off means no beans. |
 | `embabel.dice.mcp.min-confidence` | `0.5` | Minimum effective confidence for recall/list |
-| `embabel.dice.mcp.default-limit` | `10` | Default result cap for recall/list |
+| `embabel.dice.mcp.default-limit` | `10` | Default result cap for recall/list. Must be `1..100` |
 
 Every collaborator is `@ConditionalOnMissingBean`, so an app's own `DiceMcpTools` or
 `diceMcpToolExport` bean wins.
@@ -36,6 +36,9 @@ Every collaborator is `@ConditionalOnMissingBean`, so an app's own `DiceMcpTools
 - MCP export is **opt-in**. Unlike the collector (`enabled` default true), this stays dark until
   `embabel.dice.mcp.enabled=true`.
 - Without a `PropositionRepository` bean the auto-config class may load but it exports nothing.
+- `default-limit` is bounded by `DiceMcpTools.MAX_LIMIT` (100), the ceiling the tools clamp every
+  caller-supplied `limit` to. A larger default would bind and then be silently truncated on every
+  call, so it fails startup instead.
 - `afterName` is a string, not `after = [DiceStorageAutoConfiguration::class]`, so this module
   has no compile dependency on `dice-storage-autoconfigure`. The combined wiring test (test-scope
   only) is what proves the name is right and the store bean is visible.

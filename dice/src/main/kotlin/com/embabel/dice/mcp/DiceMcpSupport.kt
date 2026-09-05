@@ -15,7 +15,6 @@
  */
 package com.embabel.dice.mcp
 
-import com.embabel.agent.api.tool.Tool
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.agent.MemoryRetriever
 import com.embabel.dice.proposition.Proposition
@@ -49,6 +48,15 @@ internal object DiceMcpSupport {
         return scoped
     }
 
+    /**
+     * Hybrid recall, or confidence-ordered listing when [query] is absent.
+     *
+     * Ranking is delegated to [MemoryRetriever] so MCP and in-process
+     * [com.embabel.dice.agent.Memory] cannot drift, but the results are rendered here with
+     * [formatProposition] — the same shape `dice_list` and `dice_get` emit. That keeps one
+     * output format across the four tools and, critically, puts the proposition id on every
+     * line so a client can follow a recall hit into `dice_get`.
+     */
     fun recall(
         repository: PropositionRepository,
         contextId: String,
@@ -59,13 +67,30 @@ internal object DiceMcpSupport {
         val scoped = requireContextId(contextId)
         val base = baseQuery(scoped, minConfidence)
         val retriever = MemoryRetriever(repository, provenanceResolver = null, topic = scoped, eagerIds = emptySet())
-        val result = if (query.isNullOrBlank()) {
-            retriever.listAll(base, limit)
+        val trimmed = query?.trim()?.takeIf { it.isNotBlank() }
+        val hits = if (trimmed == null) {
+            retriever.listRanked(base, limit)
         } else {
-            retriever.search(query.trim(), base, limit)
+            retriever.rankedPropositions(trimmed, base, limit)
         }
-        return (result as? Tool.Result.Text)?.content ?: result.toString()
+        if (hits.isEmpty()) {
+            return if (trimmed == null) "No memories in context '$scoped'."
+            else "No memories matched '$trimmed' in context '$scoped'."
+        }
+        val header =
+            if (trimmed == null) "Found ${hits.size} memories in context '$scoped':"
+            else "Found ${hits.size} memories matching '$trimmed' in context '$scoped':"
+        return render(header, hits)
     }
+
+    /** Numbered rendering shared by `dice_recall` and `dice_list`. */
+    fun render(header: String, propositions: List<Proposition>): String =
+        buildString {
+            appendLine(header)
+            propositions.forEachIndexed { index, proposition ->
+                appendLine("${index + 1}. ${formatProposition(proposition)}")
+            }
+        }.trimEnd()
 
     fun formatProposition(proposition: Proposition): String =
         buildString {

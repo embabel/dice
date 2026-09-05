@@ -328,6 +328,79 @@ class DiceMcpToolsTest {
             assertFalse(result.contains("Only tenant B knows Zephyr"))
             assertTrue(result.contains("No memories matched") || result.contains("No memories"))
         }
+
+        /**
+         * `dice_get` advertises its id as "returned by recall, list, or store", so recall has to
+         * actually emit one. Recall renders through the same formatter as list for that reason.
+         */
+        @Test
+        fun `recall hits carry ids that get accepts`() {
+            val stored = tools.storeMemory("session-1", "Acme uses Canva for design", confidence = 0.9)
+            val id = stored.substringAfter("Stored proposition ").substringBefore(":")
+
+            val recalled = tools.recall("session-1", query = "Canva", limit = 5)
+            assertTrue(recalled.contains("id=$id"), "recall output should carry the proposition id")
+
+            val fetched = tools.getProposition("session-1", id)
+            assertTrue(fetched.contains("Acme uses Canva for design"))
+        }
+
+        @Test
+        fun `recall with no query carries ids too`() {
+            val stored = tools.storeMemory("session-1", "Listable fact", confidence = 0.9)
+            val id = stored.substringAfter("Stored proposition ").substringBefore(":")
+
+            val recalled = tools.recall("session-1", query = null, limit = 5)
+            assertTrue(recalled.contains("id=$id"))
+        }
+    }
+
+    @Nested
+    inner class LimitTests {
+
+        private fun seed(count: Int) {
+            repeat(count) { i ->
+                repository.save(
+                    Proposition(
+                        contextId = ContextId("session-1"),
+                        text = "Canva fact $i",
+                        mentions = emptyList(),
+                        confidence = 0.9,
+                    ),
+                )
+            }
+        }
+
+        /**
+         * A limit from an MCP client is whatever number the caller's model wrote, so it is
+         * clamped rather than trusted — the same bound [com.embabel.dice.query.discovery]'s
+         * router applies before it does any work.
+         */
+        @Test
+        fun `list caps an absurd limit at MAX_LIMIT`() {
+            seed(DiceMcpTools.MAX_LIMIT + 5)
+            val listed = tools.listMemories("session-1", limit = 10_000)
+            assertEquals(DiceMcpTools.MAX_LIMIT, listed.lines().size - 1)
+        }
+
+        @Test
+        fun `recall caps an absurd limit at MAX_LIMIT`() {
+            seed(DiceMcpTools.MAX_LIMIT + 5)
+
+            val listing = tools.recall("session-1", query = null, limit = 10_000)
+            assertEquals(DiceMcpTools.MAX_LIMIT, listing.lines().size - 1)
+
+            val searched = tools.recall("session-1", query = "Canva", limit = 10_000)
+            assertTrue(searched.lines().size - 1 <= DiceMcpTools.MAX_LIMIT)
+        }
+
+        @Test
+        fun `a limit below one is raised to one`() {
+            seed(3)
+            assertEquals(1, tools.listMemories("session-1", limit = 0).lines().size - 1)
+            assertEquals(1, tools.listMemories("session-1", limit = -5).lines().size - 1)
+            assertEquals(1, tools.recall("session-1", query = null, limit = 0).lines().size - 1)
+        }
     }
 
     @Nested
@@ -549,6 +622,15 @@ class DiceMcpToolsTest {
             assertThrows<IllegalArgumentException> {
                 DiceMcpTools(repository, defaultLimit = -3)
             }
+        }
+
+        /** A default above the clamp would be silently truncated at call time; reject it instead. */
+        @Test
+        fun `constructor rejects a defaultLimit above MAX_LIMIT`() {
+            assertThrows<IllegalArgumentException> {
+                DiceMcpTools(repository, defaultLimit = DiceMcpTools.MAX_LIMIT + 1)
+            }
+            DiceMcpTools(repository, defaultLimit = DiceMcpTools.MAX_LIMIT)
         }
 
         @Test
