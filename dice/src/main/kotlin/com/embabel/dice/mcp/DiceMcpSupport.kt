@@ -31,14 +31,17 @@ import com.embabel.dice.proposition.PropositionStatus
 internal object DiceMcpSupport {
 
     /**
-     * Base query for MCP recall/list: scoped to one [contextId], filtered to [PropositionStatus.ACTIVE]
-     * propositions at or above [minConfidence] effective confidence.
+     * Base query for MCP recall/list: scoped to one [scopedContextId], filtered to
+     * [PropositionStatus.ACTIVE] propositions at or above [minConfidence] effective confidence.
+     *
+     * Takes an id the caller has already put through [requireContextId], so validation happens
+     * once per tool call rather than once per query built.
      *
      * STALE / SUPERSEDED / CONTRADICTED propositions are excluded by default — the same guard
      * [com.embabel.dice.agent.Memory] applies before results reach an LLM.
      */
-    fun baseQuery(contextId: String, minConfidence: Double): PropositionQuery =
-        PropositionQuery.forContextId(ContextId(requireContextId(contextId)))
+    fun baseQuery(scopedContextId: String, minConfidence: Double): PropositionQuery =
+        PropositionQuery.forContextId(ContextId(scopedContextId))
             .withMinEffectiveConfidence(minConfidence)
             .withStatuses(setOf(PropositionStatus.ACTIVE))
 
@@ -74,8 +77,18 @@ internal object DiceMcpSupport {
             retriever.rankedPropositions(trimmed, base, limit)
         }
         if (hits.isEmpty()) {
-            return if (trimmed == null) "No memories in context '$scoped'."
-            else "No memories matched '$trimmed' in context '$scoped'."
+            // The no-query wording matches dice_list's for the same situation. A query miss adds
+            // how much *is* in scope, so the caller can tell "your query was wrong, try again"
+            // apart from "this context is empty, stop asking".
+            return if (trimmed == null) {
+                "No memories in context '$scoped'."
+            } else {
+                when (val total = repository.count(base)) {
+                    0 -> "No memories matched '$trimmed'. Context '$scoped' is empty."
+                    else -> "No memories matched '$trimmed' in context '$scoped'. " +
+                        "$total memories are stored there — try rephrasing or a broader query."
+                }
+            }
         }
         val header =
             if (trimmed == null) "Found ${hits.size} memories in context '$scoped':"

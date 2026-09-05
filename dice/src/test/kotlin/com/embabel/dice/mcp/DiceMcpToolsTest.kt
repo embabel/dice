@@ -18,6 +18,7 @@ package com.embabel.dice.mcp
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
@@ -81,8 +82,13 @@ class DiceMcpToolsTest {
             }
         }
 
+        /**
+         * A cross-context id and an id that does not exist must be indistinguishable, or the
+         * tool confirms to a caller that an id it does not own exists somewhere else.
+         * `MemoryController` collapses both into a 404 for the same reason.
+         */
         @Test
-        fun `get rejects wrong context`() {
+        fun `get does not reveal that a foreign id exists`() {
             val proposition = repository.save(
                 Proposition(
                     contextId = ContextId("other"),
@@ -91,14 +97,23 @@ class DiceMcpToolsTest {
                     confidence = 0.8,
                 ),
             )
-            val result = tools.getProposition("session-1", proposition.id)
-            assertTrue(result.contains("not in context"))
+
+            val foreign = tools.getProposition("session-1", proposition.id)
+            val absent = tools.getProposition("session-1", proposition.id.reversed())
+
+            assertFalse(foreign.contains("Secret fact"))
+            assertFalse(foreign.contains("other"))
+            assertEquals(
+                absent.replace(proposition.id.reversed(), proposition.id),
+                foreign,
+                "a foreign id and an unknown id must produce the same answer",
+            )
         }
 
         @Test
         fun `get reports missing id`() {
             val result = tools.getProposition("session-1", "no-such-id")
-            assertTrue(result.contains("No proposition with id 'no-such-id'"))
+            assertEquals("No proposition with id 'no-such-id' in context 'session-1'.", result)
         }
 
         @Test
@@ -326,7 +341,30 @@ class DiceMcpToolsTest {
             )
             val result = tools.recall("tenant-a", query = "Zephyr", limit = 10)
             assertFalse(result.contains("Only tenant B knows Zephyr"))
-            assertTrue(result.contains("No memories matched") || result.contains("No memories"))
+            assertEquals(
+                "No memories matched 'Zephyr'. Context 'tenant-a' is empty.",
+                result,
+            )
+        }
+
+        @Test
+        fun `recall miss on a populated context includes the count and a retry nudge`() {
+            tools.storeMemory("session-1", "Alice works at Acme", confidence = 0.9)
+            tools.storeMemory("session-1", "Bob prefers Kotlin", confidence = 0.8)
+            val result = tools.recall("session-1", query = "Zephyr", limit = 10)
+            assertEquals(
+                "No memories matched 'Zephyr' in context 'session-1'. " +
+                    "2 memories are stored there — try rephrasing or a broader query.",
+                result,
+            )
+        }
+
+        @Test
+        fun `recall without a query on an empty context matches list`() {
+            assertEquals(
+                tools.listMemories("empty-session", limit = 10),
+                tools.recall("empty-session", query = null, limit = 10),
+            )
         }
 
         /**
@@ -658,8 +696,92 @@ class DiceMcpToolsTest {
             assertFalse(recalled.contains("Tenant A only"))
 
             val fetched = tools.getProposition("tenant-b", id)
-            assertTrue(fetched.contains("not in context"))
+            assertTrue(fetched.contains("No proposition with id"))
             assertFalse(fetched.contains("Tenant A only"))
         }
+    }
+
+    /**
+     * A live store or driver failure must not reach the MCP client. The leak string is
+     * deliberately a Cypher fragment plus a bolt host — the same class of detail
+     * [com.embabel.dice.web.rest.DiscoveryController] sanitizes out of its 500s.
+     */
+    @Nested
+    inner class StoreFailureTests {
+
+        private val leak = "MATCH (n) RETURN n; bolt://neo4j-prod.internal:7687"
+        private lateinit var failing: DiceMcpTools
+
+        @BeforeEach
+        fun failingTools() {
+            failing = DiceMcpTools(LeakingStore(leak), minConfidence = 0.0)
+        }
+
+        @Test
+        fun `store failure is a generic error with no cause and no driver text`() {
+            assertSanitized { failing.storeMemory("session-1", "A fact") }
+        }
+
+        @Test
+        fun `list failure is a generic error with no cause and no driver text`() {
+            assertSanitized { failing.listMemories("session-1", limit = 10) }
+        }
+
+        @Test
+        fun `get failure is a generic error with no cause and no driver text`() {
+            assertSanitized { failing.getProposition("session-1", "any-id") }
+        }
+
+        @Test
+        fun `recall failure is a generic error with no cause and no driver text`() {
+            assertSanitized { failing.recall("session-1", query = "Canva", limit = 10) }
+        }
+
+        @Test
+        fun `recall listing failure is a generic error with no cause and no driver text`() {
+            assertSanitized { failing.recall("session-1", query = null, limit = 10) }
+        }
+
+        @Test
+        fun `caller validation still surfaces as IllegalArgumentException`() {
+            assertThrows<IllegalArgumentException> {
+                failing.storeMemory("  ", "A fact")
+            }
+            assertThrows<IllegalArgumentException> {
+                failing.recall(" ", query = "anything", limit = 5)
+            }
+        }
+
+        private fun assertSanitized(call: () -> String) {
+            val thrown = assertThrows<IllegalStateException> { call() }
+            assertTrue(thrown.message!!.endsWith("failed: the knowledge store is unavailable"))
+            assertEquals(null, thrown.cause)
+            assertFalse(thrown.message!!.contains(leak))
+            assertFalse(thrown.stackTraceToString().contains(leak))
+        }
+    }
+
+    /**
+     * Implements [PropositionRepository] by delegation so only the MCP entry points
+     * have to throw. [keywordOverlap] is overridden too: Kotlin `by` would otherwise
+     * run the default on the in-memory delegate, and MemoryRetriever's keyword probe
+     * would never see the failure. The leak text rides on the exception message the
+     * way a real driver error would.
+     */
+    private class LeakingStore(
+        private val leak: String,
+    ) : PropositionRepository by InMemoryPropositionRepository() {
+        override fun save(proposition: Proposition): Proposition = explode()
+        override fun findById(id: String): Proposition? = explode()
+        override fun query(query: PropositionQuery): List<Proposition> = explode()
+        override fun findAll(): List<Proposition> = explode()
+        override fun keywordOverlap(
+            base: PropositionQuery,
+            tokens: List<String>,
+            limit: Int,
+        ): List<Proposition> = explode()
+
+        private fun explode(): Nothing =
+            throw RuntimeException(leak)
     }
 }
