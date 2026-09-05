@@ -146,6 +146,14 @@ class DiceMcpToolsTest {
             assertTrue(fetched.contains("Padded context fact"))
             assertTrue(tools.listMemories("session-1 ", limit = 5).contains("Padded context fact"))
         }
+
+        @Test
+        fun `get trims proposition id`() {
+            val stored = tools.storeMemory("session-1", "Padded id fact")
+            val id = stored.substringAfter("Stored proposition ").substringBefore(":")
+            val fetched = tools.getProposition("session-1", "  $id  ")
+            assertTrue(fetched.contains("Padded id fact"))
+        }
     }
 
     @Nested

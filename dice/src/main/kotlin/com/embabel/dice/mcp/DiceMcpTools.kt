@@ -144,11 +144,12 @@ class DiceMcpTools(
         propositionId: String,
     ): String {
         val scoped = DiceMcpSupport.requireContextId(contextId)
-        require(propositionId.isNotBlank()) { "proposition_id must not be blank" }
-        val proposition = repository.findById(propositionId)
-            ?: return "No proposition with id '$propositionId'."
+        val id = propositionId.trim()
+        require(id.isNotBlank()) { "proposition_id must not be blank" }
+        val proposition = repository.findById(id)
+            ?: return "No proposition with id '$id'."
         if (proposition.contextIdValue != scoped) {
-            return "Proposition '$propositionId' is not in context '$scoped'."
+            return "Proposition '$id' is not in context '$scoped'."
         }
         return DiceMcpSupport.formatProposition(proposition)
     }
