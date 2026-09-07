@@ -1515,8 +1515,11 @@ class DrivinePropositionStoreIntegrationTest {
      * seeking the index and scanning it, and it will do either — which showed up as an intermittent
      * `NodeIndexScan … WHERE contextId IS NOT NULL` where the seek was expected. A scan reads every
      * proposition's `contextId`, so it is not the tenant-first plan the test means to pin, and
-     * accepting it would have hollowed out the assertion. Statistics are resampled afterwards because
-     * a freshly created index carries none, and the fallback test drops and recreates this one.
+     * accepting it would have hollowed out the assertion. The fixture resamples every index and
+     * clears the query cache afterwards, because a freshly created index carries no statistics and
+     * because earlier tests in the class run these same statements against two rows and leave a
+     * cached plan Neo4j would otherwise reuse until its replan interval passes. The fallback test
+     * drops and recreates the index.
      */
     private fun seedExplainFixture(locator: UriLocator) {
         repository.save(
@@ -1530,7 +1533,7 @@ class DrivinePropositionStoreIntegrationTest {
                 repository.save(prop("other tenant $tenant fact $row", context = "ctx-other-$tenant"))
             }
         }
-        persistenceManager.execute(QuerySpecification.withStatement("CALL db.resampleOutdatedIndexes()"))
+        persistenceManager.execute(QuerySpecification.withStatement("CALL db.prepareForReplanning()"))
         persistenceManager.execute(QuerySpecification.withStatement("CALL db.awaitIndexes(60)"))
     }
 
