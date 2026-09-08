@@ -336,6 +336,9 @@ class DrivinePropositionRepository(
         entries.map { PropositionGraphMapper.toDerivedFrom(it).source }
             .groupBy(SourceNode::key)
             .forEach { (key, sources) ->
+                // Every entry grouped under this key claims to describe the same source, so any one
+                // of them can stand for the whole group: the first is checked against the rest, then
+                // against whatever the graph already holds under the key.
                 val first = sources.first()
                 require(sources.all { sourceIdentitiesAgree(it, first) }) {
                     "Source key collision for '$key': this write carries two structurally different " +
