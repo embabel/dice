@@ -107,6 +107,27 @@ class PropositionGraphMapperRevisionTest {
     }
 
     @Test
+    fun `the writer's label rides on the edge and wins over the shared node's`() {
+        val withDisplay = evidence(locator = UriLocator("https://example.com/source", display = "My Source"))
+        val view = PropositionGraphMapper.toProvenanceView(proposition(listOf(withDisplay)))
+        val edge = view.provenance.single()
+
+        assertEquals("My Source", edge.display)
+
+        val edgeWinsOverNode = edge.copy(source = edge.source.copy(display = "Node Label"))
+        assertEquals(
+            "My Source",
+            PropositionGraphMapper.toProvenanceEntry(edgeWinsOverNode).locator.display,
+        )
+
+        val noEdgeLabel = edge.copy(display = null, source = edge.source.copy(display = "Node Label"))
+        assertEquals(
+            "Node Label",
+            PropositionGraphMapper.toProvenanceEntry(noEdgeLabel).locator.display,
+        )
+    }
+
+    @Test
     fun `an edge with no stored identity still maps back to its entry`() {
         val original = evidence(sourceRevision = null)
         val mapped = PropositionGraphMapper.toProvenanceView(proposition(listOf(original)))

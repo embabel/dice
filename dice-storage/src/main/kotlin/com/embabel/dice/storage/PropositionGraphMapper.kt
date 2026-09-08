@@ -189,11 +189,12 @@ object PropositionGraphMapper {
             source = toSourceNode(e.locator),
             sourceRevision = e.sourceRevision,
             entryKey = provenanceStorageEntryKey(e),
+            display = e.locator.display,
         )
 
     internal fun toProvenanceEntry(df: DerivedFrom): ProvenanceEntry =
         ProvenanceEntry(
-            locator = toLocator(df.source),
+            locator = toLocator(df.source, df.display ?: df.source.display),
             chunkId = df.chunkId,
             startOffset = df.startOffset,
             endOffset = df.endOffset,
@@ -220,11 +221,11 @@ object PropositionGraphMapper {
         is ConnectorRef -> "connector"
     }
 
-    private fun toLocator(s: SourceNode): SourceLocator = when (s.kind) {
-        "uri" -> UriLocator(s.uri!!, s.display)
-        "file" -> FileLocator(s.path!!, s.display)
-        "content" -> ContentAddressedLocator(s.contentHash!!, s.display)
-        "connector" -> ConnectorRef(s.connectorId!!, s.externalId!!, s.display)
+    private fun toLocator(s: SourceNode, display: String? = s.display): SourceLocator = when (s.kind) {
+        "uri" -> UriLocator(s.uri!!, display)
+        "file" -> FileLocator(s.path!!, display)
+        "content" -> ContentAddressedLocator(s.contentHash!!, display)
+        "connector" -> ConnectorRef(s.connectorId!!, s.externalId!!, display)
         else -> error("Unknown source locator kind: ${s.kind}")
     }
 

@@ -32,6 +32,10 @@ import org.drivine.annotation.RelationshipFragment
  * two endpoints would collapse those into a single row. Writes MERGE on it. Edges written before
  * revisions existed have no `entryKey`; they are adopted on first touch by an exactly matching
  * revisionless entry.
+ *
+ * `display` is the label the writer of this citation supplied. The shared `:Source` node only keeps
+ * the first writer's label, so a read prefers the edge's own `display` and falls back to the node's
+ * for edges written before this field existed.
  */
 @RelationshipFragment
 data class DerivedFrom @JvmOverloads constructor(
@@ -42,4 +46,5 @@ data class DerivedFrom @JvmOverloads constructor(
     val source: SourceNode,
     val sourceRevision: String? = null,
     val entryKey: String? = null,
+    val display: String? = null,
 )

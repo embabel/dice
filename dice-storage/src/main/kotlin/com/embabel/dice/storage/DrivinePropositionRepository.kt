@@ -464,7 +464,7 @@ class DrivinePropositionRepository(
                         r.startOffset = ${'$'}startOffset,
                         r.endOffset = ${'$'}endOffset,
                         r.contentHash = ${'$'}contentHash,
-                        r.display = ${'$'}sourceDisplay
+                        r.display = ${'$'}display
                     """.trimIndent()
                 ).bind(params),
             )
@@ -536,7 +536,7 @@ class DrivinePropositionRepository(
                   AND ((r.contentHash IS NULL AND ${'$'}contentHash IS NULL) OR r.contentHash = ${'$'}contentHash)
                 WITH r LIMIT 1
                 SET r.entryKey = ${'$'}entryKey,
-                    r.display = ${'$'}sourceDisplay
+                    r.display = ${'$'}display
                 RETURN count(r) AS adopted
                 """.trimIndent()
             ).bind(params).transform(Long::class.java)
@@ -593,6 +593,7 @@ class DrivinePropositionRepository(
         "sourceKey" to edge.source.key,
         "sourceKind" to edge.source.kind,
         "sourceDisplay" to edge.source.display,
+        "display" to edge.display,
         "sourceUri" to edge.source.uri,
         "sourcePath" to edge.source.path,
         "sourceContentHash" to edge.source.contentHash,
@@ -836,7 +837,8 @@ class DrivinePropositionRepository(
                     sourceRevision: r.sourceRevision,
                     sourceKey: s.key,
                     sourceKind: s.kind,
-                    sourceDisplay: coalesce(r.display, s.display),
+                    sourceDisplay: s.display,
+                    display: r.display,
                     sourceUri: s.uri,
                     sourcePath: s.path,
                     sourceContentHash: s.contentHash,
@@ -870,6 +872,7 @@ class DrivinePropositionRepository(
                 endOffset = (row["endOffset"] as? Number)?.toInt(),
                 contentHash = row["contentHash"] as? String,
                 sourceRevision = row["sourceRevision"] as? String,
+                display = row["display"] as? String,
             ),
         )
 

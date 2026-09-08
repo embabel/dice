@@ -705,6 +705,8 @@ and the consumer PRs that deliver it).
   Contexts sharing one `:Source` node no longer share a label: each writer's `DERIVED_FROM` edge
   carries the label it supplied, and a provenance read takes `display` from the edge it belongs to.
   Rows written before this change have no edge-level `display` and fall back to the node's label.
+  The `DerivedFrom` relationship fragment now carries `display` as a field, so the mapper can build
+  and read that per-edge label directly, not only by way of raw Cypher.
 - Length ceilings on the externally supplied strings that become stored identity, in
   `SourceIdentityBounds`: `MAX_SOURCE_KEY_LENGTH` (2048), `MAX_SOURCE_REVISION_LENGTH` (1024),
   `MAX_CHUNK_ID_LENGTH` (512), and `MAX_CONTENT_HASH_LENGTH` (256).
