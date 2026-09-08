@@ -26,28 +26,27 @@ import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
-import com.fasterxml.jackson.module.kotlin.KotlinModule
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.context.annotation.AnnotationConfigApplicationContext
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter
+import org.springframework.http.MediaType
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
+import tools.jackson.databind.json.JsonMapper
+import tools.jackson.module.kotlin.kotlinModule
 import java.time.Instant
 import kotlin.reflect.KClass
 import kotlin.reflect.KType
 import kotlin.reflect.full.functions
 import kotlin.reflect.jvm.javaMethod
-import org.springframework.http.MediaType
 
 /**
  * Opt-in and leak-free contract for the discovery REST surface, plus the cross-tier signature gate
@@ -82,16 +81,17 @@ class DiscoveryControllerTest {
     @BeforeEach
     fun setUp() {
         repository = TestPropositionRepository()
-        val objectMapper = ObjectMapper()
-            .registerModule(KotlinModule.Builder().build())
-            .registerModule(JavaTimeModule())
+        val objectMapper = JsonMapper.builder()
+            .addModule(kotlinModule())
+            .findAndAddModules()
+            .build()
         val controller = DiscoveryController(
             store = repository,
             projectionRecordStore = emptyRecordStore,
             collectorRunner = noopCollectorRunner,
         )
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
-            .setMessageConverters(MappingJackson2HttpMessageConverter(objectMapper))
+            .setMessageConverters(JacksonJsonHttpMessageConverter(objectMapper))
             .build()
     }
 
@@ -192,16 +192,17 @@ class DiscoveryControllerTest {
             override fun delete(id: String): Boolean = false
             override fun count(): Int = 0
         }
-        val objectMapper = ObjectMapper()
-            .registerModule(KotlinModule.Builder().build())
-            .registerModule(JavaTimeModule())
+        val objectMapper = JsonMapper.builder()
+            .addModule(kotlinModule())
+            .findAndAddModules()
+            .build()
         val controller = DiscoveryController(
             store = failingStore,
             projectionRecordStore = emptyRecordStore,
             collectorRunner = noopCollectorRunner,
         )
         val mvc = MockMvcBuilders.standaloneSetup(controller)
-            .setMessageConverters(MappingJackson2HttpMessageConverter(objectMapper))
+            .setMessageConverters(JacksonJsonHttpMessageConverter(objectMapper))
             .build()
 
         mvc.perform(

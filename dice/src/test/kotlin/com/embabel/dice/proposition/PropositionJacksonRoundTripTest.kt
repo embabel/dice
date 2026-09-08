@@ -16,12 +16,9 @@
 package com.embabel.dice.proposition
 
 import com.embabel.agent.core.ContextId
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
-
-// A real consumer registers modules (incl. JSR-310 for the Instant fields) on its mapper;
-// findAndRegisterModules() picks up jackson-datatype-jsr310 from the classpath.
+import tools.jackson.module.kotlin.jacksonObjectMapper
 
 /**
  * Verifies that a [Proposition] round-trips cleanly through JSON. The class exposes computed
@@ -32,7 +29,7 @@ import org.junit.jupiter.api.Test
  */
 class PropositionJacksonRoundTripTest {
 
-    private val mapper = jacksonObjectMapper().findAndRegisterModules()
+    private val mapper = jacksonObjectMapper()
 
     @Test
     fun `a Proposition round-trips through JSON preserving its core fields`() {

@@ -24,9 +24,9 @@ import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStoreType
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
 import org.slf4j.LoggerFactory
+import tools.jackson.module.kotlin.jacksonObjectMapper
+import tools.jackson.module.kotlin.readValue
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -55,7 +55,7 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
 
     private val logger = LoggerFactory.getLogger(JsonFilePropositionRepository::class.java)
 
-    private val mapper = jacksonObjectMapper().findAndRegisterModules()
+    private val mapper = jacksonObjectMapper()
 
     private val propositions = ConcurrentHashMap<String, Proposition>()
     private val embeddings = ConcurrentHashMap<String, FloatArray>()

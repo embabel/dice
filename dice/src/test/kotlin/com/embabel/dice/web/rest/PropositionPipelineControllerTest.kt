@@ -17,32 +17,29 @@ package com.embabel.dice.web.rest
 
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
+import com.embabel.agent.rag.ingestion.ContentChunker
+import com.embabel.agent.rag.ingestion.HierarchicalContentReader
+import com.embabel.agent.rag.model.Chunk
+import com.embabel.agent.rag.model.NavigableDocument
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.NewEntity
 import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.common.support.InMemorySchemaRegistry
-import com.embabel.agent.rag.ingestion.ContentChunker
-import com.embabel.agent.rag.ingestion.HierarchicalContentReader
-import com.embabel.agent.rag.model.Chunk
-import com.embabel.agent.rag.model.NavigableDocument
 import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.pipeline.PropositionResults
 import com.embabel.dice.proposition.*
 import com.embabel.dice.proposition.revision.RevisionResult
 import com.fasterxml.jackson.annotation.JsonClassDescription
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
-import com.fasterxml.jackson.module.kotlin.KotlinModule
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter
 import org.springframework.mock.web.MockMultipartFile
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart
@@ -50,6 +47,8 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
+import tools.jackson.databind.json.JsonMapper
+import tools.jackson.module.kotlin.kotlinModule
 
 /**
  * Contract tests for the proposition extraction REST controller.
@@ -64,7 +63,7 @@ class PropositionPipelineControllerTest {
     private lateinit var propositionPipeline: PropositionPipeline
     private lateinit var entityResolver: EntityResolver
     private lateinit var schemaRegistry: InMemorySchemaRegistry
-    private lateinit var objectMapper: ObjectMapper
+    private lateinit var objectMapper: JsonMapper
 
     @JsonClassDescription("A composer of music")
     data class Composer(val id: String, val name: String)
@@ -80,9 +79,10 @@ class PropositionPipelineControllerTest {
         val schema = DataDictionary.fromClasses("test", Composer::class.java, Work::class.java)
         schemaRegistry = InMemorySchemaRegistry(schema)
 
-        objectMapper = ObjectMapper()
-            .registerModule(KotlinModule.Builder().build())
-            .registerModule(JavaTimeModule())
+        objectMapper = JsonMapper.builder()
+            .addModule(kotlinModule())
+            .findAndAddModules()
+            .build()
 
         val controller = PropositionPipelineController(
             propositionPipeline = propositionPipeline,
@@ -92,7 +92,7 @@ class PropositionPipelineControllerTest {
         )
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
-            .setMessageConverters(MappingJackson2HttpMessageConverter(objectMapper))
+            .setMessageConverters(JacksonJsonHttpMessageConverter(objectMapper))
             .build()
     }
 
@@ -306,7 +306,7 @@ class PropositionPipelineControllerTest {
             contentChunker = chunker,
         )
         val mvc = MockMvcBuilders.standaloneSetup(fileController)
-            .setMessageConverters(MappingJackson2HttpMessageConverter(objectMapper))
+            .setMessageConverters(JacksonJsonHttpMessageConverter(objectMapper))
             .build()
 
         mvc.perform(
