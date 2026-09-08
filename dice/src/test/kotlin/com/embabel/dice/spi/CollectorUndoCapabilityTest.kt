@@ -442,6 +442,37 @@ class CollectorUndoCapabilityTest {
     }
 
     @Test
+    fun `a member that survived an earlier fold is undone from the fold that retired it`() {
+        // Run 1 folds A into B, so run 1's decision names B as the survivor. Run 2 later folds B
+        // into C. A lookup that can answer either side of a merge would find run 1 first for "B",
+        // the decision where it survived, and never reach run 2, the one that actually authorizes
+        // undoing B out of C.
+        val store = InMemoryPropositionRepository()
+        val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
+        val uniqueA = ProvenanceEntry(UriLocator("https://example.com/shadow/a"))
+        val uniqueB = ProvenanceEntry(UriLocator("https://example.com/shadow/b"))
+        val uniqueC = ProvenanceEntry(UriLocator("https://example.com/shadow/c"))
+        val a = store.save(proposition("a-shadowed", listOf(uniqueA), text = "Acme signed the first agreement"))
+        val b = store.save(proposition("b-shadowed", listOf(uniqueB), text = "Acme signed a related agreement"))
+
+        sweep(store, trace, records, survivorId = b.id)
+        assertEquals(PropositionStatus.STALE, store.findById(a.id)?.status)
+        assertEquals(setOf(uniqueA, uniqueB), store.findById(b.id)?.provenanceEntries?.toSet())
+
+        val c = store.save(proposition("c-shadowed", listOf(uniqueC), text = "Acme closed the funding round"))
+        sweep(store, trace, records, survivorId = c.id)
+        assertEquals(PropositionStatus.STALE, store.findById(b.id)?.status)
+        assertEquals(setOf(uniqueA, uniqueB, uniqueC), store.findById(c.id)?.provenanceEntries?.toSet())
+
+        val result = undo(trace, store, c.id, b.id, records)
+
+        assertTrue(result != null, "undo must find run 2's retirement of B, not run 1's decision where B survived")
+        assertEquals(PropositionStatus.ACTIVE, store.findById(b.id)?.status)
+        assertEquals(setOf(uniqueC), store.findById(c.id)?.provenanceEntries?.toSet())
+    }
+
+    @Test
     fun `retrying an undo that already succeeded takes nothing further from the survivor`() {
         // The records are append-only: the run's record still names the merge target after the undo
         // has run. Only the member's own status says the work is done.

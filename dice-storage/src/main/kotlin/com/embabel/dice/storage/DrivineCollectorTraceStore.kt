@@ -270,6 +270,22 @@ class DrivineCollectorTraceStore(
         }.onFailure { logger.warn("Skipping unreadable CollectorDecision row: {}", it.message) }.getOrNull()
     }
 
+    /** The newest decision that retired [propositionId]. Never one where it only survived. */
+    @Transactional(readOnly = true)
+    override fun findDecisionRetiring(propositionId: String): CollectorDecision? {
+        val node = queryRows(
+            """
+            MATCH (:CollectorRetired {propositionId: ${'$'}propositionId})-[:RETIRED_IN]->(d:CollectorDecision)
+            RETURN d ORDER BY d.createdAt DESC LIMIT 1
+            """.trimIndent(),
+            mapOf("propositionId" to propositionId),
+        ).firstOrNull() ?: return null
+        return runCatching {
+            val decisionId = node["id"]?.toString().orEmpty()
+            CollectorDecisionRowMapper.fromRow(node, retiredFor(decisionId))
+        }.onFailure { logger.warn("Skipping unreadable CollectorDecision row: {}", it.message) }.getOrNull()
+    }
+
     private fun retiredFor(decisionId: String): List<RetiredProposition> =
         queryRows(
             "MATCH (ret:CollectorRetired {decisionId: \$decisionId}) RETURN ret",

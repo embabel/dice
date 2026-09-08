@@ -39,14 +39,17 @@ class InMemoryCollectorTraceStoreTest {
         memberIds = members,
     )
 
-    private fun decision(runId: String, componentId: String, survivorId: String) = CollectorDecision(
+    private fun decision(runId: String, componentId: String, survivorId: String) =
+        decisionRetiring(runId, componentId, survivorId, retiredId = "P2")
+
+    private fun decisionRetiring(runId: String, componentId: String, survivorId: String, retiredId: String) = CollectorDecision(
         runId = runId,
         componentId = componentId,
         survivorId = survivorId,
         action = "merge",
         retired = listOf(
             RetiredProposition(
-                propositionId = "P2",
+                propositionId = retiredId,
                 priorStatus = PropositionStatus.ACTIVE,
             ),
         ),
@@ -104,5 +107,29 @@ class InMemoryCollectorTraceStoreTest {
         assertEquals(listOf(edge("C", "D")), store.edgesFor("run-b"))
         assertEquals(listOf(component("C", listOf("C", "D"))), store.componentsFor("run-b"))
         assertEquals(listOf(decision("run-b", "C", "C")), store.decisionsFor("run-b"))
+    }
+
+    @Test
+    fun `findDecisionRetiring does not return a decision where the proposition only survived`() {
+        val store = InMemoryCollectorTraceStore()
+        // "A" is the survivor here, "P2" is the retired member.
+        store.recordDecision("run-1", decision("run-1", "A", "A"))
+
+        assertTrue(store.findDecisionRetiring("A") == null, "a decision naming A as survivor must not count as retiring it")
+        assertEquals("A", store.findDecisionRetiring("P2")?.componentId)
+    }
+
+    @Test
+    fun `findDecisionRetiring answers the newest decision that retired the proposition`() {
+        val store = InMemoryCollectorTraceStore()
+        // Run 1 folds "A" into "B"; run 2 later folds "B" into "C". Both name "A" nowhere, but a
+        // proposition retired more than once (here it's "A" itself, retired again by a later run)
+        // must resolve to the newest of those decisions.
+        store.recordDecision("run-1", decisionRetiring(runId = "run-1", componentId = "comp-1", survivorId = "B", retiredId = "A"))
+        store.recordDecision("run-2", decisionRetiring(runId = "run-2", componentId = "comp-2", survivorId = "C", retiredId = "A"))
+
+        val newest = store.findDecisionRetiring("A")
+        assertEquals("comp-2", newest?.componentId)
+        assertEquals("C", newest?.survivorId)
     }
 }

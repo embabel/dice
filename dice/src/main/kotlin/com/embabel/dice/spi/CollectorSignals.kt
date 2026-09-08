@@ -158,19 +158,39 @@ interface CollectorTraceStore {
 interface CollectorTraceQuery {
     fun findEdgesByRun(runId: String): List<CollectorCandidateEdge>
     fun findDecisionsByRun(runId: String): List<CollectorDecision>
+
+    /**
+     * The decision where [propositionId] shows up on either side of a merge: as the survivor, or as
+     * one of the retired members. Useful for a caller that just wants "what happened to this
+     * proposition" without caring which side it was on. A caller that specifically wants a
+     * *retirement*, undoing a single collapse say, should use [findDecisionRetiring]: this method
+     * can answer a decision where the id survived, which is the wrong one to undo against.
+     */
     fun findDecisionForProposition(propositionId: String): CollectorDecision?
+
+    /**
+     * The most recent decision that retired [propositionId]. Never one where it merely survived.
+     *
+     * A proposition can survive one collapse and later be retired into a different survivor (fold A
+     * into B, then fold B into C). At that point [findDecisionForProposition] can hand back the
+     * first decision, the one where the id survived, and never reach the one that actually retired
+     * it. This method looks at the retired side only, and when a proposition was retired more than
+     * once, it answers the newest of those decisions.
+     *
+     * @return null if no decision ever retired [propositionId].
+     */
+    fun findDecisionRetiring(propositionId: String): CollectorDecision?
 
     /**
      * The undo-record for one retired member of a collapse: its prior status and exactly the
      * grounding/provenance/source ids a merging sweep folded onto its survivor from it. Looks up
-     * the [CollectorDecision] that retired [retiredId] and picks out its entry — a targeted
-     * alternative to [findDecisionForProposition] for callers that only want this one member's
-     * record, e.g. before undoing a single collapse rather than a whole run.
+     * the [CollectorDecision] that retired [retiredId] via [findDecisionRetiring] and picks out its
+     * entry.
      *
      * @return null if no decision retired [retiredId] (nothing recorded, or it's a survivor id).
      */
     fun findRetirement(retiredId: String): RetiredProposition? =
-        findDecisionForProposition(retiredId)?.retired?.firstOrNull { it.propositionId == retiredId }
+        findDecisionRetiring(retiredId)?.retired?.firstOrNull { it.propositionId == retiredId }
 }
 
 /**
@@ -320,10 +340,12 @@ class CollapseUndoConfigurationException(message: String) : IllegalStateExceptio
  *   the `require` below as a caller error. Refusing is right either way: the folded evidence keys
  *   were computed against B's evidence, so subtracting them from C would remove the wrong set.
  * - *A member revived without a retry.* Covered below under [isCurrentlyRetired].
- * - *A shadowed decision.* [CollectorTraceQuery.findDecisionForProposition] returns an arbitrary
- *   first match on both shipped stores, so a dry-run preview of a collapse recorded before the real
- *   one can shadow the applied decision. The undo then evaluates the preview's run, finds a dry-run
- *   header, and declines. Conservative, and worth knowing if an undo refuses for no visible reason.
+ * - *A shadowed decision.* [CollectorTraceQuery.findDecisionRetiring] looks up by retired member and
+ *   answers the newest one, so a decision where the id survived can no longer shadow the decision
+ *   that actually retired it. What can still shadow it is a dry-run preview recorded after the
+ *   applied collapse: that preview is the newer retirement, so the undo evaluates it, finds the
+ *   dry-run header, and declines. Conservative, and worth knowing if an undo refuses for no visible
+ *   reason.
  *
  * Two things worth knowing before relying on this:
  *
@@ -397,7 +419,7 @@ fun undoSingleCollapse(
                 "evidence atomically",
         )
 
-    val decision = traceQuery.findDecisionForProposition(retiredId) ?: return null
+    val decision = traceQuery.findDecisionRetiring(retiredId) ?: return null
     val retirement = decision.retired.firstOrNull { it.propositionId == retiredId } ?: return null
 
     // Ownership is settled first, on both propositions this undo writes, and ahead of the
@@ -514,7 +536,7 @@ fun undoSingleCollapse(
     survivorId: String,
     retiredId: String,
 ): CollapseUndoResult? {
-    val decision = traceQuery.findDecisionForProposition(retiredId) ?: return null
+    val decision = traceQuery.findDecisionRetiring(retiredId) ?: return null
     require(decision.survivorId == survivorId) {
         "Proposition $retiredId was retired into survivor ${decision.survivorId}, not $survivorId"
     }

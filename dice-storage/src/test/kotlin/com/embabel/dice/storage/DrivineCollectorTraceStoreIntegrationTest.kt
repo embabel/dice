@@ -274,6 +274,26 @@ class DrivineCollectorTraceStoreIntegrationTest {
     }
 
     @Test
+    fun `findDecisionRetiring ignores a decision the id survived and returns the newest retirement`() {
+        val contextId = ContextId("ctx-retiring")
+        traceStore.recordRunContext("run-survivor-only", contextId)
+        traceStore.recordDecision("run-survivor-only", decisionFor("comp-survivor-only", survivorId = "S", retiredId = "other"))
+
+        traceStore.recordRunContext("run-first-retiring", contextId)
+        traceStore.recordDecision("run-first-retiring", decisionFor("comp-first-retiring", survivorId = "B", retiredId = "S"))
+
+        // The two retirements of "S" need distinguishable createdAt timestamps to order by.
+        Thread.sleep(5)
+
+        traceStore.recordRunContext("run-second-retiring", contextId)
+        traceStore.recordDecision("run-second-retiring", decisionFor("comp-second-retiring", survivorId = "C", retiredId = "S"))
+
+        val retiring = traceStore.findDecisionRetiring("S")
+        assertEquals("comp-second-retiring", retiring?.componentId)
+        assertEquals("C", retiring?.survivorId)
+    }
+
+    @Test
     fun `deleteTracesForContext removes only that context's rows and leaves another context intact`() {
         val runA = "run-a"
         val runB = "run-b"
