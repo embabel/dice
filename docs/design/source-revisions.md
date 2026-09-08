@@ -153,10 +153,11 @@ object ProvenanceEvidenceKey {
 
 The encoding is length-framed — each field is written as `<length>:<value>`, in the fixed order
 locator key, revision, chunk id, start offset, end offset, content hash, behind a
-`dice-provenance:v1:` prefix. Framing by length means no value needs escaping however many colons
-it contains, and a length of `-1` stands for null, so absence stays distinct from every string
-value including `"null"`. An entry over `https://a` at revision `r1`, chunk `c`, offsets 1–2, hash
-`h` encodes as:
+`dice-provenance:v1:` prefix. The length counts the value's UTF-8 bytes, so any implementation in
+any language arrives at the same string for the same value. Framing by length means no value needs
+escaping however many colons it contains, and a length of `-1` stands for null, so absence stays
+distinct from every string value including `"null"`. An entry over `https://a` at revision `r1`,
+chunk `c`, offsets 1–2, hash `h` encodes as:
 
 ```
 dice-provenance:v1:13:uri:https://a2:r11:c1:11:21:h

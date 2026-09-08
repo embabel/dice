@@ -745,7 +745,8 @@ and the consumer PRs that deliver it).
   carried its own copy of the encoding; the two framed the same fields in the same order and differed
   only in the version prefix, and each being `internal` to its own module meant nothing could catch a
   drift between them. A golden-literal test now pins the `v1` bytes, so the format cannot move under
-  its own version label. Source-identity collisions are rejected in two places: under the `MERGE` that
+  its own version label; each frame's length counts the value's UTF-8 bytes, and a non-ASCII golden
+  literal pins that too. Source-identity collisions are rejected in two places: under the `MERGE` that
   upserts the shared `:Source` node, which is what separates two writers introducing one colliding key
   at the same time, and in a preflight over the whole batch before the first write, which keeps a
   rejected write from changing anything and also rejects a single write carrying two structurally

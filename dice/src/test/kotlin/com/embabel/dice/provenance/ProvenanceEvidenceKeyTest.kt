@@ -46,6 +46,26 @@ class ProvenanceEvidenceKeyTest {
             .isEqualTo("dice-provenance:v1:13:uri:https://a2:r11:c1:11:21:h")
     }
 
+    /**
+     * The frame length counts UTF-8 bytes, not `String.length` (UTF-16 code units) or code points.
+     * The key `uri:https://a/💾` is 14 ASCII bytes plus 4 bytes for the floppy disk symbol, so its
+     * frame is `18:`, not the 16 `String.length` would give or the 15 a code-point count would give.
+     */
+    @Test
+    fun `a non-ASCII value is framed by its UTF-8 byte count`() {
+        val entry = ProvenanceEntry(locator = UriLocator("https://a/💾"))
+        val encoded = ProvenanceEvidenceKey.encode(entry)
+
+        assertThat(encoded).isEqualTo("dice-provenance:v1:18:uri:https://a/💾-1:-1:-1:-1:-1:")
+        assertThat(ProvenanceEvidenceKey.matches(entry, encoded)).isTrue()
+        assertThat(
+            ProvenanceEvidenceKey.matches(entry, encoded.replaceFirst("18:", "16:"))
+        ).isFalse()
+        assertThat(
+            ProvenanceEvidenceKey.matches(entry, encoded.replaceFirst("18:", "15:"))
+        ).isFalse()
+    }
+
     @Test
     fun `full evidence identity participates in encoding`() {
         val entry = ProvenanceEntry(
