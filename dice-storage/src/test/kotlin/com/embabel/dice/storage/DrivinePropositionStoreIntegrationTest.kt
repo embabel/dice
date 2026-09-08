@@ -1828,6 +1828,45 @@ class DrivinePropositionStoreIntegrationTest {
         assertNull(repository.subtractProvenance("never-existed-at-all", listOf(locator.key())))
     }
 
+    @Test
+    fun `subtractFoldedEvidence takes evidence, grounding and source ids off in one step and leaves the rest`() {
+        // A collapse folds three things onto the survivor, and the undo takes all three off in the
+        // one statement, so nothing is saved over the survivor afterwards. The revision clock moves
+        // only when something actually came off.
+        val locator = UriLocator("https://example.com/subtract/fold")
+        val keep = evidence(locator, "r1")
+        val folded = evidence(locator, "r2")
+        val before = Instant.now().minusSeconds(60)
+        val saved = repository.save(
+            prop(
+                "whole fold",
+                context = "ctx-subtract-fold",
+                contentRevised = before,
+                grounding = listOf("chunk-keep", "chunk-folded"),
+                sourceIds = listOf("src-keep", "src-folded"),
+                provenance = listOf(keep, folded),
+            ),
+        )
+
+        val after = repository.subtractFoldedEvidence(
+            saved.id,
+            listOf(ProvenanceEvidenceKey.encode(folded)),
+            listOf("chunk-folded"),
+            listOf("src-folded"),
+        )
+
+        assertEquals(setOf(keep), after?.provenanceEntries?.toSet())
+        assertEquals(listOf("chunk-keep"), after?.grounding)
+        assertEquals(listOf("src-keep"), after?.sourceIds)
+        assertEquals(1L, edgeCount(saved.id))
+        assertTrue(after!!.metadataRevised.isAfter(before), "the metadata clock moves when something came off")
+        assertEquals(setOf(keep), repository.findById(saved.id)?.provenanceEntries?.toSet())
+
+        val untouched = repository.subtractFoldedEvidence(saved.id, emptyList(), listOf("chunk-not-there"), emptyList())
+        assertEquals(after.metadataRevised, untouched?.metadataRevised, "naming nothing it holds leaves the clocks alone")
+        assertEquals(listOf("chunk-keep"), untouched?.grounding)
+    }
+
     private fun sourceCount(sourceKey: String): Long =
         persistenceManager.getOne(
             QuerySpecification

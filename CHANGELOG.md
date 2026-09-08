@@ -775,6 +775,22 @@ and the consumer PRs that deliver it).
   block holds prefix-less keys that this build does not recognise, and re-saving that evidence adds a
   second edge for it; clearing such a development store is the whole of the fix.
 
+- `CollectorTraceQuery.findDecisionRetiring(propositionId)`: the newest decision in which a
+  proposition was a retired member, never one it survived. `findDecisionForProposition` answers
+  either side of a merge, so after A was folded into B and B into C, undoing B out of C could find
+  the decision where B survived and refuse. Both `undoSingleCollapse` overloads and `findRetirement`
+  now look up by retired member; `DrivineCollectorTraceStore` orders by `createdAt` and
+  `InMemoryCollectorTraceStore` keeps recording order.
+- `ProvenanceSubtractionCapable.subtractFoldedEvidence(propositionId, provenanceRefs, grounding,
+  sourceIds)`: the whole fold a collapse carried comes off in one atomic step, and
+  `subtractProvenance` is now a default over it with empty grounding and source ids. The guarded
+  undo calls it once and never saves the survivor, because a replacing `save` after the subtraction
+  wrote the undo's copy back over evidence another writer added in between. `InMemoryPropositionRepository`
+  does it in one `compute`; `DrivinePropositionRepository` in one statement that deletes the named
+  edges, prunes orphaned sources and rewrites the `grounding` and `sourceIds` lists together.
+  **Compatibility:** `findDecisionRetiring` and `subtractFoldedEvidence` are new abstract members on
+  experimental SPI interfaces in an unreleased train. An implementor outside DICE adds both; an
+  existing `subtractProvenance` override keeps compiling as an override of the new default.
 - Precise undo of a collapse that folded revisioned evidence (third slice of DICE #64).
   `RetiredProposition` gains `foldedProvenanceEvidenceKeys`, one `ProvenanceEvidenceKey` per entry a
   fold actually added to the survivor, and `MultiSignalCollectorStrategy` records it. Recording by
@@ -782,8 +798,9 @@ and the consumer PRs that deliver it).
   survivor already cited at `r1` shares that survivor's locator key, so the fold recorded nothing and
   `r2` stayed on the survivor after an undo; and a bare locator key matches revisionless evidence
   only, so a recorded ref could not reach a revisioned entry either. `undoSingleCollapse` now
-  subtracts evidence through `subtractProvenance`, which names the refs to
-  remove — the ordinary `save` on the graph backend appends provenance and deletes no edge, so the
+  subtracts the whole fold through `subtractFoldedEvidence`, which names the evidence refs, grounding
+  and source ids to remove and takes them off in one step, saving nothing over the survivor
+  afterwards. The ordinary `save` on the graph backend appends provenance and deletes no edge, so the
   folded rows used to outlive the undo, and the authoritative replace that would remove them has to
   name what *stays*, silently discarding evidence a concurrent extraction added since the read.
   `DrivinePropositionRepository` performs it with one statement that deletes the named edges and
@@ -829,8 +846,9 @@ and the consumer PRs that deliver it).
   from its `undoneAt` when records are supplied, so a sibling undone and then retired again by a
   later run no longer reads as still participating — and undoing every member of a shared fold
   returns the survivor to its pre-collapse evidence instead of pinning the shared entry forever.
-  The survivor's evidence subtraction now completes before the save that a decorator such as
-  `EventEmittingPropositionRepository` publishes from, so a listener sees the post-undo state.
+  The survivor is never written through `save`, so a decorator such as
+  `EventEmittingPropositionRepository` announces the member's restore and nothing for the survivor,
+  and a replacing backend cannot put back evidence another writer added after the subtraction.
   `DrivineCollectorTraceStore` persists and reads the new field. Tests fold a
   revisioned loser into a survivor, undo, and assert the survivor's evidence and its `DERIVED_FROM`
   edge count are exactly what they were before the fold, in memory and against Neo4j. Design note:

@@ -176,9 +176,14 @@ class DrivineCollectorTraceStoreIntegrationTest {
             return delegate.setProvenance(propositionId, entries)
         }
 
-        override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? {
+        override fun subtractFoldedEvidence(
+            propositionId: String,
+            provenanceRefs: List<String>,
+            grounding: Collection<String>,
+            sourceIds: Collection<String>,
+        ): Proposition? {
             writes++
-            return delegate.subtractProvenance(propositionId, provenanceRefs)
+            return delegate.subtractFoldedEvidence(propositionId, provenanceRefs, grounding, sourceIds)
         }
     }
 
@@ -191,8 +196,13 @@ class DrivineCollectorTraceStoreIntegrationTest {
         private val delegate: DrivinePropositionRepository,
     ) : PropositionStore by delegate, ProvenanceSubtractionCapable {
 
-        override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? =
-            delegate.subtractProvenance(propositionId, provenanceRefs)
+        override fun subtractFoldedEvidence(
+            propositionId: String,
+            provenanceRefs: List<String>,
+            grounding: Collection<String>,
+            sourceIds: Collection<String>,
+        ): Proposition? =
+            delegate.subtractFoldedEvidence(propositionId, provenanceRefs, grounding, sourceIds)
     }
 
     private fun edge(anchorId: String, memberId: String, vetoed: Boolean = false, score: Double = 0.9) = CollectorCandidateEdge(

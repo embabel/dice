@@ -285,12 +285,15 @@ class CollapseUndoConfigurationException(message: String) : IllegalStateExceptio
  * [RetiredProposition] carries its own folded set rather than the decision carrying one shared
  * union.
  *
- * Evidence comes off the survivor through [ProvenanceSubtractionCapable.subtractProvenance], which
- * names the refs to delete. A persistent backend's ordinary `save` appends provenance and never
- * removes it, so an undo that only saved the reduced proposition would leave the folded evidence on
- * the graph. The subtraction runs first and the survivor's `save` last; the write order below says
- * why. Because the subtraction names what goes and lands in one step, evidence another extraction
- * adds to the survivor while this undo is running survives it.
+ * The whole fold comes off the survivor through
+ * [ProvenanceSubtractionCapable.subtractFoldedEvidence], which names the evidence refs, the
+ * grounding and the source ids to remove and takes them off in one step. A persistent backend's
+ * ordinary `save` appends provenance and never removes it, so an undo that only saved the reduced
+ * proposition would leave the folded evidence on the graph, and a replacing backend's `save` after
+ * the subtraction would write this function's copy back over evidence another writer added since.
+ * So the survivor is never saved; the write order below says why. Because the subtraction names
+ * what goes and lands in one step, evidence another extraction adds to the survivor while this undo
+ * is running survives it.
  *
  * Both propositions are read before anything is written. A missing participant ends the undo with
  * nothing changed, leaving no survivor whose evidence has been subtracted and no member stranded
@@ -356,28 +359,30 @@ class CollapseUndoConfigurationException(message: String) : IllegalStateExceptio
  *   matches them. An entry differing in any of the six fields — a different revision of the same
  *   source, say — is a different key and is untouched.
  * - **No transaction spans the writes**, so the order is chosen to make every interruption
- *   recoverable. It runs: (1) `subtractProvenance` takes the evidence off, (2) `save` carries
- *   grounding and source ids and fires the persistence event, (3) the `undoneAt` stamp, (4) the
- *   member's restore. The stamp sits between the survivor's writes and the restore deliberately — after the
- *   restore, losing it would leave a finished undo still authorized, and a retry could not repair
- *   that because the member would already be back at its prior status.
+ *   recoverable. It runs: (1) `subtractFoldedEvidence` takes the evidence, grounding and source ids
+ *   off the survivor in one step, (2) the `undoneAt` stamp, (3) the member's restore. The stamp
+ *   sits between the survivor's write and the restore deliberately: after the restore, losing it
+ *   would leave a finished undo still authorized, and a retry could not repair that because the
+ *   member would already be back at its prior status.
  *
  *   | Interrupted after | State | What a retry does |
  *   | --- | --- | --- |
  *   | nothing | untouched | the whole undo |
- *   | (1) | evidence off, grounding on | re-derives against current evidence, so the subtraction is a no-op, then finishes |
- *   | (2) | survivor final, member retired, no stamp | same — re-subtracts nothing, stamps, restores |
- *   | (3) | stamped, member still retired | restores only, touching no evidence |
- *   | (4) | complete | nothing; the stamp refuses |
+ *   | (1) | survivor final, member retired, no stamp | re-derives against current evidence, so the subtraction is a no-op, then stamps and restores |
+ *   | (2) | stamped, member still retired | restores only, touching no evidence |
+ *   | (3) | complete | nothing; the stamp refuses |
  *
- *   Steps 1 and 2 are safe to repeat because the subtraction is recomputed from the survivor's
- *   *current* evidence by key, so a ref that is already gone removes nothing.
+ *   Step 1 is safe to repeat because the subtraction is recomputed from the survivor's *current*
+ *   evidence by key, so a ref that is already gone removes nothing. The survivor is never written
+ *   through `save`, so a decorator that publishes from `save` announces the member's restore and
+ *   nothing for the survivor; the survivor's write goes through the capability, unannounced, the
+ *   way the other provenance operations do.
  *
  * @param command the context, the survivor and the retired member this undo is for
  * @param traceQuery where the collapse decision (and its retired members) is looked up
- * @param propositions where the survivor and retired proposition are read and saved, where each
- *   sibling's current status is checked, and where the folded evidence is subtracted from the
- *   survivor by name. Must be [ProvenanceSubtractionCapable].
+ * @param propositions where the survivor and retired proposition are read, where the member is
+ *   restored, where each sibling's current status is checked, and where the whole fold is
+ *   subtracted from the survivor by name. Must be [ProvenanceSubtractionCapable].
  * @param collectorRecords the run's audit records. Required: they are what makes "was this collapse
  *   applied, and has it been reversed already" a recorded fact.
  * @return the updated survivor and restored proposition, or null if nothing was retired under
@@ -468,18 +473,23 @@ fun undoSingleCollapse(
 
     val refsToSubtract = retirement.provenanceRefsForUndo().filterNot { it in stillNeededProvenanceRefs }
 
-    // Evidence goes first and by name. The capability deletes exactly these refs in one atomic
-    // step, so evidence another writer adds while this undo is running survives it. Naming what
-    // stays would replace it away, which is why the store has to promise this before undo will run
-    // at all. The save then carries grounding and source ids over the survivor as the subtraction
-    // left it, and goes last because save is the write a decorator instruments: the event a
-    // listener receives describes the final state.
+    // The whole fold comes off by name in one step: the evidence refs, the grounding and the source
+    // ids the collapse carried, all in the one atomic operation the capability promises. No save
+    // follows it. A save would carry this function's copy of the survivor back over the store, and
+    // on a backend whose save replaces the row that copy would put back evidence another writer
+    // added in the meantime, which is the loss the capability exists to rule out. Naming what goes,
+    // not what stays, is why the store has to promise this before undo will run at all.
     //
     // A null answer means the store has no such proposition, so the survivor went away after this
-    // function read it. The copy read then is all that is left, and saving it back would recreate
+    // function read it. The copy read then is all that is left, and writing it back would recreate
     // what the other writer deleted, folded evidence and all. The deletion wins.
-    val subtracted = subtraction.subtractProvenance(survivorId, refsToSubtract)
-    if (subtracted == null) {
+    val updatedSurvivor = subtraction.subtractFoldedEvidence(
+        propositionId = survivorId,
+        provenanceRefs = refsToSubtract,
+        grounding = retirement.foldedGrounding.filterNot { it in stillNeededGrounding },
+        sourceIds = retirement.foldedSourceIds.filterNot { it in stillNeededSourceIds },
+    )
+    if (updatedSurvivor == null) {
         undoLogger.warn(
             "Abandoning the undo of {} in run {}: survivor {} was already gone when the subtraction " +
                 "ran, so nothing is written and the member stays retired",
@@ -487,13 +497,6 @@ fun undoSingleCollapse(
         )
         return null
     }
-    val updatedSurvivor = propositions.save(
-        subtracted.withoutFoldedEvidence(
-            groundingToRemove = retirement.foldedGrounding.filterNot { it in stillNeededGrounding },
-            provenanceRefsToRemove = emptyList(),
-            sourceIdsToRemove = retirement.foldedSourceIds.filterNot { it in stillNeededSourceIds },
-        ),
-    )
 
     // The stamp goes between the evidence writes and the restore, which is what makes every crash
     // window recoverable — see the KDoc's crash matrix. Losing it after the restore would leave a

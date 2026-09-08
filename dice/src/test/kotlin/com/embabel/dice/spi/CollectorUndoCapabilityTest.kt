@@ -136,6 +136,108 @@ class CollectorUndoCapabilityTest {
     }
 
     @Test
+    fun `an undo never saves over the survivor`() {
+        // The survivor's write goes through the capability and nothing else. A save after the
+        // subtraction would carry this function's copy of the survivor back over the store, and on a
+        // backend whose save replaces the row that copy would put back evidence another writer added
+        // in the meantime. Grounding and source ids come off in the same step as the evidence.
+        val store = SaveRecordingStore()
+        val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
+        val keep = ProvenanceEntry(UriLocator("https://example.com/keep"))
+        val folded = ProvenanceEntry(UriLocator("https://example.com/folded"))
+        val survivor = store.seed(
+            proposition("survivor-no-save", listOf(keep, folded)).copy(
+                grounding = listOf("chunk-keep", "chunk-folded"),
+                sourceIds = listOf("src-keep", "src-folded"),
+            ),
+        )
+        val retired = store.seed(proposition("retired-no-save", listOf(folded), status = PropositionStatus.STALE))
+        val runId = "run-no-save"
+        authorize(records, runId, retired.id, survivor.id)
+        trace.recordRunContext(runId, contextId)
+        trace.recordDecision(
+            runId,
+            decisionWith(
+                componentId = "component-no-save",
+                survivorId = survivor.id,
+                retired = RetiredProposition(
+                    propositionId = retired.id,
+                    priorStatus = PropositionStatus.ACTIVE,
+                    foldedGrounding = listOf("chunk-folded"),
+                    foldedProvenanceRefs = listOf(folded.locator.key()),
+                    foldedSourceIds = listOf("src-folded"),
+                ),
+            ),
+        )
+
+        val result = undo(trace, store, survivor.id, retired.id, records)
+
+        assertEquals(listOf(retired.id), store.savedIds, "the member's restore is the only save an undo issues")
+        val after = store.findById(survivor.id)
+        assertEquals(listOf(keep), after?.provenanceEntries)
+        assertEquals(listOf("chunk-keep"), after?.grounding)
+        assertEquals(listOf("src-keep"), after?.sourceIds)
+        assertEquals(listOf(keep), result?.survivor?.provenanceEntries)
+        assertEquals(PropositionStatus.ACTIVE, result?.restored?.status)
+    }
+
+    @Test
+    fun `evidence another writer adds after the subtraction survives the undo`() {
+        // The other writer lands right after the subtraction returns, inside the window a trailing
+        // save used to cover. In memory, save replaces the row, so saving the undo's copy would have
+        // put the survivor back to what the subtraction answered and dropped the newcomer.
+        val delegate = InMemoryPropositionRepository()
+        val newcomer = ProvenanceEntry(UriLocator("https://example.com/newcomer"))
+        val store = AddingAfterSubtract(delegate, adds = newcomer)
+        val trace = InMemoryCollectorTraceStore()
+        val records = InMemoryCollectorRecordStore()
+        val keep = ProvenanceEntry(UriLocator("https://example.com/keep"))
+        val folded = ProvenanceEntry(UriLocator("https://example.com/folded"))
+        val survivor = delegate.save(proposition("survivor-newcomer", listOf(keep, folded)))
+        val retired = delegate.save(proposition("retired-newcomer", listOf(folded), status = PropositionStatus.STALE))
+        val runId = "run-newcomer"
+        authorize(records, runId, retired.id, survivor.id)
+        trace.recordRunContext(runId, contextId)
+        trace.recordDecision(
+            runId,
+            decisionWith(
+                componentId = "component-newcomer",
+                survivorId = survivor.id,
+                retired = RetiredProposition(
+                    propositionId = retired.id,
+                    priorStatus = PropositionStatus.ACTIVE,
+                    foldedProvenanceRefs = listOf(folded.locator.key()),
+                ),
+            ),
+        )
+
+        val result = undo(trace, store, survivor.id, retired.id, records)
+
+        assertTrue(result != null, "the undo completes")
+        assertEquals(setOf(keep, newcomer), delegate.findById(survivor.id)?.provenanceEntries?.toSet())
+        assertEquals(PropositionStatus.ACTIVE, delegate.findById(retired.id)?.status)
+    }
+
+    @Test
+    fun `an undo announces the member's restore and nothing for the survivor`() {
+        // save is the write the decorator publishes from, and the survivor is never written through
+        // it, so a listener hears one event: the member coming back to its prior status. Coming back
+        // to ACTIVE is announced as a plain persist, the way the decorator treats every ACTIVE save.
+        val fold = appliedFold("announced")
+        val records = InMemoryCollectorRecordStore()
+        authorize(records, fold.runId, fold.retiredId, fold.survivorId)
+        val events = mutableListOf<DiceEvent>()
+        val decorated = EventEmittingPropositionRepository(fold.store) { events += it }
+
+        val result = undo(fold.trace, decorated, fold.survivorId, fold.retiredId, records)
+
+        assertEquals(listOf(revisionOne), result?.survivor?.provenanceEntries)
+        assertEquals(1, events.size, "one save, one event: $events")
+        assertEquals(fold.retiredId, (events.single() as PropositionPersisted).proposition.id)
+    }
+
+    @Test
     fun `folding a revisioned loser and undoing leaves the survivor's evidence as it was`() {
         val store = InMemoryPropositionRepository()
         val trace = InMemoryCollectorTraceStore()
@@ -1327,13 +1429,59 @@ class CollectorUndoCapabilityTest {
         status = status,
     )
 
+    /** Records the id of every proposition an undo saves, so "never over the survivor" is an assertion. */
+    private class SaveRecordingStore(
+        private val delegate: InMemoryPropositionRepository = InMemoryPropositionRepository(),
+    ) : PropositionRepository by delegate, ProvenanceSubtractionCapable {
+
+        val savedIds = mutableListOf<String>()
+
+        /** Puts a proposition in place without recording it as a save. */
+        fun seed(proposition: Proposition): Proposition = delegate.save(proposition)
+
+        override fun save(proposition: Proposition): Proposition {
+            savedIds += proposition.id
+            return delegate.save(proposition)
+        }
+
+        override fun subtractFoldedEvidence(
+            propositionId: String,
+            provenanceRefs: List<String>,
+            grounding: Collection<String>,
+            sourceIds: Collection<String>,
+        ): Proposition? = delegate.subtractFoldedEvidence(propositionId, provenanceRefs, grounding, sourceIds)
+    }
+
+    /** Another writer appending evidence to the proposition the moment the undo's subtraction returns. */
+    private class AddingAfterSubtract(
+        private val delegate: InMemoryPropositionRepository,
+        private val adds: ProvenanceEntry,
+    ) : PropositionRepository by delegate, ProvenanceSubtractionCapable {
+
+        override fun subtractFoldedEvidence(
+            propositionId: String,
+            provenanceRefs: List<String>,
+            grounding: Collection<String>,
+            sourceIds: Collection<String>,
+        ): Proposition? {
+            val subtracted = delegate.subtractFoldedEvidence(propositionId, provenanceRefs, grounding, sourceIds)
+            delegate.addProvenance(propositionId, listOf(adds))
+            return subtracted
+        }
+    }
+
     /** Models a persistent backend whose ordinary save path never removes unloaded evidence. */
     private class AppendPreservingStore(
         private val delegate: InMemoryPropositionRepository = InMemoryPropositionRepository(),
     ) : PropositionRepository by delegate, ProvenanceSubtractionCapable {
 
-        override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? =
-            delegate.subtractProvenance(propositionId, provenanceRefs)
+        override fun subtractFoldedEvidence(
+            propositionId: String,
+            provenanceRefs: List<String>,
+            grounding: Collection<String>,
+            sourceIds: Collection<String>,
+        ): Proposition? =
+            delegate.subtractFoldedEvidence(propositionId, provenanceRefs, grounding, sourceIds)
 
         override fun save(proposition: Proposition): Proposition {
             val existing = delegate.findById(proposition.id) ?: return delegate.save(proposition)
@@ -1374,9 +1522,14 @@ class CollectorUndoCapabilityTest {
         private val deletes: String,
     ) : PropositionRepository by delegate, ProvenanceSubtractionCapable {
 
-        override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? {
+        override fun subtractFoldedEvidence(
+            propositionId: String,
+            provenanceRefs: List<String>,
+            grounding: Collection<String>,
+            sourceIds: Collection<String>,
+        ): Proposition? {
             delegate.delete(deletes)
-            return delegate.subtractProvenance(propositionId, provenanceRefs)
+            return delegate.subtractFoldedEvidence(propositionId, provenanceRefs, grounding, sourceIds)
         }
     }
 
@@ -1391,8 +1544,13 @@ class CollectorUndoCapabilityTest {
             return delegate.save(proposition)
         }
 
-        override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? =
-            delegate.subtractProvenance(propositionId, provenanceRefs)
+        override fun subtractFoldedEvidence(
+            propositionId: String,
+            provenanceRefs: List<String>,
+            grounding: Collection<String>,
+            sourceIds: Collection<String>,
+        ): Proposition? =
+            delegate.subtractFoldedEvidence(propositionId, provenanceRefs, grounding, sourceIds)
     }
 
     /**
@@ -1425,9 +1583,14 @@ class CollectorUndoCapabilityTest {
             return delegate.setProvenance(propositionId, entries)
         }
 
-        override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? {
+        override fun subtractFoldedEvidence(
+            propositionId: String,
+            provenanceRefs: List<String>,
+            grounding: Collection<String>,
+            sourceIds: Collection<String>,
+        ): Proposition? {
             writes++
-            return delegate.subtractProvenance(propositionId, provenanceRefs)
+            return delegate.subtractFoldedEvidence(propositionId, provenanceRefs, grounding, sourceIds)
         }
     }
 }

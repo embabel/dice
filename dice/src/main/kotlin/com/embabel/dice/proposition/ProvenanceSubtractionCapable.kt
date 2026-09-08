@@ -24,8 +24,15 @@ package com.embabel.dice.proposition
  * evidence another extraction adds between that read and the write is replaced away with nothing
  * left to recover it from. Naming what goes has no such window.
  *
+ * A collapse folds three things onto its survivor at once, evidence, grounding and source ids, so
+ * reversing it has to take all three off together. Subtracting the evidence and then saving the
+ * survivor with the grounding and source ids removed would write the survivor's evidence back from
+ * a copy taken before the subtraction, losing whatever another writer added in between. That is why
+ * [subtractFoldedEvidence] takes all three off in the one step this capability promises, and why
+ * undo never follows it with a plain `save`.
+ *
  * The capability sits outside [PropositionStore] deliberately. Closing that window is a promise
- * about how a backend writes, and no shared default body can make it — a read-modify-write default
+ * about how a backend writes, and no shared default body can make it: a read-modify-write default
  * would compile everywhere while quietly carrying the very data loss it claims to prevent. So a
  * store that cannot subtract atomically is absent from this type, and a caller probes with an `as?`
  * test and handles the absence as its own case:
@@ -37,7 +44,7 @@ package com.embabel.dice.proposition
  *
  * ## What implementing this promises
  *
- * - **Atomicity.** Reading the current entries and writing what survives happen as one step —
+ * - **Atomicity.** Reading the current entries and writing what survives happen as one step,
  *   a compare-and-set retry loop, a lock the store already holds over the row, or a single delete
  *   statement the backend runs itself. Evidence another writer adds while a subtraction is in
  *   flight is still there when the subtraction finishes.
@@ -62,14 +69,42 @@ interface ProvenanceSubtractionCapable {
 
     /**
      * Take exactly the evidence named by [provenanceRefs] off [propositionId], leaving the rest of
-     * its evidence alone.
+     * its evidence, grounding and source ids alone.
      *
-     * Passing no refs reads and returns the proposition unchanged.
+     * Passing no refs reads and returns the proposition unchanged. A default over
+     * [subtractFoldedEvidence] with empty grounding and source ids; implementors only need to
+     * provide that one.
      *
      * @param propositionId the proposition to subtract from
      * @param provenanceRefs evidence keys or bare locator keys naming what goes
      * @return the proposition as the subtraction left it, or null when the store holds no
-     *   proposition under that id — which a caller reads as "somebody deleted it".
+     *   proposition under that id, which a caller reads as "somebody deleted it".
      */
-    fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition?
+    fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? =
+        subtractFoldedEvidence(propositionId, provenanceRefs, emptyList(), emptyList())
+
+    /**
+     * Take exactly the fold a collapse carried off [propositionId] in one atomic step: the evidence
+     * named by [provenanceRefs], the grounding chunk ids in [grounding], and the source ids in
+     * [sourceIds]. Everything else on the proposition is left alone.
+     *
+     * This is the operation collector undo actually needs. A fold onto a survivor is never evidence
+     * alone, it also carries grounding and source ids, and reversing it has to take all three off
+     * together, in the same step the evidence subtraction promises, or a later `save` of the
+     * grounding/source-id change would write the survivor's evidence back from a stale copy and lose
+     * whatever another extraction added since.
+     *
+     * @param propositionId the proposition to subtract from
+     * @param provenanceRefs evidence keys or bare locator keys naming which evidence entries go
+     * @param grounding chunk ids to remove from the proposition's grounding
+     * @param sourceIds source ids to remove from the proposition's abstraction sources
+     * @return the proposition as the subtraction left it, or null when the store holds no
+     *   proposition under that id, which a caller reads as "somebody deleted it".
+     */
+    fun subtractFoldedEvidence(
+        propositionId: String,
+        provenanceRefs: List<String>,
+        grounding: Collection<String>,
+        sourceIds: Collection<String>,
+    ): Proposition?
 }

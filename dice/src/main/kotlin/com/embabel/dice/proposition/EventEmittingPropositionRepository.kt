@@ -181,22 +181,27 @@ open class EventEmittingPropositionRepository(
         get() = delegateSubtraction?.supportsProvenanceSubtraction == true
 
     /**
-     * Forwards the atomic subtraction to the delegate, which is where the atomicity lives.
+     * Forwards the atomic fold subtraction to the delegate, which is where the atomicity lives.
      *
-     * This decorator instruments [save] alone, so the subtraction passes through unannounced —
-     * the same treatment the other provenance operations get through `by delegate`. Carrying the
+     * This decorator instruments [save] alone, so the subtraction passes through unannounced, the
+     * same treatment the other provenance operations get through `by delegate`. Carrying the
      * capability type matters because Kotlin's interface delegation only covers
      * [PropositionRepository]: without this, wrapping a capable store would hide the capability
      * from every caller that probes for it, and collector undo would refuse.
      */
-    override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? =
+    override fun subtractFoldedEvidence(
+        propositionId: String,
+        provenanceRefs: List<String>,
+        grounding: Collection<String>,
+        sourceIds: Collection<String>,
+    ): Proposition? =
         (
             delegateSubtraction
                 ?: throw UnsupportedOperationException(
-                    "subtractProvenance needs a delegate that implements ProvenanceSubtractionCapable; " +
+                    "subtractFoldedEvidence needs a delegate that implements ProvenanceSubtractionCapable; " +
                         "${delegate.javaClass.name} cannot subtract evidence atomically",
                 )
-            ).subtractProvenance(propositionId, provenanceRefs)
+            ).subtractFoldedEvidence(propositionId, provenanceRefs, grounding, sourceIds)
 }
 
 /**

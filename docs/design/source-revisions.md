@@ -255,14 +255,17 @@ trace, not a transport for one you intend to undo from.
 
 ### Undo goes through the store, and writes nothing on a broken collapse
 
-`undoSingleCollapse` takes evidence off the survivor with
-`ProvenanceSubtractionCapable.subtractProvenance`, which names the refs to delete. Saving the
-reduced survivor is not enough on a persistent backend: `DrivinePropositionRepository.save` appends
-provenance and deletes no edge, so the folded rows would outlive the undo. The subtraction runs
-first and the save follows it, carrying grounding and source ids; **The order the writes go in**
-below says why that order is load-bearing in both directions. **Subtracting evidence by name**
-below says why the operation lives on its own capability and what implementing it promises;
-`CollectorUndoCapabilityTest` pins the undo against a store that models the append-only save.
+`undoSingleCollapse` takes the whole fold off the survivor with
+`ProvenanceSubtractionCapable.subtractFoldedEvidence`, which names the evidence refs, the grounding
+and the source ids to remove and takes all three off in one step. Saving the reduced survivor is not
+enough on a persistent backend: `DrivinePropositionRepository.save` appends provenance and deletes
+no edge, so the folded rows would outlive the undo. A save after the subtraction is not safe on a
+replacing backend either: it would carry the undo's copy of the survivor back over the store and put
+back evidence another writer added since. So nothing is saved over the survivor at all; **The order
+the writes go in** below says why. **Subtracting evidence by name** below says why the operation
+lives on its own capability and what implementing it promises; `CollectorUndoCapabilityTest` pins
+the undo against a store that models the append-only save, and `an undo never saves over the
+survivor` pins the absence of the save.
 
 Both participants are read before anything is written. A survivor whose retired member has since
 been deleted would otherwise end up with the member's evidence already subtracted and no member to
@@ -330,18 +333,17 @@ the collapse. `DrivineCollectorRecordStore` writes it through `coalesce($undoneA
 instead: an arriving stamp wins, a replay preserves. The append-only in-memory store has the
 property for free, and `CollectorRecordStore.record` now states it as a contract on implementors.
 
-**Where the stamp sits in the write order is what makes a crash recoverable.** Undo writes in four
-steps — subtract the evidence, save the survivor, stamp, restore the member — and the stamp is
-deliberately third rather than last. Put it after the restore and a process that dies in between
-leaves a finished undo still authorized, which no retry can repair: the member is already back at
-its prior status, so the retry declines and the stamp is never written; a later re-retirement then
-re-arms the whole thing destructively. Third, every interruption is recoverable:
+**Where the stamp sits in the write order is what makes a crash recoverable.** Undo writes in three
+steps, subtract the fold, stamp, restore the member, and the stamp is deliberately second, not
+last. Put it after the restore and a process that dies in between leaves a finished undo still
+authorized, which no retry can repair: the member is already back at its prior status, so the retry
+declines and the stamp is never written; a later re-retirement then re-arms the whole thing
+destructively. Second, every interruption is recoverable:
 
 | Interrupted after | State | What a retry does |
 | --- | --- | --- |
 | nothing | untouched | the whole undo |
-| subtract | evidence off, grounding on | re-derives against current evidence, so the subtraction is a no-op, then finishes |
-| save | survivor final, member retired, no stamp | same — re-subtracts nothing, stamps, restores |
+| subtract | survivor final, member retired, no stamp | re-derives against current evidence, so the subtraction is a no-op, then stamps and restores |
 | stamp | stamped, member still retired | restores only, touching no evidence |
 | restore | complete | nothing; the stamp refuses |
 
@@ -452,8 +454,10 @@ nothing" and never "wrote half of it".
 
 ### Subtracting evidence by name, not by remainder
 
-Undo removes evidence through `ProvenanceSubtractionCapable.subtractProvenance`, which names the
-refs to delete. The obvious alternative — `setProvenance` with the entries that should remain — has
+Undo removes a fold through `ProvenanceSubtractionCapable.subtractFoldedEvidence`, which names the
+evidence refs, the grounding and the source ids to take off and takes all three off in one step;
+`subtractProvenance` is the same call with empty grounding and source ids. The obvious
+alternative, `setProvenance` with the entries that should remain, has
 a window that loses data: naming what stays means reading the entries first, and any evidence
 another extraction adds between that read and the write is replaced away. Nothing recovers it,
 because the `save` that follows is append-only.
@@ -472,8 +476,8 @@ for the capability and refuses with `CollapseUndoConfigurationException` when th
 `InMemoryPropositionRepository` implements it over `ConcurrentHashMap.compute`, which holds the key
 for the whole remapping function, and takes an `addProvenance` override on the same primitive so the
 two operations serialize against each other. `DrivinePropositionRepository` deletes `DERIVED_FROM`
-edges by ref in one statement and prunes only the sources those edges pointed at, reading nothing
-first. Refs come in the same two forms the codec defines: a minted key is matched against the edge's
+edges by ref in one statement, prunes only the sources those edges pointed at, and rewrites the
+`grounding` and `sourceIds` lists in that same statement, reading nothing first. Refs come in the same two forms the codec defines: a minted key is matched against the edge's
 `entryKey`, and a bare locator key matches revisionless edges for that source only — which also
 reaches edges written before `entryKey` existed. `EventEmittingPropositionRepository` carries the
 capability type and forwards to its delegate, because Kotlin's interface delegation covers
@@ -489,38 +493,40 @@ subtraction starts.
 
 A subtraction can also answer null, which is the store saying it holds no such proposition. Undo
 reads that as the survivor having been deleted between its own read and this call, and stops there
-having written nothing. Continuing from the copy it read would save that copy back and recreate the
-proposition another writer deleted, folded evidence and all — the `save` that follows the
-subtraction is an upsert on every backend here. The member stays retired, no stamp is written, and
+having written nothing. Continuing from the copy it read would mean writing that copy back and
+recreating the proposition another writer deleted, folded evidence and all. The member stays retired, no stamp is written, and
 the null the undo returns says truthfully that no restore happened. What becomes of a member left
 retired into a survivor that no longer exists is the caller's decision; undo does not guess at it.
 `a survivor deleted before the subtraction is not recreated by the undo` pins that in memory, and
 `subtractProvenance answers null for a proposition that is not there` pins the graph backend's half.
 
-**A deletion can still arrive too late to be seen**, and this is a residual the capability leaves
-open. Every deletion up to the subtraction's own last look is caught, because no implementation may
-recreate what it is subtracting from: the in-memory `compute` finds no entry and writes none, and
-the Drivine override reads once after its delete statement. The window that stays open is between
-that answer and the survivor's `save`.
+**A deletion can still arrive too late to be seen**, on the member, and this is a residual the
+capability leaves open. Every deletion of the survivor is caught, because the survivor is only ever
+written through the subtraction and no implementation may recreate what it is subtracting from: the
+in-memory `compute` finds no entry and writes none, and the Drivine statement matches nothing. The
+window that stays open is on the member: its restore is a `PropositionStore.save`, an upsert on
+every backend here, so a member deleted between the undo's read and its restore comes back at its
+prior status.
 
 The upsert is what does it. `PropositionStore.save` writes the proposition whether or not a row for
 it still exists, and nothing on the contract says "save only if it is still there". Closing the
-window needs a conditional write — a compare-and-set, or an existence-guarded save on the store
-contract that every backend then has to implement — and it would have to reach every save in the
+window needs a conditional write, a compare-and-set or an existence-guarded save on the store
+contract that every backend then has to implement, and it would have to reach every save in the
 chain. That is more than an amendment to this slice should take on. It belongs with the other
-untransactional residuals here: no transaction spans the undo's four writes, and a caller needing
+untransactional residuals here: no transaction spans the undo's three writes, and a caller needing
 strict exclusion against concurrent deletion needs a boundary the SPI does not offer yet.
 
 ### The order the writes go in
 
-Evidence comes off first, and the survivor's `save` runs last. Both halves of that order are
-load-bearing. A persistent backend's `save` appends provenance and deletes nothing, so the
-subtraction is the only write that removes the folded evidence. And `save` is the write a decorator
-instruments — `EventEmittingPropositionRepository` publishes `PropositionPersisted` from it, while
-the provenance operations forward to the delegate unannounced. Saving first would fire the event
-while the folded evidence was still in the graph, handing a synchronous listener a survivor that no
-longer exists a moment later. `the survivor's persistence event carries its post-undo evidence` pins
-the ordering against the real decorator.
+The fold comes off the survivor first and in one step, the stamp goes second, and the member's
+restore goes last. The survivor is never written through `save`. On a persistent backend `save`
+appends provenance and deletes nothing, so it could not remove the fold; on a replacing backend it
+would carry the undo's copy back over evidence another writer added since the subtraction. `save` is
+also the write a decorator instruments: `EventEmittingPropositionRepository` publishes from it,
+while the provenance operations forward to the delegate unannounced, so a listener hears the
+member's restore and nothing for the survivor. `an undo announces the member's restore and nothing
+for the survivor` pins that against the real decorator, and `evidence another writer adds after the
+subtraction survives the undo` pins the window the trailing save used to open.
 
 ### Legacy evidence is unchanged, by construction
 

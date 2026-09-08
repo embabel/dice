@@ -30,7 +30,6 @@ import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.matchesFilters
 import com.embabel.dice.provenance.ProvenanceEntry
-import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -198,7 +197,7 @@ class InMemoryPropositionRepository(
     // ========================================================================
 
     /**
-     * Takes the named evidence off in one atomic step, honouring
+     * Takes a whole collapse's fold off in one atomic step, honouring
      * [ProvenanceSubtractionCapable]'s contract.
      *
      * `ConcurrentHashMap.compute` holds the bin for this id while the remapping function runs, and
@@ -210,17 +209,25 @@ class InMemoryPropositionRepository(
      * has deleted stays deleted. Embeddings are keyed on text, which a subtraction never changes,
      * so the embedding cache needs no attention here.
      */
-    override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? =
+    override fun subtractFoldedEvidence(
+        propositionId: String,
+        provenanceRefs: List<String>,
+        grounding: Collection<String>,
+        sourceIds: Collection<String>,
+    ): Proposition? =
         propositions.compute(propositionId) { _, current ->
-            when {
-                current == null -> null
-                provenanceRefs.isEmpty() -> current
-                else -> {
-                    val remaining = current.provenanceEntries.filterNot { entry ->
-                        provenanceRefs.any { ProvenanceEvidenceKey.matches(entry, it) }
-                    }
-                    if (remaining.size == current.provenanceEntries.size) current else current.withProvenance(remaining)
-                }
+            if (current == null) {
+                null
+            } else {
+                val updated = current.withoutFoldedEvidence(
+                    groundingToRemove = grounding.toList(),
+                    provenanceRefsToRemove = provenanceRefs,
+                    sourceIdsToRemove = sourceIds.toList(),
+                )
+                val nothingMatched = updated.grounding == current.grounding &&
+                    updated.provenanceEntries == current.provenanceEntries &&
+                    updated.sourceIds == current.sourceIds
+                if (nothingMatched) current else updated
             }
         }
 

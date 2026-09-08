@@ -560,48 +560,76 @@ class DrivinePropositionRepository(
     }
 
     /**
-     * Subtract exactly the named evidence in one statement, without reading the proposition first.
+     * Take a whole fold off the proposition in one statement, without reading it first.
      *
      * This is how the store honours [ProvenanceSubtractionCapable]: naming what stays would mean
      * reading the entries, filtering, and replacing, and evidence another writer adds in between
-     * would be replaced away. Naming what goes closes that window. One `MATCH`/`DELETE` deletes the
-     * edges by their own identity and leaves every other edge on the proposition untouched, whenever
-     * it arrived, and Neo4j runs it as one transaction — so the read and the write the contract
-     * talks about land together. Nothing is written to the proposition node itself, so a proposition
-     * another writer has already deleted stays deleted.
+     * would be replaced away. Naming what goes closes that window. One statement deletes the named
+     * `DERIVED_FROM` edges by their own identity, prunes only the sources those edges pointed at,
+     * and rewrites the `grounding` and `sourceIds` lists with the named members taken out, and Neo4j
+     * runs all of it as one transaction, so the read and the write the contract talks about land
+     * together. A `save` after the evidence subtraction would write the survivor's evidence back
+     * from a copy taken before it, which is exactly the window this statement is here to close.
+     * Nothing else on the node is touched, and a proposition another writer has already deleted
+     * matches nothing and stays deleted.
      *
      * Two ref forms, matching the evidence-key contract. A minted key is compared against the
      * edge's `entryKey`, so it removes one entry. A bare locator key predates revisions and matches
      * revisionless evidence for that source only, which is why the second predicate requires a null
-     * `sourceRevision` — it also reaches edges written before `entryKey` existed. A ref carrying the
+     * `sourceRevision`; it also reaches edges written before `entryKey` existed. A ref carrying the
      * codec's prefix but an unknown version matches no stored key, so it removes nothing.
      *
-     * @return the proposition as the deletion left it, or null when this store has no proposition
-     *   with that id. Both branches answer from a fresh read, so a deleted id
-     *   answers null whether or not any refs were named. Collector undo reads that null as the
-     *   survivor having been deleted while it was working and stops rather than writing, so the
-     *   meaning is load-bearing — `subtractProvenance answers null for a proposition that is not
-     *   there` pins it.
+     * The revision clocks move only when something actually came off, so a subtraction that names
+     * nothing the proposition holds leaves it exactly as it was.
+     *
+     * @return the proposition as the subtraction left it, or null when this store has no proposition
+     *   with that id. Both branches answer from a fresh read, so a deleted id answers null whether
+     *   or not anything was named. Collector undo reads that null as the survivor having been
+     *   deleted while it was working and stops there, so the meaning is load-bearing;
+     *   `subtractProvenance answers null for a proposition that is not there` pins it.
      */
     @Transactional
-    override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? {
-        if (provenanceRefs.isEmpty()) return findById(propositionId)
+    override fun subtractFoldedEvidence(
+        propositionId: String,
+        provenanceRefs: List<String>,
+        grounding: Collection<String>,
+        sourceIds: Collection<String>,
+    ): Proposition? {
+        if (provenanceRefs.isEmpty() && grounding.isEmpty() && sourceIds.isEmpty()) return findById(propositionId)
         val (encodedRefs, legacyKeys) = provenanceRefs.partition { it.startsWith(EVIDENCE_KEY_PREFIX) }
         persistenceManager.execute(
             QuerySpecification.withStatement(
                 """
-                MATCH (p:Proposition {id: ${'$'}propositionId})-[r:DERIVED_FROM]->(s:Source)
+                MATCH (p:Proposition {id: ${'$'}propositionId})
+                OPTIONAL MATCH (p)-[r:DERIVED_FROM]->(s:Source)
                 WHERE (r.entryKey IS NOT NULL AND r.entryKey IN ${'$'}encodedRefs)
                    OR (r.sourceRevision IS NULL AND s.key IN ${'$'}legacyKeys)
-                WITH collect(DISTINCT s) AS touched, collect(r) AS doomed
+                WITH p, collect(DISTINCT s) AS touched, collect(r) AS doomed
+                WITH p, touched, doomed,
+                     coalesce(p.grounding, []) AS oldGrounding,
+                     coalesce(p.sourceIds, []) AS oldSourceIds
+                WITH p, touched, doomed, oldGrounding, oldSourceIds,
+                     [g IN oldGrounding WHERE NOT g IN ${'$'}grounding] AS keptGrounding,
+                     [sid IN oldSourceIds WHERE NOT sid IN ${'$'}sourceIds] AS keptSourceIds
+                WITH p, touched, doomed, keptGrounding, keptSourceIds,
+                     (size(doomed) > 0
+                        OR size(keptGrounding) < size(oldGrounding)
+                        OR size(keptSourceIds) < size(oldSourceIds)) AS changed
                 FOREACH (rel IN doomed | DELETE rel)
                 FOREACH (orphan IN [src IN touched WHERE NOT (src)--()] | DELETE orphan)
+                SET p.grounding = keptGrounding,
+                    p.sourceIds = keptSourceIds,
+                    p.metadataRevised = CASE WHEN changed THEN ${'$'}now ELSE p.metadataRevised END,
+                    p.lastTouched = CASE WHEN changed THEN ${'$'}now ELSE p.lastTouched END
                 """.trimIndent()
             ).bind(
                 mapOf(
                     "propositionId" to propositionId,
                     "encodedRefs" to encodedRefs,
                     "legacyKeys" to legacyKeys,
+                    "grounding" to grounding.toList(),
+                    "sourceIds" to sourceIds.toList(),
+                    "now" to Instant.now(),
                 ),
             ),
         )
