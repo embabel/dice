@@ -1814,20 +1814,23 @@ and the consumer PRs that deliver it).
   metadata never changes product behaviour: a run now adds a lineage write and nothing else, and a
   test runs the same extraction with and without one and compares everything except that write.
   Hosts that never passed a run get corrected edges under dedup without changing a line. Lineage is
-  written **last, after structural wiring, projection and grounding have all completed**, so that a
-  failure it raises leaves a complete extraction behind: claims persisted, structural edges wired,
-  projection run, grounding run, and no `PRODUCED_BY_RUN` edge. That is the end state a `STRICT`
-  failure reports, and `LENIENT` reaches the same one and reports success. The split of
-  `persistReturningCanonical` into `persistCanonicalPropositions` and `wireStructuralRelationships`
-  stays — both published, the original preserved as their composition — because the canonical
-  propositions a save returns are what every later pass wires against.
-  An earlier cut wrote lineage directly behind the save, ahead of the three wiring passes, so a
-  throwing projector could not leave stored claims unattributed. That ordering cannot survive
-  failing loud: raising from behind the save returns through the middle of the pipeline with the
-  claims stored and projection and grounding silently skipped, which is a partial state nothing
-  declared. Attribution is a statement about finished work, so it is made when the work is finished;
-  the accepted trade is that a pass throwing before lineage means no attribution is written, and the
-  honest report of that is a failed extraction with no run edge.
+  now written **right after the save, before structural wiring, projection or grounding run**, so a
+  claim is attributed the moment it exists, not once the rest of the pipeline has also succeeded on
+  it. **Compatibility: behavioral.** A `STRICT` failure now reaches the caller with only the save
+  done: canonical claims persisted, structural edges not wired, projection not run, grounding not
+  run, and no `PRODUCED_BY_RUN` edge. A host that previously saw a `STRICT` failure arrive with a
+  fully wired, projected and grounded extraction behind it now sees the failure sooner and with less
+  work done, because none of that later work runs until attribution has succeeded. `LENIENT` still
+  reaches the old end state and reports success: the link write is skipped and every later pass runs
+  regardless. The split of `persistReturningCanonical` into `persistCanonicalPropositions` and
+  `wireStructuralRelationships` stays, both published, the original preserved as their composition,
+  because the canonical propositions a save returns are what lineage and every later pass wire
+  against. An earlier cut of this slice ran lineage last, on the reasoning that a `STRICT` failure
+  should leave a complete extraction behind with only the audit edge missing; that ordering meant a
+  claim could sit fully wired, projected and grounded with nobody able to say which run produced it,
+  for as long as the pipeline kept running past the save. Attribution is now checked before any of
+  that work happens, so a lineage failure means the later passes never ran, and the honest report of
+  that is a saved, unattributed claim with nothing built around it yet.
   **Attribution fails loud by policy.** A new `LineageFailurePolicy` says what happens when lineage
   cannot be written, and `STRICT` is the default. Under it, two things fail the extraction: an
   analysis carrying a run with no `PropositionRunLinkStore` bound, and a link write that throws. Both

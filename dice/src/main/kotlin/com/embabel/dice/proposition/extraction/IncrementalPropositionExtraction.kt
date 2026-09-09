@@ -573,14 +573,12 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * recording lineage is a question about the audit trail and has no business changing what gets
      * stored. A run now adds one thing: the lineage write below. It subtracts and alters nothing.
      *
-     * **Lineage is written last, after projection and grounding have both completed.** It is the
-     * final step because it is the only one whose failure is allowed to be loud: under
-     * [LineageFailurePolicy.STRICT] a lineage failure fails the whole operation, and putting it
-     * anywhere earlier would mean raising out of the middle of the pipeline with the claims saved
-     * and the graph half-written. Running it last means the state a STRICT failure leaves behind is
-     * a complete one — claims persisted, structural edges wired, projection and grounding done, and
-     * no `PRODUCED_BY_RUN` edge — so the only thing missing is the audit record the caller is being
-     * told about. See [recordRunLineage] for exactly what that end state is.
+     * **Lineage is written right after the claims are saved, before anything else runs on them.** A
+     * stored claim is attributed the moment it exists, not only once every later pass has also
+     * succeeded. Under [LineageFailurePolicy.STRICT] a lineage failure fails the whole operation,
+     * and the state that leaves behind is just the save: the claims are there, attributed or not,
+     * and structural wiring, projection and grounding never ran. See [recordRunLineage] for exactly
+     * what that state is.
      *
      * How durable any of it is depends on the caller: with no ambient transaction each write has
      * committed as it was made, and with one they are all still the caller's to commit or roll back.
@@ -605,10 +603,19 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         }
 
         val currentRun = context.currentRun
-        // Saving only; the structural edges follow immediately below. The two are separate calls
-        // because the canonical propositions the save returns are what everything after it wires
-        // against.
+        // Saving only; lineage and the structural edges both follow. The save is its own call
+        // because the canonical propositions it returns are what everything after it, lineage
+        // included, wires against.
         val persisted = result.persistCanonicalPropositions(propositionRepository, entityRepository)
+
+        // Lineage is attributed the moment the claims exist, before anything fallible runs on them.
+        // Under STRICT this call can fail the whole operation, and when it does the state it leaves
+        // behind is just the save: the claims are stored, and the passes below never ran. See
+        // recordRunLineage.
+        if (currentRun != null) {
+            recordRunLineage(context, currentRun, persisted)
+        }
+
         // The distinct view, not the positional one. Inputs that deduplicated together are one
         // stored proposition, and projecting or grounding it once per input inflates the records
         // written about that work even though the edges themselves are idempotent.
@@ -639,13 +646,6 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         // ids resolve to stored entities. No-op when no wiring service
         // was supplied (default for backward compatibility).
         groundingWiringService?.wire(toWire)
-
-        // Lineage goes last, once the claims are stored and the whole graph around them is written.
-        // Under STRICT this call can fail the operation, and the state it leaves behind when it does
-        // is a complete extraction that simply has no audit edge. See recordRunLineage.
-        if (currentRun != null) {
-            recordRunLineage(context, currentRun, persisted)
-        }
     }
 
     /**
@@ -662,29 +662,31 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * refusing writes — both reported success. See [LineageFailurePolicy] for why that is the wrong
      * default for an audit surface.
      *
-     * **The end state a STRICT failure leaves behind, exactly.** This runs last, after structural
-     * wiring, projection and grounding have all completed. So when it raises, the extraction itself
-     * is finished and consistent: the canonical claims are persisted, their structural edges are
-     * wired, the projection has run and grounding has run. The single thing missing is the
-     * `PRODUCED_BY_RUN` edge. The operation is reported as failed, and what failed is the
-     * attribution, with everything it was going to attribute already in place.
+     * **The end state a STRICT failure leaves behind, exactly.** This runs right after the claims
+     * are saved, before structural wiring, projection or grounding have had a chance to run. So
+     * when it raises, the claims are persisted and nothing past that point has happened: no
+     * structural edges, no projection, no grounding. The operation is reported as failed, and what
+     * failed is the attribution, before anything downstream of the save was attempted.
      *
-     * That ordering is the point. Recording lineage earlier — behind the save, ahead of the fallible
-     * passes — would attribute claims sooner, but a STRICT failure would then raise out of the
-     * middle of the pipeline and leave the claims saved with projection and grounding silently
-     * skipped: a partial state nobody declared. Attribution is a statement about work that is
-     * finished, so it is made when the work is finished.
+     * That ordering is the point. A claim that exists and cannot be attributed should say so before
+     * the pipeline does anything else with it, not after the graph around it is already built.
+     * Recording lineage last would let a STRICT failure surface only once structural wiring,
+     * projection and grounding had all quietly happened to a claim nobody can trace to a run, which
+     * is a worse thing for an audit failure to hide behind than simply stopping early. Attribution
+     * is checked the moment there is something to attribute, and the rest of the pipeline only runs
+     * once that check has passed.
      *
-     * [LineageFailurePolicy.LENIENT] reaches the same end state and reports success, with the
-     * failure in the log.
+     * [LineageFailurePolicy.LENIENT] logs the failure and lets the rest of the pipeline run anyway,
+     * reaching the older end state and reporting success.
      *
      * **What a raised failure costs depends on who owns the transaction.** With no ambient
-     * transaction — the shape every entry point takes unless a host wraps it — everything above
-     * committed as it was written, so the caller learns that a complete extraction is unattributed.
-     * Inside a host's `@Transactional`, all of it shares that transaction's fate and the failure
-     * rolls the whole extraction back, which is what strict attribution asks for. A lineage failure
-     * raised by the database itself, below the store's own checks, has already terminated that
-     * transaction either way, and no policy here can undo that.
+     * transaction, the shape every entry point takes unless a host wraps it, the save above has
+     * already committed, so the caller learns that a stored claim is unattributed and structural
+     * wiring, projection and grounding never ran on it. Inside a host's `@Transactional`, the save
+     * and the lineage write share that transaction's fate and the failure rolls both back, which is
+     * what strict attribution asks for. A lineage failure raised by the database itself, below the
+     * store's own checks, has already terminated that transaction either way, and no policy here can
+     * undo that.
      *
      * An analysis that saved nothing records nothing and is not a failure under either policy: there
      * is no claim for the audit to be missing.

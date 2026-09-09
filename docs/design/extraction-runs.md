@@ -1151,17 +1151,13 @@ unaffected, because each save has already committed. It closes when the run coor
 claims before recording lineage (slice 10), which makes lineage a write that does not share a
 caller's fate.
 
-Lineage is written **last, after structural wiring, projection and grounding have all
-completed**. That needed
-`persistReturningCanonical` split in two: `persistCanonicalPropositions` writes the claims and
-`wireStructuralRelationships` writes the chunk/entity edges, so lineage can run between them.
-Structural wiring is the *first* fallible pass, and while it sat inside the same call as the save
-there was no point at which a caller could act on saved claims. The claims are written at that
-point — committed with the caller's transaction where one wraps the call, immediately otherwise —
-and attribution is a statement about them, not a reward for the rest of the pipeline succeeding. Running
-it last meant a failing projector left stored claims with no record of the run that produced them,
-which is the one outcome the relation exists to prevent and arrives exactly when the audit is worth
-most.
+Lineage is written **right after the save, before structural wiring, projection or grounding have
+run**. `persistReturningCanonical` is split in two for this: `persistCanonicalPropositions` writes
+the claims and `wireStructuralRelationships` writes the chunk/entity edges, and lineage runs between
+them. A stored claim is attributed the moment it exists, not once the rest of the pipeline has also
+succeeded on it. The claims are written at that point, committed with the caller's transaction where
+one wraps the call, immediately otherwise, and attribution is a statement about a claim that exists,
+checked before anything else is asked to run on it.
 
 ### Attribution fails loud
 
@@ -1183,39 +1179,38 @@ against their attribution and chosen the claims. It is chosen once, in configura
 
 #### The end state a lineage failure leaves behind
 
-This is the reason lineage is the last step of `persistAndProject`.
+This is the reason lineage sits right behind the save now, not at the end of `persistAndProject`.
 
-When a `STRICT` lineage failure raises, the extraction it was attributing is **complete and
-consistent**:
+When a `STRICT` lineage failure raises, the claims it was attributing are saved and nothing past
+that point has run:
 
 | | state after a STRICT lineage failure |
 |---|---|
 | canonical claims | persisted |
-| structural edges | wired |
-| graph projection | run |
-| grounding | run |
+| structural edges | **not wired** |
+| graph projection | **not run** |
+| grounding | **not run** |
 | `PRODUCED_BY_RUN` edge | **absent** |
 | operation | **reported as failed** |
 
-So the only thing missing is the audit edge, which is exactly what the raised
-`LineageNotRecordedException` is about. A caller that catches it knows precisely what it has: a
-finished extraction that nothing attributes to a run.
+The claims exist and the audit says so honestly: they are not attributed, and the rest of the
+pipeline never touched them either. A caller that catches the exception knows precisely what it
+has: claims saved with nothing built around them yet.
 
-`LENIENT` reaches that same end state and reports success, with the failure in the log.
+`LENIENT` reaches a different end state and reports success: the link write is skipped and every
+later pass still runs, because logging the gap and carrying on is what that policy is for.
 
-An earlier cut of this slice recorded lineage directly behind the save, ahead of the three wiring
-passes, so that a throwing projector could not leave stored claims unattributed. That ordering is
-incompatible with failing loud. Once a lineage failure can raise, raising it from behind the save
-means returning through the middle of the pipeline with the claims stored and structural wiring,
-projection and grounding all silently skipped — a partial state no caller was told about and no
-test described. Attribution is a statement about work that is finished, so it is made once the work
-is finished. The trade is accepted deliberately: a pass that throws before lineage now means no
-attribution is written, and the honest report of that is a failed extraction with no run edge.
+An earlier cut of this slice ran lineage last, after all three wiring passes, on the reasoning that
+a `STRICT` failure should leave a complete extraction behind with only the audit edge missing. That
+ordering meant a claim could sit fully wired, projected and grounded with nobody able to say which
+run produced it, for as long as the pipeline kept running past the save. Attribution is checked
+before any of that work happens now, so a lineage failure means the later passes never run, and the
+honest report of that is a saved, unattributed claim, not a finished one with a gap.
 
-Under a host's ambient transaction the whole extraction and its lineage share one fate, so a STRICT
-failure rolls all of it back, which is what a host running strict attribution is asking for.
+Under a host's ambient transaction the save and the lineage write share one fate, so a STRICT
+failure rolls both back, which is what a host running strict attribution is asking for.
 
-The policy binds with the store — `withRunLineage(store, policy)` — and failures raise
+The policy binds with the store, `withRunLineage(store, policy)`, and failures raise
 `LineageNotRecordedException` carrying the store's own exception as its cause, so a scope rejection
 and a database outage stay distinguishable. An analysis that saved nothing records nothing and fails
 under neither policy: there is no claim for the audit to be missing.

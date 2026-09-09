@@ -454,10 +454,10 @@ class RunLineageWiringTest {
     }
 
     @Test
-    fun `a structural wiring throw means lineage is never attempted`() {
-        // Lineage runs last, so a pass that throws before it means attribution is never attempted.
-        // The claims are durable and the graph around them is incomplete, which is the honest report
-        // of what happened: the extraction failed partway, and nothing claims a run produced it.
+    fun `a structural wiring throw leaves the saved claims attributed`() {
+        // Lineage now runs right behind the save, ahead of every fallible wiring pass, so a
+        // structural wiring throw happens after attribution has already succeeded. The claim is
+        // durable and linked to the run even though the graph around it is incomplete.
         val links = RecordingLinkStore(runsPresent = setOf(ExtractionRunKey(tenant, runRef)))
         val harness = harness(
             stored = null,
@@ -471,16 +471,19 @@ class RunLineageWiringTest {
             .hasMessage("structural wiring is down")
 
         assertThat(harness.repository.findById("minted")).isNotNull()
-        assertThat(links.linked)
-            .describedAs("the pipeline failed before attribution, so no run claims this work")
-            .isEmpty()
+        assertThat(links.linked.single().second)
+            .describedAs("the claim was attributed before the failing pass ran")
+            .containsExactly("minted")
         assertThat(harness.projected)
-            .describedAs("projection never ran either")
+            .describedAs("projection never ran, since structural wiring failed ahead of it")
             .isEmpty()
     }
 
     @Test
-    fun `a throwing projector stops the extraction before lineage`() {
+    fun `a projector that throws leaves the saved claims attributed`() {
+        // Projection is the first fallible pass behind structural wiring, and lineage now sits
+        // ahead of both. A throwing projector reaches the caller with the claim already linked to
+        // its run.
         val links = RecordingLinkStore(runsPresent = setOf(ExtractionRunKey(tenant, runRef)))
         val harness = harness(
             stored = null,
@@ -494,19 +497,19 @@ class RunLineageWiringTest {
             .hasMessage("projector is down")
 
         assertThat(harness.repository.findById("minted")).isNotNull()
+        assertThat(links.linked.single().second)
+            .describedAs("the link store recorded the canonical ids before the projector ran")
+            .containsExactly("minted")
         assertThat(harness.grounded)
             .describedAs("grounding never ran")
-            .isEmpty()
-        assertThat(links.linked)
-            .describedAs("and lineage, which comes after grounding, was never reached")
             .isEmpty()
     }
 
     @Test
-    fun `a grounding failure stops the extraction before lineage`() {
-        // Grounding is the last of the three wiring passes, and lineage sits behind it. A grounding
-        // failure therefore reaches the caller with the claims stored, the structural edges written
-        // and the projection done, and no attribution.
+    fun `a grounding failure leaves the saved claims attributed`() {
+        // Grounding is the last of the three wiring passes, and lineage now sits ahead of all of
+        // them. A grounding failure reaches the caller with the claim stored, attributed, structurally
+        // wired and projected, and no grounding edges.
         val links = RecordingLinkStore(runsPresent = setOf(ExtractionRunKey(tenant, runRef)))
         val harness = harness(
             stored = null,
@@ -520,25 +523,22 @@ class RunLineageWiringTest {
             .hasMessage("grounding is down")
 
         assertThat(harness.repository.findById("minted")).isNotNull()
+        assertThat(links.linked.single().second).containsExactly("minted")
         assertThat(harness.projected.single().map { it.id }).containsExactly("minted")
         assertThat(harness.grounded.single().map { it.id })
             .describedAs("grounding ran and threw, so it was reached")
             .containsExactly("minted")
-        assertThat(links.linked).isEmpty()
     }
 
     // ---- the end state a lineage failure leaves behind ----
 
     @Test
-    fun `a STRICT lineage failure leaves a complete extraction with no run edge`() {
-        // The discriminating test for where lineage sits. Every pass succeeds; only the link write
-        // fails. Because lineage is last, the state the caller is left with is a whole extraction —
-        // claims saved, structural edges wired, projection done, grounding done — missing exactly
-        // one thing, the PRODUCED_BY_RUN edge, which is what the raised failure is about.
-        //
-        // Ordering lineage earlier would make this a partial state instead: the claims would be
-        // saved and projection and grounding would be skipped by the raise, with nothing declaring
-        // that.
+    fun `a STRICT lineage failure leaves the claims saved with nothing built around them yet`() {
+        // The discriminating test for where lineage sits. Lineage runs first now, right behind the
+        // save, so when its own write is the thing that fails, none of structural wiring,
+        // projection or grounding has run at all. The state the caller is left with is the save and
+        // nothing past it, which is the honest report of "attribution failed before anything else
+        // was asked to run on this claim".
         val links = RecordingLinkStore(
             runsPresent = emptySet(),
             failWith = IllegalStateException("link store is down"),
@@ -555,26 +555,26 @@ class RunLineageWiringTest {
             .isInstanceOf(LineageNotRecordedException::class.java)
             .hasRootCauseMessage("link store is down")
 
-        // ...and everything the extraction was going to do is done.
+        // ...and nothing after the save ran.
         assertThat(harness.repository.findById("minted"))
             .describedAs("claims persisted")
             .isNotNull()
         assertThat(harness.structurallyWired)
-            .describedAs("structural edges wired")
-            .isTrue()
-        assertThat(harness.projected.single().map { it.id })
-            .describedAs("projection ran over the canonical ids")
-            .containsExactly("minted")
-        assertThat(harness.grounded.single().map { it.id })
-            .describedAs("grounding ran over the canonical ids")
-            .containsExactly("minted")
+            .describedAs("structural edges were never wired")
+            .isFalse()
+        assertThat(harness.projected)
+            .describedAs("projection never ran")
+            .isEmpty()
+        assertThat(harness.grounded)
+            .describedAs("grounding never ran")
+            .isEmpty()
         assertThat(links.linked)
-            .describedAs("and the one missing thing is the PRODUCED_BY_RUN edge")
+            .describedAs("and the link write is the one that failed")
             .isEmpty()
     }
 
     @Test
-    fun `a LENIENT lineage failure reaches the same end state and reports success`() {
+    fun `a LENIENT lineage failure logs the gap and runs every later pass anyway`() {
         val links = RecordingLinkStore(
             runsPresent = emptySet(),
             failWith = IllegalStateException("link store is down"),
@@ -586,10 +586,10 @@ class RunLineageWiringTest {
             policy = LineageFailurePolicy.LENIENT,
         )
 
-        // Reported as success.
+        // Reported as success, and unlike the STRICT case, every later pass still runs: LENIENT
+        // logs the gap and carries on, without stopping the pipeline where lineage failed.
         harness.extraction.remember(currentRun = runRef)
 
-        // Same end state as the STRICT case above, asserted the same way so the two are comparable.
         assertThat(harness.repository.findById("minted")).isNotNull()
         assertThat(harness.structurallyWired).isTrue()
         assertThat(harness.projected.single().map { it.id }).containsExactly("minted")
