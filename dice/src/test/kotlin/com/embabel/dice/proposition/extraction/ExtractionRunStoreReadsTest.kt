@@ -16,6 +16,7 @@
 package com.embabel.dice.proposition.extraction
 
 import com.embabel.dice.proposition.extraction.ExtractionRunFixtures.CONTEXT
+import com.embabel.dice.proposition.extraction.ExtractionRunFixtures.FINISHED_AT
 import com.embabel.dice.proposition.extraction.ExtractionRunFixtures.OTHER_CONTEXT
 import com.embabel.dice.proposition.extraction.ExtractionRunFixtures.STARTED_AT
 import org.assertj.core.api.Assertions.assertThat
@@ -53,6 +54,18 @@ class ExtractionRunStoreReadsTest {
         assertThat(page).hasSize(3)
         assertThat(page.map { it.ref.runId }).containsExactly("mine-4", "mine-3", "mine-2")
         assertThat(page).allSatisfy { assertThat(it.contextId).isEqualTo(CONTEXT) }
+    }
+
+    @Test
+    fun `a busy neighbour tenant does not change what a page returns`() {
+        (1..20).forEach { store.save(run("neighbour-$it", OTHER_CONTEXT, it.toLong())) }
+        (1..3).forEach { store.save(run("mine-$it", CONTEXT, it.toLong())) }
+
+        // The limit is well above this tenant's own count, so nothing here turns on the limit
+        // cutting the neighbour's runs off first: only the candidate set a page reads from.
+        val page = store.runsInContext(CONTEXT, limit = 10, since = null)
+
+        assertThat(page.map { it.ref.runId }).containsExactly("mine-3", "mine-2", "mine-1")
     }
 
     @Test
@@ -270,6 +283,27 @@ class ExtractionRunStoreReadsTest {
         assertThat(store.findRun(theirs.key())?.startedAt).isEqualTo(STARTED_AT.plusSeconds(60))
         assertThat(store.runsInContext(CONTEXT, 10, null)).containsExactly(mine)
         assertThat(store.runsInContext(OTHER_CONTEXT, 10, null)).containsExactly(theirs)
+    }
+
+    // ---- retention cap ----
+
+    @Test
+    fun `eviction removes a run from its tenant's reads`() {
+        val capped = InMemoryExtractionRunStore(maxRuns = 2)
+        val first = ExtractionRunFixtures.runningRun("run-evict-1", CONTEXT, STARTED_AT)
+        capped.save(first)
+        capped.transition(first.key(), ExtractionRunTransition.completed(FINISHED_AT))
+        val second = ExtractionRunFixtures.runningRun("run-evict-2", CONTEXT, STARTED_AT.plusSeconds(1))
+        capped.save(second)
+        capped.transition(second.key(), ExtractionRunTransition.completed(FINISHED_AT))
+
+        // A third insert pushes the store past its cap of two, evicting run-evict-1, the oldest
+        // ended run, from the tenant index along with the run itself.
+        val third = ExtractionRunFixtures.runningRun("run-evict-3", CONTEXT, STARTED_AT.plusSeconds(2))
+        capped.save(third)
+
+        assertThat(capped.runsInContext(CONTEXT, limit = 10, since = null).map { it.ref.runId })
+            .containsExactly("run-evict-3", "run-evict-2")
     }
 
     // ---- invocation records ----

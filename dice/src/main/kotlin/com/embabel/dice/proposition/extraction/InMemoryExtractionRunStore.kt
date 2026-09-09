@@ -103,6 +103,14 @@ class InMemoryExtractionRunStore @JvmOverloads constructor(
     /** The fingerprint of the terminal write that ended each run, for comparing a retry against. */
     private val terminalWrites = HashMap<ExtractionRunKey, String>()
 
+    /**
+     * Every tenant's own keys, in insertion order, so a scoped read never has to walk another
+     * tenant's runs to find its own. Maintained in exactly two places: an insert adds a key here,
+     * and eviction removes one. A key's value is always looked up fresh in [runs], so nothing here
+     * needs to change when a run already stored is updated, transitioned or recorded against.
+     */
+    private val runsByContext = HashMap<String, LinkedHashSet<ExtractionRunKey>>()
+
     /** Set once the store has grown past [maxRuns] with nothing left to evict, so the breach logs
      *  once, not on every insert while it lasts. Cleared once the store fits again. */
     private var overCapacityWarned = false
@@ -131,6 +139,7 @@ class InMemoryExtractionRunStore @JvmOverloads constructor(
                 // door never originates a row.
                 val inserted = rebuild(run, invocations = emptyList(), version = 0L)
                 runs[key] = inserted
+                runsByContext.getOrPut(key.contextId.value) { LinkedHashSet() }.add(key)
                 evictOverflow()
                 return inserted
             }
@@ -239,7 +248,7 @@ class InMemoryExtractionRunStore @JvmOverloads constructor(
         contextIdValue: String,
         limit: Int,
         since: Instant?,
-    ): List<ExtractionRun> = page(limit) { run ->
+    ): List<ExtractionRun> = page(contextIdValue, limit) { run ->
         run.contextId.value == contextIdValue && startedAtOrAfter(run, since)
     }
 
@@ -247,7 +256,7 @@ class InMemoryExtractionRunStore @JvmOverloads constructor(
         contextIdValue: String,
         parentRunId: String,
         limit: Int,
-    ): List<ExtractionRun> = page(limit) { run ->
+    ): List<ExtractionRun> = page(contextIdValue, limit) { run ->
         run.contextId.value == contextIdValue && run.parentRef?.runId == parentRunId
     }
 
@@ -256,7 +265,7 @@ class InMemoryExtractionRunStore @JvmOverloads constructor(
         rootRunId: String,
         limit: Int,
         since: Instant?,
-    ): List<ExtractionRun> = page(limit) { run ->
+    ): List<ExtractionRun> = page(contextIdValue, limit) { run ->
         run.contextId.value == contextIdValue &&
             run.rootRef.runId == rootRunId &&
             startedAtOrAfter(run, since)
@@ -282,17 +291,28 @@ class InMemoryExtractionRunStore @JvmOverloads constructor(
 
     /**
      * Filter, then order, then limit — in that order, because a page that limited first would drop
-     * a tenant's runs behind a busier neighbour's and report the shortfall as an empty tenant.
+     * a tenant's runs behind a busier neighbour's and report the shortfall as an empty tenant. The
+     * candidates themselves come only from [contextIdValue]'s own index, so a busy neighbouring
+     * tenant is never even looked at, let alone scanned.
      */
-    private fun page(limit: Int, matches: (ExtractionRun) -> Boolean): List<ExtractionRun> {
+    private fun page(
+        contextIdValue: String,
+        limit: Int,
+        matches: (ExtractionRun) -> Boolean,
+    ): List<ExtractionRun> {
         requirePositiveLimit(limit)
         return synchronized(lock) {
-            runs.values
+            candidatesInContext(contextIdValue)
                 .filter(matches)
                 .sortedWith(NEWEST_FIRST)
                 .take(limit)
         }
     }
+
+    /** The runs stored under [contextIdValue], read fresh from [runs] so a value updated since
+     *  insert (a header save, a transition, a recorded invocation) is never stale here. */
+    private fun candidatesInContext(contextIdValue: String): List<ExtractionRun> =
+        runsByContext[contextIdValue]?.mapNotNull { runs[it] }.orEmpty()
 
     private fun startedAtOrAfter(run: ExtractionRun, since: Instant?): Boolean =
         since == null || !run.startedAt.isBefore(since)
@@ -325,6 +345,11 @@ class InMemoryExtractionRunStore @JvmOverloads constructor(
             val evictedKey = oldest.key()
             runs.remove(evictedKey)
             terminalWrites.remove(evictedKey)
+            val tenantIndex = runsByContext[evictedKey.contextId.value]
+            tenantIndex?.remove(evictedKey)
+            if (tenantIndex?.isEmpty() == true) {
+                runsByContext.remove(evictedKey.contextId.value)
+            }
         }
         overCapacityWarned = false
     }
