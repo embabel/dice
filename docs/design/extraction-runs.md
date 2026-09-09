@@ -596,9 +596,12 @@ every downstream consumer a second time for a run that ended once — which is t
 The listener arrives the way every other DICE listener does: a constructor collaborator defaulting
 to `DiceEventListener.DEV_NULL`, the same shape `EventEmittingPropositionRepository` uses. Nothing
 is wired automatically. A host that has nothing listening builds the store exactly as it did before,
-and a host that wants the signal passes a listener in. Handlers run inline on the calling thread and
-throw isolation belongs to the listener, so a host that needs graceful degradation wraps its
-listener in `SafeDiceEventListener`.
+and a host that wants the signal passes a listener in. Handlers run inline on the calling thread,
+and a listener that throws no longer reaches the caller: the store catches it, logs it at `error`
+with the run's key, and still reports the transition as committed. The write already landed before
+the announcement ran, so a caller told the listener failed would only retry a write already made
+and get `REPLAYED` back, with no event to show for either attempt. `SafeDiceEventListener` is still there for a caller who wants a listener that never throws in the
+first place; the store no longer depends on that, and backs it up on its own.
 
 The announcement happens after the write has landed and outside the store's own lock, so a listener
 that blocks, or that reads the run back, holds up no other writer and sees the terminal run already
@@ -689,7 +692,10 @@ the query and then limits. Fetching `limit` rows and filtering by tenant afterwa
 rows than asked for — or none — whenever a busy neighbouring tenant occupies the head of the index,
 and the caller cannot tell that from a tenant with no runs. This is the drift-report store's rule
 carried over, and it is why none of the scoped reads has a default body: a default that filtered in
-memory would be inherited silently by every backend that forgot to override it.
+memory would be inherited silently by every backend that forgot to override it. The in-memory
+reference store keeps this cheap for itself too: a per-tenant index of that tenant's own run keys,
+maintained on insert and eviction, so a scoped read never has to look at another tenant's runs at
+all, let alone filter them out one by one.
 
 The `ContextId`-typed overloads do have default bodies and are a different thing — they forward to
 the `String`-typed method that is the override point, and cannot return the wrong rows because they
@@ -721,6 +727,14 @@ before it has a database. It therefore has no unscoped read at all, not even a t
 instance holds every tenant's runs, so an "everything in the store" method would hand a host running
 the shipped backend a cross-tenant unbounded read on a contract that is neither. The tests read
 through the contract like any other caller.
+
+It also caps how many runs it keeps: a constructor parameter, `maxRuns`, defaulting to 10,000.
+Past that cap, an insert evicts the oldest runs that have already ended, by `startedAt`, until the
+store fits again; a run still `RUNNING` is never evicted, so a store where every run happens to be
+running can grow past the cap, and it logs that once, not on every insert. Retention past
+that point is a durable store's own policy, kept for as long as an operator decides; the reference
+store caps because holding every run ever seen in one JVM's memory forever is not something a host
+running it in production should be signing up for by default.
 
 Compare-and-set is real there, not simulated — every write and read runs inside one monitor, so the
 read of a run's status and the write that changes it cannot interleave. A durable store gets the

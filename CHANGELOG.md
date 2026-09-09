@@ -1602,3 +1602,25 @@ and the consumer PRs that deliver it).
   `ExtractionRunTransitioned` is new and carries `@ApiStatus.Experimental` like every other type in
   this train, added to the same class-file assertion. Design note:
   [docs/design/extraction-runs.md](docs/design/extraction-runs.md).
+
+- **PR #98 review round 2: the reference store now bounds itself.** Three findings from that
+  review, closed in `InMemoryExtractionRunStore`. A host running the reference store in production
+  is accepting all three: the store now forgets old runs, a busy tenant no longer changes how fast
+  another tenant's page comes back, and a failing listener no longer looks like a failed transition.
+  **The cap.** `InMemoryExtractionRunStore` kept every run and every terminal fingerprint forever.
+  A new `maxRuns` constructor parameter, defaulting to 10,000 and added last so `@JvmOverloads`
+  keeps the existing Java descriptors, evicts the oldest ended runs by `startedAt` once an insert
+  would push the store over it. A run still `RUNNING` is never evicted; a store where every run
+  happens to be running can grow past the cap, and that logs once at `warn`, not on every insert.
+  **The tenant index.** `page()` filtered and sorted every tenant's runs while holding the monitor,
+  so a scoped read cost was proportional to the whole store, not to the tenant asking. A per-tenant
+  index of run keys, maintained on insert and eviction, means `runsInContext`, `childrenOf` and
+  `runsOfRoot` now only ever look at their own tenant's runs; the rule that scope is applied before
+  the limit is unchanged. **The listener.** `transition` let a throwing listener's exception reach
+  the caller after the terminal write had already landed, so a caller retrying on that exception saw
+  `REPLAYED` and no event for either attempt. The announcement is now wrapped in a catch that logs
+  the failure at `error` with the run's key and still returns the result as applied.
+  **Compatibility: additive.** All three land through a single new constructor parameter with a
+  default; every existing call site, Kotlin or Java, keeps compiling and keeps its prior behavior
+  short of the fixes themselves. Design note:
+  [docs/design/extraction-runs.md](docs/design/extraction-runs.md).

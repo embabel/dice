@@ -266,6 +266,23 @@ class ExtractionRunLifecycleTest {
             .isEqualTo(ExtractionRunTransitionOutcome.APPLIED)
     }
 
+    @Test
+    fun `a listener that throws does not un-commit the transition`() {
+        val throwing = InMemoryExtractionRunStore(listener = { throw IllegalStateException("listener boom") })
+        val run = started("run-throwing-listener")
+        throwing.save(run)
+        val transition = ExtractionRunTransition.completed(FINISHED_AT)
+
+        val result = throwing.transition(run.key(), transition)
+
+        assertThat(result.outcome).isEqualTo(ExtractionRunTransitionOutcome.APPLIED)
+        assertThat(throwing.findRun(run.key())?.status).isEqualTo(ExtractionRunStatus.COMPLETED)
+        // A retry sees the write already landed and replays, exactly as it would have if the
+        // listener had never thrown at all.
+        assertThat(throwing.transition(run.key(), transition).outcome)
+            .isEqualTo(ExtractionRunTransitionOutcome.REPLAYED)
+    }
+
     // ---- nothing reaches COMPLETED except through the transition ----
 
     @Test

@@ -234,7 +234,15 @@ class InMemoryExtractionRunStore @JvmOverloads constructor(
         // no other writer and sees the terminal run already committed. Exactly one call per run
         // reaches the applied branch above; a replay reports the run and stays silent.
         if (result.isApplied) {
-            listener.onEvent(ExtractionRunTransitioned(result.run))
+            try {
+                listener.onEvent(ExtractionRunTransitioned(result.run))
+            } catch (t: Throwable) {
+                // The write already landed above; a listener throwing here is the listener's own
+                // problem, not a reason to tell the caller the transition failed. A caller that saw
+                // that would retry a write already committed and get REPLAYED back, with no event
+                // for it to have ever acted on either time.
+                logger.error("DiceEventListener threw announcing the transition for run {}", key, t)
+            }
         }
         return result
     }
