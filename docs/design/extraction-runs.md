@@ -6,6 +6,12 @@ model for, what the provider actually reported back, how far it got, and what we
 holds none of the material. No prompts, no source text, no responses, no user or session
 objects, no provider SDK payloads, no extension maps.
 
+A run is the producer-side record of an extraction. A host that keeps its own audit of what
+happened in a session, an episode audit say, is looking at the same event from the consumer side:
+what ran, with what, and what came out. DICE does not model the host's episode; it writes the run
+it can know about and leaves `profile` and the run lineage as the join points a host uses to fold
+runs into its own audit.
+
 This note covers DICE #67's value model — the types in `com.embabel.dice.proposition.extraction`
 that later slices store, key, and expose. The lifecycle state machine, the store contract, the
 Drivine implementation, the proposition-to-run relation and the wiring are separate slices; where
