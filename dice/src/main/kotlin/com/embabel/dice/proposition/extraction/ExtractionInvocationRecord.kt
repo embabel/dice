@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.proposition.extraction
 
+import com.embabel.agent.core.Usage
 import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
 
@@ -95,6 +96,11 @@ enum class ExtractionInvocationOutcome {
  * Native usage objects are not stored. These are the portable counts, pulled out of whatever
  * shape the SDK returned.
  *
+ * This is not the framework's own [Usage], on purpose: [Usage] is a final class that cannot be
+ * extended, it carries a native SDK usage object this record never stores, and it has no field for
+ * cached or reasoning tokens. [from] converts the three counts [Usage] does carry and leaves the
+ * other two null.
+ *
  * EXPERIMENTAL. The shape may still change while extraction runs (DICE #67) land.
  *
  * @property inputTokens Tokens the provider counted on the way in
@@ -137,6 +143,20 @@ data class ExtractionModelUsage @JvmOverloads constructor(
             totalTokens = totalTokens,
             cachedInputTokens = cachedInputTokens,
             reasoningTokens = reasoningTokens,
+        )
+
+        /**
+         * The counts a call actually consumed, read off the framework's own [Usage].
+         *
+         * [Usage.promptTokens] becomes [inputTokens], [Usage.completionTokens] becomes
+         * [outputTokens], and [Usage.totalTokens] carries straight across. [cachedInputTokens] and
+         * [reasoningTokens] stay null, because core [Usage] does not report either one.
+         */
+        @JvmStatic
+        fun from(usage: Usage): ExtractionModelUsage = ExtractionModelUsage(
+            inputTokens = usage.promptTokens,
+            outputTokens = usage.completionTokens,
+            totalTokens = usage.totalTokens,
         )
     }
 }

@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.proposition.extraction
 
+import com.embabel.agent.core.Usage
 import com.embabel.common.ai.model.LlmHyperparameters
 import com.embabel.common.ai.model.LlmOptions
 import org.assertj.core.api.Assertions.assertThat
@@ -131,6 +132,27 @@ class ExtractionRunValueTypesTest {
             { ExtractionModelUsage(cachedInputTokens = -1) },
             { ExtractionModelUsage(reasoningTokens = -1) },
         ).forEach { construct -> assertThatIllegalArgumentException().isThrownBy { construct() } }
+    }
+
+    @Test
+    fun `a usage record is built from the framework's Usage`() {
+        val set = Usage(promptTokens = 100, completionTokens = 20, nativeUsage = null)
+        val usage = ExtractionModelUsage.from(set)
+
+        assertThat(usage.inputTokens).isEqualTo(100)
+        assertThat(usage.outputTokens).isEqualTo(20)
+        assertThat(usage.totalTokens).isEqualTo(120)
+        assertThat(usage.cachedInputTokens).isNull()
+        assertThat(usage.reasoningTokens).isNull()
+
+        val nullCounts = Usage(promptTokens = null, completionTokens = null, nativeUsage = null)
+        val nullUsage = ExtractionModelUsage.from(nullCounts)
+
+        assertThat(nullUsage.inputTokens).isNull()
+        assertThat(nullUsage.outputTokens).isNull()
+        assertThat(nullUsage.totalTokens).isNull()
+        assertThat(nullUsage.cachedInputTokens).isNull()
+        assertThat(nullUsage.reasoningTokens).isNull()
     }
 
     @Test

@@ -1337,3 +1337,10 @@ and the consumer PRs that deliver it).
   `modelRole` from `options.role` by default. **Compatibility: additive.** The data class's
   constructor descriptor is unchanged; the six fields keep their names and types and just gain
   `override`, and the new supertype adds no field.
+
+- `ExtractionModelUsage` gains a companion factory, `from(usage: com.embabel.agent.core.Usage)`
+  (PR #95 review), mapping `promptTokens` to `inputTokens`, `completionTokens` to `outputTokens`
+  and `totalTokens` straight across, and leaving `cachedInputTokens` and `reasoningTokens` null
+  because core `Usage` does not report them. The record stays its own type: `Usage` is final and
+  carries the native SDK object this record deliberately does not store. **Compatibility:
+  additive.** One new factory method, nothing existing changes.

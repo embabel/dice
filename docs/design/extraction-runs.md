@@ -96,6 +96,10 @@ upper bound because services differ on whether it stops at 1 or 2, and the penal
 required to be real numbers for the same reason. Rejecting a legitimate `2.0` would be DICE
 deciding for a provider it never talks to.
 
+`ExtractionModelUsage.from(usage)` converts from the framework's own `Usage`, mapping its three
+counts across and leaving `cachedInputTokens` and `reasoningTokens` null, because `Usage` does not
+carry them and the record stays its own type, not a `Usage` subclass.
+
 ## Invocation identity comes from the plan, never from completion
 
 A run makes zero, one, or many model calls — chunking splits work, retries repeat it. Every
