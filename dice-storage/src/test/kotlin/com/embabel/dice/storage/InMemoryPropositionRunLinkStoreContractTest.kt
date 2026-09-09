@@ -23,6 +23,7 @@ import com.embabel.dice.proposition.extraction.PropositionRunLinkStore
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -52,6 +53,25 @@ class InMemoryPropositionRunLinkStoreContractTest : AbstractPropositionRunLinkSt
 
     override fun deleteProposition(id: String) {
         propositions.delete(id)
+    }
+
+    /**
+     * The reference store prunes a stale link when a read finds it, and the proof is that the id
+     * cannot come back: re-saving a proposition under the same id after the prune does not revive
+     * the link, because the link is gone, not merely hidden.
+     */
+    @Test
+    fun `a link to a deleted proposition is pruned on read and does not revive with the id`() {
+        val store = store()
+        val key = ExtractionRunKey(tenant, ExtractionRunRef(fixtureRunIds.first()))
+        store.link(key, listOf(disposablePropositionId, fixturePropositionIds.first()))
+
+        deleteProposition(disposablePropositionId)
+        assertThat(store.propositionsOf(key, 10)).containsExactly(fixturePropositionIds.first())
+
+        propositions.save(proposition(disposablePropositionId, tenant))
+        assertThat(store.propositionsOf(key, 10)).containsExactly(fixturePropositionIds.first())
+        assertThat(store.runsOf(tenant.value, disposablePropositionId, 10)).isEmpty()
     }
 
     /**

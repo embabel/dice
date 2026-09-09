@@ -1087,6 +1087,11 @@ the node, and in the reference implementation because the reads filter through t
 rather than answering from their own map. Without that the in-memory backend would keep reporting
 lineage for claims the store no longer holds, and the two backends would disagree.
 
+The reference implementation also prunes as it reads: a link whose proposition the store no longer
+holds at all is dropped when a read resolves it, and a run with no links left goes with it,
+so the map does not keep growing with claims that no longer exist. Nothing sweeps a run nobody
+reads again; a host wanting real retention uses the durable store.
+
 Both reads are bounded by a positive limit and ordered by id ascending. Ordering runs newest-first
 would mean reading each run's header for its start time; a caller who wants that has
 `ExtractionRunStore` and the refs these reads return.

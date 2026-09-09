@@ -39,6 +39,10 @@ import org.jetbrains.annotations.ApiStatus
  * There is no unscoped read here, for the same reason [InMemoryExtractionRunStore] has none: one
  * instance holds every tenant's links.
  *
+ * Memory is bounded only by what a read has seen. A link whose proposition is gone altogether is dropped the
+ * next time a read resolves it, and a run with no links left is dropped with it, but nothing sweeps
+ * a run nobody reads again. A long-running host wanting real retention uses the durable store.
+ *
  * Nothing here survives the JVM, and two instances know nothing about each other.
  *
  * EXPERIMENTAL. The shape may still change while extraction runs (DICE #67) land.
@@ -84,8 +88,13 @@ class InMemoryPropositionRunLinkStore(
         requirePositiveLimit(limit)
         return synchronized(lock) {
             // The proposition is checked against the store as it is now, not as it was when the
-            // link was written. See the note on [propositionsOf].
-            if (!inContext(propositionId, ContextId(contextIdValue))) return emptyList()
+            // link was written. See the note on [propositionsOf]. A read from the wrong tenant fails
+            // closed and touches nothing; only a claim that is gone altogether is pruned from every
+            // run that named it.
+            if (!inContext(propositionId, ContextId(contextIdValue))) {
+                if (propositionStore.findById(propositionId) == null) prune(propositionId)
+                return emptyList()
+            }
             byRun.entries
                 .filter { (key, ids) -> key.contextId.value == contextIdValue && propositionId in ids }
                 .map { (key, _) -> key.runRef }
@@ -105,18 +114,30 @@ class InMemoryPropositionRunLinkStore(
      * disagree. Answering from live endpoint state costs a lookup per id and is the only way this
      * store can be held to the same contract.
      *
-     * The stale entries are left in the map rather than swept. Nothing here is told when a
-     * proposition is deleted, so a sweep would need a hook this store does not have, and filtering
-     * on read gives the same answer.
+     * Nothing here is told when a proposition is deleted, so the stale entries are pruned when a
+     * read finds them: an id the proposition store no longer holds at all is dropped from the run's
+     * set, and an emptied set is dropped with it. An id that exists but reads as another tenant's
+     * is filtered and left alone, since a read from the wrong tenant must change nothing. The answer
+     * is the same either way; what changes is that the map stops growing with claims that no longer
+     * exist.
      */
     override fun propositionsOf(key: ExtractionRunKey, limit: Int): List<String> {
         requirePositiveLimit(limit)
         return synchronized(lock) {
-            byRun[key].orEmpty()
-                .filter { inContext(it, key.contextId) }
-                .sorted()
-                .take(limit)
+            val ids = byRun[key] ?: return emptyList()
+            val gone = ids.filter { propositionStore.findById(it) == null }
+            if (gone.isNotEmpty()) {
+                ids.removeAll(gone.toSet())
+                if (ids.isEmpty()) byRun.remove(key)
+            }
+            ids.filter { inContext(it, key.contextId) }.sorted().take(limit)
         }
+    }
+
+    /** Drops a proposition nobody holds any more from every run that named it; a run left with no links is dropped too. */
+    private fun prune(propositionId: String) {
+        val emptied = byRun.entries.filter { (_, ids) -> ids.remove(propositionId) && ids.isEmpty() }.map { it.key }
+        emptied.forEach { byRun.remove(it) }
     }
 
     /**

@@ -1895,6 +1895,10 @@ and the consumer PRs that deliver it).
   `dice-storage`'s own `TestApplication`, so the suite exercised them and no host could get them
   without writing the beans by hand; a host that declares its own keeps them, under the same
   `@ConditionalOnMissingBean` posture as every store beside them.
+  **The in-memory link store prunes what it can see is gone** (PR #101 review). A read that finds a
+  link whose proposition is gone altogether drops the id, and an emptied run
+  entry with it, so the reference store's memory stops growing with deleted claims; re-saving the
+  same id does not revive the link. **Compatibility: additive.** Every read answers as before.
 
   The property exists because of what registration writes. The schema catalog goes to Drivine's
   schema manager, which ensures it on startup, so turning the flag on adds three uniqueness
