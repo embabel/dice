@@ -18,6 +18,7 @@ package com.embabel.dice.proposition.extraction
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.ExtractionRunTransitioned
 import org.jetbrains.annotations.ApiStatus
+import org.slf4j.LoggerFactory
 import java.time.Instant
 
 /**
@@ -62,17 +63,38 @@ import java.time.Instant
  *
  * Nothing here survives the JVM, and two instances know nothing about each other.
  *
+ * **This is the reference implementation, and it forgets.** It holds at most [maxRuns] runs, and
+ * when a new run would push it past that cap it evicts the oldest ended runs, by
+ * [ExtractionRun.startedAt], until it fits again. A run still `RUNNING` is never evicted for the
+ * cap, so a store where every stored run happens to be running can grow past [maxRuns]; when that
+ * happens it says so with a single `warn` log for the breach, not one per insert. A host running
+ * this store in production is accepting that a run older than the cap is gone for good: it cannot
+ * be found, paged, or walked as an ancestor once evicted. Retention is a real, durable policy on a
+ * database-backed store, kept for as long as an operator decides; this store exists so a host can
+ * record and read runs before it has one of those, and forgetting the oldest is the cost of holding
+ * every run in one JVM's memory.
+ *
  * EXPERIMENTAL. The shape may still change while extraction runs (DICE #67) land.
  *
  * @property listener Notified when a run ends. Defaults to [DiceEventListener.DEV_NULL], so a host
- *   that has nothing listening constructs the store the same way it always did. Handlers run inline
- *   on the calling thread, and throw isolation belongs to the listener — wrap it in
- *   `SafeDiceEventListener` for graceful degradation.
+ *   that has nothing listening constructs the store the same way it always did. Handlers run
+ *   inline on the calling thread; a listener that throws does not undo the write that already
+ *   landed, because the store catches and logs it and still reports the transition as committed.
+ * @property maxRuns The most runs this store holds before it starts forgetting the oldest ended
+ *   ones. Must be positive. The default, 10,000, is enough for a host trying the reference store
+ *   out or bridging a gap before it wires up a durable one.
  */
 @ApiStatus.Experimental
 class InMemoryExtractionRunStore @JvmOverloads constructor(
     private val listener: DiceEventListener = DiceEventListener.DEV_NULL,
+    private val maxRuns: Int = 10_000,
 ) : ExtractionRunStore {
+
+    init {
+        require(maxRuns > 0) { "maxRuns must be positive, was $maxRuns" }
+    }
+
+    private val logger = LoggerFactory.getLogger(InMemoryExtractionRunStore::class.java)
 
     private val lock = Any()
 
@@ -80,6 +102,10 @@ class InMemoryExtractionRunStore @JvmOverloads constructor(
 
     /** The fingerprint of the terminal write that ended each run, for comparing a retry against. */
     private val terminalWrites = HashMap<ExtractionRunKey, String>()
+
+    /** Set once the store has grown past [maxRuns] with nothing left to evict, so the breach logs
+     *  once, not on every insert while it lasts. Cleared once the store fits again. */
+    private var overCapacityWarned = false
 
     override fun save(run: ExtractionRun): ExtractionRun {
         require(run.status == ExtractionRunStatus.RUNNING) {
@@ -105,6 +131,7 @@ class InMemoryExtractionRunStore @JvmOverloads constructor(
                 // door never originates a row.
                 val inserted = rebuild(run, invocations = emptyList(), version = 0L)
                 runs[key] = inserted
+                evictOverflow()
                 return inserted
             }
             if (stored.status.isTerminal) {
@@ -272,6 +299,34 @@ class InMemoryExtractionRunStore @JvmOverloads constructor(
 
     private fun requirePositiveLimit(limit: Int) {
         require(limit > 0) { "limit must be positive, was $limit" }
+    }
+
+    /**
+     * Evicts the oldest ended runs, by [ExtractionRun.startedAt], until the store fits under
+     * [maxRuns] again. Called from inside the monitor an insert already holds, so it never takes
+     * the lock itself. A run still `RUNNING` is never a candidate: if evicting every ended run
+     * still leaves the store over the cap, it logs the breach once and stops.
+     */
+    private fun evictOverflow() {
+        while (runs.size > maxRuns) {
+            val oldest = runs.values.filter { it.status.isTerminal }.minByOrNull { it.startedAt }
+            if (oldest == null) {
+                if (!overCapacityWarned) {
+                    overCapacityWarned = true
+                    logger.warn(
+                        "InMemoryExtractionRunStore holds {} runs, over its cap of {}, and every " +
+                            "one of them is still running, so none can be evicted",
+                        runs.size,
+                        maxRuns,
+                    )
+                }
+                return
+            }
+            val evictedKey = oldest.key()
+            runs.remove(evictedKey)
+            terminalWrites.remove(evictedKey)
+        }
+        overCapacityWarned = false
     }
 
     /** Re-lists the run with its invocations and version replaced, since [ExtractionRun] publishes

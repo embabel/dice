@@ -102,6 +102,10 @@ import java.time.Instant
  * takes a positive `limit`, and the reads that can span a long history also take an optional
  * `since` window.
  *
+ * How long a run stays readable is the store's own policy, not this contract's: this contract
+ * says nothing about retention, and the reference implementation caps how many runs it keeps and
+ * forgets the oldest ended ones past that cap.
+ *
  * **Scope is pushed down, never applied afterwards.** An implementation must restrict to the tenant
  * inside the query and then limit. Fetching `limit` rows and filtering them by tenant afterwards
  * would return fewer rows than asked for — or none — whenever a busy neighbouring tenant occupies

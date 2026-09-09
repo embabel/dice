@@ -238,7 +238,7 @@ class ExtractionRunLifecycleTest {
     @Test
     fun `the call that ends a run announces it once, and a replay announces nothing`() {
         val received = mutableListOf<DiceEvent>()
-        val listening = InMemoryExtractionRunStore { event -> received += event }
+        val listening = InMemoryExtractionRunStore(listener = { event -> received += event })
         val run = started("run-announce")
         listening.save(run)
         listening.recordInvocation(run.key(), ExtractionInvocationRecord.planned(0))
@@ -634,5 +634,50 @@ class ExtractionRunLifecycleTest {
         // colliding with the one already recorded under the same run id.
         assertThat(store.transition(theirs.key(), ExtractionRunTransition.failed(FINISHED_AT)).outcome)
             .isEqualTo(ExtractionRunTransitionOutcome.APPLIED)
+    }
+
+    // ---- retention cap ----
+
+    @Test
+    fun `the reference store forgets the oldest ended runs past its cap`() {
+        val capped = InMemoryExtractionRunStore(maxRuns = 3)
+        val ended = (0..2).map { index ->
+            val run = ExtractionRunFixtures.runningRun(
+                "run-cap-$index",
+                CONTEXT,
+                STARTED_AT.plusSeconds(index.toLong()),
+            )
+            capped.save(run)
+            capped.transition(run.key(), ExtractionRunTransition.completed(FINISHED_AT))
+            run
+        }
+
+        // A fourth run pushes the store to four, one over the cap of three, so the oldest ended
+        // run is the one forgotten.
+        val newest = ExtractionRunFixtures.runningRun("run-cap-newest", CONTEXT, STARTED_AT.plusSeconds(10))
+        capped.save(newest)
+
+        assertThat(capped.findRun(ended[0].key())).describedAs("the oldest ended run").isNull()
+        assertThat(capped.findRun(ended[1].key())).isNotNull()
+        assertThat(capped.findRun(ended[2].key())).isNotNull()
+        assertThat(capped.findRun(newest.key())).isNotNull()
+    }
+
+    @Test
+    fun `running runs are never evicted for the cap`() {
+        val capped = InMemoryExtractionRunStore(maxRuns = 2)
+        val running = (0..2).map { index ->
+            val run = ExtractionRunFixtures.runningRun(
+                "run-running-$index",
+                CONTEXT,
+                STARTED_AT.plusSeconds(index.toLong()),
+            )
+            capped.save(run)
+            run
+        }
+
+        // Every stored run is still RUNNING, so the store has nothing to evict: it grows past its
+        // cap of two, and none of them is forgotten.
+        running.forEach { assertThat(capped.findRun(it.key())).describedAs(it.ref.runId).isNotNull() }
     }
 }
