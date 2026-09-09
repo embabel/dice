@@ -1713,3 +1713,10 @@ and the consumer PRs that deliver it).
   Reads are uncapped, because a read for a longer tenant matches nothing by construction. Every new
   type carries `@ApiStatus.Experimental` and the shapes may still move while the remaining #67 slices
   land.
+  **Race detection keys on the driver's status code now, and message text no longer matters.**
+  `Neo4jErrors.isUniquenessViolation` walks the cause chain for a `Neo4jException` whose `code()` is
+  `Neo.ClientError.Schema.ConstraintValidationFailed`, and both `DrivineExtractionRunStore` and
+  `DrivinePropositionRepository` call it to tell a lost compare-and-set race apart from a real
+  failure. `dice-storage` now declares the `neo4j-java-driver` dependency it already ran with
+  through Drivine, so the exception class it checks is visible at compile time too.
+  **Compatibility: additive.** No public signature changes.

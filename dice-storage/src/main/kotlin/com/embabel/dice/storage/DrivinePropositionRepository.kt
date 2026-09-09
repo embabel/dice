@@ -220,7 +220,9 @@ class DrivinePropositionRepository(
             try {
                 txTemplate.execute { findOrPersist(proposition, contextId, text) }!!
             } catch (e: RuntimeException) {
-                if (!isUniquenessViolation(e)) throw e
+                // Neo4jErrors tells this cross-instance race apart from a real failure by the
+                // driver's own status code, not by the exception's message.
+                if (!Neo4jErrors.isUniquenessViolation(e)) throw e
                 // Cross-instance race: another writer inserted the same (contextId, text) and the DB
                 // (contextId, text) uniqueness constraint rejected ours. The dupe now exists — reuse
                 // it, in a transaction of its own so the failed attempt cannot roll this back.
@@ -261,24 +263,6 @@ class DrivinePropositionRepository(
             }
             doPersist(proposition)
         }
-    }
-
-    /**
-     * Best-effort detection of a Neo4j uniqueness-constraint violation anywhere in the cause chain.
-     * Matches on message substrings, since which form (error code vs. prose) shows up in
-     * `getMessage()` isn't guaranteed across driver versions. [findOrPersist] pre-checks for a
-     * same-text sibling before writing, so this is just the cross-instance-race backstop now.
-     */
-    private fun isUniquenessViolation(error: Throwable?): Boolean {
-        var t: Throwable? = error
-        while (t != null) {
-            val msg = t.message ?: ""
-            if (msg.contains("ConstraintValidationFailed", ignoreCase = true) ||
-                msg.contains("already exists", ignoreCase = true)
-            ) return true
-            t = t.cause
-        }
-        return false
     }
 
     /**

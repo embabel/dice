@@ -356,7 +356,9 @@ open class DrivineExtractionRunStore @JvmOverloads constructor(
         val result = try {
             txTemplate.execute { endRun(key, transition) }
         } catch (e: RuntimeException) {
-            if (!isUniquenessViolation(e)) throw e
+            // Neo4jErrors tells a lost compare-and-set race apart from a real failure by the
+            // driver's own status code, not by the exception's message.
+            if (!Neo4jErrors.isUniquenessViolation(e)) throw e
             lostRace = e
             null
         }
@@ -975,40 +977,14 @@ open class DrivineExtractionRunStore @JvmOverloads constructor(
 }
 
 /**
- * Best-effort detection of a Neo4j uniqueness-constraint violation anywhere in the cause chain.
- *
- * Matches on message substrings, because which form — the error code or the prose — reaches
- * `getMessage()` is not guaranteed across driver versions. `DrivinePropositionRepository` carries the
- * same check for the same reason; the two are not shared yet because neither module has a home for a
- * Drivine error-mapping helper, and inventing one is a separate change.
- *
- * A false positive is bounded here: the caller only ever treats it as "someone else recorded the
- * terminal write", and re-reads to find out. If there is no terminal write, the original exception is
- * rethrown.
- */
-private fun isUniquenessViolation(error: Throwable?): Boolean {
-    var current: Throwable? = error
-    val seen = mutableSetOf<Throwable>()
-    while (current != null && seen.add(current)) {
-        val message = current.message ?: ""
-        if (message.contains("ConstraintValidationFailed", ignoreCase = true) ||
-            message.contains("already exists", ignoreCase = true)
-        ) {
-            return true
-        }
-        current = current.cause
-    }
-    return false
-}
-
-/**
  * Best-effort detection of Neo4j's own deadlock detector aborting a transaction, anywhere in the
  * cause chain — the failure [DrivineExtractionRunStore.retryingTransientConflict] retries.
  *
- * Matches on message substrings for the same reason [isUniquenessViolation] does: which form of the
- * message reaches `getMessage()` is not guaranteed across driver versions. Two writers `MERGE`-ing
- * the same not-yet-existing key concurrently is the shape [DrivineExtractionRunStore.ownedTransaction]
- * retries, and Neo4j names it
+ * Matches on message substrings because which form of the message reaches `getMessage()` is not
+ * guaranteed across driver versions, and there is no status code as stable as
+ * [Neo4jErrors.isUniquenessViolation] gets to use here: a deadlock is a driver-side retry decision,
+ * not a server status. Two writers `MERGE`-ing the same not-yet-existing key concurrently is the
+ * shape [DrivineExtractionRunStore.ownedTransaction] retries, and Neo4j names it
  * with the transaction lock manager's own vocabulary, a looser target than one stable exception
  * type: `TransientException` is the driver's own class name, and `Deadlock` and `can't acquire` are
  * the wording its lock manager uses to describe the same event. The check is deliberately loose to
