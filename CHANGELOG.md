@@ -1329,3 +1329,11 @@ and the consumer PRs that deliver it).
   asserted by a test that reads the class files because the annotation has class retention, and the
   shapes may still move while the remaining #67 slices land. The `@RequiresOptIn` question #66
   raised is unchanged and still open.
+
+- `ExtractionRequestedModelConfig` now implements the framework's `LlmHyperparameters` (PR #95
+  review), so the six hyperparameters it already carried read back as the interface a host that
+  built an `LlmOptions` already knows, not as a lookalike copy. `from(options, modelRole,
+  thinkingFingerprint, selectionFingerprint)` builds one straight off an `LlmOptions`, taking
+  `modelRole` from `options.role` by default. **Compatibility: additive.** The data class's
+  constructor descriptor is unchanged; the six fields keep their names and types and just gain
+  `override`, and the new supertype adds no field.

@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.proposition.extraction
 
+import com.embabel.common.ai.model.LlmHyperparameters
+import com.embabel.common.ai.model.LlmOptions
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 import org.junit.jupiter.api.Test
@@ -70,6 +72,41 @@ class ExtractionRunValueTypesTest {
         rejections.forEach { (name, construct) ->
             assertThatIllegalArgumentException().describedAs(name).isThrownBy { construct() }
         }
+    }
+
+    @Test
+    fun `the requested model config is the framework's hyperparameters`() {
+        val options = LlmOptions(
+            model = "model-large",
+            role = "extraction",
+            temperature = 0.4,
+            frequencyPenalty = 0.1,
+            maxTokens = 2048,
+            presencePenalty = 0.2,
+            topK = 40,
+            topP = 0.9,
+            timeout = Duration.ofSeconds(30),
+        )
+
+        val config = ExtractionRequestedModelConfig.from(options)
+
+        assertThat(config.modelRole).isEqualTo("extraction")
+        assertThat(config.requestedModel).isEqualTo("model-large")
+        assertThat(config.temperature).isEqualTo(0.4)
+        assertThat(config.frequencyPenalty).isEqualTo(0.1)
+        assertThat(config.maxTokens).isEqualTo(2048)
+        assertThat(config.presencePenalty).isEqualTo(0.2)
+        assertThat(config.topK).isEqualTo(40)
+        assertThat(config.topP).isEqualTo(0.9)
+        assertThat(config.timeout).isEqualTo(Duration.ofSeconds(30))
+
+        val asHyperparameters: LlmHyperparameters = config
+        assertThat(asHyperparameters.temperature).isEqualTo(options.temperature)
+        assertThat(asHyperparameters.frequencyPenalty).isEqualTo(options.frequencyPenalty)
+        assertThat(asHyperparameters.maxTokens).isEqualTo(options.maxTokens)
+        assertThat(asHyperparameters.presencePenalty).isEqualTo(options.presencePenalty)
+        assertThat(asHyperparameters.topK).isEqualTo(options.topK)
+        assertThat(asHyperparameters.topP).isEqualTo(options.topP)
     }
 
     @Test

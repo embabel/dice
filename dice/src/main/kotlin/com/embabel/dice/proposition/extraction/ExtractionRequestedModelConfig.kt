@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.proposition.extraction
 
+import com.embabel.common.ai.model.LlmHyperparameters
+import com.embabel.common.ai.model.LlmOptions
 import org.jetbrains.annotations.ApiStatus
 import java.time.Duration
 
@@ -39,6 +41,11 @@ import java.time.Duration
  * no upper bound here because services differ on whether it stops at 1 or 2; the penalties are
  * only required to be real numbers for the same reason.
  *
+ * The six hyperparameters are the framework's own [LlmHyperparameters], not a lookalike copy, so a
+ * caller holding this record already holds something that reads as one. [from] builds one straight
+ * from an [LlmOptions] a host handed the model, and the record hands the same six values back
+ * through that interface.
+ *
  * EXPERIMENTAL. The shape may still change while extraction runs (DICE #67) land.
  *
  * @property modelRole The host's name for the job this model was doing, such as `extraction`
@@ -57,16 +64,16 @@ import java.time.Duration
 data class ExtractionRequestedModelConfig @JvmOverloads constructor(
     val modelRole: String? = null,
     val requestedModel: String? = null,
-    val temperature: Double? = null,
-    val topP: Double? = null,
-    val topK: Int? = null,
-    val maxTokens: Int? = null,
-    val presencePenalty: Double? = null,
-    val frequencyPenalty: Double? = null,
+    override val temperature: Double? = null,
+    override val topP: Double? = null,
+    override val topK: Int? = null,
+    override val maxTokens: Int? = null,
+    override val presencePenalty: Double? = null,
+    override val frequencyPenalty: Double? = null,
     val thinkingFingerprint: String? = null,
     val selectionFingerprint: String? = null,
     val timeout: Duration? = null,
-) {
+) : LlmHyperparameters {
 
     init {
         requireBoundedIdentifier(modelRole, "modelRole")
@@ -113,6 +120,36 @@ data class ExtractionRequestedModelConfig @JvmOverloads constructor(
             thinkingFingerprint = thinkingFingerprint,
             selectionFingerprint = selectionFingerprint,
             timeout = timeout,
+        )
+
+        /**
+         * The record of what a host asked for, read straight off the [LlmOptions] it handed the
+         * model.
+         *
+         * The six hyperparameters and the model and timeout come from [options] as they stand.
+         * [modelRole] defaults to [LlmOptions.role] because that is the closest thing the options
+         * carry to a job name, but a host is free to pass its own. The two fingerprints are not on
+         * [LlmOptions] at all, so a caller that has them from elsewhere passes them in here.
+         */
+        @JvmStatic
+        @JvmOverloads
+        fun from(
+            options: LlmOptions,
+            modelRole: String? = options.role,
+            thinkingFingerprint: String? = null,
+            selectionFingerprint: String? = null,
+        ): ExtractionRequestedModelConfig = ExtractionRequestedModelConfig(
+            modelRole = modelRole,
+            requestedModel = options.model,
+            temperature = options.temperature,
+            topP = options.topP,
+            topK = options.topK,
+            maxTokens = options.maxTokens,
+            presencePenalty = options.presencePenalty,
+            frequencyPenalty = options.frequencyPenalty,
+            thinkingFingerprint = thinkingFingerprint,
+            selectionFingerprint = selectionFingerprint,
+            timeout = options.timeout,
         )
     }
 }

@@ -88,6 +88,9 @@ credentials, system prompts and whole SDK request bodies get persisted by accide
 provider-specific knob a host cares about is folded into one of the fingerprints — an opaque
 digest DICE compares and never reads.
 
+The six hyperparameters implement the framework's own `LlmHyperparameters`, and `from(LlmOptions)`
+builds the record straight off the options a host handed the model.
+
 Ranges are checked where every provider agrees and left open where they do not. Temperature has no
 upper bound because services differ on whether it stops at 1 or 2, and the penalties are only
 required to be real numbers for the same reason. Rejecting a legitimate `2.0` would be DICE
