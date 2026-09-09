@@ -412,25 +412,58 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
 
     // -- internal ---------------------------------------------------------
 
+    /**
+     * Drains [pendingEvents] under [extractionLock], one event at a time.
+     *
+     * **A lineage failure on one queued event does not cost the rest of the queue.** `processEvent`
+     * rethrows [LineageNotRecordedException] and does not swallow it, so this loop catches it per
+     * event, remembers the first one, and keeps polling. Every event that was queued when the drain
+     * started still runs. Once the queue this call can see is empty, the remembered failure (if any)
+     * is rethrown, so a STRICT wiring mistake still reaches whoever called [extractPropositions] and
+     * is not lost behind the events that came after it.
+     */
     private fun processPendingEvents() {
         if (!extractionLock.tryLock()) {
             logger.debug("Extraction in progress, {} event(s) queued", pendingEvents.size)
             return
         }
+        var firstFailure: LineageNotRecordedException? = null
         try {
             var next = pendingEvents.poll()
             while (next != null) {
-                processEvent(next)
+                try {
+                    processEvent(next)
+                } catch (e: LineageNotRecordedException) {
+                    if (firstFailure == null) firstFailure = e
+                }
                 next = pendingEvents.poll()
             }
         } finally {
             extractionLock.unlock()
         }
         if (pendingEvents.isNotEmpty()) {
-            processPendingEvents()
+            try {
+                processPendingEvents()
+            } catch (e: LineageNotRecordedException) {
+                if (firstFailure == null) firstFailure = e
+            }
         }
+        firstFailure?.let { throw it }
     }
 
+    /**
+     * Processes one event: builds its context, runs the analyzer, and persists what it finds.
+     *
+     * **A STRICT lineage failure reaches the caller; everything else is logged and swallowed.**
+     * `extractPropositions` is the public entry point an `@Async @EventListener` calls, so a plain
+     * exception here would only ever reach Spring's executor's uncaught-exception handler, not a
+     * caller waiting on the result, which is why every other failure is caught and logged and not
+     * left to propagate. Attribution failing under STRICT is different: a host that bound
+     * [LineageFailurePolicy.STRICT] asked to hear about it, and an event-published extraction must
+     * fail exactly as loud as a direct call with the same inputs would. So
+     * [LineageNotRecordedException] is caught ahead of the general catch, logged at `error` with the
+     * run key, and rethrown to [processPendingEvents], which is what makes it reach the publisher.
+     */
     private fun processEvent(event: SourceAnalysisRequestEvent) {
         try {
             val source = event.incrementalSource()
@@ -472,6 +505,13 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             logger.info(result.infoString(true, 1))
             persistAndProject(result, context)
             logAllPropositions(contextIdProvider.apply(event.user))
+        } catch (e: LineageNotRecordedException) {
+            logger.error(
+                "Lineage not recorded for extraction run {}; attribution was asked for and could " +
+                    "not be recorded",
+                e.key.runRef.runId, e,
+            )
+            throw e
         } catch (e: Exception) {
             logger.warn("Failed to extract propositions", e)
         } finally {

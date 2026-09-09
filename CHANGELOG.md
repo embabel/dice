@@ -1844,6 +1844,14 @@ and the consumer PRs that deliver it).
   one-argument form exists at all. Failures raise
   `LineageNotRecordedException`. An analysis that saved nothing records nothing and fails under
   neither policy.
+  **The async event path is as loud as a direct call** (PR #101 review). `extractPropositions`
+  used to swallow every exception from an event-published extraction, so a `LineageNotRecordedException`
+  under `STRICT` was logged at `warn` and lost while the same inputs on a direct call failed. It is
+  now logged at `error` with the run key and rethrown to the publisher; the queue drain keeps going
+  past a failing event and raises the first failure once the queue is empty. **Compatibility:
+  behavioral.** A host publishing `SourceAnalysisRequestEvent`s with a run and `STRICT` lineage
+  now sees the failure where its event multicaster reports listener exceptions; under `LENIENT`
+  nothing changes.
   **What joining a caller's transaction covers, exactly.** The lineage write joins a caller's
   transaction and never opens its own: `REQUIRES_NEW` would suspend that transaction, and a suspended transaction's
   uncommitted propositions are invisible, so a host wrapping extraction in `@Transactional` would get

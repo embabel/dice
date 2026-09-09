@@ -47,6 +47,12 @@ import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import java.time.Instant
+import com.embabel.dice.common.SourceAnalysisRequestEvent
+import com.embabel.dice.incremental.IncrementalSource
+import com.embabel.chat.Message
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * What `persistAndProject` hands to projection, grounding and lineage.
@@ -126,6 +132,8 @@ class RunLineageWiringTest {
     private class Harness(
         val repository: DeduplicatingRepository,
         val extraction: IncrementalPropositionExtraction,
+        val pipeline: PropositionPipeline,
+        val chunkResult: ChunkPropositionResult,
         val projected: MutableList<List<Proposition>>,
         val grounded: MutableList<List<Proposition>>,
         val linkStore: RecordingLinkStore?,
@@ -172,13 +180,16 @@ class RunLineageWiringTest {
         stored?.let { repository.save(it) }
 
         val pipeline = mockk<PropositionPipeline>()
-        every { pipeline.processOnce(any(), any(), any(), any(), any(), any()) } returns
-            ChunkPropositionResult.Success(
-                chunkId = "chunk-1",
-                suggestedPropositions = SuggestedPropositions("chunk-1", emptyList()),
-                entityResolutions = Resolutions<SuggestedEntityResolution>(setOf("chunk-1"), emptyList()),
-                propositions = listOf(extracted),
-            )
+        val result = ChunkPropositionResult.Success(
+            chunkId = "chunk-1",
+            suggestedPropositions = SuggestedPropositions("chunk-1", emptyList()),
+            entityResolutions = Resolutions<SuggestedEntityResolution>(setOf("chunk-1"), emptyList()),
+            propositions = listOf(extracted),
+        )
+        every { pipeline.processOnce(any(), any(), any(), any(), any(), any()) } returns result
+        // The event path reaches the pipeline through the incremental analyzer, which calls
+        // processChunk; both doors hand back the same extraction.
+        every { pipeline.processChunk(any(), any()) } returns result
 
         val projected = mutableListOf<List<Proposition>>()
         val projection = mockk<GraphProjectionService>()
@@ -220,10 +231,12 @@ class RunLineageWiringTest {
             entityRepository = entityRepository,
             entityResolver = mockk<EntityResolver>(relaxed = true),
             graphProjectionService = projection,
-            properties = PropositionExtractionProperties(),
+            // One-message windows, so an event carrying a single message is enough to trigger the
+            // incremental analyzer on the event path; the direct path ignores these.
+            properties = PropositionExtractionProperties(windowSize = 1, overlapSize = 1, triggerInterval = 1),
             groundingWiringService = grounding,
         ).withRunLineage(linkStore, policy)
-        return Harness(repository, extraction, projected, grounded, linkStore, entityRepository)
+        return Harness(repository, extraction, pipeline, result, projected, grounded, linkStore, entityRepository)
     }
 
     private fun IncrementalPropositionExtraction.remember(currentRun: ExtractionRunRef?) =
@@ -236,6 +249,95 @@ class RunLineageWiringTest {
             null,
             ExtractionRequest(currentRun = currentRun),
         )
+
+    private fun event(currentRun: ExtractionRunRef?, sourceId: String = "event-source"): SourceAnalysisRequestEvent {
+        val source = mockk<IncrementalSource<Message>>(relaxed = true)
+        every { source.id } returns sourceId
+        every { source.size } returns 1
+        return object : SourceAnalysisRequestEvent(this, user()) {
+            override fun incrementalSource(): IncrementalSource<Message> = source
+
+            override fun currentRun(): ExtractionRunRef? = currentRun
+        }
+    }
+
+    // ---- the async event path is as loud as a direct call ----
+
+    @Test
+    fun `an event-driven extraction with a run and no link store fails under STRICT`() {
+        // Same inputs as the direct-call case above, published as an event. The listener used to
+        // swallow every exception, which made STRICT a promise the async path did not keep.
+        val harness = harness(
+            stored = null,
+            extracted = proposition("Alice likes coffee", id = "minted"),
+            linkStore = null,
+            policy = LineageFailurePolicy.STRICT,
+        )
+
+        assertThatThrownBy { harness.extraction.extractPropositions(event(currentRun = runRef)) }
+            .isInstanceOf(LineageNotRecordedException::class.java)
+            .hasMessageContaining("no PropositionRunLinkStore is bound")
+
+        // The claim was saved before lineage was attempted and stands; what failed is attribution.
+        assertThat(harness.repository.findById("minted")).isNotNull()
+    }
+
+    @Test
+    fun `a lineage failure on one queued event does not drop the next`() {
+        // The first event holds the drain open inside the pipeline while two more queue behind it.
+        // Its lineage failure must not cost those two their turn: the drain keeps going and the
+        // failure surfaces once, after the queue is empty.
+        val harness = harness(
+            stored = null,
+            extracted = proposition("Alice likes coffee", id = "minted"),
+            linkStore = null,
+            policy = LineageFailurePolicy.STRICT,
+        )
+        val firstEntered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        var calls = 0
+        every { harness.pipeline.processChunk(any(), any()) } answers {
+            if (calls++ == 0) {
+                firstEntered.countDown()
+                release.await(5, TimeUnit.SECONDS)
+            }
+            harness.chunkResult
+        }
+
+        val surfaced = AtomicReference<Throwable?>()
+        val drainer = Thread {
+            try {
+                harness.extraction.extractPropositions(event(currentRun = runRef, sourceId = "source-a"))
+            } catch (t: Throwable) {
+                surfaced.set(t)
+            }
+        }
+        drainer.start()
+        assertThat(firstEntered.await(5, TimeUnit.SECONDS)).isTrue()
+        // These two find the lock held and queue behind the first event.
+        harness.extraction.extractPropositions(event(currentRun = runRef, sourceId = "source-b"))
+        harness.extraction.extractPropositions(event(currentRun = runRef, sourceId = "source-c"))
+        release.countDown()
+        drainer.join(10_000)
+
+        assertThat(surfaced.get()).isInstanceOf(LineageNotRecordedException::class.java)
+        verify(exactly = 3) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.extraction.isIdle).isTrue()
+    }
+
+    @Test
+    fun `under LENIENT an event-driven extraction with no link store completes`() {
+        val harness = harness(
+            stored = null,
+            extracted = proposition("Alice likes coffee", id = "minted"),
+            linkStore = null,
+            policy = LineageFailurePolicy.LENIENT,
+        )
+
+        harness.extraction.extractPropositions(event(currentRun = runRef))
+
+        assertThat(harness.repository.findById("minted")).isNotNull()
+    }
 
     // ---- canonical persistence is the only path ----
 

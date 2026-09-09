@@ -1210,6 +1210,15 @@ honest report of that is a saved, unattributed claim, not a finished one with a 
 Under a host's ambient transaction the save and the lineage write share one fate, so a STRICT
 failure rolls both back, which is what a host running strict attribution is asking for.
 
+The same rule holds on the async path. `extractPropositions`, the entry point the
+`@Async @EventListener` calls, swallows and logs every other failure because nobody is waiting on
+the result, but a `LineageNotRecordedException` under `STRICT` is logged at `error` with the run
+key and rethrown to the publisher, so an event-published extraction fails exactly as loud as a
+direct call with the same inputs. One failing event does not cost the rest of the queue: the drain
+keeps going, remembers the first failure, and raises it once the queue it can see is empty. A host
+dispatching those events through an async multicaster sees the failure in its executor's error
+handler, which is where every uncaught listener exception goes.
+
 The policy binds with the store, `withRunLineage(store, policy)`, and failures raise
 `LineageNotRecordedException` carrying the store's own exception as its cause, so a scope rejection
 and a database outage stay distinguishable. An analysis that saved nothing records nothing and fails

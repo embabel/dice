@@ -50,11 +50,14 @@ enum class LineageFailurePolicy {
      * - The link write itself throws. A run that does not exist, a proposition in another tenant, a
      *   database that will not take the write.
      *
-     * The exception reaches the caller. What that costs depends on who owns the transaction: with
-     * no ambient transaction the claims were already saved and stand, so the caller learns that
-     * stored claims are unattributed. Inside a host's `@Transactional`, the claims and the lineage
-     * share that transaction's fate and the failure rolls both back — which is what a host running
-     * extraction under strict attribution is asking for.
+     * The exception reaches the caller: the direct caller for a synchronous call, or the event
+     * publisher for one dispatched through the async event path, where a host using an async event
+     * multicaster for that path sees it surface in its executor's own error handler. What that costs
+     * depends on who owns the transaction: with no ambient transaction the claims were already saved
+     * and stand, so the caller learns that stored claims are unattributed. Inside a host's
+     * `@Transactional`, the claims and the lineage share that transaction's fate and the failure
+     * rolls both back, which is what a host running extraction under strict attribution is asking
+     * for.
      */
     STRICT,
 
