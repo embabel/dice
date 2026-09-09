@@ -273,7 +273,7 @@ There is one wrinkle worth knowing, because it decides where the controller can 
 that imported it, and Spring Boot registers auto-configuration bean definitions after that point. A
 plain entry in `DiceRestConfiguration`'s `@Import` list would therefore see no
 `GovernanceOperationsService` in any application whose loop came from the auto-configuration —
-which is every application following this note. `GovernanceControllerImport`, a
+which is every application following this note. `ConditionalControllerImport`, a
 `DeferredImportSelector` with the lowest precedence, is what puts the question after Spring Boot's
 own auto-configuration selector has answered. `GovernanceOperatorAutoConfigurationTest` pins all
 four combinations of import and loop, reading the live handler mapping so an empty answer means a
