@@ -26,8 +26,21 @@ package com.embabel.dice.provenance
  * A ref that lacks the `dice-provenance:` prefix is a legacy locator key, written before revisions
  * existed. Those match revisionless evidence only, so an old trace can never remove evidence from a
  * revision it never saw. Anything that carries the prefix and then fails to parse matches nothing.
+ *
+ * This is the only evidence-key codec in DICE. `dice-storage` keys each `DERIVED_FROM` edge by the
+ * string [encode] returns, so one piece of evidence has one identity whether it is being recorded by
+ * a collapse or stored as a graph row. The format is public because it outlives the process that
+ * wrote it: a version prefix leads every string, and a reader that meets a version it does not know
+ * matches nothing rather than guessing.
+ *
+ * The length in each frame counts the value's UTF-8 bytes, not its Kotlin/Java `String.length`
+ * (UTF-16 code units) or its count of Unicode code points. Those three counts agree for plain ASCII
+ * but diverge for anything outside it, and the length has to mean the same thing wherever this
+ * format is read or written, in any language, so it's pinned to the one count every language can
+ * compute the same way from the same bytes. The value itself is still carried as the string it
+ * always was; only the number in front of it changes.
  */
-internal object ProvenanceEvidenceKey {
+object ProvenanceEvidenceKey {
 
     private const val MAGIC_PREFIX = "dice-provenance:"
     private const val VERSION_PREFIX = "${MAGIC_PREFIX}v1:"
@@ -65,11 +78,13 @@ internal object ProvenanceEvidenceKey {
         if (value == null) {
             append("-1:")
         } else {
-            append(value.length)
+            append(utf8Length(value))
             append(':')
             append(value)
         }
     }
+
+    private fun utf8Length(value: String): Int = value.toByteArray(Charsets.UTF_8).size
 
     private class FrameMatcher(
         private val encoded: String,
@@ -86,13 +101,13 @@ internal object ProvenanceEvidenceKey {
             if (length == -1) {
                 return value == null
             }
-            if (value == null || length != value.length || length > encoded.length - offset) {
+            if (value == null || length != utf8Length(value) || value.length > encoded.length - offset) {
                 return false
             }
-            if (!encoded.regionMatches(offset, value, 0, length)) {
+            if (!encoded.regionMatches(offset, value, 0, value.length)) {
                 return false
             }
-            offset += length
+            offset += value.length
             return true
         }
 

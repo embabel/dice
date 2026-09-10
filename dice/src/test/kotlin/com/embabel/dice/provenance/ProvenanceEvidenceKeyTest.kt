@@ -22,6 +22,50 @@ class ProvenanceEvidenceKeyTest {
 
     private val locator = UriLocator("https://example.com/source")
 
+    /**
+     * The exact bytes of `v1`, written out. Every other test here checks `encode` against `matches`
+     * from the same build, so a coordinated edit to both would keep them all green while orphaning
+     * every `entryKey` already stored on a `DERIVED_FROM` edge and every reference already recorded
+     * with a fold. This is the only assertion that fails when the format moves under a `v1` label.
+     *
+     * Changing the format means a new version prefix and a story for the keys already written, not an
+     * edit to this string. The same worked example appears in `docs/design/source-revisions.md`.
+     */
+    @Test
+    fun `v1 encodes to exactly these bytes`() {
+        val entry = ProvenanceEntry(
+            locator = UriLocator("https://a"),
+            sourceRevision = "r1",
+            chunkId = "c",
+            startOffset = 1,
+            endOffset = 2,
+            contentHash = "h",
+        )
+
+        assertThat(ProvenanceEvidenceKey.encode(entry))
+            .isEqualTo("dice-provenance:v1:13:uri:https://a2:r11:c1:11:21:h")
+    }
+
+    /**
+     * The frame length counts UTF-8 bytes, not `String.length` (UTF-16 code units) or code points.
+     * The key `uri:https://a/💾` is 14 ASCII bytes plus 4 bytes for the floppy disk symbol, so its
+     * frame is `18:`, not the 16 `String.length` would give or the 15 a code-point count would give.
+     */
+    @Test
+    fun `a non-ASCII value is framed by its UTF-8 byte count`() {
+        val entry = ProvenanceEntry(locator = UriLocator("https://a/💾"))
+        val encoded = ProvenanceEvidenceKey.encode(entry)
+
+        assertThat(encoded).isEqualTo("dice-provenance:v1:18:uri:https://a/💾-1:-1:-1:-1:-1:")
+        assertThat(ProvenanceEvidenceKey.matches(entry, encoded)).isTrue()
+        assertThat(
+            ProvenanceEvidenceKey.matches(entry, encoded.replaceFirst("18:", "16:"))
+        ).isFalse()
+        assertThat(
+            ProvenanceEvidenceKey.matches(entry, encoded.replaceFirst("18:", "15:"))
+        ).isFalse()
+    }
+
     @Test
     fun `full evidence identity participates in encoding`() {
         val entry = ProvenanceEntry(
