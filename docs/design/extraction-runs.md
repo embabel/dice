@@ -1089,8 +1089,13 @@ lineage for claims the store no longer holds, and the two backends would disagre
 
 The reference implementation also prunes as it reads: a link whose proposition the store no longer
 holds at all is dropped when a read resolves it, and a run with no links left goes with it,
-so the map does not keep growing with claims that no longer exist. Nothing sweeps a run nobody
-reads again; a host wanting real retention uses the durable store.
+so the map does not keep growing with claims that no longer exist. Nothing reads on a host's
+behalf, though, so the store also caps how many runs it keeps links for: a constructor parameter,
+`maxRuns`, defaulting to 10,000 like the reference run store's. Past the cap a link for a new run
+evicts the links of the runs linked earliest, oldest first, as long as the run store says the run
+has ended; a run still `RUNNING` keeps its links, and a store where every linked run is running
+grows past the cap and logs that once. A host wanting real retention uses the durable store, where
+the edge lives and dies with its endpoints.
 
 Both reads are bounded by a positive limit and ordered by id ascending. Ordering runs newest-first
 would mean reading each run's header for its start time; a caller who wants that has

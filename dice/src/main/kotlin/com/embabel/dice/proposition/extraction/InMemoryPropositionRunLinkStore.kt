@@ -18,6 +18,7 @@ package com.embabel.dice.proposition.extraction
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.PropositionStore
 import org.jetbrains.annotations.ApiStatus
+import org.slf4j.LoggerFactory
 
 /**
  * Reference [PropositionRunLinkStore] that keeps the relation in a map.
@@ -39,9 +40,16 @@ import org.jetbrains.annotations.ApiStatus
  * There is no unscoped read here, for the same reason [InMemoryExtractionRunStore] has none: one
  * instance holds every tenant's links.
  *
- * Memory is bounded only by what a read has seen. A link whose proposition is gone altogether is dropped the
- * next time a read resolves it, and a run with no links left is dropped with it, but nothing sweeps
- * a run nobody reads again. A long-running host wanting real retention uses the durable store.
+ * **This is the reference implementation, and it forgets.** A link whose proposition is gone
+ * altogether is dropped the next time a read resolves it, and a run with no links left is dropped
+ * with it, but nothing reads on a host's behalf, so the store also holds links for at most
+ * [maxRuns] runs. When a link for a new run would push it past that cap it evicts the runs it
+ * linked earliest, oldest first, as long as the run store says the run has ended. A run still
+ * `RUNNING` keeps its links, so a store where every linked run is running can grow past the cap;
+ * that logs once at `warn`, not on every link. A host running this store in production is
+ * accepting that the lineage of a run older than the cap is gone for good. Retention is a real,
+ * durable policy on the graph-backed store; this one exists so a host can record lineage before it
+ * has one of those.
  *
  * Nothing here survives the JVM, and two instances know nothing about each other.
  *
@@ -49,17 +57,32 @@ import org.jetbrains.annotations.ApiStatus
  *
  * @param runStore Where the run end of a link is resolved.
  * @param propositionStore Where the proposition end is resolved.
+ * @param maxRuns The most runs this store keeps links for before it starts forgetting the ones it
+ *   linked earliest. Must be positive. The default, 10,000, matches [InMemoryExtractionRunStore].
  */
 @ApiStatus.Experimental
-class InMemoryPropositionRunLinkStore(
+class InMemoryPropositionRunLinkStore @JvmOverloads constructor(
     private val runStore: ExtractionRunStore,
     private val propositionStore: PropositionStore,
+    private val maxRuns: Int = 10_000,
 ) : PropositionRunLinkStore {
+
+    init {
+        require(maxRuns > 0) { "maxRuns must be positive, was $maxRuns" }
+    }
+
+    private val logger = LoggerFactory.getLogger(InMemoryPropositionRunLinkStore::class.java)
 
     private val lock = Any()
 
-    /** Run to the propositions it produced. A set, so a repeated link is one link. */
-    private val byRun = HashMap<ExtractionRunKey, MutableSet<String>>()
+    /**
+     * Run to the propositions it produced. A set, so a repeated link is one link. Insertion ordered
+     * by the run's first link, which is the order eviction walks.
+     */
+    private val byRun = LinkedHashMap<ExtractionRunKey, MutableSet<String>>()
+
+    /** Set once the store has grown past [maxRuns] with nothing left to evict, so the breach logs once. */
+    private var overCapacityWarned = false
 
     override fun link(key: ExtractionRunKey, propositionIds: Collection<String>): Int {
         val ids = propositionIds.distinct()
@@ -76,7 +99,33 @@ class InMemoryPropositionRunLinkStore(
             }
             val linked = byRun.getOrPut(key) { LinkedHashSet() }
             linked.addAll(ids)
+            evictOverflow()
             return ids.count { it in linked }
+        }
+    }
+
+    /**
+     * Drops the links of the runs linked earliest until the store holds links for at most [maxRuns]
+     * runs. Called from inside the monitor a link already holds. A run the run store still reports
+     * as `RUNNING` is skipped; if every candidate is running the breach is logged once and the store
+     * stays over the cap.
+     */
+    private fun evictOverflow() {
+        if (byRun.size <= maxRuns) return
+        val iterator = byRun.keys.iterator()
+        while (byRun.size > maxRuns && iterator.hasNext()) {
+            val candidate = iterator.next()
+            if (runStore.findRun(candidate)?.status?.isTerminal == false) continue
+            iterator.remove()
+        }
+        if (byRun.size > maxRuns && !overCapacityWarned) {
+            overCapacityWarned = true
+            logger.warn(
+                "InMemoryPropositionRunLinkStore holds links for {} runs, over its cap of {}, and " +
+                    "every one of them is still running, so none can be evicted",
+                byRun.size,
+                maxRuns,
+            )
         }
     }
 

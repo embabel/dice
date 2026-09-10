@@ -17,14 +17,18 @@ package com.embabel.dice.storage
 
 import com.embabel.dice.proposition.extraction.ExtractionRunKey
 import com.embabel.dice.proposition.extraction.ExtractionRunRef
+import com.embabel.dice.proposition.extraction.ExtractionRunStatus
+import com.embabel.dice.proposition.extraction.ExtractionRunTransition
 import com.embabel.dice.proposition.extraction.InMemoryExtractionRunStore
 import com.embabel.dice.proposition.extraction.InMemoryPropositionRunLinkStore
 import com.embabel.dice.proposition.extraction.PropositionRunLinkStore
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import java.time.Instant
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -36,10 +40,13 @@ import java.util.concurrent.TimeUnit
  */
 class InMemoryPropositionRunLinkStoreContractTest : AbstractPropositionRunLinkStoreContractTest() {
 
+    private lateinit var runs: InMemoryExtractionRunStore
     private lateinit var propositions: InMemoryPropositionRepository
 
-    override fun store(): PropositionRunLinkStore {
-        val runs = InMemoryExtractionRunStore()
+    override fun store(): PropositionRunLinkStore = store(maxRuns = 10_000)
+
+    private fun store(maxRuns: Int): InMemoryPropositionRunLinkStore {
+        runs = InMemoryExtractionRunStore()
         propositions = InMemoryPropositionRepository()
         listOf(tenant, neighbour).forEach { context ->
             fixtureRunIds.forEach { runs.save(run(it, context)) }
@@ -48,7 +55,55 @@ class InMemoryPropositionRunLinkStoreContractTest : AbstractPropositionRunLinkSt
             propositions.save(proposition(it, tenant))
         }
         neighbourPropositionIds.forEach { propositions.save(proposition(it, neighbour)) }
-        return InMemoryPropositionRunLinkStore(runs, propositions)
+        return InMemoryPropositionRunLinkStore(runs, propositions, maxRuns)
+    }
+
+    /**
+     * Past the cap the store forgets the links of the run it linked earliest, once that run has
+     * ended. A run still running keeps its links even when it is the oldest, so the cap is a bound
+     * on finished lineage, not a way to lose a run that is still being attributed to.
+     */
+    @Test
+    fun `past the cap the earliest linked ended run loses its links and a running one keeps them`() {
+        val store = store(maxRuns = 2)
+        val first = ExtractionRunKey(tenant, ExtractionRunRef(fixtureRunIds[0]))
+        val second = ExtractionRunKey(tenant, ExtractionRunRef(fixtureRunIds[1]))
+        val third = ExtractionRunKey(tenant, ExtractionRunRef("link-run-c"))
+        runs.save(run(third.runRef.runId, tenant))
+        val id = fixturePropositionIds.first()
+        store.link(first, listOf(id))
+        store.link(second, listOf(id))
+        runs.transition(first, completed())
+        runs.transition(second, completed())
+
+        store.link(third, listOf(id))
+
+        assertThat(store.propositionsOf(first, 10)).isEmpty()
+        assertThat(store.propositionsOf(second, 10)).containsExactly(id)
+        assertThat(store.propositionsOf(third, 10)).containsExactly(id)
+        assertThat(store.runsOf(tenant.value, id, 10).map { it.runId })
+            .containsExactly(fixtureRunIds[1], third.runRef.runId)
+    }
+
+    @Test
+    fun `a running run is never evicted for the cap`() {
+        val store = store(maxRuns = 1)
+        val first = ExtractionRunKey(tenant, ExtractionRunRef(fixtureRunIds[0]))
+        val second = ExtractionRunKey(tenant, ExtractionRunRef(fixtureRunIds[1]))
+        val id = fixturePropositionIds.first()
+        store.link(first, listOf(id))
+
+        store.link(second, listOf(id))
+
+        assertThat(store.propositionsOf(first, 10)).containsExactly(id)
+        assertThat(store.propositionsOf(second, 10)).containsExactly(id)
+    }
+
+    private fun completed() = ExtractionRunTransition(ExtractionRunStatus.COMPLETED, Instant.now())
+
+    @Test
+    fun `the cap must be positive`() {
+        assertThrows(IllegalArgumentException::class.java) { store(maxRuns = 0) }
     }
 
     override fun deleteProposition(id: String) {

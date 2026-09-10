@@ -1898,7 +1898,12 @@ and the consumer PRs that deliver it).
   **The in-memory link store prunes what it can see is gone** (PR #101 review). A read that finds a
   link whose proposition is gone altogether drops the id, and an emptied run
   entry with it, so the reference store's memory stops growing with deleted claims; re-saving the
-  same id does not revive the link. **Compatibility: additive.** Every read answers as before.
+  same id does not revive the link. Since nothing reads on a host's behalf, the store also takes a
+  `maxRuns` constructor parameter, defaulting to 10,000 and added last so `@JvmOverloads` keeps the
+  existing Java descriptor, and past it evicts the links of the runs linked earliest once the run
+  store says they have ended; a run still `RUNNING` keeps its links, and a breach with nothing to
+  evict logs once. **Compatibility: additive.** Every read answers as before, and every existing
+  constructor call keeps compiling.
 
   The property exists because of what registration writes. The schema catalog goes to Drivine's
   schema manager, which ensures it on startup, so turning the flag on adds three uniqueness
