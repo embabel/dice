@@ -48,6 +48,37 @@ class SourceRevisionContractTest {
     }
 
     @Test
+    fun `source revision ref accepts any value up to the bounds it owns, and refuses past them`() {
+        // docs/design/source-revisions.md: a revision is opaque to DICE — compared for exact
+        // equality, never parsed. The one limit on either half is SourceIdentityBounds, checked
+        // here, on the type that owns the value. Both ends of that boundary are pinned, because
+        // everything downstream — a revision query, run recording — accepts whatever this
+        // constructor accepts and adds no cap of its own, so this is the only place length can
+        // decide anything.
+        val atCeiling = SourceRevisionRef(
+            "u".repeat(SourceIdentityBounds.MAX_SOURCE_KEY_LENGTH),
+            "r".repeat(SourceIdentityBounds.MAX_SOURCE_REVISION_LENGTH),
+        )
+
+        assertThat(atCeiling.sourceKey).hasSize(SourceIdentityBounds.MAX_SOURCE_KEY_LENGTH)
+        assertThat(atCeiling.sourceRevision).hasSize(SourceIdentityBounds.MAX_SOURCE_REVISION_LENGTH)
+
+        assertThatIllegalArgumentException()
+            .isThrownBy {
+                SourceRevisionRef("u".repeat(SourceIdentityBounds.MAX_SOURCE_KEY_LENGTH + 1), "r1")
+            }
+            .withMessageContaining("source key")
+        assertThatIllegalArgumentException()
+            .isThrownBy {
+                SourceRevisionRef(
+                    locator.key(),
+                    "r".repeat(SourceIdentityBounds.MAX_SOURCE_REVISION_LENGTH + 1),
+                )
+            }
+            .withMessageContaining("source revision")
+    }
+
+    @Test
     fun `provenance revision participates in equality and deduplication`() {
         val revisionless = ProvenanceEntry(locator = locator)
         val sameRevisionless = ProvenanceEntry(locator = locator)

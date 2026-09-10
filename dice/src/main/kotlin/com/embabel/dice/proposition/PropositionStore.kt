@@ -112,6 +112,30 @@ interface PropositionStore {
     }
 
     /**
+     * Save multiple propositions and report which stored proposition each one landed on.
+     *
+     * [save] has always returned the stored proposition, and on a deduplicating backend that can be
+     * a different proposition with a different id from the one passed in. [saveAll] returns `Unit`
+     * and drops all of it, so a caller doing a batch save had no way to learn a canonical id short
+     * of saving one at a time. This is that batch call with its answer kept.
+     *
+     * Same writes, same order, same backend behaviour as [saveAll] — only the return value differs.
+     * [saveAll] keeps its `Unit` descriptor rather than growing one, because changing it would break
+     * every implementation and every compiled caller.
+     *
+     * A backend that overrides [saveAll] for a batched round trip should override this too, or it
+     * loses the batching here: the default goes through [save] one at a time, never through
+     * [saveAll].
+     *
+     * @param propositions The propositions to persist, in order.
+     * @return The stored proposition for each input, and the input-id to stored-id mapping.
+     */
+    fun saveAllReturningCanonical(propositions: Collection<Proposition>): PropositionPersistenceResult {
+        val inputs = propositions.toList()
+        return PropositionPersistenceResult.of(inputs, inputs.map { save(it) })
+    }
+
+    /**
      * Find a proposition by its ID.
      */
     fun findById(id: String): Proposition?

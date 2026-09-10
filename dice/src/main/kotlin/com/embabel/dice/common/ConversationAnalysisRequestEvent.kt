@@ -20,10 +20,23 @@ import com.embabel.chat.Conversation
 import com.embabel.chat.Message
 import com.embabel.dice.incremental.ConversationSource
 import com.embabel.dice.incremental.IncrementalSource
+import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef
+import com.embabel.dice.proposition.extraction.ExtractionRunRef
+import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
 
 /**
  * Event published after a conversation exchange to trigger async proposition extraction.
  * Used by any application integrating the DICE memory pipeline.
+ *
+ * The three-argument constructor is the one that has always existed and carries no
+ * provenance. A publisher that has a typed source for the conversation — a thread in a
+ * chat system, a transcript file — uses the longer constructor to say so, and the same
+ * constructor takes an extraction content profile and a run reference.
+ *
+ * [sourceLocator] is nullable there because the four things are independent: a publisher can
+ * name a profile for a conversation it has no typed source for. Only the revision is coupled,
+ * and to the locator alone — it names a version of that source, so it needs one.
  */
 class ConversationAnalysisRequestEvent(
     source: Any,
@@ -31,6 +44,38 @@ class ConversationAnalysisRequestEvent(
     @JvmField val conversation: Conversation,
 ) : SourceAnalysisRequestEvent(source, user) {
 
+    private var eventSourceLocator: SourceLocator? = null
+
+    private var eventSourceRevision: SourceRevisionRef? = null
+
+    private var eventProfile: ExtractionContentProfileRef? = null
+
+    private var eventCurrentRun: ExtractionRunRef? = null
+
+    @JvmOverloads
+    constructor(
+        source: Any,
+        user: NamedEntity,
+        conversation: Conversation,
+        sourceLocator: SourceLocator?,
+        sourceRevision: SourceRevisionRef? = null,
+        profile: ExtractionContentProfileRef? = null,
+        currentRun: ExtractionRunRef? = null,
+    ) : this(source, user, conversation) {
+        eventSourceLocator = sourceLocator
+        eventSourceRevision = sourceRevision
+        eventProfile = profile
+        eventCurrentRun = currentRun
+    }
+
     override fun incrementalSource(): IncrementalSource<Message> =
         ConversationSource(conversation)
+
+    override fun sourceLocator(): SourceLocator? = eventSourceLocator
+
+    override fun sourceRevision(): SourceRevisionRef? = eventSourceRevision
+
+    override fun profile(): ExtractionContentProfileRef? = eventProfile
+
+    override fun currentRun(): ExtractionRunRef? = eventCurrentRun
 }

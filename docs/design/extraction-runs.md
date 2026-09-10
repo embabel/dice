@@ -1,0 +1,1296 @@
+# Extraction runs: what produced a claim, recorded without holding what it read
+
+An extraction run is the durable record of one execution: which profile, prompt, schema and
+metamodel versions were in force, which revisions of which sources it read, what it asked a
+model for, what the provider actually reported back, how far it got, and what went wrong. It
+holds none of the material. No prompts, no source text, no responses, no user or session
+objects, no provider SDK payloads, no extension maps.
+
+A run is the producer-side record of an extraction. A host that keeps its own audit of what
+happened in a session, an episode audit say, is looking at the same event from the consumer side:
+what ran, with what, and what came out. DICE does not model the host's episode; it writes the run
+it can know about and leaves `profile` and the run lineage as the join points a host uses to fold
+runs into its own audit.
+
+This note covers DICE #67's value model, its store contract, the Drivine implementation, and the
+proposition-to-run relation — the types in `com.embabel.dice.proposition.extraction`, the lifecycle
+state machine that governs a run's status, the reads a store owes, and how a stored claim gets
+traced back to the runs that produced it. The run coordinator and its REST exposure are a separate
+slice.
+
+## What a run holds
+
+```mermaid
+flowchart TD
+    RUN["ExtractionRun<br/><i>keyed by (ContextId, ExtractionRunRef)</i>"]
+    RUN --> LIN["ExtractionRunLineage<br/>run, root, parent, supersedes, pass"]
+    RUN --> PROF["ExtractionContentProfileRef<br/><i>#66</i>"]
+    RUN --> SRC["List&lt;SourceRevisionRef&gt;<br/><i>#64, ordered</i>"]
+    RUN --> FP["ExtractionRunFingerprints<br/>prompt, schema, metamodel"]
+    RUN --> RT["ExtractionRuntimeIdentity<br/>extractor, host, runtime"]
+    RUN --> REQ["ExtractionRequestedModelConfig<br/><i>what was asked for</i>"]
+    RUN --> SUBJ["ExtractionRunSubjectRefs<br/>actor, request, session,<br/>personalization, deployment"]
+    RUN --> EXP["ExtractionExperimentRef<br/>ExtractionCohortRef"]
+    RUN --> ST["ExtractionRunStatus<br/>ExtractionReplayFidelity<br/>ExtractionRunCounts"]
+    RUN --> INV["List&lt;ExtractionInvocationRecord&gt;<br/><i>what was observed</i>"]
+    RUN --> FAIL["List&lt;ExtractionFailure&gt;<br/><i>bounded, closed vocabulary</i>"]
+    FAIL --> FV["ExtractionFailureCode<br/>ExtractionFailureStage<br/>ExtractionFailureMeasure"]
+    INV --> IID["ExtractionInvocationId<br/>plan ordinal + attempt"]
+    INV --> USE["ExtractionModelUsage"]
+    INV --> PRF["ExtractionProviderResponseFacts"]
+    SUBJ --> OP["ExtractionOpaqueRef<br/><i>bounded pseudonymous token</i>"]
+    EXP --> OP
+```
+
+`ExtractionRunKey` is the tenant-qualified identity: a run id is host-minted and DICE never
+assumes it is unique across tenants, so the `ContextId` travels with it. Two tenants that both
+mint `run-1` have two runs.
+
+## How a run joins to the metamodel
+
+One field carries the join. `ExtractionRunFingerprints.metamodelFingerprint` holds the declared
+schema's content hash — the `contentHash` a `MetamodelVersion` fingerprints itself with, which
+`docs/design/metamodel-versioning.md` on the metamodel stack describes. DICE compares it and stores
+it and reads nothing out of it, the same as the other two fingerprints.
+
+The extraction coordinator writes it, and that coordinator is a later slice. It resolves the hash
+from the host's `DeclaredSchemaSource` and stamps it once per run. Nothing in this slice produces
+one, so a run built today carries whatever its caller passed.
+
+The fingerprint says what the whole run ran under. A proposition's schema attribution is answered
+through the run that produced it (`PRODUCED_BY_RUN`, the proposition-to-run relation a later slice
+adds); the run record carries the declared schema's content hash, resolved by the extraction
+coordinator from the host's `DeclaredSchemaSource`. That is why no per-proposition schema stamp
+exists. A per-proposition denormalized copy is a coordinator concern for a slice whose reads demand
+it.
+
+## Requested and observed are different types
+
+The single most useful thing a run can tell an incident is which of these two it is looking at:
+the temperature the host asked for, or the temperature the provider used. A service can clamp a
+temperature, ignore a top-k, cap max tokens below what was asked, and route to a different
+checkpoint under a stable model name. None of that is visible to DICE, so a model that let one
+field mean both would be inviting a false answer to the only question worth asking.
+
+So the split is structural, not conventional:
+
+| | Type | Lives on | Filled in by |
+| --- | --- | --- | --- |
+| Requested | `ExtractionRequestedModelConfig` | the run header | the host, before any call |
+| Observed | `ExtractionInvocationRecord`, with `ExtractionModelUsage` and `ExtractionProviderResponseFacts` | one per attempt | whatever came back |
+
+An invocation record has no field of the requested type, and the two share no property name — the
+requested one is `requestedModel`, the reported one is `responseModel`. Both are asserted by test
+rather than left to review: a mapper that copied one into the other would have to be written on
+purpose.
+
+The corollary is that an absent observed field stays absent. A run that asked for `model-large`
+and got no model name back records a null `responseModel`, because telling "the provider did not
+say" apart from "the provider said what we asked for" is the whole point of the field.
+
+`ExtractionRequestedModelConfig` carries portable fields only: model and role, temperature, top-p,
+top-k, max tokens, the two penalties, a thinking fingerprint, a selection fingerprint, and a
+timeout. There is no provider extension object, no settings blob, no free map. That is where
+credentials, system prompts and whole SDK request bodies get persisted by accident. A
+provider-specific knob a host cares about is folded into one of the fingerprints — an opaque
+digest DICE compares and never reads.
+
+The six hyperparameters implement the framework's own `LlmHyperparameters`, and `from(LlmOptions)`
+builds the record straight off the options a host handed the model.
+
+Ranges are checked where every provider agrees and left open where they do not. Temperature has no
+upper bound because services differ on whether it stops at 1 or 2, and the penalties are only
+required to be real numbers for the same reason. Rejecting a legitimate `2.0` would be DICE
+deciding for a provider it never talks to.
+
+`ExtractionModelUsage.from(usage)` converts from the framework's own `Usage`, mapping its three
+counts across and leaving `cachedInputTokens` and `reasoningTokens` null, because `Usage` does not
+carry them and the record stays its own type, not a `Usage` subclass.
+
+## Invocation identity comes from the plan, never from completion
+
+A run makes zero, one, or many model calls — chunking splits work, retries repeat it. Every
+record needs an identity that a store can use as a deterministic child key, so that a retried
+write lands on its own row and a replayed write upserts in place.
+
+The identity is allocated when the call plan is laid out, before the first request goes out:
+
+```mermaid
+flowchart LR
+    P["plan(4)"] --> I0["id 0/1"] & I1["id 1/1"] & I2["id 2/1"] & I3["id 3/1"]
+    I2 -->|"returns first"| R2["record 2/1 SUCCEEDED"]
+    I0 -->|"returns second"| R0["record 0/1 SUCCEEDED"]
+    I1 -->|"fails"| F1["record 1/1 FAILED"]
+    F1 -->|"retry()"| RT["record 1/2"]
+```
+
+`invocationIndex` is the ordinal in the plan. `attempt` counts tries at that same call, from 1.
+`retry()` carries the index forward, increments the attempt, and resets every observed field,
+because those observations belonged to the attempt that just failed.
+
+Timing on a record is an observation like any other and may be absent even on a terminal outcome. A
+`SUCCEEDED` attempt with no `startedAt` means the clock was not recorded, not that the call did not
+run; requiring timing would push callers to invent a duration, which is worse evidence than none.
+The two checks a record can fail on its own terms do apply: a finish cannot precede its start, and
+an `IN_FLIGHT` attempt has not finished.
+
+Completion order writes into identities that already exist. There is no factory that takes a
+position in a result list, and a run holds its records in plan order however they were handed in —
+arrival order is not a fact about the run, and `equals` compares the list. A run rejects two records
+with the same `(invocationIndex, attempt)`.
+
+## The root run reference, and why it is denormalized
+
+`ExtractionRunLineage` carries four references: the run, its parent, what it supersedes, and its
+root. Parent and supersession are separate axes — a parent is the run this one continues from, a
+superseded run is one this one replaces — and a run can have one of each, both, or neither.
+
+The root is redundant with the parent chain, and it is stored anyway. OpenLineage's
+`ParentRunFacet` does the same: it carries an optional `root` alongside the immediate parent so
+consumers do not have to walk the chain a hop at a time. Deep pass-and-retry chains are exactly
+where walking hurts, and the audit projection reads lineage by run.
+
+A denormalized field is only worth having if it cannot drift, so it is fixed at mint:
+
+- a run with no parent is its own root;
+- a run with a parent takes its parent's root, and therefore is not its own root;
+- a run is neither its own parent nor its own supersession.
+
+`ExtractionRunLineage.root(...)` and `.childOf(...)` do the arithmetic, and `childOf` defaults the
+pass index to the parent's plus one.
+
+**The constructor no longer takes a root a caller could get wrong.** A PR #95 review comment
+pointed out that the old constructor took `rootRunRef` as an independent parameter: any non-self
+value passed, whether or not it named the actual parent's root, and nothing checked it against the
+parent. The constructor is now private and `copy()` follows it — `@ConsistentCopyVisibility` on
+the class — so `root()` and `childOf()` are the only way in: `root()` sets the root to the run's
+own ref, `childOf()` derives it from the actual parent lineage it is handed.
+
+That closes the public API and stops there. Kotlin reflection can still call the private
+constructor directly and hand it a root that contradicts the parent it names — the same route a
+Jackson deserializer resolving a data class's primary constructor would take. Nothing serializes an
+`ExtractionRunLineage` today, so this is a residual for whoever builds that wiring next. It is
+written down here so it stays known: a future store slice reconstructing a lineage from stored
+fields has to walk through `childOf()` with the parent's own lineage in hand; re-assembling
+`rootRunRef` and `parentRunRef` from separate columns is the shortcut that closes. `ExtractionRunLineageTest`
+pins both halves — that the public surface is closed, and that the reflective call still succeeds
+and produces an inconsistent root.
+
+What a value type cannot check is a cycle of length two or more: that needs the other runs, so
+bounded cycle-safe traversal belongs to the store that walks the chains.
+
+## The privacy contract
+
+Five references say whose work a run was — actor, request, session, personalization, deployment —
+and two more group runs for comparison: experiment and cohort. All seven are the same kind of
+thing, `ExtractionOpaqueRef`: a bounded, host-minted token that DICE compares, stores, and never
+parses.
+
+What a host takes on when it mints one:
+
+- it is a pseudonym, not an email address, a username, a phone number, a customer number or a name;
+- it is not dereferenceable into anything sensitive — no URL, no signed link, no bearer token, no
+  API key, no cookie value;
+- it carries no authorization, and DICE never presents it to anything;
+- it is stable enough to group by and cheap enough to rotate.
+
+**What the type enforces, and what it cannot.** Construction bounds the length and restricts the
+characters to `A-Z a-z 0-9 . _ : ~ -`. That excludes whitespace, control characters, `@`, `/` and
+`\`, so an email address, a URL, a file path, a JSON fragment and a human name are all rejected
+outright — the common shapes of a leaked identifier cannot be stored at all. It cannot tell a
+pseudonym from a username: `jdunnam` and `55512345` both pass. The last mile is the host's, and
+the KDoc says so in the same words rather than implying a guarantee the code does not make.
+
+Two smaller things fall out of the same reasoning. A token's `toString` shows the first eight
+characters, so a reference does not spread through logs in full. And a validation message names the
+field and the length and never quotes the value — an `IllegalArgumentException` propagates into
+logs, and the value that failed validation is exactly the one nobody vouched for.
+
+### Failures speak a closed vocabulary
+
+A failure record is a classified code, an optional stage, an optional provider status, an optional
+number with its unit, a timestamp, and the attempt it belongs to. The run holds at most 64 of them.
+There is no text field anywhere in that list.
+
+Failure records are where source text leaks. A provider quotes the prompt back in its exception
+message; a decode error carries the fragment it choked on. Both land in a stored run header the
+moment someone writes `e.message` into a text field. A #95 review comment found that the earlier
+shape — a code plus a bounded, whitespace-flattened `detail` string — closed nothing: truncating a
+prompt still stores a prompt, and a credential, an email address or a paragraph of protected text
+all fit in 512 characters. The vocabulary closes it at construction. `ExtractionFailure` has no
+`String` parameter, property or field, and no factory that takes a `Throwable`, so free text has no
+route into durable storage through this type.
+
+What the vocabulary carries:
+
+| Field | Type | Answers |
+| --- | --- | --- |
+| `code` | `ExtractionFailureCode` (11 values) | what went wrong |
+| `stage` | `ExtractionFailureStage` (10 values) | where in the run's work |
+| `providerStatus` | `Int?`, 100..599 | what the provider returned |
+| `measure` | `ExtractionFailureMeasure` | one "how much", with its unit |
+| `invocation` | `ExtractionInvocationId?` | which call and which attempt |
+
+`ExtractionFailureMeasure` pairs a number with an `ExtractionFailureQuantity` naming both the thing
+and its unit — `TOKEN_COUNT`, `ELAPSED_MILLIS`, `RETRY_AFTER_SECONDS`. A bare number on a failure
+record is a unit-mismatch bug waiting to happen, and pairing them in a type means 4096 can never be
+recorded without saying it is tokens. One measure per record: a failure answers one "how much".
+
+"Chunk 3 of 12 exceeded the token budget" survives the change, said in the vocabulary — the chunk
+is `invocation.invocationIndex`, which the call plan already allocated, and the budget is a
+`TOKEN_COUNT` measure. What is lost is the sentence, which is the part nobody could vouch for.
+
+A host that wants the exception message, the response body, or the fragment that failed to parse
+keeps that material itself. `ProtectedContentRef` is the written contract for the reference such a
+host passes around; see below.
+
+The tests match what is enforced. `ExtractionFailureVocabularyTest` takes four kinds of text a
+reviewer named — raw source text, a prompt fragment, an email address, and two credential shapes a
+scanner recognises — and asserts no constructor, factory or method on the type will take any of
+them, that no type a failure reaches has a text field, and that every value a fully populated
+failure holds is an enum, a number or an instant. The privacy suite still feeds a fixture with
+known source text (a person, an organisation, an email address, a case number) through a
+provider-shaped exception that quotes it, and asserts a full field-by-field dump of the populated
+run contains none of its fragments, no address shape, no link shape, and no long digit run. The
+dump is reflective, so a field the summary omits is still covered — and
+`run.toString()` gets its own check that it shows identity, state and sizes and none of the tokens,
+digests or failure fields.
+
+### The protected reference is a specification
+
+`ProtectedContentRef` is an interface with two members — an opaque `handle` and an `expiresAt` —
+and no implementation anywhere in DICE. It is the written contract for a host that keeps detailed
+failure material of its own.
+
+The host owns all three jobs. The **writer** is host code, because DICE never sees the material.
+The **reader** is host code, because resolving a handle is a host operation under the host's access
+rules; the handle names a row in the host's vault and grants no access to it, so a signed URL, a
+bearer token or a decryption key breaks the contract. **Retention** is the host's, and `expiresAt`
+is where the host writes it down — nothing in DICE sweeps, deletes, or checks it, and an erasure
+request reaches the material through the host's vault.
+
+A type of this name shipped in an earlier #98 draft as a stored value and was deleted during
+review, because nothing attached it to a run and DICE had no writer, no reader and no retention
+behaviour behind it. It returns as specification only, which is what it always was. The KDoc
+carries a worked example: a host minting a handle, writing an exception message into its own vault
+under it for ninety days, and running its own nightly retention job. A test asserts the interface
+is abstract and that no compiled DICE class mentions the type, so "zero implementations, zero
+production references" is a checked property.
+
+## Replay is approximate, and named that way
+
+`ExtractionReplayFidelity` has three values: `NONE`, `METADATA`, `APPROXIMATE`. The strongest one
+is still approximate, and `strongest()` returns it so the honesty of the claim survives someone
+appending a value later.
+
+There is no value meaning "run this again and get the same output". A hosted model can change
+weights, quantization, routing, safety filtering and system instructions under a stable model
+name, none of it visible to DICE. Temperature zero narrows the distribution and does not remove
+batching and floating-point nondeterminism. The field says what the *record* supports — nothing
+recorded, identities and fingerprints only, or those plus the requested configuration — and makes
+no promise about the provider. Host replay policy stays the host's.
+
+## The lifecycle state machine
+
+`ExtractionRunStatus` is `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`. A run starts running and
+ends in one of the other three. There are no other edges: a terminal run never re-opens, and it
+never moves from one terminal state to another.
+
+```mermaid
+stateDiagram-v2
+    [*] --> RUNNING: save()
+    RUNNING --> RUNNING: save() — header fields
+    RUNNING --> RUNNING: recordInvocation() — invocation rows
+    RUNNING --> COMPLETED: transition(completed) — after persistence
+    RUNNING --> FAILED: transition(failed)
+    RUNNING --> CANCELLED: transition(cancelled)
+    COMPLETED --> COMPLETED: replay, same fingerprint
+    FAILED --> FAILED: replay, same fingerprint
+    CANCELLED --> CANCELLED: replay, same fingerprint
+    COMPLETED --> [*]
+    FAILED --> [*]
+    CANCELLED --> [*]
+```
+
+The two write methods split along that line, and the split is what makes the `COMPLETED` rule
+enforceable rather than advisory. `ExtractionRunStore.save` rejects any status other than `RUNNING`,
+so a terminal status cannot enter through the door that also accepts new keys.
+`ExtractionRunStore.transition` is the only writer of a terminal status, and it is compare-and-set:
+it moves a run out of `RUNNING` or it does nothing.
+
+`ExtractionRun` itself still checks only that a finish does not precede a start. The value type does
+not half-encode the machine; a terminal status with no finish time is constructible there and is
+rejected here, where the rule is defined once.
+
+### What `COMPLETED` asserts, and who may write it
+
+Every product the run's request called for is either durably persisted or terminally disposed.
+
+The store cannot check that — it holds run headers, not products. So it does the next best thing and
+makes the claim reachable through one narrow call whose precondition is written down: on the legacy
+path the coordinator calls it once `persistAndProject` has returned, and on the #68 commit path the
+commit transaction calls it, and only the commit whose cumulative outcomes bring every requested
+product to persisted or terminally disposed.
+
+Three consequences follow, and each is a test:
+
+- a run whose persistence never finished stays `RUNNING` and is retryable under compare-and-set;
+- a commit that persists some products and leaves others outstanding leaves the run `RUNNING`, so a
+  terminal run never has re-committable products behind it;
+- a run with zero products completes vacuously — there was nothing to persist, so the coverage claim
+  holds.
+
+`FAILED` and `CANCELLED` carry no such precondition. A run that could not finish, or that was
+stopped, terminalizes whether or not anything was persisted. `CANCELLED` is also the abandonment
+path for a partially successful run nobody intends to finish: its outstanding products stay
+outstanding behind it, and recovery goes through a new run linked by parent or superseded reference.
+
+A `FAILED` transition need not carry a failure. A run can stop on something the coordinator
+classifies at the run level with no per-attempt detail, and requiring the pairing would make an
+honest "we know it failed and not why" unrecordable. A `COMPLETED` transition may carry failures for
+the same reason from the other side: a run that retried past a failed attempt and finished still
+happened.
+
+### Deriving the terminal run
+
+`ExtractionRun` publishes no `withStatus`, no `finished()` and no `copy`.
+`ExtractionRunTransition.applyTo` is the only place a terminal run is derived. Other code re-lists
+the run's eighteen constructor arguments — `InMemoryExtractionRunStore` does it to add a child
+record or move the header version — but nothing else produces a run in a terminal state.
+
+A transition carries exactly the fields the lifecycle owns: the terminal status, the finish instant,
+and optionally the final counts and failures. Everything else is carried across unchanged, including
+the header version, and a test asserts that component by component. The alternative — public
+mutators on the run — would put the state machine in two places and let anything in the codebase
+manufacture a `COMPLETED` run without going near a store. `ExtractionRunLifecycleTest` pins
+`applyTo` directly, in `dice`; the cross-backend suite pins the same promise through a store's
+`transition()`, which is what a backend that maps rows in and out of its own storage actually has to
+get right — `a terminal write through the store preserves every field it does not own, header
+version included` and `null counts and failures on a transition keep what the stored run held, and
+values replace them`.
+
+`counts` and `failures` are nullable and follow one rule: null keeps what the run recorded, a value
+replaces it. An empty failure list is a value. The distinction decides what the terminal run holds;
+it stays out of the fingerprint, which names the transition and leaves the outcome it delivers to the
+run. See
+["The digest covers the transition's identity"](#the-digest-covers-the-transitions-identity-and-the-outcome-rides-beside-it)
+below.
+
+Invocation records do not travel on a transition. They arrive through `recordInvocation` while the
+run is still running, keyed by `(invocationIndex, attempt)`, and a terminal run takes no more —
+a finished run's invocation list is part of how it finished.
+
+### `recordInvocation` is the only door onto invocation state
+
+`save` writes header fields only. It never creates, updates or deletes an invocation row, whatever
+`ExtractionRun.invocations` holds on the run it is handed — that field is not written anywhere by
+`save`, and it plays no part in what `save` accepts, rejects, or replays as a no-op. Every
+invocation write goes through `recordInvocation`, keyed by the record's own `(invocationIndex,
+attempt)`, insert-or-compare on that key alone.
+
+This was not the original design. An earlier version had `save` merge the invocation records it was
+handed into the ones already stored, by identity, so a header update built on a run read before an
+attempt was recorded would not silently drop that attempt. See
+["Why the store uses compare-and-set" below](#why-the-store-uses-compare-and-set) for why that
+shared-generation merge produced exactly the defect it was meant to prevent, and why the fix gives
+invocation rows their own door and their own key, with compare-and-set scoped to that key alone.
+
+### Invocation records are locked once terminal
+
+A record for an id already stored, and still `IN_FLIGHT`, updates in place — that is how dispatch
+details and, eventually, the terminal outcome fill in as an attempt runs. Once the stored record is
+terminal it is locked: an incoming record for that id is accepted only when it equals the stored
+one exactly (an identical retry replays as a no-op), and every other write for that id is rejected
+with `ExtractionRunConflictException`. A different outcome is the
+case the review comment named — a delayed `IN_FLIGHT` message arriving after the attempt already
+succeeded or failed, from a dispatcher's own retry timer firing late or two writers racing on the
+same attempt, which would otherwise put a finished attempt back to outstanding and erase the record
+of how it ended. The same-outcome case is narrower and easy to miss: a delayed write that repeats
+the correct terminal outcome but carries different timing, usage or provider facts than the write
+that actually landed first — accepting it as an in-place update would erase those facts just as
+surely, under an outcome that never changed. Locking the whole record closes both cases; a lock
+scoped to the outcome field alone would still miss the second. This is the same category of harm
+`transition` refuses at the run level: a late or duplicated writer silently rewriting how something
+ended. Because `save` never reaches this state, a stale header snapshot cannot be the write that
+puts a terminal record back to outstanding or erases its facts — only another `recordInvocation`
+call can, and the lock decides it the same way regardless of how old the caller's own copy of the
+run is.
+
+A record accepted as an identical replay lands back at the position the stored record already held. `ExtractionRun.equals` compares `invocations` by position, so an
+identical resend that moved to the end would read as a change even though nothing about the run
+actually differs, which would either bump a header save's version on a no-op or turn a stale but
+otherwise identical resend into a rejection the store promises everywhere else not to raise. Only a
+genuinely new id is appended.
+
+In the cross-backend suite: `a delayed IN_FLIGHT write does not replace a terminal record for the
+same attempt`, `a same-outcome write that differs from a terminal record is rejected too`,
+`repeating the same terminal invocation write is idempotent`, and `a terminal record's identical
+replay through recordInvocation lands back at its stored position` pin the lock and the
+position-preserving replace. `an in-flight record updates in place, and a terminal one accepts only
+an identical replay`, in `dice`'s own `ExtractionRunStoreReadsTest`, pins the
+retry-lands-on-its-own-record half alongside the lock. The in-place half of the rule — an
+identical replay is one shape of accepted write, and a genuinely changed `IN_FLIGHT` write is
+another, and a reader sees its new content afterward — is pinned by `a changed IN_FLIGHT record
+updates in place through recordInvocation, clearing an omitted fact`, which names a fact on the
+first write that the second write omits and reads the result back through `invocationsOf`, a read
+against the store's own storage, independent of the object the write call happens to return. A
+field-merging backend keeps the omitted fact; only whole-record replacement clears it, and only
+that independent read can tell the two apart.
+
+`a header save embedding a brand-new invocation never creates the row`, `a header save embedding a
+changed invocation never updates the stored row` and `a header save embedding an empty invocation
+list never deletes a stored row` pin the three shapes of "`save` does not touch this state" — a save
+cannot originate a row, cannot update one, and cannot remove one, however its own `invocations`
+field is populated. `a stale header save carrying an old invocation snapshot leaves the newer
+stored invocation intact` is the case the finding named directly: a caller's header save, built on
+a run read before a later `recordInvocation` call landed, still names the version currently stored
+— `recordInvocation` never moves it — and is accepted as a genuine header change, carrying a stale
+invocation snapshot along for a ride the store no longer takes. `two concurrent IN_FLIGHT writers
+on different attempts both land, losing neither` is the concurrent form of the same guarantee: two
+attempts contend for nothing, because each is decided on its own key and neither touches a shared
+header generation.
+
+### Idempotency: insert-or-compare, never overwrite
+
+Every terminal write carries a fingerprint of its identity. A store records the fingerprint of the
+write that terminalized a run, and a second write against that run is decided by comparison:
+
+| Second write | Result |
+| --- | --- |
+| same fingerprint | replays as success, `REPLAYED`, changes nothing |
+| different fingerprint | `ExtractionRunConflictException` |
+| any `save` | `ExtractionRunConflictException` — a terminal run is not re-openable |
+
+DICE's existing `MERGE … SET` stores upsert by overwriting. That is safe for a record still being
+written and wrong for one that is finished: it would let a late or duplicated writer silently
+rewrite how a run ended, and the audit would carry the last write rather than the true one. No
+method on this contract overwrites a terminal run.
+
+The fingerprint covers the terminal write and not the run. A coordinator that recorded another
+attempt between a terminal write it never saw the answer to and its retry made the same terminal
+write both times, and folding the run's invocation list in would turn that correct retry into a
+rejected conflict.
+
+#### The digest covers the transition's identity, and the outcome rides beside it
+
+Two fields reach the digest: the terminal status, and the finish time. Two writes that agree on both
+are the same terminal write.
+
+The counts and failures a transition carries stay outside it. They are the outcome a run reports,
+and a run's outcome is written once — the first accepted terminal write is what the audit keeps, and
+a retry naming the same status and finish time replays against it whatever numbers it carries. A
+coordinator holding better numbers than the ones that landed records them before it ends the run;
+after the run has ended there is nothing left to correct, which is the same promise `transition`
+makes about everything else on a finished run.
+
+This is what keeps the persisted format still. DICE #69 adds typed product outcomes to what a
+terminal write reports, and every field it adds lands in the counts-and-failures half. None of them
+reaches these bytes, so no digest recorded beside a run stops matching and no migration follows #69
+into this store.
+
+A worked contrast, since the two halves are easy to conflate. `counts = null` means keep what the
+run recorded and `counts = <value>` means replace it, and those really are different claims — the
+terminal run they produce holds different numbers. What they are not is different *writes*: both
+name the same status and the same finish time, so whichever arrives second replays. The cross-backend
+suite pins both halves in `keeping counts and replacing them are different claims on the run that
+lands, and the digest sees neither`, and pins the outcome-once rule in `a retry carrying different
+counts and failures replays, and the first write's outcome stands`.
+
+An earlier version of this rule folded counts and failures into the digest. It made every difference
+in the payload an incompatible rewrite, which reads as safe and buys nothing an audit wants: the
+first write had already landed and the second was rejected either way, so the only thing the wider
+digest changed was whether the caller learned about it as a conflict or as a replay. What it cost
+was the persisted format, which moved whenever the outcome payload grew a field.
+
+`TERMINAL_VERSION` moved from `xrun-terminal:v1` to `xrun-terminal:v2` when the payload narrowed.
+The tag is part of the hashed input, so a digest recorded under `v1` matches nothing written now.
+Nothing durable holds one — no store outside the in-memory reference has written a run yet — so the
+bump costs nothing and the version is what would have made the migration statable if it had.
+
+`save` is the one method that updates in place, and only on a run that is still running. Even there
+it is fenced four ways:
+
+- it rejects any status but `RUNNING`, so a terminal status cannot enter through it;
+- it rejects a `RUNNING` run carrying a `finishedAt`. `ExtractionRun` deliberately leaves
+  status-and-timing pairing to this state machine, and a record that reads as running and as
+  finished at once makes every page and audit meeting it guess which;
+- it rejects a save disagreeing with the stored lineage or start time — a different run wearing the
+  same id. The tenant cannot disagree, since it is half of the key;
+- it compares `ExtractionRun.version` before it accepts anything else about the header. A save
+  names the version it was read at; the store accepts the write only when that matches the version
+  currently stored, and rejects it with `ExtractionRunConflictException` otherwise, naming both
+  versions so the caller knows to read the run again and rebuild its update. A save whose header
+  content is identical to what is already stored replays as a no-op regardless of the version it
+  names — `a save whose content already matches what is stored replays as a no-op at a stale
+  version` pins that — the same idempotent-retry courtesy `transition` gives a terminal write. The
+  version names the CAS generation the header is currently at: a run that has never been saved, and
+  the run its first accepted save produces, both carry `0`, because
+  that first save inserts the row and there is no earlier generation for it to raise past, and a
+  first save naming any other value is rejected before it reaches the store — `a first save must
+  name version 0` pins the rejection and confirms nothing was written. Each later save that actually
+  changes the header raises the generation by one; a no-op replay is accepted too, and leaves the
+  generation exactly where it stood — `a save whose content already matches what is stored replays
+  as a no-op at a stale version` pins that half specifically. `recordInvocation` never moves it, so a
+  save built on the header as it stood before an attempt was recorded still names the current
+  version and is accepted; the attempt survives because save does not touch invocation rows at all.
+  `recording an invocation does not move the header version` pins that in the cross-backend suite.
+
+`save` leaves invocation records alone entirely: it does not read or write invocation rows, so it
+cannot delete one, put one back to `IN_FLIGHT`, create one, or update one. Records live under
+`recordInvocation`'s own key, with their own lifecycle, entirely independent of the header's
+version; see ["`recordInvocation` is the only door onto invocation
+state"](#recordinvocation-is-the-only-door-onto-invocation-state) above for what that closes.
+
+#### Why the store uses compare-and-set
+
+The first version of this rule tried the other approach: keep the version field off `ExtractionRun`
+entirely and merge two writers' headers field by field instead, letting each save keep whatever
+part of the header the other did not touch. It looked smaller, and it was wrong in three
+independent ways that a review round found:
+
+- **Counts cannot be merged by taking the larger reading.** Two writers can each account for
+  disjoint work — one processed five items, the other seven, and the run really got through twelve
+  — and there is no way for the store to tell that case apart from one writer's stale re-report of
+  work the other writer's higher count already covers. Taking the larger number is correct in the
+  second case and silently drops five items' worth of work in the first. Rejecting the stale write
+  and letting the caller re-read and add its own new count to what is now stored gets the right
+  total in both cases, because the caller — not the store — knows which one it is in.
+- **A union of source revisions loses the order they were read in**, which is the field's own
+  documented meaning. Appending a slower writer's unseen revisions after the ones already stored can
+  put a source that was read first after one that was read later, if the first writer saved last.
+- **A merge assembled from two different writers' saves is a header no writer ever held.** A
+  fingerprint from one save could sit beside a replay fidelity from another that fingerprint does
+  not support, misstating how much of the run could be set up again from what it recorded.
+
+Compare-and-set does not have any of these problems, because it never combines two writers' data —
+either a save is building on the freshest header, and it replaces the whole thing, or it is stale
+and is rejected outright. `a stale header save is rejected, and the header it read is left in
+place` and `an accepted header save replaces the whole header at once` are in the cross-backend
+suite.
+
+**A second version of this rule kept the version field but still had `save` merge invocation
+records by identity, and a review round found that merge reintroduced the same defect one layer
+down.** Versioning the header protects the header; it does nothing for a row `save` folds in from
+the run it was handed, because `recordInvocation` never advances the header's version. A header
+save built well before a `recordInvocation` call landed could still name the version currently
+stored — nothing about that version had moved — and be accepted as a genuine header change, carrying
+a stale invocation snapshot in on the same write. That snapshot could silently replace `IN_FLIGHT`
+dispatch details, or a terminal outcome, the later `recordInvocation` call had already settled, with
+no conflict raised on either side: the header's CAS check saw a real change and let it through, and
+the merge's own terminal lock only compared the stale snapshot against what was stored at write
+time, which was already the newer value. Two independent header writers, each merging an attempt
+recorded before the other's read, could lose each other's facts the same way. The header's
+generation cannot fence state that recording an attempt does not move it for — which is exactly
+what the finding on PR #98 named. The fix removes the merge and gives invocation rows their own
+key and their own compare-and-set, entirely off the header's generation. Run state is accumulative
+the way lineage systems such as OpenLineage model a run: independent writers contribute rows, and
+no write rewrites a row another writer owns.
+
+#### A run that ends announces itself once
+
+`transition` hands an `ExtractionRunTransitioned` to the store's listener for the call that ended
+the run, carrying the run in its terminal state. A replay announces nothing, and so does a rejected
+write. A coordinator retrying a terminal write whose answer it never saw would otherwise notify
+every downstream consumer a second time for a run that ended once — which is the whole reason
+`REPLAYED` is a distinct outcome at all.
+
+The listener arrives the way every other DICE listener does: a constructor collaborator defaulting
+to `DiceEventListener.DEV_NULL`, the same shape `EventEmittingPropositionRepository` uses. Nothing
+is wired automatically. A host that has nothing listening builds the store exactly as it did before,
+and a host that wants the signal passes a listener in. Handlers run inline on the calling thread,
+and a listener that throws no longer reaches the caller: the store catches it, logs it at `error`
+with the run's key, and still reports the transition as committed. The write already landed before
+the announcement ran, so a caller told the listener failed would only retry a write already made
+and get `REPLAYED` back, with no event to show for either attempt. `SafeDiceEventListener` is still there for a caller who wants a listener that never throws in the
+first place; the store no longer depends on that, and backs it up on its own.
+
+The announcement happens after the write has landed and outside the store's own lock, so a listener
+that blocks, or that reads the run back, holds up no other writer and sees the terminal run already
+committed. The cross-backend suite pins the count directly — one announcement per applied
+transition, none for a replay, none for a rejection, none for a `save` or a `recordInvocation`, and
+one between eight threads racing to end the same run.
+
+**Replay needs the identical finish time.** A coordinator retrying after a crash
+it never saw the answer to must reuse the transition it built the first time, or read the run back
+with `findRun` and stop if it has already ended. Minting a fresh `finishedAt` on the retry produces
+a different fingerprint, which is an incompatible rewrite and is rejected. That is safe and it is
+the opposite of what a caller expecting idempotency would predict, so it is a constraint the wiring
+slice designs its retry path around, the same way it has to around start times on `save`.
+
+#### The canonical encoding, and the RFC 8785 failure modes
+
+RFC 8785 exists because naive JSON serialization is not byte-stable. Three failure modes, each of
+which would surface here as a correct retry being rejected as an incompatible rewrite: **key order**
+(most serializers emit fields in declaration or reflection order, neither guaranteed stable),
+**number rendering** (the same value serializing as `1`, `1.0` or `1e0`, and floating-point
+round-tripping differing between implementations), and **insignificant text** (whitespace, escaping,
+Unicode normalization).
+
+The encoding is the one DICE already uses for `MetamodelVersion.contentHash`, applied to a different
+payload:
+
+- every token is length-prefixed, `<length>:<token>`, because a delimiter-joined encoding lets
+  `["a;b"]` and `["a", "b"]` hash the same, and a length prefix keeps two tokens apart whatever
+  characters either one carries;
+- a field set is preceded by how many fields it holds, so a shorter one cannot be a prefix of a
+  longer one;
+- fields are emitted as `(name, value)` pairs sorted by name;
+- instants render as `<epochSecond>.<nanos padded to 9>` — fixed width, and independent of
+  `java.time`'s own formatting, whose precision varies with the value;
+- SHA-256, lowercase hex, with a version tag on the input so a reader meeting a version it does not
+  know matches nothing rather than guessing.
+
+This is a persisted format. `ExtractionRunFingerprintTest` pins the digest of a fixed payload with a
+literal assertion, so changing the encoding means changing that literal deliberately.
+
+**A store records the string the transition computed and never re-derives it.** That is what makes
+the encoding's finer points — which sort order, how an instant renders — unable to cause a
+cross-backend divergence: only one implementation ever runs. A backend that re-derived the digest
+from the stored run in Cypher would also break the payload-only rule above, and
+`a replay after an interleaved invocation record is still a replay` in the cross-backend suite is
+the case that catches it.
+
+#### Two mechanisms deliberately not adopted
+
+**No epoch or writer generation.** Kafka's transactional producer bumps a monotonic epoch on every
+`initTransactions()` and fences zombie writers with it, because a bare identity key cannot tell the
+same logical writer retrying from an old instance that should be shut out. DICE's concurrency is two
+writers racing on one row, which the compare-and-set inside a single store transaction already
+decides. Epochs solve fencing across systems; this contract does not span systems.
+
+**No idempotency-key expiry.** Stripe prunes idempotency records after roughly 24 hours, and a
+pruned key starts a fresh request with no comparison. A run header is a permanent audit row, so the
+equivalent here would delete the evidence rather than the bookkeeping.
+
+### Four states, not five
+
+MLflow's run status has five values — `RUNNING`, `SCHEDULED`, `FINISHED`, `FAILED`, `KILLED`.
+The two DICE does not have are deliberate:
+
+- **`SCHEDULED`** has no writer. There is no scheduler in this design, so nothing can observe a run
+  between "requested" and "started"; the state would be defined and never used.
+- **`KILLED`** folds into `CANCELLED`. The fact an operator or an audit acts on is that the run
+  stopped short of its products, and that is the same fact whichever side pressed stop. `CANCELLED`
+  is also the abandonment path for a partially successful run nobody intends to finish.
+
+## The store contract: every read tenant-scoped and bounded
+
+A run store grows once per extraction forever, so there is no unbounded read on
+`ExtractionRunStore`. Every page takes a positive `limit`, and the reads that can span a long
+history also take a `since` window.
+
+| Read | Answers |
+| --- | --- |
+| `findRun(key)` | one run, by tenant-qualified identity |
+| `invocationsOf(key)` | that run's attempts, in plan order |
+| `runsInContext(tenant, limit, since)` | one tenant's runs, newest first |
+| `childrenOf(tenant, parent, limit)` | one hop down the parent axis |
+| `runsOfRoot(tenant, root, limit, since)` | a whole lineage, in one read |
+| `ancestorsOf(key, limit)` | the parent chain, walked upward |
+
+**Scope is pushed down, never applied afterwards.** An implementation restricts to the tenant inside
+the query and then limits. Fetching `limit` rows and filtering by tenant afterwards returns fewer
+rows than asked for — or none — whenever a busy neighbouring tenant occupies the head of the index,
+and the caller cannot tell that from a tenant with no runs. This is the drift-report store's rule
+carried over, and it is why none of the scoped reads has a default body: a default that filtered in
+memory would be inherited silently by every backend that forgot to override it. The in-memory
+reference store keeps this cheap for itself too: a per-tenant index of that tenant's own run keys,
+maintained on insert and eviction, so a scoped read never has to look at another tenant's runs at
+all, let alone filter them out one by one.
+
+The `ContextId`-typed overloads do have default bodies and are a different thing — they forward to
+the `String`-typed method that is the override point, and cannot return the wrong rows because they
+do not filter. The split exists because `ContextId` is a Kotlin value class, so a method taking one
+compiles to a mangled JVM name Java cannot reach. `ExtractionRunKey.of(contextIdValue, runId)`
+exists for the same reason.
+
+**Pages are ordered newest first by start time, tie-broken by run id ascending.** The tie-break is
+what makes a page repeatable: two runs started in the same millisecond would otherwise come back in
+whatever order the backend felt like, and a caller paging through would see one twice or neither.
+
+**Cross-tenant reads fail closed.** A run id that exists in two tenants is two runs, and a read
+against one never returns the other's. The chain walk stops rather than crossing: a parent reference
+that resolves only in another tenant is treated as unresolved. Slice 8 proves this against a real
+graph; here it is what every implementation is held to.
+
+**The chain walk is bounded and cycle-safe, and needs to be both.** `limit` stops it in a lineage
+deeper than the caller wants to read. A run already visited stops it outright: a value type can
+reject a run that is its own parent, but a two-hop cycle needs the other runs to see, so detecting
+one is the store's job. A store holding a cycle is corrupt, and a store that hangs on one is worse.
+
+`runsOfRoot` is the read the denormalized root reference exists for. The root is fixed when a
+lineage is minted and cannot drift, so a whole lineage is one indexed read on one property rather
+than a chain walk a hop at a time.
+
+`InMemoryExtractionRunStore` is the reference implementation, and it is in main sources rather than
+test sources for the same reason `InMemoryCollectorTraceStore` is: a host can record and read runs
+before it has a database. It therefore has no unscoped read at all, not even a test helper: one
+instance holds every tenant's runs, so an "everything in the store" method would hand a host running
+the shipped backend a cross-tenant unbounded read on a contract that is neither. The tests read
+through the contract like any other caller.
+
+It also caps how many runs it keeps: a constructor parameter, `maxRuns`, defaulting to 10,000.
+Past that cap, an insert evicts the oldest runs that have already ended, by `startedAt`, until the
+store fits again; a run still `RUNNING` is never evicted, so a store where every run happens to be
+running can grow past the cap, and it logs that once, not on every insert. Retention past
+that point is a durable store's own policy, kept for as long as an operator decides; the reference
+store caps because holding every run ever seen in one JVM's memory forever is not something a host
+running it in production should be signing up for by default.
+
+Compare-and-set is real there, not simulated — every write and read runs inside one monitor, so the
+read of a run's status and the write that changes it cannot interleave. A durable store gets the
+same guarantee from its transaction, and the cross-backend suite races two threads to end one run
+and asserts exactly one `APPLIED` and one `REPLAYED`, so the claim is inherited rather than
+remembered. Removing the monitor from `transition` fails that test and nothing else.
+
+`AbstractExtractionRunStoreContractTest` in `dice-storage` is the cross-backend suite. Each backend
+supplies a store and inherits the whole thing, so the Drivine store is held to the in-memory
+reference's semantics at authoring time. The cases there are the ones a durable backend gets wrong
+in a way a single-backend test would miss: a `MERGE … SET` upsert passes "a terminal write is
+recorded" and fails "an incompatible terminal rewrite is rejected", a finder that filters in memory
+passes every single-tenant read and fails "a page scopes before it limits", and a chain walk written
+as a recursive Cypher pattern passes on a healthy graph and hangs on a cycle.
+
+## The Drivine store
+
+`DrivineExtractionRunStore` is the durable implementation. It writes three node labels:
+
+| Node | Key | Holds |
+| --- | --- | --- |
+| `(:ExtractionRun)` | `(contextId, runId)` | the header — lineage, envelope, requested configuration, counts, failures |
+| `(:ExtractionRunInvocation)` | `(contextId, runId, invocationIndex, attempt)` | one attempt at one planned model call |
+| `(:ExtractionRunTerminalWrite)` | `(contextId, runId)` | the fingerprint of the write that ended the run |
+
+The header reaches each child by `[:RECORDED]` and its terminal write by `[:ENDED_BY]`.
+
+Every key is tenant-qualified, and the tenant needs no encoding of the kind
+`DrivineDriftReportStore` gives its scope. That store's scope is nullable and a Cypher MERGE cannot
+key on a null, so a global report needed a non-null `ctx:`-prefixed stand-in no real context id
+could collide with. A run's tenant is never null, so the plain value is already an injective key.
+
+### Compare-and-set, and why it holds across processes
+
+`transition` is one Cypher statement, so it is one transaction, and it works two ways at once.
+
+**A lock.** The statement's first act after matching the run is `SET n.casLock = $lockToken`, before
+it reads anything. A property write takes an exclusive lock on the node and holds it to commit, so a
+second transaction reaching that line blocks. Neo4j reads at read-committed and the read of
+`n.status` is downstream of the `SET` in the same statement, so the second transaction reads the
+status after it took the lock and therefore after the first committed. It sees a terminal run and
+takes the no-op branch. `DrivineMetamodelVersionStore` uses the same write-lock-before-read idiom on
+its counter.
+
+Two details make that argument hold rather than nearly hold. The lock token is a fresh UUID on every
+call, so the write is always a real change and never a no-op a database is free to optimize away
+before taking the lock. And no index carries `status` or the terminal fingerprint, so the planner
+cannot serve the post-lock read from an index entry it read at MATCH time — which is the one way a
+lock-then-read reads stale.
+
+**A constraint.** That argument is about Neo4j's behaviour, and behaviour is a thing to be wrong
+about. So the terminal write is also a `CREATE` of an `(:ExtractionRunTerminalWrite)` node on the
+run's own key, under a uniqueness constraint. Two transactions that both read a run as `RUNNING`
+both try to create it, and the database refuses the second at commit. The loser's whole transaction
+rolls back, header included; the store catches the violation, re-reads the recorded fingerprint in a
+fresh transaction, and answers replayed or conflict. **Exactly one terminal write per run is a schema
+fact, not an inference.**
+
+The constraint's sufficiency is measured rather than assumed: removing the lock leaves every race
+test green — the constraint carries it alone. Removing both and letting the create become a merge
+produces six racing writers all reporting `APPLIED`, and, when they disagree about how the run
+ended, three contradictory endings recorded for one run. That is the multi-process failure the
+in-memory reference's monitor cannot speak to, reproduced and then closed. The lock's own
+sufficiency rests on the isolation argument above, unmeasured, which is why the constraint exists.
+The constraint backstops `transition` only: the status guards in `save` and `recordInvocation`
+rest on the lock argument alone, so a failed lock idiom could set a terminal header back to
+`RUNNING` beside its terminal write — the one-write audit fact would survive; the header would not.
+
+### The fingerprint is stored, never re-derived
+
+The terminal-write node carries the exact string `ExtractionRunTransition.fingerprint` computed, and
+a repeated terminal write is decided by comparing against that string. A store that re-derived a
+digest from the stored run would reject a correct retry whenever an attempt had been recorded in
+between, because the run it derived from would have changed while the terminal write did not. The
+encoding has one implementation, in `dice`, and the graph holds its output.
+
+The string the graph holds is the `xrun-terminal:v2` digest, which covers the terminal status and
+the finish time and nothing else. The counts and failures a transition carries ride into the header
+`SET` beside it and reach none of the hashed bytes, so a retry that agrees on status and finish time
+replays whatever numbers it names and the run keeps what the first accepted terminal write
+delivered. The store has no comparison of its own to keep in step with that: it stores one string
+and compares one string.
+
+### Announcing a run that ended, once the write is durable
+
+`transition` hands an `ExtractionRunTransitioned` to the store's listener for the call that ended the
+run. Exactly one call per run reaches that branch, and the reason is the same schema fact the
+compare-and-set rests on: reaching it means having created the run's terminal-write node, and the
+uniqueness constraint lets one transaction do that. A replay announces nothing, a rejected write
+announces nothing, and the writer that lost the race announces nothing — it created no node, so it
+answers replayed or conflict and never applied.
+
+Where the durable store differs from the in-memory reference is *when*. The reference announces
+after the write has landed and outside its monitor. Here "landed" means committed, and which commit
+that is depends on who owns the transaction. When the store owns it, the commit has already happened
+by the time the template returns, and the listener runs there. When a caller's transaction is active
+the write is durable only when that caller commits, so the announcement is registered against the
+commit and is dropped with the transaction if the caller rolls back. A listener told that a run ended
+by a transaction that was thrown away would be reporting a run nothing can read back.
+
+### Failures are stored in the vocabulary, and nothing else fits
+
+A run's failures are one JSON array on the header node, and each element carries eight fields: the
+`code`, the `stage`, the `providerStatus`, the two halves of one measure, the `at`, and the two
+halves of the attempt it names. Every optional field is always present and written as a null when
+it has no value, so a bare failure and a fully populated one store the same keys.
+
+The shape is flat and the halves are deliberate. Putting the measure and the invocation id at the
+same level as everything else means every key a stored failure can carry is visible at once, which is
+what lets a test check the whole key set it finds matches an allowlist, in one assertion.
+`DrivineExtractionRunStoreIntegrationTest` round-trips a run carrying failures, reads the properties
+Neo4j actually holds, and asserts that set exactly — with the allowlist written out in the test
+and never read from the writer, so one edit cannot move both sides. That is the check standing
+between a durable row and a `detail` column: `ExtractionFailure` has no text-shaped field to write
+from, and if someone adds one to the encoding, this fails before it reaches a graph.
+
+Reads are strict about the halves too. A stored failure holding a measure quantity with no value, or
+an invocation index with no attempt, is refused; nothing here fills in a missing half.
+
+### A header write cannot touch a child row
+
+Invocation records are their own nodes on their own key, so `save` has no way to delete one. The
+contract's rule that a save merges records rather than replacing them falls out of the graph model
+instead of being implemented: `save` MERGEs the records the incoming run carries, which upserts in
+place on a shared identity, and leaves every other child row alone.
+
+One consequence is worth naming. A durable store keeps identified rows, not the order a caller
+happened to list them in, so it hands attempts back in plan order — the order `invocationsOf`
+promises. `InMemoryExtractionRunStore` hands back the caller's order. `ExtractionRun.invocations` is
+documented as being in whatever order the caller supplied, and `ExtractionRun.equals` compares it
+element by element, so the two backends can return runs that are unequal for the same call sequence.
+The ordered read both agree on is `invocationsOf`.
+
+### Reads
+
+Each page puts its tenant in the MATCH pattern and its `LIMIT` after the `ORDER BY`, which is the
+drift-report store's rule carried over. A page also excludes rows with no sort key: Neo4j sorts null
+largest, so a node missing `startedAtEpochSecond` would sort to the front of a `DESC` order, spend a
+slot of the caller's `limit`, and then be dropped by the mapper — hiding a good run behind a broken
+one. Corrupt rows are logged and skipped rather than failing a whole audit read, so a page can come
+back shorter than asked for; reading further to backfill would break the bound the contract keeps.
+
+`runsOfRoot` is one indexed lookup on the denormalized root. The chain walk is client-side: a parent
+is a property rather than a relationship, because a run can name a parent that has not been stored
+yet and an edge cannot point at a node that does not exist. Without an edge there is no
+variable-length pattern to walk, and the APOC procedures that would do it in one round trip are not a
+dependency this module takes. So the walk is at most `limit` keyed lookups inside one read
+transaction, stopping on a run already seen and resolving every hop inside the starting tenant.
+
+Every read returns each run with its attempts attached, pages included, because the in-memory
+reference does and the two are held to one suite. The cost is bounded — at most `limit` runs times
+the model's cap of 1024 attempts — but it is real on a wide page.
+
+### Schema
+
+`ExtractionRunSchema.specs()` is the whole dependency, and a host declares it in a `SchemaCatalog`
+bean. Three uniqueness constraints — `ExtractionRun(contextId, runId)`,
+`ExtractionRunInvocation(contextId, runId, invocationIndex, attempt)`, and
+`ExtractionRunTerminalWrite(contextId, runId)` — and five range indexes: `ExtractionRun(contextId)`
+for the tenant page, `(contextId, rootRunId)` for the lineage read, `(contextId, parentRunId)` for
+the parent axis, `(contextId, startedAtEpochSecond)` for the paging sort key, and
+`ExtractionRunInvocation(contextId, runId)` for reading one run's attempts. The constraints are not
+tuning: a MERGE on a natural key is race-free only under one, and the third is the compare-and-set.
+
+`ContextId` accepts any non-blank string and the tenant is the leading property of every key here, so
+the store caps it at 1024 characters on the write path — the bound the run model already puts on a
+key-like string. An uncapped tenant id is an index entry of unbounded length, and Neo4j fails that
+write mid-extraction with a message about bytes rather than about the tenant. The cap turns it into a
+named argument rejection before anything is written. Reads are not capped, because a read for a
+tenant longer than the cap matches nothing by construction, which is the fail-closed answer and the
+only one a read could give.
+
+## OpenTelemetry GenAI naming, not adopted
+
+OTel's GenAI semantic conventions cover the same ground — `gen_ai.request.*`, `gen_ai.response.*`,
+`gen_ai.usage.*`, and an opt-in-only gate on content capture that matches this model's
+"no payloads by default" stance almost exactly. The field names are still not adopted, for one
+reason: as of mid-2026 every `gen_ai.*` attribute is at stability level Development, and in June
+2026 the conventions were moved out of the main semantic-conventions repository into a dedicated
+one. Pinning a stored schema to names that are still moving buys interop now and a migration later.
+
+The structural agreement is worth keeping in view. A future OTel-compatible export is a mapping
+from these types onto whatever the conventions stabilise as, and this model has a field for each
+of the ones that matter. That is a better position than having adopted a naming that then changed.
+
+## The cap rule
+
+Most strings a run stores are bounded: the bound is a named constant on `ExtractionRunLimits`, the
+check runs in the `init` block of the type that owns the value, and anything over the bound is
+**rejected**. Truncating an identifier would be worse than rejecting it: a shortened id is a
+different id, and a store would then key rows on a value the caller never minted.
+
+| Constant | Value | Applies to |
+| --- | --- | --- |
+| `MAX_IDENTIFIER_LENGTH` | 256 | opaque tokens, fingerprints, model and role names, service names, provider response ids, runtime identifiers |
+| `MIN_PROVIDER_STATUS` / `MAX_PROVIDER_STATUS` | 100 / 599 | the status a failure records |
+| `MAX_SOURCE_REVISIONS` | 256 | source revisions per run |
+| `MAX_INVOCATIONS` | 1024 | invocation records per run, across every call and attempt |
+| `MAX_FAILURES` | 64 | failure records per run |
+
+The rule has no exception now that the model has no free-text field for one to apply to. The
+failure detail used to be one, clipped by its factories on the way in; the closed vocabulary
+removed the field and the exception with it.
+
+Lengths count UTF-16 chars, so a 256-char identifier can be around 1 KB of UTF-8. The bound exists
+to keep a run header finite.
+
+`sourceKey` and `sourceRevision` are not part of the cap rule and carry no bound on `ExtractionRun`.
+A revision's contract is defined where the type lives —
+[docs/design/source-revisions.md](source-revisions.md): opaque, compared for exact equality, never
+parsed, and bounded once by `SourceIdentityBounds` in `SourceRevisionRef`'s own constructor. A PR
+#95 review comment caught `ExtractionRun` adding a second length cap on top of that contract, so a
+revision an earlier query accepted could still fail run recording; the fix deletes the run's cap and
+leaves the one on the type that owns the value. A run records whatever a `SourceRevisionRef` can
+hold, which is the property that makes "accepted by a query, therefore recordable" true.
+
+One string sits outside the rule and stays outside it: `ContextId.value`, the tenant, which is
+validated non-blank and not bounded. `ContextId` is a DICE-wide type owned by the agent framework,
+so bounding it is not this model's call. It is worth naming because the tenant is half of
+`ExtractionRunKey`, so the run store's key is bounded on one side only — whoever sizes that key's
+index in the store slice decides what to do about the other side.
+
+Two bounds are enforced away from the field they protect, because the field is not where the cost
+lands. `ExtractionInvocationRecord.plan(count)` checks `MAX_INVOCATIONS` against the count before
+allocating anything: a plan size derived from chunking a large document can be enormous, and
+learning that from the run's own bound would mean building the whole list first. And a run rejects
+a failure whose `invocation` names an identity it holds no record of — a dangling reference reads
+as evidence about a call and nothing can join it to one, so the pair arrives together or not at
+all. A failure that happened outside any model call names no invocation and is always accepted.
+
+## Value-type discipline
+
+Everything here is immutable and validated in `init`, with `@JvmStatic`/`@JvmOverloads` factories
+on the types that have optional parameters.
+
+`ExtractionRun` is a plain class, for two reasons. A data class has
+to declare its collection parameters as properties, which means the field *is* the caller's list
+and there is nowhere to copy it. And a generated `copy`/`componentN` surface would pin an ABI
+across eighteen fields while #67 is still moving. Equality and hash are written out over every
+component, and a test varies each of the eighteen in turn, so a component dropped from `equals`
+makes that test fail.
+
+Collections are copied on the way in **unconditionally**, empty ones included. A copy skipped when
+the list is empty leaves the run aliasing a list the caller still holds, and the caller fills it
+afterwards; it fails later and stranger than the non-empty case. The copies are unmodifiable, so
+the list a caller reads back cannot be edited either.
+
+## Lineage: which runs produced which claims
+
+The gap #67 opens with is that a stored claim cannot be traced to the run that produced it. This is
+the part that closes it.
+
+```mermaid
+flowchart LR
+    P["(:Proposition)<br/><i>id, contextId</i>"]
+    S["(:Source)<br/><i>key</i>"]
+    R1["(:ExtractionRun)<br/><i>run-1</i>"]
+    R2["(:ExtractionRun)<br/><i>run-2</i>"]
+    P -->|DERIVED_FROM| S
+    P -->|PRODUCED_BY_RUN| R1
+    P -->|PRODUCED_BY_RUN| R2
+```
+
+Two runs over identical content leave **one proposition, one source grounding, two run links**. Each
+part of that is a separate way to get it wrong, and `DrivineRunLineageIntegrationTest` measures all
+three on a real graph.
+
+### Only canonical ids go in
+
+`DrivinePropositionRepository.save` answers a fresh insert of text it already holds with the
+proposition it already holds — a different id from the one extraction minted. That has always been
+true and callers have never been able to see it, because `saveAll` returns `Unit`. Any edge written
+afterwards against the minted id points at a node that was never stored.
+
+So a second save call keeps the answer:
+
+- `PropositionStore.saveAllReturningCanonical` — the same writes as `saveAll`, returning a
+  `PropositionPersistenceResult`: the stored proposition per input, in input order, plus the
+  input-id to stored-id map. `saveAll` keeps its `Unit` descriptor; changing it would break every
+  implementation and every compiled caller.
+- `PersistablePropositions.persistReturningCanonical` — the same persistence `persist` does, with
+  structural relationships wired against what the repository returned. `persist` is untouched.
+
+`DrivinePropositionRepository` needed no change at all. Its `save` already returned the canonical
+proposition; the id was being dropped one layer up, in `saveAll` and in `persist`.
+
+The result type has two views and they are not interchangeable. `canonicalPropositions` is
+positional — one entry per input, so it can repeat when two inputs deduplicate onto one.
+`canonicalIds` is the distinct set, which is what a write that should happen once per stored
+proposition uses. When one batch names an id twice, every position reports the store's last answer
+for it — a replace-by-id store overwrites the first, so the first object is stale the moment the
+second save lands, and both answers carry the same id so comparing ids cannot catch it. Resolving
+rather than rejecting, because this runs after the saves.
+
+The store is bound to the extractor with `IncrementalPropositionExtraction.withRunLineage(store)`
+rather than a constructor parameter. Binding is **one-time** — a second call throws
+`IllegalStateException`, null included — because the field is read when an analysis records lineage
+rather than when it starts, so a later call would redirect or silently erase the audit record of an
+extraction already in flight. Kotlin compiles a constructor with default arguments into one
+synthetic `<init>(..., int mask, DefaultConstructorMarker)`, and appending a defaulted parameter
+rewrites the descriptor every precompiled Kotlin caller using a default links against. Adding a
+method adds API; appending a defaulted parameter moves one.
+
+### The relation
+
+`(:Proposition {id, contextId})-[:PRODUCED_BY_RUN]->(:ExtractionRun {contextId, runId})`, behind
+`PropositionRunLinkStore`.
+
+Many-to-many in both directions, and it has to be. One run produces many claims. One claim is
+produced by many runs — not an edge case, but the normal outcome of re-extraction, where the second
+run's insert deduplicates onto a proposition the first run created. Both runs are true answers to
+"what produced this?", and a single-valued field would have to pick one silently.
+
+The edge carries no properties. A bare edge says one thing and has nothing for a replay to disagree
+about, which is what lets the write be a plain `MERGE`. A timestamp would need `ON CREATE SET` to
+stay idempotent and would duplicate the run header's `startedAt`.
+
+It is named for the run rather than left as a bare `PRODUCED_BY` because at least three things in
+DICE produce a proposition — an extraction run, a collector run, and later a #68 commit. The target
+label disambiguates a pattern; the name has to disambiguate a grep.
+
+**No new schema.** Both endpoint labels already carry the uniqueness constraints these statements
+seek on, and a relationship has no key of its own: `MERGE` on a pattern between two matched nodes
+creates at most one edge, whoever else is writing. `ExtractionRunSchema.specs()` is unchanged, so a
+host that already declared it needs no migration.
+
+### Tenant-guarded on the write, fail-closed on the reads
+
+Every statement names `contextId` on both endpoints, so a cross-tenant edge is not expressible and
+the reads fail closed for free. A write needs more than that, because "matched nothing" and "you
+asked to link a neighbour's claim" are the same silence: `link` resolves the run and then every
+proposition inside the run's tenant, and names what did not resolve
+(`PropositionRunLinkScopeException`). One out-of-scope id rejects the whole batch and writes nothing.
+
+A proposition id that resolves in another tenant and one nobody holds are the same answer from
+inside a tenant, and they mean the same thing: this run cannot claim to have produced it.
+
+**The preflight names; the write decides.** Validation and the `MERGE` are separate statements, so
+under read-committed isolation a proposition deleted or re-tenanted between them passes the check
+and is gone by the time the write runs. The Drivine statement therefore counts its own matches —
+`WHERE size(ps) = $expected` — in the same snapshot it writes in, so either every proposition is
+present and all the edges are written or none of them are; the caller then compares the returned
+count against the batch size and rolls the transaction back on any mismatch. The preflight stays
+because it is what can name the ids in the error.
+
+**Both reads resolve against live endpoint state**, not against a remembered link. Deleting a
+proposition removes its lineage from both directions: on a graph because the edge is detached with
+the node, and in the reference implementation because the reads filter through the proposition store
+rather than answering from their own map. Without that the in-memory backend would keep reporting
+lineage for claims the store no longer holds, and the two backends would disagree.
+
+The reference implementation also prunes as it reads: a link whose proposition the store no longer
+holds at all is dropped when a read resolves it, and a run with no links left goes with it,
+so the map does not keep growing with claims that no longer exist. Nothing reads on a host's
+behalf, though, so the store also caps how many runs it keeps links for: a constructor parameter,
+`maxRuns`, defaulting to 10,000 like the reference run store's. Past the cap a link for a new run
+evicts the links of the runs linked earliest, oldest first, as long as the run store says the run
+has ended; a run still `RUNNING` keeps its links, and a store where every linked run is running
+grows past the cap and logs that once. A host wanting real retention uses the durable store, where
+the edge lives and dies with its endpoints.
+
+Both reads are bounded by a positive limit and ordered by id ascending. Ordering runs newest-first
+would mean reading each run's header for its start time; a caller who wants that has
+`ExtractionRunStore` and the refs these reads return.
+
+### Run identity stays out of source provenance
+
+Nothing in the lineage touches `ProvenanceEntry` or `SourceLocator`. Two claims read from the same
+source under two different runs have equal provenance, and that is asserted rather than assumed —
+both behaviourally and structurally, by reading the two types' fields.
+
+Folding run identity into source identity would make evidence from two runs over one document look
+like evidence from two documents, and it would change what `SourceLocator.key()` means, which is the
+`:Source` node's key. "Where did this come from" and "which execution wrote it down" are different
+questions with different answers, and the second one lives in the relation.
+
+### Canonical persistence is the only path
+
+`IncrementalPropositionExtraction.persistAndProject` wires everything downstream of the save against
+what the repository returned, on every call:
+
+| | structural wiring | projection | grounding | run links |
+|---|---|---|---|---|
+| run present | canonical | canonical | canonical | canonical |
+| no run | canonical | canonical | canonical | none |
+
+**A run adds a row to the last column and changes nothing else.** An earlier cut of this slice made
+the run the switch: canonical ids with one, pre-save ids without. Both rows were defensible on their
+own terms — the canonical one is correct, and leaving the other alone avoided changing behaviour for
+hosts that never asked for extraction runs — but together they meant an audit setting decided whether
+the graph was written correctly. Turning on lineage silently changed which nodes the edges pointed
+at; leaving it off kept writing edges against ids the store does not hold whenever dedup or a merge
+substituted a canonical proposition.
+
+Audit metadata never changes product behaviour. So the correct row became the only row, and the
+no-run change is declared as the behavioural fix it is. A test runs the same extraction with and
+without a run and compares everything except the lineage write.
+
+Lineage's write joins a caller's transaction rather than opening its own. `REQUIRES_NEW` would
+guarantee a failure could never touch the caller, but it suspends that transaction, and a suspended
+transaction's uncommitted propositions are invisible — so a host wrapping extraction in
+`@Transactional` would get fail-closed lineage on every extraction. Joining means lineage resolves
+the claims it is about and commits with them.
+
+The risk `REQUIRES_NEW` would have removed is Spring marking a participating transaction
+rollback-only when an inner method throws. That marking *is* propagated here — Drivine overrides
+`doSetRollbackOnly` and the shared transaction object's flag is set — but the flag is write-only:
+`DrivineTransactionObject` does not implement `SmartTransactionObject`, so Spring's
+`isGlobalRollbackOnly` cannot see it, and Drivine never reads it when committing. Propagated, then
+dropped. Because that is behaviour rather than contract it is pinned by a test, which goes red if
+Drivine implements `SmartTransactionObject` or starts reading the flag.
+
+**The guarantee covers application-level failures only, and this is the slice's known limitation.**
+Everything `link` raises by itself is thrown after its statements succeeded, so the transaction is
+healthy and a caller that catches can carry on. A statement that fails *at the server* — a deadlock
+between two runs linking overlapping propositions is the realistic case, since nothing orders the
+node locks two concurrent `MERGE` batches take over the same propositions — terminates the
+transaction beneath Spring, and no catch can undo it. A test injects exactly that and measures the
+cost: the wrapping host's later writes are lost.
+
+That window belongs to the ambient-transaction shape only; a host that does not wrap extraction is
+unaffected, because each save has already committed. It closes when the run coordinator commits
+claims before recording lineage (slice 10), which makes lineage a write that does not share a
+caller's fate.
+
+Lineage is written **right after the save, before structural wiring, projection or grounding have
+run**. `persistReturningCanonical` is split in two for this: `persistCanonicalPropositions` writes
+the claims and `wireStructuralRelationships` writes the chunk/entity edges, and lineage runs between
+them. A stored claim is attributed the moment it exists, not once the rest of the pipeline has also
+succeeded on it. The claims are written at that point, committed with the caller's transaction where
+one wraps the call, immediately otherwise, and attribution is a statement about a claim that exists,
+checked before anything else is asked to run on it.
+
+### Attribution fails loud
+
+A link that cannot be written fails the extraction, under the default `LineageFailurePolicy.STRICT`.
+Two cases: an analysis carrying a run with no `PropositionRunLinkStore` bound, and a link write that
+throws.
+
+The first cut logged both and carried on, reasoning that a missing link is a truthful gap in the
+audit where a throw would surface as an extraction that appears to have produced nothing. The
+argument does not survive asking who reads the gap. A host binds lineage because it wants every
+stored claim traceable to the run that produced it; the moment that property is worth something is
+after an incident, reconstructing what a run wrote, and a gap discovered then is indistinguishable
+from "no run produced this claim". A warning logged weeks earlier by an extraction that reported
+success is not a control. The missing-store case is worse still: it is a wiring mistake, identical on
+every call, and silence means a host can run for months believing it has an audit trail it never had.
+
+`LineageFailurePolicy.LENIENT` is the documented downgrade for a host that has weighed the claims
+against their attribution and chosen the claims. It is chosen once, in configuration, in the open.
+
+#### The end state a lineage failure leaves behind
+
+This is the reason lineage sits right behind the save now, not at the end of `persistAndProject`.
+
+When a `STRICT` lineage failure raises, the claims it was attributing are saved and nothing past
+that point has run:
+
+| | state after a STRICT lineage failure |
+|---|---|
+| canonical claims | persisted |
+| structural edges | **not wired** |
+| graph projection | **not run** |
+| grounding | **not run** |
+| `PRODUCED_BY_RUN` edge | **absent** |
+| operation | **reported as failed** |
+
+The claims exist and the audit says so honestly: they are not attributed, and the rest of the
+pipeline never touched them either. A caller that catches the exception knows precisely what it
+has: claims saved with nothing built around them yet.
+
+`LENIENT` reaches a different end state and reports success: the link write is skipped and every
+later pass still runs, because logging the gap and carrying on is what that policy is for.
+
+An earlier cut of this slice ran lineage last, after all three wiring passes, on the reasoning that
+a `STRICT` failure should leave a complete extraction behind with only the audit edge missing. That
+ordering meant a claim could sit fully wired, projected and grounded with nobody able to say which
+run produced it, for as long as the pipeline kept running past the save. Attribution is checked
+before any of that work happens now, so a lineage failure means the later passes never run, and the
+honest report of that is a saved, unattributed claim, not a finished one with a gap.
+
+Under a host's ambient transaction the save and the lineage write share one fate, so a STRICT
+failure rolls both back, which is what a host running strict attribution is asking for.
+
+The same rule holds on the async path. `extractPropositions`, the entry point the
+`@Async @EventListener` calls, swallows and logs every other failure because nobody is waiting on
+the result, but a `LineageNotRecordedException` under `STRICT` is logged at `error` with the run
+key and rethrown to the publisher, so an event-published extraction fails exactly as loud as a
+direct call with the same inputs. One failing event does not cost the rest of the queue: the drain
+keeps going, remembers the first failure, and raises it once the queue it can see is empty. A host
+dispatching those events through an async multicaster sees the failure in its executor's error
+handler, which is where every uncaught listener exception goes.
+
+The policy binds with the store, `withRunLineage(store, policy)`, and failures raise
+`LineageNotRecordedException` carrying the store's own exception as its cause, so a scope rejection
+and a database outage stay distinguishable. An analysis that saved nothing records nothing and fails
+under neither policy: there is no claim for the audit to be missing.
+
+### The invocation order fix that rides here
+
+`ExtractionRun.invocations` is normalized to plan order — `(invocationIndex, attempt)` — at
+construction. It used to keep whatever order the caller supplied, which is the order calls came
+back, which is not a fact about the run: the same four calls answered in a different sequence are
+the same run. Since `equals` compares the list element by element, the old behaviour made those two
+runs unequal, and it made the two backends disagree on one call sequence — a durable store keeps
+identified rows and reads them back in plan order, while the in-memory one handed back the order it
+was given. `invocationsInPlanOrder()` is now the identity.
+
+`sourceRevisions` is deliberately not normalized. The order sources were read in is data.
+
+## Status: EXPERIMENTAL
+
+Every type in this slice carries `@ApiStatus.Experimental`, the marker DICE already uses for API
+that may still move, and a test reads the class files to assert none was missed. The KDoc on each
+type says the same in words and the CHANGELOG entry is labelled.
+
+As with #66, a Kotlin `@RequiresOptIn` marker would make the status enforceable at the call site
+rather than advisory. DICE defines none today, and inventing one is a decision about the whole
+public surface.
+
+## What is not here yet
+
+- **Auto-configured, and still inert.** `dice-storage-autoconfigure` registers
+  `DrivineExtractionRunStore`, `DrivinePropositionRunLinkStore` and the `SchemaCatalog` carrying
+  `ExtractionRunSchema.specs()` under the graph-backend condition, each behind
+  `@ConditionalOnMissingBean`. Having the beans changes nothing until a caller names a run.
+- **No coordinator.** Nothing constructs an `ExtractionRun` during extraction yet, and nothing calls
+  `save` or `transition` outside tests. Which means the `COMPLETED` precondition is documented and
+  structurally narrowed, not observed: the wiring slice is where "the coordinator really does wait
+  for `persistAndProject`" becomes a test rather than a contract clause.
+- **No run coordinator behind the relation.** Attribution from a claim to the run that produced it
+  now exists — `PRODUCED_BY_RUN`, written on canonical saved ids — and run identity stays out of
+  source-provenance equality. What is still missing is the coordinator that mints and terminalizes
+  the run around it.
+- **Protected-content reference: specification only.** A first cut (`ProtectedContentRef`,
+  `ProtectedContentClassification`, `ProtectedContentHandle`) landed and was removed again: nothing
+  in DICE attached one to an `ExtractionRun`, read one, or enforced its retention. The interface
+  returned as a written contract — an opaque `handle` and an `expiresAt`, with the host owning
+  writer, reader and retention. DICE stores none of its content, and the first runtime path that
+  needs the reference brings its implementation. Nothing on a run header holds one yet; attaching
+  replay material to the header is a later slice.
+- **No REST exposure for lineage.** Nothing surfaces run lineage over HTTP. That arrives with the
+  coordinator.
+- **No per-run policy override.** `LineageFailurePolicy` is bound once on the extractor, so a host
+  runs every extraction under one posture. Choosing strict attribution for one run and lenient for
+  the next needs the coordinator, which is where a run's own settings will live.
+- **Nothing writes lineage for a run the host did not mint.** `persistAndProject` links what it
+  persisted when the analysis carries a `currentRun`, but nothing constructs or terminalizes the run
+  around it yet — the host supplies the ref and owns the run's lifecycle until the coordinator lands.
+- **Dedup unions evidence but not grounding.** When a second extraction deduplicates onto an
+  existing proposition, the repository unions the incoming provenance into it and keeps the stored
+  proposition's `grounding` and `mentions`. So a re-extraction from a *different* chunk that produced
+  identical text contributes no new `HAS_PROPOSITION` edge, which shows up as a missing edge.
+  Unioning them is a repository change with its own test burden and is not this slice.
+- **No per-invocation requested configuration.** The requested configuration is one record on the
+  run header. A later slice that needs to vary settings per call adds a separate requested record
+  keyed by invocation index rather than a field on the observed record, which would collapse the
+  distinction this model exists to draw.

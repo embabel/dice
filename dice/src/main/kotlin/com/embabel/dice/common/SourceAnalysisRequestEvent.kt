@@ -18,12 +18,26 @@ package com.embabel.dice.common
 import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.chat.Message
 import com.embabel.dice.incremental.IncrementalSource
+import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef
+import com.embabel.dice.proposition.extraction.ExtractionRunRef
+import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
 import org.springframework.context.ApplicationEvent
 
 /**
  * Base event for requesting proposition extraction from any incremental source.
  * The [user] is typed as [NamedEntity] so that any application's user type
  * (e.g., UrbotUser, Customer) can be used directly.
+ *
+ * A publisher that knows where its material came from can say so by overriding
+ * [sourceLocator] and [sourceRevision]. The extraction listener collects both into an
+ * `ExtractionRequest` and puts them onto the `SourceAnalysisContext` it builds, so the async path
+ * grounds propositions exactly the way a direct `rememberText` call carrying a request does. Both
+ * default to null, so an existing subclass carries no provenance and behaves as it always did.
+ *
+ * [profile] and [currentRun] work the same way and reach the same context through the same
+ * call, so an async publisher can attribute its extraction to a content profile and a run
+ * without the listener growing a second code path. Both also default to null.
  */
 abstract class SourceAnalysisRequestEvent(
     source: Any,
@@ -31,4 +45,34 @@ abstract class SourceAnalysisRequestEvent(
 ) : ApplicationEvent(source) {
 
     abstract fun incrementalSource(): IncrementalSource<Message>
+
+    /**
+     * Where this event's material lives, when the publisher knows.
+     */
+    open fun sourceLocator(): SourceLocator? = null
+
+    /**
+     * The revision of [sourceLocator] this event's material was read at, when the publisher
+     * knows. Its source key must match the locator's, and the listener checks that when it
+     * builds the context.
+     */
+    open fun sourceRevision(): SourceRevisionRef? = null
+
+    /**
+     * The extraction content profile this event's analysis should be attributed to, when the
+     * publisher has one. EXPERIMENTAL. DICE carries it and routes nothing on it.
+     */
+    open fun profile(): ExtractionContentProfileRef? = null
+
+    /**
+     * The extraction run this event's analysis belongs to, when the publisher is running one.
+     *
+     * EXPERIMENTAL, and returning one is not free the way [profile] is. The async path goes through
+     * the same `buildContext` call `rememberText` does, so an event carrying a run gets the same
+     * treatment: structural wiring, graph projection and grounding run over the propositions the
+     * repository returned instead of the ones extraction minted, and each stored proposition is
+     * attributed to the run where the host configured a `PropositionRunLinkStore`. Returning null —
+     * the default — leaves the analysis attributed to no run and behaves as it always did.
+     */
+    open fun currentRun(): ExtractionRunRef? = null
 }

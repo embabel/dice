@@ -60,6 +60,15 @@
             <artifactId>spring-tx</artifactId>
         </dependency>
 
+        <!-- Neo4jException.code() is how this module tells a uniqueness constraint violation apart
+             from any other failure. Drivine already runs on this driver at runtime through
+             drivine4j-spring-boot-starter; this just makes the class visible at compile time. The
+             version comes from embabel-agent-dependencies. -->
+        <dependency>
+            <groupId>org.neo4j.driver</groupId>
+            <artifactId>neo4j-java-driver</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.jetbrains.kotlin</groupId>
             <artifactId>kotlin-stdlib</artifactId>

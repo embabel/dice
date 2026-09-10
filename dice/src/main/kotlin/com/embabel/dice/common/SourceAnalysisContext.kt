@@ -18,7 +18,10 @@ package com.embabel.dice.common
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.dice.provenance.SourceLocator
+import com.embabel.dice.provenance.SourceRevisionRef
+import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef
 import com.embabel.dice.proposition.extraction.ExtractionPerspective
+import com.embabel.dice.proposition.extraction.ExtractionRunRef
 
 /**
  * Base context for analyzing sources.
@@ -35,6 +38,22 @@ import com.embabel.dice.proposition.extraction.ExtractionPerspective
  * @param sourceLocator optional pointer to where this run's material lives. When set, the pipeline
  * stamps it onto every extracted proposition's provenance, so a caller that knows the real source
  * (a file, a URI, a connector record) gets richer grounding than the content-hash fallback.
+ * @param sourceRevision optional revision of [sourceLocator] — the provider's own identifier for
+ * the version of that source this run reads. Setting it requires a [sourceLocator] whose key it
+ * matches, so a revision can never name a source the run is not actually reading.
+ * @param profile optional extraction content profile the host wants this analysis attributed to.
+ * EXPERIMENTAL. DICE carries the reference and nothing else — it selects no provider, model, or
+ * credential, and no DICE code reads policy out of it. The host authorizes the profile and binds
+ * it to whatever it means. `null` (the default) is the whole of the existing behaviour.
+ * Independent of [perspective], [schema] and [contextId]: setting one never constrains another.
+ * @param currentRun optional reference to the extraction run this analysis belongs to.
+ * EXPERIMENTAL, and unlike [profile] this one is read. An analysis carrying a run has its
+ * structural wiring, graph projection and grounding run over the propositions the repository
+ * returned rather than the ones extraction minted — the two differ whenever the backend
+ * deduplicates, and the returned ones are what is actually stored — and, where the host configured
+ * a `PropositionRunLinkStore`, each stored proposition is attributed to this run.
+ * `null` (the default) means the analysis is attributed to no run and behaves exactly as it did
+ * before extraction runs existed.
  * @param mintNewEntities whether a mention the resolver could NOT match to an existing entity may
  * be persisted as a NEW entity node. Default FALSE: unresolved mentions stay unresolved (the
  * proposition is still persisted; its mention simply carries no resolvedId), so extraction never
@@ -60,7 +79,25 @@ data class SourceAnalysisContext @JvmOverloads constructor(
      * values win over extractor-supplied properties of the same key.
      */
     val mintedEntityProperties: Map<String, Any> = emptyMap(),
+    val sourceRevision: SourceRevisionRef? = null,
+    val profile: ExtractionContentProfileRef? = null,
+    val currentRun: ExtractionRunRef? = null,
 ) {
+
+    init {
+        sourceRevision?.let { revision ->
+            val locator = requireNotNull(sourceLocator) {
+                "sourceLocator is required when sourceRevision is set"
+            }
+            require(revision.sourceKey == locator.key()) {
+                "sourceRevision source key must match sourceLocator source key"
+            }
+        }
+        // [profile] and [currentRun] are checked against nothing else here, deliberately. A
+        // revision has to name the source the run is reading, which is why it is coupled to
+        // [sourceLocator]. A profile and a run reference are independent of every other field,
+        // and validating them against one would invent a relationship the contract doesn't have.
+    }
 
     companion object {
         /**
@@ -126,6 +163,32 @@ data class SourceAnalysisContext @JvmOverloads constructor(
      */
     fun withSourceLocator(sourceLocator: SourceLocator): SourceAnalysisContext =
         copy(sourceLocator = sourceLocator)
+
+    /**
+     * Returns a copy carrying a revision of this context's source. Throws if this context has no
+     * locator, or if the revision names a different source key.
+     */
+    fun withSourceRevision(sourceRevision: SourceRevisionRef): SourceAnalysisContext =
+        copy(sourceRevision = sourceRevision)
+
+    /**
+     * Returns a copy attributed to the given extraction content [profile]. EXPERIMENTAL.
+     * Changes no other field and no extraction behaviour — see [profile].
+     */
+    fun withProfile(profile: ExtractionContentProfileRef): SourceAnalysisContext =
+        copy(profile = profile)
+
+    /**
+     * Returns a copy that says this analysis belongs to the given extraction run. EXPERIMENTAL.
+     *
+     * Changes no other field, but — unlike [withProfile] — it does change what the analysis writes.
+     * An analysis carrying a run wires structural relationships, graph projection and grounding
+     * against the propositions the repository returned rather than the ones extraction minted, and
+     * attributes each stored proposition to the run where a `PropositionRunLinkStore` is
+     * configured. See [currentRun].
+     */
+    fun withCurrentRun(currentRun: ExtractionRunRef): SourceAnalysisContext =
+        copy(currentRun = currentRun)
 
     /**
      * Returns a copy allowing (or forbidding) this analysis to persist NEW entities
