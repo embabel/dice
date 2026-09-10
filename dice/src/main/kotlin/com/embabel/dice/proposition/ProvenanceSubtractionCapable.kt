@@ -56,14 +56,14 @@ package com.embabel.dice.proposition
  *   deleted answers null and writes nothing. The proposition stays deleted.
  *
  * A decorator wrapping a capable store carries this type and forwards to its delegate;
- * [EventEmittingPropositionRepository] is the worked example.
+ * [ProvenanceSubtractingEventEmittingPropositionRepository] is the worked example.
  */
 interface ProvenanceSubtractionCapable {
 
     /**
      * Whether this particular instance can really subtract. Implementing the interface is a
-     * type-level promise; this is the runtime truth, for a decorator that forwards to a backend it
-     * only discovers when it is constructed. A caller checks this before trusting the type.
+     * type-level promise; this is the runtime truth for an implementor whose ability depends on
+     * configuration. A caller checks this before trusting the type.
      */
     val supportsProvenanceSubtraction: Boolean get() = true
 

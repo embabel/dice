@@ -970,3 +970,14 @@ and the consumer PRs that deliver it).
 
   No stored data changes, and nothing in the provenance, trace or audit record shapes moves. Design
   note: [docs/design/source-revisions.md](docs/design/source-revisions.md).
+
+- Capability honesty in the event-emitting decorator. `EventEmittingPropositionRepository` is now
+  generic over its delegate, carrying `ProvenanceSubtractionCapable` only when its delegate does,
+  through `ProvenanceSubtractingEventEmittingPropositionRepository`. The base type drops the
+  provenance-subtraction surface. The same factory shape that built a `SourceRevisionQueryCapable`
+  wrapper picks the capability-matching shape, so a caller's `as? ProvenanceSubtractionCapable` or
+  `as? SourceRevisionQueryCapable` probe on the wrapper answers the way it answers on the delegate.
+  **Compatibility: source-breaking** for a caller that held the base `EventEmittingPropositionRepository`
+  type and called `subtractFoldedEvidence` on it. Direct constructor calls and `wrapping` calls keep
+  compiling; a caller that needs the operation must hold the typed shape `ProvenanceSubtractingEventEmittingPropositionRepository`
+  or probe with `as?`.

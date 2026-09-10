@@ -41,6 +41,7 @@ import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import com.embabel.dice.provenance.UriLocator
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -228,7 +229,7 @@ class CollectorUndoCapabilityTest {
         val records = InMemoryCollectorRecordStore()
         authorize(records, fold.runId, fold.retiredId, fold.survivorId)
         val events = mutableListOf<DiceEvent>()
-        val decorated = EventEmittingPropositionRepository(fold.store) { events += it }
+        val decorated = EventEmittingPropositionRepository.wrapping(fold.store) { events += it }
 
         val result = undo(fold.trace, decorated, fold.survivorId, fold.retiredId, records)
 
@@ -1140,32 +1141,36 @@ class CollectorUndoCapabilityTest {
     }
 
     @Test
-    fun `a decorator carries its delegate's subtraction, and reports honestly when it has none`() {
-        // Kotlin's interface delegation only covers PropositionRepository, so a decorator has to
-        // carry the capability itself. Wrapping a capable store and losing the capability would
-        // turn every undo behind that decorator into a refusal.
+    fun `the decorator's capabilities match its delegate's through the type system`() {
+        // Kotlin's interface delegation only covers PropositionRepository, so a decorator carries
+        // the capability type only when its delegate implements it. Wrapping a capable store and
+        // losing the capability type would make an `as? ProvenanceSubtractionCapable` probe return
+        // null, turning every undo behind that decorator into a refusal. The `wrapping` factory
+        // method picks the right shape so the type-level probe matches the delegate.
         val capable = appliedFold("decorated-capable")
+        val capableWrapper = EventEmittingPropositionRepository.wrapping(capable.store, DiceEventListener.DEV_NULL)
+        val capableSubtraction = capableWrapper as? ProvenanceSubtractionCapable
+        assertNotNull(capableSubtraction, "wrapping a subtraction-capable delegate produces a wrapper with the capability type")
+
         val capableRecords = InMemoryCollectorRecordStore()
         authorize(capableRecords, capable.runId, capable.retiredId, capable.survivorId)
-        val decorated = EventEmittingPropositionRepository(capable.store, DiceEventListener.DEV_NULL)
-        assertTrue(decorated.supportsProvenanceSubtraction)
-
-        val result = undo(capable.trace, decorated, capable.survivorId, capable.retiredId, capableRecords)
+        val result = undo(capable.trace, capableWrapper, capable.survivorId, capable.retiredId, capableRecords)
 
         assertEquals(listOf(revisionOne), result?.survivor?.provenanceEntries)
         assertEquals(listOf(revisionOne), capable.store.findById(capable.survivorId)?.provenanceEntries)
 
         val incapable = appliedFold("decorated-incapable")
-        val incapableRecords = InMemoryCollectorRecordStore()
-        authorize(incapableRecords, incapable.runId, incapable.retiredId, incapable.survivorId)
-        val overIncapable = EventEmittingPropositionRepository(
+        val incapableWrapper = EventEmittingPropositionRepository.wrapping(
             NoSubtractionStore(incapable.store),
             DiceEventListener.DEV_NULL,
         )
-        assertFalse(overIncapable.supportsProvenanceSubtraction)
+        val incapableSubtraction = incapableWrapper as? ProvenanceSubtractionCapable
+        assertNull(incapableSubtraction, "wrapping an incapable delegate produces a wrapper without the capability type")
 
+        val incapableRecords = InMemoryCollectorRecordStore()
+        authorize(incapableRecords, incapable.runId, incapable.retiredId, incapable.survivorId)
         assertThrows(CollapseUndoConfigurationException::class.java) {
-            undo(incapable.trace, overIncapable, incapable.survivorId, incapable.retiredId, incapableRecords)
+            undo(incapable.trace, incapableWrapper, incapable.survivorId, incapable.retiredId, incapableRecords)
         }
         assertEquals(
             listOf(revisionOne, revisionTwo),
