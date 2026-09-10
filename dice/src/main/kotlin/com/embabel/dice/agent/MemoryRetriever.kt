@@ -55,6 +55,25 @@ internal class MemoryRetriever(
 
     /** Hybrid search for a freeform [query] within the [base] scope. */
     fun search(query: String, base: PropositionQuery, limit: Int): Tool.Result {
+        val hits = rank(query, base, limit)
+        return if (hits.isEmpty()) noMatch(query, base) else renderHits(query, hits)
+    }
+
+    /**
+     * Ranked propositions for a freeform [query], without rendering.
+     *
+     * The ranking is the part that must not drift between surfaces; the rendering is not.
+     * [search] renders these as [Memory]'s tool result, while the MCP surface
+     * ([com.embabel.dice.mcp.DiceMcpTools]) formats them its own way so its four tools share
+     * one output shape. Probe tags are dropped here — callers that need them use [search].
+     */
+    fun rankedPropositions(query: String, base: PropositionQuery, limit: Int): List<Proposition> =
+        rank(query, base, limit).map { it.prop }
+
+    /**
+     * Run the three retrieval tiers and fuse them into one ranked list.
+     */
+    private fun rank(query: String, base: PropositionQuery, limit: Int): List<ProbeHit> {
         val ordered = LinkedHashMap<String, ProbeHit>()
 
         // Tier 1+2 — direct probes. Vector (similarity order) and
@@ -72,18 +91,24 @@ internal class MemoryRetriever(
         // Reciprocal Rank Fusion across the tiers: consensus hits (found
         // by more than one probe) outrank a single probe's high-but-lone
         // hit. Stable sort, so equal scores keep tier insertion order.
-        val hits = ordered.values
+        return ordered.values
             .filter { it.prop.id !in eagerIds }
             .sortedByDescending { it.rrf }
             .take(limit)
-        return if (hits.isEmpty()) noMatch(query, base) else renderHits(query, hits)
     }
+
+    /**
+     * In-scope memories by confidence, without rendering. The no-query counterpart to
+     * [rankedPropositions].
+     */
+    fun listRanked(base: PropositionQuery, limit: Int): List<Proposition> =
+        repository.query(base.orderedByEffectiveConfidence().withLimit(limit))
+            .filter { it.id !in eagerIds }
+            .take(limit)
 
     /** List all in-scope memories by confidence (no query supplied). */
     fun listAll(base: PropositionQuery, limit: Int): Tool.Result {
-        val results = repository.query(base.orderedByEffectiveConfidence().withLimit(limit))
-            .filter { it.id !in eagerIds }
-            .take(limit)
+        val results = listRanked(base, limit)
 
         if (results.isEmpty()) {
             return Tool.Result.text(

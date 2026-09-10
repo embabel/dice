@@ -31,6 +31,7 @@
         <module>dice-metamodel</module>
         <module>dice-integration-tests</module>
         <module>dice-user-guide</module>
+        <module>dice-mcp-autoconfigure</module>
     </modules>
 
     <properties>
@@ -95,6 +96,16 @@
             <dependency>
                 <groupId>com.embabel.dice</groupId>
                 <artifactId>dice-metamodel</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.embabel.dice</groupId>
+                <artifactId>dice-storage-autoconfigure</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.embabel.dice</groupId>
+                <artifactId>dice-mcp-autoconfigure</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

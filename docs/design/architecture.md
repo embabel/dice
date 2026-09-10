@@ -11,9 +11,10 @@ DICE is a multi-module Maven build. Each module's intent, and what it's allowed 
 
 | Module | Intent |
 |---|---|
-| `dice` | The core: proposition model, pipeline, gates, projection interfaces, query facades, agent tools, REST controllers. In-memory implementations only — no database driver. |
+| `dice` | The core: proposition model, pipeline, gates, projection interfaces, query facades, agent tools, REST controllers, MCP tool surface (`DiceMcpTools`). In-memory implementations only — no database driver. |
 | `dice-storage` | The durable Neo4j backend: `Drivine`-based repository, graph/Prolog/lineage projectors, schema and index bootstrap, and the governance persistence side: `MetamodelVersionStore`, the `DriftReportStore` drift log, and the `ObservedSchemaSource` that asks the live graph what it holds, excluding dice's own bookkeeping labels and edges so governance doesn't observe itself. Depends on `dice` and `dice-metamodel`. |
 | `dice-storage-autoconfigure` | Spring Boot autoconfiguration that wires `dice-storage`'s beans (repository, projectors, trust scorer) into a host application, plus the schema-governance loop: version store, drift log, observed-schema source, differ, quarantine policy and drift runner. That loop is wired only when the application supplies a `DeclaredSchemaSource` bean, and one property, `off` / `observe`, defaulting to `observe`, picks whether a drift runner bean is registered. No property quarantines anything; a host quarantines by calling `DriftSweepCapable.sweep`. See [metamodel-wiring.md](metamodel-wiring.md). Depends on `dice-storage`. |
+| `dice-mcp-autoconfigure` | Spring Boot autoconfiguration that exports `DiceMcpTools` over embabel-agent MCP when `embabel.dice.mcp.enabled=true`. Depends on `dice`. |
 | `dice-ingestion` | Content-hash dedup ledger and source adapters that sit in front of `PropositionPipeline`, so the same artifact is never extracted twice concurrently. Depends on `dice`. |
 | `dice-report` | Rationale and structured report generation over propositions and their lineage. Depends on `dice`. |
 | `dice-metamodel` | Schema governance: content-hash stamps over the governed part of a `DataDictionary`, the declared-schema contract, the version and drift-report store contracts, diffing, drift checking, and non-destructive quarantine. A leaf over `embabel-agent-api`, with no dependency on `dice`; `dice-storage` implements its store contracts. |
@@ -24,6 +25,7 @@ flowchart TB
     dice["dice<br/>(core)"]
     storage["dice-storage<br/>(Neo4j backend)"]
     autoconf["dice-storage-autoconfigure<br/>(Spring Boot wiring)"]
+    mcp["dice-mcp-autoconfigure<br/>(MCP export)"]
     ingestion["dice-ingestion<br/>(dedup ledger)"]
     report["dice-report<br/>(rationale/reports)"]
     metamodel["dice-metamodel<br/>(schema governance)"]
@@ -33,6 +35,7 @@ flowchart TB
     storage --> metamodel
     dice --> metamodel
     autoconf --> storage
+    mcp --> dice
     ingestion --> dice
     report --> dice
     itest --> dice
@@ -45,7 +48,8 @@ graph driver. `dice` depends on `dice-metamodel` to read a `MetamodelDiff`. One 
 `dice-storage`, which implements the `MetamodelVersionStore` and `DriftReportStore` contracts against Neo4j.
 Quarantine marks a proposition `PropositionStatus.QUARANTINED` and is declared in `dice`, so the machinery
 stays in core logic without back-depending to the schema model.
-`dice-storage-autoconfigure` is the only module that knows about Spring Boot autoconfiguration;
+Spring Boot autoconfiguration lives in dedicated `*-autoconfigure` modules
+(`dice-storage-autoconfigure`, `dice-mcp-autoconfigure`);
 plain `dice-storage` stays framework-neutral so it can be wired by hand outside Spring Boot.
 
 ### Subsystem design docs
@@ -224,7 +228,7 @@ sequenceDiagram
 
 See [retrieval-and-discovery](retrieval-and-discovery.md).
 
-### Expose: agent tools and REST
+### Expose: agent tools, REST, and MCP
 
 ```mermaid
 flowchart LR
@@ -238,17 +242,29 @@ flowchart LR
         PC["PropositionPipelineController"]
         MC["MemoryController"]
     end
+    subgraph mcp ["MCP (contextId per call)"]
+        MCP["DiceMcpTools<br/>recall, list, store, get"]
+    end
     GQT --> GQ[GraphQuery]
     DT --> RR[RetrievalRouter]
     DC --> RR
     MT --> PS[PropositionStore]
+    MCP --> PS
     PC --> PIPE[PropositionPipeline]
     MC --> PS
 ```
 
 Agent tools and REST share the same underlying routers and stores. The contextId is structurally
 isolated — agent tools bake it in at construction, REST takes it from the URL path only. Neither
-surface accepts a context override in the request body.
+of those surfaces accepts a context override in the request body.
+
+External MCP clients are stateless and may serve many sessions, so they cannot bake a context in
+at construction. `DiceMcpTools` takes `contextId` on every call — a caller-supplied scope, not
+a credential — and `get` treats a missing id and a foreign-context id the same way. Authorization
+is the host MCP server's job. Export is opt-in (`dice-mcp-autoconfigure`,
+`embabel.dice.mcp.enabled=true`). `dice_store` is a second switch
+(`embabel.dice.mcp.writes-enabled`, default false) because a direct write skips extraction,
+admission, and provenance. Discovery and graph tools stay on the in-process `asTools()` path.
 
 ## Events
 
@@ -297,7 +313,8 @@ and `CollectorRecord` MERGE on their natural keys so replayed writes are idempot
 | Retrieval router | `dice/query/discovery/RetrievalRouter.kt` |
 | Graph query facade | `dice/query/graph/GraphQuery.kt` |
 | Agent tools | `dice/agent/DiscoveryTools.kt`, `GraphQueryTools.kt` |
+| MCP tools | `dice/mcp/DiceMcpTools.kt` |
 | REST surface | `dice/web/rest/DiscoveryController.kt` |
 | Events | `dice/common/` (event types), `EventEmittingPropositionRepository` |
-| Spring Boot wiring | `dice-storage-autoconfigure/DiceStorageAutoConfiguration.kt` |
+| Spring Boot wiring | `dice-storage-autoconfigure/DiceStorageAutoConfiguration.kt`, `dice-mcp-autoconfigure/DiceMcpAutoConfiguration.kt` |
 | Schema-governance wiring | `dice-storage-autoconfigure/MetamodelAutoConfiguration.kt` |

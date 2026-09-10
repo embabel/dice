@@ -2414,6 +2414,54 @@ Everything is pushed into the database rather than scanned in memory:
 > `dice-storage/HANDOFF.md` for architecture and `dice-storage/INTEGRATE-INTO-ASSISTANT.md` for a
 > migration walkthrough.
 
+### MCP Server
+
+Expose DICE recall/list/store/get to an MCP client (Claude Desktop, Cursor, etc.) with
+`dice-mcp-autoconfigure` and embabel-agent's MCP server starter. Off until you set
+`embabel.dice.mcp.enabled=true`. Every tool takes a `contextId` (the Kotlin parameter name
+`KotlinMethodTool` publishes). That is a scope, not a credential. It keeps one call from
+reading another context; authorization is the host MCP server's job. In-process `Memory` /
+`DiscoveryTools` bake context in at construction instead. `dice_store` is off until you set
+`embabel.dice.mcp.writes-enabled=true`.
+
+```xml
+<dependency>
+    <groupId>com.embabel.dice</groupId>
+    <artifactId>dice-mcp-autoconfigure</artifactId>
+    <version>${dice.version}</version>
+</dependency>
+<dependency>
+    <groupId>com.embabel.agent</groupId>
+    <artifactId>embabel-agent-starter-mcpserver</artifactId>
+    <version>${embabel-agent.version}</version>
+</dependency>
+```
+
+```yaml
+embabel:
+  dice:
+    mcp:
+      enabled: true
+```
+
+| Tool | Description |
+|------|-------------|
+| `dice_recall` | Hybrid semantic + keyword search in a `contextId` |
+| `dice_list` | List active propositions for a context |
+| `dice_store` | Store a proposition directly (off unless `writes-enabled=true`) |
+| `dice_get` | Fetch one proposition by `propositionId`; includes status so a stale fact does not look active |
+
+`dice_recall` and `dice_list` share one result format, each line carrying the `id=` that
+`dice_get` takes, so a client can search and then drill into a single fact. Their `limit` is
+clamped to 100.
+
+`dice_store` is omitted from the export unless `embabel.dice.mcp.writes-enabled=true`. When
+it is on, it writes a fact with empty mentions and no provenance, so it is retrievable by
+vector and keyword only, not by entity expansion or graph projection. Use the ingestion
+pipeline when the fact needs to be wired into the rest of the knowledge flow.
+
+Discovery and graph tools stay on `DiscoveryTools.asTools(...)` / `GraphQueryTools.asTools(...)`.
+
 ### API Key Security
 
 DICE provides API key authentication for the REST endpoints. Enable it via configuration:
