@@ -49,10 +49,10 @@ import org.slf4j.LoggerFactory
  * Throw isolation is the listener's responsibility — wrap the listener in `SafeDiceEventListener`
  * if you need graceful degradation.
  *
- * This class does not itself implement `SourceRevisionQueryCapable`, so it carries the capability
- * only when its delegate does: use [wrapping] to build the right shape for whatever delegate you
- * hand it, so a caller's `as? SourceRevisionQueryCapable` probe on the wrapper answers the same way
- * it would on the delegate.
+ * This class carries capabilities only when its delegate does. The [wrapping] factory method
+ * picks the right shape for whatever delegate you hand it, so a caller's `as? SourceRevisionQueryCapable`
+ * or `as? ProvenanceSubtractionCapable` probe on the wrapper answers the same way it would on the
+ * delegate.
  *
  * Example usage:
  * ```kotlin
@@ -65,8 +65,8 @@ import org.slf4j.LoggerFactory
  * @property delegate The underlying repository. All non-write methods forward here.
  * @property listener Notified after each persist. Defaults to [DiceEventListener.DEV_NULL] (no-op).
  */
-open class EventEmittingPropositionRepository(
-    protected val delegate: PropositionRepository,
+open class EventEmittingPropositionRepository<D : PropositionRepository>(
+    protected val delegate: D,
     private val listener: DiceEventListener = DiceEventListener.DEV_NULL,
 ) : PropositionRepository by delegate {
 
@@ -75,21 +75,25 @@ open class EventEmittingPropositionRepository(
     companion object {
         /**
          * Build the decorator over [delegate], picking the shape that matches what [delegate] can
-         * do: when it implements [SourceRevisionQueryCapable], the returned instance does too and
-         * forwards to it, so a caller's `as?` probe on the wrapper answers the way it answers on the
-         * delegate. Over a plain repository, the returned instance carries no source-revision
-         * surface at all.
+         * do: when it implements [SourceRevisionQueryCapable] and [ProvenanceSubtractionCapable],
+         * the returned instance does too and forwards to both, so a caller's `as?` probe on the
+         * wrapper answers the way it answers on the delegate. Over a delegate with only provenance
+         * subtraction, the wrapper carries that capability alone. Over a plain repository, the
+         * returned instance carries no source-revision or provenance-subtraction surface at all.
          */
         @JvmStatic
         @JvmOverloads
         fun wrapping(
             delegate: PropositionRepository,
             listener: DiceEventListener = DiceEventListener.DEV_NULL,
-        ): EventEmittingPropositionRepository =
-            if (delegate is SourceRevisionQueryCapable) {
-                SourceRevisionEventEmittingPropositionRepository(delegate, listener)
-            } else {
-                EventEmittingPropositionRepository(delegate, listener)
+        ): EventEmittingPropositionRepository<out PropositionRepository> =
+            when {
+                delegate is SourceRevisionQueryCapable && delegate is ProvenanceSubtractionCapable ->
+                    SourceRevisionEventEmittingPropositionRepository(delegate, listener)
+                delegate is ProvenanceSubtractionCapable ->
+                    ProvenanceSubtractingEventEmittingPropositionRepository(delegate, listener)
+                else ->
+                    EventEmittingPropositionRepository(delegate, listener)
             }
     }
 
@@ -174,17 +178,44 @@ open class EventEmittingPropositionRepository(
 }
 
 /**
- * The same event-emitting decorator, over a delegate that also answers source-revision queries.
+ * The event-emitting decorator, over a delegate that can subtract provenance atomically.
  *
- * Carrying `SourceRevisionQueryCapable by delegate` here and not on the base class is what makes
- * the capability honest: a caller's `as? SourceRevisionQueryCapable` probe on this wrapper answers
- * exactly the way it would on the delegate. It cannot pass the type check and then fail at call
- * time. Built by [EventEmittingPropositionRepository.wrapping]; construct it directly only if you
+ * Carrying `ProvenanceSubtractionCapable by delegate` here and not on the base class is what makes
+ * the capability honest: a caller's `as? ProvenanceSubtractionCapable` probe on this wrapper answers
+ * exactly the way it would on the delegate. It cannot pass the type check and then fail at call time.
+ * The subtraction passes through unannounced, the same treatment the other provenance operations get
+ * through `by delegate`. Carrying the capability type matters because Kotlin's interface delegation
+ * only covers [PropositionRepository]: without this, wrapping a capable store would hide the
+ * capability from every caller that probes for it, and collector undo would refuse.
+ *
+ * Built by [EventEmittingPropositionRepository.wrapping]; construct it directly only if you
  * already have a delegate typed as both interfaces in hand.
  */
-class SourceRevisionEventEmittingPropositionRepository<T>(
-    delegate: T,
+class ProvenanceSubtractingEventEmittingPropositionRepository<D>(
+    delegate: D,
     listener: DiceEventListener = DiceEventListener.DEV_NULL,
-) : EventEmittingPropositionRepository(delegate, listener),
-    SourceRevisionQueryCapable by delegate
-    where T : PropositionRepository, T : SourceRevisionQueryCapable
+) : EventEmittingPropositionRepository<D>(delegate, listener),
+    ProvenanceSubtractionCapable by delegate
+    where D : PropositionRepository, D : ProvenanceSubtractionCapable
+
+/**
+ * The event-emitting decorator, over a delegate that answers both source-revision queries and
+ * provenance subtraction.
+ *
+ * Carrying `SourceRevisionQueryCapable by delegate` and `ProvenanceSubtractionCapable by delegate`
+ * here and not on the base class is what makes both capabilities honest: a caller's `as?` probe on
+ * this wrapper answers exactly the way it would on the delegate. It cannot pass the type check and
+ * then fail at call time. The two capabilities are paired here because every source-revision-capable
+ * store today also subtracts provenance; adding a fourth shape is a matter for the day a store needs
+ * it.
+ *
+ * Built by [EventEmittingPropositionRepository.wrapping]; construct it directly only if you
+ * already have a delegate typed as both interfaces in hand.
+ */
+class SourceRevisionEventEmittingPropositionRepository<D>(
+    delegate: D,
+    listener: DiceEventListener = DiceEventListener.DEV_NULL,
+) : EventEmittingPropositionRepository<D>(delegate, listener),
+    SourceRevisionQueryCapable by delegate,
+    ProvenanceSubtractionCapable by delegate
+    where D : PropositionRepository, D : ProvenanceSubtractionCapable, D : SourceRevisionQueryCapable

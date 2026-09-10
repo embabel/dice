@@ -36,6 +36,13 @@ class InMemoryCollectorTraceStore : CollectorTraceStore, CollectorTraceQuery {
     private val decisionsByRun = ConcurrentHashMap<String, MutableList<CollectorDecision>>()
     private val runContexts = ConcurrentHashMap<String, ContextId>()
 
+    /**
+     * Every decision, in the order it was recorded, so [findDecisionRetiring] can answer the
+     * newest one that named a given id as retired. [decisionsByRun] alone can't give that order:
+     * it groups by run, and a proposition can be retired by different runs at different times.
+     */
+    private val decisionsInOrder = Collections.synchronizedList(mutableListOf<CollectorDecision>())
+
     override fun recordRunContext(runId: String, contextId: ContextId) {
         runContexts[runId] = contextId
     }
@@ -53,8 +60,10 @@ class InMemoryCollectorTraceStore : CollectorTraceStore, CollectorTraceQuery {
     override fun recordDecision(runId: String, decision: CollectorDecision) {
         // File the decision under the run id we're told to, and stamp that same id onto the record
         // so a reader always sees the run it belongs to — no matter what the caller put on the field.
+        val stamped = decision.copy(runId = runId)
         decisionsByRun.computeIfAbsent(runId) { Collections.synchronizedList(mutableListOf()) }
-            .add(decision.copy(runId = runId))
+            .add(stamped)
+        decisionsInOrder.add(stamped)
     }
 
     override fun deleteTracesForContext(contextId: ContextId) {
@@ -65,6 +74,7 @@ class InMemoryCollectorTraceStore : CollectorTraceStore, CollectorTraceQuery {
             decisionsByRun.remove(runId)
             runContexts.remove(runId)
         }
+        decisionsInOrder.removeAll { it.runId in runIds }
     }
 
     fun edgesFor(runId: String): List<CollectorCandidateEdge> = edgesByRun[runId]?.toList() ?: emptyList()
@@ -83,5 +93,11 @@ class InMemoryCollectorTraceStore : CollectorTraceStore, CollectorTraceQuery {
     override fun findDecisionForProposition(propositionId: String): CollectorDecision? =
         decisionsByRun.values.asSequence().flatten().firstOrNull { decision ->
             decision.survivorId == propositionId || decision.retired.any { it.propositionId == propositionId }
+        }
+
+    /** Walks the recording order backwards, so the newest decision that retired [propositionId] wins. */
+    override fun findDecisionRetiring(propositionId: String): CollectorDecision? =
+        decisionsInOrder.asReversed().firstOrNull { decision ->
+            decision.retired.any { it.propositionId == propositionId }
         }
 }

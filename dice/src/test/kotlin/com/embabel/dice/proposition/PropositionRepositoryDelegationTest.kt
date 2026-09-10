@@ -71,11 +71,27 @@ class PropositionRepositoryDelegationTest {
     }
 
     /**
-     * A backend that opts in to [SourceRevisionQueryCapable] and implements only the plain-String
-     * finders. That is the implementation point a Java backend can actually reach, since the
-     * ContextId-typed methods compile to mangled JVM names.
+     * A backend that opts in to [ProvenanceSubtractionCapable] and implements subtraction
+     * over a test store.
      */
-    private inner class StringSourceOverrideRepository : MinimalRepository(), SourceRevisionQueryCapable {
+    private inner class ProvenanceSubtractingRepository : MinimalRepository(), ProvenanceSubtractionCapable {
+        override fun subtractFoldedEvidence(
+            propositionId: String,
+            provenanceRefs: List<String>,
+            grounding: Collection<String>,
+            sourceIds: Collection<String>,
+        ): Proposition? {
+            // Stub implementation for testing
+            return findById(propositionId)
+        }
+    }
+
+    /**
+     * A backend that opts in to both [SourceRevisionQueryCapable] and [ProvenanceSubtractionCapable],
+     * implementing only the plain-String finders for source revision. That is the implementation point
+     * a Java backend can actually reach, since the ContextId-typed methods compile to mangled JVM names.
+     */
+    private inner class StringSourceOverrideRepository : MinimalRepository(), SourceRevisionQueryCapable, ProvenanceSubtractionCapable {
         val sourceKeyResult = listOf(proposition(contextId, "source-key"))
         val sourceRevisionResult = listOf(proposition(contextId, "source-revision"))
         val revisionlessResult = listOf(proposition(contextId, "revisionless"))
@@ -107,6 +123,16 @@ class PropositionRepositoryDelegationTest {
             revisionlessCalls++
             receivedContexts += contextIdValue
             return revisionlessResult
+        }
+
+        override fun subtractFoldedEvidence(
+            propositionId: String,
+            provenanceRefs: List<String>,
+            grounding: Collection<String>,
+            sourceIds: Collection<String>,
+        ): Proposition? {
+            // Stub implementation for testing
+            return findById(propositionId)
         }
     }
 
@@ -200,26 +226,45 @@ class PropositionRepositoryDelegationTest {
 
     /**
      * The event-emitting decorator wraps a plain [PropositionRepository], and only implements
-     * [SourceRevisionQueryCapable] when [EventEmittingPropositionRepository.wrapping] was handed a
-     * delegate that does. A wrapper built over a capable delegate answers `as?` with itself and
-     * forwards to the delegate; a wrapper built over a plain repository answers `as?` with null,
-     * the same honest absence the delegate itself would report.
+     * [SourceRevisionQueryCapable] and [ProvenanceSubtractionCapable] when
+     * [EventEmittingPropositionRepository.wrapping] was handed a delegate that does. A wrapper built
+     * over a capable delegate answers `as?` with itself and forwards to the delegate; a wrapper built
+     * over a plain repository answers `as?` with null, the same honest absence the delegate itself
+     * would report.
      */
     @Test
     fun `the decorator carries the capability only when its delegate does`() {
-        val capableDelegate = StringSourceOverrideRepository()
-        val capableWrapper = EventEmittingPropositionRepository.wrapping(capableDelegate, DiceEventListener.DEV_NULL)
-        val capableRevisionQueries = capableWrapper as? SourceRevisionQueryCapable
-        assertNotNull(capableRevisionQueries, "a wrapper over a capable delegate must carry the capability")
+        // Both capabilities
+        val bothCapable = StringSourceOverrideRepository()
+        val bothWrapper = EventEmittingPropositionRepository.wrapping(bothCapable, DiceEventListener.DEV_NULL)
+        val revisionQueries = bothWrapper as? SourceRevisionQueryCapable
+        assertNotNull(revisionQueries, "a wrapper over a source-revision-capable delegate must carry the capability")
         assertEquals(
-            capableDelegate.sourceKeyResult,
-            capableRevisionQueries!!.findBySourceKey(contextId, "uri:https://example.com/source"),
+            bothCapable.sourceKeyResult,
+            revisionQueries!!.findBySourceKey(contextId, "uri:https://example.com/source"),
+        )
+        val subtractionCapable = bothWrapper as? ProvenanceSubtractionCapable
+        assertNotNull(subtractionCapable, "a wrapper over a provenance-subtracting delegate must carry the capability")
+
+        // Provenance subtraction only
+        val subtractionOnlyDelegate = ProvenanceSubtractingRepository()
+        val subtractionOnlyWrapper = EventEmittingPropositionRepository.wrapping(subtractionOnlyDelegate, DiceEventListener.DEV_NULL)
+        val subtractionOnly = subtractionOnlyWrapper as? ProvenanceSubtractionCapable
+        assertNotNull(subtractionOnly, "a wrapper over a provenance-subtracting delegate must carry the capability")
+        assertNull(
+            subtractionOnlyWrapper as? SourceRevisionQueryCapable,
+            "a wrapper over a delegate with only provenance subtraction must not satisfy source-revision probe",
         )
 
+        // Neither capability
         val plainWrapper = EventEmittingPropositionRepository.wrapping(MinimalRepository(), DiceEventListener.DEV_NULL)
         assertNull(
             plainWrapper as? SourceRevisionQueryCapable,
             "a wrapper over a plain repository must not satisfy the capability probe",
+        )
+        assertNull(
+            plainWrapper as? ProvenanceSubtractionCapable,
+            "a wrapper over a plain repository must not satisfy the subtraction probe",
         )
     }
 }

@@ -44,7 +44,8 @@ import java.time.Instant
  * - `(:CollectorDecision {id, runId, contextId, componentId, survivorId, action, createdAt})`
  *   with `id = "runId|componentId"`, plus one child
  *   `(:CollectorRetired {id, runId, contextId, propositionId, priorStatus, foldedGrounding,
- *   foldedProvenanceRefs, foldedSourceIds})-[:RETIRED_IN]->(:CollectorDecision)` per retired
+ *   foldedProvenanceRefs, foldedSourceIds, foldedProvenanceEvidenceKeys})
+ *   -[:RETIRED_IN]->(:CollectorDecision)` per retired
  *   proposition, so a reversal has everything a merging sweep folded onto the survivor.
  *
  * Every write is a single `UNWIND $rows AS r ...` round trip (see [com.embabel.dice.storage.CollectorTraceRowMappers] for
@@ -227,7 +228,8 @@ class DrivineCollectorTraceStore(
                 retired: [r IN retiredNodes WHERE r IS NOT NULL | {
                     propositionId: r.propositionId, priorStatus: r.priorStatus,
                     foldedGrounding: r.foldedGrounding, foldedProvenanceRefs: r.foldedProvenanceRefs,
-                    foldedSourceIds: r.foldedSourceIds
+                    foldedSourceIds: r.foldedSourceIds,
+                    foldedProvenanceEvidenceKeys: r.foldedProvenanceEvidenceKeys
                 }]
             } AS row
             """.trimIndent(),
@@ -260,6 +262,22 @@ class DrivineCollectorTraceStore(
         )
         val node = bySurvivor.firstOrNull() ?: queryRows(
             "MATCH (:CollectorRetired {propositionId: \$propositionId})-[:RETIRED_IN]->(d:CollectorDecision) RETURN d",
+            mapOf("propositionId" to propositionId),
+        ).firstOrNull() ?: return null
+        return runCatching {
+            val decisionId = node["id"]?.toString().orEmpty()
+            CollectorDecisionRowMapper.fromRow(node, retiredFor(decisionId))
+        }.onFailure { logger.warn("Skipping unreadable CollectorDecision row: {}", it.message) }.getOrNull()
+    }
+
+    /** The newest decision that retired [propositionId]. Never one where it only survived. */
+    @Transactional(readOnly = true)
+    override fun findDecisionRetiring(propositionId: String): CollectorDecision? {
+        val node = queryRows(
+            """
+            MATCH (:CollectorRetired {propositionId: ${'$'}propositionId})-[:RETIRED_IN]->(d:CollectorDecision)
+            RETURN d ORDER BY d.createdAt DESC LIMIT 1
+            """.trimIndent(),
             mapOf("propositionId" to propositionId),
         ).firstOrNull() ?: return null
         return runCatching {

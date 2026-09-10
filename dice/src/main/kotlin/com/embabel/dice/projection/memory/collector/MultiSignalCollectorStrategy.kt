@@ -19,6 +19,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.projection.memory.RunAwareCollectorStrategy
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import com.embabel.dice.spi.CandidatePair
 import com.embabel.dice.spi.CandidatePairSource
 import com.embabel.dice.spi.CollectorCandidateEdge
@@ -305,16 +306,31 @@ class MultiSignalCollectorStrategy(
             // set: absorbEvidence is a deduplicating union, so any ref the survivor already owned
             // pre-merge (common for near-duplicates from the same source) must not be recorded as
             // "folded", or undo would later strip evidence the survivor held independently.
+            //
+            // Evidence is compared by its full evidence key, so one document read at two revisions
+            // counts as two pieces of evidence: a survivor citing r1 does not hide the loser's r2,
+            // and undo can name r2 exactly. The locator keys stay beside them for trace readers and
+            // for consumers still reading the older field.
             val survivorGrounding = survivor.grounding.toSet()
-            val survivorProvenanceRefs = survivor.provenanceEntries.map { it.locator.key() }.toSet()
+            val survivorProvenanceRefs = survivor.provenanceEntries
+                .map { it.locator.key() }
+                .toSet()
+            val survivorEvidenceKeys = survivor.provenanceEntries
+                .map(ProvenanceEvidenceKey::encode)
+                .toSet()
             val survivorSourceIds = survivor.sourceIds.toSet()
             val retired = losers.map { loser ->
                 RetiredProposition(
                     propositionId = loser.id,
                     priorStatus = loser.status,
                     foldedGrounding = loser.grounding - survivorGrounding,
-                    foldedProvenanceRefs = loser.provenanceEntries.map { it.locator.key() } - survivorProvenanceRefs,
+                    foldedProvenanceRefs = loser.provenanceEntries
+                        .map { it.locator.key() }
+                        .distinct() - survivorProvenanceRefs,
                     foldedSourceIds = loser.sourceIds - survivorSourceIds,
+                    foldedProvenanceEvidenceKeys = loser.provenanceEntries
+                        .map(ProvenanceEvidenceKey::encode)
+                        .distinct() - survivorEvidenceKeys,
                 )
             }
             trace("recordDecision") {

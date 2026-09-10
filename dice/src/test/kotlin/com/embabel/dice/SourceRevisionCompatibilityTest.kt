@@ -16,16 +16,20 @@
 package com.embabel.dice
 
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.provenance.ContentAddressedLocator
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.SourceRevisionRef
+import com.embabel.dice.spi.RetiredProposition
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.KotlinModule
 import com.fasterxml.jackson.module.kotlin.readValue
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -74,6 +78,28 @@ class SourceRevisionCompatibilityTest {
             revisioned,
             mapper.readValue<Proposition>(mapper.writeValueAsString(revisioned)),
         )
+    }
+
+    @Test
+    fun `collector trace JSON keeps readable refs without exposing storage identities`() {
+        val retired = RetiredProposition(
+            propositionId = "retired",
+            priorStatus = PropositionStatus.ACTIVE,
+            foldedProvenanceRefs = listOf("uri:https://example.com/source"),
+            foldedProvenanceEvidenceKeys = listOf("dice-provenance:v1:opaque"),
+        )
+
+        val json = mapper.writeValueAsString(retired)
+
+        assertTrue(json.contains("uri:https://example.com/source"))
+        assertFalse(json.contains("foldedProvenanceEvidenceKeys"))
+        assertFalse(json.contains("dice-provenance:v1:opaque"))
+
+        // The consequence, stated as an assertion: a trace that goes through JSON comes back with
+        // its locator refs and no evidence keys, so it undoes at locator granularity.
+        val readBack = mapper.readValue<RetiredProposition>(json)
+        assertEquals(listOf("uri:https://example.com/source"), readBack.foldedProvenanceRefs)
+        assertEquals(emptyList<String>(), readBack.foldedProvenanceEvidenceKeys)
     }
 
     @Test

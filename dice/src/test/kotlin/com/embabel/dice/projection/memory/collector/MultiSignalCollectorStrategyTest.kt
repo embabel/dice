@@ -22,6 +22,9 @@ import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.ProvenanceEvidenceKey
+import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.spi.CollectorCandidateEdge
 import com.embabel.dice.spi.CollectorComponent
 import com.embabel.dice.spi.CollectorDecision
@@ -61,6 +64,7 @@ class MultiSignalCollectorStrategyTest {
         confidence: Double = 0.8,
         reinforceCount: Int = 0,
         mentions: List<EntityMention> = emptyList(),
+        provenanceEntries: List<ProvenanceEntry> = emptyList(),
     ): Proposition =
         Proposition(
             contextId = contextId,
@@ -69,6 +73,7 @@ class MultiSignalCollectorStrategyTest {
             confidence = confidence,
             decay = 0.0,
             reinforceCount = reinforceCount,
+            provenanceEntries = provenanceEntries,
         )
 
     private fun mention(resolvedId: String): EntityMention =
@@ -187,6 +192,40 @@ class MultiSignalCollectorStrategyTest {
         assertEquals(weak.status, retired.priorStatus)
         assertEquals(weak.grounding, retired.foldedGrounding)
         assertEquals(weak.sourceIds, retired.foldedSourceIds)
+    }
+
+    @Test
+    fun `records only the distinct evidence a fold actually adds`() {
+        // The survivor already cites r1 of this document; the loser cites r1 and r2, twice each.
+        // Recorded by locator key alone, the fold would look like it added nothing and r2 would sit
+        // on the survivor forever after an undo.
+        setEmbedding("strong statement", floatArrayOf(1f, 0f, 0f))
+        setEmbedding("weak statement", floatArrayOf(0.99f, 0.1f, 0f))
+        val locator = UriLocator("https://example.com/source")
+        val revisionOne = ProvenanceEntry(locator = locator, sourceRevision = "r1")
+        val revisionTwo = ProvenanceEntry(locator = locator, sourceRevision = "r2")
+        val strong = repo.save(
+            proposition("strong statement", confidence = 0.9, provenanceEntries = listOf(revisionOne)),
+        )
+        val weak = repo.save(
+            proposition(
+                "weak statement",
+                confidence = 0.3,
+                provenanceEntries = listOf(revisionOne, revisionOne, revisionTwo, revisionTwo),
+            ),
+        )
+        val traceStore = InMemoryCollectorTraceStore()
+
+        vectorOnlyStrategy(traceStore).mark(
+            listOf(strong, weak),
+            repo,
+            CollectorRunContext("revision-trace-run", contextId),
+        )
+
+        val retired = traceStore.decisionsFor("revision-trace-run").single().retired.single()
+        assertEquals(weak.id, retired.propositionId)
+        assertEquals(emptyList<String>(), retired.foldedProvenanceRefs)
+        assertEquals(listOf(ProvenanceEvidenceKey.encode(revisionTwo)), retired.foldedProvenanceEvidenceKeys)
     }
 
     @Test
