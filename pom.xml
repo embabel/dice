@@ -21,6 +21,69 @@
         <tag>HEAD</tag>
     </scm>
 
+    <developers>
+        <developer>
+            <id>rjohnson</id>
+            <name>Rod Johnson</name>
+            <email>rod@embabel.com</email>
+            <organization>Embabel Pty Ltd</organization>
+            <organizationUrl>https://www.embabel.com</organizationUrl>
+            <roles>
+                <role>Founder and Project Lead</role>
+            </roles>
+        </developer>
+        <developer>
+            <id>jimador</id>
+            <name>James Dunnam</name>
+            <email>james@embabel.com</email>
+            <organization>Embabel Pty Ltd</organization>
+            <organizationUrl>https://www.embabel.com</organizationUrl>
+            <roles>
+                <role>lead</role>
+            </roles>
+        </developer>
+        <developer>
+            <id>alexheifetz</id>
+            <name>Alex Hein-Heifetz</name>
+            <email>alex@embabel.com</email>
+            <organization>Embabel Pty Ltd</organization>
+            <organizationUrl>https://www.embabel.com</organizationUrl>
+            <roles>
+                <role>lead</role>
+            </roles>
+        </developer>
+        <developer>
+            <id>igordayen</id>
+            <name>Igor Dayen</name>
+            <email>igor@embabel.com</email>
+            <organization>Embabel Pty Ltd</organization>
+            <organizationUrl>https://www.embabel.com</organizationUrl>
+            <roles>
+                <role>lead</role>
+            </roles>
+        </developer>
+        <developer>
+            <id>jasperblues</id>
+            <name>Jasper Blues</name>
+            <email>jasper@embabel.com</email>
+            <organization>Embabel Pty Ltd</organization>
+            <organizationUrl>https://www.embabel.com</organizationUrl>
+            <roles>
+                <role>lead</role>
+            </roles>
+        </developer>
+        <developer>
+            <id>tschuehly</id>
+            <name>Thomas Schilling</name>
+            <email>thomas@embabel.com</email>
+            <organization>Embabel Pty Ltd</organization>
+            <organizationUrl>https://www.embabel.com</organizationUrl>
+            <roles>
+                <role>lead</role>
+            </roles>
+        </developer>
+    </developers>
+
     <modules>
         <module>dice</module>
         <module>dice-storage</module>
@@ -28,8 +91,6 @@
         <module>dice-report</module>
         <module>dice-ingestion</module>
         <module>dice-metamodel</module>
-        <module>dice-integration-tests</module>
-        <module>dice-user-guide</module>
         <module>dice-mcp-autoconfigure</module>
     </modules>
 
@@ -153,6 +214,19 @@
         <plugins>
             <plugin>
                 <!--
+                    Register src/main/kotlin and src/main/java as compile source roots (configured in
+                    embabel-build-parent), so the sources jar below contains the Kotlin code, not just resources.
+                -->
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- Attach a sources jar to every module; Maven Central requires one. Configured in embabel-build-parent. -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!--
                     Pin the Docker Engine API version the Testcontainers docker-java client uses;
                     its default is below the engine minimum and disables container-backed tests.
                     Honoured only as a JVM system property, and tests fork, so it must be set here.
@@ -168,5 +242,30 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+            Integration tests and the user guide are built by default but are not published.
+            activeByDefault profiles switch off when any other profile in this POM is activated,
+            so the Maven Central release (-Psonatype) builds only the published modules above.
+        -->
+        <profile>
+            <id>unpublished-modules</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <modules>
+                <module>dice-integration-tests</module>
+                <module>dice-user-guide</module>
+            </modules>
+        </profile>
+        <!--
+            Declared here (the release setup itself lives in embabel-build-parent) so that
+            -Psonatype deactivates unpublished-modules.
+        -->
+        <profile>
+            <id>sonatype</id>
+        </profile>
+    </profiles>
 
 </project>

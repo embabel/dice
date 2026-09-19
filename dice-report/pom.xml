@@ -10,6 +10,14 @@
     <packaging>jar</packaging>
     <name>Dice Report</name>
     <description>Report projectors for DICE knowledge graphs — semantic links, structured reports, and rationale</description>
+    <url>https://github.com/embabel/dice</url>
+
+    <scm>
+        <url>https://github.com/embabel/dice</url>
+        <connection>scm:git:https://github.com/embabel/dice.git</connection>
+        <developerConnection>scm:git:https://github.com/embabel/dice.git</developerConnection>
+        <tag>HEAD</tag>
+    </scm>
 
     <dependencies>
         <!-- Dice core: Proposition model and repository SPI -->
