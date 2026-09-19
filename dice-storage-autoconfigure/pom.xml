@@ -10,6 +10,14 @@
     <packaging>jar</packaging>
     <name>Dice Storage Autoconfigure</name>
     <description>Spring Boot auto-configuration for Dice graph storage (backend selection, schema, decay sweep)</description>
+    <url>https://github.com/embabel/dice</url>
+
+    <scm>
+        <url>https://github.com/embabel/dice</url>
+        <connection>scm:git:https://github.com/embabel/dice.git</connection>
+        <developerConnection>scm:git:https://github.com/embabel/dice.git</developerConnection>
+        <tag>HEAD</tag>
+    </scm>
 
     <properties>
         <!-- Matches dice-storage: consumes its Kotlin 2.2 metadata (see that module's note). -->

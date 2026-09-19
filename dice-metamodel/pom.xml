@@ -10,6 +10,14 @@
     <packaging>jar</packaging>
     <name>Dice Metamodel</name>
     <description>Schema governance for DICE knowledge graphs: content-hash stamping, the declared-schema contract, diffing, drift checking, and non-destructive quarantine</description>
+    <url>https://github.com/embabel/dice</url>
+
+    <scm>
+        <url>https://github.com/embabel/dice</url>
+        <connection>scm:git:https://github.com/embabel/dice.git</connection>
+        <developerConnection>scm:git:https://github.com/embabel/dice.git</developerConnection>
+        <tag>HEAD</tag>
+    </scm>
 
     <dependencies>
         <!--

@@ -10,6 +10,14 @@
     <packaging>jar</packaging>
     <name>Dice Ingestion</name>
     <description>Artifact ingestion SPI and handlers for DICE knowledge ingestion</description>
+    <url>https://github.com/embabel/dice</url>
+
+    <scm>
+        <url>https://github.com/embabel/dice</url>
+        <connection>scm:git:https://github.com/embabel/dice.git</connection>
+        <developerConnection>scm:git:https://github.com/embabel/dice.git</developerConnection>
+        <tag>HEAD</tag>
+    </scm>
 
     <dependencies>
         <!-- Dice core: Proposition model and repository SPI -->
