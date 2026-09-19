@@ -8,7 +8,7 @@
     </parent>
     <groupId>com.embabel.dice</groupId>
     <artifactId>dice-parent</artifactId>
-    <version>0.2.0</version>
+    <version>0.3.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>Dice Parent</name>
     <description>Knowledge graph construction and reasoning library (multi-module aggregator)</description>
@@ -18,7 +18,7 @@
         <url>https://github.com/embabel/dice</url>
         <connection>scm:git:https://github.com/embabel/dice.git</connection>
         <developerConnection>scm:git:https://github.com/embabel/dice.git</developerConnection>
-        <tag>v0.2.0</tag>
+        <tag>HEAD</tag>
     </scm>
 
     <modules>
