@@ -4,7 +4,7 @@
     <parent>
         <groupId>com.embabel.dice</groupId>
         <artifactId>dice-parent</artifactId>
-        <version>0.2.0-SNAPSHOT</version>
+        <version>0.2.0</version>
     </parent>
     <artifactId>dice-user-guide</artifactId>
     <packaging>jar</packaging>
@@ -16,7 +16,7 @@
         <url>https://github.com/embabel/dice</url>
         <connection>scm:git:https://github.com/embabel/dice.git</connection>
         <developerConnection>scm:git:https://github.com/embabel/dice.git</developerConnection>
-        <tag>HEAD</tag>
+        <tag>v0.2.0</tag>
     </scm>
 
     <properties>
