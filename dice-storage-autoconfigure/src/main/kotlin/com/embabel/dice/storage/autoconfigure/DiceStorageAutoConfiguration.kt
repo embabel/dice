@@ -300,6 +300,44 @@ class DiceStorageAutoConfiguration {
      * `@VectorIndex` annotation gives `loadNearest` and the `findClusters` Cypher — so all three paths
      * target one index. Only [dimensions] varies, since it comes from the embedding model at runtime.
      */
+    /**
+     * The same index, ensured on demand instead of at startup.
+     *
+     * The catalog above can only register what it can see WHEN IT IS BUILT, and a host that starts
+     * without an embedding model has nothing to register. Its own note said the catalog would be
+     * rebuilt on the next boot — true while such a host restarted after a model was configured,
+     * and no longer true of one that applies a provider key without restarting. The index was then
+     * never made: the model came alive, was used, and every read failed with "There is no such
+     * vector schema index".
+     *
+     * A catalog cannot answer it either. `SchemaCatalog` holds materialised specs and
+     * `SchemaManager` snapshots the catalog beans when it is built, so a later `enforce()` applies
+     * the same empty catalog. This goes through `PersistenceManager.indexes`, which is the public
+     * way to converge one index without a catalog at all.
+     *
+     * The host decides when — see [PropositionVectorIndexConvergence].
+     */
+    @Bean
+    @ConditionalOnBean(Ai::class)
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnProperty(
+        prefix = "embabel.dice.store.vector-index",
+        name = ["enabled"],
+        havingValue = "true",
+        matchIfMissing = true,
+    )
+    fun propositionVectorIndexConvergence(
+        persistenceManager: PersistenceManager,
+        ai: Ai,
+        embeddingServices: ObjectProvider<EmbeddingService>,
+    ): PropositionVectorIndexConvergence = PropositionVectorIndexConvergence(
+        persistenceManager = persistenceManager,
+        // Resolved per call, not captured: the model that matters here is one that arrived after
+        // this bean was built.
+        dimensionsOf = PropositionVectorIndexConvergence.dimensionsFrom { embeddingService(ai, embeddingServices) },
+        spec = ::propositionVectorIndexSpec,
+    )
+
     internal fun propositionVectorIndexSpec(dimensions: Int): VectorIndexSpec = VectorIndexSpec(
         label = DrivinePropositionRepository.VECTOR_INDEX_LABEL,
         property = DrivinePropositionRepository.VECTOR_INDEX_PROPERTY,
