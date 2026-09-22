@@ -83,21 +83,26 @@ interface PropositionRepository :
     // ========================================================================
 
     /**
-     * Re-embed every stored proposition with the currently-configured embedding service.
+     * Re-embed every stored proposition with the currently-configured embedding service, and leave
+     * this backend's own vector index agreeing with the result.
      *
      * The default re-saves each proposition, which re-embeds it for any backend that embeds on
-     * save; for backends that do not own embeddings (e.g. in-memory) it is a harmless rewrite.
+     * save; for backends that do not own embeddings (e.g. in-memory) it is a harmless rewrite. A
+     * backend with no index of its own has nothing further to do, which is why reconciliation
+     * belongs in the override rather than here.
      *
-     * Caveat: a model swap that changes the embedding *dimension* also needs the backend's vector
-     * index recreated at the new dimension — a backend/schema concern this does not perform. For
-     * same-dimension re-embeds (the common case) it is sufficient on its own.
+     * A BACKEND THAT OWNS AN INDEX MUST RECONCILE IT. A change of embedding model may make the
+     * vector wider or narrower, and either way an index created at the previous shape no longer
+     * describes what is stored. Leaving that to the caller is what this contract used to do, and
+     * it put the one workable order — drop, re-embed, remake — in every host's hands to rediscover
+     * and get wrong.
      *
-     * @return number of propositions re-embedded
+     * @return what was re-embedded, and whether the index had to be recreated to match
      */
-    fun reembedAll(): Int {
+    fun reembedAll(): PropositionReembedReport {
         val all = findAll()
         all.forEach { save(it) }
-        return all.size
+        return PropositionReembedReport(propositions = all.size, indexRecreated = false)
     }
 
     /**

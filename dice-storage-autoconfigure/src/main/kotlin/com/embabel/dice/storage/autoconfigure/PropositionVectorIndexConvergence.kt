@@ -60,10 +60,14 @@ class PropositionVectorIndexConvergence internal constructor(
      * False means there is still no embedding model — the ordinary answer on a host that has not
      * been given a key yet, and not an error. A host may call this hopefully.
      *
-     * CREATES, AND NEVER REWIDENS. `IndexManager.ensure` is deliberately non-destructive: against
-     * an index of a different width it reports [org.drivine.schema.EnsureResult.Drift] and changes
+     * CREATES, AND NEVER RESHAPES. `IndexManager.ensure` is deliberately non-destructive: against
+     * an index of a different shape it reports [org.drivine.schema.EnsureResult.Drift] and changes
      * nothing. That is the right default — recreating an index silently would strand every vector
-     * already in it — but it means this alone cannot follow a model CHANGE. See [drop].
+     * already in it — and it is why this cannot follow a model CHANGE.
+     *
+     * It does not need to. `reembedAll` reconciles the index around its own rewrite, so the only
+     * job left here is the one it was written for: making the index the FIRST time a key arrives,
+     * when there is nothing stored to re-embed.
      */
     fun ensure(): Boolean {
         val dimensions = dimensionsOf() ?: return false
@@ -73,56 +77,8 @@ class PropositionVectorIndexConvergence internal constructor(
             .isSuccess
     }
 
-    /**
-     * Drop the index, so propositions can be re-embedded at a DIFFERENT width and the index remade
-     * to match.
-     *
-     * THE ORDER MATTERS, and it is the host's to run:
-     *
-     * ```
-     * convergence.drop()                  // the old width goes
-     * propositionRepository.reembedAll()  // every vector rewritten at the new one
-     * convergence.ensure()                // remade, at the width the model now reports
-     * ```
-     *
-     * Dropping FIRST rather than recreating afterwards, which is the order `DrivineStore` already
-     * uses for chunks and entities. An index recreated before the re-embed spends the whole run
-     * declaring a width that none of the stored vectors have; dropping first means nothing is
-     * indexed until everything agrees.
-     *
-     * `reembedAll` on its own is NOT enough after a width change, and its own documentation says
-     * why: it writes `embedding` and no DDL, because the index is Drivine's to own. That is
-     * correct for a same-width re-embed and silently insufficient for any other — the vectors move
-     * and the index stays where it was.
-     *
-     * WIDTH IS NOT PART OF AN INDEX'S IDENTITY. Drivine matches an existing index on kind, label
-     * and properties, so the spec handed over here finds the index whatever width it was made at,
-     * and the number passed is only there to build a spec. The current model's is used where there
-     * is one, so the log line says something true.
-     *
-     * Returns false when there was no index to drop — a host that has never had a model, which is
-     * not an error. Idempotent, like [ensure], so a host may call it without checking first.
-     */
-    fun drop(): Boolean {
-        val dimensions = dimensionsOf() ?: WIDTH_FOR_IDENTITY_ONLY
-        return runCatching { persistenceManager.indexes.drop(spec(dimensions)) }
-            .onSuccess { dropped ->
-                if (dropped) logger.info("Dropped the proposition vector index; re-embed, then ensure() remakes it")
-                else logger.debug("No proposition vector index to drop")
-            }
-            .onFailure { logger.warn("Could not drop the proposition vector index: {}", it.message, it) }
-            .getOrDefault(false)
-    }
 
     companion object {
-
-        /**
-         * Stands in when there is no model to ask for a width.
-         *
-         * Only ever used to build a spec for a LOOKUP, where Drivine matches on kind, label and
-         * properties and ignores the width entirely. Never used to create anything.
-         */
-        private const val WIDTH_FOR_IDENTITY_ONLY = 1
 
         /**
          * The dimension of the host's embedding model, or null when it has none.
