@@ -1239,7 +1239,27 @@ class DrivinePropositionRepository(
      * ~10–50K propositions. A larger store would want chunked / periodic-commit writes to bound the
      * transaction; not implemented until a store that big exists.
      */
-    @Transactional
+    /**
+     * NOT `@Transactional`, and that is the point of this method's shape.
+     *
+     * Neo4j will not take schema work and data work in one transaction. Doing the index DDL inside
+     * the transactional rewrite deadlocked: the DDL runs on its own session and waits on the
+     * schema locks the open data transaction holds, while that transaction waits to commit. The
+     * request never returned, and the graph was left with the index dropped and the vectors not
+     * yet rewritten — observed on a live appliance, a transaction Running for ten minutes with no
+     * current query.
+     *
+     * So the DDL sits on either side of the transaction rather than inside it, and only
+     * [rewriteEveryEmbedding] is transactional. Between the drop and the remake there is a window
+     * in which proposition search finds nothing; that is inherent to changing the shape of an
+     * index and is why the caller is told the index was recreated.
+     *
+     * NOT_SUPPORTED, not a bare absence of the annotation: this CLASS carries `@Transactional`, so
+     * saying nothing here still runs the whole method in a transaction and reproduces the deadlock.
+     * It also suspends a transaction a CALLER already opened, which is the same hazard arriving
+     * from outside — [save] overrides the class default for its own reasons and is the precedent.
+     */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     override fun reembedAll(): PropositionReembedReport {
         logger.info("reembedAll start: model={} dim={}", embeddingService.name, embeddingService.dimensions)
         val spec = vectorIndexSpec(embeddingService.dimensions)
@@ -1259,6 +1279,25 @@ class DrivinePropositionRepository(
             logger.info("Embedding shape changed; dropping {} and remaking it after the re-embed", spec.effectiveName)
             persistenceManager.indexes.drop(spec)
         }
+        val rewritten = rewriteEveryEmbedding()
+        if (shapeChanged) persistenceManager.indexes.ensure(spec)
+        logger.info(
+            "reembedAll done: propositions={} model={} indexRecreated={}",
+            rewritten, embeddingService.name, shapeChanged,
+        )
+        return PropositionReembedReport(propositions = rewritten, indexRecreated = shapeChanged)
+    }
+
+    /**
+     * Recompute and write every proposition's vector, in one transaction, and say how many.
+     *
+     * The transactional half of [reembedAll], separated so the index DDL can stay outside it —
+     * see that method for what happens when the two share a transaction. Internal rather than
+     * private so Spring's proxy can apply `@Transactional` to it at all: a private method is
+     * invoked directly and the annotation on it would do nothing.
+     */
+    @Transactional
+    internal fun rewriteEveryEmbedding(): Int {
         val specs = graphObjectManager.loadAll<PropositionView> {
             where { proposition.contextId.isNotNull() } // skip malformed/foreign :Proposition nodes (see findAll)
         }.mapNotNull { view ->
@@ -1269,12 +1308,7 @@ class DrivinePropositionRepository(
             }
         }
         if (specs.isNotEmpty()) persistenceManager.executeBatch(specs)
-        if (shapeChanged) persistenceManager.indexes.ensure(spec)
-        logger.info(
-            "reembedAll done: propositions={} model={} indexRecreated={}",
-            specs.size, embeddingService.name, shapeChanged,
-        )
-        return PropositionReembedReport(propositions = specs.size, indexRecreated = shapeChanged)
+        return specs.size
     }
 
     @Transactional
