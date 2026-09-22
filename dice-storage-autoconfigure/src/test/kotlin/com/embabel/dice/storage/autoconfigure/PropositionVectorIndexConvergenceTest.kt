@@ -90,6 +90,53 @@ class PropositionVectorIndexConvergenceTest {
     }
 
     @Test
+    @DisplayName("dropping finds the index whatever width it was made at")
+    fun `drop matches on identity, not width`() {
+        val indexes = mock<IndexManager>()
+        whenever(indexes.drop(any())).thenReturn(true)
+
+        val dropped = convergence(indexes) { 1024 }.drop()
+
+        assertThat(dropped).isTrue()
+        val spec = org.mockito.kotlin.argumentCaptor<VectorIndexSpec>()
+        verify(indexes).drop(spec.capture())
+        // Drivine matches an existing index on kind, label and properties - the width is shape,
+        // not identity - so this finds an index made at 1536 just as well.
+        assertThat(spec.firstValue.label).isEqualTo("Proposition")
+        assertThat(spec.firstValue.properties).contains("embedding")
+    }
+
+    @Test
+    @DisplayName("with no model there is still something to drop, because the old index outlives it")
+    fun `drop works without a model`() {
+        val indexes = mock<IndexManager>()
+        whenever(indexes.drop(any())).thenReturn(true)
+
+        // The width is unknowable here and irrelevant: an index is identified without it. Unlike
+        // ensure(), which has nothing to create AT and so declines.
+        assertThat(convergence(indexes) { null }.drop()).isTrue()
+        verify(indexes).drop(any())
+    }
+
+    @Test
+    @DisplayName("nothing to drop is not an error")
+    fun `drop is idempotent`() {
+        val indexes = mock<IndexManager>()
+        whenever(indexes.drop(any())).thenReturn(false)
+
+        assertThat(convergence(indexes) { 1536 }.drop()).isFalse()
+    }
+
+    @Test
+    @DisplayName("a failure to drop is soft, like every other failure here")
+    fun `drop failure is soft`() {
+        val indexes = mock<IndexManager>()
+        whenever(indexes.drop(any())).thenThrow(RuntimeException("engine said no"))
+
+        assertThat(convergence(indexes) { 1536 }.drop()).isFalse()
+    }
+
+    @Test
     @DisplayName("the dimension is read on every call, so a model that arrives later is seen")
     fun `the model is resolved per call`() {
         val indexes = mock<IndexManager>()
