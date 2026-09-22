@@ -338,13 +338,14 @@ class DiceStorageAutoConfiguration {
         spec = ::propositionVectorIndexSpec,
     )
 
-    internal fun propositionVectorIndexSpec(dimensions: Int): VectorIndexSpec = VectorIndexSpec(
-        label = DrivinePropositionRepository.VECTOR_INDEX_LABEL,
-        property = DrivinePropositionRepository.VECTOR_INDEX_PROPERTY,
-        dimensions = dimensions,
-        similarity = SimilarityFunction.COSINE,
-        name = DrivinePropositionRepository.VECTOR_INDEX,
-    )
+    /**
+     * Delegated to the repository, which owns the identity constants and now needs the spec at
+     * runtime as well — [DrivinePropositionRepository.reembedAll] reconciles the index itself. Two
+     * builders would be two chances for the startup DDL and the re-embed to describe different
+     * indexes.
+     */
+    internal fun propositionVectorIndexSpec(dimensions: Int): VectorIndexSpec =
+        DrivinePropositionRepository.vectorIndexSpec(dimensions)
 
     // ---- In-memory backend (default) ----
 

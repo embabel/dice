@@ -23,6 +23,7 @@ import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.common.DiceMetadataKeys
+import com.embabel.dice.proposition.PropositionReembedReport
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionQuery.OrderBy
@@ -40,6 +41,9 @@ import com.embabel.dice.query.graph.GraphPath
 import com.embabel.dice.query.graph.PropositionLineage
 import com.embabel.dice.query.graph.RelatedEntity
 import com.embabel.dice.storage.model.*
+import org.drivine.schema.SimilarityFunction
+import org.drivine.schema.VectorIndexSpec
+import org.drivine.schema.EnsureResult
 import org.drivine.manager.*
 import org.drivine.query.CypherStatement
 import org.drivine.query.QueryLoader
@@ -1223,16 +1227,38 @@ class DrivinePropositionRepository(
     /**
      * Re-embed every proposition by writing a fresh vector onto each node. Lighter than the
      * interface default (which re-saves the whole view): it SETs only `embedding`, leaving mentions
-     * and other properties untouched. The `@VectorIndex`-declared index is owned by Drivine, so a
-     * same-dimension re-embed needs no index DDL here.
+     * and other properties untouched.
+     *
+     * IT RECONCILES ITS OWN INDEX. A same-shape re-embed needs no DDL, and used to be the only
+     * case this handled — the index was left to the host, which had to know that only one order
+     * works. A change of embedding model makes the stored vectors disagree with the index whether
+     * the new model is wider or narrower, so the shape is checked here and the index remade around
+     * the rewrite when it has moved.
      *
      * Vectors are computed in memory then written in a single batch in one transaction — sized for
      * ~10–50K propositions. A larger store would want chunked / periodic-commit writes to bound the
      * transaction; not implemented until a store that big exists.
      */
     @Transactional
-    override fun reembedAll(): Int {
+    override fun reembedAll(): PropositionReembedReport {
         logger.info("reembedAll start: model={} dim={}", embeddingService.name, embeddingService.dimensions)
+        val spec = vectorIndexSpec(embeddingService.dimensions)
+        /*
+         * `IndexManager.ensure` is deliberately non-destructive: against an index of a different
+         * shape it reports Drift and changes nothing. That makes it the question "does the stored
+         * index still describe what this model produces?" as well as the means of creating one —
+         * and the answer is the same whether the model got WIDER or NARROWER, since a shape either
+         * matches or it does not.
+         *
+         * Drop before re-embedding rather than recreate after, the order DrivineStore already uses
+         * for chunks and entities: an index left standing through the run spends it describing a
+         * shape none of the rewritten vectors have.
+         */
+        val shapeChanged = persistenceManager.indexes.ensure(spec) is EnsureResult.Drift
+        if (shapeChanged) {
+            logger.info("Embedding shape changed; dropping {} and remaking it after the re-embed", spec.effectiveName)
+            persistenceManager.indexes.drop(spec)
+        }
         val specs = graphObjectManager.loadAll<PropositionView> {
             where { proposition.contextId.isNotNull() } // skip malformed/foreign :Proposition nodes (see findAll)
         }.mapNotNull { view ->
@@ -1243,8 +1269,12 @@ class DrivinePropositionRepository(
             }
         }
         if (specs.isNotEmpty()) persistenceManager.executeBatch(specs)
-        logger.info("reembedAll done: propositions={} model={}", specs.size, embeddingService.name)
-        return specs.size
+        if (shapeChanged) persistenceManager.indexes.ensure(spec)
+        logger.info(
+            "reembedAll done: propositions={} model={} indexRecreated={}",
+            specs.size, embeddingService.name, shapeChanged,
+        )
+        return PropositionReembedReport(propositions = specs.size, indexRecreated = shapeChanged)
     }
 
     @Transactional
@@ -1467,6 +1497,23 @@ class DrivinePropositionRepository(
          * same index.
          */
         const val VECTOR_INDEX = VECTOR_INDEX_LABEL + "_" + VECTOR_INDEX_PROPERTY + "_vector"
+
+        /**
+         * The proposition vector index, at a given embedding width.
+         *
+         * Here rather than in the autoconfiguration because it is built entirely from the three
+         * constants above, which this class already owns as the canonical identity — and because
+         * [reembedAll] needs it at runtime, where a bean method is out of reach. The
+         * autoconfiguration's schema catalog reads it from here, so the startup DDL and the
+         * re-embed cannot describe different indexes.
+         */
+        fun vectorIndexSpec(dimensions: Int): VectorIndexSpec = VectorIndexSpec(
+            label = VECTOR_INDEX_LABEL,
+            property = VECTOR_INDEX_PROPERTY,
+            dimensions = dimensions,
+            similarity = SimilarityFunction.COSINE,
+            name = VECTOR_INDEX,
+        )
 
         /** Mirrors the [PropositionQuery.decayK] default; the materialised column is computed at this k. */
         private const val DEFAULT_DECAY_K = 2.0

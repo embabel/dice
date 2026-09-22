@@ -1982,6 +1982,46 @@ class DrivinePropositionStoreIntegrationTest {
         assertTrue(old.id !in ids, "a proposition revised before the cutoff must be filtered out")
     }
 
+    /**
+     * A change of embedding model leaves the vectors and the index describing the same shape,
+     * whichever direction the shape moved.
+     *
+     * The index is created AT a width, and `ensure` will not reshape one — so before `reembedAll`
+     * reconciled its own index, a model change rewrote every vector and left the index behind.
+     * Nothing failed loudly; searches just stopped finding things.
+     */
+    @Test
+    fun `reembedAll remakes the index when the embedding shape changes`() {
+        repository.save(prop("a fact worth keeping"))
+        repository.save(prop("another fact"))
+        val startingWidth = embeddingService.dimensions
+
+        fun widthOfStoredIndex(): Int? = persistenceManager.indexes
+            .find(DrivinePropositionRepository.vectorIndexSpec(startingWidth))
+            ?.dimensions
+
+        fun reembedAt(width: Int) = DrivinePropositionRepository(
+            graphObjectManager, persistenceManager, FakeEmbeddingService(width), transactionManager,
+        ).reembedAll()
+
+        // WIDER.
+        val wider = reembedAt(startingWidth * 2)
+        assertEquals(2, wider.propositions)
+        assertTrue(wider.indexRecreated, "a wider model must remake the index")
+        assertEquals(startingWidth * 2, widthOfStoredIndex(), "the index must describe what is stored")
+
+        // NARROWER — the direction that prompted this, and it is the same question.
+        val narrower = reembedAt(startingWidth)
+        assertTrue(narrower.indexRecreated, "a narrower model must remake the index too")
+        assertEquals(startingWidth, widthOfStoredIndex())
+
+        // SAME shape: rewrite the vectors, leave the index alone. No drop, so no search outage.
+        val unchanged = reembedAt(startingWidth)
+        assertEquals(2, unchanged.propositions)
+        assertFalse(unchanged.indexRecreated, "a same-shape re-embed must not touch the index")
+        assertEquals(startingWidth, widthOfStoredIndex())
+    }
+
     /** findClusters must query the configured vector index, not a hard-coded name. */
     @Test
     fun `findClusters uses the configured vector index name`() {
