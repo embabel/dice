@@ -25,6 +25,7 @@ import com.embabel.dice.proposition.DecaySweepConfig
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionReembedReport
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
@@ -40,6 +41,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTimeoutPreemptively
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -1980,6 +1982,43 @@ class DrivinePropositionStoreIntegrationTest {
 
         assertTrue(recent.id in ids, "the recently-revised proposition should pass the filter")
         assertTrue(old.id !in ids, "a proposition revised before the cutoff must be filtered out")
+    }
+
+    /**
+     * Through the SPRING BEAN, which is what production calls and what the test below did not.
+     *
+     * This class carries a class-level `@Transactional`, so the proxied `reembedAll` runs inside a
+     * transaction — and Neo4j will not take schema work and data work in one. The index DDL
+     * deadlocked against the open data transaction: the request never returned, and the graph was
+     * left with the index dropped and the vectors unwritten. Observed on a live appliance.
+     *
+     * The test below constructs the repository DIRECTLY, so no proxy, no transaction, and the DDL
+     * and the writes landed in separate transactions — it passed on a path production never takes.
+     * That is what this one is for, and why it uses the autowired bean and nothing else.
+     */
+    @Test
+    fun `reembedAll through the bean does not deadlock on its own index DDL`() {
+        repository.save(prop("a fact the bean will re-embed"))
+        val modelWidth = embeddingService.dimensions
+
+        // Force the mismatch the DDL path exists for, without needing a second model: leave the
+        // index at a width this model does not produce, so `reembedAll` must drop and remake it.
+        persistenceManager.indexes.recreate(DrivinePropositionRepository.vectorIndexSpec(modelWidth * 2))
+
+        // A deadlock does not fail, it HANGS — so the assertion that matters is arriving here at
+        // all, which the timeout turns into a failure instead of a stuck build.
+        // Assigned inside rather than returned: Kotlin picks the Executable overload for a
+        // value-producing lambda here, which would make `report` Unit.
+        var report: PropositionReembedReport? = null
+        assertTimeoutPreemptively(Duration.ofSeconds(60)) { report = repository.reembedAll() }
+        val outcome = requireNotNull(report) { "reembedAll returned nothing" }
+
+        assertTrue(outcome.indexRecreated, "a shape mismatch must be reconciled")
+        assertEquals(
+            modelWidth,
+            persistenceManager.indexes.find(DrivinePropositionRepository.vectorIndexSpec(modelWidth))?.dimensions,
+            "the index must end at the width the model produces",
+        )
     }
 
     /**
