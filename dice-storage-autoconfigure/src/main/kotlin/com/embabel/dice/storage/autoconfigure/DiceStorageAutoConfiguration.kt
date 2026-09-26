@@ -97,7 +97,7 @@ class DiceStorageAutoConfiguration {
             DrivinePropositionRepository.VECTOR_INDEX,
         )
         return DrivinePropositionRepository(
-            graphObjectManager, persistenceManager, embeddingService(ai, embeddingServices), transactionManager,
+            graphObjectManager, persistenceManager, storeEmbeddingService("graph", ai, embeddingServices), transactionManager,
         )
     }
 
@@ -112,9 +112,37 @@ class DiceStorageAutoConfiguration {
      * eagerly and throws when no model is registered, taking the context down with it.
      * [DrivinePropositionRepository] only touches the service when it actually embeds, so
      * an absent-tolerant one is safe to hold.
+     *
+     * Several beans and no `@Primary` is the ORDINARY case, not an ambiguity to fail on: the platform
+     * registers one bean per model it can reach (an OpenAI key alone registers three), and choosing
+     * among those is exactly what the configured default embedding model is for. A host that wants
+     * its own service used marks it `@Primary`.
      */
     private fun embeddingService(ai: Ai, embeddingServices: ObjectProvider<EmbeddingService>): EmbeddingService =
         embeddingServices.getIfUnique() ?: ai.withDefaultEmbeddingService()
+
+    /**
+     * [embeddingService] for a proposition store, saying which one it got and why. Both stores go
+     * through here, so a host's embedding service reaches whichever backend it runs, and the one
+     * line an operator needs — is memory embedded with the model I configured? — is at startup
+     * rather than inferred from a vector-width mismatch later.
+     */
+    private fun storeEmbeddingService(
+        store: String,
+        ai: Ai,
+        embeddingServices: ObjectProvider<EmbeddingService>,
+    ): EmbeddingService {
+        val hostService = embeddingServices.getIfUnique()
+        val service = hostService ?: ai.withDefaultEmbeddingService()
+        logger.info(
+            "{} proposition store embeds with '{}' ({}): {}",
+            store,
+            service.name,
+            service.provider,
+            if (hostService != null) "the application's EmbeddingService bean" else "the platform default embedding service",
+        )
+        return service
+    }
 
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
@@ -352,9 +380,12 @@ class DiceStorageAutoConfiguration {
     @Bean
     @ConditionalOnBean(Ai::class)
     @ConditionalOnMissingBean(PropositionRepository::class)
-    fun inMemoryPropositionRepository(ai: Ai): PropositionRepository {
+    fun inMemoryPropositionRepository(
+        ai: Ai,
+        embeddingServices: ObjectProvider<EmbeddingService>,
+    ): PropositionRepository {
         logger.info("Wiring in-memory proposition store")
-        return InMemoryPropositionRepository(ai.withDefaultEmbeddingService())
+        return InMemoryPropositionRepository(storeEmbeddingService("in-memory", ai, embeddingServices))
     }
 
     @Bean
