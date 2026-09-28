@@ -97,12 +97,29 @@ interface PropositionRepository :
      * it put the one workable order — drop, re-embed, remake — in every host's hands to rediscover
      * and get wrong.
      *
+     * ONE FAILURE DOES NOT STOP THE RUN. Every proposition is attempted; a failure (an embedding
+     * service that rejects one text, a rate limit) is recorded and the loop continues, so the store
+     * is not left split between two models at whatever point the first failure happened. When any
+     * failed, [PropositionReembedIncompleteException] is thrown AFTER the run, naming them; calling
+     * this again is the retry.
+     *
      * @return what was re-embedded, and whether the index had to be recreated to match
+     * @throws PropositionReembedIncompleteException when one or more propositions could not be
+     * re-embedded; everything else was
      */
     fun reembedAll(): PropositionReembedReport {
         val all = findAll()
-        all.forEach { save(it) }
-        return PropositionReembedReport(propositions = all.size, indexRecreated = false)
+        val failures = all.mapNotNull { proposition ->
+            try {
+                save(proposition)
+                null
+            } catch (e: Exception) {
+                proposition.id to e
+            }
+        }.toMap()
+        val report = PropositionReembedReport(propositions = all.size - failures.size, indexRecreated = false)
+        if (failures.isNotEmpty()) throw PropositionReembedIncompleteException.of(report, failures)
+        return report
     }
 
     /**

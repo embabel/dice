@@ -61,9 +61,15 @@ class InMemoryPropositionRepository(
     /** Vector search only works when an embedder was supplied; otherwise the type claims it but can't. */
     override val supportsVector: Boolean get() = embeddingService != null
 
+    /**
+     * Embeds BEFORE storing, as [JsonFilePropositionRepository] does: a failing embedder throws
+     * with nothing changed, rather than leaving the proposition stored beside a missing or stale
+     * vector that vector search would then silently disagree with.
+     */
     override fun save(proposition: Proposition): Proposition {
+        val embedding = embeddingService?.embed(proposition.text)
         propositions[proposition.id] = proposition
-        embeddingService?.let { embeddings[proposition.id] = it.embed(proposition.text) }
+        embedding?.let { embeddings[proposition.id] = it }
         return proposition
     }
 

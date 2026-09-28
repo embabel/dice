@@ -65,15 +65,40 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
     // torn/stale snapshot and so in-memory state can be rolled back if the disk flush fails.
     private val writeLock = Any()
 
+    /**
+     * Loads every stored proposition, then embeds each one. Vectors are not persisted, so they are
+     * recomputed on every start.
+     *
+     * A FAILED EMBED DOES NOT STOP THE REPOSITORY STARTING. The proposition is still loaded and
+     * served by every non-vector read; it simply has no vector, so vector search does not find it.
+     * The failures are logged at WARN with their ids, and a later [reembedAll] (or re-saving the
+     * proposition) retries them. Refusing to construct over one embedding hiccup would make the
+     * whole store unreadable for the sake of one index entry.
+     */
     init {
         if (Files.exists(path)) {
             val loaded: List<Proposition> = mapper.readValue(path.toFile())
-            loaded.forEach { prop ->
-                propositions[prop.id] = prop
-                embeddingService?.let { embeddings[prop.id] = it.embed(prop.text) }
-            }
+            loaded.forEach { propositions[it.id] = it }
+            embeddingService?.let { embedOnLoad(loaded, it) }
             logger.info("Loaded {} proposition(s) from {}", propositions.size, path)
         }
+    }
+
+    private fun embedOnLoad(loaded: List<Proposition>, embedder: EmbeddingService) {
+        val failures = loaded.mapNotNull { prop ->
+            try {
+                embeddings[prop.id] = embedder.embed(prop.text)
+                null
+            } catch (e: Exception) {
+                prop.id to e
+            }
+        }
+        if (failures.isEmpty()) return
+        logger.warn(
+            "{} of {} proposition(s) from {} could not be embedded on load; they are stored but absent from " +
+                "vector search until reembedAll retries them. ids={}",
+            failures.size, loaded.size, path, failures.map { it.first }, failures.first().second,
+        )
     }
 
     override val luceneSyntaxNotes: String

@@ -23,6 +23,7 @@ import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.common.DiceMetadataKeys
+import com.embabel.dice.proposition.PropositionReembedIncompleteException
 import com.embabel.dice.proposition.PropositionReembedReport
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
@@ -1235,11 +1236,14 @@ class DrivinePropositionRepository(
      * the new model is wider or narrower, so the shape is checked here and the index remade around
      * the rewrite when it has moved.
      *
-     * Vectors are computed in memory then written in a single batch in one transaction — sized for
-     * ~10–50K propositions. A larger store would want chunked / periodic-commit writes to bound the
-     * transaction; not implemented until a store that big exists.
-     */
-    /**
+     * ONE BAD PROPOSITION DOES NOT SINK THE RUN. Each proposition is embedded on its own, and the
+     * vectors are written in batches of [REEMBED_WRITE_BATCH], each batch committed atomically by
+     * Drivine's own transaction. A proposition whose embed fails keeps its node; if its old vector
+     * no longer matches the index width it is cleared, so the index never describes a vector of
+     * the wrong shape and the proposition is simply absent from vector search until retried. When
+     * anything failed, [PropositionReembedIncompleteException] is thrown AFTER the index is back,
+     * naming the failed ids. Re-running this is the retry: every write is an idempotent SET.
+     *
      * NOT `@Transactional`, and that is the point of this method's shape.
      *
      * Neo4j will not take schema work and data work in one transaction. Doing the index DDL inside
@@ -1249,15 +1253,18 @@ class DrivinePropositionRepository(
      * yet rewritten — observed on a live appliance, a transaction Running for ten minutes with no
      * current query.
      *
-     * So the DDL sits on either side of the transaction rather than inside it, and only
-     * [rewriteEveryEmbedding] is transactional. Between the drop and the remake there is a window
-     * in which proposition search finds nothing; that is inherent to changing the shape of an
-     * index and is why the caller is told the index was recreated.
+     * So the DDL sits on either side of the writes rather than inside a transaction with them.
+     * Between the drop and the remake there is a window in which proposition search finds nothing;
+     * that is inherent to changing the shape of an index and is why the caller is told the index
+     * was recreated. The remake happens whether the rewrite succeeded or threw.
      *
      * NOT_SUPPORTED, not a bare absence of the annotation: this CLASS carries `@Transactional`, so
      * saying nothing here still runs the whole method in a transaction and reproduces the deadlock.
      * It also suspends a transaction a CALLER already opened, which is the same hazard arriving
      * from outside — [save] overrides the class default for its own reasons and is the precedent.
+     *
+     * @throws PropositionReembedIncompleteException when some propositions could not be embedded;
+     * all others were written and the index is restored
      */
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     override fun reembedAll(): PropositionReembedReport {
@@ -1279,37 +1286,106 @@ class DrivinePropositionRepository(
             logger.info("Embedding shape changed; dropping {} and remaking it after the re-embed", spec.effectiveName)
             persistenceManager.indexes.drop(spec)
         }
-        val rewritten = rewriteEveryEmbedding()
+        val outcome = try {
+            rewriteEveryEmbedding()
+        } catch (e: Throwable) {
+            // Throwable, not Exception: whatever escapes, the index is remade before it does.
+            if (shapeChanged) remakeIndexAfterFailure(spec, e)
+            throw e
+        }
         if (shapeChanged) persistenceManager.indexes.ensure(spec)
+        val report = PropositionReembedReport(propositions = outcome.rewritten, indexRecreated = shapeChanged)
+        if (outcome.failures.isNotEmpty()) {
+            // The exception names every failed proposition and carries the causes; logging them here too
+            // would report the same failure twice.
+            throw PropositionReembedIncompleteException.of(report, outcome.failures)
+        }
         logger.info(
             "reembedAll done: propositions={} model={} indexRecreated={}",
-            rewritten, embeddingService.name, shapeChanged,
+            outcome.rewritten, embeddingService.name, shapeChanged,
         )
-        return PropositionReembedReport(propositions = rewritten, indexRecreated = shapeChanged)
+        return report
     }
 
     /**
-     * Recompute and write every proposition's vector, in one transaction, and say how many.
-     *
-     * The transactional half of [reembedAll], separated so the index DDL can stay outside it —
-     * see that method for what happens when the two share a transaction. Internal rather than
-     * private so Spring's proxy can apply `@Transactional` to it at all: a private method is
-     * invoked directly and the annotation on it would do nothing.
+     * The index must come back even when the rewrite threw. A failure to remake it is attached to
+     * the original failure rather than replacing it, and logged, since the caller then has an
+     * index to fix as well as a rewrite to retry.
      */
-    @Transactional
-    internal fun rewriteEveryEmbedding(): Int {
-        val specs = graphObjectManager.loadAll<PropositionView> {
-            where { proposition.contextId.isNotNull() } // skip malformed/foreign :Proposition nodes (see findAll)
-        }.mapNotNull { view ->
-            view.proposition.text.takeIf { it.isNotBlank() }?.let { text ->
-                QuerySpecification
-                    .withStatement("MATCH (p:Proposition {id: \$id}) SET p.embedding = \$embedding")
-                    .bind(mapOf("id" to view.proposition.id, "embedding" to embeddingService.embed(text).toList()))
-            }
+    private fun remakeIndexAfterFailure(spec: VectorIndexSpec, failure: Throwable) {
+        try {
+            persistenceManager.indexes.ensure(spec)
+        } catch (e: Exception) {
+            // No stack trace: it travels with the rethrown failure as a suppressed exception.
+            logger.error(
+                "reembedAll failed AND could not remake {}; vector search is down until it is: {}",
+                spec.effectiveName,
+                e.message,
+            )
+            failure.addSuppressed(e)
         }
-        if (specs.isNotEmpty()) persistenceManager.executeBatch(specs)
-        return specs.size
     }
+
+    /** What [rewriteEveryEmbedding] managed: vectors written, and the propositions it could not embed. */
+    private data class RewriteOutcome(
+        val rewritten: Int,
+        val failures: Map<String, Throwable>,
+    )
+
+    /**
+     * Recompute and write every proposition's vector, isolating each embed so one failure costs
+     * only its own proposition.
+     *
+     * Deliberately not `@Transactional`. It used to carry the annotation, but it is only ever
+     * called from [reembedAll] on `this`, and a self-invocation never passes through Spring's proxy
+     * — so the annotation did nothing, whatever the visibility. That was the right outcome by
+     * accident: a single transaction around every write is what this method must NOT have now,
+     * since it would discard every successful vector on the first failed write and hold the
+     * transaction open across thousands of remote embedding calls. Instead each batch goes through
+     * [PersistenceManager.executeBatch], which with no ambient transaction commits the batch
+     * atomically on its own.
+     *
+     * A WRITE failure (the database, not the embedder) still propagates; batches already committed
+     * stay committed, and a rerun rewrites them harmlessly.
+     */
+    private fun rewriteEveryEmbedding(): RewriteOutcome {
+        val views = graphObjectManager.loadAll<PropositionView> {
+            where { proposition.contextId.isNotNull() } // skip malformed/foreign :Proposition nodes (see findAll)
+        }.filter { it.proposition.text.isNotBlank() }
+        val dimensions = embeddingService.dimensions
+        val batchResults = views.chunked(REEMBED_WRITE_BATCH).map { batch ->
+            val embedded = batch.associate { view ->
+                view.proposition.id to tryEmbed(view.proposition.text)
+            }
+            val writes = embedded.map { (id, result) ->
+                result.fold(
+                    onSuccess = { vector ->
+                        QuerySpecification
+                            .withStatement("MATCH (p:Proposition {id: \$id}) SET p.embedding = \$embedding")
+                            .bind(mapOf("id" to id, "embedding" to vector.toList()))
+                    },
+                    onFailure = { failure ->
+                        logger.warn("reembedAll: could not embed proposition {}; it keeps no vector of the wrong width", id, failure)
+                        QuerySpecification
+                            .withStatement(CLEAR_MISMATCHED_EMBEDDING)
+                            .bind(mapOf("id" to id, "dimensions" to dimensions))
+                    },
+                )
+            }
+            persistenceManager.executeBatch(writes)
+            embedded.mapNotNull { (id, result) -> result.exceptionOrNull()?.let { id to it } }
+        }
+        val failures = batchResults.flatten().toMap()
+        return RewriteOutcome(rewritten = views.size - failures.size, failures = failures)
+    }
+
+    /** An embed as a value, so one failure is recorded against its proposition. Errors still propagate. */
+    private fun tryEmbed(text: String): Result<FloatArray> =
+        try {
+            Result.success(embeddingService.embed(text))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
 
     @Transactional
     override fun clearAll(): Int = clearMatching(contextId = null, contextIdPrefix = null)
@@ -1508,6 +1584,21 @@ class DrivinePropositionRepository(
     companion object {
         /** Stripe count for save-time dedup locks. */
         private const val DEDUP_STRIPES = 64
+
+        /**
+         * Propositions embedded and written per committed batch in [reembedAll]: bounds both the
+         * transaction and the vectors held in memory at once.
+         */
+        private const val REEMBED_WRITE_BATCH = 500
+
+        /**
+         * Removes a vector whose width no longer matches the model, for a proposition that could
+         * not be re-embedded. A vector of the right width is left alone.
+         */
+        private const val CLEAR_MISMATCHED_EMBEDDING =
+            "MATCH (p:Proposition {id: \$id}) " +
+                "WHERE p.embedding IS NOT NULL AND size(p.embedding) <> \$dimensions " +
+                "REMOVE p.embedding"
 
         /**
          * What every minted evidence key starts with. A ref lacking it is a locator key from before
