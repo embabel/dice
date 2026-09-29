@@ -23,6 +23,7 @@ import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.common.DiceMetadataKeys
+import com.embabel.dice.proposition.ConsecutiveFailureBreaker
 import com.embabel.dice.proposition.PropositionReembedIncompleteException
 import com.embabel.dice.proposition.PropositionReembedReport
 import com.embabel.dice.proposition.Proposition
@@ -1295,10 +1296,10 @@ class DrivinePropositionRepository(
         }
         if (shapeChanged) persistenceManager.indexes.ensure(spec)
         val report = PropositionReembedReport(propositions = outcome.rewritten, indexRecreated = shapeChanged)
-        if (outcome.failures.isNotEmpty()) {
+        if (outcome.failures.isNotEmpty() || outcome.notAttempted.isNotEmpty()) {
             // The exception names every failed proposition and carries the causes; logging them here too
             // would report the same failure twice.
-            throw PropositionReembedIncompleteException.of(report, outcome.failures)
+            throw PropositionReembedIncompleteException.of(report, outcome.failures, outcome.notAttempted)
         }
         logger.info(
             "reembedAll done: propositions={} model={} indexRecreated={}",
@@ -1330,6 +1331,7 @@ class DrivinePropositionRepository(
     private data class RewriteOutcome(
         val rewritten: Int,
         val failures: Map<String, Throwable>,
+        val notAttempted: List<String>,
     )
 
     /**
@@ -1353,39 +1355,50 @@ class DrivinePropositionRepository(
             where { proposition.contextId.isNotNull() } // skip malformed/foreign :Proposition nodes (see findAll)
         }.filter { it.proposition.text.isNotBlank() }
         val dimensions = embeddingService.dimensions
+        // Once the service has failed too many times in a row, the rest are not attempted: each would
+        // wait out its own timeout, and vector search is down until the index is back.
+        val breaker = ConsecutiveFailureBreaker()
         val batchResults = views.chunked(REEMBED_WRITE_BATCH).map { batch ->
-            val embedded = batch.associate { view ->
-                view.proposition.id to tryEmbed(view.proposition.text)
+            val embedded = batch.map { view ->
+                view.proposition.id to breaker.attempt { embeddingService.embed(view.proposition.text) }
             }
-            val writes = embedded.map { (id, result) ->
-                result.fold(
-                    onSuccess = { vector ->
-                        QuerySpecification
-                            .withStatement("MATCH (p:Proposition {id: \$id}) SET p.embedding = \$embedding")
-                            .bind(mapOf("id" to id, "embedding" to vector.toList()))
-                    },
-                    onFailure = { failure ->
-                        logger.warn("reembedAll: could not embed proposition {}; it keeps no vector of the wrong width", id, failure)
-                        QuerySpecification
-                            .withStatement(CLEAR_MISMATCHED_EMBEDDING)
-                            .bind(mapOf("id" to id, "dimensions" to dimensions))
-                    },
-                )
-            }
-            persistenceManager.executeBatch(writes)
-            embedded.mapNotNull { (id, result) -> result.exceptionOrNull()?.let { id to it } }
+            persistenceManager.executeBatch(embedded.map { (id, result) -> rewriteOf(id, result, dimensions) })
+            embedded
+        }.flatten()
+        if (breaker.tripped) {
+            logger.warn(
+                "reembedAll: stopped embedding after {} consecutive failures; {} proposition(s) not attempted",
+                breaker.maxConsecutiveFailures,
+                batchResults.count { (_, result) -> result == null },
+            )
         }
-        val failures = batchResults.flatten().toMap()
-        return RewriteOutcome(rewritten = views.size - failures.size, failures = failures)
+        val failures = batchResults.mapNotNull { (id, result) -> result?.exceptionOrNull()?.let { id to it } }.toMap()
+        val notAttempted = batchResults.filter { (_, result) -> result == null }.map { (id, _) -> id }
+        return RewriteOutcome(
+            rewritten = views.size - failures.size - notAttempted.size,
+            failures = failures,
+            notAttempted = notAttempted,
+        )
     }
 
-    /** An embed as a value, so one failure is recorded against its proposition. Errors still propagate. */
-    private fun tryEmbed(text: String): Result<FloatArray> =
-        try {
-            Result.success(embeddingService.embed(text))
-        } catch (e: Exception) {
-            Result.failure(e)
+    /**
+     * The write for one proposition: its new vector, or, if it failed or was not attempted, removing
+     * a vector whose width no longer matches the model.
+     */
+    private fun rewriteOf(id: String, result: Result<FloatArray>?, dimensions: Int): QuerySpecification<*> {
+        val vector = result?.getOrNull()
+        if (vector != null) {
+            return QuerySpecification
+                .withStatement("MATCH (p:Proposition {id: \$id}) SET p.embedding = \$embedding")
+                .bind(mapOf("id" to id, "embedding" to vector.toList()))
         }
+        result?.exceptionOrNull()?.let {
+            logger.warn("reembedAll: could not embed proposition {}; it keeps no vector of the wrong width: {}", id, it.message)
+        }
+        return QuerySpecification
+            .withStatement(CLEAR_MISMATCHED_EMBEDDING)
+            .bind(mapOf("id" to id, "dimensions" to dimensions))
+    }
 
     @Transactional
     override fun clearAll(): Int = clearMatching(contextId = null, contextIdPrefix = null)

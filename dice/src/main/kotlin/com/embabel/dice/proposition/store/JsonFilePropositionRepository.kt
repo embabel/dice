@@ -19,6 +19,7 @@ import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.proposition.ConsecutiveFailureBreaker
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.ProvenanceScanningSourceRevisionQueries
 import com.embabel.dice.proposition.PropositionQuery
@@ -85,19 +86,19 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
     }
 
     private fun embedOnLoad(loaded: List<Proposition>, embedder: EmbeddingService) {
-        val failures = loaded.mapNotNull { prop ->
-            try {
-                embeddings[prop.id] = embedder.embed(prop.text)
-                null
-            } catch (e: Exception) {
-                prop.id to e
-            }
-        }
+        // Stops after repeated failures, so a dead embedder does not hold up startup for one timeout
+        // per proposition.
+        val breaker = ConsecutiveFailureBreaker()
+        val results = loaded.map { prop -> prop.id to breaker.attempt { embedder.embed(prop.text) } }
+        results.forEach { (id, result) -> result?.getOrNull()?.let { embeddings[id] = it } }
+        val failures = results.mapNotNull { (id, result) -> result?.exceptionOrNull()?.let { id to it } }
+        val notAttempted = results.count { (_, result) -> result == null }
         if (failures.isEmpty()) return
         logger.warn(
-            "{} of {} proposition(s) from {} could not be embedded on load; they are stored but absent from " +
-                "vector search until reembedAll retries them. ids={}",
-            failures.size, loaded.size, path, failures.map { it.first }, failures.first().second,
+            "{} of {} proposition(s) from {} could not be embedded on load, and {} were not attempted after " +
+                "repeated failures; they are stored but absent from vector search until reembedAll retries " +
+                "them. failed ids={}: {}",
+            failures.size, loaded.size, path, notAttempted, failures.map { it.first }, failures.first().second.message,
         )
     }
 

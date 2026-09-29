@@ -18,6 +18,7 @@ package com.embabel.dice.proposition.store
 import com.embabel.agent.core.ContextId
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.proposition.ConsecutiveFailureBreaker
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionReembedIncompleteException
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -32,6 +33,7 @@ import org.mockito.kotlin.whenever
 import java.nio.file.Path
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * An embedding failure costs only the proposition it happened to, and is never swallowed: the
@@ -123,5 +125,41 @@ class PropositionReembedFailureTest {
         failing.clear()
         assertEquals(2, reloaded.reembedAll().propositions)
         assertEquals(setOf(good.id, bad.id), reloaded.findSimilar(similarTo("anything")).map { it.id }.toSet())
+    }
+
+    @Test
+    fun `default reembedAll stops calling a dead embedder and reports the rest as not attempted`() {
+        val repo = InMemoryPropositionRepository(embeddingService)
+        val all = (1..20).map { repo.save(proposition("text $it")) }
+        embedded.clear()
+        val calls = AtomicInteger()
+        whenever(embeddingService.embed(any<String>())).thenAnswer {
+            calls.incrementAndGet()
+            throw EmbedRefused(it.getArgument(0))
+        }
+
+        val thrown = assertThrows<PropositionReembedIncompleteException> { repo.reembedAll() }
+
+        assertEquals(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES, calls.get())
+        assertEquals(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES, thrown.failedPropositionIds.size)
+        assertEquals(20 - ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES, thrown.notAttemptedPropositionIds.size)
+        assertEquals(0, thrown.reembedded)
+        assertEquals(all.map { it.id }.toSet(), (thrown.failedPropositionIds + thrown.notAttemptedPropositionIds).toSet())
+    }
+
+    @Test
+    fun `json repository with a dead embedder starts after a few calls, not one per proposition`(@TempDir tempDir: Path) {
+        val file = tempDir.resolve("propositions.json")
+        JsonFilePropositionRepository(file).apply { (1..20).forEach { save(proposition("text $it")) } }
+        val calls = AtomicInteger()
+        whenever(embeddingService.embed(any<String>())).thenAnswer {
+            calls.incrementAndGet()
+            throw EmbedRefused(it.getArgument(0))
+        }
+
+        val reloaded = JsonFilePropositionRepository(file, embeddingService)
+
+        assertEquals(20, reloaded.count())
+        assertEquals(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES, calls.get())
     }
 }

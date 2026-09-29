@@ -26,6 +26,7 @@ import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionReembedIncompleteException
+import com.embabel.dice.proposition.ConsecutiveFailureBreaker
 import com.embabel.dice.proposition.PropositionReembedReport
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
@@ -45,6 +46,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTimeoutPreemptively
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.jupiter.api.assertThrows
 import org.drivine.connection.DataSourceMap
 import org.drivine.manager.CascadeType
@@ -2114,6 +2116,41 @@ class DrivinePropositionStoreIntegrationTest {
                     .reembedAll()
             }
             assertEquals(startingWidth * 2, storedIndexWidth(startingWidth), "the index must not be left dropped")
+        } finally {
+            persistenceManager.indexes.recreate(DrivinePropositionRepository.vectorIndexSpec(startingWidth))
+        }
+    }
+
+    /**
+     * A dead embedding service costs a few calls, not one per proposition: the run stops, the index
+     * is back, and the rest are reported as not attempted.
+     */
+    @Test
+    fun `reembedAll stops calling a dead embedder and restores the index`() {
+        val saved = (1..12).map { repository.save(prop("fact number $it")) }
+        val startingWidth = embeddingService.dimensions
+        val calls = AtomicInteger()
+        val dead = object : EmbeddingService by FakeEmbeddingService(startingWidth * 2) {
+            override fun embed(text: String): FloatArray {
+                calls.incrementAndGet()
+                throw EmbedRefused(text)
+            }
+        }
+        try {
+            val thrown = assertThrows<PropositionReembedIncompleteException> {
+                DrivinePropositionRepository(graphObjectManager, persistenceManager, dead, transactionManager)
+                    .reembedAll()
+            }
+
+            assertEquals(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES, calls.get())
+            assertEquals(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES, thrown.failedPropositionIds.size)
+            assertTrue(thrown.notAttemptedPropositionIds.isNotEmpty())
+            assertTrue(
+                (thrown.failedPropositionIds + thrown.notAttemptedPropositionIds).containsAll(saved.map { it.id }),
+                "every proposition is reported as failed or not attempted",
+            )
+            assertEquals(startingWidth * 2, storedIndexWidth(startingWidth), "the index must not be left dropped")
+            saved.forEach { assertNull(storedEmbeddingWidth(it.id), "no vector of the old width stays behind") }
         } finally {
             persistenceManager.indexes.recreate(DrivinePropositionRepository.vectorIndexSpec(startingWidth))
         }

@@ -109,16 +109,17 @@ interface PropositionRepository :
      */
     fun reembedAll(): PropositionReembedReport {
         val all = findAll()
-        val failures = all.mapNotNull { proposition ->
-            try {
-                save(proposition)
-                null
-            } catch (e: Exception) {
-                proposition.id to e
-            }
-        }.toMap()
-        val report = PropositionReembedReport(propositions = all.size - failures.size, indexRecreated = false)
-        if (failures.isNotEmpty()) throw PropositionReembedIncompleteException.of(report, failures)
+        val breaker = ConsecutiveFailureBreaker()
+        val results = all.map { proposition -> proposition.id to breaker.attempt { save(proposition) } }
+        val failures = results.mapNotNull { (id, result) -> result?.exceptionOrNull()?.let { id to it } }.toMap()
+        val notAttempted = results.filter { (_, result) -> result == null }.map { (id, _) -> id }
+        val report = PropositionReembedReport(
+            propositions = all.size - failures.size - notAttempted.size,
+            indexRecreated = false,
+        )
+        if (failures.isNotEmpty() || notAttempted.isNotEmpty()) {
+            throw PropositionReembedIncompleteException.of(report, failures, notAttempted)
+        }
         return report
     }
 

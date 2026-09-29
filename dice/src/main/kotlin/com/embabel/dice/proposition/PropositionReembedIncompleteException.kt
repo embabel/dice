@@ -34,15 +34,19 @@ package com.embabel.dice.proposition
  * @param report what the run did achieve: [PropositionReembedReport.propositions] counts only the
  * propositions actually re-embedded
  * @param failedPropositionIds ids of the propositions whose re-embed failed, in the order attempted
+ * @param notAttemptedPropositionIds ids of the propositions not tried because the run stopped after
+ * too many consecutive failures (see [ConsecutiveFailureBreaker]); they are handled as failed ones are
  */
-class PropositionReembedIncompleteException(
+class PropositionReembedIncompleteException @JvmOverloads constructor(
     val report: PropositionReembedReport,
     val failedPropositionIds: List<String>,
     cause: Throwable?,
+    val notAttemptedPropositionIds: List<String> = emptyList(),
 ) : RuntimeException(
     """
-    Re-embed incomplete: ${failedPropositionIds.size} proposition(s) failed and ${report.propositions} were re-embedded
-    (indexRecreated=${report.indexRecreated}). Re-run reembedAll to retry. Failed ids: ${abbreviate(failedPropositionIds)}
+    Re-embed incomplete: ${failedPropositionIds.size} proposition(s) failed, ${notAttemptedPropositionIds.size} were not
+    attempted after repeated failures, and ${report.propositions} were re-embedded (indexRecreated=${report.indexRecreated}).
+    Re-run reembedAll to retry. Failed ids: ${abbreviate(failedPropositionIds)}
     """.trimIndent().replace("\n", " "),
     cause,
 ) {
@@ -62,12 +66,19 @@ class PropositionReembedIncompleteException(
          * first as the cause and suppressing a bounded number of the rest.
          */
         @JvmStatic
+        @JvmOverloads
         fun of(
             report: PropositionReembedReport,
             failures: Map<String, Throwable>,
+            notAttempted: List<String> = emptyList(),
         ): PropositionReembedIncompleteException {
             val causes = failures.values.toList()
-            return PropositionReembedIncompleteException(report, failures.keys.toList(), causes.firstOrNull()).apply {
+            return PropositionReembedIncompleteException(
+                report,
+                failures.keys.toList(),
+                causes.firstOrNull(),
+                notAttempted,
+            ).apply {
                 causes.drop(1).take(MAX_SUPPRESSED).forEach { addSuppressed(it) }
             }
         }
