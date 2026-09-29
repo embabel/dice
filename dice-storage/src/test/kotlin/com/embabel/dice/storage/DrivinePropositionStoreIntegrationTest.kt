@@ -25,6 +25,8 @@ import com.embabel.dice.proposition.DecaySweepConfig
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionReembedIncompleteException
+import com.embabel.dice.proposition.ConsecutiveFailureBreaker
 import com.embabel.dice.proposition.PropositionReembedReport
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
@@ -44,6 +46,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTimeoutPreemptively
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.jupiter.api.assertThrows
 import org.drivine.connection.DataSourceMap
 import org.drivine.manager.CascadeType
@@ -2060,6 +2063,121 @@ class DrivinePropositionStoreIntegrationTest {
         assertFalse(unchanged.indexRecreated, "a same-shape re-embed must not touch the index")
         assertEquals(startingWidth, widthOfStoredIndex())
     }
+
+    /**
+     * One proposition the embedder refuses must not cost the others their vectors, nor leave the
+     * index dropped. The run writes every success, remakes the index, THEN names what failed — and
+     * a rerun is the retry.
+     */
+    @Test
+    fun `reembedAll survives a failing embed, restores the index, and a rerun completes`() {
+        val good1 = repository.save(prop("first good fact"))
+        val bad = repository.save(prop("the fact the embedder refuses"))
+        val good2 = repository.save(prop("second good fact"))
+        val startingWidth = embeddingService.dimensions
+        val newWidth = startingWidth * 2
+        val refusing = RefusingEmbeddingService(FakeEmbeddingService(newWidth), refuse = setOf(bad.text))
+        val wider = DrivinePropositionRepository(graphObjectManager, persistenceManager, refusing, transactionManager)
+
+        try {
+            val thrown = assertThrows<PropositionReembedIncompleteException> { wider.reembedAll() }
+
+            assertEquals(listOf(bad.id), thrown.failedPropositionIds)
+            assertEquals(2, thrown.reembedded)
+            assertTrue(thrown.report.indexRecreated)
+            assertTrue(thrown.cause is EmbedRefused, "the embedder's failure is the cause")
+            assertEquals(newWidth, storedIndexWidth(startingWidth), "the index must be back, at the new width")
+            assertEquals(newWidth, storedEmbeddingWidth(good1.id), "successes are written")
+            assertEquals(newWidth, storedEmbeddingWidth(good2.id), "successes are written")
+            assertNull(storedEmbeddingWidth(bad.id), "a vector of the old width must not stay behind")
+
+            val retry = DrivinePropositionRepository(
+                graphObjectManager, persistenceManager, FakeEmbeddingService(newWidth), transactionManager,
+            ).reembedAll()
+            assertEquals(3, retry.propositions, "a rerun is the retry")
+            assertFalse(retry.indexRecreated, "the index was already restored at the new width")
+            assertEquals(newWidth, storedEmbeddingWidth(bad.id))
+        } finally {
+            persistenceManager.indexes.recreate(DrivinePropositionRepository.vectorIndexSpec(startingWidth))
+        }
+    }
+
+    /** Even a failure that aborts the run outright leaves the index remade, not dropped. */
+    @Test
+    fun `reembedAll remakes the index even when the rewrite aborts`() {
+        repository.save(prop("a fact"))
+        val startingWidth = embeddingService.dimensions
+        val aborting = object : EmbeddingService by FakeEmbeddingService(startingWidth * 2) {
+            override fun embed(text: String): FloatArray = throw AbortingError()
+        }
+        try {
+            assertThrows<AbortingError> {
+                DrivinePropositionRepository(graphObjectManager, persistenceManager, aborting, transactionManager)
+                    .reembedAll()
+            }
+            assertEquals(startingWidth * 2, storedIndexWidth(startingWidth), "the index must not be left dropped")
+        } finally {
+            persistenceManager.indexes.recreate(DrivinePropositionRepository.vectorIndexSpec(startingWidth))
+        }
+    }
+
+    /**
+     * A dead embedding service costs a few calls, not one per proposition: the run stops, the index
+     * is back, and the rest are reported as not attempted.
+     */
+    @Test
+    fun `reembedAll stops calling a dead embedder and restores the index`() {
+        val saved = (1..12).map { repository.save(prop("fact number $it")) }
+        val startingWidth = embeddingService.dimensions
+        val calls = AtomicInteger()
+        val dead = object : EmbeddingService by FakeEmbeddingService(startingWidth * 2) {
+            override fun embed(text: String): FloatArray {
+                calls.incrementAndGet()
+                throw EmbedRefused(text)
+            }
+        }
+        try {
+            val thrown = assertThrows<PropositionReembedIncompleteException> {
+                DrivinePropositionRepository(graphObjectManager, persistenceManager, dead, transactionManager)
+                    .reembedAll()
+            }
+
+            assertEquals(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES, calls.get())
+            assertEquals(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES, thrown.failedPropositionIds.size)
+            assertTrue(thrown.notAttemptedPropositionIds.isNotEmpty())
+            assertTrue(
+                (thrown.failedPropositionIds + thrown.notAttemptedPropositionIds).containsAll(saved.map { it.id }),
+                "every proposition is reported as failed or not attempted",
+            )
+            assertEquals(startingWidth * 2, storedIndexWidth(startingWidth), "the index must not be left dropped")
+            saved.forEach { assertNull(storedEmbeddingWidth(it.id), "no vector of the old width stays behind") }
+        } finally {
+            persistenceManager.indexes.recreate(DrivinePropositionRepository.vectorIndexSpec(startingWidth))
+        }
+    }
+
+    private class EmbedRefused(text: String) : RuntimeException("embedder refused '$text'")
+
+    /** An Error, not an Exception: per-proposition isolation does not catch it, so it aborts the run. */
+    private class AbortingError : Error("embedder aborted")
+
+    private class RefusingEmbeddingService(
+        private val delegate: EmbeddingService,
+        private val refuse: Set<String>,
+    ) : EmbeddingService by delegate {
+        override fun embed(text: String): FloatArray =
+            if (text in refuse) throw EmbedRefused(text) else delegate.embed(text)
+    }
+
+    private fun storedIndexWidth(anyWidth: Int): Int? =
+        persistenceManager.indexes.find(DrivinePropositionRepository.vectorIndexSpec(anyWidth))?.dimensions
+
+    private fun storedEmbeddingWidth(id: String): Int? =
+        persistenceManager.getOne(
+            QuerySpecification.withStatement("MATCH (p:Proposition {id: \$id}) RETURN coalesce(size(p.embedding), -1)")
+                .bind(mapOf("id" to id))
+                .transform(Long::class.java)
+        ).toInt().takeIf { it >= 0 }
 
     /** findClusters must query the configured vector index, not a hard-coded name. */
     @Test

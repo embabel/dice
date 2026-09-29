@@ -19,6 +19,7 @@ import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.proposition.ConsecutiveFailureBreaker
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.ProvenanceScanningSourceRevisionQueries
 import com.embabel.dice.proposition.PropositionQuery
@@ -65,15 +66,40 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
     // torn/stale snapshot and so in-memory state can be rolled back if the disk flush fails.
     private val writeLock = Any()
 
+    /**
+     * Loads every stored proposition, then embeds each one. Vectors are not persisted, so they are
+     * recomputed on every start.
+     *
+     * A FAILED EMBED DOES NOT STOP THE REPOSITORY STARTING. The proposition is still loaded and
+     * served by every non-vector read; it simply has no vector, so vector search does not find it.
+     * The failures are logged at WARN with their ids, and a later [reembedAll] (or re-saving the
+     * proposition) retries them. Refusing to construct over one embedding hiccup would make the
+     * whole store unreadable for the sake of one index entry.
+     */
     init {
         if (Files.exists(path)) {
             val loaded: List<Proposition> = mapper.readValue(path.toFile())
-            loaded.forEach { prop ->
-                propositions[prop.id] = prop
-                embeddingService?.let { embeddings[prop.id] = it.embed(prop.text) }
-            }
+            loaded.forEach { propositions[it.id] = it }
+            embeddingService?.let { embedOnLoad(loaded, it) }
             logger.info("Loaded {} proposition(s) from {}", propositions.size, path)
         }
+    }
+
+    private fun embedOnLoad(loaded: List<Proposition>, embedder: EmbeddingService) {
+        // Stops after repeated failures, so a dead embedder does not hold up startup for one timeout
+        // per proposition.
+        val breaker = ConsecutiveFailureBreaker()
+        val results = loaded.map { prop -> prop.id to breaker.attempt { embedder.embed(prop.text) } }
+        results.forEach { (id, result) -> result?.getOrNull()?.let { embeddings[id] = it } }
+        val failures = results.mapNotNull { (id, result) -> result?.exceptionOrNull()?.let { id to it } }
+        val notAttempted = results.count { (_, result) -> result == null }
+        if (failures.isEmpty()) return
+        logger.warn(
+            "{} of {} proposition(s) from {} could not be embedded on load, and {} were not attempted after " +
+                "repeated failures; they are stored but absent from vector search until reembedAll retries " +
+                "them. failed ids={}: {}",
+            failures.size, loaded.size, path, notAttempted, failures.map { it.first }, failures.first().second.message,
+        )
     }
 
     override val luceneSyntaxNotes: String
