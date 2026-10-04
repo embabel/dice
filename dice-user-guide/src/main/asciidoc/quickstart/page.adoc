@@ -36,7 +36,9 @@ You also need an embabel-agent runtime on the classpath. DICE declares `embabel-
 `embabel-agent-rag-core` as `provided`, so the version your application brings is the version that
 runs.
 
-Snapshots and releases resolve from Embabel's Artifactory:
+Released DICE artifacts resolve from Maven Central. No DICE-specific repository is needed for
+{dice-version} when it is a release version. For a `-SNAPSHOT` build, add Embabel's snapshot
+repository:
 
 [source,xml]
 ----

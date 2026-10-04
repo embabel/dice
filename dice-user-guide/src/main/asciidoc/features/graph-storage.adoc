@@ -22,7 +22,8 @@ Neo4j.
   get slower.
 * *Memory*: propositions no longer live in your heap.
 * *LLM calls*: unchanged.
-* *Startup*: schema catalogues create constraints and the vector index on first run.
+* *Startup*: schema catalogues create constraints and, when an embedding model is available, the
+  vector index. See <<features-vector-index>> for models added after startup.
 
 ==== How to enable
 

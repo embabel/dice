@@ -37,7 +37,8 @@ embabel:
 Plus Drivine's own Neo4j connection configuration. Nothing else in your application changes: the
 auto-configuration swaps `PropositionRepository`, `ChunkHistoryStore`, `DecayManager`,
 `ProjectionRecordStore` and `CollectorRecordStore` for their Drivine equivalents, and registers the
-schema catalogues that create the constraints and the vector index.
+schema catalogues that create the constraints and, when an embedding model is available, the vector
+index. See <<features-vector-index>> for models added after startup.
 
 See <<features-graph-storage>> for the full activation detail.
 

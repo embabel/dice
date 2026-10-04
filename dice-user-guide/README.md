@@ -51,7 +51,19 @@ It runs on three triggers:
 |---|---|
 | `repository_dispatch` (`publish-docs`) | The Build workflow's `trigger-docs` job fires it after a green build on `main` that touched a `.adoc` file. |
 | `push` to `main` | Any push touching `dice-user-guide/**/*.adoc`. |
-| `workflow_dispatch` | Manually, with environment / VM instance / zone as inputs. |
+| `workflow_dispatch` | Manually, with environment / VM instance / zone and optional `release_tag`. |
+
+For a release guide after the tag has been cut, merge its `.adoc` changes to `main` and run
+"Publish Docs" manually with `release_tag=v<version>`. The workflow builds the code and API docs
+from that tag, overlays the guide's AsciiDoc from `main`, checks that the tag matches the POM
+version, and deploys under that release version. A tag push alone does not publish docs. A normal
+`.adoc` push to `main` continues to publish under the current development version.
+
+For 0.3.0, after the guide changes are merged:
+
+```bash
+gh workflow run deploy-docs.yml --ref main -f release_tag=v0.3.0
+```
 
 The build step is `mvn -B -Pguide-html,dokka package`, run from this directory so the parent pom
 resolves on disk — which is what makes `${project.parent.basedir}` work for the dokka profile's

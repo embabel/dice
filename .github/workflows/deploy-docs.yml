@@ -15,6 +15,10 @@ on:
 
   workflow_dispatch:  # Enables manual triggering
     inputs:
+      release_tag:
+        description: 'Release tag to build code and API docs from (for example v0.3.0); guide text comes from main'
+        required: false
+        type: string
       environment:
         description: 'Deploy Environment'
         required: true
@@ -62,6 +66,17 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+      - name: Check out updated guide for a release
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' }}
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: guide-source
+      - name: Use updated guide with release source
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' }}
+        run: rsync -a --delete ../guide-source/dice-user-guide/src/main/asciidoc/ src/main/asciidoc/
       - name: Install Graphviz
         # The guide currently uses no diagram blocks, but asciidoctor-diagram is required by the
         # pom — this keeps a future [graphviz] block from failing the publish.
@@ -81,8 +96,14 @@ jobs:
 
       - name: Extract version from pom.xml
         id: get_version
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          if [ -n "$RELEASE_TAG" ] && [ "$RELEASE_TAG" != "v$VERSION" ]; then
+            echo "Release tag $RELEASE_TAG does not match project version $VERSION" >&2
+            exit 1
+          fi
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
 

@@ -15,11 +15,12 @@ aliases that share no characters with the canonical name.
 
 Turn it off when your Neo4j deployment does not support vector indexes, when you are certain all
 retrieval is by entity and `ContextId`, or when the index build on a large existing store is
-something you want to schedule rather than have happen at startup.
+something you want to schedule yourself.
 
 ==== Impact
 
-* *Startup*: the index is created if absent. On a large existing store this takes time.
+* *Startup*: the index is created if an embedding model is available. On a large existing store this
+  takes time.
 * *Write*: each proposition is embedded on save — an embedding call per proposition.
 * *Storage*: one embedding vector per proposition.
 * *Read*: similarity search becomes a native index lookup rather than a scan.
@@ -56,8 +57,32 @@ Only `enabled`. The index's label, property, name and similarity function are fi
 This is deliberate: those values must agree between the index definition and every query that uses
 it, and making them configurable would create a way to have them disagree.
 
-The vector dimension comes from the configured `EmbeddingService`, so the index matches whatever
-embedding model your `Ai` bean is using.
+The vector dimension comes from the selected `EmbeddingService`. If the application supplies one
+unambiguous service bean, DICE uses it. Otherwise DICE uses the platform's default embedding
+service. The selected service is logged when the proposition store starts.
+
+==== Adding or changing an embedding model
+
+If the application starts without an embedding model, the startup schema catalogue cannot create
+the index. When a model becomes available, the host application calls
+`PropositionVectorIndexConvergence.ensure()`. This creates the index at the model's dimension and
+returns `false` if no usable model is available yet. DICE does not detect provider changes or call
+this method on behalf of the host. `ensure()` does not reshape an index built for an earlier model.
+
+When changing a model for a store that already has propositions, call
+`PropositionRepository.reembedAll()` after selecting the new embedding service. The graph backend
+rewrites proposition vectors and, if the dimension changed, drops and recreates its vector index.
+The method returns `PropositionReembedReport`, with the number of propositions re-embedded and an
+`indexRecreated` flag. A successful call leaves the vectors and index at the new dimension. In
+0.3.0, a failed re-embed can leave the index absent; rerun it after correcting the failure before
+relying on vector search.
+
+[source,java]
+----
+PropositionReembedReport report = propositionRepository.reembedAll();
+System.out.printf("Re-embedded %d propositions; index recreated: %s%n",
+        report.getPropositions(), report.getIndexRecreated());
+----
 
 ==== Example
 
