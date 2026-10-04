@@ -74,7 +74,7 @@ class LlmSourceAnalyzer(
                 mapOf(
                     "context" to context,
                     "chunk" to chunk,
-                )
+                ) + context.promptVariables,
             )
         return SuggestedEntities(
             suggestedEntities = entities.entities.map {
