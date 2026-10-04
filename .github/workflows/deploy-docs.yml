@@ -39,10 +39,12 @@ on:
         default: 'us-east1-b'
         type: string
 
-  # Automatic trigger on file changes
+  # Main guide edits and future release tags
   push:
     branches:
       - main
+    tags:
+      - 'v*'
     paths:
       - 'dice-user-guide/**/*.adoc'
 
@@ -100,6 +102,9 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            RELEASE_TAG="${GITHUB_REF#refs/tags/}"
+          fi
           if [ -n "$RELEASE_TAG" ] && [ "$RELEASE_TAG" != "v$VERSION" ]; then
             echo "Release tag $RELEASE_TAG does not match project version $VERSION" >&2
             exit 1
