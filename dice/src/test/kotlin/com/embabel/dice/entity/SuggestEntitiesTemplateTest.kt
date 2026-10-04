@@ -15,16 +15,24 @@
  */
 package com.embabel.dice.entity
 
+import com.embabel.agent.api.common.Ai
+import com.embabel.agent.api.common.PromptRunner
 import com.embabel.agent.core.Cardinality
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.core.DynamicType
 import com.embabel.agent.core.ValuePropertyDefinition
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.common.ai.model.LlmOptions
 import com.embabel.common.textio.template.JinjaProperties
 import com.embabel.common.textio.template.JinjavaTemplateRenderer
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
+import com.embabel.dice.text2graph.support.Entities
+import com.embabel.dice.text2graph.support.LlmSourceAnalyzer
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -98,5 +106,31 @@ class SuggestEntitiesTemplateTest {
             render(mapOf("directions" to "focus on scheduling"))
                 .contains("Consider the following direction: focus on scheduling"),
         )
+    }
+
+    @Test
+    fun `source analyzer forwards context prompt variables to the template`() {
+        val ai = mockk<Ai>()
+        val runner = mockk<PromptRunner>()
+        val creating = mockk<PromptRunner.Creating<Entities>>()
+        val model = slot<Map<String, Any>>()
+        every { ai.withLlm(any<LlmOptions>()) } returns runner
+        every { runner.withId("suggest-entities") } returns runner
+        every { runner.creating(Entities::class.java) } returns creating
+        every { creating.fromTemplate("suggest_entities", capture(model)) } returns Entities(emptyList())
+
+        val context = SourceAnalysisContext(
+            schema = DataDictionary.fromDomainTypes("test", listOf(meeting)),
+            entityResolver = AlwaysCreateEntityResolver,
+            contextId = ContextId("test-context"),
+            promptVariables = mapOf("directions" to "focus on scheduling"),
+        )
+        LlmSourceAnalyzer(ai).suggestEntities(
+            Chunk.create(text = "Test chunk text", parentId = "source-1"),
+            context,
+        )
+
+        val prompt = renderer.renderLoadedTemplate("suggest_entities", model.captured)
+        assertTrue(prompt.contains("Consider the following direction: focus on scheduling"))
     }
 }
