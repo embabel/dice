@@ -16,8 +16,14 @@
 package com.embabel.dice.proposition
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.proposition.store.JsonFilePropositionRepository
+import com.embabel.dice.provenance.UriLocator
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Files
+import java.nio.file.Path
+import java.time.Instant
 import tools.jackson.module.kotlin.jacksonObjectMapper
 
 /**
@@ -30,6 +36,22 @@ import tools.jackson.module.kotlin.jacksonObjectMapper
 class PropositionJacksonRoundTripTest {
 
     private val mapper = jacksonObjectMapper()
+
+    @Test
+    fun `JSON file written by the Jackson 2 repository loads after the upgrade`(@TempDir tempDir: Path) {
+        // Captured from the old repository's jacksonObjectMapper().findAndRegisterModules() writer.
+        val savedFile = tempDir.resolve("propositions.json")
+        requireNotNull(javaClass.getResourceAsStream("/compat/propositions-jackson2.json")).use {
+            Files.copy(it, savedFile)
+        }
+
+        val restored = requireNotNull(JsonFilePropositionRepository(savedFile).findById("legacy-proposition"))
+        assertEquals(ContextId("legacy-context"), restored.contextId)
+        assertEquals("A saved fact survives the upgrade", restored.text)
+        assertEquals(Instant.parse("2026-01-02T03:04:05Z"), restored.created)
+        assertEquals(UriLocator("https://example.com/source"), restored.provenanceEntries.single().locator)
+        assertEquals("chunk-1", restored.provenanceEntries.single().chunkId)
+    }
 
     @Test
     fun `a Proposition round-trips through JSON preserving its core fields`() {

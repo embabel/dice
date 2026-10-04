@@ -17,14 +17,14 @@ package com.embabel.dice.storage
 
 import com.embabel.agent.core.Cardinality
 import com.embabel.agent.core.ContextId
+import com.embabel.common.util.EmbabelObjectMapperHolder
 import com.embabel.dice.metamodel.DriftReport
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.PropertySignature
-import com.fasterxml.jackson.core.type.TypeReference
-import com.fasterxml.jackson.databind.ObjectMapper
 import java.time.Instant
+import tools.jackson.core.type.TypeReference
 
-private val objectMapper = ObjectMapper()
+private val objectMapper = EmbabelObjectMapperHolder.createDefault().get()
 
 /**
  * Translate metamodel versions to and from the property maps the Neo4j graph store reads and

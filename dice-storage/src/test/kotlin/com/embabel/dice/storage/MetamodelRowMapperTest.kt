@@ -78,6 +78,25 @@ class MetamodelRowMapperTest {
     }
 
     @Test
+    fun `a metamodel row written by Jackson 2 remains readable`() {
+        val oldRow = mapOf(
+            "schemaName" to "test-schema",
+            "contentHash" to version.contentHash,
+            "entityTypeNames" to """["Company","Person"]""",
+            "entityTypeLabels" to """{"Company":["Org"],"Person":["Agent"]}""",
+            "entityTypeProperties" to
+                """{"Company":[{"name":"employs","kind":"REFERENCE","type":"Person","cardinality":"SET"}],""" +
+                """"Person":[{"name":"age","kind":"VALUE","type":"integer","cardinality":"OPTIONAL"},""" +
+                """{"name":"name","kind":"VALUE","type":"string","cardinality":"ONE"}]}""",
+            "relationshipNames" to """["WORKS_FOR"]""",
+            "savedAt" to savedAt.toString(),
+            "savedAtEpochMillis" to savedAt.toEpochMilli(),
+        )
+
+        assertEquals(version, MetamodelVersionRowMapper.fromRow(oldRow))
+    }
+
+    @Test
     fun `property signatures are written as explicit named fields, enums by name, in a fixed order`() {
         // The encoding on disk feeds the content hash on the way back in, so it is a persisted
         // format, and this is where its shape is pinned:
