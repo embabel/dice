@@ -45,13 +45,31 @@ docs and deploys both to the Embabel web server under a versioned path:
 - `https://docs.embabel.com/dice/guide/<version>/index.html`
 - `https://docs.embabel.com/dice/api-docs/<version>/index.html`
 
-It runs on three triggers:
+It runs in these cases:
 
 | Trigger | When |
 |---|---|
 | `repository_dispatch` (`publish-docs`) | The Build workflow's `trigger-docs` job fires it after a green build on `main` that touched a `.adoc` file. |
 | `push` to `main` | Any push touching `dice-user-guide/**/*.adoc`. |
-| `workflow_dispatch` | Manually, with environment / VM instance / zone as inputs. |
+| `push` of a `v*` tag | Builds the guide and API docs from that tag and publishes under its POM version. |
+| `workflow_dispatch` | Manually, with environment / VM instance / zone and optional `release_tag`. |
+
+For a release whose guide changes after the tag has been cut, merge its `.adoc` changes to `main` and run
+"Publish Docs" manually with `release_tag=v<version>`. The workflow builds the code and API docs
+from that tag, overlays the guide's AsciiDoc from `main`, checks that the tag matches the POM
+version, and deploys under that release version. A normal `.adoc` push to `main` continues to
+publish under the current development version.
+
+Future `v*` tag pushes publish the guide from the tagged source automatically. GitHub does not
+evaluate the `.adoc` path filter for tag pushes. The tag must match `v${project.version}`, or the
+workflow stops before deployment. Adding this trigger does not rerun the already-pushed `v0.3.0`
+tag, so use the manual command below for that release.
+
+For 0.3.0, after the guide changes are merged:
+
+```bash
+gh workflow run deploy-docs.yml --ref main -f release_tag=v0.3.0
+```
 
 The build step is `mvn -B -Pguide-html,dokka package`, run from this directory so the parent pom
 resolves on disk — which is what makes `${project.parent.basedir}` work for the dokka profile's
