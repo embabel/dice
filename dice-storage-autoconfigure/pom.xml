@@ -134,30 +134,6 @@
         </dependency>
 
         <!--
-          Test: WebApplicationContextRunner needs a servlet API to build its mock context, and that
-          is how the governance REST bean's web condition is checked. Runtime needs nothing new: the
-          controller lives in dice, which already declares the servlet API itself.
-        -->
-        <dependency>
-            <groupId>jakarta.servlet</groupId>
-            <artifactId>jakarta.servlet-api</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!--
-          Test: the governance wiring tests read the URLs a context really exposes off a live
-          RequestMappingHandlerMapping, which lives in spring-webmvc. `dice` declares spring-webmvc
-          optional, so it stops there and never reaches this module's classpath. Asking whether a
-          GovernanceController bean exists is a weaker question than asking which routes resolve,
-          and the second one is what a host's endpoint snapshot is about.
-        -->
-        <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-webmvc</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!--
           Test: the metamodel autoconfiguration IT drives the whole governance loop against a real
           Neo4j. Drivine's test support wires transactions; Neo4jTestContainer supplies the database.
         -->
