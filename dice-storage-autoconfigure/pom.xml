@@ -133,6 +133,18 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- REST wiring tests inspect MVC routes in a mock servlet context. -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webmvc</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!--
           Test: the metamodel autoconfiguration IT drives the whole governance loop against a real
           Neo4j. Drivine's test support wires transactions; Neo4jTestContainer supplies the database.
