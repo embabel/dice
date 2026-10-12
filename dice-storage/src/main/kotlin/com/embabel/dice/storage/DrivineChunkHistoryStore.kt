@@ -34,7 +34,7 @@ import org.springframework.transaction.annotation.Transactional
  */
 @Transactional
 class DrivineChunkHistoryStore(
-    private val graphObjectManager: GraphObjectManager,
+    private val graphObjectManager: StatelessGraphObjectManager,
     private val persistenceManager: PersistenceManager,
 ) : ChunkHistoryStore {
 
@@ -55,7 +55,6 @@ class DrivineChunkHistoryStore(
                 endIndex = record.endIndex,
                 processedAt = record.processedAt,
             ),
-            CascadeType.NONE,
         )
     }
 

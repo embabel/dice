@@ -19,7 +19,7 @@ import com.embabel.agent.api.common.Ai
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.proposition.PropositionRepository
 import org.assertj.core.api.Assertions.assertThat
-import org.drivine.manager.GraphObjectManager
+import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.PersistenceManager
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
@@ -105,7 +105,7 @@ class DiceStorageTransactionAutoConfigurationTest {
         }
 
         @Bean
-        fun graphObjectManager(): GraphObjectManager = mock()
+        fun graphObjectManager(): StatelessGraphObjectManager = mock()
 
         @Bean
         fun persistenceManager(): PersistenceManager = mock()

@@ -24,7 +24,7 @@ import com.embabel.dice.storage.DrivineExtractionRunStore
 import com.embabel.dice.storage.DrivinePropositionRunLinkStore
 import com.embabel.dice.storage.ExtractionRunSchema
 import org.assertj.core.api.Assertions.assertThat
-import org.drivine.manager.GraphObjectManager
+import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.schema.SchemaCatalog
 import org.junit.jupiter.api.Test
@@ -204,7 +204,7 @@ class ExtractionRunStoreAutoConfigurationTest {
         open fun persistenceManager(): PersistenceManager = mock()
 
         @Bean
-        open fun graphObjectManager(): GraphObjectManager = mock()
+        open fun graphObjectManager(): StatelessGraphObjectManager = mock()
 
         @Bean
         open fun transactionManager(): PlatformTransactionManager = mock()

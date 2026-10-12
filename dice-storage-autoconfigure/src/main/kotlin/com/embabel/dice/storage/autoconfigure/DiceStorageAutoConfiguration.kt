@@ -42,7 +42,7 @@ import com.embabel.dice.storage.ExtractionRunSchema
 import com.embabel.dice.storage.GraphDecayManager
 import com.embabel.dice.storage.LineageSchema
 import com.embabel.dice.storage.diceStorageCatalog
-import org.drivine.manager.GraphObjectManager
+import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.schema.RangeIndexSpec
 import org.drivine.schema.SchemaCatalog
@@ -86,7 +86,7 @@ class DiceStorageAutoConfiguration {
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
     @ConditionalOnMissingBean(PropositionRepository::class)
     fun drivinePropositionRepository(
-        graphObjectManager: GraphObjectManager,
+        graphObjectManager: StatelessGraphObjectManager,
         persistenceManager: PersistenceManager,
         ai: Ai,
         transactionManager: PlatformTransactionManager,
@@ -148,7 +148,7 @@ class DiceStorageAutoConfiguration {
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
     @ConditionalOnMissingBean(ChunkHistoryStore::class)
     fun drivineChunkHistoryStore(
-        graphObjectManager: GraphObjectManager,
+        graphObjectManager: StatelessGraphObjectManager,
         persistenceManager: PersistenceManager,
     ): ChunkHistoryStore = DrivineChunkHistoryStore(graphObjectManager, persistenceManager)
 

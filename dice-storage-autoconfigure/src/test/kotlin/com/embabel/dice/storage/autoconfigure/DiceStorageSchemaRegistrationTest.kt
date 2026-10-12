@@ -19,7 +19,7 @@ import com.embabel.dice.storage.CollectorTraceSchema
 import com.embabel.dice.storage.DiceStorageSchema
 import com.embabel.dice.storage.LineageSchema
 import org.assertj.core.api.Assertions.assertThat
-import org.drivine.manager.GraphObjectManager
+import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.PersistenceManager
 import org.springframework.transaction.PlatformTransactionManager
 import org.drivine.schema.SchemaCatalog
@@ -123,7 +123,7 @@ class DiceStorageSchemaRegistrationTest {
         open fun persistenceManager(): PersistenceManager = mock()
 
         @Bean
-        open fun graphObjectManager(): GraphObjectManager = mock()
+        open fun graphObjectManager(): StatelessGraphObjectManager = mock()
 
         /** Store beans that manage their own transactions ask for one of these at wiring time. */
         @Bean

@@ -21,7 +21,7 @@ import com.embabel.dice.common.DiceEvent
 import com.embabel.dice.common.DiceEventListener
 import org.drivine.autoconfigure.EnableDrivine
 import org.drivine.autoconfigure.EnableDrivineTestConfig
-import org.drivine.manager.GraphObjectManager
+import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.GraphObjectManagerFactory
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.PersistenceManagerFactory
@@ -123,7 +123,7 @@ open class TestApplication {
     open fun persistenceManager(factory: PersistenceManagerFactory): PersistenceManager = factory.get("neo")
 
     @Bean
-    open fun graphObjectManager(factory: GraphObjectManagerFactory): GraphObjectManager = factory.get("neo")
+    open fun graphObjectManager(factory: GraphObjectManagerFactory): StatelessGraphObjectManager = factory.stateless("neo")
 
     @Bean
     open fun embeddingService(): EmbeddingService = FakeEmbeddingService()
@@ -147,7 +147,7 @@ open class TestApplication {
 
     @Bean
     open fun propositionRepository(
-        graphObjectManager: GraphObjectManager,
+        graphObjectManager: StatelessGraphObjectManager,
         persistenceManager: PersistenceManager,
         embeddingService: EmbeddingService,
         transactionManager: PlatformTransactionManager,
@@ -156,7 +156,7 @@ open class TestApplication {
 
     @Bean
     open fun chunkHistoryStore(
-        graphObjectManager: GraphObjectManager,
+        graphObjectManager: StatelessGraphObjectManager,
         persistenceManager: PersistenceManager,
     ): DrivineChunkHistoryStore = DrivineChunkHistoryStore(graphObjectManager, persistenceManager)
 

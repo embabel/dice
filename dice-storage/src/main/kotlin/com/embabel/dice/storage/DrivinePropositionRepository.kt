@@ -46,7 +46,9 @@ import com.embabel.dice.storage.model.*
 import org.drivine.schema.SimilarityFunction
 import org.drivine.schema.VectorIndexSpec
 import org.drivine.schema.EnsureResult
+import org.drivine.StaleObjectException
 import org.drivine.manager.*
+import org.drivine.model.Stamps
 import org.drivine.query.CypherStatement
 import org.drivine.query.QueryLoader
 import org.drivine.query.QuerySpecification
@@ -112,7 +114,7 @@ internal object SourceProvenanceQueryStatements {
  * Graph-backed [PropositionRepository] over Drivine / Neo4j.
  *
  * Filtering, ordering, limiting, vector search, and entity (`HAS_MENTION`) predicates all push into
- * the database via the high-level [GraphObjectManager] DSL — no whole-store scans. A few operations the
+ * the database via the high-level [StatelessGraphObjectManager] DSL — no whole-store scans. A few operations the
  * DSL can't express drop to hand-written Cypher: the [findClusters] correlation, the cascade-aware bulk
  * clear (`queries/clear_propositions.cypher`), the dedup lookup, and the batch re-embed.
  *
@@ -125,7 +127,7 @@ internal object SourceProvenanceQueryStatements {
  */
 @Transactional
 class DrivinePropositionRepository(
-    private val graphObjectManager: GraphObjectManager,
+    private val graphObjectManager: StatelessGraphObjectManager,
     private val persistenceManager: PersistenceManager,
     private val embeddingService: EmbeddingService,
     transactionManager: PlatformTransactionManager,
@@ -304,11 +306,19 @@ class DrivinePropositionRepository(
         val knownEntries = winner.provenanceEntries.toHashSet()
         val novelEntries = incomingEntries.filterNot(knownEntries::contains)
         if (novelEntries.isEmpty()) return winner
-        val revisedWinner = winner.withProvenanceEntries(novelEntries)
         // Straight to the write: everything incoming was checked above, and the winner's own entries
-        // riding along in `revisedWinner` came out of the graph, so they have nothing left to
+        // riding along in the revised winner came out of the graph, so they have nothing left to
         // disagree with. Going through doPersist would re-read every source key this batch names.
-        persistValidated(revisedWinner)
+        // The winner is loaded again for its stamp, so the write is refused, and tried again on what
+        // is there, when another writer changed the winner in between.
+        val revisedWinner = reviseChecked(winner.id) { current ->
+            val held = current.provenanceEntries.toHashSet()
+            val novel = incomingEntries.filterNot(held::contains)
+            if (novel.isEmpty()) current else current.withProvenanceEntries(novel)
+        }
+            // The winner was deleted in between: make it again, as an unchecked save does.
+            ?: return persistValidated(winner.withProvenanceEntries(novelEntries))
+        persistBeyondNode(revisedWinner)
         return findById(winner.id) ?: revisedWinner
     }
 
@@ -393,7 +403,7 @@ class DrivinePropositionRepository(
      * [doPersist] would re-read every source key the batch names, a second time, for nothing.
      *
      * Two writes with different ownership:
-     * - **Node + mentions** via the lean [PropositionView] with `DELETE_ORPHAN`: authoritative, so a
+     * - **Node + mentions** via the lean [PropositionView] with [REPLACE_MENTIONS]: authoritative, so a
      *   changed mention set is reconciled and stale Mention nodes are cleaned. Provenance is *not* in
      *   this view, so existing `DERIVED_FROM` edges are left intact.
      * - **Provenance** via raw Cypher keyed by the whole evidence tuple: additive and idempotent, and
@@ -402,12 +412,65 @@ class DrivinePropositionRepository(
      *   row and lose a revision. Authoritative replacement is the job of [setProvenance].
      */
     private fun persistValidated(proposition: Proposition): Proposition {
-        val embedding = embeddingFor(proposition)
-        graphObjectManager.save(PropositionGraphMapper.toView(proposition, embedding), CascadeType.DELETE_ORPHAN)
+        saveNode(proposition)
+        return persistBeyondNode(proposition)
+    }
+
+    /**
+     * The node-and-mentions write. With the [stamp] the node carried when [proposition] was loaded,
+     * it throws [StaleObjectException] and writes nothing if the node, or any relationship of it,
+     * changed since. Without one it is not checked.
+     */
+    private fun saveNode(proposition: Proposition, stamp: String? = null) {
+        graphObjectManager.save(
+            PropositionGraphMapper.toView(proposition, embeddingFor(proposition), stamp),
+            REPLACE_MENTIONS,
+        )
+    }
+
+    /** What a save writes outside the view, after [saveNode]: stale metadata keys and evidence. */
+    private fun persistBeyondNode(proposition: Proposition): Proposition {
         dropMetadataKeysNotIn(proposition)
         appendProvenance(proposition.id, proposition.provenanceEntries)
         return proposition
     }
+
+    /**
+     * Load the proposition, apply [revise], and save the node and its mentions, checked against the
+     * stamp the load returned. When another writer changed the node in between, the save is refused
+     * and the whole of it is done again on what is there now, [STALE_SAVE_ATTEMPTS] times in all.
+     *
+     * @return the revised proposition as saved, or null when there is no such proposition
+     */
+    private fun reviseChecked(
+        id: String,
+        attemptsLeft: Int = STALE_SAVE_ATTEMPTS,
+        revise: (Proposition) -> Proposition,
+    ): Proposition? {
+        val loaded = loadStamped(id) ?: return null
+        val revised = revise(loaded.proposition)
+        return try {
+            saveNode(revised, loaded.stamp)
+            revised
+        } catch (stale: StaleObjectException) {
+            // With a cause, the engine turned the save away and the transaction has failed: loading
+            // again here cannot help.
+            if (attemptsLeft <= 1 || stale.cause != null) throw stale
+            logger.debug("Proposition {} changed after it was loaded; loading it again: {}", id, stale.message)
+            reviseChecked(id, attemptsLeft - 1, revise)
+        }
+    }
+
+    /** A proposition as the store held it, and the stamp its node carried then. */
+    private data class StampedProposition(val proposition: Proposition, val stamp: String?)
+
+    private fun loadStamped(id: String): StampedProposition? =
+        graphObjectManager.load<PropositionView>(id)?.let { view ->
+            StampedProposition(
+                withRawProvenance(listOf(PropositionGraphMapper.toProposition(view))).single(),
+                view.proposition.stamp,
+            )
+        }
 
     /**
      * A saved proposition's metadata map is the whole map, the same way its status and text are the
@@ -421,9 +484,12 @@ class DrivinePropositionRepository(
         persistenceManager.execute(
             QuerySpecification
                 .withStatement(
-                    "MATCH (p:Proposition {id: \$id}) " +
-                        "UNWIND [k IN keys(p) WHERE k STARTS WITH 'metadata.' AND NONE(x IN \$kept WHERE x = k)] AS k " +
-                        "REMOVE p[k]",
+                    """
+                    MATCH (p:Proposition {id: ${'$'}id})
+                    UNWIND [k IN keys(p) WHERE k STARTS WITH 'metadata.' AND NONE(x IN ${'$'}kept WHERE x = k)] AS k
+                    REMOVE p[k]
+                    SET ${Stamps.setClause("p")}
+                    """.trimIndent(),
                 )
                 .bind(
                     mapOf(
@@ -455,7 +521,8 @@ class DrivinePropositionRepository(
                         r.startOffset = ${'$'}startOffset,
                         r.endOffset = ${'$'}endOffset,
                         r.contentHash = ${'$'}contentHash,
-                        r.display = ${'$'}display
+                        r.display = ${'$'}display,
+                        ${Stamps.linksClause("p")}
                     """.trimIndent()
                 ).bind(params),
             )
@@ -525,9 +592,10 @@ class DrivinePropositionRepository(
                   AND ((r.startOffset IS NULL AND ${'$'}startOffset IS NULL) OR r.startOffset = ${'$'}startOffset)
                   AND ((r.endOffset IS NULL AND ${'$'}endOffset IS NULL) OR r.endOffset = ${'$'}endOffset)
                   AND ((r.contentHash IS NULL AND ${'$'}contentHash IS NULL) OR r.contentHash = ${'$'}contentHash)
-                WITH r LIMIT 1
+                WITH p, r LIMIT 1
                 SET r.entryKey = ${'$'}entryKey,
-                    r.display = ${'$'}display
+                    r.display = ${'$'}display,
+                    ${Stamps.linksClause("p")}
                 RETURN count(r) AS adopted
                 """.trimIndent()
             ).bind(params).transform(Long::class.java)
@@ -542,9 +610,9 @@ class DrivinePropositionRepository(
      */
     @Transactional
     override fun setProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? {
-        val updated = (findById(propositionId) ?: return null).withProvenance(entries)
+        if (!existsById(propositionId)) return null
         validateSourceIdentities(entries)
-        graphObjectManager.save(PropositionGraphMapper.toView(updated, embeddingFor(updated)), CascadeType.DELETE_ORPHAN)
+        val updated = reviseChecked(propositionId) { it.withProvenance(entries) } ?: return null
         replaceProvenance(propositionId, entries)
         return updated
     }
@@ -611,6 +679,8 @@ class DrivinePropositionRepository(
                     p.sourceIds = keptSourceIds,
                     p.metadataRevised = CASE WHEN changed THEN ${'$'}now ELSE p.metadataRevised END,
                     p.lastTouched = CASE WHEN changed THEN ${'$'}now ELSE p.lastTouched END
+                FOREACH (_ IN CASE WHEN changed THEN [1] ELSE [] END | SET ${Stamps.setClause("p")})
+                FOREACH (_ IN CASE WHEN size(doomed) > 0 THEN [1] ELSE [] END | SET ${Stamps.linksClause("p")})
                 """.trimIndent()
             ).bind(
                 mapOf(
@@ -643,9 +713,10 @@ class DrivinePropositionRepository(
                 """
                 MATCH (p:Proposition {id: ${'$'}propositionId})-[r:DERIVED_FROM]->(s:Source)
                 WHERE r.entryKey IS NULL OR NOT r.entryKey IN ${'$'}entryKeys
-                WITH collect(DISTINCT s) AS touched, collect(r) AS doomed
+                WITH p, collect(DISTINCT s) AS touched, collect(r) AS doomed
                 FOREACH (rel IN doomed | DELETE rel)
                 FOREACH (orphan IN [src IN touched WHERE NOT (src)--()] | DELETE orphan)
+                SET ${Stamps.linksClause("p")}
                 """.trimIndent()
             ).bind(mapOf("propositionId" to propositionId, "entryKeys" to entryKeys)),
         )
@@ -704,10 +775,7 @@ class DrivinePropositionRepository(
         dedupLocks[Math.floorMod("$contextId $text".hashCode(), DEDUP_STRIPES)]
 
     @Transactional(readOnly = true)
-    override fun findById(id: String): Proposition? =
-        graphObjectManager.load<PropositionView>(id)
-            ?.let(PropositionGraphMapper::toProposition)
-            ?.let { withRawProvenance(listOf(it)).single() }
+    override fun findById(id: String): Proposition? = loadStamped(id)?.proposition
 
     @Transactional(readOnly = true)
     override fun findAll(): List<Proposition> =
@@ -812,12 +880,15 @@ class DrivinePropositionRepository(
     @Transactional(readOnly = true)
     override fun query(query: PropositionQuery): List<Proposition> {
         val liveDecay = needsLiveDecay(query)
-        val results = if (liveDecay) queryWithLiveDecay(query)
-        else graphObjectManager.loadAll<PropositionView> {
-            where { applyFilters(query, includeEffectiveConfidence = true) }
-            orderBy { applyOrder(query.orderBy) }
-            query.limit?.let { limit(it) }
-        }.map(PropositionGraphMapper::toProposition)
+        val results = when {
+            liveDecay -> queryWithLiveDecay(query)
+            query.orderBy == OrderBy.EFFECTIVE_CONFIDENCE_DESC -> queryByEffectiveConfidence(query)
+            else -> graphObjectManager.loadAll<PropositionView> {
+                where { applyFilters(query, includeEffectiveConfidence = true) }
+                orderBy { applyOrder(query.orderBy) }
+                query.limit?.let { limit(it) }
+            }.map(PropositionGraphMapper::toProposition)
+        }
         logger.debug("query returned {} proposition(s) (liveDecay={}, limit={})", results.size, liveDecay, query.limit)
         return results
     }
@@ -831,6 +902,34 @@ class DrivinePropositionRepository(
     @Transactional(readOnly = true)
     override fun findAll(withProvenance: Boolean): List<Proposition> =
         if (!withProvenance) findAll() else withRawProvenance(findAll())
+
+    /**
+     * Effective confidence descending, ranking a null (never-materialised) value LAST. Cypher treats
+     * null as greater than any value, so a bare `effectiveConfidence DESC` would float nulls to the
+     * top, and the `orderBy { }` DSL orders by a property, not an expression such as `coalesce`. So
+     * the two groups are read separately: the ranked rows in order, then unranked rows for whatever
+     * the limit leaves.
+     */
+    private fun queryByEffectiveConfidence(query: PropositionQuery): List<Proposition> {
+        val ranked = graphObjectManager.loadAll<PropositionView> {
+            where {
+                applyFilters(query, includeEffectiveConfidence = true)
+                proposition.effectiveConfidence.isNotNull()
+            }
+            orderBy { proposition.effectiveConfidence.desc() }
+            query.limit?.let { limit(it) }
+        }
+        val remaining = query.limit?.let { it - ranked.size }
+        val unranked = if (remaining != null && remaining <= 0) emptyList()
+        else graphObjectManager.loadAll<PropositionView> {
+            where {
+                applyFilters(query, includeEffectiveConfidence = true)
+                proposition.effectiveConfidence.isNull()
+            }
+            remaining?.let { limit(it) }
+        }
+        return (ranked + unranked).map(PropositionGraphMapper::toProposition)
+    }
 
     /**
      * The materialised `effectiveConfidence` (default k = 2.0, as of the last sweep) only matches a
@@ -983,7 +1082,8 @@ class DrivinePropositionRepository(
     context(builder: OrderBuilder<PropositionViewQueryDsl>)
     private fun applyOrder(orderBy: OrderBy) {
         when (orderBy) {
-            OrderBy.EFFECTIVE_CONFIDENCE_DESC -> orderByEffectiveConfidenceDescNullsLast()
+            // Nulls-last needs two reads, so this ordering goes through queryByEffectiveConfidence.
+            OrderBy.EFFECTIVE_CONFIDENCE_DESC -> proposition.effectiveConfidence.desc()
             OrderBy.CREATED_DESC -> proposition.created.desc()
             OrderBy.REVISED_DESC -> proposition.lastTouched.desc()
             OrderBy.LAST_ACCESSED_DESC -> proposition.lastAccessed.desc()
@@ -1135,7 +1235,7 @@ class DrivinePropositionRepository(
         if (ids.isEmpty()) return
         persistenceManager.execute(
             QuerySpecification
-                .withStatement("MATCH (p:Proposition) WHERE p.id IN \$ids SET p.lastAccessed = \$now")
+                .withStatement("MATCH (p:Proposition) WHERE p.id IN \$ids SET p.lastAccessed = \$now, ${Stamps.setClause("p")}")
                 .bind(mapOf("ids" to ids.distinct(), "now" to Instant.now())),
         )
     }
@@ -1389,7 +1489,7 @@ class DrivinePropositionRepository(
         val vector = result?.getOrNull()
         if (vector != null) {
             return QuerySpecification
-                .withStatement("MATCH (p:Proposition {id: \$id}) SET p.embedding = \$embedding")
+                .withStatement("MATCH (p:Proposition {id: \$id}) SET p.embedding = \$embedding, ${Stamps.setClause("p")}")
                 .bind(mapOf("id" to id, "embedding" to vector.toList()))
         }
         result?.exceptionOrNull()?.let {
@@ -1426,13 +1526,6 @@ class DrivinePropositionRepository(
         return deleted
     }
 
-    /**
-     * Order by effective confidence descending, ranking a null (never-materialised) value LAST. Cypher
-     * treats null as greater than any value, so a bare `effectiveConfidence DESC` would float nulls to
-     * the top; effectiveConfidence is in [0,1], so coalescing nulls to -1.0 floors them. The high-level
-     * `orderBy { }` DSL can't express coalesce, so add the order expression straight to the builder —
-     * the in-scope context parameter, mirroring the generated property accessors.
-     */
     // ========================================================================
     // GraphQueryCapable — entity-axis graph queries pushed down to Cypher
     // ========================================================================
@@ -1589,12 +1682,17 @@ class DrivinePropositionRepository(
     @Suppress("UNCHECKED_CAST")
     private fun Any?.asStringList(): List<String> = (this as? List<String>) ?: emptyList()
 
-    context(builder: OrderBuilder<PropositionViewQueryDsl>)
-    private fun orderByEffectiveConfidenceDescNullsLast() {
-        builder(OrderSpec("coalesce(proposition.effectiveConfidence, -1.0)", OrderDirection.DESC))
-    }
-
     companion object {
+        /**
+         * How a proposition save treats `HAS_MENTION`: the view's list is the whole list, and a
+         * `:Mention` the save drops is deleted once nothing else points at it.
+         */
+        internal val REPLACE_MENTIONS: RelationshipWrite =
+            Replace(PropositionView::mentions, removedTargets = RemovedTargets.DELETE_UNREFERENCED)
+
+        /** How many times a checked save is made before a stale node is reported to the caller. */
+        private const val STALE_SAVE_ATTEMPTS = 3
+
         /** Stripe count for save-time dedup locks. */
         private const val DEDUP_STRIPES = 64
 
@@ -1608,10 +1706,13 @@ class DrivinePropositionRepository(
          * Removes a vector whose width no longer matches the model, for a proposition that could
          * not be re-embedded. A vector of the right width is left alone.
          */
-        private const val CLEAR_MISMATCHED_EMBEDDING =
-            "MATCH (p:Proposition {id: \$id}) " +
-                "WHERE p.embedding IS NOT NULL AND size(p.embedding) <> \$dimensions " +
-                "REMOVE p.embedding"
+        private val CLEAR_MISMATCHED_EMBEDDING =
+            """
+            MATCH (p:Proposition {id: ${'$'}id})
+            WHERE p.embedding IS NOT NULL AND size(p.embedding) <> ${'$'}dimensions
+            REMOVE p.embedding
+            SET ${Stamps.setClause("p")}
+            """.trimIndent()
 
         /**
          * What every minted evidence key starts with. A ref lacking it is a locator key from before

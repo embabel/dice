@@ -56,9 +56,12 @@ import com.embabel.dice.temporal.TemporalMetadata
  */
 object PropositionGraphMapper {
 
-    /** Lean view: mentions only. */
-    fun toView(p: Proposition, embedding: List<Float>? = null): PropositionView =
-        PropositionView(proposition = nodeOf(p, embedding), mentions = mentionsOf(p))
+    /**
+     * Lean view: mentions only. A [stamp] is the one the node carried when [p] was loaded, and makes
+     * the save of the view a checked one; without it the save is not checked.
+     */
+    fun toView(p: Proposition, embedding: List<Float>? = null, stamp: String? = null): PropositionView =
+        PropositionView(proposition = nodeOf(p, embedding).copy(stamp = stamp), mentions = mentionsOf(p))
 
     /**
      * Full view: mentions + provenance (`DERIVED_FROM` → shared [SourceNode]).

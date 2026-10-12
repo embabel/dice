@@ -16,11 +16,13 @@ Kotlin 2.2.0 (one minor version above `dice`'s 2.1.10 — see below). Java 21.
 
 ## How it relates to the core SPI
 
-`DrivinePropositionRepository` implements every capability in `PropositionRepository` — not just basic CRUD. Filtering, ordering, limiting, vector similarity, and entity-mention predicates all push into Neo4j via the Drivine `GraphObjectManager` DSL. Hand-written Cypher is used only for a few things the DSL can't express: the `findClusters` correlated query, cascade-aware bulk clears (`queries/clear_propositions.cypher`), the dedup existence check, and the batch re-embed.
+`DrivinePropositionRepository` implements every capability in `PropositionRepository` — not just basic CRUD. Filtering, ordering, limiting, vector similarity, and entity-mention predicates all push into Neo4j via the Drivine `StatelessGraphObjectManager` DSL. Hand-written Cypher is used only for a few things the DSL can't express: the `findClusters` correlated query, cascade-aware bulk clears (`queries/clear_propositions.cypher`), the dedup existence check, and the batch re-embed.
 
 **Exact-text dedup.** Parallel chunk extraction can mint identical propositions. `DrivinePropositionRepository.save()` runs a stripe-locked find-then-insert to collapse exact `(contextId, text)` duplicates into a single node. There is also a Neo4j uniqueness constraint on `(contextId, text)` as a cross-instance backstop.
 
-**Two-phase save for provenance.** `doPersist()` writes node + mentions with `DELETE_ORPHAN` (authoritative — stale mentions are reconciled), then writes provenance edges with `PRESERVE` (append-only — existing evidence is never dropped by a lean save). Use `setProvenance()` / `clearProvenance()` when you need to replace evidence authoritatively.
+**Two-phase save for provenance.** `doPersist()` writes node + mentions with `Replace(PropositionView::mentions, DELETE_UNREFERENCED)` (authoritative — stale mentions are reconciled), then writes provenance edges with `PRESERVE` (append-only — existing evidence is never dropped by a lean save). Use `setProvenance()` / `clearProvenance()` when you need to replace evidence authoritatively.
+
+**Stamped proposition nodes.** `PropositionNode` carries a Drivine `@NodeStamp`. `Proposition` does not, so `save(proposition)` is unchecked. The repository's own load-then-save paths (`setProvenance`, the dedup evidence merge) save with the stamp they loaded and load again when the save is refused as stale. Raw Cypher that changes a `:Proposition` or one of its relationships must mark the stamp with `Stamps.setClause("p")` or `Stamps.linksClause("p")`, or a checked save will not notice the write.
 
 **Materialised effective confidence.** The graph stores a pre-computed `effectiveConfidence` column (updated by the decay sweep). Queries with default `decayK=2.0` and no custom `asOf` push this column to the DB. Non-default decay parameters fall back to in-memory filtering over a candidate set from the DB.
 

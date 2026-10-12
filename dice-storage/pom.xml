@@ -56,7 +56,7 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- Drivine + Neo4j (GraphObjectManager, PersistenceManager, schema, vector search) -->
+        <!-- Drivine + Neo4j (StatelessGraphObjectManager, PersistenceManager, schema, vector search) -->
         <dependency>
             <groupId>org.drivine</groupId>
             <artifactId>drivine4j-spring-boot-starter</artifactId>

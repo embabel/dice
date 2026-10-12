@@ -21,6 +21,7 @@ import com.embabel.dice.proposition.extraction.ExtractionRunRef
 import com.embabel.dice.proposition.extraction.PropositionRunLinkScopeException
 import com.embabel.dice.proposition.extraction.PropositionRunLinkStore
 import org.drivine.manager.PersistenceManager
+import org.drivine.model.Stamps
 import org.jetbrains.annotations.ApiStatus
 import org.drivine.query.QuerySpecification
 import org.slf4j.LoggerFactory
@@ -297,6 +298,7 @@ open class DrivinePropositionRunLinkStore(
             WHERE size(ps) = ${'$'}expected
             UNWIND ps AS p
             MERGE (p)-[r:PRODUCED_BY_RUN]->(n)
+            ON CREATE SET ${Stamps.linksClause("p")}
             WITH count(r) AS linked
             RETURN {linked: linked} AS row
         """.trimIndent()

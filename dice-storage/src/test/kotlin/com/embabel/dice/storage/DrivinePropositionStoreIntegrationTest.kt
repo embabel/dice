@@ -49,8 +49,10 @@ import org.junit.jupiter.api.Test
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.jupiter.api.assertThrows
 import org.drivine.connection.DataSourceMap
-import org.drivine.manager.CascadeType
-import org.drivine.manager.GraphObjectManager
+import com.embabel.dice.storage.model.PropositionView
+import org.drivine.StaleObjectException
+import org.drivine.manager.StatelessGraphObjectManager
+import org.drivine.manager.load
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.neo4j.driver.AuthTokens
@@ -104,7 +106,7 @@ class DrivinePropositionStoreIntegrationTest {
     private lateinit var persistenceManager: PersistenceManager
 
     @Autowired
-    private lateinit var graphObjectManager: GraphObjectManager
+    private lateinit var graphObjectManager: StatelessGraphObjectManager
 
     @Autowired
     private lateinit var embeddingService: EmbeddingService
@@ -1971,6 +1973,58 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals(1L, sourceCount, "the replaced source should be orphan-deleted")
     }
 
+    /** Cypher the repository writes itself marks the node's stamp, so a checked save notices it. */
+    @Test
+    fun `a save of a loaded proposition is refused after the node's data is changed by Cypher`() {
+        val saved = repository.save(prop("fact"))
+        val loaded = requireNotNull(graphObjectManager.load<PropositionView>(saved.id))
+        assertNotNull(loaded.proposition.stamp, "a load fills the stamp")
+
+        repository.touchAccessed(listOf(saved.id))
+
+        val stale = assertThrows<StaleObjectException> {
+            graphObjectManager.save(loaded, DrivinePropositionRepository.REPLACE_MENTIONS)
+        }
+        assertFalse(stale.deleted)
+    }
+
+    /** A replace of the mentions compares the relationship token, which evidence edges change. */
+    @Test
+    fun `a save of a loaded proposition is refused after its evidence is changed by Cypher`() {
+        val saved = repository.save(prop("fact"))
+        val loaded = requireNotNull(graphObjectManager.load<PropositionView>(saved.id))
+
+        repository.setProvenance(saved.id, listOf(ProvenanceEntry(locator = UriLocator("https://example.com/new"))))
+
+        assertThrows<StaleObjectException> {
+            graphObjectManager.save(loaded, DrivinePropositionRepository.REPLACE_MENTIONS)
+        }
+    }
+
+    /**
+     * The repository embeds between its load and its save, so an embedding service that writes to
+     * the node on its first call stands in for another writer getting there first.
+     */
+    @Test
+    fun `setProvenance loads again when another writer changes the proposition before its save`() {
+        val saved = repository.save(prop("fact"))
+        val embeds = AtomicInteger()
+        val interfering = object : EmbeddingService by embeddingService {
+            override fun embed(text: String): FloatArray {
+                if (embeds.getAndIncrement() == 0) repository.touchAccessed(listOf(saved.id))
+                return embeddingService.embed(text)
+            }
+        }
+        val contended = DrivinePropositionRepository(graphObjectManager, persistenceManager, interfering, transactionManager)
+        val entry = ProvenanceEntry(locator = UriLocator("https://example.com/new"))
+
+        val updated = contended.setProvenance(saved.id, listOf(entry))
+
+        assertEquals(listOf(entry), updated?.provenanceEntries)
+        assertEquals(2, embeds.get(), "the first save was refused and the second, from a new load, applied")
+        assertEquals(listOf("https://example.com/new"), repository.provenanceOf(saved.id).map { (it.locator as UriLocator).uri })
+    }
+
     /** The query-filtered vector search must honour the query's date/time predicates, not just status/level/entity. */
     @Test
     fun `vector search with query honours revised-time filters`() {
@@ -2341,12 +2395,12 @@ class DrivinePropositionStoreIntegrationTest {
     /** Insert a proposition node directly, bypassing [DrivinePropositionRepository]'s in-JVM dedup. */
     private fun seedRawNode(p: Proposition) {
         val embedding = embeddingService.embed(p.text).toList()
-        graphObjectManager.save(PropositionGraphMapper.toView(p, embedding), CascadeType.DELETE_ORPHAN)
+        graphObjectManager.save(PropositionGraphMapper.toView(p, embedding), DrivinePropositionRepository.REPLACE_MENTIONS)
     }
 
     /** Like [seedRawNode] but with a caller-supplied embedding, so a pair's exact cosine is controlled. */
     private fun seedRawNodeWithEmbedding(p: Proposition, embedding: List<Float>) {
-        graphObjectManager.save(PropositionGraphMapper.toView(p, embedding), CascadeType.DELETE_ORPHAN)
+        graphObjectManager.save(PropositionGraphMapper.toView(p, embedding), DrivinePropositionRepository.REPLACE_MENTIONS)
     }
 
     /**

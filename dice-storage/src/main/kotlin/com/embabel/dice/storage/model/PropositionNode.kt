@@ -19,6 +19,7 @@ import org.drivine.annotation.Default
 import org.drivine.annotation.EmptyWhenAbsent
 import org.drivine.annotation.NodeFragment
 import org.drivine.annotation.NodeId
+import org.drivine.annotation.NodeStamp
 import org.drivine.annotation.PropertyBag
 import org.drivine.annotation.RangeIndex
 import org.drivine.annotation.Unique
@@ -139,4 +140,13 @@ data class PropositionNode(
      */
     @PropertyBag
     val metadata: Map<String, Any?> = emptyMap(),
+
+    /**
+     * Drivine's stamp for the node, filled by a load. A save of a node that carries one is refused
+     * when the node changed after it was loaded; a null stamp is saved unchecked. Not part of
+     * [com.embabel.dice.proposition.Proposition]: the repository carries it across its own
+     * load-then-save paths.
+     */
+    @NodeStamp
+    val stamp: String? = null,
 )

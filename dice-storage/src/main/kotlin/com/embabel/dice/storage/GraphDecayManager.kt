@@ -20,6 +20,7 @@ import com.embabel.dice.proposition.DecayManager
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
 import org.drivine.manager.PersistenceManager
+import org.drivine.model.Stamps
 import org.drivine.query.QuerySpecification
 import java.time.Instant
 
@@ -116,7 +117,8 @@ class GraphDecayManager(
                 WHEN vf IS NOT NULL THEN p.confidence * exp(-coalesce(p.decay, 0.0) * $DECAY_K * ageValidFrom)
                 ELSE p.confidence * exp(-coalesce(p.decay, 0.0) * $DECAY_K * ageRevised)
               END,
-              p.decayUpdatedAt = nowDt
+              p.decayUpdatedAt = nowDt,
+              ${Stamps.setClause("p")}
         """.trimIndent()
     }
 }
