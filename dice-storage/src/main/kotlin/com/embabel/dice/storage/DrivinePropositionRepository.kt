@@ -421,11 +421,12 @@ class DrivinePropositionRepository(
      * it throws [StaleObjectException] and writes nothing if the node, or any relationship of it,
      * changed since. Without one it is not checked.
      */
-    private fun saveNode(proposition: Proposition, stamp: String? = null) {
-        graphObjectManager.save(
-            PropositionGraphMapper.toView(proposition, embeddingFor(proposition), stamp),
-            REPLACE_MENTIONS,
-        )
+    private fun saveNode(
+        proposition: Proposition,
+        stamp: String? = null,
+        embedding: List<Float>? = embeddingFor(proposition),
+    ) {
+        graphObjectManager.save(PropositionGraphMapper.toView(proposition, embedding, stamp), REPLACE_MENTIONS)
     }
 
     /** What a save writes outside the view, after [saveNode]: stale metadata keys and evidence. */
@@ -440,26 +441,40 @@ class DrivinePropositionRepository(
      * stamp the load returned. When another writer changed the node in between, the save is refused
      * and the whole of it is done again on what is there now, [STALE_SAVE_ATTEMPTS] times in all.
      *
-     * @return the revised proposition as saved, or null when there is no such proposition
+     * The text is embedded once. A later attempt reuses the vector while the text is the same, so
+     * the time between its load and its save is not spent on the embedding service again.
+     *
+     * @return the revised proposition as saved, or null when there is no such proposition, which
+     *   includes one that was deleted between the load and the save
+     * @throws StaleObjectException when the last attempt is refused too, and when the engine itself
+     *   turned the save away
      */
     private fun reviseChecked(
         id: String,
         attemptsLeft: Int = STALE_SAVE_ATTEMPTS,
+        embedded: EmbeddedText? = null,
         revise: (Proposition) -> Proposition,
     ): Proposition? {
         val loaded = loadStamped(id) ?: return null
         val revised = revise(loaded.proposition)
+        val embedding = embedded?.takeIf { it.text == revised.text }
+            ?: EmbeddedText(revised.text, embeddingFor(revised))
         return try {
-            saveNode(revised, loaded.stamp)
+            saveNode(revised, loaded.stamp, embedding.vector)
             revised
         } catch (stale: StaleObjectException) {
+            // Nothing is left to revise: the answer is the one a load that found no node gives.
+            if (stale.deleted) return null
             // With a cause, the engine turned the save away and the transaction has failed: loading
             // again here cannot help.
             if (attemptsLeft <= 1 || stale.cause != null) throw stale
             logger.debug("Proposition {} changed after it was loaded; loading it again: {}", id, stale.message)
-            reviseChecked(id, attemptsLeft - 1, revise)
+            reviseChecked(id, attemptsLeft - 1, embedding, revise)
         }
     }
+
+    /** The vector the embedding service gave for [text]; null for a blank text, which has none. */
+    private data class EmbeddedText(val text: String, val vector: List<Float>?)
 
     /** A proposition as the store held it, and the stamp its node carried then. */
     private data class StampedProposition(val proposition: Proposition, val stamp: String?)

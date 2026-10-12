@@ -18,7 +18,11 @@ package com.embabel.dice.storage
 import com.embabel.dice.proposition.extraction.ExtractionRunKey
 import com.embabel.dice.proposition.extraction.ExtractionRunRef
 import com.embabel.dice.proposition.extraction.PropositionRunLinkStore
+import com.embabel.dice.storage.model.PropositionView
+import org.drivine.StaleObjectException
 import org.drivine.manager.PersistenceManager
+import org.drivine.manager.StatelessGraphObjectManager
+import org.drivine.manager.load
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -26,6 +30,7 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
+import org.junit.jupiter.api.assertThrows
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 
@@ -58,6 +63,9 @@ class DrivinePropositionRunLinkStoreContractIntegrationTest : AbstractPropositio
 
     @Autowired
     private lateinit var persistenceManager: PersistenceManager
+
+    @Autowired
+    private lateinit var graphObjectManager: StatelessGraphObjectManager
 
     @BeforeAll
     fun seed() {
@@ -131,6 +139,22 @@ class DrivinePropositionRunLinkStoreContractIntegrationTest : AbstractPropositio
             edgeCount(propositionId, key.runRef.runId),
             "a duplicate inside one batch is still one edge",
         )
+    }
+
+    /**
+     * A link is a relationship of the proposition, written by Cypher. It marks the proposition's
+     * stamp, so a save that replaces a relationship list of a view loaded before the link is refused.
+     */
+    @Test
+    fun `a save of a loaded proposition is refused after it is linked to a run`() {
+        val propositionId = fixturePropositionIds.first()
+        val loaded = requireNotNull(graphObjectManager.load<PropositionView>(propositionId))
+
+        linkStore.link(ExtractionRunKey(tenant, ExtractionRunRef(fixtureRunIds.first())), listOf(propositionId))
+
+        assertThrows<StaleObjectException> {
+            graphObjectManager.save(loaded, DrivinePropositionRepository.REPLACE_MENTIONS)
+        }
     }
 
     /** How many `PRODUCED_BY_RUN` edges join this claim to this run, counted in the graph itself. */

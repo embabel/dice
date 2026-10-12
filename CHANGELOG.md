@@ -8,6 +8,29 @@ and the consumer PRs that deliver it).
 
 ## Unreleased
 
+### Changed
+
+- `dice-storage` moves to Drivine 0.1.1 and its `StatelessGraphObjectManager`. Drivine 0.1.x
+  deprecates `GraphObjectManager`, whose saves depend on a session snapshot. The stores and the
+  autoconfiguration take the stateless manager, and `PropositionNode` carries a `@NodeStamp`.
+  `setProvenance` and the dedup evidence merge save against the stamp they loaded, and load again
+  (three attempts) when the save is refused because another writer changed the proposition in
+  between. `save(proposition)` is unchecked, as `Proposition` carries no stamp. Cypher of the
+  repository that writes a `:Proposition` or one of its relationships marks the stamp.
+  **Compatibility: breaking.** A host that uses the graph store:
+  - supplies a `StatelessGraphObjectManager` bean (`GraphObjectManagerFactory.stateless(...)`) in
+    place of the `GraphObjectManager` one, and resolves Drivine 0.1.1;
+  - adds `Stamps.setClause("p")` to Cypher of its own that changes a `:Proposition` node, and
+    `Stamps.linksClause("p")` to Cypher that adds, removes or changes one of its relationships.
+    Without them a checked save does not notice the write;
+  - sees a new property, `__drivine.stamp`, on every saved `:Proposition` node. Cypher that reads
+    every property of the node reads this one too.
+
+  **Compatibility: behavioral.** `setProvenance` and a deduplicated `save` can throw Drivine's
+  `StaleObjectException` when the proposition is changed by another writer on each of the three
+  attempts. Effective-confidence ordering is now two reads, ranked rows and then unranked ones;
+  the order it answers with is unchanged.
+
 ### Added
 
 - A Kotlin DSL for stamping in `dice-metamodel`. **EXPERIMENTAL** (shape may change

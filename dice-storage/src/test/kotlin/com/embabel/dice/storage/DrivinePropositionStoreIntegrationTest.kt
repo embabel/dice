@@ -2003,26 +2003,104 @@ class DrivinePropositionStoreIntegrationTest {
 
     /**
      * The repository embeds between its load and its save, so an embedding service that writes to
-     * the node on its first call stands in for another writer getting there first.
+     * the node on its first call stands in for another writer getting there first. The first save
+     * is then refused, as the tests above show, so an answer at all is the second attempt's.
      */
     @Test
     fun `setProvenance loads again when another writer changes the proposition before its save`() {
         val saved = repository.save(prop("fact"))
         val embeds = AtomicInteger()
-        val interfering = object : EmbeddingService by embeddingService {
-            override fun embed(text: String): FloatArray {
-                if (embeds.getAndIncrement() == 0) repository.touchAccessed(listOf(saved.id))
-                return embeddingService.embed(text)
-            }
-        }
-        val contended = DrivinePropositionRepository(graphObjectManager, persistenceManager, interfering, transactionManager)
+        val contended = repositoryEmbeddingWith(embeds) { repository.touchAccessed(listOf(saved.id)) }
         val entry = ProvenanceEntry(locator = UriLocator("https://example.com/new"))
 
         val updated = contended.setProvenance(saved.id, listOf(entry))
 
         assertEquals(listOf(entry), updated?.provenanceEntries)
-        assertEquals(2, embeds.get(), "the first save was refused and the second, from a new load, applied")
+        assertEquals(1, embeds.get(), "the second attempt reuses the vector the first one made")
         assertEquals(listOf("https://example.com/new"), repository.provenanceOf(saved.id).map { (it.locator as UriLocator).uri })
+    }
+
+    @Test
+    fun `a save of a loaded proposition is refused after the decay sweep rewrites its ranking column`() {
+        assertSaveOfLoadedViewRefusedAfter { decayManager.materializeAll() }
+    }
+
+    @Test
+    fun `a save of a loaded proposition is refused after it is re-embedded`() {
+        assertSaveOfLoadedViewRefusedAfter { repository.reembedAll() }
+    }
+
+    @Test
+    fun `a save of a loaded proposition is refused after evidence is subtracted from it`() {
+        val entry = evidence(UriLocator("https://example.com/stamp/subtract"), "r1")
+        assertSaveOfLoadedViewRefusedAfter(prop("fact", provenance = listOf(entry))) { saved ->
+            repository.subtractProvenance(saved.id, listOf(ProvenanceEvidenceKey.encode(entry)))
+        }
+    }
+
+    /**
+     * The merge decides what is new from the winner it loads, not from the one the caller read. So
+     * evidence another writer adds between the two is kept, and the incoming entry is added to it.
+     */
+    @Test
+    fun `the dedup evidence merge loads the winner again when another writer changes it before its save`() {
+        val first = evidence(UriLocator("https://example.com/merge/first"), "r1")
+        val between = evidence(UriLocator("https://example.com/merge/between"), "r1")
+        val incoming = evidence(UriLocator("https://example.com/merge/incoming"), "r1")
+        val winner = repository.save(prop("fact", provenance = listOf(first)))
+        val embeds = AtomicInteger()
+        val contended = repositoryEmbeddingWith(embeds) {
+            repository.save(prop("fact", provenance = listOf(between)))
+        }
+
+        val merged = contended.save(prop("fact", provenance = listOf(incoming)))
+
+        assertEquals(winner.id, merged.id, "the same text is answered with the proposition already held")
+        assertEquals(1, embeds.get(), "the second attempt reuses the vector the first one made")
+        assertEquals(setOf(first, between, incoming), repository.provenanceOf(winner.id).toSet())
+    }
+
+    /** A proposition deleted between the load and the save is not made again by `setProvenance`. */
+    @Test
+    fun `setProvenance answers null when the proposition is deleted before its save`() {
+        val saved = repository.save(prop("fact"))
+        val contended = repositoryEmbeddingWith(AtomicInteger()) { repository.delete(saved.id) }
+
+        val updated = contended.setProvenance(saved.id, listOf(evidence(UriLocator("https://example.com/gone"), "r1")))
+
+        assertNull(updated)
+        assertNull(repository.findById(saved.id), "the deleted proposition must stay deleted")
+        assertEquals(0L, nodeCount("Source"), "no evidence is written for a proposition that is not there")
+    }
+
+    /**
+     * Saves [seed], loads its view, runs [write], and expects a save of the loaded view to be
+     * refused. This is what holds each Cypher write of the repository to marking the node's stamp.
+     */
+    private fun assertSaveOfLoadedViewRefusedAfter(seed: Proposition = prop("fact"), write: (Proposition) -> Unit) {
+        val saved = repository.save(seed)
+        val loaded = requireNotNull(graphObjectManager.load<PropositionView>(saved.id))
+
+        write(saved)
+
+        assertThrows<StaleObjectException> {
+            graphObjectManager.save(loaded, DrivinePropositionRepository.REPLACE_MENTIONS)
+        }
+    }
+
+    /**
+     * A repository whose embedding service runs [onFirstEmbed] the first time it is asked for a
+     * vector, and counts its calls in [embeds]. A checked save embeds between its load and its save,
+     * so [onFirstEmbed] is where another writer gets in.
+     */
+    private fun repositoryEmbeddingWith(embeds: AtomicInteger, onFirstEmbed: () -> Unit): DrivinePropositionRepository {
+        val interfering = object : EmbeddingService by embeddingService {
+            override fun embed(text: String): FloatArray {
+                if (embeds.getAndIncrement() == 0) onFirstEmbed()
+                return embeddingService.embed(text)
+            }
+        }
+        return DrivinePropositionRepository(graphObjectManager, persistenceManager, interfering, transactionManager)
     }
 
     /** The query-filtered vector search must honour the query's date/time predicates, not just status/level/entity. */
@@ -2272,6 +2350,31 @@ class DrivinePropositionStoreIntegrationTest {
             ordered.map { it.id },
             "a null effectiveConfidence must sort last, not ahead of a confident proposition",
         )
+    }
+
+    /**
+     * The ordering is two reads, the ranked rows and then the unranked ones. A limit is spent on
+     * the ranked rows first, and only what it leaves goes to the unranked.
+     */
+    @Test
+    fun `effective-confidence ordering spends its limit on ranked rows before unranked ones`() {
+        val low = repository.save(prop("low fact", confidence = 0.5))
+        val high = repository.save(prop("high fact", confidence = 0.8))
+        val unranked = repository.save(prop("unranked fact", confidence = 0.9))
+        persistenceManager.execute(
+            QuerySpecification
+                .withStatement("MATCH (p:Proposition {id: \$id}) SET p.effectiveConfidence = null")
+                .bind(mapOf("id" to unranked.id)),
+        )
+
+        fun idsWithLimit(limit: Int?) = repository.query(
+            PropositionQuery(orderBy = PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC, limit = limit),
+        ).map { it.id }
+
+        assertEquals(listOf(high.id), idsWithLimit(1))
+        assertEquals(listOf(high.id, low.id), idsWithLimit(2), "a limit the ranked rows fill reads no unranked row")
+        assertEquals(listOf(high.id, low.id, unranked.id), idsWithLimit(3))
+        assertEquals(listOf(high.id, low.id, unranked.id), idsWithLimit(null))
     }
 
     /** `allEntityIds` is conjunctive — a proposition must mention *every* listed entity to match. */

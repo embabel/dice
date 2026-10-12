@@ -167,7 +167,7 @@ sequenceDiagram
     participant Repo as Durable repository
     participant Graph as Neo4j
     Caller->>Repo: save(proposition)
-    Repo->>Graph: write node + mentions (DELETE_ORPHAN — authoritative)
+    Repo->>Graph: write node + mentions (replace — authoritative)
     Note over Graph: mentions no longer present are reconciled away
     Repo->>Graph: write provenance edges (PRESERVE — append-only)
     Note over Graph: existing evidence is never dropped by a lean save
