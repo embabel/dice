@@ -897,7 +897,6 @@ class DrivinePropositionRepository(
         val liveDecay = needsLiveDecay(query)
         val results = when {
             liveDecay -> queryWithLiveDecay(query)
-            query.orderBy == OrderBy.EFFECTIVE_CONFIDENCE_DESC -> queryByEffectiveConfidence(query)
             else -> graphObjectManager.loadAll<PropositionView> {
                 where { applyFilters(query, includeEffectiveConfidence = true) }
                 orderBy { applyOrder(query.orderBy) }
@@ -917,34 +916,6 @@ class DrivinePropositionRepository(
     @Transactional(readOnly = true)
     override fun findAll(withProvenance: Boolean): List<Proposition> =
         if (!withProvenance) findAll() else withRawProvenance(findAll())
-
-    /**
-     * Effective confidence descending, ranking a null (never-materialised) value LAST. Cypher treats
-     * null as greater than any value, so a bare `effectiveConfidence DESC` would float nulls to the
-     * top, and the `orderBy { }` DSL orders by a property, not an expression such as `coalesce`. So
-     * the two groups are read separately: the ranked rows in order, then unranked rows for whatever
-     * the limit leaves.
-     */
-    private fun queryByEffectiveConfidence(query: PropositionQuery): List<Proposition> {
-        val ranked = graphObjectManager.loadAll<PropositionView> {
-            where {
-                applyFilters(query, includeEffectiveConfidence = true)
-                proposition.effectiveConfidence.isNotNull()
-            }
-            orderBy { proposition.effectiveConfidence.desc() }
-            query.limit?.let { limit(it) }
-        }
-        val remaining = query.limit?.let { it - ranked.size }
-        val unranked = if (remaining != null && remaining <= 0) emptyList()
-        else graphObjectManager.loadAll<PropositionView> {
-            where {
-                applyFilters(query, includeEffectiveConfidence = true)
-                proposition.effectiveConfidence.isNull()
-            }
-            remaining?.let { limit(it) }
-        }
-        return (ranked + unranked).map(PropositionGraphMapper::toProposition)
-    }
 
     /**
      * The materialised `effectiveConfidence` (default k = 2.0, as of the last sweep) only matches a
@@ -1097,8 +1068,8 @@ class DrivinePropositionRepository(
     context(builder: OrderBuilder<PropositionViewQueryDsl>)
     private fun applyOrder(orderBy: OrderBy) {
         when (orderBy) {
-            // Nulls-last needs two reads, so this ordering goes through queryByEffectiveConfidence.
-            OrderBy.EFFECTIVE_CONFIDENCE_DESC -> proposition.effectiveConfidence.desc()
+            // Cypher ranks null above every value, so a never-materialised confidence is placed last.
+            OrderBy.EFFECTIVE_CONFIDENCE_DESC -> proposition.effectiveConfidence.desc().nullsLast()
             OrderBy.CREATED_DESC -> proposition.created.desc()
             OrderBy.REVISED_DESC -> proposition.lastTouched.desc()
             OrderBy.LAST_ACCESSED_DESC -> proposition.lastAccessed.desc()

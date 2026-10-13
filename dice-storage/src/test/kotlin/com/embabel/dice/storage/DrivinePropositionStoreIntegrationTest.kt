@@ -2384,8 +2384,8 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     /**
-     * The ordering is two reads, the ranked rows and then the unranked ones. A limit is spent on
-     * the ranked rows first, and only what it leaves goes to the unranked.
+     * A proposition with no effective confidence yet is ordered after every one that has it, so a
+     * limit is spent on the ranked rows first.
      */
     @Test
     fun `effective-confidence ordering spends its limit on ranked rows before unranked ones`() {
@@ -2403,7 +2403,7 @@ class DrivinePropositionStoreIntegrationTest {
         ).map { it.id }
 
         assertEquals(listOf(high.id), idsWithLimit(1))
-        assertEquals(listOf(high.id, low.id), idsWithLimit(2), "a limit the ranked rows fill reads no unranked row")
+        assertEquals(listOf(high.id, low.id), idsWithLimit(2), "a limit the ranked rows fill leaves no room for an unranked row")
         assertEquals(listOf(high.id, low.id, unranked.id), idsWithLimit(3))
         assertEquals(listOf(high.id, low.id, unranked.id), idsWithLimit(null))
     }
