@@ -2039,6 +2039,37 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     /**
+     * The second save holds the proposition exactly as stored, less one metadata key. The node write
+     * changes nothing, so the mark is the key removal's.
+     */
+    @Test
+    fun `a save of a loaded proposition is refused after a metadata key is removed from it`() {
+        assertSaveOfLoadedViewRefusedAfter(prop("fact", metadata = mapOf("source" to "wiki"))) { saved ->
+            repository.save(saved.copy(metadata = emptyMap()))
+        }
+    }
+
+    /**
+     * The second save holds the proposition exactly as stored, and names the evidence of an edge
+     * written before evidence keys. The node write changes nothing and the edge is adopted, not
+     * made, so the mark is the adoption's.
+     */
+    @Test
+    fun `a save of a loaded proposition is refused after a legacy evidence edge is adopted`() {
+        val entry = ProvenanceEntry(locator = UriLocator("https://example.com/stamp/legacy"))
+        val saved = repository.save(prop("fact"))
+        seedLegacyEdge(saved.id, entry)
+        val loaded = requireNotNull(graphObjectManager.load<PropositionView>(saved.id))
+
+        repository.save(saved.copy(provenanceEntries = listOf(entry)))
+
+        assertEquals(1L, edgeCount(saved.id), "the edge was adopted, and no second one made")
+        assertThrows<StaleObjectException> {
+            graphObjectManager.save(loaded, DrivinePropositionRepository.REPLACE_MENTIONS)
+        }
+    }
+
+    /**
      * The merge decides what is new from the winner it loads, not from the one the caller read. So
      * evidence another writer adds between the two is kept, and the incoming entry is added to it.
      */
