@@ -10,6 +10,10 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- Drivine 0.1.6. A 0.1.x release can change the compiled signature of a method, as 0.1.6 did for
+  `saveAll`, so a host resolves the Drivine its libraries were built on.
+  **Compatibility: behavioral.** A host on Drivine 0.1.5 moves to 0.1.6 with it.
+
 - `dice-storage` moves to Drivine 0.1.5 and its `StatelessGraphObjectManager`. Drivine 0.1.x
   deprecates `GraphObjectManager`, whose saves depend on a session snapshot. The stores and the
   autoconfiguration take the stateless manager, and `PropositionNode` carries a `@NodeStamp`.
