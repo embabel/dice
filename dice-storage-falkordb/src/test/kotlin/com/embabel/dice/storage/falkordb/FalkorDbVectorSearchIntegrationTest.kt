@@ -26,12 +26,15 @@ import org.drivine.query.grammar.CypherDialect
 import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.proposition.ConsecutiveFailureBreaker
 import com.embabel.dice.proposition.ContextSetVectorSearchCapable
+import com.embabel.dice.proposition.DecaySweepConfig
+import com.embabel.dice.proposition.DecaySweepResult
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionReembedIncompleteException
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.StrictPolicyReadCapable
+import com.embabel.dice.proposition.store.InMemoryDecayManager
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.UriLocator
@@ -107,6 +110,28 @@ class FalkorDbVectorSearchIntegrationTest {
                 }
             }
         }
+
+    @Test
+    fun `portable decay sweep persists stale status and retains vectors across reconnect`() {
+        val fact = proposition("decay-candidate").copy(
+            confidence = 0.1, decay = 0.99, created = Instant.EPOCH,
+            contentRevised = Instant.EPOCH, lastAccessed = Instant.EPOCH,
+        )
+        repository.save(fact)
+        val result = InMemoryDecayManager(FalkorDbPropositionRepository(provider)).sweepAll(
+            DecaySweepConfig(),
+        )
+        assertTrue(result is DecaySweepResult.Swept)
+        assertEquals(listOf(fact.id), result.transitioned.map { it.id })
+        val reconnected = FalkorDbPropositionRepository(provider).withEmbeddingService(model)
+        val stale = reconnected.findById(fact.id)!!
+        assertEquals(PropositionStatus.STALE, stale.status)
+        assertEquals(fact.contentRevised, stale.contentRevised)
+        val matches = reconnected.findSimilarWithScores(request(),
+            PropositionQuery.againstContext("a").copy(statuses = setOf(PropositionStatus.STALE)))
+        assertEquals(listOf(fact.id), matches.map { it.match.id })
+        assertEquals(1.0, matches.single().score)
+    }
 
     @Test
     fun `native cosine matches portable scores thresholds and Unicode tie order`() {

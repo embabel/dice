@@ -36,6 +36,12 @@ and the consumer PRs that deliver it).
 
 ### Added
 
+- `dice-storage-falkordb` and `dice-storage-falkordb-starter` provide durable proposition and
+  chunk-history storage through Drivine, native structured reads, and optional exact vector search.
+  Select `embabel.dice.store.type=falkordb` with the starter. **Compatibility: additive.** Existing
+  Neo4j and in-memory selections retain their behavior. FalkorDB applications must declare Jedis
+  8.0.1 directly; see [configuration and migration](docs/falkordb.md).
+
 - A Kotlin DSL for stamping in `dice-metamodel`. **EXPERIMENTAL** (shape may change
   before 1.0): `MetamodelVersion(dictionary) { }` and `DeclaredSchema(dictionary) { }`
   take a receiver block, so the call site is a sequence of statements with no receiver

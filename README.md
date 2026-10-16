@@ -110,6 +110,7 @@ recover by reading a single class — see the design notes in [`docs/design/`](d
   edge lineage, projection outcomes, the stale-cascade on source change, and idempotent reconciliation.
 - [Retrieval and discovery](docs/design/retrieval-and-discovery.md) — store-agnostic graph queries,
   query-time authority filtering, the single retrieval router, and serendipitous link discovery.
+- [FalkorDB storage](docs/falkordb.md) — Spring Boot setup, dependencies, capabilities and consistency.
 - [Durable storage](docs/design/durable-storage.md) — backend selection, defense-in-depth dedup,
   two-phase save, materialised effective confidence, schema-as-beans, and the decay tick.
 - [Events](docs/design/events.md) — the domain-event model the store and pipeline emit.
@@ -2391,7 +2392,7 @@ Add the autoconfigure dependency and flip one property — no manual wiring:
 embabel:
   dice:
     store:
-      type: graph          # 'graph' (Neo4j/Drivine) or 'in-memory' (default)
+      type: graph          # 'graph' (Neo4j), 'falkordb' (optional starter), or 'in-memory' (default)
 ```
 
 With `type: graph`, the autoconfiguration registers `DrivinePropositionRepository` (and the

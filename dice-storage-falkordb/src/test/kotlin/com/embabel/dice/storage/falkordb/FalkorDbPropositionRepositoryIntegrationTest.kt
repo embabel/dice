@@ -43,6 +43,7 @@ import org.drivine.connection.NativeSchemaCommandExecutor
 import org.drivine.query.QuerySpecification
 import org.drivine.schema.SchemaGrammar
 import org.drivine.schema.SchemaItemInfo
+import org.drivine.schema.SchemaItemKind
 import org.drivine.transaction.DrivineTransactionObject
 import org.drivine.transaction.TransactionContextHolder
 import org.junit.jupiter.api.AfterEach
@@ -552,6 +553,32 @@ class FalkorDbPropositionRepositoryIntegrationTest {
             assertTrue(constraintBuildingObserved.get())
             recovered.save(proposition())
             assertEquals(proposition(), FalkorDbPropositionRepository(raw).findById("one"))
+        } finally {
+            raw.end()
+        }
+    }
+
+    @Test
+    fun `index creation errors propagate when the required index is absent`() {
+        val raw = server.provider("index_failure_${UUID.randomUUID().toString().replace("-", "")}")
+        val failure = IllegalStateException("Index command refused")
+        try {
+            val provider = object : ConnectionProvider by raw, NativeSchemaCommandExecutor by raw {
+                override fun connect(): Connection {
+                    val delegate = raw.connect()
+                    return object : Connection by delegate {
+                        override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
+                            if (spec.statement!!.text.startsWith("CREATE INDEX")) throw failure
+                            return delegate.query(spec)
+                        }
+                    }
+                }
+            }
+            assertSame(failure, assertThrows<IllegalStateException> { FalkorDbPropositionRepository(provider) })
+            val indexes = raw.schemaGrammar.parseIndexRows(
+                FalkorDbAccess(raw, null).query(raw.schemaGrammar.listIndexesQuery(SchemaItemKind.RANGE_INDEX)),
+            )
+            assertTrue(indexes.none { it.label == "DiceProposition" })
         } finally {
             raw.end()
         }
