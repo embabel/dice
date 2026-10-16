@@ -28,6 +28,7 @@ import com.embabel.dice.projection.lineage.InMemoryCollectorRecordStore
 import com.embabel.dice.projection.lineage.InMemoryProjectionRecordStore
 import com.embabel.dice.projection.lineage.ProjectionRecordStore
 import com.embabel.dice.proposition.DecayManager
+import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
@@ -51,9 +52,11 @@ import org.drivine.connection.FalkorDbTransactionMode
 import org.drivine.mapper.SubtypeRegistry
 import org.drivine.query.QuerySpecification
 import org.drivine.query.grammar.CypherDialect
+import org.drivine.schema.ConstraintSpec
 import org.drivine.schema.SchemaCatalog
 import org.drivine.schema.SchemaGrammar
 import org.drivine.schema.SchemaItemInfo
+import org.drivine.schema.SchemaStatement
 import org.drivine.transaction.TransactionContextHolder
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.doReturn
@@ -207,6 +210,7 @@ class FalkorDbStarterIntegrationTest {
                 FalkorDbPropositionRepository(real)
                 val grammar = real.schemaGrammar
                 val delayed = object : SchemaGrammar by grammar {
+                    override fun createConstraint(spec: ConstraintSpec): List<SchemaStatement> = emptyList()
                     override fun parseConstraintRows(rows: List<Any?>): List<SchemaItemInfo> =
                         grammar.parseConstraintRows(rows).map { it.copy(status = status) }
                 }
@@ -233,15 +237,24 @@ class FalkorDbStarterIntegrationTest {
         runner(graph()).run { context ->
             val repository = context.getBean(PropositionRepository::class.java)
             val source = com.embabel.dice.proposition.store.InMemoryPropositionRepository()
-            val original = storeFact(source).copy(provenanceEntries = listOf(
-                com.embabel.dice.provenance.ProvenanceEntry(com.embabel.dice.provenance.UriLocator("https://example.test/evidence")),
-            ))
+            val original = storeFact(source).copy(
+                metadata = mapOf("count" to 3L, "large" to Long.MAX_VALUE, "ratio" to 1.5f),
+                mentions = listOf(EntityMention("Alice", "Person",
+                    hints = mapOf("counts" to listOf(3L), "ratio" to 1.5f))),
+                provenanceEntries = listOf(
+                    com.embabel.dice.provenance.ProvenanceEntry(com.embabel.dice.provenance.UriLocator("https://example.test/evidence")),
+                ),
+            )
             source.save(original)
             val leanSource = object : PropositionRepository by source {
                 override fun findAll() = source.findAll().map { it.copy(provenanceEntries = emptyList()) }
             }
             copyKnowledge(leanSource, repository)
-            assertThat(repository.findById(original.id)).isEqualTo(original)
+            val restored = repository.findById(original.id)!!
+            assertThat(restored).isEqualTo(original.copy(
+                metadata = mapOf("count" to 3, "large" to Long.MAX_VALUE, "ratio" to 1.5),
+                mentions = original.mentions.map { it.copy(hints = mapOf("counts" to listOf(3), "ratio" to 1.5)) },
+            ))
             val kotlinBody = Path.of("src/test/kotlin/com/embabel/dice/storage/falkordb/autoconfigure/FalkorDbStarterIntegrationTest.kt")
                 .readText().substringAfter("// Kotlin documentation example\n").substringBefore("\n// End Kotlin documentation example")
             assertThat(documentation).contains(kotlinBody)
@@ -263,6 +276,20 @@ class FalkorDbStarterIntegrationTest {
             } finally {
                 directory.toFile().deleteRecursively()
             }
+        }
+    }
+
+    @Test
+    fun `migration verification rejects changed field values`() {
+        val source = com.embabel.dice.proposition.store.InMemoryPropositionRepository()
+        storeFact(source)
+        runner(graph()).run { context ->
+            val repository = context.getBean(PropositionRepository::class.java)
+            val changed = object : PropositionRepository by repository {
+                override fun findById(id: String) = repository.findById(id)?.copy(text = "Unexpected replacement")
+            }
+            val failure = org.junit.jupiter.api.assertThrows<IllegalStateException> { copyKnowledge(source, changed) }
+            assertThat(failure).hasMessage("Proposition fields changed")
         }
     }
 
@@ -342,13 +369,16 @@ class StarterServer(image: DockerImageName) : GenericContainer<StarterServer>(im
 
 // Migration documentation example
 fun copyKnowledge(source: PropositionRepository, target: PropositionRepository) {
+    val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().findAndRegisterModules()
+    fun json(proposition: Proposition) = mapper.readTree(mapper.writeValueAsString(proposition))
     check(target.count() == 0) { "Use an empty target" }
     val complete = source.findAll().map { proposition ->
         proposition.copy(provenanceEntries = source.provenanceOf(proposition.id))
     }
     complete.forEach { proposition ->
         check(target.save(proposition).id == proposition.id) { "Source ID changed" }
-        check(target.findById(proposition.id) == proposition) { "Proposition fields changed" }
+        val restored = checkNotNull(target.findById(proposition.id)) { "Proposition missing" }
+        check(json(restored) == json(proposition)) { "Proposition fields changed" }
         check(target.provenanceOf(proposition.id).toSet() == proposition.provenanceEntries.toSet()) {
             "Evidence changed"
         }

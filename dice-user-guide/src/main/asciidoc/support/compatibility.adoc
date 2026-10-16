@@ -35,8 +35,14 @@ commitment. They get pinned at the 1.0 release.
 | Reached through Drivine; the release POM declares its version.
 | Only needed for the graph backend. The in-memory and JSON-file backends need no Neo4j.
 
+| FalkorDB
+| Drivine 0.1.6, JFalkorDB 0.13.0, Jedis 8.0.1
+| Only needed for `dice-storage-falkordb` or its starter. Declare Jedis 8.0.1 directly in the
+  consuming application; a consuming BOM can otherwise select an incompatible version. Tests pin
+  `falkordb/falkordb@sha256:0d793d4b249a9cf0837faa9f30fea1b86fb50086fc8aa21e9447078a07f995bc`.
+
 | Kotlin
-| 2.1.10 (`dice`), 2.2.0 (`dice-storage`, `dice-storage-autoconfigure`)
+| 2.1.10 (`dice`), 2.2.0 (`dice-storage`, `dice-storage-autoconfigure`, and FalkorDB modules)
 | A build concern, not a consumer one. The storage modules need the 2.2 compiler for Drivine's
   KSP-generated `where { }` DSL, which uses context parameters.
 
@@ -87,6 +93,10 @@ commitment. They get pinned at the 1.0 release.
 | Graph-backed storage
 | `dice-storage` (+ `dice-storage-autoconfigure`) + Neo4j
 | Stable
+
+| FalkorDB-backed storage and optional exact vector search
+| `dice-storage-falkordb-starter` + FalkorDB; vectors also require an `EmbeddingService`
+| Opt-in
 
 | Vector index
 | `dice-storage-autoconfigure` + graph backend + `Ai` bean

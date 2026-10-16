@@ -31,7 +31,7 @@ import org.springframework.boot.context.properties.NestedConfigurationProperty
  */
 @ConfigurationProperties(prefix = "embabel.dice.store")
 data class DiceStoreProperties @Autowired(required = false) constructor(
-    /** Backend kind: `graph` or `in-memory`. */
+    /** Backend kind: `graph`, `in-memory`, or `falkordb` with the optional FalkorDB starter. */
     var type: String = "in-memory",
 
     @NestedConfigurationProperty

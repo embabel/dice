@@ -150,7 +150,7 @@ public class FalkorExample {
 
 | Surface | FalkorDB starter behavior |
 |---|---|
-| Propositions, nested metadata, temporal fields, mentions, provenance | Durable aggregate; ID-preserving upserts, appended evidence |
+| Propositions, nested metadata, temporal fields, mentions, provenance | Durable JSON aggregate; ID-preserving upserts, appended evidence; numeric normalization below |
 | Processed chunk hashes and source bookmarks | Durable and context-isolated |
 | Structured queries, counts, keyword overlap and context-set reads | Native filtering and limiting before aggregate hydration |
 | Legacy vector reads and clustering | Native exact cosine over persisted embeddings when a service is supplied; dimension mismatches excluded |
@@ -163,6 +163,10 @@ public class FalkorExample {
 | Extraction-run and proposition-run-link stores | Unavailable by default, even with extraction-run opt-in; supply application implementations |
 | Neo4j schema catalogs, vector indexes and executor | Not registered for this selector |
 
+Metadata and mention hints use JSON-compatible values. Untyped numbers follow Jackson's JSON
+normalization: small integral values load as `Int`, larger values as `Long`, and floating-point
+values as `Double`. Numeric JVM types need not survive a round trip; for example, `3L` loads as `3`.
+
 Vectors use exact search, not ANN or a Neo4j vector index. Native structured filters include the
 read scope, status, entity membership, temporal boundaries, confidence, trust and importance. Query
 time confidence uses the requested time and decay rate. Embedding errors abort a save before data
@@ -173,10 +177,12 @@ changes; re-embedding reports incomplete work rather than silently mixing incomp
 Construction establishes the fixed unique identities `DiceProposition(id)`,
 `DiceChunkHash(context, hash)` and `DiceBookmark(context, source)`. It waits for backing indexes and
 constraints to become operational before exposing each store. Repeated initialization reuses
-existing operational constraints. Duplicate preexisting keys, failed constraints and a readiness
-wait longer than ten seconds fail startup; repair the reported data or server condition before
-retrying. This barrier uses the backend's existing typed Drivine schema grammar, independently of
-Drivine's optional catalog startup runner.
+existing operational constraints. A failed constraint is recreated on the next initialization;
+duplicate keys must be repaired first. Duplicate preexisting keys, constraints that fail again and
+a readiness wait longer than ten seconds fail startup. Repair the reported data or server condition
+before retrying; initialization does not drop constraints or remove duplicate records. This barrier
+uses the backend's existing typed Drivine schema grammar, independently of Drivine's optional
+catalog startup runner.
 
 Each mutation is one atomic server statement; updates use optimistic version checks and bounded
 retries. Several calls, batch saves, decay sweeps and proposition-plus-chunk writes do not form a
@@ -190,18 +196,22 @@ Persist application completion markers only after all required writes have succe
 FalkorDB uses its own labels and aggregate representation. Changing the selector does not migrate a
 Neo4j graph. Stop source writers, provision an empty destination, and copy through the existing
 repository APIs. Hydrate evidence explicitly: a source query may omit it. This compiled and tested
-Kotlin function preserves IDs, full proposition fields and complete evidence and checks the result.
-It uses the imports from the Kotlin example above.
+Kotlin function preserves IDs, proposition fields under JSON numeric normalization, and complete
+evidence. It compares JSON representations so a source `Long` and a destination `Int` with the same
+value do not fail verification. It uses the imports from the Kotlin example above.
 
 ```kotlin
 fun copyKnowledge(source: PropositionRepository, target: PropositionRepository) {
+    val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().findAndRegisterModules()
+    fun json(proposition: Proposition) = mapper.readTree(mapper.writeValueAsString(proposition))
     check(target.count() == 0) { "Use an empty target" }
     val complete = source.findAll().map { proposition ->
         proposition.copy(provenanceEntries = source.provenanceOf(proposition.id))
     }
     complete.forEach { proposition ->
         check(target.save(proposition).id == proposition.id) { "Source ID changed" }
-        check(target.findById(proposition.id) == proposition) { "Proposition fields changed" }
+        val restored = checkNotNull(target.findById(proposition.id)) { "Proposition missing" }
+        check(json(restored) == json(proposition)) { "Proposition fields changed" }
         check(target.provenanceOf(proposition.id).toSet() == proposition.provenanceEntries.toSet()) {
             "Evidence changed"
         }
