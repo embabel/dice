@@ -20,6 +20,7 @@ import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.VectorReadFailure
 import org.slf4j.LoggerFactory
 
 /**
@@ -149,6 +150,7 @@ internal class MemoryRetriever(
                 base,
             ).map { it.match }
         } catch (t: Throwable) {
+            if (t is VectorReadFailure) throw t
             logger.warn("vector probe failed for '{}': {}", query, t.message)
             emptyList()
         }
@@ -182,9 +184,22 @@ internal class MemoryRetriever(
             .distinct()
             .take(MAX_EXPANSION_SEEDS)
         if (seedEntityIds.isEmpty()) return emptyList()
+        val priorAny = base.anyEntityIds
+        val required = base.allEntityIds.orEmpty() + listOfNotNull(base.entityId)
+        val expansion = when {
+            priorAny == null -> base.withAnyEntityIds(seedEntityIds)
+            priorAny.isEmpty() -> return emptyList()
+            required.any { it in seedEntityIds } -> base
+            seedEntityIds.size == 1 -> base.withAllEntityIds((required + seedEntityIds).distinct())
+            priorAny.size == 1 -> base.withAllEntityIds((required + priorAny).distinct())
+                .withAnyEntityIds(seedEntityIds)
+            seedEntityIds.all { it in priorAny } -> base.withAnyEntityIds(seedEntityIds)
+            priorAny.all { it in seedEntityIds } -> base
+            else -> throw IllegalArgumentException("Related entity predicates cannot be conjoined safely")
+        }
         return try {
             repository.query(
-                base.withAnyEntityIds(seedEntityIds)
+                expansion
                     .orderedByEffectiveConfidence()
                     .withLimit(limit * 3)
             )

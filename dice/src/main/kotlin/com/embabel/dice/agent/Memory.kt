@@ -26,6 +26,7 @@ import com.embabel.dice.projection.memory.support.DefaultMemoryProjector
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.VectorReadFailure
 import com.embabel.dice.proposition.PropositionStatus
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.slf4j.LoggerFactory
@@ -96,7 +97,7 @@ import java.util.function.UnaryOperator
  * @param narrowedBy Optional query transformer that narrows the scope of all queries.
  * Applied on top of the base query (contextId + minConfidence) before any tool-specific
  * additions. Use this to restrict Memory to a subset of propositions (e.g., by entity,
- * level, or temporal range). Cannot widen the base scope, only narrow it.
+ * level, or temporal range). Context, ACTIVE status and the raw-confidence floor remain mandatory.
  * @param eagerQuery Optional query transformer to eagerly load key memories into the description.
  * When set, the description will include memories fetched using this query, making them
  * immediately available to the LLM without requiring a tool call.
@@ -161,6 +162,8 @@ data class Memory @JvmOverloads constructor(
      * eager loading and all search modes — so the LLM
      * cannot access propositions outside it.
      *
+     * Context, ACTIVE status and the configured raw-confidence floor remain mandatory, even
+     * when the transformer returns a fresh query. A different context is rejected before reads.
      * Can be called multiple times; each call replaces the previous narrowing.
      *
      * Example (Kotlin):
@@ -190,13 +193,38 @@ data class Memory @JvmOverloads constructor(
      * (already the default for listing/searching without a query).
      */
     private fun baseQuery(): PropositionQuery {
-        // Scope retrieval to ACTIVE so STALE/SUPERSEDED/CONTRADICTED never
-        // reach LLM context by default. Applied before narrowedBy so a consumer
-        // can still explicitly widen the status set via the narrowing operator.
         val base = PropositionQuery.forContextId(contextId)
             .withMinConfidence(minConfidence)
             .withStatuses(setOf(PropositionStatus.ACTIVE))
-        return narrowedBy?.apply(base) ?: base
+        return enforceBoundary(narrowedBy?.apply(base) ?: base)
+    }
+
+    private fun enforceBoundary(query: PropositionQuery): PropositionQuery {
+        require(query.contextId == null || query.contextId == contextId) {
+            "Memory query cannot change its context"
+        }
+        require(minConfidence.isFinite() && (query.minConfidence == null || query.minConfidence.isFinite())) {
+            "Memory confidence must be finite"
+        }
+        require(query.statuses.isNullOrEmpty() || PropositionStatus.ACTIVE in query.statuses) {
+            "Memory query must retain ACTIVE membership"
+        }
+        return query.copy(
+            contextId = contextId,
+            minConfidence = maxOf(minConfidence, query.minConfidence ?: minConfidence),
+            statuses = setOf(PropositionStatus.ACTIVE),
+            anyEntityIds = query.anyEntityIds?.let { java.util.Collections.unmodifiableList(it.toList()) },
+            allEntityIds = query.allEntityIds?.let { java.util.Collections.unmodifiableList(it.toList()) },
+        )
+    }
+
+    private fun eagerReadQuery(base: PropositionQuery): PropositionQuery? = eagerQuery?.let { hook ->
+        val candidate = hook.apply(base)
+        val scoped = candidate.copy(contextId = enforceBoundary(candidate).contextId)
+        require(scoped.retainsMembershipOf(base)) {
+            "Eager query must provably retain all prior membership predicates"
+        }
+        enforceBoundary(scoped)
     }
 
     /**
@@ -207,51 +235,55 @@ data class Memory @JvmOverloads constructor(
         loadEagerMemories().map { it.id }.toSet()
     }
 
-    private fun loadEagerMemories(): List<Proposition> = try {
+    private fun loadEagerMemories(): List<Proposition> {
         val base = baseQuery()
+        val eager = eagerReadQuery(base)
+        return try {
 
-        val topicMemories = eagerTopicSearch?.let { limit ->
-            repository.findSimilarWithScores(
-                TextSimilaritySearchRequest(
-                    query = topic,
-                    similarityThreshold = 0.0,
-                    topK = limit,
-                ),
-                base,
-            ).map { it.match }
-        } ?: emptyList()
+            val topicMemories = eagerTopicSearch?.let { limit ->
+                repository.findSimilarWithScores(
+                    TextSimilaritySearchRequest(
+                        query = topic,
+                        similarityThreshold = 0.0,
+                        topK = limit,
+                    ),
+                    base,
+                ).map { it.match }
+            } ?: emptyList()
 
-        val aboutMemories = eagerTextSearch?.let { request ->
-            repository.findSimilarWithScores(
-                request,
-                base,
-            ).map { it.match }
-        } ?: emptyList()
+            val aboutMemories = eagerTextSearch?.let { request ->
+                repository.findSimilarWithScores(
+                    request,
+                    base,
+                ).map { it.match }
+            } ?: emptyList()
 
-        val queryMemories = eagerQuery?.let { queryFn ->
-            repository.query(queryFn.apply(base))
-        } ?: emptyList()
+            val queryMemories = eager?.let { query ->
+                repository.query(query)
+            } ?: emptyList()
 
-        // Merge all sources, deduplicating by ID, aboutMemories first (most contextual)
-        val seen = mutableSetOf<String>()
-        val merged = (aboutMemories + topicMemories + queryMemories).filter { seen.add(it.id) }
+            // Merge all sources, deduplicating by ID, aboutMemories first (most contextual)
+            val seen = mutableSetOf<String>()
+            val merged = (aboutMemories + topicMemories + queryMemories).filter { seen.add(it.id) }
 
-        // Reinforce on access: eagerly-surfaced memories are the ones actually being used, so
-        // refresh their decay anchor. Best-effort and scoped to this read path only (not every
-        // internal query) to bound write amplification — a failure here must never break the
-        // eager load itself.
-        if (merged.isNotEmpty()) {
-            try {
-                repository.touchAccessed(merged.map { it.id })
-            } catch (t: Throwable) {
-                logger.warn("Unable to touch lastAccessed for eagerly loaded memories", t)
+            // Reinforce on access: eagerly-surfaced memories are the ones actually being used, so
+            // refresh their decay anchor. Best-effort and scoped to this read path only (not every
+            // internal query) to bound write amplification — a failure here must never break the
+            // eager load itself.
+            if (merged.isNotEmpty()) {
+                try {
+                    repository.touchAccessed(merged.map { it.id })
+                } catch (t: Throwable) {
+                    logger.warn("Unable to touch lastAccessed for eagerly loaded memories", t)
+                }
             }
-        }
 
-        merged
-    } catch (t: Throwable) {
-        logger.warn("Unable to perform vector search")
-        emptyList()
+            merged
+        } catch (t: Throwable) {
+            if (t is VectorReadFailure) throw t
+            logger.warn("Unable to perform vector search")
+            emptyList()
+        }
     }
 
     // -- LlmReference implementation --
@@ -261,8 +293,8 @@ data class Memory @JvmOverloads constructor(
     override fun tools(): List<Tool> = listOf(this)
 
     override fun contribution(): String {
-        val memoryCount = repository.count(baseQuery())
         val eagerMemories = loadEagerMemories()
+        val memoryCount = repository.count(baseQuery())
 
         return buildString {
             appendLine("Reference: $name")
@@ -287,7 +319,9 @@ data class Memory @JvmOverloads constructor(
      */
     private val toolDescription: String
         get() {
-            val memoryCount = repository.count(baseQuery())
+            val base = baseQuery()
+            eagerReadQuery(base)
+            val memoryCount = repository.count(base)
             logger.info(
                 "Found {} memories > {} confidence in context {}", memoryCount, minConfidence,
                 contextId
@@ -342,7 +376,8 @@ data class Memory @JvmOverloads constructor(
      * When set, the description will include memories fetched using this query,
      * making them immediately available to the LLM without requiring a tool call.
      * The query transformer receives the base query (contextId, minConfidence,
-     * and any [narrowedBy] scope already applied).
+     * and any [narrowedBy] scope already applied). Every prior membership predicate must
+     * be retained or provably tightened; unsupported changes fail before repository access.
      *
      * Can be combined with [withEagerTopicSearch] — both sets of memories will be
      * merged (deduplicated) in the description.
@@ -482,4 +517,32 @@ data class Memory @JvmOverloads constructor(
         fun withRepository(repository: PropositionRepository): Memory =
             Memory(contextId, repository)
     }
+}
+
+
+private fun PropositionQuery.retainsMembershipOf(prior: PropositionQuery): Boolean {
+    fun <T : Comparable<T>> lower(old: T?, next: T?): Boolean =
+        old == null || (next != null && (next !is Double || next.isFinite()) && next >= old)
+    fun <T : Comparable<T>> upper(old: T?, next: T?): Boolean =
+        old == null || (next != null && (next !is Double || next.isFinite()) && next <= old)
+
+    val requiredEntities = allEntityIds.orEmpty().toSet() + listOfNotNull(entityId)
+    val retainsAny = prior.anyEntityIds?.let { old ->
+        anyEntityIds?.all { it in old } == true || requiredEntities.any { it in old }
+    } ?: true
+    val sameEffectiveMetric = (prior.minEffectiveConfidence == null && prior.belowEffectiveConfidence == null) ||
+        (effectiveConfidenceAsOf == prior.effectiveConfidenceAsOf && decayK == prior.decayK)
+    return contextId == prior.contextId &&
+        (prior.entityId == null || prior.entityId in requiredEntities) &&
+        retainsAny && requiredEntities.containsAll(prior.allEntityIds.orEmpty()) &&
+        (prior.statuses.isNullOrEmpty() || (!statuses.isNullOrEmpty() && prior.statuses.containsAll(statuses))) &&
+        lower(prior.minLevel, minLevel) && upper(prior.maxLevel, maxLevel) &&
+        lower(prior.createdAfter, createdAfter) && upper(prior.createdBefore, createdBefore) &&
+        lower(prior.revisedAfter, revisedAfter) && upper(prior.revisedBefore, revisedBefore) &&
+        lower(prior.accessedAfter, accessedAfter) && upper(prior.accessedBefore, accessedBefore) &&
+        lower(prior.minConfidence, minConfidence) && sameEffectiveMetric &&
+        lower(prior.minEffectiveConfidence, minEffectiveConfidence) &&
+        upper(prior.belowEffectiveConfidence, belowEffectiveConfidence) &&
+        lower(prior.minImportance, minImportance) && lower(prior.minReinforceCount, minReinforceCount) &&
+        lower(prior.minTrustScore, minTrustScore) && (prior.pinned == null || pinned == prior.pinned)
 }
