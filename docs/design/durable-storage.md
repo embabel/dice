@@ -262,6 +262,9 @@ repeated here.)
 | `embabel.dice.store.decay.k` | `Double` | `2.0` | Decay-rate multiplier `k` for the staleness policy (see [proposition-lifecycle](proposition-lifecycle.md)). |
 | `embabel.dice.store.decay.prune-stale` | `Boolean` | `false` | Opt-in hard-delete of `STALE` propositions during the lifecycle sweep. Left `false`, `STALE` propositions are kept (reversible). |
 | `embabel.dice.store.vector-index.enabled` | `Boolean` | `true` | Whether the graph backend declares its vector index (graph backend only). Label, property name, and similarity metric are fixed by the `@VectorIndex` annotation on `PropositionNode.embedding`, not configurable here. |
+| `embabel.dice.store.exact-vector.max-candidates` | `Int` | `10000` | How many matching rows the filtered vector search may score before it fails with `EXACT_VECTOR_BUDGET_EXCEEDED` (graph backend only). |
+| `embabel.dice.store.exact-vector.timeout` | `Duration` | `5s` | How long the graph store's filtered vector search may run in Neo4j before it fails with `EXACT_VECTOR_DEADLINE_EXCEEDED`. A search that runs in the caller's transaction is bounded by `max-candidates` alone (graph backend only). |
+| `embabel.dice.store.scoped-read.timeout` | `Duration` | `5s` | How long a scoped query, count or keyword read may run before the database stops it (graph backend only). Vector and strict policy reads keep their own deadlines. A value that is not positive stops the store from starting. |
 
 ### How to configure the store: a worked example
 

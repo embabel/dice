@@ -23,8 +23,12 @@ and the consumer PRs that deliver it).
 
 - `VectorSearchCapable.findSimilarWithScores(request, query)` no longer intersects a global
   top-K with `query()`, which could drop eligible rows. Its default now throws
-  `FilteredVectorUnsupportedException`, and `Memory` and `MemoryRetriever` let that exception
-  through instead of returning no memories.
+  `FilteredVectorUnsupportedException`, and `Memory` lets that exception through instead of
+  returning no memories. On such a store `LlmPropositionReviser` fails the
+  revision as well, so `PropositionPipeline` fails that chunk instead of returning its propositions
+  to save. `RetrievalRouter` fails in VECTOR and HYBRID modes, so the discovery tool call fails and
+  the discovery endpoint answers with a server error. Every store in this repository implements the
+  filtered method.
   **Compatibility: breaking.** A store that relied on the default overrides the filtered method and
   ranks only rows that match the query.
 
@@ -52,7 +56,45 @@ and the consumer PRs that deliver it).
   `StaleObjectException` when the proposition is changed by another writer on each of the three
   attempts.
 
+- `DrivinePropositionRepository.findSimilarWithScores(request, query)` scores every row that
+  matches the query exactly, where it used to take the vector index's global top K and then filter,
+  which could drop matching rows. Whenever a read-write transaction is active it scans the matching
+  rows in that transaction, so it sees rows the caller has just written. With no such transaction, a
+  native read executor and a context in the query, it runs in Neo4j, reads committed rows only and
+  is held to `embabel.dice.store.exact-vector.timeout` too; without the executor or the context it
+  scans in a read transaction. A threshold of zero or below means no threshold. More matching
+  rows than `embabel.dice.store.exact-vector.max-candidates` (10,000) fail with
+  `ScopedReadException(EXACT_VECTOR_BUDGET_EXCEEDED)`, and `Memory` and `MemoryRetriever` let a
+  `ScopedReadException` through instead of returning no memories.
+  **Compatibility: behavioral.** Raise the budget or narrow the query for a larger context.
+
 ### Added
+
+- Reads across several contexts in `dice`. **EXPERIMENTAL** (shape may change before 1.0).
+  `ScopedPropositionReader` reads a host-chosen `ContextReadScope`, and narrowing only adds
+  conditions. Filters, grants and exclusions apply in the store before ranking, counting and
+  limiting, and scoped vector search scores eligible rows exactly within an `ExactVectorBudget`.
+  `ScopedMemory`, also reached through `Memory.forContexts`, is the multi-context memory tool, and
+  `PolicyReadView` with `PolicyMemory` adds per-row grants and field projection. Failures are
+  `ScopedReadException`s with a `ScopedReadFailure` code. Stores opt in through
+  `ContextSetReadCapable`, `ContextSetVectorSearchCapable` and `StrictPolicyReadCapable`; the Neo4j
+  store enables them with `withNativeReadExecutor`, and the `embabel.dice.store.scoped-read.timeout`
+  property (five seconds by default) bounds its scoped query, count and keyword reads.
+  `ScopedReadRules` holds the tie order, cosine and keyword rules every store follows, so a store
+  outside this repository can apply them too. See
+  [scoped proposition reads](docs/design/scoped-proposition-reads.md).
+  **Compatibility: additive.** New types and opt-in capability interfaces.
+
+- `VectorSearchCapable.findApproximateSimilarWithScores(request, query)` finds the nearest
+  neighbours among the rows that match the query, through an approximate vector index when the
+  store has one. It keeps widening the index search until it has `topK` matching rows or has seen
+  every indexed row. An index may miss rows written in a transaction that has not committed yet.
+  The default runs the exact filtered search, so a store without an index behaves as
+  `findSimilarWithScores(request, query)` does. The Neo4j store searches its vector index with no
+  row budget, and `LlmPropositionReviser` finds similar propositions through this method, so
+  revision on Neo4j never fails on `embabel.dice.store.exact-vector.max-candidates`.
+  **Compatibility: additive.** A new method with a default, passed through by the event-publishing
+  and RAG repository wrappers.
 
 - A Kotlin DSL for stamping in `dice-metamodel`. **EXPERIMENTAL** (shape may change
   before 1.0): `MetamodelVersion(dictionary) { }` and `DeclaredSchema(dictionary) { }`
@@ -762,6 +804,12 @@ and the consumer PRs that deliver it).
   Nothing a real connector emits comes close to any of the four.
 
 ### Fixed
+
+- `TemporalMetadata` JSON no longer includes `isCurrent`, a value that depended on when it was
+  written, in REST, MCP or the JSON-file store. JSON that still has it reads as before. This also
+  fixes reloading a JSON-file store that holds dated propositions, which failed on that field.
+  **Compatibility: behavioral.** A client that read `isCurrent` computes it from the validity
+  window instead.
 
 - `MetamodelAutoConfiguration` and the metamodel wiring tests referenced the drift quarantine types
   at their former home in `com.embabel.dice.metamodel(.support)`. They moved to

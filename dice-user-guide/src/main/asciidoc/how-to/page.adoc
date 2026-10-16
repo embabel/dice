@@ -18,6 +18,8 @@ include::project-to-graph.adoc[]
 
 include::agent-memory.adoc[]
 
+include::read-across-contexts.adoc[]
+
 include::oracle.adoc[]
 
 include::choose-a-backend.adoc[]

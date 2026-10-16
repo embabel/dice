@@ -73,6 +73,9 @@ you need.
   vector search, graph walks, temporal windows, trust filtering at read time, and surfacing
   connections nobody explicitly queried for. Ends with why the embedding model is a latency
   decision on the retrieval side, and what a hosted one costs per interactive turn.
+- [scoped-proposition-reads.md](scoped-proposition-reads.md) explains reads across several
+  host-approved contexts: why the host owns the scope, why filters apply before ranking, and why
+  reads fail instead of approximating.
 - [oracle-and-query.md](oracle-and-query.md) — the layer above retrieval: turning a
   natural-language question into an answer, not just a bag of relevant propositions.
 

@@ -88,6 +88,10 @@ commitment. They get pinned at the 1.0 release.
 | `dice-storage` (+ `dice-storage-autoconfigure`) + Neo4j
 | Stable
 
+| Scoped reads, scoped memory and policy memory
+| `dice`; on the graph backend, a Neo4j database (the auto-configuration wires the native read executor)
+| Experimental
+
 | Vector index
 | `dice-storage-autoconfigure` + graph backend + `Ai` bean
 | Stable
