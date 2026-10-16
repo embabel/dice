@@ -15,18 +15,25 @@
  */
 package com.embabel.dice.storage
 
-/** Live confidence from the same persisted inputs used by Proposition.effectiveConfidenceAt. */
+/** Live confidence and timestamp normalisation, shared by scoped reads and the decay sweep. */
 internal object ScopedConfidenceCypher {
+    // Stored timestamps are datetimes in any zone or ISO strings from an older write path; compare them as UTC instants.
+    fun instant(value: String): String =
+        "(CASE WHEN $value IS NULL THEN null ELSE datetime({datetime: datetime(toString($value)), timezone: '+00:00'}) END)"
+
     fun expression(nodeAlias: String, asOfParameter: String, decayKParameter: String): String {
         // These names belong to the compiler, never to a query or policy supplied by a caller.
         listOf(nodeAlias, asOfParameter, decayKParameter).forEach {
             require(it.matches(Regex("[A-Za-z][A-Za-z0-9_]*"))) { "Invalid compiler identifier" }
         }
         val p = nodeAlias
-        val at = "datetime($" + asOfParameter + ")"
-        val k = "$" + decayKParameter
-        val content = "coalesce($p.contentRevised, $p.created)"
-        val accessed = "coalesce($p.lastAccessed, $p.created)"
+        val at = "datetime(${'$'}$asOfParameter)"
+        val k = "${'$'}$decayKParameter"
+        val content = instant("coalesce($p.contentRevised, $p.created)")
+        val accessed = instant("coalesce($p.lastAccessed, $p.created)")
+        val validFrom = instant("$p.validFrom")
+        val validTo = instant("$p.validTo")
+        val invalidatedAt = instant("$p.invalidatedAt")
         val anchor = "(CASE WHEN $content >= $accessed THEN $content ELSE $accessed END)"
         fun decayed(from: String): String {
             // inSeconds preserves elapsed time (including nanoseconds), unlike calendar days.
@@ -37,12 +44,12 @@ internal object ScopedConfidenceCypher {
         }
         return """
             (CASE
-              WHEN $p.invalidatedAt IS NOT NULL AND $p.invalidatedAt <= $at THEN 0.0
+              WHEN $p.invalidatedAt IS NOT NULL AND $invalidatedAt <= $at THEN 0.0
               WHEN $p.validFrom IS NOT NULL THEN
                 CASE
-                  WHEN $at < $p.validFrom OR ($p.validTo IS NOT NULL AND $at >= $p.validTo) THEN 0.0
+                  WHEN $at < $validFrom OR ($p.validTo IS NOT NULL AND $at >= $validTo) THEN 0.0
                   WHEN $p.validTo IS NOT NULL THEN $p.confidence
-                  ELSE ${decayed("$p.validFrom")}
+                  ELSE ${decayed(validFrom)}
                 END
               ELSE ${decayed(anchor)}
             END)
