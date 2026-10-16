@@ -14,6 +14,13 @@ and the consumer PRs that deliver it).
   them together resolves one Drivine. **Compatibility: behavioral.** A host on Drivine 0.1.6 moves
   to 0.1.8 with it.
 
+- `Memory.narrowedBy` and `Memory.withEagerQuery` hooks can no longer widen what a memory reads.
+  The context, ACTIVE status and confidence floor always apply; a hook that names another context
+  or a status other than ACTIVE fails before any read, and eager rows are kept only when they match
+  the narrowed query.
+  **Compatibility: behavioral.** A host that widened the status set through `narrowedBy` builds a
+  separate memory for those propositions.
+
 - `VectorSearchCapable.findSimilarWithScores(request, query)` no longer intersects a global
   top-K with `query()`, which could drop eligible rows. Its default now throws
   `FilteredVectorUnsupportedException`, and `Memory` and `MemoryRetriever` let that exception

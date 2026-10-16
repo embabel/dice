@@ -17,11 +17,16 @@ package com.embabel.dice.agent
 
 import com.embabel.agent.api.tool.Tool
 import com.embabel.common.core.types.TextSimilaritySearchRequest
-import com.embabel.dice.proposition.FilteredVectorUnsupportedException
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionKey
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.FilteredVectorUnsupportedException
+import com.embabel.dice.proposition.ScopedReadException
+import com.embabel.dice.proposition.propositionKeyOrder
+import com.embabel.dice.proposition.rowComparator
 import org.slf4j.LoggerFactory
+import java.time.Instant
 
 /**
  * The retrieval + rendering engine behind [Memory]'s search tool, kept
@@ -149,8 +154,11 @@ internal class MemoryRetriever(
                 TextSimilaritySearchRequest(query = query, similarityThreshold = 0.0, topK = limit),
                 base,
             ).map { it.match }
+        } catch (e: FilteredVectorUnsupportedException) {
+            throw e
+        } catch (e: ScopedReadException) {
+            throw e
         } catch (t: Throwable) {
-            if (t is FilteredVectorUnsupportedException) throw t
             logger.warn("vector probe failed for '{}'", query, t)
             emptyList()
         }
@@ -184,12 +192,27 @@ internal class MemoryRetriever(
             .distinct()
             .take(MAX_EXPANSION_SEEDS)
         if (seedEntityIds.isEmpty()) return emptyList()
+        // Every read and the merge below are judged at one instant on the base query's decay rate,
+        // so the cut and the related ranks agree with the order the store gives each read.
+        val asOf = base.effectiveConfidenceAsOf ?: Instant.now()
+        val clocked = base.withEffectiveConfidenceAsOf(asOf)
+        // With no ANY narrowing one read over every seed is exact. With an ANY list, each seed
+        // becomes its own ALL conjunct, so the narrowing reaches the store unchanged.
+        val reads = if (clocked.anyEntityIds == null) {
+            listOf(clocked.withAnyEntityIds(seedEntityIds))
+        } else {
+            seedEntityIds.map { seed -> clocked.withAllEntityIds((clocked.allEntityIds.orEmpty() + seed).distinct()) }
+        }
+        // Rows from different seed reads can tie on confidence. Break ties by context and id in code
+        // point order, as the scoped reads do, so the merge does not depend on which read ran first.
+        val byConfidence =
+            checkNotNull(PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC.rowComparator(asOf, base.decayK))
+                .thenBy(propositionKeyOrder) { PropositionKey(it.contextId.value, it.id) }
         return try {
-            repository.query(
-                base.withAnyEntityIds(seedEntityIds)
-                    .orderedByEffectiveConfidence()
-                    .withLimit(limit * 3)
-            )
+            reads.flatMap { repository.query(it.orderedByEffectiveConfidence().withLimit(limit * 3)) }
+                .distinctBy { it.id }
+                .sortedWith(byConfidence)
+                .take(limit * 3)
         } catch (t: Throwable) {
             logger.warn("entity expansion failed: {}", t.message)
             emptyList()

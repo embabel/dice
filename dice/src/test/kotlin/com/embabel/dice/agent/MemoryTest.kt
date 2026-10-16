@@ -22,11 +22,15 @@ import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.projection.memory.MemoryProjector
 import com.embabel.dice.proposition.EntityMention
-import com.embabel.dice.proposition.FilteredVectorUnsupportedException
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.ScopedReadException
+import com.embabel.dice.proposition.ScopedReadFailure
+import com.embabel.dice.proposition.FilteredVectorUnsupportedException
+import com.embabel.dice.proposition.matchesFilters
+import java.time.Instant
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
@@ -239,20 +243,6 @@ class MemoryTest {
                 .withTopic("music preferences")
 
             assertEquals("Memories about music preferences", memory.description)
-        }
-
-        @Test
-        fun `eager topic search lets an unsupported filtered vector search through`() {
-            val store = mockk<PropositionRepository>(relaxed = true)
-            val failure = FilteredVectorUnsupportedException()
-            every { store.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>()) } throws failure
-
-            val memory = Memory.forContext(contextId)
-                .withRepository(store)
-                .withTopic("music")
-                .withEagerTopicSearch(3)
-
-            assertSame(failure, assertThrows(FilteredVectorUnsupportedException::class.java) { memory.contribution() })
         }
     }
 
@@ -1002,6 +992,209 @@ class MemoryTest {
             val listAllQuery = queries.first { it.orderBy == PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC }
             assertEquals(listOf("alice", "bob"), listAllQuery.allEntityIds)
         }
+    }
+
+    @Nested
+    inner class LegacyBoundaryTests {
+        private val start = Instant.parse("2025-01-01T00:00:00Z")
+        private val end = start.plusSeconds(100)
+
+        @Test
+        fun `fresh narrowing query restores singleton ACTIVE and raw floor on every read`() {
+            val allowed = createProposition("jazz permitted")
+            val outsider = allowed.copy(id = "outsider", contextId = ContextId("C"), text = "jazz forbidden C")
+            val stale = allowed.copy(id = "stale", status = PropositionStatus.STALE, text = "jazz stale")
+            val low = allowed.copy(id = "low", confidence = 0.1, text = "jazz low")
+            val fake = SingletonOnlyRepository(listOf(allowed, outsider, stale, low))
+            val provenanceIds = mutableListOf<String>()
+            val provenance = ProvenanceResolver { ids ->
+                provenanceIds.addAll(ids)
+                ids.associateWith { listOf("source") }
+            }
+            val memory = Memory.forContext(contextId).withRepository(fake)
+                .narrowedBy { PropositionQuery() }
+                .withProvenance(provenance)
+                .withEagerQuery { it.withLimit(1) }
+                .withEagerTopicSearch(1)
+                .withEagerSearchAbout("jazz", 1)
+            val contribution = memory.contribution()
+            assertTrue(contribution.contains("jazz permitted"))
+            assertFalse(contribution.contains("forbidden"))
+            assertFalse(contribution.contains("jazz stale"))
+            assertFalse(contribution.contains("jazz low"))
+            val onDemand = Memory.forContext(contextId).withRepository(fake)
+                .narrowedBy { it.copy(contextId = null, minConfidence = 0.0, statuses = null) }
+                .withProvenance(provenance)
+            val search = (onDemand.call("""{"query":"jazz"}""") as Tool.Result.Text).content
+            val list = (onDemand.call("{}") as Tool.Result.Text).content
+            assertTrue(search.contains("jazz permitted"))
+            assertTrue(list.contains("jazz permitted"))
+            assertFalse(search.contains("forbidden"))
+            assertFalse(list.contains("jazz stale"))
+            onDemand.call("""{"query":"missing"}""")
+            assertTrue(fake.reads.isNotEmpty())
+            fake.reads.forEach {
+                assertEquals(contextId, it.contextId)
+                assertEquals(setOf(PropositionStatus.ACTIVE), it.statuses)
+                assertEquals(Memory.DEFAULT_MIN_CONFIDENCE, it.minConfidence)
+            }
+            assertEquals(setOf(allowed.id), provenanceIds.toSet())
+        }
+
+        @Test
+        fun `non finite raw hook floors fail before every backend read`() {
+            listOf(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY).forEach { threshold ->
+                listOf<(Memory) -> Any>({ it.call("{}") }, { it.call("""{"query":"jazz"}""") },
+                    { it.contribution() }, { it.definition }).forEach { read ->
+                    val fake = SingletonOnlyRepository(emptyList())
+                    val memory = Memory.forContext(contextId).withRepository(fake)
+                        .narrowedBy { it.copy(minConfidence = threshold) }
+                    assertThrows(IllegalArgumentException::class.java) { read(memory) }
+                    assertTrue(fake.reads.isEmpty(), "Non-finite floor reached backend: $threshold")
+                }
+            }
+        }
+
+        @Test
+        fun `different owner fails before every backend entry`() {
+            val fake = SingletonOnlyRepository(emptyList())
+            listOf<(Memory) -> Any>({ it.call("{}") }, { it.call("""{"query":"jazz"}""") },
+                { it.contribution() }, { it.definition }).forEach { read ->
+                val memory = Memory.forContext(contextId).withRepository(fake)
+                    .narrowedBy { PropositionQuery.forContextId(ContextId("C")) }
+                assertThrows(IllegalArgumentException::class.java) { read(memory) }
+            }
+            assertTrue(fake.reads.isEmpty())
+        }
+
+        @Test
+        fun `E1 a hook naming any status besides ACTIVE fails before reads`() {
+            val cases = listOf(
+                null to true, emptySet<PropositionStatus>() to true, setOf(PropositionStatus.ACTIVE) to true,
+                setOf(PropositionStatus.STALE) to false, setOf(PropositionStatus.ACTIVE, PropositionStatus.STALE) to false,
+            )
+            val installs = listOf<(Memory, (PropositionQuery) -> PropositionQuery) -> Memory>(
+                { memory, hook -> memory.narrowedBy { hook(it) } },
+                { memory, hook -> memory.withEagerQuery { hook(it) } },
+            )
+            installs.forEachIndexed { which, install ->
+                cases.forEach { (statuses, accepted) ->
+                    val label = "hook $which statuses $statuses"
+                    val fake = SingletonOnlyRepository(listOf(createProposition("jazz")))
+                    val memory = install(Memory.forContext(contextId).withRepository(fake)) { it.copy(statuses = statuses) }
+                    if (accepted) {
+                        assertTrue(memory.contribution().contains("1 memories available"), label)
+                        assertTrue(fake.reads.all { it.statuses == setOf(PropositionStatus.ACTIVE) }, label)
+                    } else {
+                        assertThrows(IllegalArgumentException::class.java, { memory.contribution() }, label)
+                        assertThrows(IllegalArgumentException::class.java, { memory.call("{}") }, label)
+                        assertTrue(fake.reads.isEmpty(), "$label reached backend")
+                    }
+                }
+            }
+        }
+
+        @Test
+        fun `E2 eager rows count only when they also match the narrowed query`() {
+            val alice = EntityMention(span = "Alice", type = "Person", resolvedId = "alice")
+            val bob = EntityMention(span = "Bob", type = "Person", resolvedId = "bob")
+            val inScope = createProposition("alice likes jazz").copy(mentions = listOf(alice), created = start.plusSeconds(10))
+            val wrongEntity = createProposition("bob likes jazz").copy(mentions = listOf(bob), created = start.plusSeconds(10))
+            val tooEarly = createProposition("alice liked polka").copy(mentions = listOf(alice), created = start.minusSeconds(10))
+            val fake = SingletonOnlyRepository(listOf(inScope, wrongEntity, tooEarly))
+            val memory = Memory.forContext(contextId).withRepository(fake)
+                .narrowedBy { it.withEntityId("alice").withCreatedAfter(start) }
+                .withEagerQuery { PropositionQuery.forContextId(contextId) }
+
+            val contribution = memory.contribution()
+
+            assertTrue(contribution.contains("1. alice likes jazz"), contribution)
+            assertFalse(contribution.contains("bob likes jazz"), contribution)
+            assertFalse(contribution.contains("polka"), contribution)
+            // The fresh eager query itself reached the store unnarrowed; only the conjunction kept it in scope.
+            assertTrue(fake.reads.any { it.entityId == null && it.createdAfter == null })
+        }
+
+        @Test
+        fun `E3 a fresh eager query for the same context contributes without throwing`() {
+            val fake = SingletonOnlyRepository(listOf(createProposition("User likes jazz")))
+            val memory = Memory.forContext(contextId).withRepository(fake)
+                .withEagerQuery { PropositionQuery.forContextId(contextId).withLimit(5) }
+
+            val contribution = memory.contribution()
+
+            assertTrue(contribution.contains("1. User likes jazz"), contribution)
+        }
+
+        @Test
+        fun `eager recognized monotone tightening remains supported on singleton fake`() {
+            val fake = SingletonOnlyRepository(emptyList())
+            val memory = Memory.forContext(contextId).withRepository(fake)
+                .narrowedBy {
+                    it.copy(entityId = "alice", anyEntityIds = listOf("alice", "bob"), allEntityIds = listOf("alice"),
+                        minLevel = 1, maxLevel = 9, createdAfter = start, createdBefore = end,
+                        revisedAfter = start, revisedBefore = end, accessedAfter = start, accessedBefore = end,
+                        minEffectiveConfidence = 0.2, belowEffectiveConfidence = 0.9,
+                        minImportance = 0.2, minReinforceCount = 1, minTrustScore = 0.2, pinned = true)
+                }
+                .withEagerQuery {
+                    it.copy(contextId = null, entityId = null, anyEntityIds = listOf("alice"),
+                        allEntityIds = listOf("alice", "charlie"), minConfidence = 0.8,
+                        minLevel = 2, maxLevel = 8, createdAfter = start.plusSeconds(1), createdBefore = end.minusSeconds(1),
+                        revisedAfter = start.plusSeconds(1), revisedBefore = end.minusSeconds(1),
+                        accessedAfter = start.plusSeconds(1), accessedBefore = end.minusSeconds(1),
+                        minEffectiveConfidence = 0.3, belowEffectiveConfidence = 0.8,
+                        minImportance = 0.3, minReinforceCount = 2, minTrustScore = 0.3,
+                        orderBy = PropositionQuery.OrderBy.CREATED_DESC, limit = 3)
+                }
+            memory.contribution()
+            assertEquals(2, fake.reads.size)
+            assertEquals(0.8, fake.reads.first().minConfidence)
+            assertEquals(contextId, fake.reads.first().contextId)
+        }
+
+        @Test
+        fun `eager hook cannot mutate earlier entity membership in place`() {
+            val fake = SingletonOnlyRepository(emptyList())
+            val memory = Memory.forContext(contextId).withRepository(fake)
+                .narrowedBy { it.withAnyEntityIds(mutableListOf("alice")) }
+                .withEagerQuery {
+                    (it.anyEntityIds as MutableList<String>).clear()
+                    it
+                }
+            assertThrows(UnsupportedOperationException::class.java) { memory.contribution() }
+            assertTrue(fake.reads.isEmpty())
+        }
+
+        @Test
+        fun `all typed vector failures propagate through eager contribution and tool calls`() {
+            val failures = listOf(FilteredVectorUnsupportedException(), ScopedReadException(ScopedReadFailure.EXACT_VECTOR_BUDGET_EXCEEDED),
+                ScopedReadException(ScopedReadFailure.EXACT_VECTOR_DEADLINE_EXCEEDED))
+            failures.forEach { failure ->
+                every { repository.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>()) } throws failure
+                listOf<(Memory) -> Memory>({ it.withEagerTopicSearch(1) },
+                    { it.withEagerSearchAbout("jazz", 1) }, { it }).forEach { configure ->
+                    val memory = configure(Memory.forContext(contextId).withRepository(repository))
+                    assertSame(failure, assertThrows(failure.javaClass) { memory.call("""{"query":"jazz"}""") })
+                }
+                val memory = Memory.forContext(contextId).withRepository(repository).withEagerTopicSearch(1)
+                assertSame(failure, assertThrows(failure.javaClass) { memory.contribution() })
+            }
+        }
+    }
+
+    private class SingletonOnlyRepository(private val rows: List<Proposition>) : PropositionRepository by mockk(relaxed = true) {
+        val reads = mutableListOf<PropositionQuery>()
+        override fun query(query: PropositionQuery): List<Proposition> {
+            reads += query
+            return rows.filter { query.matchesFilters(it) }.sortedByDescending { it.effectiveConfidence() }
+                .let { if (query.limit == null) it else it.take(query.limit) }
+        }
+        override fun count(query: PropositionQuery): Int = query(query.copy(limit = null)).size
+        override fun findSimilarWithScores(request: TextSimilaritySearchRequest, query: PropositionQuery): List<SimilarityResult<Proposition>> =
+            query(query.copy(limit = request.topK)).map { SimilarityResult(it, 0.9) }
+        override fun keywordOverlap(base: PropositionQuery, tokens: List<String>, limit: Int): List<Proposition> =
+            query(base.copy(limit = null)).filter { prop -> tokens.any { prop.text.contains(it, ignoreCase = true) } }.take(limit)
     }
 
 }
