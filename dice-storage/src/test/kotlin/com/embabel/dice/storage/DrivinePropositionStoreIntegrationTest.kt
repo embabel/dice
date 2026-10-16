@@ -15,6 +15,10 @@
  */
 package com.embabel.dice.storage
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.embabel.agent.core.ContextId
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.TextSimilaritySearchRequest
@@ -22,6 +26,7 @@ import com.embabel.dice.incremental.BookmarkKey
 import com.embabel.dice.incremental.HashKey
 import com.embabel.dice.incremental.ProcessedChunkRecord
 import com.embabel.dice.proposition.DecaySweepConfig
+import com.embabel.dice.proposition.ExactVectorBudget
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
@@ -31,6 +36,8 @@ import com.embabel.dice.proposition.PropositionReembedReport
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.ScopedReadException
+import com.embabel.dice.proposition.ScopedReadFailure
 import com.embabel.dice.provenance.ConnectorRef
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.ProvenanceEvidenceKey
@@ -49,6 +56,7 @@ import org.junit.jupiter.api.Test
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.jupiter.api.assertThrows
 import org.drivine.connection.DataSourceMap
+import org.drivine.connection.DatabaseRegistry
 import com.embabel.dice.storage.model.PropositionView
 import org.drivine.StaleObjectException
 import org.drivine.manager.StatelessGraphObjectManager
@@ -59,6 +67,8 @@ import org.neo4j.driver.AuthTokens
 import org.neo4j.driver.GraphDatabase
 import org.neo4j.driver.SessionConfig
 import org.neo4j.driver.summary.Plan
+import org.mockito.Mockito
+import org.slf4j.LoggerFactory
 import org.springframework.aop.framework.ProxyFactory
 import org.springframework.aop.support.AopUtils
 import org.springframework.beans.factory.annotation.Autowired
@@ -116,6 +126,9 @@ class DrivinePropositionStoreIntegrationTest {
 
     @Autowired
     private lateinit var dataSourceMap: DataSourceMap
+
+    @Autowired
+    private lateinit var databaseRegistry: DatabaseRegistry
 
     @AfterEach
     fun cleanUp() {
@@ -2186,6 +2199,396 @@ class DrivinePropositionStoreIntegrationTest {
         assertTrue(old.id !in ids, "a proposition revised before the cutoff must be filtered out")
     }
 
+    /** A repository with no native executor, the way a host that never configured one builds it. */
+    private fun executorlessRepository(manager: StatelessGraphObjectManager = graphObjectManager) =
+        DrivinePropositionRepository(manager, persistenceManager, embeddingService, transactionManager)
+
+    /**
+     * Three rows outside the filter score a perfect 1.0, one inside scores lower. The context-wide unique
+     * text rule means the three cannot share the query's text, so they carry its embedding instead.
+     */
+    private fun seedRowsAGlobalTopKWouldPrefer(query: String): Proposition {
+        val queryVector = embeddingService.embed(query).toList()
+        (1..3).forEach { seedRawNodeWithEmbedding(prop("$query copy $it", context = "ctx-b"), queryVector) }
+        val eligible = prop("an unrelated eligible fact", context = "ctx-a")
+        seedRawNode(eligible)
+        return eligible
+    }
+
+    @Test
+    fun `E1 an executorless filtered search finds eligible rows a global top K would miss`() {
+        val eligible = seedRowsAGlobalTopKWouldPrefer("the query text")
+
+        val hits = executorlessRepository().findSimilarWithScores(
+            TextSimilaritySearchRequest(query = "the query text", topK = 1, similarityThreshold = 0.0),
+            PropositionQuery(contextId = ContextId("ctx-a")),
+        )
+
+        assertEquals(listOf(eligible.id), hits.map { it.match.id })
+    }
+
+    @Test
+    fun `E2 a filtered search without a context is exact over the filter`() {
+        val query = "an e2 query"
+        val queryVector = embeddingService.embed(query).toList()
+        val strong = prop("strong in ctx-a", context = "ctx-a")
+        val middle = prop("middle in ctx-b", context = "ctx-b")
+        val weak = prop("weak in ctx-a", context = "ctx-a")
+        val stale = prop("stale in ctx-b", context = "ctx-b", status = PropositionStatus.STALE)
+        seedRawNodeWithEmbedding(strong, rotate(queryVector, 0.9, "e2 strong"))
+        seedRawNodeWithEmbedding(middle, rotate(queryVector, 0.5, "e2 middle"))
+        seedRawNodeWithEmbedding(weak, rotate(queryVector, 0.1, "e2 weak"))
+        seedRawNodeWithEmbedding(stale, queryVector)
+
+        // The bean has an executor, so this also shows a query with no context never reaches the native scan.
+        val hits = repository.findSimilarWithScores(
+            TextSimilaritySearchRequest(query = query, topK = 10, similarityThreshold = 0.0),
+            PropositionQuery(statuses = setOf(PropositionStatus.ACTIVE)),
+        )
+
+        assertEquals(listOf(strong.id, middle.id, weak.id), hits.map { it.match.id })
+        assertEquals(0.9, hits.first().score, 1e-4)
+    }
+
+    @Test
+    fun `E3 more eligible rows than the budget fail`() {
+        (1..3).forEach { repository.save(prop("budget fact $it", context = "ctx-e3")) }
+        val budgeted = executorlessRepository().withExactVectorBudget(ExactVectorBudget(2, Duration.ofSeconds(5)))
+
+        val failure = assertThrows<ScopedReadException> {
+            budgeted.findSimilarWithScores(
+                TextSimilaritySearchRequest(query = "budget fact 1", topK = 1, similarityThreshold = 0.0),
+                PropositionQuery(contextId = ContextId("ctx-e3")),
+            )
+        }
+
+        assertEquals(ScopedReadFailure.EXACT_VECTOR_BUDGET_EXCEEDED, failure.failure)
+    }
+
+    @Test
+    fun `E4 a filtered search never uses the vector index`() {
+        val eligible = seedRowsAGlobalTopKWouldPrefer("the query text")
+        val spy = Mockito.spy(graphObjectManager)
+
+        val hits = executorlessRepository(spy).findSimilarWithScores(
+            TextSimilaritySearchRequest(query = "the query text", topK = 1, similarityThreshold = 0.0),
+            PropositionQuery(contextId = ContextId("ctx-a")),
+        )
+
+        assertEquals(listOf(eligible.id), hits.map { it.match.id })
+        assertTrue(
+            Mockito.mockingDetails(spy).invocations.none { it.method.name == "loadNearest" },
+            "a filtered search must not take a global top K from the vector index",
+        )
+    }
+
+    @Test
+    fun `E5 the fallback sees rows written in the caller's transaction`() {
+        // Proxied so the method's own transaction annotation decides whether it joins the caller's.
+        val proxied = newTransactionProxiedRepository()
+        val written = prop("written in the open transaction", context = "ctx-e5")
+
+        val ids = TransactionTemplate(transactionManager).execute {
+            seedRawNodeWithEmbedding(written, embeddingService.embed(written.text).toList())
+            proxied.findSimilarWithScores(
+                TextSimilaritySearchRequest(query = written.text, topK = 5, similarityThreshold = 0.0),
+                PropositionQuery(contextId = ContextId("ctx-e5")),
+            ).map { it.match.id }
+        }
+
+        assertEquals(listOf(written.id), ids)
+    }
+
+    @Test
+    fun `E6 with a native executor the search still sees rows written in the caller's transaction`() {
+        // The bean is proxied and has a native executor, so outside a transaction this would scan natively.
+        assertTrue(repository.supportsScopedVectors, "sanity: the bean has a native executor")
+        val written = prop("written in the open native transaction", context = "ctx-e6")
+
+        val ids = TransactionTemplate(transactionManager).execute {
+            seedRawNodeWithEmbedding(written, embeddingService.embed(written.text).toList())
+            repository.findSimilarWithScores(
+                TextSimilaritySearchRequest(query = written.text, topK = 5, similarityThreshold = 0.0),
+                PropositionQuery(contextId = ContextId("ctx-e6")),
+            ).map { it.match.id }
+        }
+
+        assertEquals(listOf(written.id), ids)
+    }
+
+    /**
+     * A repository with a native executor whose graph object manager is a spy, so a test can show the
+     * native scan answered and the in-transaction fallback, which loads through that manager, never ran.
+     */
+    private fun nativeRepositoryWithSpiedManager(spy: StatelessGraphObjectManager) =
+        executorlessRepository(spy)
+            .withNativeReadExecutor(Neo4jScopedReadExecutor.from(persistenceManager, databaseRegistry, dataSourceMap))
+
+    /** Seeds a close row and one pointing away from [query] in [context], and returns them in that order. */
+    private fun seedCloseAndOppositeRows(query: String, context: String): Pair<Proposition, Proposition> {
+        val queryVector = embeddingService.embed(query).toList()
+        val close = prop("close row", context = context)
+        val opposite = prop("opposite row", context = context)
+        seedRawNodeWithEmbedding(close, rotate(queryVector, 0.8, "$context close"))
+        seedRawNodeWithEmbedding(opposite, rotate(queryVector, -0.5, "$context opposite"))
+        return close to opposite
+    }
+
+    @Test
+    fun `E7 a native filtered search with a zero threshold keeps a negative cosine row`() {
+        val query = "a native query with an opposite row"
+        val (close, opposite) = seedCloseAndOppositeRows(query, "ctx-e7")
+        val spy = Mockito.spy(graphObjectManager)
+
+        val hits = nativeRepositoryWithSpiedManager(spy).findSimilarWithScores(
+            TextSimilaritySearchRequest(query = query, topK = 5, similarityThreshold = 0.0),
+            PropositionQuery(contextId = ContextId("ctx-e7")),
+        )
+
+        assertEquals(listOf(close.id, opposite.id), hits.map { it.match.id })
+        assertEquals(-0.5, hits.last().score, 1e-4, "the score is raw cosine, below zero")
+        assertTrue(Mockito.mockingDetails(spy).invocations.isEmpty(), "the native scan answered and the fallback never ran")
+    }
+
+    @Test
+    fun `E8 a native filtered search treats a negative threshold as no threshold`() {
+        val query = "a native query with a negative threshold"
+        val (close, opposite) = seedCloseAndOppositeRows(query, "ctx-e8")
+        val spy = Mockito.spy(graphObjectManager)
+
+        val hits = nativeRepositoryWithSpiedManager(spy).findSimilarWithScores(
+            TextSimilaritySearchRequest(query = query, topK = 5, similarityThreshold = -0.25),
+            PropositionQuery(contextId = ContextId("ctx-e8")),
+        )
+
+        assertEquals(listOf(close.id, opposite.id), hits.map { it.match.id })
+        assertTrue(Mockito.mockingDetails(spy).invocations.isEmpty(), "the native scan answered and the fallback never ran")
+    }
+
+    @Test
+    fun `E9 the bean answers from the native scan when no caller transaction is open`() {
+        val query = "a bean query with an opposite row"
+        val (close, opposite) = seedCloseAndOppositeRows(query, "ctx-e9")
+        // Too short to score, so whichever path answers warns that it skipped one embedding.
+        seedRawNodeWithEmbedding(prop("an unscorable row", context = "ctx-e9"), listOf(1f, 2f))
+
+        val (hits, warnings) = warningsByLogger(DrivineScopedVectorSearch::class.java, DrivinePropositionRepository::class.java) {
+            repository.findSimilarWithScores(
+                TextSimilaritySearchRequest(query = query, topK = 5, similarityThreshold = 0.0),
+                PropositionQuery(contextId = ContextId("ctx-e9")),
+            )
+        }
+
+        assertEquals(listOf(close.id, opposite.id), hits.map { it.match.id })
+        // Both paths log the same words, each through its own logger, so the logger shows which one ran.
+        assertEquals(
+            mapOf(
+                DrivineScopedVectorSearch::class.java.name to listOf("Scoped vector search skipped 1 stored embeddings it could not score"),
+                DrivinePropositionRepository::class.java.name to emptyList(),
+            ),
+            warnings,
+            "the native scan answered and the fallback never ran",
+        )
+    }
+
+    /** Runs [body] and returns its result with the warnings each of [sources]' loggers wrote meanwhile. */
+    private fun <T> warningsByLogger(vararg sources: Class<*>, body: () -> T): Pair<T, Map<String, List<String>>> {
+        val captured = sources.associate { source ->
+            val logger = LoggerFactory.getLogger(source) as Logger
+            val appender = ListAppender<ILoggingEvent>().apply { start() }
+            logger.addAppender(appender)
+            logger to appender
+        }
+        try {
+            val result = body()
+            return result to captured.entries.associate { (logger, appender) ->
+                logger.name to appender.list.filter { it.level == Level.WARN }.map { it.formattedMessage }
+            }
+        } finally {
+            captured.forEach { (logger, appender) ->
+                logger.detachAppender(appender)
+                appender.stop()
+            }
+        }
+    }
+
+    @Test
+    fun `the index search ignores the exact vector budget`() {
+        val texts = (1..20).map { "budget-free fact number $it" }
+        texts.forEach { repository.save(prop(it, context = "ctx-index-budget")) }
+        // The bean has a native executor, so the exact search would scan this context under the budget.
+        val budgeted = repository.withExactVectorBudget(ExactVectorBudget(5, Duration.ofSeconds(5)))
+        val request = TextSimilaritySearchRequest(query = texts[7], topK = 3, similarityThreshold = 0.0)
+        val query = PropositionQuery(contextId = ContextId("ctx-index-budget"), statuses = setOf(PropositionStatus.ACTIVE))
+
+        assertEquals(
+            ScopedReadFailure.EXACT_VECTOR_BUDGET_EXCEEDED,
+            assertThrows<ScopedReadException> { budgeted.findSimilarWithScores(request, query) }.failure,
+            "sanity: the exact search refuses this context",
+        )
+        val hits = budgeted.findApproximateSimilarWithScores(request, query)
+
+        assertEquals(3, hits.size)
+        assertEquals(texts[7], hits.first().match.text)
+        assertTrue(hits.all { it.match.contextId.value == "ctx-index-budget" })
+    }
+
+    @Test
+    fun `the index search widens past rows from other contexts`() {
+        val query = "a crowded index query"
+        val queryVector = embeddingService.embed(query).toList()
+        // More perfect matches elsewhere than the first index page holds.
+        (1..40).forEach { seedRawNodeWithEmbedding(prop("crowding copy $it", context = "ctx-crowd"), queryVector) }
+        val strong = prop("strong target", context = "ctx-target")
+        val middle = prop("middle target", context = "ctx-target")
+        val weak = prop("weak target", context = "ctx-target")
+        seedRawNodeWithEmbedding(strong, rotate(queryVector, 0.9, "widen strong"))
+        seedRawNodeWithEmbedding(middle, rotate(queryVector, 0.5, "widen middle"))
+        seedRawNodeWithEmbedding(weak, rotate(queryVector, 0.1, "widen weak"))
+
+        val hits = repository.findApproximateSimilarWithScores(
+            TextSimilaritySearchRequest(query = query, topK = 2, similarityThreshold = 0.0),
+            PropositionQuery(contextId = ContextId("ctx-target")),
+        )
+
+        assertEquals(listOf(strong.id, middle.id), hits.map { it.match.id })
+        assertEquals(0.9, hits.first().score, 1e-3)
+    }
+
+    @Test
+    fun `the index search with a zero threshold keeps a negative cosine row`() {
+        val query = "a query with an opposite row"
+        val queryVector = embeddingService.embed(query).toList()
+        val close = prop("close row", context = "ctx-negative")
+        val opposite = prop("opposite row", context = "ctx-negative")
+        seedRawNodeWithEmbedding(close, rotate(queryVector, 0.8, "negative close"))
+        seedRawNodeWithEmbedding(opposite, rotate(queryVector, -0.5, "negative opposite"))
+
+        val hits = repository.findApproximateSimilarWithScores(
+            TextSimilaritySearchRequest(query = query, topK = 5, similarityThreshold = 0.0),
+            PropositionQuery(contextId = ContextId("ctx-negative")),
+        )
+
+        assertEquals(listOf(close.id, opposite.id), hits.map { it.match.id })
+        assertEquals(-0.5, hits.last().score, 1e-3, "the score is raw cosine, below zero")
+    }
+
+    /**
+     * A repository that writes down how many rows each index page asked for, in order. It stops the
+     * search after a handful of pages, so a search that never ends fails here instead of hanging.
+     */
+    private fun indexPageRecordingRepository(pages: MutableList<Int>): DrivinePropositionRepository {
+        val recording = Mockito.mock(
+            StatelessGraphObjectManager::class.java,
+            Mockito.withSettings().spiedInstance(graphObjectManager).defaultAnswer { invocation ->
+                if (invocation.method.name == "loadNearest") {
+                    // Every loadNearest overload takes the page size as its first Int argument.
+                    pages += invocation.arguments.filterIsInstance<Int>().first()
+                    check(pages.size <= 5) { "the index search kept widening: $pages" }
+                }
+                invocation.callRealMethod()
+            },
+        )
+        return executorlessRepository(recording)
+    }
+
+    @Test
+    fun `the index search stops widening once a page reaches below the threshold`() {
+        val query = "a query with a thin top"
+        val queryVector = embeddingService.embed(query).toList()
+        val strong = prop("the one strong row", context = "ctx-threshold")
+        val nearMiss = prop("just under the threshold", context = "ctx-threshold")
+        seedRawNodeWithEmbedding(strong, rotate(queryVector, 0.9, "threshold strong"))
+        seedRawNodeWithEmbedding(nearMiss, rotate(queryVector, 0.45, "threshold near miss"))
+        // Enough weak rows that the first page is full and the index still holds more.
+        val weak = rotate(queryVector, 0.1, "threshold weak")
+        (1..40).forEach { seedRawNodeWithEmbedding(prop("weak row $it", context = "ctx-threshold"), weak) }
+        val pages = mutableListOf<Int>()
+
+        val hits = indexPageRecordingRepository(pages).findApproximateSimilarWithScores(
+            TextSimilaritySearchRequest(query = query, topK = 2, similarityThreshold = 0.5),
+            PropositionQuery(contextId = ContextId("ctx-threshold")),
+        )
+
+        assertEquals(listOf(strong.id), hits.map { it.match.id }, "no row under the threshold comes back")
+        assertEquals(listOf(32), pages, "the first page already ends below the threshold, so it does not widen")
+    }
+
+    @Test
+    fun `the index search with live decay filters each page and fills from a later one`() {
+        val query = "a query whose nearest rows have faded"
+        val queryVector = embeddingService.embed(query).toList()
+        val longAgo = Instant.now().minus(Duration.ofDays(30))
+        // The nearest rows fill the whole first page, and all of them have decayed to almost nothing.
+        (1..40).forEach {
+            seedRawNodeWithEmbedding(
+                prop("faded row $it", context = "ctx-decay", confidence = 0.9, decay = 0.5, contentRevised = longAgo),
+                queryVector,
+            )
+        }
+        val fresh = prop("fresh row", context = "ctx-decay", confidence = 0.9)
+        val fresher = prop("another fresh row", context = "ctx-decay", confidence = 0.9)
+        seedRawNodeWithEmbedding(fresh, rotate(queryVector, 0.6, "decay fresh"))
+        seedRawNodeWithEmbedding(fresher, rotate(queryVector, 0.4, "decay fresher"))
+
+        // A non-default decay rate means effective confidence is worked out live for each page.
+        val hits = repository.findApproximateSimilarWithScores(
+            TextSimilaritySearchRequest(query = query, topK = 2, similarityThreshold = 0.0),
+            PropositionQuery(contextId = ContextId("ctx-decay"), minEffectiveConfidence = 0.5, decayK = 10.0),
+        )
+
+        assertEquals(listOf(fresh.text, fresher.text), hits.map { it.match.text })
+    }
+
+    @Test
+    fun `the index search returns every match when the index runs out before topK`() {
+        val query = "a query with only a few matches"
+        val queryVector = embeddingService.embed(query).toList()
+        val strong = prop("strong match", context = "ctx-runout")
+        val middle = prop("middle match", context = "ctx-runout")
+        val weak = prop("weak match", context = "ctx-runout")
+        seedRawNodeWithEmbedding(strong, rotate(queryVector, 0.9, "runout strong"))
+        seedRawNodeWithEmbedding(middle, rotate(queryVector, 0.5, "runout middle"))
+        seedRawNodeWithEmbedding(weak, rotate(queryVector, 0.1, "runout weak"))
+        // Rows with no embedding count as propositions but never reach the index, so the first page
+        // comes back short while the proposition count says there could be more.
+        (1..50).forEach {
+            graphObjectManager.save(
+                PropositionGraphMapper.toView(prop("unembedded row $it", context = "ctx-unembedded")),
+                DrivinePropositionRepository.REPLACE_MENTIONS,
+            )
+        }
+        val pages = mutableListOf<Int>()
+
+        val hits = indexPageRecordingRepository(pages).findApproximateSimilarWithScores(
+            TextSimilaritySearchRequest(query = query, topK = 5, similarityThreshold = 0.0),
+            PropositionQuery(contextId = ContextId("ctx-runout")),
+        )
+
+        assertEquals(listOf(strong.id, middle.id, weak.id), hits.map { it.match.id })
+        assertEquals(listOf(32), pages, "a page shorter than asked for means the index has nothing more")
+    }
+
+    @Test
+    fun `the index search ends once its page covers every proposition`() {
+        val query = "a query that searches the whole index"
+        val queryVector = embeddingService.embed(query).toList()
+        (1..38).forEach { seedRawNodeWithEmbedding(prop("crowding row $it", context = "ctx-everything-crowd"), queryVector) }
+        val strong = prop("strong target", context = "ctx-everything")
+        val middle = prop("middle target", context = "ctx-everything")
+        seedRawNodeWithEmbedding(strong, rotate(queryVector, 0.9, "everything strong"))
+        seedRawNodeWithEmbedding(middle, rotate(queryVector, 0.5, "everything middle"))
+        val pages = mutableListOf<Int>()
+
+        val hits = indexPageRecordingRepository(pages).findApproximateSimilarWithScores(
+            TextSimilaritySearchRequest(query = query, topK = 5, similarityThreshold = 0.0),
+            PropositionQuery(contextId = ContextId("ctx-everything")),
+        )
+
+        assertEquals(listOf(strong.id, middle.id), hits.map { it.match.id })
+        assertEquals(listOf(32, 40), pages, "the second page is capped at the 40 propositions and is the last")
+    }
+
     /**
      * Through the SPRING BEAN, which is what production calls and what the test below did not.
      *
@@ -2478,36 +2881,6 @@ class DrivinePropositionStoreIntegrationTest {
 
         val expected = listOf(fast, slow).sortedByDescending { it.effectiveConfidenceAt(asOf, k) }.map { it.id }
         assertEquals(expected, graphOrder, "graph live-decay order must equal the in-memory effectiveConfidenceAt order")
-    }
-
-    /**
-     * Live decay cannot use the materialised column, so the filtered vector search ranks only the rows
-     * the query allows. A stale row that matches the query text exactly must not take the only slot.
-     */
-    @Test
-    fun `filtered vector search with live decay ranks only eligible rows before top K`() {
-        val now = Instant.now()
-        val stale = repository.save(
-            prop("the river floods every spring", context = "ctx-live", decay = 0.9, contentRevised = now.minus(Duration.ofDays(365))),
-        )
-        val fresh = repository.save(prop("the bakery opens at dawn", context = "ctx-live", decay = 0.0))
-        assertTrue(stale.effectiveConfidenceAt(now, 10.0) < 0.5, "premise: the stale row falls below the floor")
-        assertTrue(fresh.effectiveConfidenceAt(now, 10.0) >= 0.5, "premise: the fresh row clears the floor")
-
-        val request = TextSimilaritySearchRequest(query = stale.text, topK = 1, similarityThreshold = 0.0)
-        val hits = repository.findSimilarWithScores(
-            request,
-            PropositionQuery(
-                contextId = ContextId("ctx-live"),
-                minEffectiveConfidence = 0.5,
-                decayK = 10.0,
-                effectiveConfidenceAsOf = now,
-            ),
-        )
-
-        assertEquals(listOf(fresh.id), hits.map { it.match.id }, "only the eligible row may fill the top K")
-        val unfiltered = repository.findSimilarWithScores(TextSimilaritySearchRequest(query = stale.text, topK = 10, similarityThreshold = 0.0)).single { it.match.id == fresh.id }
-        assertEquals(unfiltered.score, hits.single().score, 1e-4, "the exact score matches the index's raw cosine")
     }
 
     /** Provenance is lean by default and only loaded when `withProvenance = true` (or via [findById]). */

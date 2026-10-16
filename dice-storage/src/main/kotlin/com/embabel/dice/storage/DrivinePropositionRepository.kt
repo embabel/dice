@@ -24,7 +24,8 @@ import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.proposition.ContextReadScope
-import com.embabel.dice.proposition.ContextSetReadCapable
+import com.embabel.dice.proposition.ContextSetVectorSearchCapable
+import com.embabel.dice.proposition.ExactVectorBudget
 import com.embabel.dice.proposition.ReadClock
 import com.embabel.dice.proposition.ScopedReadSpec
 import com.embabel.dice.proposition.ScopedReadException
@@ -150,8 +151,9 @@ class DrivinePropositionRepository private constructor(
     private val vectorIndexName: String,
     private val nativeReadExecutor: Neo4jScopedReadExecutor?,
     private val scopedReadTimeout: Duration,
+    private val exactVectorBudget: ExactVectorBudget,
 ) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable,
-    ContextSetReadCapable {
+    ContextSetVectorSearchCapable {
 
     /** Builds a repository with scoped reads turned off; [withNativeReadExecutor] turns them on. */
     constructor(
@@ -162,19 +164,46 @@ class DrivinePropositionRepository private constructor(
         vectorIndexName: String = VECTOR_INDEX,
     ) : this(
         graphObjectManager, persistenceManager, embeddingService, transactionManager, vectorIndexName,
-        null, DEFAULT_SCOPED_READ_TIMEOUT,
+        null, DEFAULT_SCOPED_READ_TIMEOUT, ExactVectorBudget.DEFAULT,
     )
-
 
     /**
      * Returns a new repository whose scoped reads run through [executor] in their own read transactions,
      * so they see committed data only and not writes still open in the caller's transaction.
+     *
+     * Call this where you build the repository, such as in your own `@Bean` method, and use the
+     * instance it returns. Calling it on the injected bean gives you a plain copy that has lost the
+     * bean's transaction handling.
      */
     fun withNativeReadExecutor(executor: Neo4jScopedReadExecutor): DrivinePropositionRepository =
         DrivinePropositionRepository(
             graphObjectManager, persistenceManager, embeddingService, transactionManager, vectorIndexName,
-            executor, scopedReadTimeout,
+            executor, scopedReadTimeout, exactVectorBudget,
         )
+
+    /**
+     * Returns a new repository with a finite allowance for filtered vector reads.
+     *
+     * Call this where you build the repository, such as in your own `@Bean` method, and use the
+     * instance it returns. Calling it on the injected bean gives you a plain copy that has lost the
+     * bean's transaction handling.
+     */
+    fun withExactVectorBudget(budget: ExactVectorBudget): DrivinePropositionRepository =
+        DrivinePropositionRepository(
+            graphObjectManager, persistenceManager, embeddingService, transactionManager, vectorIndexName,
+            nativeReadExecutor, scopedReadTimeout, budget,
+        )
+
+    override val supportsScopedVectors: Boolean get() = nativeReadExecutor != null
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    override fun findSimilarWithScores(
+        request: TextSimilaritySearchRequest, spec: ScopedReadSpec, clock: ReadClock, budget: ExactVectorBudget,
+    ): List<SimilarityResult<Proposition>> {
+        val executor = nativeReadExecutor ?: throw ScopedReadException(ScopedReadFailure.SCOPED_VECTOR_UNSUPPORTED)
+        return DrivineScopedVectorSearch(executor, embeddingService)
+            .findSimilarWithScores(request, spec, clock, budget)
+    }
 
     override val supportsScopedReads: Boolean get() = nativeReadExecutor != null
 
@@ -186,12 +215,16 @@ class DrivinePropositionRepository private constructor(
     /**
      * Returns a new repository whose scoped query, count and keyword reads give up after [timeout].
      * Vector and strict policy reads keep their own deadlines.
+     *
+     * Call this where you build the repository, such as in your own `@Bean` method, and use the
+     * instance it returns. Calling it on the injected bean gives you a plain copy that has lost the
+     * bean's transaction handling.
      */
     fun withScopedReadTimeout(timeout: Duration): DrivinePropositionRepository {
         require(timeout > Duration.ZERO) { "Scoped read timeout must be positive" }
         return DrivinePropositionRepository(
             graphObjectManager, persistenceManager, embeddingService, transactionManager, vectorIndexName,
-            nativeReadExecutor, timeout,
+            nativeReadExecutor, timeout, exactVectorBudget,
         )
     }
 
@@ -1010,13 +1043,7 @@ class DrivinePropositionRepository private constructor(
         }.map(PropositionGraphMapper::toProposition)
 
         val asOf = query.effectiveConfidenceAsOf ?: Instant.now()
-        var seq = candidates.asSequence()
-        query.minEffectiveConfidence?.let { threshold ->
-            seq = seq.filter { it.effectiveConfidenceAt(asOf, query.decayK) >= threshold }
-        }
-        query.belowEffectiveConfidence?.let { threshold ->
-            seq = seq.filter { it.effectiveConfidenceAt(asOf, query.decayK) < threshold }
-        }
+        val seq = candidates.asSequence().filter { passesLiveDecay(it, query, asOf) }
         val ordered = if (query.orderBy == OrderBy.EFFECTIVE_CONFIDENCE_DESC) {
             seq.sortedByDescending { it.effectiveConfidenceAt(asOf, query.decayK) }
         } else {
@@ -1024,6 +1051,15 @@ class DrivinePropositionRepository private constructor(
         }
         val list = ordered.toList()
         return query.limit?.let { list.take(it) } ?: list
+    }
+
+    /** The effective-confidence bounds of [query], worked out live at [asOf] with the query's own decay. */
+    private fun passesLiveDecay(proposition: Proposition, query: PropositionQuery, asOf: Instant): Boolean {
+        val min = query.minEffectiveConfidence
+        val below = query.belowEffectiveConfidence
+        if (min == null && below == null) return true
+        val effective = proposition.effectiveConfidenceAt(asOf, query.decayK)
+        return (min == null || effective >= min) && (below == null || effective < below)
     }
 
     /** Add provenance to a lean result set in one batch query, preserving order. */
@@ -1162,27 +1198,63 @@ class DrivinePropositionRepository private constructor(
         return results
     }
 
+    /**
+     * Ranks exactly over the rows the query allows, never the global top K. With a native executor and
+     * a context, and no read-write transaction open, it scans in Neo4j under the exact vector budget,
+     * reading committed data only. Otherwise it loads at most the budget's candidate count in the
+     * caller's transaction and scores them here, failing when more rows are eligible, so a caller that
+     * has just written a row in its transaction finds it.
+     *
+     * Only the native scan honours the budget's timeout. Drivine ignores Spring transaction timeouts,
+     * so the in-transaction fallback is bounded by its candidate count alone.
+     *
+     * A threshold of zero or less means no threshold, on either path.
+     *
+     * @throws ScopedReadException with [ScopedReadFailure.EXACT_VECTOR_BUDGET_EXCEEDED] when more rows
+     * match than the budget allows.
+     */
     @Transactional(readOnly = true)
     override fun findSimilarWithScores(
         textSimilaritySearchRequest: TextSimilaritySearchRequest,
         query: PropositionQuery,
     ): List<SimilarityResult<Proposition>> {
-        // Live decay cannot use the materialised column, so rank the eligible rows exactly.
-        if (needsLiveDecay(query)) {
-            return nearestAmong(
-                textSimilaritySearchRequest,
-                queryWithLiveDecay(query.copy(limit = null, orderBy = OrderBy.NONE)),
-            )
+        val context = query.contextId
+        // The native scan reads in its own session, so it would miss rows the caller's open
+        // read-write transaction has written; those callers get the in-transaction search instead.
+        val callerCanWrite = TransactionSynchronizationManager.isActualTransactionActive() &&
+            !TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        return if (nativeReadExecutor != null && context != null && !callerCanWrite) {
+            nativeFilteredSearch(nativeReadExecutor, textSimilaritySearchRequest, query, context)
+        } else {
+            exactFilteredSearch(textSimilaritySearchRequest, query)
         }
-        val vector = embeddingService.embed(textSimilaritySearchRequest.query).toList()
-        val threshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }?.let(::toEngineScore)
-        return graphObjectManager.loadNearest<PropositionView>(
-            vector,
-            textSimilaritySearchRequest.topK,
-            threshold,
-        ) {
-            where { applyFilters(query, includeEffectiveConfidence = true) }
-        }.map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = toRawCosine(it.score)) }
+    }
+
+    // Keeps this method's older threshold rule, where zero or less means no threshold, instead of
+    // the scoped search's rule that a threshold must be from zero to one.
+    private fun nativeFilteredSearch(
+        executor: Neo4jScopedReadExecutor, request: TextSimilaritySearchRequest, query: PropositionQuery, context: ContextId,
+    ): List<SimilarityResult<Proposition>> {
+        val scope = ContextReadScope.ofValues(listOf(context.value))
+        val spec = ScopedReadSpec.of(scope)
+            .restrict(query.copy(orderBy = PropositionQuery.OrderBy.NONE, limit = null, effectiveConfidenceAsOf = null))
+        val clock = ReadClock(query.effectiveConfidenceAsOf ?: Instant.now(), query.decayK)
+        val threshold = request.similarityThreshold
+        val minimumScore = if (threshold <= 0.0) DrivineScopedVectorSearch.NO_MINIMUM_SCORE else threshold
+        return DrivineScopedVectorSearch(executor, embeddingService)
+            .findSimilarWithScores(request, spec, clock, exactVectorBudget, minimumScore)
+    }
+
+    // Loads one row past the budget so an over-full filter fails instead of being silently cut short.
+    // query() applies live decay itself, so the eligible set is exactly what the filter allows.
+    private fun exactFilteredSearch(
+        request: TextSimilaritySearchRequest, query: PropositionQuery,
+    ): List<SimilarityResult<Proposition>> {
+        val eligible = query(query.copy(limit = exactVectorBudget.maxCandidates + 1, orderBy = OrderBy.NONE))
+        if (eligible.size > exactVectorBudget.maxCandidates) {
+            throw ScopedReadException(ScopedReadFailure.EXACT_VECTOR_BUDGET_EXCEEDED)
+        }
+        return nearestAmong(request, eligible)
     }
 
     /**
@@ -1229,13 +1301,87 @@ class DrivinePropositionRepository private constructor(
                 SimilarityResult(match = match, score = ScopedReadRules.cosineSimilarity(vector, stored))
             }
             .filter { threshold <= 0.0 || it.score >= threshold }
-            .sortedWith(
-                compareByDescending<SimilarityResult<Proposition>> { it.score }
-                    .thenBy(ScopedReadRules.CODE_POINT_ORDER) { it.match.contextId.value }
-                    .thenBy(ScopedReadRules.CODE_POINT_ORDER) { it.match.id },
-            )
+            .sortedWith(NEAREST_FIRST)
             .take(request.topK)
     }
+
+    /**
+     * Searches the vector index inside the caller's transaction and keeps only the rows [query]
+     * allows. Neo4j's vector index holds committed rows only, so a row written earlier in the same,
+     * still open transaction is not found.
+     *
+     * When too few of the index's nearest rows pass, it asks the index for four times as many and
+     * tries again. It stops once it has `topK` rows, once the index has nothing left to give, or once
+     * the index's furthest row is already below the threshold, since anything further out would be
+     * too. No row budget applies, so a large context cannot make it fail.
+     *
+     * A threshold of zero or less means no threshold. Ties go to the lower context ID, then the lower
+     * proposition ID, both compared by Unicode code point.
+     */
+    @Transactional(readOnly = true)
+    override fun findApproximateSimilarWithScores(
+        textSimilaritySearchRequest: TextSimilaritySearchRequest,
+        query: PropositionQuery,
+    ): List<SimilarityResult<Proposition>> {
+        val topK = textSimilaritySearchRequest.topK
+        if (topK <= 0) return emptyList()
+        val vector = embeddingService.embed(textSimilaritySearchRequest.query).toList()
+        val engineThreshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }?.let(::toEngineScore)
+        // Effective confidence at a non-default decay can't use the stored column, so it is checked
+        // here on each page instead, the same way query() does it.
+        val liveDecay = needsLiveDecay(query)
+        val asOf = query.effectiveConfidenceAsOf ?: Instant.now()
+        var ceiling: Long? = null
+        var k = maxOf(topK.toLong() * INDEX_PAGE_GROWTH, MIN_INDEX_PAGE.toLong()).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        while (true) {
+            val hits = graphObjectManager
+                .loadNearest<PropositionView>(vector, k, engineThreshold) {
+                    where { applyFilters(query, includeEffectiveConfidence = !liveDecay) }
+                }
+                .map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = toRawCosine(it.score)) }
+                .filter { !liveDecay || passesLiveDecay(it.match, query, asOf) }
+            if (hits.size >= topK) return hits.sortedWith(NEAREST_FIRST).take(topK)
+
+            val page = indexPage(vector, k)
+            val indexed = ceiling ?: propositionCount().also { ceiling = it }
+            val exhausted = page.returned < k || k >= indexed || k == Int.MAX_VALUE
+            val pastThreshold = engineThreshold != null && page.lowest != null && page.lowest < engineThreshold
+            if (exhausted || pastThreshold) {
+                logger.debug(
+                    "findApproximateSimilarWithScores: {} hit(s) after searching {} index row(s) (topK={})",
+                    hits.size, k, topK,
+                )
+                return hits.sortedWith(NEAREST_FIRST).take(topK)
+            }
+            k = minOf(k.toLong() * INDEX_PAGE_GROWTH, indexed, Int.MAX_VALUE.toLong()).toInt()
+        }
+    }
+
+    /** How many rows the index gave back for its `k` nearest, and the lowest score among them. */
+    private data class IndexPage(val returned: Long, val lowest: Double?)
+
+    // The same index loadNearest searches, read without any filter, so the caller can tell a page
+    // the filter emptied from an index that has run out.
+    private fun indexPage(vector: List<Float>, k: Int): IndexPage {
+        @Suppress("UNCHECKED_CAST")
+        val row = persistenceManager.query(
+            QuerySpecification
+                .withStatement(
+                    """
+                    CALL db.index.vector.queryNodes('$VECTOR_INDEX', ${'$'}k, ${'$'}vector) YIELD score
+                    RETURN { returned: count(score), lowest: min(score) } AS row
+                    """.trimIndent()
+                )
+                .bind(mapOf("k" to k, "vector" to vector.map { it.toDouble() }))
+                as QuerySpecification<Any>,
+        ).filterIsInstance<Map<*, *>>().single()
+        return IndexPage((row["returned"] as Number).toLong(), (row["lowest"] as Number?)?.toDouble())
+    }
+
+    // Every indexed row is a Proposition, so the label count bounds how far the index can widen.
+    private fun propositionCount(): Long = persistenceManager.getOne(
+        QuerySpecification.withStatement("MATCH (p:Proposition) RETURN count(p) AS c").transform(Long::class.java),
+    )
 
     /**
      * Single correlated statement: select candidates DB-side via [query], then within that set run
@@ -1865,6 +2011,18 @@ class DrivinePropositionRepository private constructor(
             similarity = SimilarityFunction.COSINE,
             name = VECTOR_INDEX,
         )
+
+        /** Most similar first; ties go to the lower context ID, then the lower proposition ID, by code point. */
+        private val NEAREST_FIRST: Comparator<SimilarityResult<Proposition>> =
+            compareByDescending<SimilarityResult<Proposition>> { it.score }
+                .thenBy(ScopedReadRules.CODE_POINT_ORDER) { it.match.contextId.value }
+                .thenBy(ScopedReadRules.CODE_POINT_ORDER) { it.match.id }
+
+        /** The smallest first page the index search asks for, however small `topK` is. */
+        private const val MIN_INDEX_PAGE = 32
+
+        /** How much larger each index page is than the one before, and than `topK` on the first. */
+        private const val INDEX_PAGE_GROWTH = 4L
 
         /** Mirrors the [PropositionQuery.decayK] default; the materialised column is computed at this k. */
         private const val DEFAULT_DECAY_K = 2.0
