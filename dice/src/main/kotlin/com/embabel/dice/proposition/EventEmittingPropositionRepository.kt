@@ -68,9 +68,49 @@ import org.slf4j.LoggerFactory
 open class EventEmittingPropositionRepository<D : PropositionRepository>(
     protected val delegate: D,
     private val listener: DiceEventListener = DiceEventListener.DEV_NULL,
-) : PropositionRepository by delegate {
+) : PropositionRepository by delegate, ContextSetVectorSearchCapable {
 
     private val logger = LoggerFactory.getLogger(EventEmittingPropositionRepository::class.java)
+
+    override val supportsScopedReads: Boolean
+        get() = (delegate as? ContextSetReadCapable)?.supportsScopedReads == true
+
+    override val supportsScopedVectors: Boolean
+        get() = (delegate as? ContextSetVectorSearchCapable)?.supportsScopedVectors == true
+
+    override fun query(
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        order: ReadOrder,
+        limit: Int,
+    ): List<Proposition> = scopedReadDelegate().query(scope, spec, order, limit)
+
+    override fun count(scope: ContextReadScope, spec: ScopedReadSpec): Long =
+        scopedReadDelegate().count(scope, spec)
+
+    override fun keywordOverlap(
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        tokens: List<String>,
+        limit: Int,
+    ): List<Proposition> = scopedReadDelegate().keywordOverlap(scope, spec, tokens, limit)
+
+    override fun findSimilarWithScores(
+        request: TextSimilaritySearchRequest,
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        budget: ExactVectorBudget,
+    ): List<SimilarityResult<Proposition>> {
+        val capable = delegate as? ContextSetVectorSearchCapable
+        if (capable?.supportsScopedVectors != true) throw ScopedReadException("SCOPED_VECTOR_UNSUPPORTED")
+        return capable.findSimilarWithScores(request, scope, spec, budget)
+    }
+
+    private fun scopedReadDelegate(): ContextSetReadCapable {
+        val capable = delegate as? ContextSetReadCapable
+        if (capable?.supportsScopedReads != true) throw ScopedReadException("SCOPED_READ_UNSUPPORTED")
+        return capable
+    }
 
     companion object {
         /**
