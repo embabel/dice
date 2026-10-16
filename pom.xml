@@ -87,6 +87,7 @@
     <modules>
         <module>dice</module>
         <module>dice-storage</module>
+        <module>dice-storage-falkordb</module>
         <module>dice-storage-autoconfigure</module>
         <module>dice-report</module>
         <module>dice-ingestion</module>
@@ -166,6 +167,12 @@
             <dependency>
                 <groupId>com.embabel.dice</groupId>
                 <artifactId>dice-mcp-autoconfigure</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.embabel.dice</groupId>
+                <artifactId>dice-storage-falkordb</artifactId>
                 <version>${project.version}</version>
             </dependency>
 
