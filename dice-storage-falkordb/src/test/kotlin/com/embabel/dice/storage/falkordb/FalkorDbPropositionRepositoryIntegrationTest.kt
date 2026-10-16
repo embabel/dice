@@ -60,6 +60,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -476,6 +477,76 @@ class FalkorDbPropositionRepositoryIntegrationTest {
             repeat(2) { assertThrows<RuntimeException> { FalkorDbPropositionRepository(raw) } }
             assertEquals(2L, (access.query("MATCH (p:DiceProposition) RETURN {value:count(p)} AS result").single()["value"] as Number).toLong())
             assertEquals(0L, (access.query("MATCH (p:DiceProposition) WHERE p.aggregate IS NOT NULL RETURN {value:count(p)} AS result").single()["value"] as Number).toLong())
+        } finally {
+            raw.end()
+        }
+    }
+
+    @Test
+    fun `repaired duplicate identities recover failed constraints on restart`() {
+        val raw = server.provider("repaired_${UUID.randomUUID().toString().replace("-", "")}")
+        try {
+            val access = FalkorDbAccess(raw, null)
+            access.write("CREATE (:DiceProposition {id:'duplicate', extra:false}), (:DiceProposition {id:'duplicate', extra:true})")
+            assertThrows<IllegalStateException> { FalkorDbPropositionRepository(raw) }
+            access.write("MATCH (p:DiceProposition {extra:true}) DELETE p")
+            val recovered = FalkorDbPropositionRepository(raw)
+            val fact = proposition("after-repair")
+            recovered.save(fact)
+            assertEquals(fact, FalkorDbPropositionRepository(raw).findById(fact.id))
+            val constraints = raw.schemaGrammar.parseConstraintRows(access.query(raw.schemaGrammar.listConstraintsQuery()))
+            assertEquals("OPERATIONAL", constraints.single { it.label == "DiceProposition" }.status)
+        } finally {
+            raw.end()
+        }
+    }
+
+    @Test
+    fun `schema creation recovers lost responses without relying on exception text`() {
+        val raw = server.provider("response_${UUID.randomUUID().toString().replace("-", "")}")
+        val indexResponseLost = AtomicBoolean(false)
+        val constraintResponseLost = AtomicBoolean(false)
+        try {
+            val provider = object : ConnectionProvider by raw, NativeSchemaCommandExecutor by raw {
+                override fun connect(): Connection {
+                    val delegate = raw.connect()
+                    return object : Connection by delegate {
+                        override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
+                            val result = delegate.query(spec)
+                            if (spec.statement!!.text.startsWith("CREATE INDEX") && indexResponseLost.compareAndSet(false, true)) {
+                                throw IllegalStateException("Index response unavailable", RuntimeException("Driver wrapper"))
+                            }
+                            return result
+                        }
+                    }
+                }
+
+                override fun executeNativeSchemaCommand(args: List<String>): Any? {
+                    raw.executeNativeSchemaCommand(args)
+                    constraintResponseLost.set(true)
+                    throw IllegalStateException("Constraint response unavailable", RuntimeException("Driver wrapper"))
+                }
+            }
+            val recovered = FalkorDbPropositionRepository(provider)
+            assertTrue(indexResponseLost.get())
+            assertTrue(constraintResponseLost.get())
+            recovered.save(proposition())
+            assertEquals(proposition(), FalkorDbPropositionRepository(raw).findById("one"))
+        } finally {
+            raw.end()
+        }
+    }
+
+    @Test
+    fun `schema creation errors propagate when the required identity is absent`() {
+        val raw = server.provider("failure_${UUID.randomUUID().toString().replace("-", "")}")
+        val failure = IllegalStateException("Schema command refused")
+        try {
+            val provider = object : ConnectionProvider by raw, NativeSchemaCommandExecutor by raw {
+                override fun executeNativeSchemaCommand(args: List<String>): Any? = throw failure
+            }
+            assertSame(failure, assertThrows<IllegalStateException> { FalkorDbPropositionRepository(provider) })
+            assertTrue(FalkorDbAccess(raw, null).query("MATCH (p:DiceProposition) RETURN {id:p.id} AS result").isEmpty())
         } finally {
             raw.end()
         }
