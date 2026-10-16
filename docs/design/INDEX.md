@@ -69,6 +69,14 @@ you need.
 
 ## Retrieval & query
 
+- [scoped-proposition-reads.md](scoped-proposition-reads.md) explains finite host-authorized
+  context sets, conjunctive filters, frozen read specifications and native transaction semantics.
+- [filtered-vector-search.md](filtered-vector-search.md) covers filter-before-top-K behavior,
+  exact eligible-row budgets, explicit failures and manual backend migration.
+- [authorized-multi-context-memory.md](authorized-multi-context-memory.md) describes scoped
+  memory construction, shared retrieval, eager publication and retained singleton APIs.
+- [memory-visibility.md](memory-visibility.md) covers host row grants, approved field projection,
+  strict search influence and policy replacement.
 - [retrieval-and-discovery.md](retrieval-and-discovery.md) — how propositions come back out:
   vector search, graph walks, temporal windows, trust filtering at read time, and surfacing
   connections nobody explicitly queried for. Ends with why the embedding model is a latency
