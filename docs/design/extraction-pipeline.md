@@ -109,6 +109,18 @@ the entities they mention — pure work that depends only on the chunk in front 
 takes those candidates and decides *which real entities* they refer to, which means consulting a
 resolver that accumulates identity across the whole run.
 
+`LlmPropositionExtractor.extract()` checks model-suggested mentions before returning candidates:
+a span must be nonblank and occur as a literal substring of its own proposition text, ignoring
+case. Matching does not trim or normalize spans, interpret regex syntax, or require whole words.
+A mention present only in the source chunk is dropped; a mention present only in the generated
+proposition is retained. Invalid mentions are dropped without discarding the proposition, even
+when no mentions remain. All other proposition fields and valid mention metadata, order, and
+duplicates are preserved, and the model response is not mutated.
+
+This checks consistency with the generated statement; it does not prove the statement is supported
+by its source. Custom extractor implementations retain their own behavior. Caller-provided
+`MentionFilter` rules remain a separate, optional check during conversion to suggested entities.
+
 Keeping them as distinct stages is what makes safe concurrency possible at all. The extraction
 stage (`extractStage`) touches no resolver and shares no state between chunks, so two chunks can be
 extracted at the same time without stepping on each other. The resolution stage (`resolveStage`)

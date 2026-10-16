@@ -15,6 +15,12 @@
  */
 package com.embabel.dice.proposition.extraction
 
+import com.embabel.agent.api.common.Ai
+import com.embabel.agent.api.common.CreationExample
+import com.embabel.agent.api.common.PromptRunner
+import com.embabel.agent.rag.model.Chunk
+import com.embabel.common.ai.model.LlmOptions
+import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.core.DynamicType
 import com.embabel.agent.core.ValidatedPropertyDefinition
@@ -26,16 +32,145 @@ import com.embabel.dice.common.validation.NoVagueReferences
 import com.embabel.dice.proposition.SuggestedMention
 import com.embabel.dice.proposition.SuggestedProposition
 import com.embabel.dice.proposition.SuggestedPropositions
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
 /**
- * Tests for LlmPropositionExtractor's mention filtering functionality.
- *
- * Note: This test focuses on the toSuggestedEntities() method's filtering logic.
- * Full LLM extraction tests would require mocking the LLM client.
+ * Tests for extraction span consistency and optional mention filters.
  */
 class LlmPropositionExtractorTest {
+
+    private fun extract(
+        response: PropositionsResult,
+        sourceText: String = "SourceOnly appears in the original chunk",
+    ): SuggestedPropositions {
+        val ai = mockk<Ai>()
+        val runner = mockk<PromptRunner>()
+        val creating = mockk<PromptRunner.Creating<PropositionsResult>>()
+        val chunk = mockk<Chunk>()
+        val context = mockk<SourceAnalysisContext>()
+        every { chunk.id } returns "mention-chunk"
+        every { chunk.text } returns sourceText
+        every { context.perspective } returns null
+        every { context.promptVariables } returns emptyMap()
+        every { ai.withLlm(any<LlmOptions>()) } returns runner
+        every { runner.withId("extract-propositions") } returns runner
+        every { runner.creating(PropositionsResult::class.java) } returns creating
+        every { creating.withExamples(any<List<CreationExample<PropositionsResult>>>()) } returns creating
+        every { creating.fromTemplate(any(), any()) } returns response
+
+        return LlmPropositionExtractor(LlmOptions(), ai).extract(chunk, context)
+    }
+
+    @Test
+    fun `extract drops blank and absent spans while preserving fields metadata order and duplicates`() {
+        val alice = SuggestedMention("Alice", "Person", "person-alice", "SUBJECT")
+        val company = SuggestedMention("Acme", "Company", "company-acme", "OBJECT")
+        val originalMentions = listOf(
+            SuggestedMention("", "Person"),
+            alice,
+            SuggestedMention("   ", "Person"),
+            SuggestedMention("Absent", "Person"),
+            company,
+            alice,
+        )
+        val proposition = SuggestedProposition(
+            text = "Alice works at Acme",
+            mentions = originalMentions,
+            confidence = 0.83,
+            decay = 0.17,
+            importance = 0.72,
+            reasoning = "Employment statement",
+            grounding = listOf("evidence-1", "evidence-2"),
+            source = "custom-source",
+        )
+        val response = PropositionsResult(listOf(proposition))
+
+        val result = extract(response)
+
+        assertEquals("mention-chunk", result.chunkId)
+        assertEquals(listOf(proposition.copy(mentions = listOf(alice, company, alice))), result.propositions)
+        assertSame(alice, result.propositions.single().mentions.first())
+        assertSame(company, result.propositions.single().mentions[1])
+        assertSame(alice, result.propositions.single().mentions.last())
+        assertEquals(listOf(proposition), response.propositions)
+        assertSame(originalMentions, response.propositions.single().mentions)
+        assertEquals(6, originalMentions.size)
+    }
+
+    @Test
+    fun `extract matches literal case insensitive Unicode and partial word spans without trimming`() {
+        val mentions = listOf(
+            SuggestedMention("Alice", "Person"),
+            SuggestedMention("aLiCe", "Person"),
+            SuggestedMention("ÉLODIE", "Person"),
+            SuggestedMention("[x].*", "Token"),
+            SuggestedMention("art", "Token"),
+            SuggestedMention("a.b", "Token"),
+            SuggestedMention(" Alice ", "Person"),
+        )
+        val proposition = SuggestedProposition(
+            text = "Alice meets Élodie beside [x].* in a cart with axb",
+            mentions = mentions,
+            confidence = 0.9,
+        )
+
+        val result = extract(PropositionsResult(listOf(proposition)))
+
+        assertEquals(listOf(proposition.copy(mentions = mentions.take(5))), result.propositions)
+    }
+
+    @Test
+    fun `extract checks each proposition rather than chunk text or other propositions`() {
+        val propositionOnly = SuggestedMention("PropositionOnly", "Person")
+        val sourceOnly = SuggestedMention("SourceOnly", "Person")
+        val first = SuggestedProposition(
+            text = "PropositionOnly works here",
+            mentions = listOf(sourceOnly, propositionOnly),
+            confidence = 0.8,
+        )
+        val second = SuggestedProposition(
+            text = "An unrelated statement",
+            mentions = listOf(propositionOnly, sourceOnly),
+            confidence = 0.7,
+        )
+
+        val result = extract(PropositionsResult(listOf(first, second)))
+
+        assertEquals(listOf(first.copy(mentions = listOf(propositionOnly)), second.copy(mentions = emptyList())), result.propositions)
+    }
+
+    @Test
+    fun `extract retains all invalid no mention empty and whitespace propositions`() {
+        val invalidMentions = listOf(
+            SuggestedMention("", "Person"),
+            SuggestedMention(" \t\n", "Person"),
+            SuggestedMention("Absent", "Person"),
+        )
+        val propositions = listOf(
+            SuggestedProposition("An entity-free fact", invalidMentions, 0.8),
+            SuggestedProposition("No mentions supplied", confidence = 0.7),
+            SuggestedProposition("", invalidMentions, 0.6),
+            SuggestedProposition(" \t\n", invalidMentions, 0.5),
+        )
+        val response = PropositionsResult(propositions)
+
+        val result = extract(response)
+
+        assertEquals(propositions.map { it.copy(mentions = emptyList()) }, result.propositions)
+        assertEquals(propositions, response.propositions)
+        assertEquals(invalidMentions, response.propositions.first().mentions)
+    }
+
+    @Test
+    fun `extract retains empty model output and chunk id`() {
+        val result = extract(PropositionsResult(emptyList()))
+
+        assertEquals("mention-chunk", result.chunkId)
+        assertTrue(result.propositions.isEmpty())
+    }
 
     // Test schema with validation rules
     private val companyType = DynamicType(

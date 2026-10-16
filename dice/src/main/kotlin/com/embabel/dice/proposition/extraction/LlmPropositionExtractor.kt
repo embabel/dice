@@ -288,7 +288,13 @@ data class LlmPropositionExtractor(
 
         return SuggestedPropositions(
             chunkId = chunk.id,
-            propositions = result.propositions,
+            propositions = result.propositions.map { proposition ->
+                proposition.copy(
+                    mentions = proposition.mentions.filter { mention ->
+                        mention.span.isNotBlank() && proposition.text.contains(mention.span, ignoreCase = true)
+                    },
+                )
+            },
         )
     }
 
