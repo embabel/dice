@@ -344,6 +344,115 @@ class PolicyMemoryTest {
     }
 
     @Test
+    fun `hidden revision inputs reject real view and memory reads before backend access`() {
+        val a = row("a")
+        val revisionFields = setOf(MemoryField.CONTENT_REVISED, MemoryField.METADATA_REVISED)
+        val criteria = listOf(
+            PropositionQuery(revisedAfter = now), PropositionQuery(revisedBefore = now),
+            PropositionQuery(revisedAfter = now, revisedBefore = now),
+        )
+        revisionFields.forEach { omitted ->
+            criteria.forEach { query ->
+                val backend = Backend().apply { rows += a }
+                val projection = RowProjection.text(ApprovedText.Literal("public summary"))
+                    .withFields(revisionFields - omitted)
+                val base = view(backend, listOf(grant(a, projection)))
+                val restricted = base.restrict(query)
+                val reads = listOf<() -> Any?>(
+                    { restricted.snapshot(now, 2.0).count() },
+                    { restricted.snapshot(now, 2.0).list(1) },
+                    { restricted.snapshot(now, 2.0).get(key(a)) },
+                    { output(memory(restricted, plan(*PolicySearchTier.entries.toTypedArray())), """{"query":"public"}""") },
+                    { memory(base).withEagerQuery(query).contribution() },
+                    { memory(base).withEagerQuery(query.copy(orderBy = PropositionQuery.OrderBy.REVISED_DESC)) },
+                )
+                reads.forEach { read ->
+                    val failure = assertThrows<ScopedReadException> { read() }
+                    assertEquals("INVALID_SCOPED_READ", failure.code)
+                    assertNull(failure.cause)
+                    assertFalse(failure.toString().contains("hidden"))
+                }
+                assertEquals(0, backend.calls)
+                assertEquals(0, backend.countCalls)
+                assertEquals(0, backend.strictCalls)
+                assertEquals(0, backend.ordinaryQueries)
+                assertEquals(0, backend.vectorCalls)
+                assertTrue(backend.specs.isEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun `approved revision inputs preserve inclusive last touched boundaries in view and memory`() {
+        val revisions = listOf(
+            row("earlier").copy(contentRevised = now.minusSeconds(1), metadataRevised = now.minusSeconds(2)),
+            row("content-boundary").copy(metadataRevised = now.minusSeconds(1)),
+            row("metadata-boundary").copy(contentRevised = now.minusSeconds(1)),
+            row("content-later").copy(contentRevised = now.plusSeconds(1)),
+            row("metadata-later").copy(metadataRevised = now.plusSeconds(1)),
+        )
+        val cases = listOf(
+            PropositionQuery(revisedAfter = now) to revisions.drop(1),
+            PropositionQuery(revisedBefore = now) to revisions.take(3),
+            PropositionQuery(revisedAfter = now, revisedBefore = now) to revisions.subList(1, 3),
+        )
+        HiddenFieldInfluence.entries.forEach { influence ->
+            val backend = Backend().apply { rows += revisions }
+            val grants = revisions.map { row ->
+                val fields = if (influence == HiddenFieldInfluence.STRICT) {
+                    setOf(MemoryField.CONTENT_REVISED, MemoryField.METADATA_REVISED)
+                } else emptySet()
+                grant(row, RowProjection.text(ApprovedText.Literal(row.id)).withFields(fields))
+            }
+            val base = view(backend, grants, influence = influence)
+            cases.forEach { (query, expected) ->
+                val restricted = base.restrict(query)
+                val session = restricted.snapshot(now, 2.0)
+                assertEquals(expected.size.toLong(), session.count())
+                assertEquals(expected.map { it.id }, session.list(5).map { it.text })
+                revisions.forEach { row -> assertEquals(row.id.takeIf { row in expected }, session.get(key(row))?.text) }
+                assertEquals(expected.size, lines(output(memory(restricted))).size)
+                assertEquals(expected.size, lines(memory(base).withEagerQuery(query).contribution()).size)
+            }
+            assertTrue(backend.calls > 0)
+        }
+    }
+
+    @Test
+    fun `approved metadata revision changes membership while fixed content revision stays below after bound`() {
+        val old = row("a").copy(contentRevised = now.minusSeconds(60), metadataRevised = now.minusSeconds(60))
+        val backend = Backend().apply { rows += old }
+        val projection = RowProjection.text(ApprovedText.Literal("public summary"))
+            .withFields(setOf(MemoryField.CONTENT_REVISED, MemoryField.METADATA_REVISED))
+        val restricted = view(backend, listOf(grant(old, projection))).restrict(PropositionQuery(revisedAfter = now))
+        assertEquals(0L, restricted.snapshot(now, 2.0).count())
+        assertTrue(restricted.snapshot(now, 2.0).list(1).isEmpty())
+        backend.rows[0] = old.copy(metadataRevised = now)
+        val session = restricted.snapshot(now, 2.0)
+        assertEquals(1L, session.count())
+        assertEquals("public summary", session.list(1).single().text)
+        assertEquals("public summary", session.get(key(old))?.text)
+        assertEquals(1, lines(output(memory(restricted, plan(PolicySearchTier.KEYWORD)), """{"query":"public"}""")).size)
+    }
+
+    @Test
+    fun `permissive revised ordering follows both actual revision inputs without field grants`() {
+        val metadataLatest = row("metadata-latest").copy(metadataRevised = now.plusSeconds(2))
+        val contentNext = row("content-next").copy(contentRevised = now.plusSeconds(1))
+        val oldest = row("oldest")
+        val backend = InMemoryPropositionRepository()
+        listOf(oldest, contentNext, metadataLatest).forEach(backend::save)
+        val grants = listOf(oldest, contentNext, metadataLatest).map { grant(it, RowProjection.text(ApprovedText.Literal(it.id))) }
+        val policy = RowPolicy.of(stamp, grants, HiddenFieldInfluence.ALLOW_SEARCH_INFLUENCE)
+        val view = PolicyReadView.open(ScopedPropositionReader.open(backend, scope), policy)
+        val selected = view.snapshot(now, 2.0).eagerList(PropositionQuery(orderBy = PropositionQuery.OrderBy.REVISED_DESC), 3)
+        assertEquals(listOf("metadata-latest", "content-next", "oldest"), selected.map { it.value.text })
+        val rendered = memory(view).withEagerQuery(PropositionQuery(orderBy = PropositionQuery.OrderBy.REVISED_DESC)).contribution()
+        assertTrue(rendered.indexOf("metadata-latest") < rendered.indexOf("content-next"))
+        assertTrue(rendered.indexOf("content-next") < rendered.indexOf("oldest"))
+    }
+
+    @Test
     fun `strict nonordinal eager ordering fails preflight even with all fields approved`() {
         val a = row("a")
         val backend = Backend().apply { rows += a }
