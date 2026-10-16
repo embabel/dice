@@ -27,64 +27,49 @@ import com.embabel.dice.proposition.PropositionKey
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStoreType
-import com.embabel.dice.proposition.ReadOrder
+import com.embabel.dice.proposition.ReadClock
 import com.embabel.dice.proposition.ScopedReadSpec
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.provenance.ConnectorRef
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.temporal.TemporalMetadata
-import org.drivine.connection.Connection
-import org.drivine.connection.ConnectionProvider
-import org.drivine.connection.DataSourceMap
-import org.drivine.connection.DatabaseRegistry
-import org.drivine.connection.FalkorDbConnectionProvider
-import org.drivine.connection.NativeSchemaCommandExecutor
-import org.drivine.query.QuerySpecification
-import org.drivine.transaction.DrivineTransactionObject
-import org.drivine.transaction.TransactionContextHolder
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.assertThrows
-import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import java.time.Instant
-import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
-import kotlin.test.assertSame
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @Testcontainers
 class FalkorDbPropositionRepositoryIntegrationTest {
-    private lateinit var first: FalkorDbConnectionProvider
-    private lateinit var second: FalkorDbConnectionProvider
+    private lateinit var first: FalkorDbTestGraph
+    private lateinit var second: FalkorDbTestGraph
     private lateinit var repository: FalkorDbPropositionRepository
     private lateinit var other: FalkorDbPropositionRepository
     private val now = Instant.parse("2026-04-05T06:07:08.123456789Z")
+    private val clock = ReadClock(now, 2.0)
 
     @BeforeEach
     fun setUp() {
-        val graph = "propositions_${UUID.randomUUID().toString().replace("-", "")}"
-        first = server.provider(graph)
-        second = server.provider(graph)
-        repository = FalkorDbPropositionRepository(first)
-        other = FalkorDbPropositionRepository(second)
+        first = server.graph()
+        second = server.graph(first.graph)
+        repository = FalkorDbPropositionRepository(first.objects, first.persistence)
+        other = FalkorDbPropositionRepository(second.objects, second.persistence)
     }
 
     @AfterEach
-    fun closeProviders() {
-        first.end()
-        second.end()
+    fun closeGraphs() {
+        first.close()
+        second.close()
     }
 
     private fun proposition(id: String = "one", context: String = "a"): Proposition = Proposition(
@@ -129,7 +114,8 @@ class FalkorDbPropositionRepositoryIntegrationTest {
     private fun fixtures(): List<Proposition> = (0..8).map { i ->
         proposition(listOf("a", "aa", "𐀀", "\uE000", "🙂", "f", "g", "h", "i")[i], if (i % 2 == 0) "a" else "b").copy(
             text = if (i % 3 == 0) "Alpha beta" else if (i % 3 == 1) "ALPHA" else "unrelated",
-            confidence = 0.1 + i * 0.1, decay = 0.05 * i, importance = i / 10.0, level = i % 4,
+            // FalkorDB returns doubles to 15 significant digits, so the fixtures use values that survive that.
+            confidence = (1 + i) / 10.0, decay = i / 20.0, importance = i / 10.0, level = i % 4,
             reinforceCount = i, pinned = i % 2 == 0,
             mentions = if (i % 3 == 0) proposition().mentions else listOf(EntityMention("beta", "Topic", "entity-b")),
             status = if (i % 2 == 0) PropositionStatus.ACTIVE else PropositionStatus.SUPERSEDED,
@@ -178,11 +164,11 @@ class FalkorDbPropositionRepositoryIntegrationTest {
             val query = criteria.copy(effectiveConfidenceAsOf = now)
             assertEquals(oracle.query(query).map { it.id }.toSet(), repository.query(query).map { it.id }.toSet(), "legacy filter $index")
             assertEquals(oracle.count(query), repository.count(query), "legacy count $index")
-            val spec = ScopedReadSpec.at(now, 2.0).restrict(scope, query)
-            assertEquals(oracle.count(scope, spec), repository.count(scope, spec), "scoped count $index")
-            for (order in ReadOrder.entries) {
+            val spec = ScopedReadSpec.of(scope).restrict(criteria)
+            assertEquals(oracle.count(spec, clock), repository.count(spec, clock), "scoped count $index")
+            for (order in PropositionQuery.OrderBy.entries) {
                 for (limit in listOf(0, 3, 20)) {
-                    assertEquals(oracle.query(scope, spec, order, limit), repository.query(scope, spec, order, limit),
+                    assertEquals(oracle.query(spec, clock, order, limit), repository.query(spec, clock, order, limit),
                         "filter=$index order=$order limit=$limit")
                 }
             }
@@ -203,9 +189,10 @@ class FalkorDbPropositionRepositoryIntegrationTest {
         repository.saveAll(rows)
         oracle.saveAll(rows)
         for (asOf in listOf(now.minusNanos(1), now, now.plusNanos(1))) {
-            val spec = ScopedReadSpec.at(asOf, 2.0)
-            assertEquals(oracle.query(scope, spec, ReadOrder.EFFECTIVE_CONFIDENCE_DESC, 20),
-                repository.query(scope, spec, ReadOrder.EFFECTIVE_CONFIDENCE_DESC, 20))
+            val spec = ScopedReadSpec.of(scope)
+            val at = ReadClock(asOf, 2.0)
+            assertEquals(oracle.query(spec, at, PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC, 20),
+                repository.query(spec, at, PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC, 20))
         }
     }
 
@@ -217,28 +204,57 @@ class FalkorDbPropositionRepositoryIntegrationTest {
         oracle.saveAll(rows)
         val scope = ContextReadScope.ofValues(listOf("a", "b"))
         val keys = rows.map { PropositionKey(it.contextId.value, it.id) }
-        val spec = ScopedReadSpec.at(now, 2.0)
-            .includingOnly(scope, keys.take(7)).includingOnly(scope, keys.drop(2))
-            .excluding(scope, listOf(keys[3], PropositionKey("b", rows[4].id)))
-            .restrict(scope, PropositionQuery(minConfidence = 0.3, limit = 1))
-        assertEquals(oracle.count(scope, spec), repository.count(scope, spec))
-        assertEquals(oracle.query(scope, spec, ReadOrder.NONE, 1), repository.query(scope, spec, ReadOrder.NONE, 1))
+        val spec = ScopedReadSpec.of(scope)
+            .includingOnly(keys.take(7)).includingOnly(keys.drop(2))
+            .excluding(listOf(keys[3], PropositionKey("b", rows[4].id)))
+            .restrict(PropositionQuery(minConfidence = 0.3))
+        assertEquals(oracle.count(spec, clock), repository.count(spec, clock))
+        assertEquals(oracle.query(spec, clock, PropositionQuery.OrderBy.NONE, 1), repository.query(spec, clock, PropositionQuery.OrderBy.NONE, 1))
         val tokens = listOf(" Alpha ", "BETA", "alpha", "", "   ")
-        assertEquals(oracle.keywordOverlap(scope, spec, tokens, 2), repository.keywordOverlap(scope, spec, tokens, 2))
-        val empty = spec.includingOnly(scope, emptyList())
-        assertEquals(0L, repository.count(scope, empty))
-        assertTrue(repository.query(scope, empty, ReadOrder.NONE, 10).isEmpty())
-        assertTrue(repository.keywordOverlap(scope, spec, listOf("  "), 10).isEmpty())
-        assertTrue(repository.keywordOverlap(scope, spec, tokens, 0).isEmpty())
+        assertEquals(oracle.keywordOverlap(spec, clock, tokens, 2), repository.keywordOverlap(spec, clock, tokens, 2))
+        val empty = spec.includingOnly(emptyList())
+        assertEquals(0L, repository.count(empty, clock))
+        assertTrue(repository.query(empty, clock, PropositionQuery.OrderBy.NONE, 10).isEmpty())
+        assertTrue(repository.keywordOverlap(spec, clock, listOf("  "), 10).isEmpty())
+        assertTrue(repository.keywordOverlap(spec, clock, tokens, 0).isEmpty())
         val isolated = ContextReadScope.ofValues(listOf("missing"))
-        assertEquals(0L, repository.count(isolated, ScopedReadSpec.at(now, 2.0)))
+        assertEquals(0L, repository.count(ScopedReadSpec.of(isolated), clock))
+    }
+
+    @Test
+    fun `a fragment without its own instant is evaluated at the read clock`() {
+        val saved = proposition("one")
+        repository.save(saved)
+        val fragment = PropositionQuery(minEffectiveConfidence = 0.1)
+        // The window closes a nanosecond after the read instant, so the row passes then and fails at the wall clock.
+        assertTrue(saved.effectiveConfidenceAt(now, fragment.decayK) >= 0.1)
+        assertTrue(saved.effectiveConfidenceAt(Instant.now(), fragment.decayK) < 0.1)
+        val spec = ScopedReadSpec.of(ContextReadScope.ofValues(listOf("a"))).restrict(fragment)
+        val at = ReadClock(now, 2.0)
+        assertEquals(1L, repository.count(spec, at))
+        assertEquals(listOf(saved), repository.query(spec, at, PropositionQuery.OrderBy.NONE, 10))
+        assertEquals(listOf(saved), repository.keywordOverlap(spec, at, listOf("alpha"), 10))
+    }
+
+    @Test
+    fun `scoped and keyword ties order by context then id in code point order`() {
+        // U+FF61 sorts before U+10000 by code point but after it in UTF-16, where U+10000 is U+D800 U+DC00.
+        repository.saveAll(listOf(proposition("𐀀", "｡"), proposition("｡", "｡"), proposition("c1", "𐀀"), proposition("c2", "a")))
+        val spec = ScopedReadSpec.of(ContextReadScope.ofValues(listOf("a", "｡", "𐀀")))
+        val clock = ReadClock(now, 2.0)
+        // Context first ("a", then "｡", then "𐀀"), then id. The hex columns give c2, c1, 𐀀, ｡ instead.
+        val expected = listOf("c2", "｡", "𐀀", "c1")
+        for (order in PropositionQuery.OrderBy.entries) {
+            assertEquals(expected, repository.query(spec, clock, order, 10).map { it.id }, order.name)
+        }
+        assertEquals(expected, repository.keywordOverlap(spec, clock, listOf("alpha"), 10).map { it.id })
     }
 
     @Test
     fun `legacy keyword overlap retains base limit and case-insensitive token semantics`() {
         val oracle = InMemoryPropositionRepository()
         val rows = (0..3).map { i -> proposition("keyword-$i").copy(
-            confidence = 0.2 + i * 0.2, decay = 0.0, temporal = null,
+            confidence = (1 + i) / 5.0, decay = 0.0, temporal = null,
             text = listOf("Alpha beta", "ALPHA", "beta", "ı İ alpha")[i],
         ) }
         repository.saveAll(rows)
@@ -331,224 +347,6 @@ class FalkorDbPropositionRepositoryIntegrationTest {
             assertEquals((0..1).flatMap { w -> (0..14).map { n -> evidence("$w-$n") } }.toSet(), stored.provenanceEntries.toSet())
         } finally {
             pool.shutdownNow()
-        }
-    }
-
-    private fun intercept(before: (QuerySpecification<*>) -> Unit): ConnectionProvider = object : ConnectionProvider by first, NativeSchemaCommandExecutor by first {
-        override fun connect(): Connection {
-            val delegate = first.connect()
-            return object : Connection by delegate {
-                override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
-                    before(spec)
-                    return delegate.query(spec)
-                }
-            }
-        }
-    }
-
-    @Test
-    fun `stale CAS recomputes pin and evidence updates against current aggregate`() {
-        repository.save(proposition())
-        val armed = AtomicBoolean(true)
-        val provider = intercept { spec ->
-            if (spec.statement!!.text.contains("AS accepted") && armed.compareAndSet(true, false)) {
-                other.addProvenance("one", listOf(evidence("concurrent")))
-            }
-        }
-        val raced = FalkorDbPropositionRepository(provider)
-        assertFalse(assertNotNull(raced.unpin("one")).pinned)
-        assertTrue(other.provenanceOf("one").contains(evidence("concurrent")))
-        assertFalse(armed.get())
-    }
-
-    @Test
-    fun `delete between read and CAS leaves no empty node and mutation returns missing`() {
-        repository.save(proposition())
-        val armed = AtomicBoolean(true)
-        val provider = intercept { spec ->
-            if (spec.statement!!.text.contains("AS accepted") && armed.compareAndSet(true, false)) {
-                assertTrue(other.delete("one"))
-            }
-        }
-        assertNull(FalkorDbPropositionRepository(provider).addProvenance("one", listOf(evidence("late"))))
-        assertEquals(0, repository.count())
-        assertNull(repository.findById("one"))
-    }
-
-    @Test
-    fun `failed native replacement rolls back aggregate and mirrored query fields`() {
-        val p = proposition()
-        repository.save(p)
-        val armed = AtomicBoolean(true)
-        val provider = intercept { spec ->
-            if (spec.statement!!.text.contains("AS accepted") && armed.compareAndSet(true, false)) {
-                val properties = spec.parameters["properties"] as Map<*, *>
-                spec.bind(spec.parameters + ("properties" to (properties + ("invalid" to mapOf("nested" to "not a graph property")))))
-            }
-        }
-        assertThrows<RuntimeException> { FalkorDbPropositionRepository(provider).save(p.copy(text = "changed", level = 99)) }
-        assertEquals(p, other.findById(p.id))
-        assertTrue(other.findByMinLevel(99).isEmpty())
-        assertEquals(listOf(p), other.findByMinLevel(2))
-    }
-
-    @Test
-    fun `caller Spring and Drivine transactions are rejected before any database call`() {
-        val calls = AtomicInteger()
-        val provider = intercept { calls.incrementAndGet() }
-        val guarded = FalkorDbPropositionRepository(provider)
-        calls.set(0)
-        TransactionSynchronizationManager.setActualTransactionActive(true)
-        try {
-            assertThrows<IllegalStateException> { guarded.save(proposition()) }
-            assertThrows<IllegalStateException> { guarded.delete("one") }
-            assertThrows<IllegalStateException> { guarded.pin("one") }
-            assertThrows<IllegalStateException> { guarded.touchAccessed(emptyList()) }
-            assertThrows<IllegalStateException> { guarded.clearAll() }
-        } finally {
-            TransactionSynchronizationManager.setActualTransactionActive(false)
-        }
-        val holder = TransactionContextHolder(DatabaseRegistry(DataSourceMap()))
-        holder.currentTransaction = DrivineTransactionObject()
-        try {
-            assertThrows<IllegalStateException> { FalkorDbPropositionRepository(provider, holder).save(proposition()) }
-        } finally {
-            holder.currentTransaction = null
-        }
-        assertEquals(0, calls.get())
-        assertEquals(0, repository.count())
-    }
-
-    @Test
-    fun `scoped select and keyword hydrate only selected rows in one statement`() {
-        repository.saveAll(fixtures())
-        val calls = AtomicInteger()
-        var observing = false
-        val provider = intercept { spec ->
-            if (observing) {
-                calls.incrementAndGet()
-                assertTrue(spec.statement!!.text.contains("LIMIT"))
-                assertTrue(spec.statement!!.text.contains("RETURN {aggregate:"))
-            }
-        }
-        val native = FalkorDbPropositionRepository(provider)
-        observing = true
-        val scope = ContextReadScope.ofValues(listOf("a", "b"))
-        val spec = ScopedReadSpec.at(now, 2.0)
-        assertEquals(2, native.query(scope, spec, ReadOrder.CREATED_DESC, 2).size)
-        assertEquals(2, native.keywordOverlap(scope, spec, listOf("alpha"), 2).size)
-        assertEquals(2, calls.get())
-    }
-
-    @Test
-    fun `concurrent cold starts await uniqueness and reconnect accepts existing operational schema`() {
-        val graph = "cold_${UUID.randomUUID().toString().replace("-", "")}"
-        val providers = listOf(server.provider(graph), server.provider(graph))
-        val pool = Executors.newFixedThreadPool(2)
-        val start = CountDownLatch(1)
-        try {
-            val jobs = providers.map { provider -> pool.submit {
-                check(start.await(10, TimeUnit.SECONDS))
-                val store = FalkorDbPropositionRepository(provider)
-                store.save(proposition())
-            } }
-            start.countDown()
-            jobs.forEach { it.get(30, TimeUnit.SECONDS) }
-            val restored = FalkorDbPropositionRepository(providers.first())
-            assertEquals(1, restored.count())
-            assertEquals(proposition(), restored.findById("one"))
-            val provider = providers.first()
-            val constraints = provider.schemaGrammar.parseConstraintRows(
-                FalkorDbAccess(provider, null).query(provider.schemaGrammar.listConstraintsQuery()),
-            )
-            assertEquals("OPERATIONAL", constraints.single { it.label == "DiceProposition" } .status)
-        } finally {
-            pool.shutdownNow()
-            providers.forEach { it.end() }
-        }
-    }
-
-    @Test
-    fun `duplicate existing identities and failed constraints reject startup before business writes`() {
-        val raw = server.provider("duplicates_${UUID.randomUUID().toString().replace("-", "")}")
-        try {
-            val access = FalkorDbAccess(raw, null)
-            access.query("CREATE (:DiceProposition {id:'duplicate'}) CREATE (:DiceProposition {id:'duplicate'}) RETURN {value:1} AS result")
-            repeat(2) { assertThrows<RuntimeException> { FalkorDbPropositionRepository(raw) } }
-            assertEquals(2L, (access.query("MATCH (p:DiceProposition) RETURN {value:count(p)} AS result").single()["value"] as Number).toLong())
-            assertEquals(0L, (access.query("MATCH (p:DiceProposition) WHERE p.aggregate IS NOT NULL RETURN {value:count(p)} AS result").single()["value"] as Number).toLong())
-        } finally {
-            raw.end()
-        }
-    }
-
-    @Test
-    fun `repaired duplicate identities recover failed constraints on restart`() {
-        val raw = server.provider("repaired_${UUID.randomUUID().toString().replace("-", "")}")
-        try {
-            val access = FalkorDbAccess(raw, null)
-            access.write("CREATE (:DiceProposition {id:'duplicate', extra:false}), (:DiceProposition {id:'duplicate', extra:true})")
-            assertThrows<IllegalStateException> { FalkorDbPropositionRepository(raw) }
-            access.write("MATCH (p:DiceProposition {extra:true}) DELETE p")
-            val recovered = FalkorDbPropositionRepository(raw)
-            val fact = proposition("after-repair")
-            recovered.save(fact)
-            assertEquals(fact, FalkorDbPropositionRepository(raw).findById(fact.id))
-            val constraints = raw.schemaGrammar.parseConstraintRows(access.query(raw.schemaGrammar.listConstraintsQuery()))
-            assertEquals("OPERATIONAL", constraints.single { it.label == "DiceProposition" }.status)
-        } finally {
-            raw.end()
-        }
-    }
-
-    @Test
-    fun `schema creation recovers lost responses without relying on exception text`() {
-        val raw = server.provider("response_${UUID.randomUUID().toString().replace("-", "")}")
-        val indexResponseLost = AtomicBoolean(false)
-        val constraintResponseLost = AtomicBoolean(false)
-        try {
-            val provider = object : ConnectionProvider by raw, NativeSchemaCommandExecutor by raw {
-                override fun connect(): Connection {
-                    val delegate = raw.connect()
-                    return object : Connection by delegate {
-                        override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
-                            val result = delegate.query(spec)
-                            if (spec.statement!!.text.startsWith("CREATE INDEX") && indexResponseLost.compareAndSet(false, true)) {
-                                throw IllegalStateException("Index response unavailable", RuntimeException("Driver wrapper"))
-                            }
-                            return result
-                        }
-                    }
-                }
-
-                override fun executeNativeSchemaCommand(args: List<String>): Any? {
-                    raw.executeNativeSchemaCommand(args)
-                    constraintResponseLost.set(true)
-                    throw IllegalStateException("Constraint response unavailable", RuntimeException("Driver wrapper"))
-                }
-            }
-            val recovered = FalkorDbPropositionRepository(provider)
-            assertTrue(indexResponseLost.get())
-            assertTrue(constraintResponseLost.get())
-            recovered.save(proposition())
-            assertEquals(proposition(), FalkorDbPropositionRepository(raw).findById("one"))
-        } finally {
-            raw.end()
-        }
-    }
-
-    @Test
-    fun `schema creation errors propagate when the required identity is absent`() {
-        val raw = server.provider("failure_${UUID.randomUUID().toString().replace("-", "")}")
-        val failure = IllegalStateException("Schema command refused")
-        try {
-            val provider = object : ConnectionProvider by raw, NativeSchemaCommandExecutor by raw {
-                override fun executeNativeSchemaCommand(args: List<String>): Any? = throw failure
-            }
-            assertSame(failure, assertThrows<IllegalStateException> { FalkorDbPropositionRepository(provider) })
-            assertTrue(FalkorDbAccess(raw, null).query("MATCH (p:DiceProposition) RETURN {id:p.id} AS result").isEmpty())
-        } finally {
-            raw.end()
         }
     }
 

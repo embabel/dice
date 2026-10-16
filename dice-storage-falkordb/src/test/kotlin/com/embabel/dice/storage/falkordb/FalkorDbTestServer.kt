@@ -18,16 +18,26 @@ package com.embabel.dice.storage.falkordb
 import com.github.dockerjava.api.model.ExposedPort
 import com.github.dockerjava.api.model.PortBinding
 import com.github.dockerjava.api.model.Ports
+import org.drivine.connection.DataSourceMap
+import org.drivine.connection.DatabaseRegistry
 import org.drivine.connection.FalkorDbConnectionProvider
 import org.drivine.connection.FalkorDbTransactionMode
+import org.drivine.manager.GraphObjectManagerFactory
+import org.drivine.manager.PersistenceManager
+import org.drivine.manager.PersistenceManagerFactory
+import org.drivine.manager.StatelessGraphObjectManager
+import org.drivine.mapper.Neo4jObjectMapper
 import org.drivine.mapper.SubtypeRegistry
 import org.drivine.query.grammar.CypherDialect
+import org.drivine.schema.SchemaManager
+import org.drivine.transaction.TransactionContextHolder
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.utility.DockerImageName
 import java.util.UUID
 
-internal class FalkorDbTestServer : GenericContainer<FalkorDbTestServer>(
+/** The pinned FalkorDB server the FalkorDB tests run against, shared with other modules through this module's test jar. */
+class FalkorDbTestServer : GenericContainer<FalkorDbTestServer>(
     DockerImageName.parse("falkordb/falkordb@sha256:0d793d4b249a9cf0837faa9f30fea1b86fb50086fc8aa21e9447078a07f995bc"),
 ) {
     init {
@@ -42,8 +52,28 @@ internal class FalkorDbTestServer : GenericContainer<FalkorDbTestServer>(
         waitingFor(Wait.forListeningPort())
     }
 
-    fun provider(graph: String): FalkorDbConnectionProvider = FalkorDbConnectionProvider(
-        "dice-test-${UUID.randomUUID()}", host, getMappedPort(6379), null, graph,
-        FalkorDbTransactionMode.WARN, SubtypeRegistry(), CypherDialect.FALKORDB,
+    /** A connection to [graph] wired through Drivine in STRICT mode, with the FalkorDB schema applied. */
+    fun graph(graph: String = "dice_${UUID.randomUUID().toString().replace("-", "")}"): FalkorDbTestGraph =
+        FalkorDbTestGraph(this, graph)
+}
+
+/** One connection to a graph: the object manager and persistence manager the stores take. */
+class FalkorDbTestGraph(server: FalkorDbTestServer, val graph: String) : AutoCloseable {
+    private val database = "falkor-${UUID.randomUUID()}"
+    private val provider = FalkorDbConnectionProvider(
+        database, server.host, server.getMappedPort(6379), null, graph,
+        FalkorDbTransactionMode.STRICT, SubtypeRegistry(), CypherDialect.FALKORDB,
     )
+    private val registry = DatabaseRegistry(DataSourceMap()).apply { register(provider) }
+    private val managers = PersistenceManagerFactory(registry, TransactionContextHolder(registry))
+
+    val persistence: PersistenceManager = managers.get(database)
+    val objects: StatelessGraphObjectManager =
+        GraphObjectManagerFactory(managers, Neo4jObjectMapper.instance, SubtypeRegistry()).stateless(database)
+
+    init {
+        SchemaManager(managers, registry, listOf(FalkorDbSchema.catalog(database))).enforce()
+    }
+
+    override fun close() = provider.end()
 }

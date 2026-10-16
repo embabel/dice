@@ -21,75 +21,64 @@ import com.embabel.dice.incremental.BookmarkKey
 import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.HashKey
 import com.embabel.dice.incremental.ProcessedChunkRecord
-import org.drivine.connection.ConnectionProvider
-import org.drivine.transaction.TransactionContextHolder
-import java.time.Instant
+import com.embabel.dice.storage.falkordb.model.BookmarkNode
+import com.embabel.dice.storage.falkordb.model.ChunkHashNode
+import com.embabel.dice.storage.falkordb.model.deleteAll
+import org.drivine.manager.StatelessGraphObjectManager
+import org.drivine.query.dsl.query
+import java.nio.ByteBuffer
+import java.util.UUID
 
 /**
- * Context-isolated content hashes and source bookmarks persisted atomically through Drivine.
- * Construction establishes operational identity constraints; caller transactions are rejected.
- * The application owns the supplied connection provider.
+ * Processed content hashes and per-source bookmarks on FalkorDB, kept apart by context.
+ *
+ * Each hash and each bookmark is a node whose id is derived from its (context, value) pair, so
+ * recording the same pair again updates the node it made the first time.
  */
-class FalkorDbChunkHistoryStore @JvmOverloads constructor(
-    connectionProvider: ConnectionProvider,
-    transactionContextHolder: TransactionContextHolder? = null,
+class FalkorDbChunkHistoryStore(
+    private val objects: StatelessGraphObjectManager,
 ) : ChunkHistoryStore {
-    private val access = FalkorDbAccess(connectionProvider, transactionContextHolder)
 
-    init {
-        access.checkWriteAllowed()
-        FalkorDbStorageSchema.chunks(connectionProvider)
-    }
+    override fun isProcessed(key: HashKey): Boolean =
+        objects.load(id(HASH, key.contextId.value, key.contentHash), ChunkHashNode::class.java) != null
 
-    override fun isProcessed(key: HashKey): Boolean = (access.query(
-        "MATCH (h:DiceChunkHash {context:\$context, hash:\$hash}) RETURN {value:count(h)} AS result",
-        mapOf("context" to key.contextId.value, "hash" to key.contentHash),
-    ).single()["value"] as Number).toLong() > 0
+    override fun getLastBookmark(key: BookmarkKey): AnalysisBookmark? =
+        objects.load(id(BOOKMARK, key.contextId.value, key.sourceId), BookmarkNode::class.java)
+            ?.let { AnalysisBookmark(it.sourceId, it.endIndex, it.processedAt) }
 
-    override fun getLastBookmark(key: BookmarkKey): AnalysisBookmark? = access.query(
-        "MATCH (b:DiceBookmark {context:\$context, source:\$source}) " +
-            "RETURN {endIndex:b.endIndex, seconds:b.seconds, nanos:b.nanos} AS result",
-        mapOf("context" to key.contextId.value, "source" to key.sourceId),
-    ).singleOrNull()?.let {
-        AnalysisBookmark(key.sourceId, (it["endIndex"] as Number).toInt(),
-            Instant.ofEpochSecond((it["seconds"] as Number).toLong(), (it["nanos"] as Number).toLong()))
-    }
-
+    /** Both nodes go in one statement, so FalkorDB writes the hash and the bookmark together or not at all. */
     override fun recordProcessed(record: ProcessedChunkRecord) {
-        access.checkWriteAllowed()
-        repeat(64) {
-            try {
-                access.write(
-                    "MERGE (:DiceChunkHash {context:\$context, hash:\$hash}) " +
-                        "MERGE (b:DiceBookmark {context:\$context, source:\$source}) " +
-                        "SET b.endIndex=\$endIndex, b.seconds=\$seconds, b.nanos=\$nanos " +
-                        "RETURN {value:1} AS result",
-                    mapOf(
-                        "context" to record.contextId.value,
-                        "hash" to record.contentHash,
-                        "source" to record.sourceId,
-                        "endIndex" to record.endIndex,
-                        "seconds" to record.processedAt.epochSecond,
-                        "nanos" to record.processedAt.nano,
-                    ),
-                )
-                return
-            } catch (ex: Exception) {
-                if (!access.isConstraintViolation(ex)) throw ex
-            }
-        }
-        error("Concurrent changes prevented recording chunk history")
+        val context = record.contextId.value
+        objects.saveAll(
+            listOf(
+                ChunkHashNode(id(HASH, context, record.contentHash), context, record.contentHash),
+                BookmarkNode(
+                    id(BOOKMARK, context, record.sourceId), context, record.sourceId, record.endIndex, record.processedAt,
+                ),
+            ),
+        )
     }
 
-    override fun clearByContext(contextId: ContextId) = clear(contextId.value)
-    override fun clearAll() = clear(null)
+    override fun clearByContext(contextId: ContextId) {
+        objects.deleteAll<ChunkHashNode> { where { query.contextId eq contextId.value } }
+        objects.deleteAll<BookmarkNode> { where { query.contextId eq contextId.value } }
+    }
 
-    private fun clear(context: String?) {
-        access.write(
-            "MATCH (n) WHERE n:DiceChunkHash OR n:DiceBookmark " +
-                "WITH n, (\$context IS NULL OR n.context=\$context) AS accepted " +
-                "FOREACH (ignored IN CASE WHEN accepted THEN [1] ELSE [] END | DELETE n) RETURN {value:1} AS result",
-            mapOf("context" to context),
-        )
+    override fun clearAll() {
+        objects.deleteAll(ChunkHashNode::class.java)
+        objects.deleteAll(BookmarkNode::class.java)
+    }
+
+    private companion object {
+        const val HASH = "hash"
+        const val BOOKMARK = "bookmark"
+
+        /** A name-based UUID over the length-prefixed parts, so no context or value can run into the next part. */
+        fun id(kind: String, context: String, value: String): String {
+            val parts = listOf(kind, context, value).map { it.toByteArray(Charsets.UTF_8) }
+            val buffer = ByteBuffer.allocate(parts.sumOf { Int.SIZE_BYTES + it.size })
+            parts.forEach { buffer.putInt(it.size).put(it) }
+            return UUID.nameUUIDFromBytes(buffer.array()).toString()
+        }
     }
 }

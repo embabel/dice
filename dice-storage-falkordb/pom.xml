@@ -51,6 +51,14 @@
             <artifactId>kotlin-reflect</artifactId>
             <version>${kotlin.version}</version>
         </dependency>
+        <!-- The scoped read conformance suite this store runs -->
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
