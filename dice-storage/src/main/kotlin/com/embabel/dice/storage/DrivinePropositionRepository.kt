@@ -28,6 +28,8 @@ import com.embabel.dice.proposition.ContextSetVectorSearchCapable
 import com.embabel.dice.proposition.ExactVectorBudget
 import com.embabel.dice.proposition.FilteredVectorUnsupportedException
 import com.embabel.dice.proposition.ReadOrder
+import com.embabel.dice.proposition.StrictPolicyReadCapable
+import com.embabel.dice.proposition.StrictReadRow
 import com.embabel.dice.proposition.ScopedReadSpec
 import com.embabel.dice.proposition.ScopedReadException
 import com.embabel.dice.proposition.ConsecutiveFailureBreaker
@@ -67,6 +69,7 @@ import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
+import java.time.Duration
 import java.time.Instant
 
 /**
@@ -147,7 +150,7 @@ class DrivinePropositionRepository(
      */
     private val vectorIndexName: String = VECTOR_INDEX,
 ) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable,
-    ContextSetVectorSearchCapable {
+    ContextSetVectorSearchCapable, StrictPolicyReadCapable {
 
     // Configured only on a fresh instance in the wither; the receiver never changes.
     private var nativeReadExecutor: Neo4jScopedReadExecutor? = null
@@ -203,6 +206,24 @@ class DrivinePropositionRepository(
     override fun keywordOverlap(
         scope: ContextReadScope, spec: ScopedReadSpec, tokens: List<String>, limit: Int,
     ): List<Proposition> = scopedReads().keywordOverlap(scope, spec, tokens, limit)
+
+    override val supportsStrictPolicyReads: Boolean get() = nativeReadExecutor != null
+
+    private fun policyReads(): DrivinePolicyReadOperations {
+        val executor = nativeReadExecutor ?: throw ScopedReadException("SCOPED_READ_UNSUPPORTED")
+        return DrivinePolicyReadOperations(executor, DrivineScopedReadOperations(executor))
+    }
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    override fun queryByGrantOrder(
+        scope: ContextReadScope, spec: ScopedReadSpec, rows: List<StrictReadRow>, limit: Int, timeout: Duration,
+    ): List<Proposition> = policyReads().queryByGrantOrder(scope, spec, rows, limit, timeout)
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    override fun keywordByApprovedText(
+        scope: ContextReadScope, spec: ScopedReadSpec, rows: List<StrictReadRow>,
+        tokens: List<String>, limit: Int, timeout: Duration,
+    ): List<Proposition> = policyReads().keywordByApprovedText(scope, spec, rows, tokens, limit, timeout)
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
 
