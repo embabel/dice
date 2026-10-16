@@ -54,7 +54,7 @@ internal object FalkorDbStorageSchema {
         }
         identities.forEach { identity ->
             fun constraint() = grammar.parseConstraintRows(access.query(grammar.listConstraintsQuery()))
-                .singleOrNull { grammar.matchesShape(it, identity) }
+                .singleOrNull { grammar.matchesIdentity(it, identity) && grammar.matchesShape(it, identity) }
             val existingConstraint = constraint()
             if (existingConstraint == null || existingConstraint.status == "FAILED") {
                 val index = RangeIndexSpec(identity.label, identity.properties)
