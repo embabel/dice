@@ -24,7 +24,9 @@ import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.proposition.ContextReadScope
-import com.embabel.dice.proposition.ContextSetReadCapable
+import com.embabel.dice.proposition.ContextSetVectorSearchCapable
+import com.embabel.dice.proposition.ExactVectorBudget
+import com.embabel.dice.proposition.FilteredVectorUnsupportedException
 import com.embabel.dice.proposition.ReadOrder
 import com.embabel.dice.proposition.ScopedReadSpec
 import com.embabel.dice.proposition.ScopedReadException
@@ -145,10 +147,11 @@ class DrivinePropositionRepository(
      */
     private val vectorIndexName: String = VECTOR_INDEX,
 ) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable,
-    ContextSetReadCapable {
+    ContextSetVectorSearchCapable {
 
     // Configured only on a fresh instance in the wither; the receiver never changes.
     private var nativeReadExecutor: Neo4jScopedReadExecutor? = null
+    private var exactVectorBudget: ExactVectorBudget = ExactVectorBudget.DEFAULT
 
     /**
      * Enables scoped native reads on a new repository, retaining the original constructor ABI.
@@ -158,7 +161,30 @@ class DrivinePropositionRepository(
     fun withNativeReadExecutor(executor: Neo4jScopedReadExecutor): DrivinePropositionRepository =
         DrivinePropositionRepository(
             graphObjectManager, persistenceManager, embeddingService, txTemplate.transactionManager!!, vectorIndexName,
-        ).also { it.nativeReadExecutor = executor }
+        ).also {
+            it.nativeReadExecutor = executor
+            it.exactVectorBudget = exactVectorBudget
+        }
+
+    /** Returns a new repository with a finite allowance for legacy filtered vector reads. */
+    fun withExactVectorBudget(budget: ExactVectorBudget): DrivinePropositionRepository =
+        DrivinePropositionRepository(
+            graphObjectManager, persistenceManager, embeddingService, txTemplate.transactionManager!!, vectorIndexName,
+        ).also {
+            it.nativeReadExecutor = nativeReadExecutor
+            it.exactVectorBudget = budget
+        }
+
+    override val supportsScopedVectors: Boolean get() = nativeReadExecutor != null
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    override fun findSimilarWithScores(
+        request: TextSimilaritySearchRequest, scope: ContextReadScope, spec: ScopedReadSpec, budget: ExactVectorBudget,
+    ): List<SimilarityResult<Proposition>> {
+        val executor = nativeReadExecutor ?: throw FilteredVectorUnsupportedException()
+        return DrivineScopedVectorSearch(executor, DrivineScopedReadOperations(executor), embeddingService)
+            .findSimilarWithScores(request, scope, spec, budget)
+    }
 
     override val supportsScopedReads: Boolean get() = nativeReadExecutor != null
 
@@ -1133,25 +1159,16 @@ class DrivinePropositionRepository(
         return results
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     override fun findSimilarWithScores(
         textSimilaritySearchRequest: TextSimilaritySearchRequest,
         query: PropositionQuery,
     ): List<SimilarityResult<Proposition>> {
-        // Non-default decay can't push onto the materialised column; the interface default
-        // (vector ∩ query()) routes the filter through query()'s live-decay fallback.
-        if (needsLiveDecay(query)) {
-            return super<PropositionRepository>.findSimilarWithScores(textSimilaritySearchRequest, query)
-        }
-        val vector = embeddingService.embed(textSimilaritySearchRequest.query).toList()
-        val threshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }?.let(::toEngineScore)
-        return graphObjectManager.loadNearest<PropositionView>(
-            vector,
-            textSimilaritySearchRequest.topK,
-            threshold,
-        ) {
-            where { applyFilters(query, includeEffectiveConfidence = true) }
-        }.map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = toRawCosine(it.score)) }
+        val context = query.contextId ?: throw FilteredVectorUnsupportedException()
+        val scope = ContextReadScope.ofValues(listOf(context.value))
+        val spec = ScopedReadSpec.at(query.effectiveConfidenceAsOf ?: Instant.now(), query.decayK)
+            .restrict(scope, query)
+        return findSimilarWithScores(textSimilaritySearchRequest, scope, spec, exactVectorBudget)
     }
 
     /**

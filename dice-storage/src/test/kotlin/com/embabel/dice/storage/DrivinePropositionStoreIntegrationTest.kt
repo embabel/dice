@@ -2139,10 +2139,11 @@ class DrivinePropositionStoreIntegrationTest {
     fun `vector search with query honours revised-time filters`() {
         val old = repository.save(prop("alpha topic", contentRevised = Instant.now().minus(Duration.ofDays(30))))
         val recent = repository.save(prop("beta topic", contentRevised = Instant.now()))
+        seedRawNodeWithEmbedding(recent, embeddingService.embed(old.text).toList())
 
         val hits = repository.findSimilarWithScores(
             TextSimilaritySearchRequest(query = "alpha topic", topK = 10, similarityThreshold = 0.0),
-            PropositionQuery(revisedAfter = Instant.now().minus(Duration.ofDays(7))),
+            PropositionQuery(contextId = ContextId("ctx"), revisedAfter = Instant.now().minus(Duration.ofDays(7))),
         )
         val ids = hits.map { it.match.id }.toSet()
 
