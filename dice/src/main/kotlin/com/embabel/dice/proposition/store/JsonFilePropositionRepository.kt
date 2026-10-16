@@ -20,12 +20,18 @@ import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.proposition.ConsecutiveFailureBreaker
+import com.embabel.dice.proposition.ContextReadScope
+import com.embabel.dice.proposition.ContextSetReadCapable
 import com.embabel.dice.proposition.Proposition
-import com.embabel.dice.proposition.ProvenanceScanningSourceRevisionQueries
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStoreType
+import com.embabel.dice.proposition.ProvenanceScanningSourceRevisionQueries
+import com.embabel.dice.proposition.ReadOrder
+import com.embabel.dice.proposition.ScopedReadSpec
+import com.embabel.dice.temporal.TemporalMetadata
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import org.slf4j.LoggerFactory
@@ -53,11 +59,16 @@ import java.util.concurrent.ConcurrentHashMap
 class JsonFilePropositionRepository @JvmOverloads constructor(
     private val path: Path,
     private val embeddingService: EmbeddingService? = null,
-) : PropositionRepository, ProvenanceScanningSourceRevisionQueries {
+) : PropositionRepository, ContextSetReadCapable, ProvenanceScanningSourceRevisionQueries {
 
     private val logger = LoggerFactory.getLogger(JsonFilePropositionRepository::class.java)
 
     private val mapper = jacksonObjectMapper().findAndRegisterModules()
+        .addMixIn(TemporalMetadata::class.java, TemporalMetadataJson::class.java)
+
+    // isCurrent is computed from the clock, not persisted evidence. Accept older files that emitted it.
+    @JsonIgnoreProperties("isCurrent")
+    private abstract class TemporalMetadataJson
 
     private val propositions = ConcurrentHashMap<String, Proposition>()
     private val embeddings = ConcurrentHashMap<String, FloatArray>()
@@ -101,6 +112,24 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
             failures.size, loaded.size, path, notAttempted, failures.map { it.first }, failures.first().second.message,
         )
     }
+
+    private val scopedReads = LocalScopedReadOperations { propositions.values }
+
+    override fun query(
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        order: ReadOrder,
+        limit: Int,
+    ): List<Proposition> = scopedReads.query(scope, spec, order, limit)
+
+    override fun count(scope: ContextReadScope, spec: ScopedReadSpec): Long = scopedReads.count(scope, spec)
+
+    override fun keywordOverlap(
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        tokens: List<String>,
+        limit: Int,
+    ): List<Proposition> = scopedReads.keywordOverlap(scope, spec, tokens, limit)
 
     override val luceneSyntaxNotes: String
         get() = "no lucene support"
