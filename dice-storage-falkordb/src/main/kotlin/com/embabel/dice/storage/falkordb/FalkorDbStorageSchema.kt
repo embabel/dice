@@ -69,7 +69,8 @@ internal object FalkorDbStorageSchema {
                     execute(grammar.createIndex(index, existingIndex))
                 } catch (ex: Exception) {
                     // A lost create response is recoverable only when the required index exists.
-                    if (indexInfo()?.get("status") !in listOf("PENDING", "OPERATIONAL")) throw ex
+                    val created = indexInfo()
+                    if (created == null || created["status"] == "FAILED") throw ex
                 }
                 val indexDeadline = System.nanoTime() + timeout.toNanos()
                 while (true) {
@@ -82,8 +83,9 @@ internal object FalkorDbStorageSchema {
                 try {
                     execute(grammar.createConstraint(identity))
                 } catch (ex: Exception) {
-                    // Exact identity and readiness establish the create postcondition independently of error wording.
-                    if (constraint()?.status !in listOf("PENDING", "OPERATIONAL")) throw ex
+                    // A matching item may still be building; the readiness loop requires OPERATIONAL.
+                    val created = constraint()
+                    if (created == null || created.status == "FAILED") throw ex
                 }
             }
             val deadline = System.nanoTime() + timeout.toNanos()

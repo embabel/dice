@@ -41,6 +41,8 @@ import org.drivine.connection.DatabaseRegistry
 import org.drivine.connection.FalkorDbConnectionProvider
 import org.drivine.connection.NativeSchemaCommandExecutor
 import org.drivine.query.QuerySpecification
+import org.drivine.schema.SchemaGrammar
+import org.drivine.schema.SchemaItemInfo
 import org.drivine.schema.SchemaItemKind
 import org.drivine.transaction.DrivineTransactionObject
 import org.drivine.transaction.TransactionContextHolder
@@ -507,8 +509,19 @@ class FalkorDbPropositionRepositoryIntegrationTest {
         val raw = server.provider("response_${UUID.randomUUID().toString().replace("-", "")}")
         val indexResponseLost = AtomicBoolean(false)
         val constraintResponseLost = AtomicBoolean(false)
+        val indexBuildingObserved = AtomicBoolean(false)
+        val constraintBuildingObserved = AtomicBoolean(false)
         try {
+            val grammar = object : SchemaGrammar by raw.schemaGrammar {
+                override fun parseConstraintRows(rows: List<Any?>): List<SchemaItemInfo> =
+                    raw.schemaGrammar.parseConstraintRows(rows).map { item ->
+                        if (constraintResponseLost.get() && constraintBuildingObserved.compareAndSet(false, true)) {
+                            item.copy(status = "UNDER CONSTRUCTION")
+                        } else item
+                    }
+            }
             val provider = object : ConnectionProvider by raw, NativeSchemaCommandExecutor by raw {
+                override val schemaGrammar = grammar
                 override fun connect(): Connection {
                     val delegate = raw.connect()
                     return object : Connection by delegate {
@@ -516,6 +529,11 @@ class FalkorDbPropositionRepositoryIntegrationTest {
                             val result = delegate.query(spec)
                             if (spec.statement!!.text.startsWith("CREATE INDEX") && indexResponseLost.compareAndSet(false, true)) {
                                 throw IllegalStateException("Index response unavailable", RuntimeException("Driver wrapper"))
+                            }
+                            if (spec.statement!!.text.startsWith("CALL db.indexes() YIELD label, properties, status") &&
+                                indexResponseLost.get() && indexBuildingObserved.compareAndSet(false, true)) {
+                                @Suppress("UNCHECKED_CAST")
+                                return result.map { (it as Map<String, Any?>) + ("status" to "UNDER CONSTRUCTION") } as List<T>
                             }
                             return result
                         }
@@ -531,6 +549,8 @@ class FalkorDbPropositionRepositoryIntegrationTest {
             val recovered = FalkorDbPropositionRepository(provider)
             assertTrue(indexResponseLost.get())
             assertTrue(constraintResponseLost.get())
+            assertTrue(indexBuildingObserved.get())
+            assertTrue(constraintBuildingObserved.get())
             recovered.save(proposition())
             assertEquals(proposition(), FalkorDbPropositionRepository(raw).findById("one"))
         } finally {
