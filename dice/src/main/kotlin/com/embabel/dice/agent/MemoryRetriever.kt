@@ -43,7 +43,7 @@ import java.time.Instant
  * found it (`[vector]` / `[keyword]` / `[related]`). When a
  * [ProvenanceResolver] is wired, every line also carries its source and
  * the entity ids it mentions. Tiers are merged with **Reciprocal Rank
- * Fusion** — a proposition's final score sums `1/(RRF_K + rank)` over
+ * Fusion**: a proposition's final score sums 1/([MemoryRanking.RRF_K] + rank) over
  * every tier that found it, so a hit corroborated by several probes
  * outranks a single probe's high-but-lone hit. Ties keep tier order
  * (vector, then keyword, then related).
@@ -134,7 +134,7 @@ internal class MemoryRetriever(
     /**
      * Fold one probe's ranked result into the union: dedupe by
      * proposition id, record the probe tag, and accumulate its
-     * Reciprocal Rank Fusion contribution `1/(RRF_K + rank)` (rank is
+     * Reciprocal Rank Fusion contribution 1/([MemoryRanking.RRF_K] + rank) (rank is
      * the 1-based position in this probe's list). Summing across probes
      * rewards consensus without needing the probes' scores to share a
      * scale.
@@ -143,7 +143,7 @@ internal class MemoryRetriever(
         ranked.forEachIndexed { i, prop ->
             val hit = into.getOrPut(prop.id) { ProbeHit(prop, mutableSetOf()) }
             hit.sources += tag
-            hit.rrf += 1.0 / (RRF_K + i + 1)
+            hit.rrf += 1.0 / (MemoryRanking.RRF_K + i + 1)
         }
     }
 
@@ -173,7 +173,7 @@ internal class MemoryRetriever(
      * the rare, meaningful tokens.
      */
     private fun keywordProbe(query: String, base: PropositionQuery, limit: Int): List<Proposition> =
-        repository.keywordOverlap(base, tokenize(query), limit)
+        repository.keywordOverlap(base, MemoryRanking.tokenize(query), limit)
 
     /**
      * Tier 3 — neighbourhood recall: more propositions about the SAME
@@ -239,18 +239,6 @@ internal class MemoryRetriever(
     }
 
     /**
-     * Split a query into lexical tokens for the keyword probe:
-     * lower-cased, de-duplicated runs of Unicode letters/digits of
-     * length >= [MIN_TOKEN_LEN]. No stopword list (language-agnostic);
-     * overlap-count ranking in [search] handles common words.
-     */
-    private fun tokenize(query: String): List<String> =
-        query.lowercase()
-            .split(Regex("[^\\p{L}\\p{N}]+"))
-            .filter { it.length >= MIN_TOKEN_LEN }
-            .distinct()
-
-    /**
      * Resolve provenance for a result set in one batch. Returns an
      * empty map when no resolver is wired or the lookup fails — memory
      * still returns its propositions, just without source annotations.
@@ -308,16 +296,6 @@ internal class MemoryRetriever(
     )
 
     private companion object {
-        /**
-         * Reciprocal Rank Fusion damping constant. The standard value
-         * (60) flattens the curve so deep-but-corroborated hits still
-         * matter; raising it weights consensus over absolute rank.
-         */
-        const val RRF_K = 60
-
-        /** Min token length for the keyword (term-overlap) probe. */
-        const val MIN_TOKEN_LEN = 3
-
         /** Max seed entities used for the entity-expansion tier. */
         const val MAX_EXPANSION_SEEDS = 4
 
