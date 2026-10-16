@@ -80,9 +80,10 @@ fun supports(mode: RetrievalMode): Boolean = when (mode) {
 ## Choosing a backend without choosing it
 
 A deployment selects its store with one property — `embabel.dice.store.type=graph` for Drivine/Neo4j,
-the default for in-memory. The optional [FalkorDB starter](../falkordb.md) adds
-`embabel.dice.store.type=falkordb` and registers durable proposition/chunk stores before the base
-fallbacks. Its audit companions remain in-memory; see its capability matrix and transaction limits. The wiring lives entirely in autoconfiguration, and two
+the default for in-memory. The optional [FalkorDB module](../falkordb.md) adds
+`embabel.dice.store.type=falkordb` and registers durable proposition and chunk stores before the
+base fallbacks. Its audit companions stay in memory, and startup says so. The wiring lives entirely
+in autoconfiguration, and two
 rules make it predictable. Every *store* bean is `@ConditionalOnMissingBean`, so an application that
 defines its own store always wins — the autoconfig only fills gaps. And the graph beans are declared
 *before* their in-memory counterparts, so the `type` flip resolves cleanly by registration order
@@ -118,7 +119,7 @@ class MyStoreConfiguration {
 ```
 
 The remaining persistence mechanics in this note describe the Neo4j backend; FalkorDB uses the
-aggregate, identity and consistency rules in its [storage guide](../falkordb.md).
+node model, identity and consistency rules in its [storage guide](../falkordb.md).
 
 ## Dedup as defense in depth
 
@@ -261,14 +262,14 @@ repeated here.)
 
 | Property | Type | Default | Meaning |
 |---|---|---|---|
-| `embabel.dice.store.type` | `String` | `in-memory` | Backend kind: `graph` (Drivine/Neo4j), `falkordb` with its optional starter, otherwise in-memory. Drives the flowchart in [Choosing a backend without choosing it](#choosing-a-backend-without-choosing-it). |
+| `embabel.dice.store.type` | `String` | `in-memory` | Backend kind: `graph` (Drivine/Neo4j), `falkordb` with its optional auto-configuration module, otherwise in-memory. Drives the flowchart in [Choosing a backend without choosing it](#choosing-a-backend-without-choosing-it). |
 | `embabel.dice.store.decay.enabled` | `Boolean` | `true` | Master switch for the scheduled decay tick. `false` means `@EnableScheduling` never switches on for decay. |
 | `embabel.dice.store.decay.interval-ms` | `Long` | `3600000` (1 hour) | Delay between decay ticks, in milliseconds. |
 | `embabel.dice.store.decay.k` | `Double` | `2.0` | Decay-rate multiplier `k` for the staleness policy (see [proposition-lifecycle](proposition-lifecycle.md)). |
 | `embabel.dice.store.decay.prune-stale` | `Boolean` | `false` | Opt-in hard-delete of `STALE` propositions during the lifecycle sweep. Left `false`, `STALE` propositions are kept (reversible). |
 | `embabel.dice.store.vector-index.enabled` | `Boolean` | `true` | Whether the graph backend declares its vector index (graph backend only). Label, property name, and similarity metric are fixed by the `@VectorIndex` annotation on `PropositionNode.embedding`, not configurable here. |
-| `embabel.dice.store.exact-vector.max-candidates` | `Int` | `10000` | How many matching rows the filtered vector search may score before it fails with `EXACT_VECTOR_BUDGET_EXCEEDED` (graph backend only). |
-| `embabel.dice.store.exact-vector.timeout` | `Duration` | `5s` | How long the graph store's filtered vector search may run in Neo4j before it fails with `EXACT_VECTOR_DEADLINE_EXCEEDED`. A search that runs in the caller's transaction is bounded by `max-candidates` alone (graph backend only). |
+| `embabel.dice.store.exact-vector.max-candidates` | `Int` | `10000` | How many matching rows a filtered vector search may score before it fails with `EXACT_VECTOR_BUDGET_EXCEEDED` (graph and FalkorDB backends). On FalkorDB the unfiltered search and clustering have no cap and scan every proposition. |
+| `embabel.dice.store.exact-vector.timeout` | `Duration` | `5s` | How long the graph store's filtered vector search may run in Neo4j before it fails with `EXACT_VECTOR_DEADLINE_EXCEEDED`. A search that runs in the caller's transaction is bounded by `max-candidates` alone. FalkorDB ignores it: the FalkorDB server's own `TIMEOUT` is the only deadline there. |
 | `embabel.dice.store.scoped-read.timeout` | `Duration` | `5s` | How long a scoped query, count or keyword read may run before the database stops it (graph backend only). Vector and strict policy reads keep their own deadlines. A value that is not positive stops the store from starting. |
 
 ### How to configure the store: a worked example

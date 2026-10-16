@@ -2394,7 +2394,7 @@ Add the autoconfigure dependency and flip one property — no manual wiring:
 embabel:
   dice:
     store:
-      type: graph          # 'graph' (Neo4j/Drivine) or 'in-memory' (default)
+      type: graph          # 'graph' (Neo4j), 'falkordb' (optional starter), or 'in-memory' (default)
 ```
 
 With `type: graph`, the autoconfiguration registers `DrivinePropositionRepository` (and the

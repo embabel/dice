@@ -19,6 +19,7 @@ import com.embabel.agent.api.common.Ai
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore
+import com.embabel.dice.projection.lineage.ProjectionRecordStore
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.storage.DrivineChunkHistoryStore
@@ -29,14 +30,19 @@ import org.drivine.connection.ConnectionProvider
 import org.drivine.connection.DataSourceMap
 import org.drivine.connection.DatabaseRegistry
 import org.drivine.connection.DatabaseType
+import org.drivine.connection.FalkorDbTransactionMode
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.transaction.TransactionContextHolder
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
+import org.springframework.boot.test.system.CapturedOutput
+import org.springframework.boot.test.system.OutputCaptureExtension
+import org.springframework.mock.env.MockEnvironment
 import org.springframework.transaction.PlatformTransactionManager
 
 class FalkorDbStorageAutoConfigurationTest {
@@ -45,7 +51,7 @@ class FalkorDbStorageAutoConfigurationTest {
     ))
 
     @Test
-    fun `starter is discoverable through Spring Boot imports`() {
+    fun `auto-configuration is discoverable through Spring Boot imports`() {
         val imports = org.springframework.boot.context.annotation.ImportCandidates.load(
             org.springframework.boot.autoconfigure.AutoConfiguration::class.java, javaClass.classLoader,
         )
@@ -63,6 +69,31 @@ class FalkorDbStorageAutoConfigurationTest {
                 assertThat(context).hasNotFailed()
                 assertThat(context.getBean(PropositionRepository::class.java)).isSameAs(repository)
                 assertThat(context.getBean(ChunkHistoryStore::class.java)).isSameAs(chunks)
+            }
+    }
+
+    @Test
+    fun `the datasource name binds through FalkorDbStoreProperties`() {
+        runner.withPropertyValues("embabel.dice.store.type=falkordb", "embabel.dice.store.falkordb.datasource=knowledge")
+            .withBean(PropositionRepository::class.java, { InMemoryPropositionRepository() })
+            .withBean(ChunkHistoryStore::class.java, { InMemoryChunkHistoryStore() })
+            .run { context ->
+                assertThat(context).hasNotFailed()
+                assertThat(context.getBean(FalkorDbStoreProperties::class.java).datasource).isEqualTo("knowledge")
+            }
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension::class)
+    fun `startup warns about the stores that stay in memory`(output: CapturedOutput) {
+        runner.withPropertyValues("embabel.dice.store.type=falkordb")
+            .withBean(PropositionRepository::class.java, { InMemoryPropositionRepository() })
+            .withBean(ChunkHistoryStore::class.java, { InMemoryChunkHistoryStore() })
+            .withBean(ProjectionRecordStore::class.java, { mock<ProjectionRecordStore>() })
+            .run { context ->
+                assertThat(context).hasNotFailed()
+                assertThat(output).contains("lose them on restart: collector audit records")
+                assertThat(output).doesNotContain("projection records")
             }
     }
 
@@ -127,6 +158,28 @@ class FalkorDbStorageAutoConfigurationTest {
                 assertThat(context).hasFailed()
                 assertThat(context.startupFailure).hasStackTraceContaining("requires a Drivine FalkorDbConnectionProvider")
             }
+    }
+
+    @Test
+    fun `the stores' datasource defaults to STRICT and an explicit mode is kept`() {
+        val strict = FalkorDbStorageAutoConfiguration.falkorDbStrictTransactions(
+            MockEnvironment().withProperty("embabel.dice.store.falkordb.datasource", "knowledge"),
+        )
+        val sources = DataSourceMap(mapOf(
+            "other" to ConnectionProperties(type = DatabaseType.FALKORDB),
+            "knowledge" to ConnectionProperties(type = DatabaseType.FALKORDB),
+            "chosen" to ConnectionProperties(type = DatabaseType.FALKORDB, falkorDbTransactionMode = FalkorDbTransactionMode.WARN),
+        ))
+        val processed = strict.postProcessAfterInitialization(sources, "dataSourceMap") as DataSourceMap
+        assertThat(processed.dataSources.getValue("knowledge").falkorDbTransactionMode).isEqualTo(FalkorDbTransactionMode.STRICT)
+        assertThat(processed.dataSources.getValue("other").falkorDbTransactionMode).isNull()
+        val explicit = FalkorDbStorageAutoConfiguration.falkorDbStrictTransactions(
+            MockEnvironment().withProperty("embabel.dice.store.falkordb.datasource", "chosen"),
+        ).postProcessAfterInitialization(sources, "dataSourceMap") as DataSourceMap
+        assertThat(explicit.dataSources.getValue("chosen").falkorDbTransactionMode).isEqualTo(FalkorDbTransactionMode.WARN)
+        val byDefault = FalkorDbStorageAutoConfiguration.falkorDbStrictTransactions(MockEnvironment())
+            .postProcessAfterInitialization(sources, "dataSourceMap") as DataSourceMap
+        assertThat(byDefault.dataSources.getValue("other").falkorDbTransactionMode).isEqualTo(FalkorDbTransactionMode.STRICT)
     }
 
     private fun invalidRunner(registry: DatabaseRegistry, sources: DataSourceMap) = runner

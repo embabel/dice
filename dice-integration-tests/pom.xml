@@ -50,9 +50,10 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>redis.clients</groupId>
-            <artifactId>jedis</artifactId>
-            <version>8.0.1</version>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice-storage-falkordb</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
             <scope>test</scope>
         </dependency>
 

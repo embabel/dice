@@ -1,81 +1,24 @@
 # FalkorDB storage
 
-`dice-storage-falkordb-starter` selects durable FalkorDB propositions and chunk history through
-Drivine 0.1.6. Add it to an application that already supplies Embabel Agent 1.5.3 APIs.
-The tested client is Jedis 8.0.1, with the pinned FalkorDB server image used by this module's tests.
-
-## Maven dependencies
-
-A consuming BOM can manage transitive Jedis back to an incompatible version. Declare the tested
-version directly in the consuming application (or its dependency management). The starter's
-transitive dependency cannot override the consuming BOM. This complete example imports the
-Spring Boot and Embabel BOMs and aligns the client explicitly:
+`dice-storage-falkordb-autoconfigure` stores propositions and chunk history in FalkorDB through
+Drivine 0.1.8. Add it to an application that already supplies the Embabel Agent 1.5.3 APIs, and
+declare Jedis 8.0.1 directly in the application's dependency management: a consuming BOM can
+otherwise pull in a Jedis that JFalkorDB 0.13 cannot use.
 
 ```xml
-<project xmlns="http://maven.apache.org/POM/4.0.0">
-  <modelVersion>4.0.0</modelVersion>
-  <groupId>example</groupId>
-  <artifactId>falkordb-application</artifactId>
-  <version>1.0.0</version>
-  <dependencyManagement>
-    <dependencies>
-      <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-dependencies</artifactId>
-        <version>4.1.1</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
-      <dependency>
-        <groupId>com.embabel.agent</groupId>
-        <artifactId>embabel-agent-dependencies</artifactId>
-        <version>1.5.3</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
-    </dependencies>
-  </dependencyManagement>
-  <dependencies>
-    <dependency>
-      <groupId>com.embabel.dice</groupId>
-      <artifactId>dice-storage-falkordb-starter</artifactId>
-      <version>0.5.0-SNAPSHOT</version>
-    </dependency>
-    <dependency>
-      <groupId>com.embabel.agent</groupId>
-      <artifactId>embabel-agent-api</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>com.embabel.agent</groupId>
-      <artifactId>embabel-agent-rag-core</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>redis.clients</groupId>
-      <artifactId>jedis</artifactId>
-      <version>8.0.1</version>
-    </dependency>
-  </dependencies>
-  <repositories>
-    <repository>
-      <id>embabel-releases</id>
-      <url>https://repo.embabel.com/artifactory/libs-release</url>
-      <snapshots><enabled>false</enabled></snapshots>
-    </repository>
-    <repository>
-      <id>embabel-snapshots</id>
-      <url>https://repo.embabel.com/artifactory/libs-snapshot</url>
-      <releases><enabled>false</enabled></releases>
-      <snapshots><enabled>true</enabled></snapshots>
-    </repository>
-  </repositories>
-</project>
+<dependency>
+  <groupId>com.embabel.dice</groupId>
+  <artifactId>dice-storage-falkordb-autoconfigure</artifactId>
+  <version>0.5.0-SNAPSHOT</version>
+</dependency>
+<dependency>
+  <groupId>redis.clients</groupId>
+  <artifactId>jedis</artifactId>
+  <version>8.0.1</version>
+</dependency>
 ```
 
-## Spring configuration
-
-Use the same datasource name in the DICE selector and Drivine configuration. `default` uses
-Drivine's first registered datasource; name it explicitly when configuring multiple datasources.
-Both the declared database type and the actual provider are validated before creating stores.
+## Configuration
 
 ```properties
 embabel.dice.store.type=falkordb
@@ -87,131 +30,93 @@ database.datasources.knowledge.database-name=${FALKORDB_GRAPH}
 database.datasources.knowledge.cypher-dialect=FALKORDB
 ```
 
-Configure authentication through Drivine's datasource `password` property using the application's
-secret configuration. The graph name is a Redis key, not a Neo4j database name. Server persistence,
-backups and authentication remain deployment responsibilities; application context restarts
-reuse the same graph. The tests use a disposable server with disk persistence disabled.
+`default` names Drivine's first datasource. The auto-configuration checks that the datasource is a
+FalkorDB one, takes the object manager and persistence manager for it from Drivine, and registers
+the stores' schema as a catalog for it, which Drivine ensures at startup. It also sets the
+datasource's `falkor-db-transaction-mode` to `STRICT` unless you set it yourself (see below).
 
-No `Ai` bean or embedding model is required. A unique application `EmbeddingService` bean (including
-one marked `@Primary`) enables embedding and native exact cosine search. Multiple services with no
-primary leave embeddings disabled. The starter does not select an Embabel default model or make
-external model calls at startup. Supply an explicitly selected service to enable vectors.
-Application `PropositionRepository` and `ChunkHistoryStore` beans each replace that default.
-Without `type=falkordb`, the existing in-memory default and `type=graph` Neo4j selection retain
-their behavior.
+The store embeds with the application's own `EmbeddingService` bean when there is exactly one (or
+one marked `@Primary`), and otherwise with the platform's default embedding model, as the other
+stores do; the startup log says which. With no `Ai` bean and no embedding bean, vector searches
+return nothing and a startup warning says so. Your own `PropositionRepository` or
+`ChunkHistoryStore` bean replaces the auto-configuration's.
 
-## Using the repository
+Without the auto-configuration, build the stores yourself:
+`FalkorDbPropositionRepository(objects, persistence, embeddingService)` and
+`FalkorDbChunkHistoryStore(objects)`, and register `FalkorDbSchema.catalog(datasource)`. The
+repository takes an `ExactVectorBudget` as an optional fourth argument for the vector search cap
+described below.
 
-These examples use the injected repository. The Kotlin function and Java class are compiled and
-executed by the starter tests, against a real server. Import the Kotlin types shown below.
+## How it is stored
 
-```kotlin
-import com.embabel.agent.core.ContextId
-import com.embabel.dice.proposition.Proposition
-import com.embabel.dice.proposition.PropositionQuery
-import com.embabel.dice.proposition.PropositionRepository
+A proposition is one `DiceProposition` node with typed fields, so filters and ordering run in the
+database through Drivine's query DSL. Mentions, evidence and metadata are kept on the node as JSON
+text; metadata values must be plain JSON (strings, numbers, booleans, lists and maps), and a number
+reads back as Jackson reads it, so `3L` comes back as `3`. FalkorDB returns a stored double to 15
+significant digits, so `0.1 + 0.2` reads back as `0.3`. Comparisons in the database use the exact
+value.
 
-fun storeFact(repository: PropositionRepository): Proposition {
-    val fact = Proposition(
-        contextId = ContextId("example"), text = "A durable fact",
-        mentions = emptyList(), confidence = 0.9,
-    )
-    repository.save(fact)
-    check(repository.query(PropositionQuery.againstContext("example")).any { it.id == fact.id })
-    return fact
-}
-```
+Chunk history is a `DiceChunkHash` node per (context, hash) and a `DiceBookmark` node per
+(context, source), each with an id derived from its pair. The schema makes the proposition id, both
+pairs and the derived ids unique, and indexes the fields queries filter on.
 
-```java
-import com.embabel.dice.proposition.Proposition;
-import com.embabel.dice.proposition.PropositionQuery;
-import com.embabel.dice.proposition.PropositionRepository;
-import java.util.List;
-import java.time.Instant;
-import java.util.UUID;
-import com.embabel.dice.proposition.PropositionStatus;
+Vector searches score every proposition that passes the query's filters, exactly, with FalkorDB's
+cosine distance, and keep the best: a filter never hides a match. FalkorDB scores in single
+precision, so a score can differ from the in-memory store's in the seventh decimal place. A vector
+whose length differs from the query's, or that no longer matches its proposition's text, is left out
+until `reembedAll` replaces it.
 
-public class FalkorExample {
-    public static Proposition storeFact(PropositionRepository repository) {
-        var now = Instant.now();
-        var fact = Proposition.create(UUID.randomUUID().toString(), "example", "A Java fact",
-                List.of(), 0.9, 0.0, null, List.of(), now, now, PropositionStatus.ACTIVE);
-        repository.save(fact);
-        if (repository.query(PropositionQuery.againstContext("example")).stream()
-                .noneMatch(p -> p.getId().equals(fact.getId()))) {
-            throw new IllegalStateException("Fact was not persisted");
-        }
-        return fact;
-    }
-}
-```
+A filtered vector search first counts the propositions its query lets through, and fails with
+`ScopedReadException(EXACT_VECTOR_BUDGET_EXCEEDED)` when there are more than
+`embabel.dice.store.exact-vector.max-candidates` (10,000 by default). Narrow the query or raise the
+property. `embabel.dice.store.exact-vector.timeout` has no effect on FalkorDB: the server's own
+`TIMEOUT` setting is the only deadline on a search. The unfiltered search has no cap and scans every
+proposition, and `findClusters` has none either: it pairs every proposition its query returns, so
+give that query a limit to bound it.
 
-## Capabilities and durability
+No approximate vector index is created, so `findApproximateSimilarWithScores` runs the exact
+filtered search. `LlmPropositionReviser` looks for similar propositions through it, so revision on
+FalkorDB is subject to the same cap, and fails in a context with more active propositions than
+`max-candidates` allows.
 
-| Surface | FalkorDB starter behavior |
-|---|---|
-| Propositions, nested metadata, temporal fields, mentions, provenance | Durable aggregate; ID-preserving upserts, appended evidence |
-| Processed chunk hashes and source bookmarks | Durable and context-isolated |
-| Structured queries, counts, keyword overlap and context-set reads | Native filtering and limiting before aggregate hydration |
-| Legacy vector reads and clustering | Native exact cosine over persisted embeddings when a service is supplied; dimension mismatches excluded |
-| Strict policy reads and context-set vector capability | Not advertised by this backend |
-| Native entity graph traversal (`GraphQueryCapable`) | Not advertised; portable graph facade falls back to proposition reads |
-| Decay manager | Portable `InMemoryDecayManager`; computes confidence on read and persists lifecycle changes through the repository |
-| Projection and collector audit records | In-memory defaults; lost on restart |
-| Collector trace | In-memory when collector auto-configuration is enabled (default), including with trace disabled; no FalkorDB trace store |
-| Metamodel version store | In-memory when a declared schema enables governance; no durable drift report or observed-schema source |
-| Extraction-run and proposition-run-link stores | Unavailable by default, even with extraction-run opt-in; supply application implementations |
-| Neo4j schema catalogs, vector indexes and executor | Not registered for this selector |
+## Writes and transactions
 
-Vectors use exact search, not ANN or a Neo4j vector index. Native structured filters include the
-read scope, status, entity membership, temporal boundaries, confidence, trust and importance. Query
-time confidence uses the requested time and decay rate. Embedding errors abort a save before data
-changes; re-embedding reports incomplete work rather than silently mixing incompatible dimensions.
+FalkorDB has no transactions across statements, so every write the stores make is one statement:
 
-## Readiness and consistency
+- `save` creates the proposition, or merges it into the stored one: its fields win and its evidence
+  is added to what is there. Concurrent first saves keep every writer's evidence.
+- `pin`, `unpin` and the provenance methods reload and reapply if another writer got there first.
+  Under sustained contention they give up with Drivine's `StaleObjectException`.
+- `touchAccessed` patches the access time of up to a thousand propositions in one statement.
+- `recordProcessed` writes the hash and the bookmark in one statement.
 
-Construction establishes the fixed unique identities `DiceProposition(id)`,
-`DiceChunkHash(context, hash)` and `DiceBookmark(context, source)`. It waits for backing indexes and
-constraints to become operational before exposing each store. Repeated initialization reuses
-existing operational constraints. Duplicate preexisting keys, failed constraints and a readiness
-wait longer than ten seconds fail startup; repair the reported data or server condition before
-retrying. This barrier uses the backend's existing typed Drivine schema grammar, independently of
-Drivine's optional catalog startup runner.
-
-Each mutation is one atomic server statement; updates use optimistic version checks and bounded
-retries. Several calls, batch saves, decay sweeps and proposition-plus-chunk writes do not form a
-single transaction. Caller Spring or Drivine transactions are rejected before writes, because the
-server cannot provide cross-command rollback. Adding `@Transactional` cannot create that guarantee.
-Separate IDs with identical text remain distinct; there is no Neo4j `(contextId, text)` dedup rule.
-Persist application completion markers only after all required writes have succeeded.
+In `STRICT` mode Drivine refuses a caller's `@Transactional` and any batch it cannot write as one
+statement, rather than half applying it. Several calls never form one unit: persist your own
+completion markers only after every write they cover has succeeded.
 
 ## Moving existing knowledge
 
-FalkorDB uses its own labels and aggregate representation. Changing the selector does not migrate a
-Neo4j graph. Stop source writers, provision an empty destination, and copy through the existing
-repository APIs. Hydrate evidence explicitly: a source query may omit it. This compiled and tested
-Kotlin function preserves IDs, full proposition fields and complete evidence and checks the result.
-It uses the imports from the Kotlin example above.
+Changing the selector does not move a Neo4j graph. With both stores quiet, copy through the
+repository APIs into an empty FalkorDB graph, hydrating evidence explicitly, and check each
+proposition afterwards:
 
 ```kotlin
 fun copyKnowledge(source: PropositionRepository, target: PropositionRepository) {
     check(target.count() == 0) { "Use an empty target" }
-    val complete = source.findAll().map { proposition ->
-        proposition.copy(provenanceEntries = source.provenanceOf(proposition.id))
+    source.findAll().forEach { proposition ->
+        val complete = proposition.copy(provenanceEntries = source.provenanceOf(proposition.id))
+        target.save(complete)
+        check(target.provenanceOf(complete.id).toSet() == complete.provenanceEntries.toSet()) { "Evidence changed" }
     }
-    complete.forEach { proposition ->
-        check(target.save(proposition).id == proposition.id) { "Source ID changed" }
-        check(target.findById(proposition.id) == proposition) { "Proposition fields changed" }
-        check(target.provenanceOf(proposition.id).toSet() == proposition.provenanceEntries.toSet()) {
-            "Evidence changed"
-        }
-    }
-    check(target.count() == complete.size) { "Destination count differs" }
 }
 ```
 
-Keep both stores quiescent throughout the copy and verification, and keep the source until readers
-have switched successfully. The copy is a series of independent writes; a failure can leave a
-partial destination. Diagnose it and restart with an empty destination. Chunk hashes/bookmarks,
-projection and collector audits, traces, metamodel versions and extraction-run records are not
-copied by this function. Retain or replay that companion data separately where needed.
+Chunk history, audit records, traces and metamodel versions are not copied by this.
+
+## What stays in memory
+
+Projection and collector audit records, the collector trace and the metamodel version store have no
+FalkorDB implementation yet. With `type=falkordb` they stay in memory and are lost on restart, and a
+startup warning lists the ones that are; register your own beans to keep them. The decay manager
+works through the proposition store, so its status changes persist. Native graph traversal is not
+offered either: the portable facade reads propositions instead.

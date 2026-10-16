@@ -1,7 +1,7 @@
 [[how-to-choose-a-backend]]
 === Choose a storage backend
 
-*Prerequisites*: `dice-storage-autoconfigure` on the classpath.
+*Prerequisites*: `dice-storage-autoconfigure` on the classpath; add `dice-storage-falkordb-autoconfigure` for FalkorDB.
 
 Backend selection is a property. The code you write against `PropositionRepository` does not change.
 
@@ -22,7 +22,23 @@ Backend selection is a property. The code you write against `PropositionReposito
 | `graph`
 | Production. Durable, concurrent, with native graph traversal, a vector index, and decay applied in
   the database.
+
+| FalkorDB (Drivine)
+| `falkordb`
+| Durable propositions and chunk history with native structured reads and optional exact cosine
+  search. Requires the FalkorDB auto-configuration module, Jedis 8.0.1, and a FalkorDB server.
 |===
+
+==== Switching to FalkorDB
+
+Add `dice-storage-falkordb-autoconfigure` and declare Jedis `8.0.1` directly in the application or
+its dependency management. Set `embabel.dice.store.type=falkordb` and configure the Drivine FalkorDB
+datasource. Structured queries and optional exact cosine search run in FalkorDB; the portable
+graph facade and decay manager use their existing fallbacks. Projection and collector audit stores
+remain in memory. Server persistence and backups require deployment configuration.
+
+See https://github.com/embabel/dice/blob/main/docs/falkordb.md[FalkorDB configuration and migration]
+for dependencies, datasource properties, transactions, and how values are stored.
 
 ==== Switching to the graph backend
 
@@ -44,33 +60,39 @@ See <<features-graph-storage>> for the full activation detail.
 
 ==== What changes when you switch
 
-[cols="1,1,1", options="header"]
+[cols="1,1,1,1", options="header"]
 |===
-| | In-memory | Graph
+| | In-memory | Graph (Neo4j) | FalkorDB
 
 | Survives restart
 | No
 | Yes
+| Yes, with server persistence configured
 
 | Concurrent writers
 | Single process
+| Yes
 | Yes
 
 | Vector search
 | Through the `Ai` embedding service
 | Native Neo4j vector index
+| Native exact cosine with an `EmbeddingService`
 
 | Graph traversal
 | Default implementations over the primitives
 | Native Cypher, via `GraphQueryCapable`
+| Default implementations over proposition reads
 
 | Decay tick
 | In-process, over the whole store
 | Executed in the database
+| Portable lifecycle transitions through the repository
 
 | Extra infrastructure
 | None
 | A Neo4j instance
+| A FalkorDB instance
 |===
 
 ==== Overriding the choice entirely

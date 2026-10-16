@@ -72,9 +72,9 @@ import org.springframework.transaction.PlatformTransactionManager
  *
  * `embabel.dice.store.type=graph` selects the Drivine/Neo4j backend. Otherwise this base module
  * supplies in-memory fallbacks unless an earlier auto-configuration registered a store, as the
- * optional FalkorDB starter does for `type=falkordb`. Every bean is `@ConditionalOnMissingBean`,
- * so an application's own bean always wins. Graph beans are declared before their in-memory counterparts so the flip resolves by
- * registration order.
+ * optional FalkorDB module does for `type=falkordb`. Every bean is `@ConditionalOnMissingBean`,
+ * so an application's own bean always wins. Graph beans are declared before their in-memory
+ * counterparts so the flip resolves by registration order.
  *
  * Schema (indexes/constraints) is declared as [SchemaCatalog] beans; Drivine's `SchemaManager`
  * (registered by the starter) applies them idempotently on startup — no runner here.
@@ -164,29 +164,6 @@ class DiceStorageAutoConfiguration {
      */
     private fun embeddingService(ai: Ai, embeddingServices: ObjectProvider<EmbeddingService>): EmbeddingService =
         embeddingServices.getIfUnique() ?: ai.withDefaultEmbeddingService()
-
-    /**
-     * [embeddingService] for a proposition store, saying which one it got and why. Both stores go
-     * through here, so a host's embedding service reaches whichever backend it runs, and the one
-     * line an operator needs — is memory embedded with the model I configured? — is at startup
-     * rather than inferred from a vector-width mismatch later.
-     */
-    private fun storeEmbeddingService(
-        store: String,
-        ai: Ai,
-        embeddingServices: ObjectProvider<EmbeddingService>,
-    ): EmbeddingService {
-        val hostService = embeddingServices.getIfUnique()
-        val service = hostService ?: ai.withDefaultEmbeddingService()
-        logger.info(
-            "{} proposition store embeds with '{}' ({}): {}",
-            store,
-            service.name,
-            service.provider,
-            if (hostService != null) "the application's EmbeddingService bean" else "the platform default embedding service",
-        )
-        return service
-    }
 
     @Bean
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
@@ -449,6 +426,35 @@ class DiceStorageAutoConfiguration {
     @ConditionalOnMissingBean(DecayManager::class)
     fun inMemoryDecayManager(repository: PropositionRepository): DecayManager =
         InMemoryDecayManager(repository)
+}
+
+private val storeLogger = LoggerFactory.getLogger(DiceStorageAutoConfiguration::class.java)
+
+/**
+ * The embedding service a proposition store should use: the application's own bean when there is
+ * exactly one (a `@Primary` bean counts), otherwise the platform default.
+ *
+ * Several beans and no `@Primary` is the ordinary case, not an ambiguity to fail on: the platform
+ * registers one bean per model it can reach, and picking among those is what the configured default
+ * embedding model is for. Every proposition store's auto-configuration goes through here and logs
+ * its pick, so whether memory is embedded with the model you configured shows at startup rather
+ * than as a vector-width mismatch later.
+ */
+fun storeEmbeddingService(
+    store: String,
+    ai: Ai,
+    embeddingServices: ObjectProvider<EmbeddingService>,
+): EmbeddingService {
+    val hostService = embeddingServices.getIfUnique()
+    val service = hostService ?: ai.withDefaultEmbeddingService()
+    storeLogger.info(
+        "{} proposition store embeds with '{}' ({}): {}",
+        store,
+        service.name,
+        service.provider,
+        if (hostService != null) "the application's EmbeddingService bean" else "the platform default embedding service",
+    )
+    return service
 }
 
 /**

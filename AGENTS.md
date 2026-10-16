@@ -8,7 +8,9 @@ DICE (Domain-Integrated Context Engineering) is a proposition-first knowledge su
 |---|---|
 | `dice` | The entire domain: `Proposition` model, `PropositionStore`/`PropositionRepository` SPIs, extraction pipeline, revision/conflict detection, entity resolution, projectors (graph, Prolog, memory), graph and discovery query/retrieval, incremental analysis, in-memory and file-backed stores, tuProlog integration, REST endpoints, MCP tool surface (`DiceMcpTools`) |
 | `dice-storage` | Drivine/Neo4j implementation of `PropositionRepository`, `ChunkHistoryStore`, and `DecayManager`; uses Kotlin 2.2 for the Drivine KSP-generated query DSL |
+| `dice-storage-falkordb` | FalkorDB implementation of `PropositionRepository` and `ChunkHistoryStore` through Drivine |
 | `dice-storage-autoconfigure` | Spring Boot auto-configuration that wires the right backend based on `embabel.dice.store.type`, schedules the decay tick, and provides auto-configuration for the multi-signal duplicate collector (properties prefix `embabel.dice.collector`) |
+| `dice-storage-falkordb-autoconfigure` | Spring Boot auto-configuration for the FalkorDB stores when `embabel.dice.store.type=falkordb` |
 | `dice-report` | Output projectors over propositions: rationale (why a fact is believed, with evidence), structured report, and surprising-link discovery |
 | `dice-ingestion` | Ingestion SPI (artifacts → chunks) with a content-hash dedup ledger so the same source isn't extracted twice |
 | `dice-metamodel` | Schema versioning: `MetamodelVersion` content-hash stamps over the governed types of a `DataDictionary`, `GovernedTypeSelector`, the `DeclaredSchemaSource` opt-in, and the `MetamodelVersionStore` contract. Pure JVM, with no dependency on `dice` |
