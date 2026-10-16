@@ -23,7 +23,9 @@ import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.proposition.ContextReadScope
-import com.embabel.dice.proposition.ContextSetReadCapable
+import com.embabel.dice.proposition.ContextSetVectorSearchCapable
+import com.embabel.dice.proposition.ExactVectorBudget
+import com.embabel.dice.proposition.ScopedReadException
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
@@ -52,7 +54,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class InMemoryPropositionRepository(
     private val embeddingService: EmbeddingService? = null,
-) : PropositionRepository, ContextSetReadCapable, ProvenanceScanningSourceRevisionQueries, ProvenanceSubtractionCapable {
+) : PropositionRepository, ContextSetVectorSearchCapable, ProvenanceScanningSourceRevisionQueries, ProvenanceSubtractionCapable {
 
     private val logger = LoggerFactory.getLogger(InMemoryPropositionRepository::class.java)
 
@@ -76,6 +78,20 @@ class InMemoryPropositionRepository(
         tokens: List<String>,
         limit: Int,
     ): List<Proposition> = scopedReads.keywordOverlap(scope, spec, tokens, limit)
+
+    override val supportsScopedVectors: Boolean get() = embeddingService != null
+
+    override fun findSimilarWithScores(
+        request: TextSimilaritySearchRequest,
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        budget: ExactVectorBudget,
+    ): List<SimilarityResult<Proposition>> {
+        val embedder = embeddingService ?: throw ScopedReadException("SCOPED_VECTOR_UNSUPPORTED")
+        return scopedReads.findSimilarWithScores(request, scope, spec, budget, embedder::embed) { key ->
+            embeddings[key.propositionId]
+        }
+    }
 
     override val luceneSyntaxNotes: String
         get() = "no lucene support"
@@ -108,7 +124,8 @@ class InMemoryPropositionRepository(
     override fun findSimilarWithScores(
         textSimilaritySearchRequest: TextSimilaritySearchRequest,
     ): List<SimilarityResult<Proposition>> {
-        if (propositions.isEmpty()) return emptyList()
+        require(textSimilaritySearchRequest.topK >= 0) { "topK must not be negative" }
+        if (textSimilaritySearchRequest.topK == 0 || propositions.isEmpty()) return emptyList()
 
         val embedder = embeddingService ?: run {
             logger.debug("Vector search requested but no embedder is configured; returning empty results")
@@ -123,7 +140,7 @@ class InMemoryPropositionRepository(
                 val similarity = cosineSimilarity(queryEmbedding, propEmbedding)
                 if (similarity >= minSimilarity) SimilarityResult(match = prop, score = similarity) else null
             }
-            .sortedByDescending { it.score }
+            .sortedWith(LocalScopedReadOperations.similarityOrder)
             .take(textSimilaritySearchRequest.topK)
     }
 
@@ -131,7 +148,8 @@ class InMemoryPropositionRepository(
         textSimilaritySearchRequest: TextSimilaritySearchRequest,
         query: PropositionQuery,
     ): List<SimilarityResult<Proposition>> {
-        if (propositions.isEmpty()) return emptyList()
+        require(textSimilaritySearchRequest.topK >= 0) { "topK must not be negative" }
+        if (textSimilaritySearchRequest.topK == 0 || propositions.isEmpty()) return emptyList()
 
         val embedder = embeddingService ?: run {
             logger.debug("Vector search requested but no embedder is configured; returning empty results")
@@ -153,7 +171,7 @@ class InMemoryPropositionRepository(
                 val similarity = cosineSimilarity(queryEmbedding, propEmbedding)
                 if (similarity >= minSimilarity) SimilarityResult(match = prop, score = similarity) else null
             }
-            .sortedByDescending { it.score }
+            .sortedWith(LocalScopedReadOperations.similarityOrder)
             .take(textSimilaritySearchRequest.topK)
     }
 
@@ -175,29 +193,15 @@ class InMemoryPropositionRepository(
                     val score = cosineSimilarity(anchorEmbedding, otherEmbedding)
                     if (score >= similarityThreshold) SimilarityResult(match = other, score = score) else null
                 }
-                .sortedByDescending { it.score }
+                .sortedWith(LocalScopedReadOperations.similarityOrder)
                 .take(topK)
 
             if (similar.isNotEmpty()) Cluster(anchor = anchor, similar = similar) else null
         }.sortedByDescending { it.similar.size }
     }
 
-    private fun cosineSimilarity(a: FloatArray, b: FloatArray): Double {
-        require(a.size == b.size) { "Vectors must have the same dimension" }
-
-        var dotProduct = 0.0
-        var normA = 0.0
-        var normB = 0.0
-
-        for (i in a.indices) {
-            dotProduct += a[i] * b[i]
-            normA += a[i] * a[i]
-            normB += b[i] * b[i]
-        }
-
-        val denominator = kotlin.math.sqrt(normA) * kotlin.math.sqrt(normB)
-        return if (denominator == 0.0) 0.0 else dotProduct / denominator
-    }
+    private fun cosineSimilarity(a: FloatArray, b: FloatArray): Double =
+        LocalScopedReadOperations.cosineSimilarity(a, b)
 
     override fun findByStatus(status: PropositionStatus): List<Proposition> =
         propositions.values.filter { it.status == status }
