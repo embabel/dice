@@ -23,6 +23,11 @@ import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.common.DiceMetadataKeys
+import com.embabel.dice.proposition.ContextReadScope
+import com.embabel.dice.proposition.ContextSetReadCapable
+import com.embabel.dice.proposition.ReadOrder
+import com.embabel.dice.proposition.ScopedReadSpec
+import com.embabel.dice.proposition.ScopedReadException
 import com.embabel.dice.proposition.ConsecutiveFailureBreaker
 import com.embabel.dice.proposition.PropositionReembedIncompleteException
 import com.embabel.dice.proposition.PropositionReembedReport
@@ -113,10 +118,13 @@ internal object SourceProvenanceQueryStatements {
 /**
  * Graph-backed [PropositionRepository] over Drivine / Neo4j.
  *
- * Filtering, ordering, limiting, vector search, and entity (`HAS_MENTION`) predicates all push into
+ * Legacy filtering, ordering, limiting, vector search, and entity (`HAS_MENTION`) predicates push into
  * the database via the high-level [StatelessGraphObjectManager] DSL — no whole-store scans. A few operations the
  * DSL can't express drop to hand-written Cypher: the [findClusters] correlation, the cascade-aware bulk
  * clear (`queries/clear_propositions.cypher`), the dedup lookup, and the batch re-embed.
+ *
+ * Scoped reads use explicit native read transactions with bounded selected-key hydration.
+ * Enable them with [withNativeReadExecutor]; manual construction otherwise reports them unsupported.
  *
  * Embeddings are derived from [Proposition.embeddableValue] and owned here, not by the model mapper.
  *
@@ -136,7 +144,39 @@ class DrivinePropositionRepository(
      * [findClusters] Cypher. Defaults to the canonical [VECTOR_INDEX]; overridable only for tests.
      */
     private val vectorIndexName: String = VECTOR_INDEX,
-) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable {
+) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable,
+    ContextSetReadCapable {
+
+    // Configured only on a fresh instance in the wither; the receiver never changes.
+    private var nativeReadExecutor: Neo4jScopedReadExecutor? = null
+
+    /**
+     * Enables scoped native reads on a new repository, retaining the original constructor ABI.
+     * Reads use independent transactions and observe committed data, including within ambient writes.
+     * An unconfigured repository explicitly reports scoped reads as unsupported.
+     */
+    fun withNativeReadExecutor(executor: Neo4jScopedReadExecutor): DrivinePropositionRepository =
+        DrivinePropositionRepository(
+            graphObjectManager, persistenceManager, embeddingService, txTemplate.transactionManager!!, vectorIndexName,
+        ).also { it.nativeReadExecutor = executor }
+
+    override val supportsScopedReads: Boolean get() = nativeReadExecutor != null
+
+    private fun scopedReads(): DrivineScopedReadOperations = DrivineScopedReadOperations(
+        nativeReadExecutor ?: throw ScopedReadException("SCOPED_READ_UNSUPPORTED"),
+    )
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    override fun query(scope: ContextReadScope, spec: ScopedReadSpec, order: ReadOrder, limit: Int): List<Proposition> =
+        scopedReads().query(scope, spec, order, limit)
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    override fun count(scope: ContextReadScope, spec: ScopedReadSpec): Long = scopedReads().count(scope, spec)
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    override fun keywordOverlap(
+        scope: ContextReadScope, spec: ScopedReadSpec, tokens: List<String>, limit: Int,
+    ): List<Proposition> = scopedReads().keywordOverlap(scope, spec, tokens, limit)
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
 
