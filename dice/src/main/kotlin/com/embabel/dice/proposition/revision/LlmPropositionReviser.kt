@@ -303,8 +303,9 @@ data class LlmPropositionReviser(
             return RevisionResult.Merged(original, scoreAndCache(merged))
         }
 
-        // Fast path 2: vector similarity search
-        val similarWithScores = repository.findSimilarWithScores(
+        // Fast path 2: vector similarity search. The index search keeps widening until it has
+        // enough hits in this context, and unlike the exact search it has no row budget to blow.
+        val similarWithScores = repository.findApproximateSimilarWithScores(
             TextSimilaritySearchRequest(
                 query = newProposition.text,
                 topK = topK,

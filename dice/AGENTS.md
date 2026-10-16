@@ -17,7 +17,7 @@ Kotlin 2.1.10, Java 21. `embabel-agent-api` and `embabel-agent-rag-core` are `pr
 **`PropositionStore`** (`com.embabel.dice.proposition.PropositionStore`) — the base persistence SPI: CRUD, `findBy*`, and a composable `query(PropositionQuery)`. The default `query()` implementation filters in memory; persistent backends override to push predicates to the database.
 
 **`PropositionRepository`** (`com.embabel.dice.proposition.PropositionRepository`) — extends `PropositionStore` with opt-in capability fragments:
-- `VectorSearchCapable` — `findSimilarWithScores`, `findClusters`
+- `VectorSearchCapable` — `findSimilarWithScores`, `findApproximateSimilarWithScores`, `findClusters`
 - `GraphTraversalCapable` — traversal helpers over the proposition abstraction hierarchy
 - `TemporalQueryCapable` — bitemporal queries
 - `GraphQueryCapable` — native neighbourhood, path-between, and why-explain lineage queries over the entity-relationship graph; also declares `honorsAuthorityFilter` so the portable graph facade can route authority-filtered traversals to the native backend rather than falling back to proposition-walk

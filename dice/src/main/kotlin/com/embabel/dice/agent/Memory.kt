@@ -23,6 +23,7 @@ import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.agent.Memory.Companion.DEFAULT_LIMIT
 import com.embabel.dice.projection.memory.MemoryProjector
 import com.embabel.dice.projection.memory.support.DefaultMemoryProjector
+import com.embabel.dice.proposition.FilteredVectorUnsupportedException
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
@@ -250,7 +251,8 @@ data class Memory @JvmOverloads constructor(
 
         merged
     } catch (t: Throwable) {
-        logger.warn("Unable to perform vector search")
+        if (t is FilteredVectorUnsupportedException) throw t
+        logger.warn("Unable to perform vector search", t)
         emptyList()
     }
 

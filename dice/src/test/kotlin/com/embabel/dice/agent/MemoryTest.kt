@@ -22,6 +22,7 @@ import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.projection.memory.MemoryProjector
 import com.embabel.dice.proposition.EntityMention
+import com.embabel.dice.proposition.FilteredVectorUnsupportedException
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
@@ -238,6 +239,20 @@ class MemoryTest {
                 .withTopic("music preferences")
 
             assertEquals("Memories about music preferences", memory.description)
+        }
+
+        @Test
+        fun `eager topic search lets an unsupported filtered vector search through`() {
+            val store = mockk<PropositionRepository>(relaxed = true)
+            val failure = FilteredVectorUnsupportedException()
+            every { store.findSimilarWithScores(any<TextSimilaritySearchRequest>(), any<PropositionQuery>()) } throws failure
+
+            val memory = Memory.forContext(contextId)
+                .withRepository(store)
+                .withTopic("music")
+                .withEagerTopicSearch(3)
+
+            assertSame(failure, assertThrows(FilteredVectorUnsupportedException::class.java) { memory.contribution() })
         }
     }
 

@@ -1098,10 +1098,12 @@ class DrivinePropositionRepository(
         textSimilaritySearchRequest: TextSimilaritySearchRequest,
         query: PropositionQuery,
     ): List<SimilarityResult<Proposition>> {
-        // Non-default decay can't push onto the materialised column; the interface default
-        // (vector ∩ query()) routes the filter through query()'s live-decay fallback.
+        // Live decay cannot use the materialised column, so rank the eligible rows exactly.
         if (needsLiveDecay(query)) {
-            return super<PropositionRepository>.findSimilarWithScores(textSimilaritySearchRequest, query)
+            return nearestAmong(
+                textSimilaritySearchRequest,
+                queryWithLiveDecay(query.copy(limit = null, orderBy = OrderBy.NONE)),
+            )
         }
         val vector = embeddingService.embed(textSimilaritySearchRequest.query).toList()
         val threshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }?.let(::toEngineScore)
@@ -1112,6 +1114,83 @@ class DrivinePropositionRepository(
         ) {
             where { applyFilters(query, includeEffectiveConfidence = true) }
         }.map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = toRawCosine(it.score)) }
+    }
+
+    /**
+     * Scores [eligible] against the request by exact cosine, here rather than in Neo4j, and keeps the
+     * best `topK`. Stored embeddings of the wrong width, the wrong type or with non-finite values are
+     * skipped and counted rather than failing the search. Ties go to the lower context ID, then the
+     * lower proposition ID, both compared by Unicode code point.
+     */
+    private fun nearestAmong(
+        request: TextSimilaritySearchRequest,
+        eligible: List<Proposition>,
+    ): List<SimilarityResult<Proposition>> {
+        if (eligible.isEmpty() || request.topK == 0) return emptyList()
+        val vector = embeddingService.embed(request.query).map { it.toDouble() }
+        // One map per row, as findClusters does: Drivine hands a multi-column row back as a bare list.
+        @Suppress("UNCHECKED_CAST")
+        val rows = persistenceManager.query(
+            QuerySpecification
+                .withStatement(
+                    """
+                    MATCH (p:Proposition) WHERE p.id IN ${'$'}ids AND p.embedding IS NOT NULL
+                    RETURN {
+                      id: p.id,
+                      usable: coalesce(p.embedding IS :: LIST<INTEGER | FLOAT> NOT NULL AND size(p.embedding) = size(${'$'}vector)
+                        AND all(x IN p.embedding WHERE abs(x) <= ${'$'}finiteMax), false),
+                      embedding: p.embedding
+                    } AS row
+                    """.trimIndent()
+                )
+                .bind(mapOf("ids" to eligible.map { it.id }, "vector" to vector, "finiteMax" to Float.MAX_VALUE.toDouble()))
+                as QuerySpecification<Any>,
+        ).filterIsInstance<Map<*, *>>()
+
+        val (usable, unusable) = rows.partition { it["usable"] == true }
+        if (unusable.isNotEmpty()) {
+            logger.warn("Scoped vector search skipped {} stored embeddings it could not score", unusable.size)
+        }
+        val byId = eligible.associateBy { it.id }
+        val threshold = request.similarityThreshold
+        return usable
+            .mapNotNull { row ->
+                val match = byId[row["id"] as String] ?: return@mapNotNull null
+                val stored = (row["embedding"] as List<*>).map { (it as Number).toDouble() }
+                SimilarityResult(match = match, score = rawCosine(vector, stored))
+            }
+            .filter { threshold <= 0.0 || it.score >= threshold }
+            .sortedWith(
+                compareByDescending<SimilarityResult<Proposition>> { it.score }
+                    .thenComparator { a, b -> compareCodePoints(a.match.contextId.value, b.match.contextId.value) }
+                    .thenComparator { a, b -> compareCodePoints(a.match.id, b.match.id) },
+            )
+            .take(request.topK)
+    }
+
+    // Raw cosine in Double, 0.0 for a zero vector, clamped so rounding never leaves [-1, 1].
+    private fun rawCosine(a: List<Double>, b: List<Double>): Double {
+        var dot = 0.0
+        var normA = 0.0
+        var normB = 0.0
+        for (i in a.indices) {
+            dot += a[i] * b[i]
+            normA += a[i] * a[i]
+            normB += b[i] * b[i]
+        }
+        val denominator = kotlin.math.sqrt(normA) * kotlin.math.sqrt(normB)
+        if (denominator == 0.0) return 0.0
+        return (dot / denominator).coerceIn(-1.0, 1.0)
+    }
+
+    // Compares strings by Unicode code point, not UTF-16 unit, with the shorter first on a common prefix.
+    private fun compareCodePoints(a: String, b: String): Int {
+        val left = a.codePoints().toArray()
+        val right = b.codePoints().toArray()
+        for (i in 0 until minOf(left.size, right.size)) {
+            if (left[i] != right[i]) return left[i].compareTo(right[i])
+        }
+        return left.size.compareTo(right.size)
     }
 
     /**
