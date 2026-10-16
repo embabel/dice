@@ -41,7 +41,10 @@ import com.embabel.dice.storage.DrivineProjectionRecordStore
 import com.embabel.dice.storage.ExtractionRunSchema
 import com.embabel.dice.storage.GraphDecayManager
 import com.embabel.dice.storage.LineageSchema
+import com.embabel.dice.storage.Neo4jScopedReadExecutor
 import com.embabel.dice.storage.diceStorageCatalog
+import org.drivine.connection.DataSourceMap
+import org.drivine.connection.DatabaseRegistry
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.schema.RangeIndexSpec
@@ -51,6 +54,7 @@ import org.drivine.schema.UniquenessConstraintSpec
 import org.drivine.schema.VectorIndexSpec
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
@@ -79,6 +83,15 @@ class DiceStorageAutoConfiguration {
 
     private val logger = LoggerFactory.getLogger(DiceStorageAutoConfiguration::class.java)
 
+    @Autowired(required = false)
+    private var databaseRegistry: DatabaseRegistry? = null
+
+    @Autowired(required = false)
+    private var dataSources: DataSourceMap? = null
+
+    @Autowired(required = false)
+    private var properties: DiceStoreProperties = DiceStoreProperties()
+
     // ---- Graph backend (embabel.dice.store.type=graph) ----
 
     @Bean
@@ -96,9 +109,16 @@ class DiceStorageAutoConfiguration {
             "Wiring graph proposition store (Drivine/Neo4j), vector index '{}'",
             DrivinePropositionRepository.VECTOR_INDEX,
         )
-        return DrivinePropositionRepository(
+        val repository = DrivinePropositionRepository(
             graphObjectManager, persistenceManager, storeEmbeddingService("graph", ai, embeddingServices), transactionManager,
-        )
+        ).withExactVectorBudget(properties.exactVector.toBudget())
+        val registry = databaseRegistry
+        val sources = dataSources
+        return if (registry != null && sources != null) {
+            repository.withNativeReadExecutor(Neo4jScopedReadExecutor.from(persistenceManager, registry, sources))
+        } else {
+            repository
+        }
     }
 
     /**
