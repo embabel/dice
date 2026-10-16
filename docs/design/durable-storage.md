@@ -80,7 +80,9 @@ fun supports(mode: RetrievalMode): Boolean = when (mode) {
 ## Choosing a backend without choosing it
 
 A deployment selects its store with one property — `embabel.dice.store.type=graph` for Drivine/Neo4j,
-anything else (the default) for in-memory. The wiring lives entirely in autoconfiguration, and two
+the default for in-memory. The optional [FalkorDB starter](../falkordb.md) adds
+`embabel.dice.store.type=falkordb` and registers durable proposition/chunk stores before the base
+fallbacks. Its audit companions remain in-memory; see its capability matrix and transaction limits. The wiring lives entirely in autoconfiguration, and two
 rules make it predictable. Every *store* bean is `@ConditionalOnMissingBean`, so an application that
 defines its own store always wins — the autoconfig only fills gaps. And the graph beans are declared
 *before* their in-memory counterparts, so the `type` flip resolves cleanly by registration order
@@ -114,6 +116,9 @@ class MyStoreConfiguration {
     fun propositionRepository(): PropositionRepository = MyCustomPropositionRepository()
 }
 ```
+
+The remaining persistence mechanics in this note describe the Neo4j backend; FalkorDB uses the
+aggregate, identity and consistency rules in its [storage guide](../falkordb.md).
 
 ## Dedup as defense in depth
 
@@ -256,7 +261,7 @@ repeated here.)
 
 | Property | Type | Default | Meaning |
 |---|---|---|---|
-| `embabel.dice.store.type` | `String` | `in-memory` | Backend kind: `graph` (Drivine/Neo4j) or anything else (in-memory). Drives the flowchart in [Choosing a backend without choosing it](#choosing-a-backend-without-choosing-it). |
+| `embabel.dice.store.type` | `String` | `in-memory` | Backend kind: `graph` (Drivine/Neo4j), `falkordb` with its optional starter, otherwise in-memory. Drives the flowchart in [Choosing a backend without choosing it](#choosing-a-backend-without-choosing-it). |
 | `embabel.dice.store.decay.enabled` | `Boolean` | `true` | Master switch for the scheduled decay tick. `false` means `@EnableScheduling` never switches on for decay. |
 | `embabel.dice.store.decay.interval-ms` | `Long` | `3600000` (1 hour) | Delay between decay ticks, in milliseconds. |
 | `embabel.dice.store.decay.k` | `Double` | `2.0` | Decay-rate multiplier `k` for the staleness policy (see [proposition-lifecycle](proposition-lifecycle.md)). |

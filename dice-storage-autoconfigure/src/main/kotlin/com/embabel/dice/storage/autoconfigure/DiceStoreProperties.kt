@@ -25,6 +25,7 @@ import org.springframework.boot.context.properties.NestedConfigurationProperty
  * Configuration for the Dice proposition store.
  *
  * `embabel.dice.store.type` selects the backend: `graph` (Drivine/Neo4j) or `in-memory` (default).
+ * The optional FalkorDB starter adds `falkordb` and registers its stores before the base fallbacks.
  */
 @ConfigurationProperties(prefix = "embabel.dice.store")
 data class DiceStoreProperties(
