@@ -404,7 +404,7 @@ class ScopedReadCypherTest {
         ReadOrder.entries.forEach { order ->
             val result = ids(spec(), order)
             assertEquals(2, result.size)
-            assertTrue(ScopedReadCypher.order(order, spec()).endsWith("p.contextId ASC, p.id ASC"))
+            assertTrue(ScopedReadCypher.order(order, spec()).endsWith("(p.contextId + '') ASC, (p.id + '') ASC"))
         }
         assertEquals(listOf("fresh", "old"), ids(spec(), ReadOrder.EFFECTIVE_CONFIDENCE_DESC))
         val compiled = ScopedReadCypher.compile(scope, spec())

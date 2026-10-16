@@ -127,6 +127,7 @@ internal object ScopedReadCypher {
             ReadOrder.REINFORCE_COUNT_DESC -> "coalesce(p.reinforceCount, 0)"
             ReadOrder.IMPORTANCE_DESC -> "coalesce(p.importance, 0.5)"
         }
-        return (primary?.let { "$it DESC, " } ?: "") + "p.contextId ASC, p.id ASC"
+        // Materialize UTF16 strings so native ties follow Kotlin String ordering before LIMIT.
+        return (primary?.let { "$it DESC, " } ?: "") + "(p.contextId + '') ASC, (p.id + '') ASC"
     }
 }
