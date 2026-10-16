@@ -31,7 +31,10 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.proposition.VectorSearchCapable
+import com.embabel.dice.proposition.StrictPolicyReadCapable
+import com.embabel.dice.proposition.StrictReadRow
 import org.slf4j.LoggerFactory
+import java.time.Duration
 
 /**
  * Reference proposition store that backs persistence through Embabel's
@@ -85,9 +88,35 @@ import org.slf4j.LoggerFactory
 class Neo4jRagPropositionRepository(
     private val crud: PropositionStore,
     val entityRepository: NamedEntityDataRepository,
-) : PropositionStore by crud, VectorSearchCapable, ContextSetVectorSearchCapable {
+) : PropositionStore by crud, VectorSearchCapable, ContextSetVectorSearchCapable, StrictPolicyReadCapable {
 
     private val logger = LoggerFactory.getLogger(Neo4jRagPropositionRepository::class.java)
+
+    override val supportsStrictPolicyReads: Boolean
+        get() = (crud as? StrictPolicyReadCapable)?.supportsStrictPolicyReads == true
+
+    override fun queryByGrantOrder(
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        rows: List<StrictReadRow>,
+        limit: Int,
+        timeout: Duration,
+    ): List<Proposition> = strictReadDelegate().queryByGrantOrder(scope, spec, rows, limit, timeout)
+
+    override fun keywordByApprovedText(
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        rows: List<StrictReadRow>,
+        tokens: List<String>,
+        limit: Int,
+        timeout: Duration,
+    ): List<Proposition> = strictReadDelegate().keywordByApprovedText(scope, spec, rows, tokens, limit, timeout)
+
+    private fun strictReadDelegate(): StrictPolicyReadCapable {
+        val capable = crud as? StrictPolicyReadCapable
+        if (capable?.supportsStrictPolicyReads != true) throw ScopedReadException("SCOPED_READ_UNSUPPORTED")
+        return capable
+    }
 
     override val supportsScopedReads: Boolean
         get() = (crud as? ContextSetReadCapable)?.supportsScopedReads == true

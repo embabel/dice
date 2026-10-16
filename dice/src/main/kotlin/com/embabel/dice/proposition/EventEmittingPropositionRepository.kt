@@ -23,6 +23,7 @@ import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.PropositionPersisted
 import com.embabel.dice.common.PropositionStatusChanged
 import org.slf4j.LoggerFactory
+import java.time.Duration
 
 /**
  * Decorator that emits lifecycle events at the persistence boundary.
@@ -68,9 +69,35 @@ import org.slf4j.LoggerFactory
 open class EventEmittingPropositionRepository<D : PropositionRepository>(
     protected val delegate: D,
     private val listener: DiceEventListener = DiceEventListener.DEV_NULL,
-) : PropositionRepository by delegate, ContextSetVectorSearchCapable {
+) : PropositionRepository by delegate, ContextSetVectorSearchCapable, StrictPolicyReadCapable {
 
     private val logger = LoggerFactory.getLogger(EventEmittingPropositionRepository::class.java)
+
+    override val supportsStrictPolicyReads: Boolean
+        get() = (delegate as? StrictPolicyReadCapable)?.supportsStrictPolicyReads == true
+
+    override fun queryByGrantOrder(
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        rows: List<StrictReadRow>,
+        limit: Int,
+        timeout: Duration,
+    ): List<Proposition> = strictReadDelegate().queryByGrantOrder(scope, spec, rows, limit, timeout)
+
+    override fun keywordByApprovedText(
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        rows: List<StrictReadRow>,
+        tokens: List<String>,
+        limit: Int,
+        timeout: Duration,
+    ): List<Proposition> = strictReadDelegate().keywordByApprovedText(scope, spec, rows, tokens, limit, timeout)
+
+    private fun strictReadDelegate(): StrictPolicyReadCapable {
+        val capable = delegate as? StrictPolicyReadCapable
+        if (capable?.supportsStrictPolicyReads != true) throw ScopedReadException("SCOPED_READ_UNSUPPORTED")
+        return capable
+    }
 
     override val supportsScopedReads: Boolean
         get() = (delegate as? ContextSetReadCapable)?.supportsScopedReads == true
