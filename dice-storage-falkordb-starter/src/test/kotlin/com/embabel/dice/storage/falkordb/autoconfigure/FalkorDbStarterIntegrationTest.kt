@@ -274,7 +274,7 @@ class FalkorDbStarterIntegrationTest {
             val pom = documentation.substringAfter("```xml\n").substringBefore("\n```")
             directory.resolve("pom.xml").writeText(pom)
             val output = directory.resolve("effective.xml")
-            val process = ProcessBuilder(Path.of("../mvnw").toAbsolutePath().toString(), "-o", "-q", "-f",
+            val process = ProcessBuilder(Path.of("../mvnw").toAbsolutePath().toString(), "-q", "-f",
                 directory.resolve("pom.xml").toString(), "help:effective-pom", "-Doutput=$output")
                 .redirectErrorStream(true).redirectOutput(directory.resolve("maven.log").toFile()).start()
             try {
