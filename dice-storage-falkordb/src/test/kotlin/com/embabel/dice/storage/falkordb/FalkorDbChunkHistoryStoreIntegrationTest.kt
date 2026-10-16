@@ -140,6 +140,28 @@ class FalkorDbChunkHistoryStoreIntegrationTest {
         }
     }
 
+    @Test
+    fun `each fixed identity becomes operational for chunk-only and either adapter construction order`() {
+        for (order in listOf("chunks-only", "propositions-first", "chunks-first")) {
+            val provider = server.provider("identities_${UUID.randomUUID().toString().replace("-", "")}")
+            try {
+                repeat(2) {
+                    if (order == "propositions-first") FalkorDbPropositionRepository(provider)
+                    FalkorDbChunkHistoryStore(provider)
+                    if (order == "chunks-first") FalkorDbPropositionRepository(provider)
+                }
+                val grammar = provider.schemaGrammar
+                val constraints = grammar.parseConstraintRows(FalkorDbAccess(provider, null).query(grammar.listConstraintsQuery()))
+                val expected = mapOf("DiceChunkHash" to listOf("context", "hash"), "DiceBookmark" to listOf("context", "source")) +
+                    if (order == "chunks-only") emptyMap() else mapOf("DiceProposition" to listOf("id"))
+                assertEquals(expected, constraints.associate { it.label to it.properties }, order)
+                assertTrue(constraints.all { it.status == "OPERATIONAL" }, order)
+            } finally {
+                provider.end()
+            }
+        }
+    }
+
     companion object {
         @Container
         @JvmField
