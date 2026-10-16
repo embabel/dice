@@ -233,8 +233,8 @@ class FalkorDbVectorSearchIntegrationTest {
             access.write("MATCH (p:DiceProposition {id: $" + "id}) SET p.embedding = [1.0, $expression] RETURN {value:1} AS result",
                 mapOf("id" to "nonfinite-$index"))
         }
-        assertEquals("nan", access.query("MATCH (p:DiceProposition {id:'nonfinite-1'}) " +
-            "RETURN {value:toLower(toString(p.embedding[1]))} AS result").single()["value"])
+        assertTrue(access.query("MATCH (p:DiceProposition {id:'nonfinite-1'}) " +
+            "RETURN {value:toLower(toString(p.embedding[1]))} AS result").single()["value"] in setOf("nan", "-nan"))
         assertEquals(listOf("stable"), repository.findSimilarWithScores(request()).map { it.match.id })
         assertEquals(1 + malformed.size + 2, repository.count())
         assertThrows<IllegalArgumentException> { repository.findSimilarWithScores(request(topK = -1)) }
