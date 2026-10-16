@@ -32,6 +32,8 @@ import com.embabel.dice.proposition.PropositionStoreType
 import com.embabel.dice.proposition.ProvenanceScanningSourceRevisionQueries
 import com.embabel.dice.proposition.ReadOrder
 import com.embabel.dice.proposition.ScopedReadSpec
+import com.embabel.dice.proposition.StrictPolicyReadCapable
+import com.embabel.dice.proposition.StrictReadRow
 import com.embabel.dice.proposition.matchesFilters
 import com.embabel.dice.temporal.TemporalMetadata
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
@@ -41,6 +43,7 @@ import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
@@ -55,15 +58,18 @@ import java.util.concurrent.ConcurrentHashMap
  * the caller's responsibility.
  *
  * The embedding service is optional. When supplied, vector similarity search works; when absent
- * (the default), it returns empty results while plain storage and lookups keep working.
+ * (the default), legacy vector reads return empty results and scoped vector reads fail explicitly
+ * as unsupported. Strict grant-order and approved-text reads need no embedder. Plain storage and
+ * lookups keep working.
  *
  * @param path the JSON file the store is persisted to and loaded from.
- * @param embeddingService optional embedder; when null, vector paths return empty results.
+ * @param embeddingService optional embedder; when null, legacy vector reads return empty results
+ *   and scoped vector reads fail explicitly as unsupported.
  */
 class JsonFilePropositionRepository @JvmOverloads constructor(
     private val path: Path,
     private val embeddingService: EmbeddingService? = null,
-) : PropositionRepository, ContextSetVectorSearchCapable, ProvenanceScanningSourceRevisionQueries {
+) : PropositionRepository, ContextSetVectorSearchCapable, StrictPolicyReadCapable, ProvenanceScanningSourceRevisionQueries {
 
     private val logger = LoggerFactory.getLogger(JsonFilePropositionRepository::class.java)
 
@@ -118,6 +124,24 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
     }
 
     private val scopedReads = LocalScopedReadOperations { propositions.values }
+    private val policyReads = LocalPolicyReadOperations(scopedReads)
+
+    override fun queryByGrantOrder(
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        rows: List<StrictReadRow>,
+        limit: Int,
+        timeout: Duration,
+    ): List<Proposition> = policyReads.queryByGrantOrder(scope, spec, rows, limit, timeout)
+
+    override fun keywordByApprovedText(
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        rows: List<StrictReadRow>,
+        tokens: List<String>,
+        limit: Int,
+        timeout: Duration,
+    ): List<Proposition> = policyReads.keywordByApprovedText(scope, spec, rows, tokens, limit, timeout)
 
     override fun query(
         scope: ContextReadScope,
