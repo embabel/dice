@@ -35,9 +35,12 @@ import com.embabel.dice.proposition.ProvenanceScanningSourceRevisionQueries
 import com.embabel.dice.proposition.ProvenanceSubtractionCapable
 import com.embabel.dice.proposition.ReadClock
 import com.embabel.dice.proposition.ScopedReadSpec
+import com.embabel.dice.proposition.StrictPolicyReadCapable
+import com.embabel.dice.proposition.StrictReadRow
 import com.embabel.dice.proposition.matchesFilters
 import com.embabel.dice.provenance.ProvenanceEntry
 import org.slf4j.LoggerFactory
+import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
@@ -46,16 +49,16 @@ import java.util.concurrent.ConcurrentHashMap
  * Thread-safe using ConcurrentHashMap, but not intended for production use.
  *
  * The embedding service is optional. When one is supplied, embeddings are computed and cached
- * for cosine similarity search and clustering. When it is absent (the default), the vector
- * similarity and clustering paths degrade gracefully to empty results, while plain storage and
+ * for cosine similarity search and clustering. Without one, plain vector search and clustering
+ * return nothing and scoped vector search throws. Plain storage and
  * lookups (save, findById, findAll, findByContextIdValue, etc.) keep working. This lets consumers
  * that only need store-and-retrieve construct the repository without supplying an embedder.
  *
- * @param embeddingService optional embedder; when null, vector paths return empty results.
+ * @param embeddingService optional embedder for vector search and clustering.
  */
 class InMemoryPropositionRepository(
     private val embeddingService: EmbeddingService? = null,
-) : PropositionRepository, ContextSetVectorSearchCapable, ProvenanceScanningSourceRevisionQueries, ProvenanceSubtractionCapable {
+) : PropositionRepository, ContextSetVectorSearchCapable, StrictPolicyReadCapable, ProvenanceScanningSourceRevisionQueries, ProvenanceSubtractionCapable {
 
     private val logger = LoggerFactory.getLogger(InMemoryPropositionRepository::class.java)
 
@@ -63,6 +66,24 @@ class InMemoryPropositionRepository(
     private val embeddings = ConcurrentHashMap<String, FloatArray>()
 
     private val scopedReads = LocalScopedReadOperations { propositions.values }
+    private val policyReads = LocalPolicyReadOperations(scopedReads) { id -> propositions[id] }
+
+    override fun queryByGrantOrder(
+        spec: ScopedReadSpec,
+        clock: ReadClock,
+        rows: List<StrictReadRow>,
+        limit: Int,
+        timeout: Duration,
+    ): List<Proposition> = policyReads.queryByGrantOrder(spec, clock, rows, limit, timeout)
+
+    override fun keywordByApprovedText(
+        spec: ScopedReadSpec,
+        clock: ReadClock,
+        rows: List<StrictReadRow>,
+        tokens: List<String>,
+        limit: Int,
+        timeout: Duration,
+    ): List<Proposition> = policyReads.keywordByApprovedText(spec, clock, rows, tokens, limit, timeout)
 
     override fun query(
         spec: ScopedReadSpec,
