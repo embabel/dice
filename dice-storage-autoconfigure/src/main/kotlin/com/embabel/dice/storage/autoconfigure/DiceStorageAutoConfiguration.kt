@@ -69,9 +69,10 @@ import org.springframework.transaction.PlatformTransactionManager
  * Auto-configures the Dice proposition store and its lineage record stores (projection records and
  * the collector audit trail).
  *
- * `embabel.dice.store.type=graph` selects the Drivine/Neo4j backend; anything else (default) uses the
- * in-memory backend. Every bean is `@ConditionalOnMissingBean`, so an application's own bean always
- * wins. Graph beans are declared before their in-memory counterparts so the flip resolves by
+ * `embabel.dice.store.type=graph` selects the Drivine/Neo4j backend. Otherwise this base module
+ * supplies in-memory fallbacks unless an earlier auto-configuration registered a store, as the
+ * optional FalkorDB starter does for `type=falkordb`. Every bean is `@ConditionalOnMissingBean`,
+ * so an application's own bean always wins. Graph beans are declared before their in-memory counterparts so the flip resolves by
  * registration order.
  *
  * Schema (indexes/constraints) is declared as [SchemaCatalog] beans; Drivine's `SchemaManager`
