@@ -21,7 +21,9 @@ import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.proposition.ConsecutiveFailureBreaker
 import com.embabel.dice.proposition.ContextReadScope
-import com.embabel.dice.proposition.ContextSetReadCapable
+import com.embabel.dice.proposition.ContextSetVectorSearchCapable
+import com.embabel.dice.proposition.ExactVectorBudget
+import com.embabel.dice.proposition.ScopedReadException
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
@@ -30,6 +32,7 @@ import com.embabel.dice.proposition.PropositionStoreType
 import com.embabel.dice.proposition.ProvenanceScanningSourceRevisionQueries
 import com.embabel.dice.proposition.ReadOrder
 import com.embabel.dice.proposition.ScopedReadSpec
+import com.embabel.dice.proposition.matchesFilters
 import com.embabel.dice.temporal.TemporalMetadata
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -38,6 +41,7 @@ import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -59,7 +63,7 @@ import java.util.concurrent.ConcurrentHashMap
 class JsonFilePropositionRepository @JvmOverloads constructor(
     private val path: Path,
     private val embeddingService: EmbeddingService? = null,
-) : PropositionRepository, ContextSetReadCapable, ProvenanceScanningSourceRevisionQueries {
+) : PropositionRepository, ContextSetVectorSearchCapable, ProvenanceScanningSourceRevisionQueries {
 
     private val logger = LoggerFactory.getLogger(JsonFilePropositionRepository::class.java)
 
@@ -131,6 +135,20 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
         limit: Int,
     ): List<Proposition> = scopedReads.keywordOverlap(scope, spec, tokens, limit)
 
+    override val supportsScopedVectors: Boolean get() = embeddingService != null
+
+    override fun findSimilarWithScores(
+        request: TextSimilaritySearchRequest,
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        budget: ExactVectorBudget,
+    ): List<SimilarityResult<Proposition>> {
+        val embedder = embeddingService ?: throw ScopedReadException("SCOPED_VECTOR_UNSUPPORTED")
+        return scopedReads.findSimilarWithScores(request, scope, spec, budget, embedder::embed) { key ->
+            embeddings[key.propositionId]
+        }
+    }
+
     override val luceneSyntaxNotes: String
         get() = "no lucene support"
 
@@ -172,7 +190,8 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
     override fun findSimilarWithScores(
         textSimilaritySearchRequest: TextSimilaritySearchRequest,
     ): List<SimilarityResult<Proposition>> {
-        if (propositions.isEmpty()) return emptyList()
+        require(textSimilaritySearchRequest.topK >= 0) { "topK must not be negative" }
+        if (textSimilaritySearchRequest.topK == 0 || propositions.isEmpty()) return emptyList()
 
         val embedder = embeddingService ?: run {
             logger.debug("Vector search requested but no embedder is configured; returning empty results")
@@ -187,7 +206,7 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
                 val similarity = cosineSimilarity(queryEmbedding, propEmbedding)
                 if (similarity >= minSimilarity) SimilarityResult(match = prop, score = similarity) else null
             }
-            .sortedByDescending { it.score }
+            .sortedWith(LocalScopedReadOperations.similarityOrder)
             .take(textSimilaritySearchRequest.topK)
     }
 
@@ -195,7 +214,8 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
         textSimilaritySearchRequest: TextSimilaritySearchRequest,
         query: PropositionQuery,
     ): List<SimilarityResult<Proposition>> {
-        if (propositions.isEmpty()) return emptyList()
+        require(textSimilaritySearchRequest.topK >= 0) { "topK must not be negative" }
+        if (textSimilaritySearchRequest.topK == 0 || propositions.isEmpty()) return emptyList()
 
         val embedder = embeddingService ?: run {
             logger.debug("Vector search requested but no embedder is configured; returning empty results")
@@ -204,7 +224,8 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
         val queryEmbedding = embedder.embed(textSimilaritySearchRequest.query)
         val minSimilarity = textSimilaritySearchRequest.similarityThreshold
 
-        val candidates = query(query)
+        val asOf = query.effectiveConfidenceAsOf ?: Instant.now()
+        val candidates = propositions.values.filter { query.matchesFilters(it, asOf) }
 
         return candidates
             .mapNotNull { prop ->
@@ -212,26 +233,12 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
                 val similarity = cosineSimilarity(queryEmbedding, propEmbedding)
                 if (similarity >= minSimilarity) SimilarityResult(match = prop, score = similarity) else null
             }
-            .sortedByDescending { it.score }
+            .sortedWith(LocalScopedReadOperations.similarityOrder)
             .take(textSimilaritySearchRequest.topK)
     }
 
-    private fun cosineSimilarity(a: FloatArray, b: FloatArray): Double {
-        require(a.size == b.size) { "Vectors must have the same dimension" }
-
-        var dotProduct = 0.0
-        var normA = 0.0
-        var normB = 0.0
-
-        for (i in a.indices) {
-            dotProduct += a[i] * b[i]
-            normA += a[i] * a[i]
-            normB += b[i] * b[i]
-        }
-
-        val denominator = kotlin.math.sqrt(normA) * kotlin.math.sqrt(normB)
-        return if (denominator == 0.0) 0.0 else dotProduct / denominator
-    }
+    private fun cosineSimilarity(a: FloatArray, b: FloatArray): Double =
+        LocalScopedReadOperations.cosineSimilarity(a, b)
 
     override fun findByStatus(status: PropositionStatus): List<Proposition> =
         propositions.values.filter { it.status == status }
