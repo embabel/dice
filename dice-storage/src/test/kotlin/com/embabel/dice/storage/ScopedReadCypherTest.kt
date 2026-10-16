@@ -37,6 +37,7 @@ import org.neo4j.driver.AuthTokens
 import org.neo4j.driver.Driver
 import org.neo4j.driver.GraphDatabase
 import java.time.Instant
+import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -49,6 +50,8 @@ class ScopedReadCypherTest {
     private lateinit var driver: Driver
     private val at = Instant.parse("2026-10-15T12:00:00.000000123Z")
     private val scope = ContextReadScope.ofValues(listOf("compiler-A", "compiler-B", "compiler-A"))
+    private val zones = listOf(ZoneId.of("UTC"), ZoneOffset.UTC, ZoneOffset.ofHoursMinutes(5, 30),
+        ZoneId.of("America/New_York"))
 
     @BeforeAll
     fun connect() {
@@ -75,33 +78,33 @@ class ScopedReadCypherTest {
         mentions = listOf(EntityMention(span = "one", type = "fixture", resolvedId = "entity-1")),
     )
 
-    private fun properties(p: Proposition): Map<String, Any?> {
+    private fun properties(p: Proposition, zone: ZoneId = zones.first()): Map<String, Any?> {
         val n = PropositionGraphMapper.toView(p).proposition
         val props = linkedMapOf<String, Any?>(
             "id" to n.id, "contextId" to n.contextId, "text" to n.text,
             "confidence" to n.confidence, "decay" to n.decay, "importance" to n.importance,
-            "created" to n.created.atOffset(ZoneOffset.UTC),
-            "contentRevised" to n.contentRevised.atOffset(ZoneOffset.UTC),
-            "metadataRevised" to n.metadataRevised.atOffset(ZoneOffset.UTC),
-            "lastTouched" to n.lastTouched.atOffset(ZoneOffset.UTC),
-            "lastAccessed" to n.lastAccessed.atOffset(ZoneOffset.UTC),
+            "created" to n.created.atZone(zone),
+            "contentRevised" to n.contentRevised.atZone(zone),
+            "metadataRevised" to n.metadataRevised.atZone(zone),
+            "lastTouched" to n.lastTouched.atZone(zone),
+            "lastAccessed" to n.lastAccessed.atZone(zone),
             "status" to n.status, "pinned" to n.pinned, "level" to n.level,
             "reinforceCount" to n.reinforceCount,
         )
-        n.validFrom?.let { props["validFrom"] = it.atOffset(ZoneOffset.UTC) }
-        n.validTo?.let { props["validTo"] = it.atOffset(ZoneOffset.UTC) }
-        n.invalidatedAt?.let { props["invalidatedAt"] = it.atOffset(ZoneOffset.UTC) }
+        n.validFrom?.let { props["validFrom"] = it.atZone(zone) }
+        n.validTo?.let { props["validTo"] = it.atZone(zone) }
+        n.invalidatedAt?.let { props["invalidatedAt"] = it.atZone(zone) }
         n.metadata.forEach { (key, value) -> props["metadata.$key"] = value }
         return props
     }
 
-    private fun save(p: Proposition) {
+    private fun save(p: Proposition, zone: ZoneId = zones.first()) {
         driver.session().use { session ->
             session.run(
                 "CREATE (p:ScopedCompilerProposition:ScopedCompilerFixture) SET p = $" + "props " +
                     "WITH p UNWIND $" + "mentions AS entity " +
                     "CREATE (p)-[:HAS_MENTION]->(:Mention:ScopedCompilerFixture {resolvedId: entity})",
-                mapOf("props" to properties(p), "mentions" to p.mentions.mapNotNull { it.resolvedId }),
+                mapOf("props" to properties(p, zone), "mentions" to p.mentions.mapNotNull { it.resolvedId }),
             ).consume()
         }
     }
@@ -294,30 +297,102 @@ class ScopedReadCypherTest {
             "zero confidence" to p.copy(confidence = 0.0),
             "newer content anchor" to p.copy(contentRevised = at.minusSeconds(43200)),
             "future anchor" to p.copy(lastAccessed = at.plusSeconds(86400)),
+            "anchor one nanosecond in future" to p.copy(lastAccessed = at.plusNanos(1)),
             "one nanosecond before day" to p.copy(lastAccessed = at.minusSeconds(86400).plusNanos(1)),
             "exact elapsed day" to p.copy(lastAccessed = at.minusSeconds(86400)),
             "one nanosecond after day" to p.copy(lastAccessed = at.minusSeconds(86400).minusNanos(1)),
             "validTo only ignored" to p.copy(temporal = TemporalMetadata(validTo = at.minusSeconds(1))),
+            "invalidated one nanosecond ago" to p.copy(temporal = TemporalMetadata(invalidatedAt = at.minusNanos(1))),
             "invalidated now" to p.copy(temporal = TemporalMetadata(invalidatedAt = at)),
             "invalidated in future" to p.copy(temporal = TemporalMetadata(invalidatedAt = at.plusNanos(1))),
             "dated not yet valid" to p.copy(temporal = TemporalMetadata(validFrom = at.plusNanos(1))),
             "closed inside window" to p.copy(temporal = TemporalMetadata(validFrom = at.minusSeconds(864000), validTo = at.plusNanos(1))),
+            "closed one nanosecond past end" to p.copy(temporal = TemporalMetadata(validFrom = at.minusSeconds(864000), validTo = at.minusNanos(1))),
             "closed at end excluded" to p.copy(temporal = TemporalMetadata(validFrom = at.minusSeconds(864000), validTo = at)),
             "closed invalidated overrides" to p.copy(temporal = TemporalMetadata(validFrom = at.minusSeconds(864000), validTo = at.plusSeconds(1), invalidatedAt = at)),
             "open ended validFrom anchor" to p.copy(temporal = TemporalMetadata(validFrom = at.minusSeconds(432000))),
             "open ended starts now" to p.copy(temporal = TemporalMetadata(validFrom = at)),
         )
-        return fixtures.flatMap { (name, value) -> listOf(0.0, 0.5, 2.0, 7.0, Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY).map { k ->
-            DynamicTest.dynamicTest("$name k=$k") {
+        return fixtures.flatMap { (name, value) -> zones.flatMap { zone ->
+            listOf(0.0, 0.5, 2.0, 7.0, Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY).map { k ->
+            DynamicTest.dynamicTest("$name zone=$zone k=$k") {
                 val expression = ScopedConfidenceCypher.expression("p", "asOf", "k")
                 val actual = driver.session().use {
                     it.run("WITH $" + "props AS p RETURN $expression AS confidence",
-                        mapOf("props" to properties(value), "asOf" to at.toString(), "k" to k))
+                        mapOf("props" to properties(value, zone), "asOf" to at.toString(), "k" to k))
                         .single()["confidence"].asDouble()
                 }
                 assertEquals(value.effectiveConfidenceAt(at, k), actual, 1e-14)
             }
+        } } }
+    }
+
+    @TestFactory
+    fun `mixed zone timestamp boundaries retain adjacent nanoseconds`(): List<DynamicTest> {
+        val queries = linkedMapOf<String, (Instant, Instant) -> PropositionQuery>(
+            "created" to { after, before -> PropositionQuery(createdAfter = after, createdBefore = before) },
+            "revised" to { after, before -> PropositionQuery(revisedAfter = after, revisedBefore = before) },
+            "accessed" to { after, before -> PropositionQuery(accessedAfter = after, accessedBefore = before) },
+        )
+        return queries.flatMap { (field, query) -> listOf(-1L, 0L, 1L).map { endpoint ->
+            DynamicTest.dynamicTest("$field boundary nanos=$endpoint") {
+                clean()
+                val portable = InMemoryPropositionRepository()
+                zones.forEachIndexed { index, zone -> listOf(-1L, 0L, 1L).forEach { nanos ->
+                    val timestamp = at.plusNanos(nanos)
+                    val p = proposition("zone-$index-nanos-$nanos").copy(created = timestamp,
+                        contentRevised = timestamp, metadataRevised = timestamp, lastAccessed = timestamp)
+                    save(p, zone)
+                    portable.save(p)
+                } }
+                val boundary = at.plusNanos(endpoint)
+                listOf(query(boundary, at.plusSeconds(1)), query(at.minusSeconds(1), boundary),
+                    query(boundary, boundary)).forEach { restriction ->
+                    val criteria = spec(restriction)
+                    assertEquals(portable.query(scope, criteria, ReadOrder.NONE, 100).map { it.id }, ids(criteria))
+                }
+            }
         } }
+    }
+
+    @Test
+    fun `mixed zone timestamp orders tie by identity at the same Instant`() {
+        val portable = InMemoryPropositionRepository()
+        zones.forEachIndexed { index, zone -> listOf(-1L, 0L, 1L).forEach { nanos ->
+            val timestamp = at.plusNanos(nanos)
+            val p = proposition("zone-$index-nanos-$nanos").copy(created = timestamp,
+                contentRevised = timestamp, metadataRevised = timestamp, lastAccessed = timestamp)
+            save(p, zone)
+            portable.save(p)
+        } }
+        listOf(ReadOrder.CREATED_DESC, ReadOrder.REVISED_DESC, ReadOrder.LAST_ACCESSED_DESC,
+            ReadOrder.EFFECTIVE_CONFIDENCE_DESC).forEach { order ->
+            assertEquals(portable.query(scope, spec(), order, 100).map { it.id }, ids(spec(), order), order.name)
+        }
+    }
+
+    @Test
+    fun `missing timestamp properties use Instant fallback anchors across zones`() {
+        val p = proposition()
+        val properties = properties(p).toMutableMap().apply {
+            this["contentRevised"] = at.atZone(zones[2])
+            this["metadataRevised"] = at.minusNanos(1).atZone(zones[3])
+            remove("lastTouched")
+            remove("lastAccessed")
+        }
+        driver.session().use { session ->
+            session.run("CREATE (p:ScopedCompilerProposition:ScopedCompilerFixture) SET p = $" + "props",
+                mapOf("props" to properties)).consume()
+        }
+        assertEquals(listOf("one"), ids(spec(PropositionQuery(revisedAfter = at, revisedBefore = at))))
+        assertEquals(emptyList(), ids(spec(PropositionQuery(revisedAfter = at.plusNanos(1)))))
+        assertEquals(listOf("one"), ids(spec(PropositionQuery(accessedAfter = p.created, accessedBefore = p.created))))
+        val expression = ScopedConfidenceCypher.expression("p", "asOf", "k")
+        val actual = driver.session().use { session ->
+            session.run("MATCH (p:ScopedCompilerProposition:ScopedCompilerFixture) RETURN $expression AS confidence",
+                mapOf("asOf" to at.toString(), "k" to 2.0)).single()["confidence"].asDouble()
+        }
+        assertEquals(p.copy(contentRevised = at, lastAccessed = p.created).effectiveConfidenceAt(at), actual, 1e-14)
     }
 
     @Test

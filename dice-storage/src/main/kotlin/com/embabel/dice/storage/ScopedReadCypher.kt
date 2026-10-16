@@ -50,7 +50,10 @@ internal object ScopedReadCypher {
         spec.fragments.forEachIndexed { index, query ->
             fun parameter(field: String, value: Any) = bind("f${index}_$field", value)
             fun compare(field: String, property: String, operator: String, value: Any?) {
-                if (value != null) predicates += "$property $operator ${parameter(field, value)}"
+                if (value != null) {
+                    val compared = if (value is Instant) ScopedConfidenceCypher.instant(property) else property
+                    predicates += "$compared $operator ${parameter(field, value)}"
+                }
             }
             fun acceptUnless(field: String, property: String, rejectedBy: String, value: Double?) {
                 // Kotlin rejects on this comparison. Its logical complement preserves NaN;
@@ -77,9 +80,7 @@ internal object ScopedReadCypher {
             compare("maxLevel", "coalesce(p.level, 0)", "<=", query.maxLevel)
             compare("createdAfter", "p.created", ">=", query.createdAfter)
             compare("createdBefore", "p.created", "<=", query.createdBefore)
-            val content = "coalesce(p.contentRevised, p.created)"
-            val metadata = "coalesce(p.metadataRevised, p.created)"
-            val revised = "coalesce(p.lastTouched, CASE WHEN $content >= $metadata THEN $content ELSE $metadata END)"
+            val revised = revised()
             compare("revisedAfter", revised, ">=", query.revisedAfter)
             compare("revisedBefore", revised, "<=", query.revisedBefore)
             compare("accessedAfter", "coalesce(p.lastAccessed, p.created)", ">=", query.accessedAfter)
@@ -108,16 +109,21 @@ internal object ScopedReadCypher {
         return CompiledScopedPredicate(predicates.joinToString(" AND ") { "($it)" }, parameters)
     }
 
+    private fun revised(): String {
+        val content = "coalesce(p.contentRevised, p.created)"
+        val metadata = "coalesce(p.metadataRevised, p.created)"
+        return "coalesce(p.lastTouched, CASE WHEN ${ScopedConfidenceCypher.instant(content)} >= " +
+            "${ScopedConfidenceCypher.instant(metadata)} THEN $content ELSE $metadata END)"
+    }
+
     fun order(order: ReadOrder, spec: ScopedReadSpec): String {
         val primary = when (order) {
             ReadOrder.NONE -> null
             ReadOrder.EFFECTIVE_CONFIDENCE_DESC ->
                 ScopedConfidenceCypher.expression("p", "rankAsOf", "rankDecayK")
-            ReadOrder.CREATED_DESC -> "p.created"
-            ReadOrder.REVISED_DESC -> "coalesce(p.lastTouched, CASE WHEN " +
-                "coalesce(p.contentRevised, p.created) >= coalesce(p.metadataRevised, p.created) " +
-                "THEN coalesce(p.contentRevised, p.created) ELSE coalesce(p.metadataRevised, p.created) END)"
-            ReadOrder.LAST_ACCESSED_DESC -> "coalesce(p.lastAccessed, p.created)"
+            ReadOrder.CREATED_DESC -> ScopedConfidenceCypher.instant("p.created")
+            ReadOrder.REVISED_DESC -> ScopedConfidenceCypher.instant(revised())
+            ReadOrder.LAST_ACCESSED_DESC -> ScopedConfidenceCypher.instant("coalesce(p.lastAccessed, p.created)")
             ReadOrder.REINFORCE_COUNT_DESC -> "coalesce(p.reinforceCount, 0)"
             ReadOrder.IMPORTANCE_DESC -> "coalesce(p.importance, 0.5)"
         }
