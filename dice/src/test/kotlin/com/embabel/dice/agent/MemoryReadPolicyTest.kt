@@ -205,7 +205,6 @@ class MemoryReadPolicyTest {
             base.copy(statuses = setOf(PropositionStatus.ACTIVE)) to MemoryField.STATUS,
             base.copy(minLevel = 0) to MemoryField.LEVEL, base.copy(maxLevel = 2) to MemoryField.LEVEL,
             base.copy(createdAfter = now) to MemoryField.CREATED, base.copy(createdBefore = now) to MemoryField.CREATED,
-            base.copy(revisedAfter = now) to MemoryField.CONTENT_REVISED, base.copy(revisedBefore = now) to MemoryField.CONTENT_REVISED,
             base.copy(accessedAfter = now) to MemoryField.LAST_ACCESSED, base.copy(accessedBefore = now) to MemoryField.LAST_ACCESSED,
             base.copy(minConfidence = 0.2) to MemoryField.RAW_CONFIDENCE,
             base.copy(minEffectiveConfidence = 0.2) to MemoryField.EFFECTIVE_CONFIDENCE,
@@ -218,6 +217,30 @@ class MemoryReadPolicyTest {
             val restricted = spec.restrict(scope, criteria)
             assertThrows<IllegalArgumentException>(field.name) { policy().validate(scope, restricted) }
             policy(RowProjection.text(ApprovedText.Omitted).withFields(setOf(field))).validate(scope, restricted)
+        }
+    }
+
+    @Test
+    fun `revision filtering and ordering require both last touched inputs under strict policy`() {
+        val revisionFields = setOf(MemoryField.CONTENT_REVISED, MemoryField.METADATA_REVISED)
+        val dependencies = listOf(
+            spec.restrict(scope, PropositionQuery(revisedAfter = now)) to ReadOrder.NONE,
+            spec.restrict(scope, PropositionQuery(revisedBefore = now)) to ReadOrder.NONE,
+            spec.restrict(scope, PropositionQuery(revisedAfter = now, revisedBefore = now)) to ReadOrder.NONE,
+            spec to ReadOrder.REVISED_DESC,
+        )
+        dependencies.forEach { (criteria, order) ->
+            revisionFields.forEach { omitted ->
+                val projection = RowProjection.text(ApprovedText.Literal("approved"))
+                    .withFields(revisionFields - omitted)
+                assertThrows<IllegalArgumentException>("$omitted required for $order") {
+                    policy(projection).validate(scope, criteria, order)
+                }
+            }
+            policy(RowProjection.text(ApprovedText.Literal("approved")).withFields(revisionFields))
+                .validate(scope, criteria, order)
+            RowPolicy.of(stamp, listOf(grant()), HiddenFieldInfluence.ALLOW_SEARCH_INFLUENCE)
+                .validate(scope, criteria, order)
         }
     }
 

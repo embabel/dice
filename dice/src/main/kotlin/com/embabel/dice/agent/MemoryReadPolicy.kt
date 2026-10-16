@@ -174,7 +174,10 @@ class RowPolicy private constructor(
             if (query.statuses != null) required += MemoryField.STATUS
             if (query.minLevel != null || query.maxLevel != null) required += MemoryField.LEVEL
             if (query.createdAfter != null || query.createdBefore != null) required += MemoryField.CREATED
-            if (query.revisedAfter != null || query.revisedBefore != null) required += MemoryField.CONTENT_REVISED
+            if (query.revisedAfter != null || query.revisedBefore != null) {
+                required += MemoryField.CONTENT_REVISED
+                required += MemoryField.METADATA_REVISED
+            }
             if (query.accessedAfter != null || query.accessedBefore != null) required += MemoryField.LAST_ACCESSED
             if (query.minConfidence != null) required += MemoryField.RAW_CONFIDENCE
             if (query.minEffectiveConfidence != null || query.belowEffectiveConfidence != null) required += MemoryField.EFFECTIVE_CONFIDENCE
@@ -187,7 +190,10 @@ class RowPolicy private constructor(
             ReadOrder.NONE -> Unit
             ReadOrder.EFFECTIVE_CONFIDENCE_DESC -> required += MemoryField.EFFECTIVE_CONFIDENCE
             ReadOrder.CREATED_DESC -> required += MemoryField.CREATED
-            ReadOrder.REVISED_DESC -> required += MemoryField.CONTENT_REVISED
+            ReadOrder.REVISED_DESC -> {
+                required += MemoryField.CONTENT_REVISED
+                required += MemoryField.METADATA_REVISED
+            }
             ReadOrder.LAST_ACCESSED_DESC -> required += MemoryField.LAST_ACCESSED
             ReadOrder.REINFORCE_COUNT_DESC -> required += MemoryField.REINFORCE_COUNT
             ReadOrder.IMPORTANCE_DESC -> required += MemoryField.IMPORTANCE
