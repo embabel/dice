@@ -24,6 +24,7 @@ import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.ReadOrder
 import com.embabel.dice.proposition.ScopedReadSpec
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.temporal.TemporalMetadata
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
@@ -201,6 +202,67 @@ class ScopedReadCypherTest {
             ids(spec(PropositionQuery(minTrustScore = 0.8))))
     }
 
+    @TestFactory
+    fun `all Double thresholds preserve portable rejection semantics including NaN`(): List<DynamicTest> {
+        val values = listOf(Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, -1.0, 0.0, 0.8, 1.0)
+        val fields = linkedMapOf<String, (Double) -> PropositionQuery>(
+            "raw confidence" to { PropositionQuery(minConfidence = it) },
+            "effective lower" to { PropositionQuery(minEffectiveConfidence = it) },
+            "effective upper" to { PropositionQuery(belowEffectiveConfidence = it) },
+            "importance" to { PropositionQuery(minImportance = it) },
+            "trust" to { PropositionQuery(minTrustScore = it) },
+        )
+        return fields.flatMap { (name, query) -> values.map { threshold ->
+            DynamicTest.dynamicTest("$name threshold=$threshold") {
+                clean()
+                val fixtures = listOf(null, "0.1", true, Double.NaN, Double.NEGATIVE_INFINITY,
+                    Double.POSITIVE_INFINITY, 0.1, 0.8, 1).mapIndexed { index, score ->
+                    proposition("numeric-$index").copy(
+                        metadata = if (score == null) emptyMap() else mapOf("dice.trust.score" to score),
+                    )
+                }
+                val portable = InMemoryPropositionRepository()
+                fixtures.forEach { save(it); portable.save(it) }
+                val criteria = spec(query(threshold))
+                assertEquals(portable.query(scope, criteria, ReadOrder.NONE, 100).map { it.id }, ids(criteria))
+            }
+        } }
+    }
+
+    @TestFactory
+    fun `nonfinite fragment decay preserves portable membership in every confidence branch`(): List<DynamicTest> {
+        val p = proposition()
+        val fixtures = listOf(
+            p,
+            p.copy(id = "zero-decay", decay = 0.0),
+            p.copy(id = "zero-confidence", confidence = 0.0),
+            p.copy(id = "zero-age", lastAccessed = at),
+            p.copy(id = "future", lastAccessed = at.plusSeconds(86400)),
+            p.copy(id = "open", temporal = TemporalMetadata(validFrom = at.minusSeconds(172800))),
+            p.copy(id = "open-now", temporal = TemporalMetadata(validFrom = at)),
+            p.copy(id = "not-yet", temporal = TemporalMetadata(validFrom = at.plusSeconds(1))),
+            p.copy(id = "closed", temporal = TemporalMetadata(validFrom = at.minusSeconds(172800), validTo = at.plusSeconds(1))),
+            p.copy(id = "expired", temporal = TemporalMetadata(validFrom = at.minusSeconds(172800), validTo = at)),
+            p.copy(id = "invalidated", temporal = TemporalMetadata(invalidatedAt = at)),
+            p.copy(id = "validTo-only", temporal = TemporalMetadata(validTo = at.minusSeconds(1))),
+        )
+        return listOf(Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY).flatMap { k ->
+            listOf(
+                PropositionQuery(minEffectiveConfidence = 0.5, decayK = k),
+                PropositionQuery(belowEffectiveConfidence = 0.5, decayK = k),
+                PropositionQuery(minEffectiveConfidence = 0.5, belowEffectiveConfidence = 0.5, decayK = k),
+            ).mapIndexed { index, query ->
+                DynamicTest.dynamicTest("nonfinite k=$k bounds=$index") {
+                    clean()
+                    val portable = InMemoryPropositionRepository()
+                    fixtures.forEach { save(it); portable.save(it) }
+                    val criteria = spec(query)
+                    assertEquals(portable.query(scope, criteria, ReadOrder.NONE, 100).map { it.id }, ids(criteria))
+                }
+            }
+        }
+    }
+
     @Test
     fun `malicious values are bound and identifiers cannot be supplied`() {
         val attack = "x') MATCH (secret) DETACH DELETE secret //"
@@ -228,6 +290,8 @@ class ScopedReadCypherTest {
         val p = proposition()
         val fixtures = linkedMapOf(
             "decaying access anchor" to p,
+            "zero decay" to p.copy(decay = 0.0),
+            "zero confidence" to p.copy(confidence = 0.0),
             "newer content anchor" to p.copy(contentRevised = at.minusSeconds(43200)),
             "future anchor" to p.copy(lastAccessed = at.plusSeconds(86400)),
             "one nanosecond before day" to p.copy(lastAccessed = at.minusSeconds(86400).plusNanos(1)),
@@ -243,7 +307,7 @@ class ScopedReadCypherTest {
             "open ended validFrom anchor" to p.copy(temporal = TemporalMetadata(validFrom = at.minusSeconds(432000))),
             "open ended starts now" to p.copy(temporal = TemporalMetadata(validFrom = at)),
         )
-        return fixtures.flatMap { (name, value) -> listOf(0.0, 0.5, 2.0, 7.0).map { k ->
+        return fixtures.flatMap { (name, value) -> listOf(0.0, 0.5, 2.0, 7.0, Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY).map { k ->
             DynamicTest.dynamicTest("$name k=$k") {
                 val expression = ScopedConfidenceCypher.expression("p", "asOf", "k")
                 val actual = driver.session().use {

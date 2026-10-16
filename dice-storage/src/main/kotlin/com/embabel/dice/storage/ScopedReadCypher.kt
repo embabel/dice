@@ -52,6 +52,11 @@ internal object ScopedReadCypher {
             fun compare(field: String, property: String, operator: String, value: Any?) {
                 if (value != null) predicates += "$property $operator ${parameter(field, value)}"
             }
+            fun acceptUnless(field: String, property: String, rejectedBy: String, value: Double?) {
+                // Kotlin rejects on this comparison. Its logical complement preserves NaN;
+                // the opposite comparison operator would silently exclude accepted rows.
+                if (value != null) predicates += "NOT ($property $rejectedBy ${parameter(field, value)})"
+            }
             compare("contextId", "p.contextId", "=", query.contextId?.value)
             query.entityId?.let {
                 predicates += "EXISTS { MATCH (p)-[:HAS_MENTION]->(m:Mention) " +
@@ -79,15 +84,15 @@ internal object ScopedReadCypher {
             compare("revisedBefore", revised, "<=", query.revisedBefore)
             compare("accessedAfter", "coalesce(p.lastAccessed, p.created)", ">=", query.accessedAfter)
             compare("accessedBefore", "coalesce(p.lastAccessed, p.created)", "<=", query.accessedBefore)
-            compare("minConfidence", "p.confidence", ">=", query.minConfidence)
+            acceptUnless("minConfidence", "p.confidence", "<", query.minConfidence)
             if (query.minEffectiveConfidence != null || query.belowEffectiveConfidence != null) {
                 parameter("asOf", spec.asOf)
                 parameter("decayK", query.decayK)
                 val confidence = ScopedConfidenceCypher.expression("p", "f${index}_asOf", "f${index}_decayK")
-                compare("minEffectiveConfidence", confidence, ">=", query.minEffectiveConfidence)
-                compare("belowEffectiveConfidence", confidence, "<", query.belowEffectiveConfidence)
+                acceptUnless("minEffectiveConfidence", confidence, "<", query.minEffectiveConfidence)
+                acceptUnless("belowEffectiveConfidence", confidence, ">=", query.belowEffectiveConfidence)
             }
-            compare("minImportance", "coalesce(p.importance, 0.5)", ">=", query.minImportance)
+            acceptUnless("minImportance", "coalesce(p.importance, 0.5)", "<", query.minImportance)
             compare("minReinforceCount", "coalesce(p.reinforceCount, 0)", ">=", query.minReinforceCount)
             compare("pinned", "coalesce(p.pinned, false)", "=", query.pinned)
             query.minTrustScore?.let {
