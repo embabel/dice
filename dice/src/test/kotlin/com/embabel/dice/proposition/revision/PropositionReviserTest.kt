@@ -22,8 +22,10 @@ import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.matchesFilters
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.spi.ConflictType
@@ -36,6 +38,29 @@ import java.util.concurrent.ConcurrentHashMap
 private val testContextId = ContextId("test-context")
 
 class PropositionReviserTest {
+
+    @Nested
+    inner class FilteredVectorFixtureTests {
+
+        @Test
+        fun `filtered fixture ranks eligible candidates before foreign top-K decoys`() {
+            val repository = TestPropositionRepository(defaultScore = 0.7)
+            repeat(6) {
+                val decoy = createProposition("foreign-$it").copy(contextId = ContextId("ctxC"))
+                repository.save(decoy)
+                repository.scoreOverrides[decoy.text] = 0.99
+            }
+            val eligible = createProposition("eligible")
+            repository.save(eligible)
+            val request = TextSimilaritySearchRequest(query = "q", topK = 1, similarityThreshold = 0.5)
+
+            assertTrue(repository.findSimilarWithScores(request).all { it.match.contextId == ContextId("ctxC") })
+            assertEquals(
+                listOf(eligible.id),
+                repository.findSimilarWithScores(request, PropositionQuery.forContextId(testContextId)).map { it.match.id },
+            )
+        }
+    }
 
     @Nested
     inner class RevisionResultTests {
@@ -1167,6 +1192,18 @@ class TestPropositionRepository(
             .filter { it.score >= request.similarityThreshold }
             .sortedByDescending { it.score }
             .take(request.topK)
+
+    override fun findSimilarWithScores(
+        request: TextSimilaritySearchRequest,
+        query: PropositionQuery,
+    ): List<SimilarityResult<Proposition>> {
+        val asOf = query.effectiveConfidenceAsOf ?: java.time.Instant.now()
+        return propositions.values.filter { query.matchesFilters(it, asOf) }
+            .map { SimilarityResult(match = it, score = scoreOverrides[it.text] ?: defaultScore) }
+            .filter { it.score >= request.similarityThreshold }
+            .sortedByDescending { it.score }
+            .take(request.topK)
+    }
 
     override fun findByStatus(status: PropositionStatus): List<Proposition> =
         propositions.values.filter { it.status == status }

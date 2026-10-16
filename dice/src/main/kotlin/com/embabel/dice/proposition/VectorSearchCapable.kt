@@ -41,8 +41,8 @@ interface VectorSearchCapable {
     val supportsVector: Boolean get() = true
 
     /**
-     * Query propositions by specification. Required by [findSimilarWithScores] (filtered overload)
-     * and [findClusters]; satisfied automatically when a type also implements [PropositionStore].
+     * Query propositions by specification. Required by [findClusters]; satisfied automatically
+     * when a type also implements [PropositionStore].
      */
     fun query(query: PropositionQuery): List<Proposition>
 
@@ -64,8 +64,11 @@ interface VectorSearchCapable {
     /**
      * Vector similarity search with an additional [PropositionQuery] filter applied to results.
      *
-     * The default runs vector search then filters in memory via [query]. Override to push the
-     * filter to the backend for better performance.
+     * Implementations must apply all query filters before similarity ranking and top-K selection.
+     * Filtering a global top-K result can silently omit eligible hits. The default therefore fails
+     * explicitly without reading the backend; override only when filtered search is supported.
+     *
+     * @throws FilteredVectorUnsupportedException if this backend does not implement filtered search
      *
      * @param textSimilaritySearchRequest The similarity search parameters
      * @param query Additional filter to apply to the vector results
@@ -75,12 +78,7 @@ interface VectorSearchCapable {
         textSimilaritySearchRequest: TextSimilaritySearchRequest,
         query: PropositionQuery,
     ): List<SimilarityResult<Proposition>> {
-        // Default: get vector results then filter using query criteria
-        val vectorResults = findSimilarWithScores(textSimilaritySearchRequest)
-        val matchingIds = this.query(query).map { it.id }.toSet()
-        val filtered = vectorResults.filter { it.match.id in matchingIds }
-        logger.debug("findSimilarWithScores+query: {} vector hit(s) -> {} after query filter", vectorResults.size, filtered.size)
-        return filtered
+        throw FilteredVectorUnsupportedException()
     }
 
     // ========================================================================
