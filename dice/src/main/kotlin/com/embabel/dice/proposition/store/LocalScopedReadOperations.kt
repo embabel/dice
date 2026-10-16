@@ -120,7 +120,7 @@ internal class LocalScopedReadOperations(private val rows: () -> Collection<Prop
     fun eligible(scope: ContextReadScope, spec: ScopedReadSpec): List<Proposition> =
         eligibleRows(scope, spec).toList()
 
-    private fun eligibleRows(
+    internal fun eligibleRows(
         scope: ContextReadScope,
         spec: ScopedReadSpec,
         checkDeadline: () -> Unit = {},
