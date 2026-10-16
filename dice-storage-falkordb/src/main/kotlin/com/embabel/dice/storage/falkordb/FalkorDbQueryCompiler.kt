@@ -90,6 +90,40 @@ internal class FalkorDbQueryCompiler {
         return finish(ReadOrder.valueOf(q.orderBy.name), asOf, q.decayK, limit, count, tokens, false, q.limit)
     }
 
+    /** Exact Double accumulation keeps Float embedding scores consistent with portable stores. */
+    fun vector(
+        q: PropositionQuery, embedding: List<Double>?, threshold: Double, topK: Int,
+        candidateIds: List<String>? = null, afterId: String? = null,
+    ): FalkorDbRead {
+        filters(q, q.effectiveConfidenceAsOf ?: Instant.now())
+        candidateIds?.let { predicates += "p.id IN ${bind(it)}" }
+        afterId?.let { predicates += "p.idOrder > ${bind(FalkorDbPropositionCodec.orderKey(it))}" }
+        val vector = embedding?.let(::bind) ?: "anchor.embedding"
+        val maximum = bind(Float.MAX_VALUE.toDouble())
+        val minimum = bind(-Float.MAX_VALUE.toDouble())
+        var statement = "MATCH (p:DiceProposition)"
+        if (predicates.isNotEmpty()) statement += " WHERE " + predicates.joinToString(" AND ")
+        if (embedding == null) statement += " MATCH (anchor:DiceProposition {id:${bind(requireNotNull(afterId))}})"
+        // CASE guards malformed property types before list operations and arithmetic are evaluated.
+        statement += " WITH p, CASE WHEN typeOf(p.embedding) = 'List' THEN p.embedding ELSE [] END AS embedding, " +
+            "CASE WHEN typeOf($vector) = 'List' THEN $vector ELSE [] END AS queryEmbedding"
+        // FalkorDB's numeric ordering treats NaN as equal, so a range check alone cannot reject it.
+        val validComponents = "typeOf(x) IN ['Float', 'Integer'] AND x >= $minimum AND x <= $maximum " +
+            "AND NOT (toLower(toString(x)) CONTAINS 'nan')"
+        statement += " WITH p, queryEmbedding, CASE WHEN size(queryEmbedding) > 0 AND size(embedding) = size(queryEmbedding) AND " +
+            "all(x IN embedding WHERE $validComponents) AND all(x IN queryEmbedding WHERE $validComponents) " +
+            "THEN embedding ELSE null END AS embedding WHERE embedding IS NOT NULL"
+        statement += " WITH p, queryEmbedding, reduce(dot = 0.0, i IN range(0, size(queryEmbedding) - 1) | " +
+            "dot + embedding[i] * queryEmbedding[i]) AS dot, " +
+            "sqrt(reduce(norm = 0.0, x IN embedding | norm + x * x)) * " +
+            "sqrt(reduce(norm = 0.0, x IN queryEmbedding | norm + x * x)) AS denominator"
+        statement += " WITH p, queryEmbedding, CASE WHEN denominator = 0.0 THEN 0.0 ELSE dot / denominator END AS cosine"
+        statement += " WITH p, queryEmbedding, CASE WHEN cosine > 1.0 THEN 1.0 WHEN cosine < -1.0 THEN -1.0 ELSE cosine END AS score"
+        statement += " WHERE score >= ${bind(threshold)} WITH p, score, queryEmbedding ORDER BY score DESC, p.contextOrder, p.idOrder " +
+            "LIMIT ${bind(topK)} RETURN {aggregate:p.aggregate, score:score, embedding:p.embedding, queryEmbedding:queryEmbedding} AS result"
+        return FalkorDbRead(statement, parameters.toMap())
+    }
+
     fun scoped(
         scope: ContextReadScope, spec: ScopedReadSpec, order: ReadOrder = ReadOrder.NONE,
         limit: Int? = null, count: Boolean = false, tokens: List<String>? = null,
