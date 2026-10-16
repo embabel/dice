@@ -15,22 +15,15 @@
  */
 package com.embabel.dice.proposition
 
+import com.embabel.dice.proposition.store.ScopedReadRules
+
 /**
  * Compares strings by Unicode code point, the order the graph stores use for stored text.
- * Kotlin's own string comparison works on UTF-16 units and would put characters above U+FFFF
- * before U+E000..U+FFFF, so ties would break differently on resident and database backends.
+ * The rule itself lives in [ScopedReadRules.compareCodePoints]; this is the short name the
+ * module uses for it.
  */
 internal object CodePointOrder : Comparator<String> {
-    override fun compare(a: String, b: String): Int {
-        var i = 0
-        while (i < a.length && i < b.length) {
-            val x = a.codePointAt(i)
-            val y = b.codePointAt(i)
-            if (x != y) return x.compareTo(y)
-            i += Character.charCount(x)
-        }
-        return a.length.compareTo(b.length)
-    }
+    override fun compare(a: String, b: String): Int = ScopedReadRules.compareCodePoints(a, b)
 }
 
 /** Context first, then proposition id, both by code point: how every scoped read breaks ties. */
