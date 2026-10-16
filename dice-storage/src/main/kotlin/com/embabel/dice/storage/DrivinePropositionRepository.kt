@@ -1939,7 +1939,7 @@ class DrivinePropositionRepository private constructor(
 
     companion object {
         /** How long a scoped query, count or keyword read may run unless [withScopedReadTimeout] says otherwise. */
-        private val DEFAULT_SCOPED_READ_TIMEOUT: Duration = Duration.ofSeconds(5)
+        val DEFAULT_SCOPED_READ_TIMEOUT: Duration = Duration.ofSeconds(5)
 
         /**
          * How a proposition save treats `HAS_MENTION`: the view's list is the whole list, and a
