@@ -15,6 +15,9 @@
  */
 package com.embabel.dice.storage.autoconfigure
 
+import com.embabel.dice.proposition.ExactVectorBudget
+import java.time.Duration
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.context.properties.NestedConfigurationProperty
 
@@ -22,9 +25,11 @@ import org.springframework.boot.context.properties.NestedConfigurationProperty
  * Configuration for the Dice proposition store.
  *
  * `embabel.dice.store.type` selects the backend: `graph` (Drivine/Neo4j) or `in-memory` (default).
+ * Optional constructor autowiring opts into property binding for body options and permits both
+ * the primary and generated no-argument constructors. Their signatures remain unchanged.
  */
 @ConfigurationProperties(prefix = "embabel.dice.store")
-data class DiceStoreProperties(
+data class DiceStoreProperties @Autowired(required = false) constructor(
     /** Backend kind: `graph` or `in-memory`. */
     var type: String = "in-memory",
 
@@ -34,6 +39,17 @@ data class DiceStoreProperties(
     @NestedConfigurationProperty
     var vectorIndex: VectorIndex = VectorIndex(),
 ) {
+    @NestedConfigurationProperty
+    var exactVector: ExactVector = ExactVector()
+
+    /** Finite candidate and timeout bounds for legacy filtered vector reads. */
+    class ExactVector {
+        var maxCandidates: Int = 10_000
+        var timeout: Duration = Duration.ofSeconds(5)
+
+        fun toBudget(): ExactVectorBudget = ExactVectorBudget(maxCandidates, timeout)
+    }
+
     /** The scheduled decay tick (materialise cached confidence, then apply lifecycle transitions). */
     data class Decay(
         var enabled: Boolean = true,
