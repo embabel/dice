@@ -21,6 +21,8 @@ import com.embabel.dice.common.DiceEvent
 import com.embabel.dice.common.DiceEventListener
 import org.drivine.autoconfigure.EnableDrivine
 import org.drivine.autoconfigure.EnableDrivineTestConfig
+import org.drivine.connection.DatabaseRegistry
+import org.drivine.connection.DataSourceMap
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.GraphObjectManagerFactory
 import org.drivine.manager.PersistenceManager
@@ -151,8 +153,11 @@ open class TestApplication {
         persistenceManager: PersistenceManager,
         embeddingService: EmbeddingService,
         transactionManager: PlatformTransactionManager,
+        registry: DatabaseRegistry,
+        sources: DataSourceMap,
     ): DrivinePropositionRepository =
         DrivinePropositionRepository(graphObjectManager, persistenceManager, embeddingService, transactionManager)
+            .withNativeReadExecutor(Neo4jScopedReadExecutor.from(persistenceManager, registry, sources))
 
     @Bean
     open fun chunkHistoryStore(

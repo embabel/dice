@@ -23,6 +23,12 @@ import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.common.DiceMetadataKeys
+import com.embabel.dice.proposition.ContextReadScope
+import com.embabel.dice.proposition.ContextSetReadCapable
+import com.embabel.dice.proposition.ReadClock
+import com.embabel.dice.proposition.ScopedReadSpec
+import com.embabel.dice.proposition.ScopedReadException
+import com.embabel.dice.proposition.ScopedReadFailure
 import com.embabel.dice.proposition.ConsecutiveFailureBreaker
 import com.embabel.dice.proposition.PropositionReembedIncompleteException
 import com.embabel.dice.proposition.PropositionReembedReport
@@ -35,6 +41,7 @@ import com.embabel.dice.proposition.GraphQueryCapable
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.SourceRevisionQueryCapable
 import com.embabel.dice.proposition.PropositionStoreType
+import com.embabel.dice.proposition.store.ScopedReadRules
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.SourceLocator
 import com.embabel.dice.provenance.SourceRevisionRef
@@ -60,6 +67,7 @@ import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
+import java.time.Duration
 import java.time.Instant
 
 /**
@@ -113,10 +121,14 @@ internal object SourceProvenanceQueryStatements {
 /**
  * Graph-backed [PropositionRepository] over Drivine / Neo4j.
  *
- * Filtering, ordering, limiting, vector search, and entity (`HAS_MENTION`) predicates all push into
+ * Filtering, ordering, limiting, vector search, and entity (`HAS_MENTION`) predicates push into
  * the database via the high-level [StatelessGraphObjectManager] DSL — no whole-store scans. A few operations the
  * DSL can't express drop to hand-written Cypher: the [findClusters] correlation, the cascade-aware bulk
  * clear (`queries/clear_propositions.cypher`), the dedup lookup, and the batch re-embed.
+ *
+ * Scoped reads run in their own read transactions, so they see committed data only and not writes still
+ * open in the caller's transaction. Enable them with [withNativeReadExecutor]; without it they report
+ * themselves unsupported.
  *
  * Embeddings are derived from [Proposition.embeddableValue] and owned here, not by the model mapper.
  *
@@ -126,17 +138,74 @@ internal object SourceProvenanceQueryStatements {
  * - Detached re-saves with changed mentions may leave orphan Mention nodes (load-then-save avoids it).
  */
 @Transactional
-class DrivinePropositionRepository(
+class DrivinePropositionRepository private constructor(
     private val graphObjectManager: StatelessGraphObjectManager,
     private val persistenceManager: PersistenceManager,
     private val embeddingService: EmbeddingService,
-    transactionManager: PlatformTransactionManager,
+    private val transactionManager: PlatformTransactionManager,
     /**
      * Name of the Neo4j vector index backing `Proposition.embedding`, used by the hand-written
      * [findClusters] Cypher. Defaults to the canonical [VECTOR_INDEX]; overridable only for tests.
      */
-    private val vectorIndexName: String = VECTOR_INDEX,
-) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable {
+    private val vectorIndexName: String,
+    private val nativeReadExecutor: Neo4jScopedReadExecutor?,
+    private val scopedReadTimeout: Duration,
+) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable,
+    ContextSetReadCapable {
+
+    /** Builds a repository with scoped reads turned off; [withNativeReadExecutor] turns them on. */
+    constructor(
+        graphObjectManager: StatelessGraphObjectManager,
+        persistenceManager: PersistenceManager,
+        embeddingService: EmbeddingService,
+        transactionManager: PlatformTransactionManager,
+        vectorIndexName: String = VECTOR_INDEX,
+    ) : this(
+        graphObjectManager, persistenceManager, embeddingService, transactionManager, vectorIndexName,
+        null, DEFAULT_SCOPED_READ_TIMEOUT,
+    )
+
+
+    /**
+     * Returns a new repository whose scoped reads run through [executor] in their own read transactions,
+     * so they see committed data only and not writes still open in the caller's transaction.
+     */
+    fun withNativeReadExecutor(executor: Neo4jScopedReadExecutor): DrivinePropositionRepository =
+        DrivinePropositionRepository(
+            graphObjectManager, persistenceManager, embeddingService, transactionManager, vectorIndexName,
+            executor, scopedReadTimeout,
+        )
+
+    override val supportsScopedReads: Boolean get() = nativeReadExecutor != null
+
+    private fun scopedReads(): DrivineScopedReadOperations = DrivineScopedReadOperations(
+        nativeReadExecutor ?: throw ScopedReadException(ScopedReadFailure.SCOPED_READ_UNSUPPORTED),
+        scopedReadTimeout,
+    )
+
+    /**
+     * Returns a new repository whose scoped query, count and keyword reads give up after [timeout].
+     * Vector and strict policy reads keep their own deadlines.
+     */
+    fun withScopedReadTimeout(timeout: Duration): DrivinePropositionRepository {
+        require(timeout > Duration.ZERO) { "Scoped read timeout must be positive" }
+        return DrivinePropositionRepository(
+            graphObjectManager, persistenceManager, embeddingService, transactionManager, vectorIndexName,
+            nativeReadExecutor, timeout,
+        )
+    }
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    override fun query(spec: ScopedReadSpec, clock: ReadClock, order: PropositionQuery.OrderBy, limit: Int): List<Proposition> =
+        scopedReads().query(spec, clock, order, limit)
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    override fun count(spec: ScopedReadSpec, clock: ReadClock): Long = scopedReads().count(spec, clock)
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    override fun keywordOverlap(
+        spec: ScopedReadSpec, clock: ReadClock, tokens: List<String>, limit: Int,
+    ): List<Proposition> = scopedReads().keywordOverlap(spec, clock, tokens, limit)
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
 
@@ -1157,40 +1226,15 @@ class DrivinePropositionRepository(
             .mapNotNull { row ->
                 val match = byId[row["id"] as String] ?: return@mapNotNull null
                 val stored = (row["embedding"] as List<*>).map { (it as Number).toDouble() }
-                SimilarityResult(match = match, score = rawCosine(vector, stored))
+                SimilarityResult(match = match, score = ScopedReadRules.cosineSimilarity(vector, stored))
             }
             .filter { threshold <= 0.0 || it.score >= threshold }
             .sortedWith(
                 compareByDescending<SimilarityResult<Proposition>> { it.score }
-                    .thenComparator { a, b -> compareCodePoints(a.match.contextId.value, b.match.contextId.value) }
-                    .thenComparator { a, b -> compareCodePoints(a.match.id, b.match.id) },
+                    .thenBy(ScopedReadRules.CODE_POINT_ORDER) { it.match.contextId.value }
+                    .thenBy(ScopedReadRules.CODE_POINT_ORDER) { it.match.id },
             )
             .take(request.topK)
-    }
-
-    // Raw cosine in Double, 0.0 for a zero vector, clamped so rounding never leaves [-1, 1].
-    private fun rawCosine(a: List<Double>, b: List<Double>): Double {
-        var dot = 0.0
-        var normA = 0.0
-        var normB = 0.0
-        for (i in a.indices) {
-            dot += a[i] * b[i]
-            normA += a[i] * a[i]
-            normB += b[i] * b[i]
-        }
-        val denominator = kotlin.math.sqrt(normA) * kotlin.math.sqrt(normB)
-        if (denominator == 0.0) return 0.0
-        return (dot / denominator).coerceIn(-1.0, 1.0)
-    }
-
-    // Compares strings by Unicode code point, not UTF-16 unit, with the shorter first on a common prefix.
-    private fun compareCodePoints(a: String, b: String): Int {
-        val left = a.codePoints().toArray()
-        val right = b.codePoints().toArray()
-        for (i in 0 until minOf(left.size, right.size)) {
-            if (left[i] != right[i]) return left[i].compareTo(right[i])
-        }
-        return left.size.compareTo(right.size)
     }
 
     /**
@@ -1748,6 +1792,9 @@ class DrivinePropositionRepository(
     private fun Any?.asStringList(): List<String> = (this as? List<String>) ?: emptyList()
 
     companion object {
+        /** How long a scoped query, count or keyword read may run unless [withScopedReadTimeout] says otherwise. */
+        private val DEFAULT_SCOPED_READ_TIMEOUT: Duration = Duration.ofSeconds(5)
+
         /**
          * How a proposition save treats `HAS_MENTION`: the view's list is the whole list, and a
          * `:Mention` the save drops is deleted once nothing else points at it.
