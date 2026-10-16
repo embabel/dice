@@ -20,12 +20,18 @@ import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.proposition.ConsecutiveFailureBreaker
+import com.embabel.dice.proposition.ContextReadScope
+import com.embabel.dice.proposition.ContextSetReadCapable
 import com.embabel.dice.proposition.Proposition
-import com.embabel.dice.proposition.ProvenanceScanningSourceRevisionQueries
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStoreType
+import com.embabel.dice.proposition.ProvenanceScanningSourceRevisionQueries
+import com.embabel.dice.proposition.ReadClock
+import com.embabel.dice.proposition.ScopedReadSpec
+import com.embabel.dice.temporal.TemporalMetadata
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import org.slf4j.LoggerFactory
@@ -53,7 +59,7 @@ import java.util.concurrent.ConcurrentHashMap
 class JsonFilePropositionRepository @JvmOverloads constructor(
     private val path: Path,
     private val embeddingService: EmbeddingService? = null,
-) : PropositionRepository, ProvenanceScanningSourceRevisionQueries {
+) : PropositionRepository, ContextSetReadCapable, ProvenanceScanningSourceRevisionQueries {
 
     private val logger = LoggerFactory.getLogger(JsonFilePropositionRepository::class.java)
 
@@ -101,6 +107,24 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
             failures.size, loaded.size, path, notAttempted, failures.map { it.first }, failures.first().second.message,
         )
     }
+
+    private val scopedReads = LocalScopedReadOperations { propositions.values }
+
+    override fun query(
+        spec: ScopedReadSpec,
+        clock: ReadClock,
+        order: PropositionQuery.OrderBy,
+        limit: Int,
+    ): List<Proposition> = scopedReads.query(spec, clock, order, limit)
+
+    override fun count(spec: ScopedReadSpec, clock: ReadClock): Long = scopedReads.count(spec, clock)
+
+    override fun keywordOverlap(
+        spec: ScopedReadSpec,
+        clock: ReadClock,
+        tokens: List<String>,
+        limit: Int,
+    ): List<Proposition> = scopedReads.keywordOverlap(spec, clock, tokens, limit)
 
     override val luceneSyntaxNotes: String
         get() = "no lucene support"

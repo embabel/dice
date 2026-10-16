@@ -21,12 +21,15 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.SourceRevisionRef
 import com.embabel.dice.provenance.UriLocator
+import com.embabel.dice.temporal.TemporalMetadata
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
 
 class JsonFilePropositionRepositoryTest {
 
@@ -70,6 +73,27 @@ class JsonFilePropositionRepositoryTest {
         val forA = reloaded.findByContextIdValue(contextA.value)
         assertEquals(1, forA.size)
         assertEquals(first, forA.single())
+    }
+
+    @Test
+    fun `a store holding temporal metadata reloads, including a file that still carries isCurrent`(
+        @TempDir tempDir: Path,
+    ) {
+        val storeFile = tempDir.resolve("propositions.json")
+        val temporal = TemporalMetadata(
+            observedAt = Instant.parse("2026-01-01T00:00:00Z"),
+            validFrom = Instant.parse("2026-01-02T00:00:00Z"),
+        )
+        val dated = proposition(contextA, "dated statement").copy(temporal = temporal)
+        JsonFilePropositionRepository(storeFile).save(dated)
+        val written = Files.readString(storeFile)
+        assertTrue(written.contains("\"temporal\":{"), written)
+        assertFalse(written.contains("isCurrent"), written)
+        assertEquals(dated, JsonFilePropositionRepository(storeFile).findById(dated.id))
+
+        // Files written before isCurrent was left out carry it; they must still load.
+        Files.writeString(storeFile, written.replace("\"temporal\":{", "\"temporal\":{\"isCurrent\":true,"))
+        assertEquals(dated, JsonFilePropositionRepository(storeFile).findById(dated.id))
     }
 
     @Test

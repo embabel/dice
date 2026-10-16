@@ -67,6 +67,23 @@ class TemporalMetadataTest {
     }
 
     @Test
+    fun `JSON leaves out isCurrent and still reads JSON that has it`() {
+        val tm = TemporalMetadata(
+            observedAt = t0, validFrom = t1, validTo = t2, invalidatedAt = t3,
+            supersedes = listOf("older"), contradicts = listOf("rival"),
+        )
+        val jackson2 = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().findAndRegisterModules()
+        val json2 = jackson2.writeValueAsString(tm)
+        assertFalse(json2.contains("isCurrent"), json2)
+        assertEquals(tm, jackson2.readValue(json2, TemporalMetadata::class.java))
+        assertEquals(tm, jackson2.readValue(json2.replaceFirst("{", "{\"isCurrent\":true,"), TemporalMetadata::class.java))
+        val jackson3 = tools.jackson.module.kotlin.jacksonObjectMapper()
+        val json3 = jackson3.writeValueAsString(tm)
+        assertFalse(json3.contains("isCurrent"), json3)
+        assertEquals(tm, jackson3.readValue(json3.replaceFirst("{", "{\"isCurrent\":false,"), TemporalMetadata::class.java))
+    }
+
+    @Test
     fun `validTo before validFrom rejected`() {
         assertThrows<IllegalArgumentException> {
             TemporalMetadata(observedAt = t0, validFrom = t2, validTo = t1)

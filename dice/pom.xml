@@ -236,6 +236,24 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- Shares the scoped read conformance suites with the storage modules that run them. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>conformance-suites</id>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>com/embabel/dice/proposition/store/AbstractScoped*ConformanceTest*.class</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 
