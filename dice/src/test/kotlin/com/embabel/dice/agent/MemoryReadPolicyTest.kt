@@ -88,6 +88,61 @@ class MemoryReadPolicyTest {
     }
 
     @Test
+    fun `named projection chain equals direct and Kotlin block values and snapshots every step`() {
+        val fields = linkedSetOf(MemoryField.ID)
+        val metadata = linkedSetOf("public")
+        val handles = linkedSetOf("public-person")
+        val sources = arrayListOf(AllowedSource("source", true, false))
+        val base = RowProjection.projecting(ApprovedText.Stored)
+        val withFields = base.withFields(fields)
+        val configured = withFields.withMetadataKeys(metadata).withEntityHandles(handles).withSources(sources)
+        val direct = RowProjection.text(ApprovedText.Stored).withFields(fields).withMetadataKeys(metadata)
+            .withEntityHandles(handles).withSources(sources)
+        val block = RowProjection(ApprovedText.Stored) {
+            this.fields = fields; metadataKeys = metadata; entityHandles = handles; this.sources = sources
+        }
+        fields.clear(); metadata.clear(); handles.clear(); sources.clear()
+        assertEquals(direct, block)
+        assertEquals(direct, configured.projection())
+        assertEquals(RowProjection.text(ApprovedText.Stored), base.projection())
+        assertEquals(setOf(MemoryField.ID), withFields.projection().fields)
+        assertTrue(withFields.projection().metadataKeys.isEmpty())
+        val modified = configured.withFields(setOf(MemoryField.OWNER)).projection()
+        assertEquals(setOf(MemoryField.OWNER), modified.fields)
+        assertEquals(direct, configured.projection())
+        assertThrows<UnsupportedOperationException> { (configured.projection().fields as MutableSet).clear() }
+        assertThrows<UnsupportedOperationException> { (configured.projection().metadataKeys as MutableSet).clear() }
+        assertThrows<UnsupportedOperationException> { (configured.projection().entityHandles as MutableSet).clear() }
+        assertThrows<UnsupportedOperationException> { (configured.projection().sources as MutableList).clear() }
+    }
+
+    @Test
+    fun `invalid projection keys and sources validate at terminal with direct and block messages`() {
+        val base = RowProjection.projecting(ApprovedText.Omitted)
+        val duplicate = AllowedSource("source", true, false)
+        val invalidChains = listOf(
+            base.withMetadataKeys(setOf("")), base.withEntityHandles(setOf(" ")),
+            base.withSources(listOf(duplicate, duplicate)),
+        )
+        val directCalls = listOf<() -> RowProjection>(
+            { RowProjection.text(ApprovedText.Omitted).withMetadataKeys(setOf("")) },
+            { RowProjection.text(ApprovedText.Omitted).withEntityHandles(setOf(" ")) },
+            { RowProjection.text(ApprovedText.Omitted).withSources(listOf(duplicate, duplicate)) },
+        )
+        val blockCalls = listOf<() -> RowProjection>(
+            { RowProjection(ApprovedText.Omitted) { metadataKeys = setOf("") } },
+            { RowProjection(ApprovedText.Omitted) { entityHandles = setOf(" ") } },
+            { RowProjection(ApprovedText.Omitted) { sources = listOf(duplicate, duplicate) } },
+        )
+        invalidChains.indices.forEach { index ->
+            val direct = assertThrows<IllegalArgumentException> { directCalls[index]() }
+            assertEquals(direct.message, assertThrows<IllegalArgumentException> { blockCalls[index]() }.message)
+            assertEquals(direct.message, assertThrows<IllegalArgumentException> { invalidChains[index].projection() }.message)
+        }
+        assertEquals(RowProjection.text(ApprovedText.Omitted), base.projection())
+    }
+
+    @Test
     fun `policy snapshots deduplicate identical rows and preserve caller order`() {
         val first = grant()
         val second = RowGrant.of(PropositionKey("B", "same-id"), first.projection, true, false)

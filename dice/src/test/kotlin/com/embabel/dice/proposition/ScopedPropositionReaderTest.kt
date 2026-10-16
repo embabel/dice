@@ -188,6 +188,52 @@ class ScopedPropositionReaderTest {
     }
 
     @Test
+    fun `named limits chain equals direct and Kotlin block construction without changing earlier values`() {
+        val budget = ExactVectorBudget(3, Duration.ofSeconds(1))
+        val base = ScopedReadLimits.configuring()
+        val changed = base.withMaxResults(500).withMaxProbe(2000).withMaxEager(200).withVectorBudget(budget)
+        val direct = ScopedReadLimits(500, 2000, 200, budget)
+        lateinit var configuration: ScopedReadLimits.Configuration
+        val block = ScopedReadLimits {
+            configuration = this
+            maxResults = 500; maxProbe = 2000; maxEager = 200; vectorBudget = budget
+        }
+        configuration.maxResults = 0
+        fun values(limits: ScopedReadLimits) = listOf(limits.maxResults, limits.maxProbe, limits.maxEager, limits.vectorBudget)
+        assertEquals(values(direct), values(block))
+        assertEquals(values(direct), values(changed.limits()))
+        assertEquals(values(ScopedReadLimits.DEFAULT), values(base.limits()))
+        assertEquals(values(direct), values(changed.withMaxResults(500).limits()))
+    }
+
+    @Test
+    fun `limit options validate only at terminal and permit either configuration order`() {
+        val resultsFirst = ScopedReadLimits.configuring().withMaxResults(500).withMaxEager(600)
+        val probeFirst = ScopedReadLimits.configuring().withMaxProbe(2000)
+        assertEquals(500, resultsFirst.withMaxProbe(2000).limits().maxResults)
+        assertEquals(600, probeFirst.withMaxEager(600).withMaxResults(500).limits().maxEager)
+        failure("INVALID_SCOPED_READ") { resultsFirst.limits() }
+        assertEquals(100, probeFirst.limits().maxResults)
+        assertEquals(401, ScopedReadLimits.configuring().limits().maxProbe)
+    }
+
+    @Test
+    fun `invalid limits have identical direct block and chain terminal errors`() {
+        for ((results, probe, eager) in listOf(
+            Triple(-1, 401, 100), Triple(100, -1, 100), Triple(100, 401, -1),
+            Triple(Int.MAX_VALUE, 401, 100), Triple(100, Int.MAX_VALUE, 100), Triple(100, 401, Int.MAX_VALUE),
+            Triple(500, 401, 100), Triple(100, 401, 500),
+        )) {
+            val chain = ScopedReadLimits.configuring().withMaxResults(results).withMaxProbe(probe).withMaxEager(eager)
+            val direct = failure("INVALID_SCOPED_READ") { ScopedReadLimits(results, probe, eager, ExactVectorBudget.DEFAULT) }
+            val block = failure("INVALID_SCOPED_READ") { ScopedReadLimits { maxResults = results; maxProbe = probe; maxEager = eager } }
+            val terminal = failure("INVALID_SCOPED_READ") { chain.limits() }
+            assertEquals(direct.message, block.message)
+            assertEquals(direct.message, terminal.message)
+        }
+    }
+
+    @Test
     fun `terminal requests admit default probe capacity and reject maxProbe plus one before reading`() {
         val store = VectorStore()
         val read = session(store)
