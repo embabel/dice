@@ -21,6 +21,9 @@ import com.embabel.dice.proposition.ReadOrder
 import com.embabel.dice.proposition.ScopedReadSpec
 import java.util.Collections
 
+@DslMarker
+internal annotation class RowProjectionDsl
+
 /** Trusted host identity. Policy content is always revalidated, even when this stamp is reused. */
 data class ReadPolicyStamp(val principal: String, val purpose: String, val policyId: String, val version: String) {
     init {
@@ -76,7 +79,27 @@ class RowProjection private constructor(
         metadataKeys == other.metadataKeys && entityHandles == other.entityHandles && sources == other.sources
     override fun hashCode(): Int = listOf(text, fields, metadataKeys, entityHandles, sources).hashCode()
 
-    class Configuration {
+    class Projecting internal constructor(
+        private val text: ApprovedText,
+        fields: Set<MemoryField> = emptySet(),
+        metadataKeys: Set<String> = emptySet(),
+        entityHandles: Set<String> = emptySet(),
+        sources: List<AllowedSource> = emptyList(),
+    ) {
+        private val fields = immutablePolicySet(fields)
+        private val metadataKeys = immutablePolicySet(metadataKeys)
+        private val entityHandles = immutablePolicySet(entityHandles)
+        private val sources = immutablePolicyList(sources)
+
+        fun withFields(fields: Set<MemoryField>): Projecting = Projecting(text, fields, metadataKeys, entityHandles, sources)
+        fun withMetadataKeys(keys: Set<String>): Projecting = Projecting(text, fields, keys, entityHandles, sources)
+        fun withEntityHandles(handles: Set<String>): Projecting = Projecting(text, fields, metadataKeys, handles, sources)
+        fun withSources(sources: List<AllowedSource>): Projecting = Projecting(text, fields, metadataKeys, entityHandles, sources)
+        fun projection(): RowProjection = RowProjection(text, fields, metadataKeys, entityHandles, sources)
+    }
+
+    @RowProjectionDsl
+    class Configuration internal constructor() {
         var fields: Set<MemoryField> = emptySet()
         var metadataKeys: Set<String> = emptySet()
         var entityHandles: Set<String> = emptySet()
@@ -86,6 +109,9 @@ class RowProjection private constructor(
     companion object {
         @JvmStatic
         fun text(text: ApprovedText) = RowProjection(text, emptySet(), emptySet(), emptySet(), emptyList())
+
+        @JvmStatic
+        fun projecting(text: ApprovedText): Projecting = Projecting(text)
 
         @JvmSynthetic
         operator fun invoke(text: ApprovedText, configure: Configuration.() -> Unit): RowProjection {

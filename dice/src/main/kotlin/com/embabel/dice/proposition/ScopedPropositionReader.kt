@@ -19,6 +19,9 @@ import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import java.time.Instant
 
+@DslMarker
+internal annotation class ScopedReadLimitsDsl
+
 enum class ReadOrder {
     NONE, EFFECTIVE_CONFIDENCE_DESC, CREATED_DESC, REVISED_DESC,
     LAST_ACCESSED_DESC, REINFORCE_COUNT_DESC, IMPORTANCE_DESC,
@@ -42,7 +45,21 @@ class ScopedReadLimits(
     fun withMaxEager(value: Int) = ScopedReadLimits(maxResults, maxProbe, value, vectorBudget)
     fun withVectorBudget(value: ExactVectorBudget) = ScopedReadLimits(maxResults, maxProbe, maxEager, value)
 
-    class Configuration {
+    data class Configuring internal constructor(
+        private val maxResults: Int = 100,
+        private val maxProbe: Int = 401,
+        private val maxEager: Int = 100,
+        private val vectorBudget: ExactVectorBudget = ExactVectorBudget.DEFAULT,
+    ) {
+        fun withMaxResults(value: Int): Configuring = copy(maxResults = value)
+        fun withMaxProbe(value: Int): Configuring = copy(maxProbe = value)
+        fun withMaxEager(value: Int): Configuring = copy(maxEager = value)
+        fun withVectorBudget(value: ExactVectorBudget): Configuring = copy(vectorBudget = value)
+        fun limits(): ScopedReadLimits = ScopedReadLimits(maxResults, maxProbe, maxEager, vectorBudget)
+    }
+
+    @ScopedReadLimitsDsl
+    class Configuration internal constructor() {
         var maxResults: Int = 100
         var maxProbe: Int = 401
         var maxEager: Int = 100
@@ -52,6 +69,9 @@ class ScopedReadLimits(
     companion object {
         @JvmField
         val DEFAULT = ScopedReadLimits(100, 401, 100, ExactVectorBudget.DEFAULT)
+
+        @JvmStatic
+        fun configuring(): Configuring = Configuring()
 
         @JvmSynthetic
         operator fun invoke(configure: Configuration.() -> Unit): ScopedReadLimits {

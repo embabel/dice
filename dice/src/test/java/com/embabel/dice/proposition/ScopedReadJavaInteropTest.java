@@ -16,11 +16,18 @@
 package com.embabel.dice.proposition;
 
 import com.embabel.common.core.types.TextSimilaritySearchRequest;
+import com.embabel.dice.agent.AllowedSource;
+import com.embabel.dice.agent.ApprovedText;
+import com.embabel.dice.agent.MemoryField;
+import com.embabel.dice.agent.RowProjection;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -69,6 +76,79 @@ class ScopedReadJavaInteropTest {
     }
 
     @Test
+    void namedLimitChainIsImmutableAndAcceptsEitherWitherOrder() {
+        var budget = new ExactVectorBudget(10, Duration.ofSeconds(1));
+        var base = ScopedReadLimits.configuring();
+        var resultsFirst = base.withMaxResults(500).withMaxEager(600);
+        var configured = resultsFirst.withMaxProbe(2000).withVectorBudget(budget);
+        var limits = configured.limits();
+        var reverse = base.withMaxProbe(2000).withVectorBudget(budget)
+                .withMaxEager(600).withMaxResults(500).limits();
+        var direct = new ScopedReadLimits(500, 2000, 600, budget);
+        assertEquals(direct.getMaxResults(), limits.getMaxResults());
+        assertEquals(direct.getMaxProbe(), limits.getMaxProbe());
+        assertEquals(direct.getMaxEager(), limits.getMaxEager());
+        assertSame(budget, limits.getVectorBudget());
+        assertEquals(limits.getMaxResults(), reverse.getMaxResults());
+        assertEquals(limits.getMaxProbe(), reverse.getMaxProbe());
+        assertEquals(limits.getMaxEager(), reverse.getMaxEager());
+        assertSame(budget, reverse.getVectorBudget());
+        assertEquals(100, base.limits().getMaxResults());
+        assertEquals(401, base.limits().getMaxProbe());
+        assertEquals(100, configured.withMaxResults(100).limits().getMaxResults());
+        assertEquals(500, configured.limits().getMaxResults());
+        var directError = assertThrows(ScopedReadException.class,
+                () -> new ScopedReadLimits(500, 401, 600, budget));
+        assertEquals(directError.getMessage(),
+                assertThrows(ScopedReadException.class, resultsFirst::limits).getMessage());
+    }
+
+    @Test
+    void namedProjectionChainSnapshotsCollectionsAndKeepsEarlierValues() {
+        var fields = new HashSet<>(Set.of(MemoryField.ID));
+        var keys = new HashSet<>(Set.of("public"));
+        var handles = new HashSet<>(Set.of("person"));
+        var sources = new ArrayList<>(List.of(new AllowedSource("source", true, false)));
+        var base = RowProjection.projecting(ApprovedText.Stored.INSTANCE);
+        var withFields = base.withFields(fields);
+        var configured = withFields.withMetadataKeys(keys).withEntityHandles(handles).withSources(sources);
+        var direct = RowProjection.text(ApprovedText.Stored.INSTANCE).withFields(fields)
+                .withMetadataKeys(keys).withEntityHandles(handles).withSources(sources);
+        fields.clear();
+        keys.clear();
+        handles.clear();
+        sources.clear();
+        var projection = configured.projection();
+        assertEquals(direct, projection);
+        assertTrue(base.projection().getFields().isEmpty());
+        assertEquals(Set.of(MemoryField.ID), withFields.projection().getFields());
+        assertTrue(withFields.projection().getMetadataKeys().isEmpty());
+        assertEquals(Set.of(MemoryField.OWNER), configured.withFields(Set.of(MemoryField.OWNER)).projection().getFields());
+        assertEquals(direct, configured.projection());
+        assertThrows(UnsupportedOperationException.class, () -> projection.getFields().clear());
+        assertThrows(UnsupportedOperationException.class, () -> projection.getMetadataKeys().clear());
+        assertThrows(UnsupportedOperationException.class, () -> projection.getEntityHandles().clear());
+        assertThrows(UnsupportedOperationException.class, () -> projection.getSources().clear());
+    }
+
+    @Test
+    void projectionTerminalUsesTheSameValidationAsExistingWithers() {
+        var fields = new HashSet<MemoryField>();
+        fields.add(null);
+        var invalid = RowProjection.projecting(ApprovedText.Omitted.INSTANCE).withFields(fields);
+        fields.clear();
+        var directFields = new HashSet<MemoryField>();
+        directFields.add(null);
+        var direct = assertThrows(IllegalArgumentException.class,
+                () -> RowProjection.text(ApprovedText.Omitted.INSTANCE).withFields(directFields));
+        assertEquals(direct.getMessage(), assertThrows(IllegalArgumentException.class, invalid::projection).getMessage());
+        var keys = RowProjection.projecting(ApprovedText.Omitted.INSTANCE).withMetadataKeys(Set.of(""));
+        var keyError = assertThrows(IllegalArgumentException.class,
+                () -> RowProjection.text(ApprovedText.Omitted.INSTANCE).withMetadataKeys(Set.of("")));
+        assertEquals(keyError.getMessage(), assertThrows(IllegalArgumentException.class, keys::projection).getMessage());
+    }
+
+    @Test
     void publicFactoryDescriptorsRemainAvailable() throws Exception {
         assertNotNull(ScopedPropositionReader.class.getMethod("open", PropositionStore.class, ContextReadScope.class));
         assertNotNull(ScopedPropositionReader.class.getMethod("open", PropositionStore.class,
@@ -76,8 +156,7 @@ class ScopedReadJavaInteropTest {
         assertNotNull(ScopedReadSession.class.getMethod("findSimilarWithScores", TextSimilaritySearchRequest.class));
         assertNotNull(ContextSetVectorSearchCapable.class.getMethod("findSimilarWithScores",
                 TextSimilaritySearchRequest.class, ContextReadScope.class, ScopedReadSpec.class, ExactVectorBudget.class));
-        ScopedReadLimits.Configuration config = new ScopedReadLimits.Configuration();
-        config.setMaxProbe(500);
-        assertEquals(500, config.getMaxProbe());
+        assertNotNull(ScopedReadLimits.class.getConstructor(int.class, int.class, int.class, ExactVectorBudget.class));
+        assertNotNull(RowProjection.class.getMethod("text", ApprovedText.class));
     }
 }
