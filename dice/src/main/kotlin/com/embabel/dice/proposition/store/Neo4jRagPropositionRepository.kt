@@ -20,11 +20,19 @@ import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
+import com.embabel.dice.proposition.ContextSetVectorSearchCapable
+import com.embabel.dice.proposition.ReadClock
+import com.embabel.dice.proposition.ScopedReadException
+import com.embabel.dice.proposition.ScopedReadForwarder
+import com.embabel.dice.proposition.ScopedReadSpec
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.proposition.VectorSearchCapable
+import com.embabel.dice.proposition.StrictPolicyReadCapable
+import com.embabel.dice.proposition.StrictReadRow
 import org.slf4j.LoggerFactory
+import java.time.Duration
 
 /**
  * Reference proposition store that backs persistence through Embabel's
@@ -45,16 +53,20 @@ import org.slf4j.LoggerFactory
  *   is deliberately never exposed in this store's public signatures, so no SPI-only type leaks
  *   into the proposition contract.
  *
- * ## Declared capabilities (honest fragments only)
+ * ## Declared capabilities
  *
- * The store declares exactly [PropositionStore] and [VectorSearchCapable]. Every
- * [VectorSearchCapable] member — both [findSimilarWithScores] overloads and [findClusters] — is
+ * The store declares [PropositionStore], [VectorSearchCapable], [ContextSetVectorSearchCapable] and
+ * [StrictPolicyReadCapable]. Scoped reads, scoped vector search and strict policy reads work
+ * differently from the legacy members: they are declared whatever the supplementary store is, and
+ * `supportsScopedReads`, `supportsScopedVectors` and `supportsStrictPolicyReads` report what that
+ * store can do. A scoped call it cannot serve fails with a [ScopedReadException]. Every legacy
+ * [VectorSearchCapable] member — both [findSimilarWithScores] overloads, [findApproximateSimilarWithScores] and [findClusters] — is
  * forwarded to the supplementary store when that store is itself vector-capable, so any
  * backend-pushed-down filtering or clustering override on the supplementary store is honoured
  * rather than bypassed. When the supplementary store is not vector-capable, every vector member
- * degrades to an empty result. None of these paths is ever wired to the SPI's entity
- * `vectorSearch`, which operates on a different axis (entities, not propositions) and would be
- * semantically wrong.
+ * degrades to an empty result and `supportsVector` is false. None of these paths is ever wired
+ * to the SPI's entity `vectorSearch`, which operates on a different axis (entities, not
+ * propositions) and would be semantically wrong.
  *
  * ## Why graph and temporal capabilities are omitted
  *
@@ -76,9 +88,39 @@ import org.slf4j.LoggerFactory
 class Neo4jRagPropositionRepository(
     private val crud: PropositionStore,
     val entityRepository: NamedEntityDataRepository,
-) : PropositionStore by crud, VectorSearchCapable {
+) : PropositionStore by crud,
+    VectorSearchCapable,
+    ContextSetVectorSearchCapable by ScopedReadForwarder(crud),
+    StrictPolicyReadCapable {
 
     private val logger = LoggerFactory.getLogger(Neo4jRagPropositionRepository::class.java)
+
+    // Kotlin cannot take the shared scoped-read members from two delegates, so the strict members
+    // are passed on by hand.
+    private val strictReads: StrictPolicyReadCapable = ScopedReadForwarder(crud)
+
+    override val supportsStrictPolicyReads: Boolean get() = strictReads.supportsStrictPolicyReads
+
+    override fun queryByGrantOrder(
+        spec: ScopedReadSpec,
+        clock: ReadClock,
+        rows: List<StrictReadRow>,
+        limit: Int,
+        timeout: Duration,
+    ): List<Proposition> = strictReads.queryByGrantOrder(spec, clock, rows, limit, timeout)
+
+    override fun keywordByApprovedText(
+        spec: ScopedReadSpec,
+        clock: ReadClock,
+        rows: List<StrictReadRow>,
+        tokens: List<String>,
+        limit: Int,
+        timeout: Duration,
+    ): List<Proposition> = strictReads.keywordByApprovedText(spec, clock, rows, tokens, limit, timeout)
+
+    /** Vector search is available exactly when the supplementary store has it. */
+    override val supportsVector: Boolean
+        get() = (crud as? VectorSearchCapable)?.supportsVector == true
 
     /**
      * Disambiguates the diamond between [VectorSearchCapable.query] and [PropositionStore.query]
@@ -118,6 +160,22 @@ class Neo4jRagPropositionRepository(
             return emptyList()
         }
         return capable.findSimilarWithScores(textSimilaritySearchRequest, query)
+    }
+
+    /**
+     * Index similarity search. Forwards to the supplementary store so its own index search runs.
+     * Degrades to empty when the supplementary store is not vector-capable.
+     */
+    override fun findApproximateSimilarWithScores(
+        textSimilaritySearchRequest: TextSimilaritySearchRequest,
+        query: PropositionQuery,
+    ): List<SimilarityResult<Proposition>> {
+        val capable = crud as? VectorSearchCapable
+        if (capable == null) {
+            logger.debug("findApproximateSimilarWithScores: supplementary store {} is not vector-capable, returning empty", crud::class.simpleName)
+            return emptyList()
+        }
+        return capable.findApproximateSimilarWithScores(textSimilaritySearchRequest, query)
     }
 
     /**

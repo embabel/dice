@@ -23,6 +23,7 @@ import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.PropositionPersisted
 import com.embabel.dice.common.PropositionStatusChanged
 import org.slf4j.LoggerFactory
+import java.time.Duration
 
 /**
  * Decorator that emits lifecycle events at the persistence boundary.
@@ -49,10 +50,13 @@ import org.slf4j.LoggerFactory
  * Throw isolation is the listener's responsibility — wrap the listener in `SafeDiceEventListener`
  * if you need graceful degradation.
  *
- * This class carries capabilities only when its delegate does. The [wrapping] factory method
- * picks the right shape for whatever delegate you hand it, so a caller's `as? SourceRevisionQueryCapable`
- * or `as? ProvenanceSubtractionCapable` probe on the wrapper answers the same way it would on the
- * delegate.
+ * The [wrapping] factory picks a shape that matches the delegate for source-revision queries and
+ * provenance subtraction, so an `as? SourceRevisionQueryCapable` or `as? ProvenanceSubtractionCapable`
+ * probe on the wrapper answers the same way it would on the delegate. Scoped reads, scoped vector
+ * search and strict policy reads work differently: every wrapper declares them, and
+ * `supportsScopedReads`, `supportsScopedVectors` and `supportsStrictPolicyReads` report what the
+ * delegate can do. Check the flag, not the type; a scoped call the delegate cannot serve fails with
+ * a [ScopedReadException].
  *
  * Example usage:
  * ```kotlin
@@ -68,9 +72,34 @@ import org.slf4j.LoggerFactory
 open class EventEmittingPropositionRepository<D : PropositionRepository>(
     protected val delegate: D,
     private val listener: DiceEventListener = DiceEventListener.DEV_NULL,
-) : PropositionRepository by delegate {
+) : PropositionRepository by delegate,
+    ContextSetVectorSearchCapable by ScopedReadForwarder(delegate),
+    StrictPolicyReadCapable {
 
     private val logger = LoggerFactory.getLogger(EventEmittingPropositionRepository::class.java)
+
+    // Kotlin cannot take the shared scoped-read members from two delegates, so the strict members
+    // are passed on by hand.
+    private val strictReads: StrictPolicyReadCapable = ScopedReadForwarder(delegate)
+
+    override val supportsStrictPolicyReads: Boolean get() = strictReads.supportsStrictPolicyReads
+
+    override fun queryByGrantOrder(
+        spec: ScopedReadSpec,
+        clock: ReadClock,
+        rows: List<StrictReadRow>,
+        limit: Int,
+        timeout: Duration,
+    ): List<Proposition> = strictReads.queryByGrantOrder(spec, clock, rows, limit, timeout)
+
+    override fun keywordByApprovedText(
+        spec: ScopedReadSpec,
+        clock: ReadClock,
+        rows: List<StrictReadRow>,
+        tokens: List<String>,
+        limit: Int,
+        timeout: Duration,
+    ): List<Proposition> = strictReads.keywordByApprovedText(spec, clock, rows, tokens, limit, timeout)
 
     companion object {
         /**
@@ -183,6 +212,12 @@ open class EventEmittingPropositionRepository<D : PropositionRepository>(
         query: PropositionQuery,
     ): List<SimilarityResult<Proposition>> =
         delegate.findSimilarWithScores(textSimilaritySearchRequest, query)
+
+    override fun findApproximateSimilarWithScores(
+        textSimilaritySearchRequest: TextSimilaritySearchRequest,
+        query: PropositionQuery,
+    ): List<SimilarityResult<Proposition>> =
+        delegate.findApproximateSimilarWithScores(textSimilaritySearchRequest, query)
 
     override fun findClusters(
         similarityThreshold: ZeroToOne,

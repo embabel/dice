@@ -29,6 +29,7 @@ import com.embabel.dice.proposition.GraphTraversalCapable
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
+import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.proposition.PropositionStoreTemplate
@@ -97,7 +98,11 @@ class Neo4jRagPropositionRepositoryTest {
         assertFalse(adapter is TemporalQueryCapable, "adapter must not declare temporal queries")
 
         val template = PropositionStoreTemplate(adapter)
-        assertTrue(template.supportsVector, "template reports vector support")
+        assertFalse(template.supportsVector, "an embedder-less supplementary store gives no vector search")
+        assertTrue(
+            PropositionStoreTemplate(Neo4jRagPropositionRepository(vectorBackedCrud(), entityRepository())).supportsVector,
+            "a vector-backed supplementary store gives vector search",
+        )
         assertFalse(template.supportsGraph, "template reports no graph support")
 
         val sources = assertDoesNotThrow<List<Proposition>> { template.findSources(proposition("orphan")) }
@@ -176,6 +181,32 @@ class Neo4jRagPropositionRepositoryTest {
         assertTrue(
             assertDoesNotThrow<List<Cluster<Proposition>>> { adapter.findClusters(0.5, 10, query) }.isEmpty(),
             "findClusters degrades to empty when the store cannot back vectors",
+        )
+        assertTrue(
+            assertDoesNotThrow<List<SimilarityResult<Proposition>>> {
+                adapter.findApproximateSimilarWithScores(request, query)
+            }.isEmpty(),
+            "the index search degrades to empty when the store cannot back vectors",
+        )
+    }
+
+    @Test
+    fun `forwards the index search to the supplementary store's own index search`() {
+        val vectors = vectorBackedCrud()
+        val indexHit = SimilarityResult(match = proposition("only the index search finds this"), score = 0.42)
+        val crud = object : PropositionRepository by vectors {
+            override fun findApproximateSimilarWithScores(
+                textSimilaritySearchRequest: TextSimilaritySearchRequest,
+                query: PropositionQuery,
+            ): List<SimilarityResult<Proposition>> = listOf(indexHit)
+        }
+        val adapter = Neo4jRagPropositionRepository(crud = crud, entityRepository = entityRepository())
+        val request = TextSimilaritySearchRequest(query = "A likes B", similarityThreshold = 0.5, topK = 10)
+
+        assertEquals(
+            listOf(indexHit),
+            adapter.findApproximateSimilarWithScores(request, PropositionQuery()),
+            "the adapter must hand the index search to the supplementary store",
         )
     }
 
