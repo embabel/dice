@@ -16,13 +16,19 @@
 package com.embabel.dice.storage.falkordb
 
 import com.embabel.agent.core.ContextId
+import com.embabel.agent.rag.service.Cluster
 import com.embabel.agent.rag.service.RetrievableIdentifier
+import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.common.core.types.ZeroToOne
+import com.embabel.dice.proposition.ConsecutiveFailureBreaker
 import com.embabel.dice.proposition.ContextReadScope
 import com.embabel.dice.proposition.ContextSetReadCapable
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
+import com.embabel.dice.proposition.PropositionReembedIncompleteException
+import com.embabel.dice.proposition.PropositionReembedReport
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStoreType
@@ -42,11 +48,14 @@ import java.util.UUID
  * holder when using its transaction manager. The application owns the connection provider.
  * Construction waits for the native ID constraint to be operational.
  * IDs are preserved; saving an existing ID replaces its fields while appending evidence.
- * Vector search is unconfigured: legacy vector reads return empty results.
+ * An optional [EmbeddingService] enables native exact cosine search over persisted embeddings.
+ * Without it, legacy vector reads return empty results. Embedding failures leave existing data
+ * intact. Vectors of a different dimension are excluded until [reembedAll] succeeds for them.
  */
 class FalkorDbPropositionRepository @JvmOverloads constructor(
-    connectionProvider: ConnectionProvider,
-    transactionContextHolder: TransactionContextHolder? = null,
+    private val connectionProvider: ConnectionProvider,
+    private val transactionContextHolder: TransactionContextHolder? = null,
+    private val embeddingService: EmbeddingService? = null,
 ) : PropositionRepository, ContextSetReadCapable {
     private val access = FalkorDbAccess(connectionProvider, transactionContextHolder)
 
@@ -56,17 +65,23 @@ class FalkorDbPropositionRepository @JvmOverloads constructor(
     }
 
     override val storeType: PropositionStoreType get() = PropositionStoreType.STORED
-    override val supportsVector: Boolean get() = false
+    override val supportsVector: Boolean get() = embeddingService != null
     override val luceneSyntaxNotes: String get() = "no lucene support"
+
+    /** Returns a new repository using [embeddingService]; existing vectors change only on save or re-embed. */
+    fun withEmbeddingService(embeddingService: EmbeddingService): FalkorDbPropositionRepository =
+        FalkorDbPropositionRepository(connectionProvider, transactionContextHolder, embeddingService)
 
     override fun save(proposition: Proposition): Proposition {
         access.checkWriteAllowed()
+        val embedding = embeddingService?.let { embed(it, proposition.text) }
         repeat(MAX_ATTEMPTS) {
             val previous = readVersion(proposition.id)
             val candidate = proposition.copy(
                 provenanceEntries = ((previous?.first?.provenanceEntries ?: emptyList()) + proposition.provenanceEntries).distinct(),
             )
-            if (compareAndSet(candidate, previous?.second)) return candidate
+            if (compareAndSet(candidate, previous?.second, embedding,
+                    embeddingService != null || previous?.first?.text != candidate.text)) return candidate
         }
         error("Concurrent changes prevented saving proposition ${proposition.id}")
     }
@@ -76,11 +91,14 @@ class FalkorDbPropositionRepository @JvmOverloads constructor(
         mapOf("id" to id),
     ).singleOrNull()?.let { FalkorDbPropositionCodec.decode(it["aggregate"] as String) to (it["version"] as String) }
 
-    private fun compareAndSet(proposition: Proposition, expected: String?): Boolean {
+    private fun compareAndSet(
+        proposition: Proposition, expected: String?, embedding: List<Double>? = null, replaceEmbedding: Boolean = false,
+    ): Boolean {
         val version = UUID.randomUUID().toString()
         val parameters = mapOf(
             "id" to proposition.id, "expected" to expected,
-            "properties" to FalkorDbPropositionCodec.properties(proposition, version), "version" to version,
+            "properties" to (FalkorDbPropositionCodec.properties(proposition, version) + ("embedding" to embedding)), "version" to version,
+            "embedding" to embedding, "replaceEmbedding" to replaceEmbedding,
         )
         val statement = if (expected == null) {
             "MERGE (p:DiceProposition {id: \$id}) ON CREATE SET p = \$properties " +
@@ -88,8 +106,9 @@ class FalkorDbPropositionRepository @JvmOverloads constructor(
         } else {
             // A missing row must stay missing; MERGE here would create a placeholder on a stale CAS.
             "OPTIONAL MATCH (p:DiceProposition {id: \$id}) " +
-                "WITH p, p IS NOT NULL AND p.version = \$expected AS accepted " +
-                "FOREACH (ignored IN CASE WHEN accepted THEN [1] ELSE [] END | SET p = \$properties) " +
+                "WITH p, p.embedding AS previousEmbedding, p IS NOT NULL AND p.version = \$expected AS accepted " +
+                "FOREACH (ignored IN CASE WHEN accepted THEN [1] ELSE [] END | " +
+                "SET p = \$properties, p.embedding = CASE WHEN \$replaceEmbedding THEN \$embedding ELSE previousEmbedding END) " +
                 "RETURN {accepted:accepted} AS result"
         }
         return try {
@@ -170,13 +189,101 @@ class FalkorDbPropositionRepository @JvmOverloads constructor(
             "RETURN {value:sum(CASE WHEN accepted THEN 1 ELSE 0 END)} AS result", parameters,
     ).single()["value"] as Number).toInt()
 
-    override fun findSimilarWithScores(textSimilaritySearchRequest: TextSimilaritySearchRequest): List<SimilarityResult<Proposition>> {
-        require(textSimilaritySearchRequest.topK >= 0) { "topK must not be negative" }
-        return emptyList()
-    }
+    override fun findSimilarWithScores(textSimilaritySearchRequest: TextSimilaritySearchRequest): List<SimilarityResult<Proposition>> =
+        findSimilarWithScores(textSimilaritySearchRequest, PropositionQuery())
+
     override fun findSimilarWithScores(
         textSimilaritySearchRequest: TextSimilaritySearchRequest, query: PropositionQuery,
-    ): List<SimilarityResult<Proposition>> = findSimilarWithScores(textSimilaritySearchRequest)
+    ): List<SimilarityResult<Proposition>> {
+        require(textSimilaritySearchRequest.topK >= 0) { "topK must not be negative" }
+        if (textSimilaritySearchRequest.topK == 0) return emptyList()
+        val service = embeddingService ?: return emptyList()
+        return similar(textSimilaritySearchRequest, query, embed(service, textSimilaritySearchRequest.query))
+    }
+
+    private fun similar(
+        request: TextSimilaritySearchRequest, query: PropositionQuery, embedding: List<Double>?,
+        candidateIds: List<String>? = null, afterId: String? = null,
+    ): List<SimilarityResult<Proposition>> {
+        val compiled = FalkorDbQueryCompiler().vector(query, embedding, request.similarityThreshold, request.topK, candidateIds, afterId)
+        return access.query(compiled.statement, compiled.parameters).map {
+            SimilarityResult(match = FalkorDbPropositionCodec.decode(it["aggregate"] as String), score = selectedScore(it))
+        }
+    }
+
+    // FalkorDB rounds wire Doubles; recover the original Floats only for the native-selected top-K.
+    // Membership, thresholds and ordering have already run on the server and are never repeated here.
+    private fun selectedScore(row: Map<String, Any?>): Double {
+        fun vector(key: String) = (row[key] as List<*>).map { (it as Number).toFloat().toDouble() }
+        val a = vector("queryEmbedding")
+        val b = vector("embedding")
+        var dot = 0.0
+        var normA = 0.0
+        var normB = 0.0
+        for (i in a.indices) {
+            dot += a[i] * b[i]
+            normA += a[i] * a[i]
+            normB += b[i] * b[i]
+        }
+        val denominator = kotlin.math.sqrt(normA) * kotlin.math.sqrt(normB)
+        return if (denominator == 0.0) 0.0 else (dot / denominator).coerceIn(-1.0, 1.0)
+    }
+
+    /** Candidate membership and pair deduplication are applied natively before each cluster's top-K. */
+    override fun findClusters(similarityThreshold: ZeroToOne, topK: Int, query: PropositionQuery): List<Cluster<Proposition>> {
+        require(topK >= 0) { "topK must not be negative" }
+        if (topK == 0) return emptyList()
+        if (!supportsVector) return emptyList()
+        val candidates = query(query)
+        val ids = candidates.map { it.id }
+        return candidates.mapNotNull { anchor ->
+            val request = TextSimilaritySearchRequest(anchor.text, similarityThreshold, topK)
+            val similar = similar(request, query, null, ids, anchor.id)
+            if (similar.isEmpty()) null else Cluster(anchor = anchor, similar = similar)
+        }.sortedByDescending { it.similar.size }
+    }
+
+    /**
+     * Replaces vectors without rewriting a stale aggregate over concurrent evidence changes.
+     * Ordinary failures preserve the old row and are reported after the remaining rows are attempted;
+     * repeated failures use DICE's breaker. No vector index is owned or recreated.
+     */
+    override fun reembedAll(): PropositionReembedReport {
+        access.checkWriteAllowed()
+        val service = embeddingService ?: return PropositionReembedReport(0, false)
+        val breaker = ConsecutiveFailureBreaker()
+        val failures = linkedMapOf<String, Throwable>()
+        val notAttempted = mutableListOf<String>()
+        var completed = 0
+        for (proposition in findAll()) {
+            val result = breaker.attempt {
+                repeat(MAX_ATTEMPTS) {
+                    val (current, version) = readVersion(proposition.id) ?: return@attempt false
+                    val embedding = embed(service, current.text)
+                    if (compareAndSet(current, version, embedding, true)) return@attempt true
+                }
+                error("Concurrent changes prevented re-embedding proposition ${proposition.id}")
+            }
+            when {
+                result == null -> notAttempted += proposition.id
+                result.isFailure -> failures[proposition.id] = result.exceptionOrNull()!!
+                result.getOrNull() == true -> completed++
+            }
+        }
+        val report = PropositionReembedReport(completed, false)
+        if (failures.isNotEmpty() || notAttempted.isNotEmpty()) {
+            throw PropositionReembedIncompleteException.of(report, failures, notAttempted)
+        }
+        return report
+    }
+
+    private fun embed(service: EmbeddingService, text: String): List<Double> {
+        val vector = service.embed(text)
+        require(vector.isNotEmpty() && vector.all { it.isFinite() }) {
+            "Vectors must have a positive dimension and finite components"
+        }
+        return vector.map { it.toDouble() }
+    }
 
     private companion object {
         const val MAX_ATTEMPTS = 64
