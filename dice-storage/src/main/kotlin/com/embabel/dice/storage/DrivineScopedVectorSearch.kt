@@ -97,6 +97,7 @@ internal class DrivineScopedVectorSearch(
             val compiled = ScopedReadCypher.compile(scope, spec)
             // CASE removes the whole candidate set on exhaustion or corruption, before UNWIND can score any row.
             // Ordered scalar reductions preserve resident Double threshold and tie decisions.
+            // Empty suffixes materialize tie strings in resident UTF-16 order before top-K.
             val statement = """
                 CALL {
                     MATCH (p:Proposition) WHERE ${compiled.predicate}
@@ -124,7 +125,7 @@ internal class DrivineScopedVectorSearch(
                     WITH p, CASE WHEN denominator = 0.0 THEN 0.0 ELSE dot / denominator END AS raw
                     WITH p, CASE WHEN raw > 1.0 THEN 1.0 WHEN raw < -1.0 THEN -1.0 ELSE raw END AS score
                     WHERE score >= ${'$'}threshold
-                    WITH p, score ORDER BY score DESC, p.contextId ASC, p.id ASC LIMIT ${'$'}topK
+                    WITH p, score ORDER BY score DESC, p.contextId + '' ASC, p.id + '' ASC LIMIT ${'$'}topK
                     RETURN collect({contextId: p.contextId, id: p.id, score: score}) AS results
                 }
                 RETURN overflow, invalid, results
