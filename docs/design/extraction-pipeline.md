@@ -140,6 +140,17 @@ sequenceDiagram
     Pipeline-->>Caller: aggregated, UNSAVED result
 ```
 
+`LlmPropositionExtractor` can check each mention the model suggests against its own proposition's
+text before handing its candidates on. The check is off by default, so every mention is kept.
+`withExtractionMentionFilter(SpanInPropositionFilter())` turns it on: the extractor then drops any
+mention whose span is blank or does not appear in that text, ignoring case, and logs a warning for
+each one. Turn it on for a model that sometimes tags an entity it saw elsewhere in the chunk, since
+resolving that mention would attach the proposition to the wrong thing. It also drops the implied
+mentions the default extraction prompt asks for, such as the user as the subject of a first-person
+message, along with the relationships they would carry. The check is a `MentionFilter`, so another
+filter can take its place, and `null` turns it back off. It only asks whether a mention fits its
+statement; whether the statement is true to its source is a separate question.
+
 ## Execution strategies
 
 How the extraction stage is dispatched is a pluggable choice, separated from the pipeline behind a
