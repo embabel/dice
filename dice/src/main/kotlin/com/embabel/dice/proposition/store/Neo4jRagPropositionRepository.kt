@@ -20,6 +20,13 @@ import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
+import com.embabel.dice.proposition.ContextReadScope
+import com.embabel.dice.proposition.ContextSetReadCapable
+import com.embabel.dice.proposition.ContextSetVectorSearchCapable
+import com.embabel.dice.proposition.ExactVectorBudget
+import com.embabel.dice.proposition.ReadOrder
+import com.embabel.dice.proposition.ScopedReadException
+import com.embabel.dice.proposition.ScopedReadSpec
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStore
@@ -47,7 +54,9 @@ import org.slf4j.LoggerFactory
  *
  * ## Declared capabilities (honest fragments only)
  *
- * The store declares exactly [PropositionStore] and [VectorSearchCapable]. Every
+ * The store declares [PropositionStore], [VectorSearchCapable] and conditional
+ * [ContextSetVectorSearchCapable] support from the supplementary proposition store. Scoped
+ * operations reject unsupported delegates explicitly. Every legacy
  * [VectorSearchCapable] member — both [findSimilarWithScores] overloads and [findClusters] — is
  * forwarded to the supplementary store when that store is itself vector-capable, so any
  * backend-pushed-down filtering or clustering override on the supplementary store is honoured
@@ -76,9 +85,49 @@ import org.slf4j.LoggerFactory
 class Neo4jRagPropositionRepository(
     private val crud: PropositionStore,
     val entityRepository: NamedEntityDataRepository,
-) : PropositionStore by crud, VectorSearchCapable {
+) : PropositionStore by crud, VectorSearchCapable, ContextSetVectorSearchCapable {
 
     private val logger = LoggerFactory.getLogger(Neo4jRagPropositionRepository::class.java)
+
+    override val supportsScopedReads: Boolean
+        get() = (crud as? ContextSetReadCapable)?.supportsScopedReads == true
+
+    override val supportsScopedVectors: Boolean
+        get() = (crud as? ContextSetVectorSearchCapable)?.supportsScopedVectors == true
+
+    override fun query(
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        order: ReadOrder,
+        limit: Int,
+    ): List<Proposition> = scopedReadDelegate().query(scope, spec, order, limit)
+
+    override fun count(scope: ContextReadScope, spec: ScopedReadSpec): Long =
+        scopedReadDelegate().count(scope, spec)
+
+    override fun keywordOverlap(
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        tokens: List<String>,
+        limit: Int,
+    ): List<Proposition> = scopedReadDelegate().keywordOverlap(scope, spec, tokens, limit)
+
+    override fun findSimilarWithScores(
+        request: TextSimilaritySearchRequest,
+        scope: ContextReadScope,
+        spec: ScopedReadSpec,
+        budget: ExactVectorBudget,
+    ): List<SimilarityResult<Proposition>> {
+        val capable = crud as? ContextSetVectorSearchCapable
+        if (capable?.supportsScopedVectors != true) throw ScopedReadException("SCOPED_VECTOR_UNSUPPORTED")
+        return capable.findSimilarWithScores(request, scope, spec, budget)
+    }
+
+    private fun scopedReadDelegate(): ContextSetReadCapable {
+        val capable = crud as? ContextSetReadCapable
+        if (capable?.supportsScopedReads != true) throw ScopedReadException("SCOPED_READ_UNSUPPORTED")
+        return capable
+    }
 
     /**
      * Disambiguates the diamond between [VectorSearchCapable.query] and [PropositionStore.query]
