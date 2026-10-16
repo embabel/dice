@@ -55,7 +55,8 @@ internal object FalkorDbStorageSchema {
         identities.forEach { identity ->
             fun constraint() = grammar.parseConstraintRows(access.query(grammar.listConstraintsQuery()))
                 .singleOrNull { grammar.matchesShape(it, identity) }
-            if (constraint() == null) {
+            val existingConstraint = constraint()
+            if (existingConstraint == null || existingConstraint.status == "FAILED") {
                 val index = RangeIndexSpec(identity.label, identity.properties)
                 fun indexInfo() = access.query(
                     "CALL db.indexes() YIELD label, properties, status " +
@@ -67,7 +68,8 @@ internal object FalkorDbStorageSchema {
                 try {
                     execute(grammar.createIndex(index, existingIndex))
                 } catch (ex: Exception) {
-                    if (ex.message?.contains("is already indexed") != true || indexInfo() == null) throw ex
+                    // A lost create response is recoverable only when the required index exists.
+                    if (indexInfo()?.get("status") !in listOf("PENDING", "OPERATIONAL")) throw ex
                 }
                 val indexDeadline = System.nanoTime() + timeout.toNanos()
                 while (true) {
@@ -80,8 +82,8 @@ internal object FalkorDbStorageSchema {
                 try {
                     execute(grammar.createConstraint(identity))
                 } catch (ex: Exception) {
-                    // Concurrent cold starts may create the same fixed constraint first.
-                    if (ex.message?.contains("already exists", ignoreCase = true) != true || constraint() == null) throw ex
+                    // Exact identity and readiness establish the create postcondition independently of error wording.
+                    if (constraint()?.status !in listOf("PENDING", "OPERATIONAL")) throw ex
                 }
             }
             val deadline = System.nanoTime() + timeout.toNanos()
