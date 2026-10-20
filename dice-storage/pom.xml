@@ -99,6 +99,15 @@
             <scope>provided</scope>
         </dependency>
 
+        <!-- Test: the scoped read conformance suites this store runs -->
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Test: Drivine test support spins a Neo4j testcontainer; see TestApplication -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
