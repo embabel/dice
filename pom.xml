@@ -87,6 +87,7 @@
     <modules>
         <module>dice</module>
         <module>dice-storage</module>
+        <module>dice-storage-falkordb</module>
         <module>dice-storage-autoconfigure</module>
         <module>dice-report</module>
         <module>dice-ingestion</module>
@@ -104,6 +105,11 @@
         -->
         <tuprolog.version>1.0.4</tuprolog.version>
         <drivine.version>0.1.8</drivine.version>
+        <!--
+            JFalkorDB 0.13, which Drivine brings in, needs the Jedis 8 API, while the imported BOM
+            manages Jedis 7. Managing it here wins over the BOM for every module.
+        -->
+        <jedis.version>8.0.1</jedis.version>
         <!--
             Docker Engine API version the Testcontainers docker-java client talks. The client's
             default is below the engine minimum, which disables container-backed tests; pin it here
@@ -169,11 +175,22 @@
                 <version>${project.version}</version>
             </dependency>
 
+            <dependency>
+                <groupId>com.embabel.dice</groupId>
+                <artifactId>dice-storage-falkordb</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
             <!-- Drivine Spring Boot starter -->
             <dependency>
                 <groupId>org.drivine</groupId>
                 <artifactId>drivine4j-spring-boot-starter</artifactId>
                 <version>${drivine.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>redis.clients</groupId>
+                <artifactId>jedis</artifactId>
+                <version>${jedis.version}</version>
             </dependency>
 
             <dependency>
