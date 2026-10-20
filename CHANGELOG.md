@@ -10,6 +10,10 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- Drivine 0.1.8, in step with embabel-chat-store and embabel-agent-rag-graph, so a host that uses
+  them together resolves one Drivine. **Compatibility: behavioral.** A host on Drivine 0.1.6 moves
+  to 0.1.8 with it.
+
 - Drivine 0.1.6. A 0.1.x release can change the compiled signature of a method, as 0.1.6 did for
   `saveAll`, so a host resolves the Drivine its libraries were built on.
   **Compatibility: behavioral.** A host on Drivine 0.1.5 moves to 0.1.6 with it.
