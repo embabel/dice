@@ -23,13 +23,16 @@ import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.agent.Memory.Companion.DEFAULT_LIMIT
 import com.embabel.dice.projection.memory.MemoryProjector
 import com.embabel.dice.projection.memory.support.DefaultMemoryProjector
-import com.embabel.dice.proposition.FilteredVectorUnsupportedException
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.FilteredVectorUnsupportedException
+import com.embabel.dice.proposition.ScopedReadException
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.matchesFilters
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.slf4j.LoggerFactory
+import java.time.Instant
 import java.util.function.UnaryOperator
 
 /**
@@ -97,7 +100,7 @@ import java.util.function.UnaryOperator
  * @param narrowedBy Optional query transformer that narrows the scope of all queries.
  * Applied on top of the base query (contextId + minConfidence) before any tool-specific
  * additions. Use this to restrict Memory to a subset of propositions (e.g., by entity,
- * level, or temporal range). Cannot widen the base scope, only narrow it.
+ * level, or temporal range). Context, ACTIVE status and the raw-confidence floor remain mandatory.
  * @param eagerQuery Optional query transformer to eagerly load key memories into the description.
  * When set, the description will include memories fetched using this query, making them
  * immediately available to the LLM without requiring a tool call.
@@ -162,6 +165,9 @@ data class Memory @JvmOverloads constructor(
      * eager loading and all search modes — so the LLM
      * cannot access propositions outside it.
      *
+     * The context, ACTIVE status and the configured raw-confidence floor always apply, even when
+     * the transformer returns a fresh query. A transformer that names another context, or any
+     * status other than ACTIVE, fails before anything is read.
      * Can be called multiple times; each call replaces the previous narrowing.
      *
      * Example (Kotlin):
@@ -191,14 +197,33 @@ data class Memory @JvmOverloads constructor(
      * (already the default for listing/searching without a query).
      */
     private fun baseQuery(): PropositionQuery {
-        // Scope retrieval to ACTIVE so STALE/SUPERSEDED/CONTRADICTED never
-        // reach LLM context by default. Applied before narrowedBy so a consumer
-        // can still explicitly widen the status set via the narrowing operator.
         val base = PropositionQuery.forContextId(contextId)
             .withMinConfidence(minConfidence)
             .withStatuses(setOf(PropositionStatus.ACTIVE))
-        return narrowedBy?.apply(base) ?: base
+        return enforceBoundary(narrowedBy?.apply(base) ?: base)
     }
+
+    private fun enforceBoundary(query: PropositionQuery): PropositionQuery {
+        require(query.contextId == null || query.contextId == contextId) {
+            "Memory query cannot change its context"
+        }
+        require(minConfidence.isFinite() && (query.minConfidence == null || query.minConfidence.isFinite())) {
+            "Memory confidence must be finite"
+        }
+        require(query.statuses.isNullOrEmpty() || query.statuses == setOf(PropositionStatus.ACTIVE)) {
+            "Memory reads ACTIVE propositions only"
+        }
+        return query.copy(
+            contextId = contextId,
+            minConfidence = maxOf(minConfidence, query.minConfidence ?: minConfidence),
+            statuses = setOf(PropositionStatus.ACTIVE),
+            anyEntityIds = query.anyEntityIds?.let { java.util.Collections.unmodifiableList(it.toList()) },
+            allEntityIds = query.allEntityIds?.let { java.util.Collections.unmodifiableList(it.toList()) },
+        )
+    }
+
+    private fun eagerReadQuery(base: PropositionQuery): PropositionQuery? =
+        eagerQuery?.let { hook -> enforceBoundary(hook.apply(base)) }
 
     /**
      * IDs of propositions that were eagerly loaded into the description.
@@ -208,52 +233,62 @@ data class Memory @JvmOverloads constructor(
         loadEagerMemories().map { it.id }.toSet()
     }
 
-    private fun loadEagerMemories(): List<Proposition> = try {
+    private fun loadEagerMemories(): List<Proposition> {
         val base = baseQuery()
+        val eager = eagerReadQuery(base)
+        // One instant for the whole load, so every eager row is checked against the same clock.
+        val asOf = base.effectiveConfidenceAsOf ?: Instant.now()
+        return try {
 
-        val topicMemories = eagerTopicSearch?.let { limit ->
-            repository.findSimilarWithScores(
-                TextSimilaritySearchRequest(
-                    query = topic,
-                    similarityThreshold = 0.0,
-                    topK = limit,
-                ),
-                base,
-            ).map { it.match }
-        } ?: emptyList()
+            val topicMemories = eagerTopicSearch?.let { limit ->
+                repository.findSimilarWithScores(
+                    TextSimilaritySearchRequest(
+                        query = topic,
+                        similarityThreshold = 0.0,
+                        topK = limit,
+                    ),
+                    base,
+                ).map { it.match }
+            } ?: emptyList()
 
-        val aboutMemories = eagerTextSearch?.let { request ->
-            repository.findSimilarWithScores(
-                request,
-                base,
-            ).map { it.match }
-        } ?: emptyList()
+            val aboutMemories = eagerTextSearch?.let { request ->
+                repository.findSimilarWithScores(
+                    request,
+                    base,
+                ).map { it.match }
+            } ?: emptyList()
 
-        val queryMemories = eagerQuery?.let { queryFn ->
-            repository.query(queryFn.apply(base))
-        } ?: emptyList()
+            // The eager hook may hand back a fresh query, so its rows only count when they also
+            // match the narrowed base query. That way no eager hook can widen what Memory shows.
+            val queryMemories = eager?.let { query ->
+                repository.query(query).filter { base.matchesFilters(it, asOf) }
+            } ?: emptyList()
 
-        // Merge all sources, deduplicating by ID, aboutMemories first (most contextual)
-        val seen = mutableSetOf<String>()
-        val merged = (aboutMemories + topicMemories + queryMemories).filter { seen.add(it.id) }
+            // Merge all sources, deduplicating by ID, aboutMemories first (most contextual)
+            val seen = mutableSetOf<String>()
+            val merged = (aboutMemories + topicMemories + queryMemories).filter { seen.add(it.id) }
 
-        // Reinforce on access: eagerly-surfaced memories are the ones actually being used, so
-        // refresh their decay anchor. Best-effort and scoped to this read path only (not every
-        // internal query) to bound write amplification — a failure here must never break the
-        // eager load itself.
-        if (merged.isNotEmpty()) {
-            try {
-                repository.touchAccessed(merged.map { it.id })
-            } catch (t: Throwable) {
-                logger.warn("Unable to touch lastAccessed for eagerly loaded memories", t)
+            // Reinforce on access: eagerly-surfaced memories are the ones actually being used, so
+            // refresh their decay anchor. Best-effort and scoped to this read path only (not every
+            // internal query) to bound write amplification — a failure here must never break the
+            // eager load itself.
+            if (merged.isNotEmpty()) {
+                try {
+                    repository.touchAccessed(merged.map { it.id })
+                } catch (t: Throwable) {
+                    logger.warn("Unable to touch lastAccessed for eagerly loaded memories", t)
+                }
             }
-        }
 
-        merged
-    } catch (t: Throwable) {
-        if (t is FilteredVectorUnsupportedException) throw t
-        logger.warn("Unable to perform vector search", t)
-        emptyList()
+            merged
+        } catch (e: FilteredVectorUnsupportedException) {
+            throw e
+        } catch (e: ScopedReadException) {
+            throw e
+        } catch (t: Throwable) {
+            logger.warn("Unable to perform vector search", t)
+            emptyList()
+        }
     }
 
     // -- LlmReference implementation --
@@ -263,8 +298,8 @@ data class Memory @JvmOverloads constructor(
     override fun tools(): List<Tool> = listOf(this)
 
     override fun contribution(): String {
-        val memoryCount = repository.count(baseQuery())
         val eagerMemories = loadEagerMemories()
+        val memoryCount = repository.count(baseQuery())
 
         return buildString {
             appendLine("Reference: $name")
@@ -289,7 +324,8 @@ data class Memory @JvmOverloads constructor(
      */
     private val toolDescription: String
         get() {
-            val memoryCount = repository.count(baseQuery())
+            val base = baseQuery()
+            val memoryCount = repository.count(base)
             logger.info(
                 "Found {} memories > {} confidence in context {}", memoryCount, minConfidence,
                 contextId
@@ -345,6 +381,11 @@ data class Memory @JvmOverloads constructor(
      * making them immediately available to the LLM without requiring a tool call.
      * The query transformer receives the base query (contextId, minConfidence,
      * and any [narrowedBy] scope already applied).
+     *
+     * The context, ACTIVE status and raw-confidence floor always apply. A transformer that names
+     * another context, or any status other than ACTIVE, fails before anything is read. Eager rows
+     * count only when they also match the narrowed query, and the eager limit is applied before
+     * that check, so build on the query you are given rather than starting a fresh one.
      *
      * Can be combined with [withEagerTopicSearch] — both sets of memories will be
      * merged (deduplicated) in the description.
