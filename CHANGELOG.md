@@ -10,6 +10,19 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- `LlmPropositionExtractor` can check each mention the extraction model suggests against the text
+  of its own proposition. The check is off by default, so the extractor keeps every mention as
+  before. `withExtractionMentionFilter(SpanInPropositionFilter())` turns it on: the extractor then
+  drops a mention whose span is blank or does not appear in that text, ignoring case, and logs a
+  warning naming the span, the proposition, the chunk and the reason. Turn it on for a model that
+  tags entities it saw elsewhere in the chunk. It also drops the non-literal mentions the default
+  extraction prompt asks for, such as Cycling as the object of "Alice cycles" or the user as the
+  implied subject of a first-person message, along with the relationships they would carry.
+  **Compatibility: source-additive; Kotlin callers built against an earlier version need a recompile.**
+  `LlmPropositionExtractor` gained an `extractionMentionFilter` constructor parameter, which changes
+  its Kotlin default-argument entry points and `copy`. Kotlin source and Java constructor callers are
+  unaffected.
+
 - Drivine 0.1.8, in step with embabel-chat-store and embabel-agent-rag-graph, so a host that uses
   them together resolves one Drivine. **Compatibility: behavioral.** A host on Drivine 0.1.6 moves
   to 0.1.8 with it.

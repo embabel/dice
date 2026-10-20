@@ -26,6 +26,7 @@ import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.common.filter.MentionFilter
+import com.embabel.dice.common.filter.SpanInPropositionFilter
 import com.embabel.dice.proposition.MentionKey
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionExtractor
@@ -139,6 +140,8 @@ data class TemplateModel(
  * When provided, existing propositions for the context will be included in the prompt
  * to help the LLM avoid duplicates and maintain consistency.
  * @param perspective Controls whose perspective propositions are extracted from. See [ExtractionPerspective].
+ * @param extractionMentionFilter an optional check each model-suggested mention must pass before [extract] returns it.
+ * The default is null, which keeps every mention. See [withExtractionMentionFilter] for when to turn one on.
  */
 data class LlmPropositionExtractor(
     private val llmOptions: LlmOptions,
@@ -149,7 +152,16 @@ data class LlmPropositionExtractor(
     val existingPropositionsToShow: Int = 100,
     private val propositionRepository: PropositionRepository? = null,
     val perspective: ExtractionPerspective = ExtractionPerspective.ALL,
+    private val extractionMentionFilter: MentionFilter? = null,
 ) : PropositionExtractor, ExtractionConfig {
+
+    /** The constructor from before [extractionMentionFilter] existed, so compiled Java callers still link. It keeps every mention. */
+    constructor(
+        llmOptions: LlmOptions, ai: Ai, template: String, examples: List<CreationExample<PropositionsResult>>,
+        schemaAdherence: SchemaAdherence, existingPropositionsToShow: Int,
+        propositionRepository: PropositionRepository?, perspective: ExtractionPerspective,
+    ) : this(llmOptions, ai, template, examples, schemaAdherence, existingPropositionsToShow,
+        propositionRepository, perspective, null)
 
     companion object {
 
@@ -234,6 +246,20 @@ data class LlmPropositionExtractor(
         )
     }
 
+    /**
+     * Set a check each model-suggested mention must pass before [extract] returns it, or null to keep every mention,
+     * which is the default.
+     *
+     * Turn on [SpanInPropositionFilter] when your model tags entities it saw elsewhere in the chunk and you would
+     * rather drop those mentions than link a proposition to an entity it never names. It drops every mention whose
+     * span does not appear in the proposition text, ignoring case. That includes the non-literal mentions the
+     * default extraction prompt asks for, such as Cycling as the object of "Alice cycles", a known entity named
+     * differently in the text, or the user as the implied subject of a first-person message, so the
+     * relationships those mentions would carry are lost too. Each dropped mention is logged as a warning.
+     */
+    fun withExtractionMentionFilter(filter: MentionFilter?): LlmPropositionExtractor =
+        this.copy(extractionMentionFilter = filter)
+
     private fun extractExistingPropositions(context: SourceAnalysisContext): List<Proposition> {
         if (propositionRepository == null) {
             return emptyList()
@@ -288,8 +314,15 @@ data class LlmPropositionExtractor(
 
         return SuggestedPropositions(
             chunkId = chunk.id,
-            propositions = result.propositions,
+            propositions = result.propositions.map { keepValidMentions(it, chunk.id) },
         )
+    }
+
+    private fun keepValidMentions(proposition: SuggestedProposition, chunkId: String): SuggestedProposition {
+        val filter = extractionMentionFilter ?: return proposition
+        val (kept, dropped) = proposition.mentions.partition { filter.isValid(it, proposition.text) }
+        dropped.forEach { logger.warn("Filtered mention '{}' from proposition '{}' in chunk {}: {}", it.span, proposition.text, chunkId, filter.rejectionReason(it)) }
+        return proposition.copy(mentions = kept)
     }
 
     override fun toSuggestedEntities(

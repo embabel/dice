@@ -57,6 +57,17 @@ class PropositionDuplicateFilter(
 }
 
 /**
+ * Rejects a mention whose span is blank or not in its own proposition text, ignoring case. A model
+ * sometimes tags an entity it saw elsewhere in the chunk, and resolving that would attach the
+ * proposition to the wrong thing. It is a plain substring check, so "art" matches "cart".
+ */
+class SpanInPropositionFilter : MentionFilter {
+    override fun isValid(mention: SuggestedMention, propositionText: String): Boolean =
+        mention.span.isNotBlank() && propositionText.contains(mention.span, ignoreCase = true)
+    override fun rejectionReason(mention: SuggestedMention): String? = if (mention.span.isBlank()) "blank span" else "span not found in its proposition"
+}
+
+/**
  * Combines multiple filters using AND logic.
  *
  * A mention is valid only if ALL child filters accept it.
