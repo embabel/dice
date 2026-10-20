@@ -1335,7 +1335,7 @@ class DrivinePropositionRepository(
     @Transactional(readOnly = true)
     override fun keywordOverlap(base: PropositionQuery, tokens: List<String>, limit: Int): List<Proposition> {
         if (tokens.isEmpty() || limit <= 0) return emptyList()
-        if (!keywordPushable(base)) return super.keywordOverlap(base, tokens, limit)
+        if (!keywordPushable(base)) return super<PropositionRepository>.keywordOverlap(base, tokens, limit)
 
         val lowered = tokens.map { it.lowercase() }.distinct()
         val conds = listOfNotNull(
