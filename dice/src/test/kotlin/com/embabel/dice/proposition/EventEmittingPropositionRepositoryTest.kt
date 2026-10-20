@@ -213,4 +213,24 @@ class EventEmittingPropositionRepositoryTest {
             "findClusters through the decorator must match the bare delegate's clusters",
         )
     }
+
+    @Test
+    fun `forwards the index search to the delegate's own index search`() {
+        val vectors = vectorBackedDelegate()
+        val indexHit = SimilarityResult(match = proposition("only the index search finds this"), score = 0.42)
+        val delegate = object : PropositionRepository by vectors {
+            override fun findApproximateSimilarWithScores(
+                textSimilaritySearchRequest: TextSimilaritySearchRequest,
+                query: PropositionQuery,
+            ): List<SimilarityResult<Proposition>> = listOf(indexHit)
+        }
+        val repo = EventEmittingPropositionRepository(delegate, RecordingDiceEventListener())
+        val request = TextSimilaritySearchRequest(query = "A likes B", similarityThreshold = 0.5, topK = 10)
+
+        assertEquals(
+            listOf(indexHit),
+            repo.findApproximateSimilarWithScores(request, PropositionQuery.forContextId(contextId)),
+            "the decorator must hand the index search to the delegate",
+        )
+    }
 }
