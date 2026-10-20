@@ -20,10 +20,13 @@ import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.proposition.EntityMention
+import com.embabel.dice.proposition.FilteredVectorUnsupportedException
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.matchesFilters
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.spi.ConflictType
@@ -31,6 +34,7 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 private val testContextId = ContextId("test-context")
@@ -1115,6 +1119,91 @@ class PropositionReviserTest {
         }
     }
 
+    /**
+     * The real reviser looks for similar propositions with a filtered vector search. A backend that
+     * can't filter before ranking fails that search, and the reviser has to let that failure reach
+     * the caller. Reading it as "nothing similar" would quietly store a duplicate.
+     */
+    @Nested
+    inner class UnsupportedFilteredSearchTests {
+
+        private fun realReviser() = LlmPropositionReviser(
+            llmOptions = io.mockk.mockk(),
+            ai = io.mockk.mockk(),
+        )
+
+        private fun repositoryWithoutFilteredSearch() = GlobalVectorOnlyRepository().apply {
+            save(createProposition("Alice is a software engineer", confidence = 0.7))
+        }
+
+        @Test
+        fun `revise propagates unsupported filtered search`() {
+            val repository = repositoryWithoutFilteredSearch()
+
+            assertThrows(FilteredVectorUnsupportedException::class.java) {
+                realReviser().revise(createProposition("Alice works as a software engineer"), repository)
+            }
+        }
+
+        @Test
+        fun `reviseAll propagates unsupported filtered search`() {
+            val repository = repositoryWithoutFilteredSearch()
+
+            assertThrows(FilteredVectorUnsupportedException::class.java) {
+                realReviser().reviseAll(
+                    listOf(
+                        createProposition("Alice works as a software engineer"),
+                        createProposition("Bob is a designer"),
+                    ),
+                    repository,
+                )
+            }
+        }
+    }
+
+    /**
+     * Revision looks for similar propositions through the store's index search, which keeps
+     * widening until it has enough hits in the context. The exact filtered search has a row budget
+     * that a large context can blow, so the reviser must not use it.
+     */
+    @Nested
+    inner class SimilarSearchTests {
+
+        private fun realReviser() = LlmPropositionReviser(
+            llmOptions = io.mockk.mockk(),
+            ai = io.mockk.mockk(),
+        )
+
+        @Test
+        fun `revise finds similar propositions through the index search`() {
+            val repository = SearchRecordingRepository()
+
+            val result = realReviser().revise(createProposition("Alice works as a software engineer"), repository)
+
+            assertTrue(result is RevisionResult.New)
+            assertEquals(listOf("approximate"), repository.calls)
+            assertEquals(
+                PropositionQuery(contextId = testContextId, statuses = setOf(PropositionStatus.ACTIVE)),
+                repository.queries.single(),
+            )
+        }
+
+        @Test
+        fun `reviseAll finds similar propositions through the index search`() {
+            val repository = SearchRecordingRepository()
+
+            realReviser().reviseAll(
+                listOf(
+                    createProposition("Alice works as a software engineer"),
+                    createProposition("Bob is a designer"),
+                ),
+                repository,
+            )
+
+            assertEquals(listOf("approximate", "approximate"), repository.calls)
+        }
+    }
+
     private fun createProposition(
         text: String,
         confidence: Double = 0.8,
@@ -1168,6 +1257,18 @@ class TestPropositionRepository(
             .sortedByDescending { it.score }
             .take(request.topK)
 
+    override fun findSimilarWithScores(
+        request: TextSimilaritySearchRequest,
+        query: PropositionQuery,
+    ): List<SimilarityResult<Proposition>> {
+        val asOf = query.effectiveConfidenceAsOf ?: Instant.now()
+        return propositions.values.filter { query.matchesFilters(it, asOf) }
+            .map { SimilarityResult(match = it, score = scoreOverrides[it.text] ?: defaultScore) }
+            .filter { it.score >= request.similarityThreshold }
+            .sortedByDescending { it.score }
+            .take(request.topK)
+    }
+
     override fun findByStatus(status: PropositionStatus): List<Proposition> =
         propositions.values.filter { it.status == status }
 
@@ -1187,6 +1288,56 @@ class TestPropositionRepository(
     override fun count(): Int = propositions.size
 
     fun clear() = propositions.clear()
+}
+
+/**
+ * A repository that only knows global vector search. Everything goes to an in-memory test
+ * repository except the two filtered searches, which keep the interface defaults: the exact one
+ * fails explicitly, and the index search falls back to it.
+ */
+private class GlobalVectorOnlyRepository(
+    private val delegate: TestPropositionRepository = TestPropositionRepository(),
+) : PropositionRepository by delegate {
+
+    override fun findSimilarWithScores(
+        request: TextSimilaritySearchRequest,
+        query: PropositionQuery,
+    ): List<SimilarityResult<Proposition>> = super<PropositionRepository>.findSimilarWithScores(request, query)
+
+    override fun findApproximateSimilarWithScores(
+        textSimilaritySearchRequest: TextSimilaritySearchRequest,
+        query: PropositionQuery,
+    ): List<SimilarityResult<Proposition>> =
+        super<PropositionRepository>.findApproximateSimilarWithScores(textSimilaritySearchRequest, query)
+}
+
+/**
+ * Remembers which filtered similarity search a caller used, and finds nothing either way, so a
+ * revision ends as a new proposition without reaching the LLM.
+ */
+private class SearchRecordingRepository(
+    private val delegate: TestPropositionRepository = TestPropositionRepository(),
+) : PropositionRepository by delegate {
+    val calls = mutableListOf<String>()
+    val queries = mutableListOf<PropositionQuery>()
+
+    override fun findSimilarWithScores(
+        request: TextSimilaritySearchRequest,
+        query: PropositionQuery,
+    ): List<SimilarityResult<Proposition>> {
+        calls += "exact"
+        queries += query
+        return emptyList()
+    }
+
+    override fun findApproximateSimilarWithScores(
+        textSimilaritySearchRequest: TextSimilaritySearchRequest,
+        query: PropositionQuery,
+    ): List<SimilarityResult<Proposition>> {
+        calls += "approximate"
+        queries += query
+        return emptyList()
+    }
 }
 
 /**

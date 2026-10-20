@@ -19,6 +19,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.proposition.FilteredVectorUnsupportedException
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
@@ -28,6 +29,7 @@ import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.proposition.GraphQueryCapable
 import com.embabel.dice.proposition.TemporalQueryCapable
 import com.embabel.dice.proposition.VectorSearchCapable
+import com.embabel.dice.proposition.matchesFilters
 import com.embabel.dice.query.graph.GraphNeighborhood
 import com.embabel.dice.query.graph.GraphPath
 import com.embabel.dice.query.graph.GraphQuery
@@ -35,6 +37,7 @@ import com.embabel.dice.query.graph.PropositionLineage
 import com.embabel.dice.query.graph.RelatedEntity
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.time.Instant
@@ -109,14 +112,22 @@ class RetrievalRouterTest {
         private val neighbourhood: GraphNeighborhood,
     ) : RecordingEntityStore(), VectorSearchCapable, GraphQueryCapable {
         init {
-            // The router uses the context-scoped findSimilarWithScores(request, query) overload, whose
-            // default body retains a hit only if query() returns its id. Persist the hits so they pass
-            // the context filter (they share the test contextId) and the merge can exercise both arms.
+            // Keep the complete fixture resident so filtered vector search can select before top-K.
             vectorHits.forEach { save(it.match) }
         }
         override fun findSimilarWithScores(
             textSimilaritySearchRequest: TextSimilaritySearchRequest,
         ): List<SimilarityResult<Proposition>> = vectorHits
+        override fun findSimilarWithScores(
+            textSimilaritySearchRequest: TextSimilaritySearchRequest,
+            query: PropositionQuery,
+        ): List<SimilarityResult<Proposition>> {
+            val asOf = query.effectiveConfidenceAsOf ?: Instant.now()
+            return vectorHits.filter { query.matchesFilters(it.match, asOf) }
+                .filter { it.score >= textSimilaritySearchRequest.similarityThreshold }
+                .sortedByDescending { it.score }
+                .take(textSimilaritySearchRequest.topK)
+        }
         override fun neighborhood(entityId: String, depth: Int): GraphNeighborhood = neighbourhood
         override fun pathBetween(entityIdA: String, entityIdB: String): List<GraphPath> = emptyList()
         override fun whyExplain(propositionId: String): PropositionLineage? = null
@@ -139,14 +150,25 @@ class RetrievalRouterTest {
     /**
      * A store backed by a real map (so findAll()/query() honour context filtering), that is BOTH
      * vector- and temporal-capable. Its single-arg vector method returns hits across EVERY context;
-     * its temporal default body scans all contexts. This lets a test prove the router scopes those
-     * paths back to its own context rather than leaking the unscoped fragment output.
+     * its filtered vector method applies predicates to the complete fixture before top-K, while its
+     * temporal default scans all contexts. This lets tests prove the router supplies its own scope.
      */
     private class CrossContextStore : RecordingEntityStore(), VectorSearchCapable, TemporalQueryCapable {
         override fun findSimilarWithScores(
             textSimilaritySearchRequest: TextSimilaritySearchRequest,
         ): List<SimilarityResult<Proposition>> =
             store.values.map { SimilarityResult.create(it, 0.9) }
+        override fun findSimilarWithScores(
+            textSimilaritySearchRequest: TextSimilaritySearchRequest,
+            query: PropositionQuery,
+        ): List<SimilarityResult<Proposition>> {
+            val asOf = query.effectiveConfidenceAsOf ?: Instant.now()
+            return store.values.filter { query.matchesFilters(it, asOf) }
+                .map { SimilarityResult.create(it, 0.9) }
+                .filter { it.score >= textSimilaritySearchRequest.similarityThreshold }
+                .sortedByDescending { it.score }
+                .take(textSimilaritySearchRequest.topK)
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -166,6 +188,64 @@ class RetrievalRouterTest {
         val result = router.retrieve(DiscoveryQuery(mode = RetrievalMode.VECTOR, text = "q"))
 
         assertEquals(listOf("a1"), result.propositions.map { it.id }, "VECTOR must not leak ctxB props")
+    }
+
+    @Test
+    fun `VECTOR selects eligible hits before top-K despite foreign decoys`() {
+        val ctxA = ContextId("ctxA")
+        val store = CrossContextStore().apply {
+            repeat(5) { save(propInContext("decoy-$it", ContextId("ctxC"))) }
+            save(propInContext("a1", ctxA))
+            save(propInContext("a2", ctxA))
+        }
+        val router = RetrievalRouter(store, GraphQuery(store, ctxA), ctxA)
+
+        val result = router.retrieve(DiscoveryQuery(mode = RetrievalMode.VECTOR, text = "q", topK = 2))
+
+        assertEquals(listOf("a1", "a2"), result.propositions.map { it.id })
+    }
+
+    @Test
+    fun `VECTOR propagates unsupported filtered search without a global fallback`() {
+        val store = object : RecordingEntityStore(), VectorSearchCapable {
+            override fun findSimilarWithScores(
+                textSimilaritySearchRequest: TextSimilaritySearchRequest,
+            ): List<SimilarityResult<Proposition>> = throw AssertionError("global vector call")
+        }
+        val router = RetrievalRouter(store, GraphQuery(store, contextId), contextId)
+
+        assertThrows(FilteredVectorUnsupportedException::class.java) {
+            router.retrieve(DiscoveryQuery(mode = RetrievalMode.VECTOR, text = "q"))
+        }
+        assertTrue(store.queries.isEmpty())
+    }
+
+    @Test
+    fun `HYBRID propagates unsupported filtered search instead of returning graph-only results`() {
+        val store = object : RecordingEntityStore(), VectorSearchCapable {
+            override fun findSimilarWithScores(
+                textSimilaritySearchRequest: TextSimilaritySearchRequest,
+            ): List<SimilarityResult<Proposition>> = throw AssertionError("global vector call")
+        }
+        // A graph neighbour exists, so a swallowed vector failure would still produce a result.
+        store.save(
+            Proposition(
+                id = "p1",
+                contextId = contextId,
+                text = "A relates to B",
+                mentions = listOf(
+                    EntityMention(span = "A", type = "Entity", resolvedId = "A", role = MentionRole.SUBJECT),
+                    EntityMention(span = "B", type = "Entity", resolvedId = "B", role = MentionRole.OBJECT),
+                ),
+                confidence = 0.9,
+            ),
+        )
+        val router = RetrievalRouter(store, GraphQuery(store, contextId), contextId)
+
+        assertThrows(FilteredVectorUnsupportedException::class.java) {
+            router.retrieve(DiscoveryQuery(mode = RetrievalMode.HYBRID, text = "q", entityId = "A"))
+        }
+        assertTrue(store.queries.isEmpty())
     }
 
     @Test

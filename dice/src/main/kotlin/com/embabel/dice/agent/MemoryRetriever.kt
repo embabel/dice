@@ -17,6 +17,7 @@ package com.embabel.dice.agent
 
 import com.embabel.agent.api.tool.Tool
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.proposition.FilteredVectorUnsupportedException
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
@@ -149,7 +150,8 @@ internal class MemoryRetriever(
                 base,
             ).map { it.match }
         } catch (t: Throwable) {
-            logger.warn("vector probe failed for '{}': {}", query, t.message)
+            if (t is FilteredVectorUnsupportedException) throw t
+            logger.warn("vector probe failed for '{}'", query, t)
             emptyList()
         }
 

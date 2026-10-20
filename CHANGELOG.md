@@ -14,6 +14,13 @@ and the consumer PRs that deliver it).
   them together resolves one Drivine. **Compatibility: behavioral.** A host on Drivine 0.1.6 moves
   to 0.1.8 with it.
 
+- `VectorSearchCapable.findSimilarWithScores(request, query)` no longer intersects a global
+  top-K with `query()`, which could drop eligible rows. Its default now throws
+  `FilteredVectorUnsupportedException`, and `Memory` and `MemoryRetriever` let that exception
+  through instead of returning no memories.
+  **Compatibility: breaking.** A store that relied on the default overrides the filtered method and
+  ranks only rows that match the query.
+
 - Drivine 0.1.6. A 0.1.x release can change the compiled signature of a method, as 0.1.6 did for
   `saveAll`, so a host resolves the Drivine its libraries were built on.
   **Compatibility: behavioral.** A host on Drivine 0.1.5 moves to 0.1.6 with it.

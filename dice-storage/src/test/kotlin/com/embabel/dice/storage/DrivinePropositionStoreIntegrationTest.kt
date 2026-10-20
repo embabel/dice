@@ -2444,6 +2444,36 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals(expected, graphOrder, "graph live-decay order must equal the in-memory effectiveConfidenceAt order")
     }
 
+    /**
+     * Live decay cannot use the materialised column, so the filtered vector search ranks only the rows
+     * the query allows. A stale row that matches the query text exactly must not take the only slot.
+     */
+    @Test
+    fun `filtered vector search with live decay ranks only eligible rows before top K`() {
+        val now = Instant.now()
+        val stale = repository.save(
+            prop("the river floods every spring", context = "ctx-live", decay = 0.9, contentRevised = now.minus(Duration.ofDays(365))),
+        )
+        val fresh = repository.save(prop("the bakery opens at dawn", context = "ctx-live", decay = 0.0))
+        assertTrue(stale.effectiveConfidenceAt(now, 10.0) < 0.5, "premise: the stale row falls below the floor")
+        assertTrue(fresh.effectiveConfidenceAt(now, 10.0) >= 0.5, "premise: the fresh row clears the floor")
+
+        val request = TextSimilaritySearchRequest(query = stale.text, topK = 1, similarityThreshold = 0.0)
+        val hits = repository.findSimilarWithScores(
+            request,
+            PropositionQuery(
+                contextId = ContextId("ctx-live"),
+                minEffectiveConfidence = 0.5,
+                decayK = 10.0,
+                effectiveConfidenceAsOf = now,
+            ),
+        )
+
+        assertEquals(listOf(fresh.id), hits.map { it.match.id }, "only the eligible row may fill the top K")
+        val unfiltered = repository.findSimilarWithScores(TextSimilaritySearchRequest(query = stale.text, topK = 10, similarityThreshold = 0.0)).single { it.match.id == fresh.id }
+        assertEquals(unfiltered.score, hits.single().score, 1e-4, "the exact score matches the index's raw cosine")
+    }
+
     /** Provenance is lean by default and only loaded when `withProvenance = true` (or via [findById]). */
     @Test
     fun `withProvenance loads entries only when requested`() {
