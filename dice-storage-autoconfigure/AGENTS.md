@@ -15,7 +15,7 @@ Under `com.embabel.dice.storage.autoconfigure`:
   `SchemaCatalog` beans (constraints, range indexes, vector index). Also `DiceDecaySchedulingConfiguration`,
   the separate auto-config that schedules the decay tick.
 - **`DiceStoreProperties`** — `@ConfigurationProperties(prefix = "embabel.dice.store")`: the `type`
-  switch plus nested `decay` and `vector-index` blocks.
+  switch plus nested `decay`, `vector-index`, `exact-vector` and `scoped-read` blocks.
 - **`MetamodelAutoConfiguration`** — the opt-in wiring for schema governance. It registers only when
   the host declares a `DeclaredSchemaSource` bean, and then supplies the version store, drift log,
   observed-schema source, differ, quarantine policy, drift runner, and the metamodel `SchemaCatalog`.
@@ -74,6 +74,9 @@ applying lifecycle transitions.
 | `embabel.dice.store.decay.k` | `2.0` | Decay-rate multiplier for the staleness policy |
 | `embabel.dice.store.decay.prune-stale` | `false` | Hard-delete STALE propositions during the sweep |
 | `embabel.dice.store.vector-index.enabled` | `true` | Register the vector index schema |
+| `embabel.dice.store.exact-vector.max-candidates` | `10000` | Rows the graph store's filtered vector search may score before it fails |
+| `embabel.dice.store.exact-vector.timeout` | `5s` | How long the graph store's search may run in Neo4j |
+| `embabel.dice.store.scoped-read.timeout` | `5s` | How long a scoped query, count or keyword read may run on the graph store |
 
 The index's label (`Proposition`), property (`embedding`), name (`Proposition_embedding_vector`), and
 similarity (cosine) aren't configurable — they're fixed by the `@VectorIndex` annotation on
@@ -95,3 +98,6 @@ drift from that annotation and silently break vector search, so they live as con
   vector index — the schema is applied idempotently but won't resize an existing index.
 - The decay tick is a no-op when no `DecayManager` is available (resolved lazily), so enabling decay
   without a store backend does nothing (it never fails).
+- Scoped and policy reads on the graph backend need a Neo4j database, plus Drivine's `DatabaseRegistry`
+  and `DataSourceMap` beans. On any other database, or without those beans, the graph repository
+  starts with them off, reports them unsupported, and logs one warning at startup.

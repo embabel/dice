@@ -1,0 +1,85 @@
+[[how-to-read-across-contexts]]
+=== Read across several contexts
+
+*Prerequisites*: a store that supports scoped reads (see the table below), and a host that already knows which contexts the current caller may read.
+
+A `PropositionQuery` reads one context at a time. When an agent should see a user's own memories and a shared team context together, open a scoped reader over exactly those contexts. Your application decides the scope. A context ID only names data and holding one grants nothing, so work out what the caller may see before you build the reader, and never let model input choose it.
+
+[source,java,indent=0]
+----
+include::../../../../../dice/src/test/java/com/embabel/dice/agent/ScopedReadGuideExamplesTest.java[tag=open-reader]
+----
+
+`snapshot(asOf, rankingDecayK)` fixes the instant and decay rate every read in the session uses, so a count and a query agree on effective confidence. It does not freeze the database: each call reads current data.
+
+==== Narrowing a reader
+
+`restrict(query)` adds criteria every row must also match. Restrictions add up and never widen the scope: a context named in the criteria must be one of the reader's contexts, and the criteria must not carry an order, a limit or an `effectiveConfidenceAsOf`, because the read chooses those. `includingOnly(keys)` keeps only the named rows and `excluding(keys)` leaves rows out. A `PropositionKey` holds the context as well as the proposition ID, so a key can't point outside the scope.
+
+==== Limits and exact vector search
+
+`ScopedReadLimits` caps how many rows one call may return (`maxRows`, 1000 by default) and how much work an exact vector search may do (`vectorBudget`). Java callers start from `ScopedReadLimits.DEFAULT` and use the withers; Kotlin callers can write `ScopedReadLimits { maxRows = 500 }`. A limit above `maxRows` fails before the store is touched.
+
+Scoped vector search applies the scope and every filter first, then scores each eligible row exactly, so a row outside the scope can never take an eligible row's place in the top K. `ExactVectorBudget` bounds that work at 10,000 eligible rows and five seconds by default, and rows without an embedding count toward it. Time spent embedding the query does not count against the five seconds. When more rows are eligible than the budget allows, the search fails with `EXACT_VECTOR_BUDGET_EXCEEDED` rather than scoring a sample. Narrow the scope or raise the budget. A stored embedding the search can't score (the wrong length, or a NaN or infinite value) is skipped with a logged warning and still counts toward the budget, and an all-zero embedding scores 0. A query embedding like that fails the search. Ties in any ordered read break by context ID and then proposition ID, compared by Unicode code point on every backend.
+
+==== When a read fails
+
+Every failure is a `ScopedReadException` whose `failure` says what went wrong. A store failure keeps the original exception as its cause. A store that can't run a scoped read fails; it never falls back to reading the whole store.
+
+[cols="2,3", options="header"]
+|===
+| `ScopedReadFailure` | Meaning
+
+| `SCOPED_READ_UNSUPPORTED` | The store can't run scoped reads, or has them switched off.
+| `SCOPED_VECTOR_UNSUPPORTED` | The store can't run scoped vector search, for example because it has no embedder.
+| `INVALID_SCOPED_READ` | The caller asked for something the read does not allow, such as a limit above `maxRows`.
+| `SCOPED_READ_RESULT_INVALID` | The store returned rows the read did not allow.
+| `SCOPED_READ_FAILED` | The store failed or timed out while reading; the cause says which.
+| `EXACT_VECTOR_BUDGET_EXCEEDED` | More rows were eligible than the vector budget allows.
+| `EXACT_VECTOR_DEADLINE_EXCEEDED` | The vector search ran out of time.
+|===
+
+==== Which stores support it
+
+[cols="2,1,1,1", options="header"]
+|===
+| Store | Scoped reads | Scoped vector search | Strict policy reads
+
+| In-memory and JSON-file | Yes | With an `EmbeddingService` | Yes
+| Neo4j (`DrivinePropositionRepository`) | With a native read executor | With a native read executor | With a native read executor
+| FalkorDB | Yes | No | No
+|===
+
+The executor talks to Neo4j through its own driver, so these reads need a Neo4j database. With `embabel.dice.store.type=graph`, the auto-configuration wires that executor for you when the Drivine database is Neo4j. On any other database, or without Drivine's `DatabaseRegistry` and `DataSourceMap` beans, the store starts with scoped and policy reads off, reports them unsupported, and logs a warning at startup. If you build `DrivinePropositionRepository` yourself over Neo4j, call `withNativeReadExecutor(Neo4jScopedReadExecutor.from(persistenceManager, databaseRegistry, dataSourceMap))` and use the repository it returns; the original instance still reports scoped reads as unsupported. Native scoped reads run in their own session and see committed data only, so a scoped read inside one of your write transactions does not see that transaction's unsaved changes. A scoped query, count or keyword read times out after five seconds unless you set another limit with `embabel.dice.store.scoped-read.timeout`. The `embabel.dice.store.exact-vector` properties set the allowance for the store's own filtered vector search, `findSimilarWithScores(request, query)` with a `PropositionQuery`. On a repository you build yourself, call `withScopedReadTimeout` and `withExactVectorBudget` where you construct it and use the instance it returns. Never call the `with*` methods on the injected bean: each one returns a copy, and the copy loses the bean's transaction handling. Scoped readers carry their own vector allowance in `ScopedReadLimits`. The event-publishing and RAG repository wrappers pass these capabilities through from the store they wrap.
+
+==== Memory over several contexts
+
+`ScopedMemory` is the multi-context counterpart of `Memory`. It is an `LlmReference` and a tool: `contribution()` puts key memories into the prompt, and the model calls the `memory` tool for more. The scope comes from the reader you give it, so the model can't widen it.
+
+[source,java,indent=0]
+----
+include::../../../../../dice/src/test/java/com/embabel/dice/agent/ScopedReadGuideExamplesTest.java[tag=scoped-memory]
+----
+
+`Memory.forContexts(scope, repository)` gives you a `ScopedMemory` with default settings. Kotlin callers can configure one in a block: `ScopedMemory(reader) { topic = "drinks" }`.
+
+The eager modes (`withEagerQuery`, `withEagerTopicSearch`, `withEagerTextSearch`) choose what goes into the prompt. Once `contribution()` has published those memories, later tool calls leave them out, so the model only gets new ones. The published text stays the same for the life of that `ScopedMemory`. Build a new one when the caller's access changes; text a model has already seen can't be taken back.
+
+A call with a query searches three ways and fuses the results with reciprocal rank fusion: vector similarity, keyword overlap, and, when those find fewer memories than asked for, memories that mention the same entities. Keyword search splits the query on anything that isn't a letter or digit and ignores words shorter than three characters, so a query like "AI" or "UK" gets no keyword matches. On a store without scoped vector search, such as the in-memory store with no `EmbeddingService`, a search skips the vector part and uses the other two. If the model sends input the tool can't use, such as an unknown field or a `limit` that isn't a positive whole number, it gets back a `Tool.Result.Error` saying what to send, and nothing is read. Each kind of search contributes at most 400 candidates, so if you lower `maxRows`, keep it at 401 or more. `MemoryLimits` caps how many memories one call returns and how many the prompt holds, 100 each by default.
+
+==== Show each memory only the way policy allows
+
+When the caller may see some rows only in part, wrap the reader in a `PolicyReadView`. A `RowPolicy` lists one `RowGrant` per visible proposition, and each grant's `RowProjection` says what that row may show: its stored text, replacement text you supply, or no text, plus the fields, metadata keys and sources you approve. Rows without a grant are invisible.
+
+[source,java,indent=0]
+----
+include::../../../../../dice/src/test/java/com/embabel/dice/agent/ScopedReadGuideExamplesTest.java[tag=policy-view]
+----
+
+A `ProjectedMemory` carries approved output only; fields you did not approve are `null`. A policy holds at most 1,000 grants and 1 MiB of replacement text. `ReadPolicyStamp` records who is reading, why, and under which policy version. DICE keeps it with the policy for auditing and does not check it.
+
+`HiddenFieldInfluence.STRICT`, the default, also keeps hidden fields from shaping results. A filter or order may only use fields every grant approves, listing follows the order of the grants, keyword search matches approved text only, and vector search needs grants that allow the stored text and embedding (`storedEmbeddingAllowed`) and approve the owner, ID and effective confidence. A read that would depend on a hidden field fails with `INVALID_SCOPED_READ` before the store is touched. `ALLOW_SEARCH_INFLUENCE` lets hidden fields affect matching and ranking while keeping them out of the output. Choose it only when whoever owns the data accepts that.
+
+`PolicyMemory` is the matching memory tool, and it treats model input the same way. You choose which searches the policy allows: `PolicyMemory.configuring(view).withSearchTiers(EnumSet.of(PolicySearchTier.KEYWORD)).memory()` in Java, or `PolicyMemory(view) { searchTiers = setOf(PolicySearchTier.KEYWORD) }` in Kotlin. With no tiers, as in `PolicyMemory.from(view)` above, the tool only lists approved memories and its schema offers no query. A tier you choose that the store can't run is an error, because the host asked for it. When grants change, open a new view.
+
+A grant can approve a source's descriptor, its locator, or both. Without a resolver, the tool shows the approved sources stored on the row. To have your own system describe them instead, pass a `PolicyProvenanceResolver` with `withProvenance(resolver)` (or `provenance = resolver` in Kotlin). It is called once per answer with the policy's stamp and only the source parts the grants approve, and an answer that returns a part nobody asked for fails the call with `SCOPED_READ_RESULT_INVALID`.

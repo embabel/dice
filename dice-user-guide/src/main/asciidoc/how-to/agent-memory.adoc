@@ -94,3 +94,7 @@ permanent claim on the context window.
 
 `MemoryController` exposes memory at `/api/v1/contexts/{contextId}/memory` — list, search, recall by
 entity, create, fetch and delete. It is opt-in. See <<features-web-api>>.
+
+==== Memory across several contexts
+
+To give an agent memory over several contexts the host has approved, see <<how-to-read-across-contexts>>.

@@ -1763,6 +1763,8 @@ Memory memory = Memory.forContext("session-123")
 `narrowedBy` composes with all eager modes — the eager searches and queries receive the
 already-narrowed base, so they can only further restrict (ordering, limits), never widen the scope.
 
+Memory enforces this for both hooks: the context, `ACTIVE` status and confidence floor always apply. A hook that names another context or any status besides `ACTIVE` fails before anything is read, and eager memories count only when they also match the narrowed query. To read across several contexts the host has approved, use `Memory.forContexts(scope, repository)`, which returns a `ScopedMemory`.
+
 #### Usage
 
 ```kotlin
@@ -1822,7 +1824,7 @@ val memory = Memory.forContext(contextId)
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `narrowedBy(UnaryOperator<PropositionQuery>)` | Narrows the scope of all queries (e.g., by entity, level, status). Applied before any tool-specific additions | none (unscoped) |
+| `narrowedBy(UnaryOperator<PropositionQuery>)` | Narrows the scope of all queries (e.g., by entity or level). Applied before any tool-specific additions | none (unscoped) |
 | `withProjector(MemoryProjector)` | Projector for classifying memories by knowledge type | `DefaultMemoryProjector.DEFAULT` (heuristic) |
 | `withMinConfidence(Double)` | Minimum effective confidence threshold (0.0–1.0) | 0.5 |
 | `withDefaultLimit(Int)` | Maximum results per search | 10 |

@@ -78,6 +78,18 @@ only what your domain actually needs.
 | `PropositionRepository`
 | `PropositionStore` plus the optional capabilities. Implement only the capabilities you genuinely
   support — defaults cover the rest.
+  If you implement `VectorSearchCapable`, override `findSimilarWithScores(request, query)` only when
+  your backend filters before it ranks; the default throws `FilteredVectorUnsupportedException`.
+  `findApproximateSimilarWithScores(request, query)` is the index-backed version, which
+  `LlmPropositionReviser` uses to find similar propositions. Its default runs the exact filtered
+  search. Override it when your backend has an approximate vector index, and keep widening the index
+  search until you have `topK` matching rows or have seen every indexed row.
+
+| `ContextSetReadCapable`, `ContextSetVectorSearchCapable`, `StrictPolicyReadCapable`
+| Whether your backend serves reads across several contexts (see <<how-to-read-across-contexts>>).
+  Apply the scope and every filter in the backend before ranking, counting and limiting.
+  Follow `ScopedReadRules` for the tie order, vector similarity and keyword matching, so your store
+  returns the same rows in the same order as the stores that ship.
 
 | `DecayManager`
 | How decay is applied. `InMemoryDecayManager` and `GraphDecayManager` ship.
