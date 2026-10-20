@@ -24,6 +24,8 @@ import com.embabel.dice.agent.Memory.Companion.DEFAULT_LIMIT
 import com.embabel.dice.projection.memory.MemoryProjector
 import com.embabel.dice.projection.memory.support.DefaultMemoryProjector
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.ContextReadScope
+import com.embabel.dice.proposition.ScopedPropositionReader
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.FilteredVectorUnsupportedException
@@ -481,6 +483,20 @@ data class Memory @JvmOverloads constructor(
     }
 
     companion object {
+
+        /**
+         * The quickest way to get a memory over several contexts the host has authorized.
+         *
+         * Use [forContext] instead for one context on any store, and [ScopedMemory.configuring]
+         * (Java) or `ScopedMemory(reader) { }` (Kotlin) when the scoped memory needs settings.
+         *
+         * @param scope the contexts the memory may read
+         * @param repository a store that supports scoped reads
+         * @throws com.embabel.dice.proposition.ScopedReadException with `SCOPED_READ_UNSUPPORTED` when the store has no scoped reads
+         */
+        @JvmStatic
+        fun forContexts(scope: ContextReadScope, repository: PropositionRepository): ScopedMemory =
+            ScopedMemory.from(ScopedPropositionReader.open(repository, scope))
 
         private const val NAME = "memory"
 
