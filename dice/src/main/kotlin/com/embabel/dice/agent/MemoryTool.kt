@@ -90,16 +90,21 @@ internal sealed interface MemoryToolInput {
 /**
  * The tool definition memory tools share: an optional `query` and an optional `limit`.
  *
+ * A tool that can only list leaves `query` out, so the model is not invited to search.
+ *
  * @param name the tool name the model calls
  * @param description what the tool tells the model it holds
+ * @param searchable whether to offer the `query` parameter
  */
-internal fun memoryToolDefinition(name: String, description: String): Tool.Definition = Tool.Definition(
-    name = name, description = description,
-    inputSchema = Tool.InputSchema.of(
-        Tool.Parameter.string("query", "What to recall; omit to list memories", required = false),
-        Tool.Parameter.integer("limit", "Maximum number of results", required = false),
-    ),
-)
+internal fun memoryToolDefinition(name: String, description: String, searchable: Boolean = true): Tool.Definition {
+    val limit = Tool.Parameter.integer("limit", "Maximum number of results", required = false)
+    val parameters = if (searchable) {
+        listOf(Tool.Parameter.string("query", "What to recall; omit to list memories", required = false), limit)
+    } else {
+        listOf(limit)
+    }
+    return Tool.Definition(name = name, description = description, inputSchema = Tool.InputSchema.of(*parameters.toTypedArray()))
+}
 
 /**
  * Builds the text a memory reference adds to the prompt: its name, its description with the

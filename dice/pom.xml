@@ -76,6 +76,12 @@
             <artifactId>jackson-module-kotlin</artifactId>
         </dependency>
 
+        <!-- Policy memory renders approved times as ISO-8601 text. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+
         <!-- JetBrains annotations for @ApiStatus -->
         <dependency>
             <groupId>org.jetbrains</groupId>
