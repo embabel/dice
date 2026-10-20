@@ -74,8 +74,8 @@ applying lifecycle transitions.
 | `embabel.dice.store.decay.k` | `2.0` | Decay-rate multiplier for the staleness policy |
 | `embabel.dice.store.decay.prune-stale` | `false` | Hard-delete STALE propositions during the sweep |
 | `embabel.dice.store.vector-index.enabled` | `true` | Register the vector index schema |
-| `embabel.dice.store.exact-vector.max-candidates` | `10000` | Rows the graph store's filtered vector search may score before it fails |
-| `embabel.dice.store.exact-vector.timeout` | `5s` | How long the graph store's search may run in Neo4j |
+| `embabel.dice.store.exact-vector.max-candidates` | `10000` | Rows a filtered vector search may score before it fails, on the graph and FalkorDB stores |
+| `embabel.dice.store.exact-vector.timeout` | `5s` | How long the graph store's search may run in Neo4j; FalkorDB ignores it, as its server `TIMEOUT` is the only deadline there |
 | `embabel.dice.store.scoped-read.timeout` | `5s` | How long a scoped query, count or keyword read may run on the graph store |
 
 The index's label (`Proposition`), property (`embedding`), name (`Proposition_embedding_vector`), and

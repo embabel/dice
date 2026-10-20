@@ -25,10 +25,11 @@ import org.springframework.boot.context.properties.NestedConfigurationProperty
  * Configuration for the Dice proposition store.
  *
  * `embabel.dice.store.type` selects the backend: `graph` (Drivine/Neo4j) or `in-memory` (default).
+ * The optional FalkorDB module adds `falkordb` and registers its stores before the base fallbacks.
  */
 @ConfigurationProperties(prefix = "embabel.dice.store")
 data class DiceStoreProperties(
-    /** Backend kind: `graph` or `in-memory`. */
+    /** Backend kind: `graph`, `in-memory`, or `falkordb` with the optional FalkorDB module. */
     var type: String = "in-memory",
 
     @NestedConfigurationProperty
@@ -46,8 +47,10 @@ data class DiceStoreProperties(
     /**
      * How far one filtered exact vector search may go before it gives up: the most eligible
      * propositions it will score, and how long it may run. The graph backend honours both, though
-     * only a search it runs natively in Neo4j is held to the timeout. The in-memory store ignores
-     * both. A value that is not positive stops the graph store from starting.
+     * only a search it runs natively in Neo4j is held to the timeout. FalkorDB honours
+     * [maxCandidates] and ignores [timeout], because the FalkorDB server's own `TIMEOUT` is the only
+     * deadline there. The in-memory store ignores both. A value that is not positive stops the graph
+     * or FalkorDB store from starting.
      */
     data class ExactVector(
         var maxCandidates: Int = ExactVectorBudget.DEFAULT_MAX_CANDIDATES,

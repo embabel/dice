@@ -5,7 +5,8 @@ Every property DICE binds, with its default and the module that reads it.
 
 ==== `embabel.dice.store` — `DiceStoreProperties`
 
-Read by `dice-storage-autoconfigure`.
+Read by `dice-storage-autoconfigure`. The optional `dice-storage-falkordb-autoconfigure` reads the
+FalkorDB datasource property and the `exact-vector` properties.
 
 [cols="2,1,1,3", options="header"]
 |===
@@ -14,7 +15,12 @@ Read by `dice-storage-autoconfigure`.
 | `embabel.dice.store.type`
 | `String`
 | `in-memory`
-| Backend kind: `graph` (Drivine/Neo4j) or `in-memory`.
+| Backend kind: `graph` (Drivine/Neo4j), `in-memory`, or `falkordb` with `dice-storage-falkordb-autoconfigure`.
+
+| `embabel.dice.store.falkordb.datasource`
+| `String`
+| `default`
+| Drivine datasource name read by `dice-storage-falkordb-autoconfigure`; the datasource must declare `type=FALKORDB`.
 
 | `embabel.dice.store.decay.enabled`
 | `boolean`
@@ -44,16 +50,18 @@ Read by `dice-storage-autoconfigure`.
 | `embabel.dice.store.exact-vector.max-candidates`
 | `int`
 | `10000`
-| How many matching rows the graph store's filtered vector search may score before it fails with
-  `EXACT_VECTOR_BUDGET_EXCEEDED`. A value that is not positive stops the store from starting. Graph
-  backend only.
+| How many matching rows a filtered vector search may score before it fails with
+  `EXACT_VECTOR_BUDGET_EXCEEDED`. Graph and FalkorDB backends. On FalkorDB the unfiltered search and
+  clustering have no cap and scan every proposition. A value that is not positive stops the store
+  from starting.
 
 | `embabel.dice.store.exact-vector.timeout`
 | `Duration`
 | `5s`
 | How long the graph store's filtered vector search may run in Neo4j before it fails with
   `EXACT_VECTOR_DEADLINE_EXCEEDED`. A search that runs in the caller's transaction is bounded by
-  `max-candidates` alone. Graph backend only.
+  `max-candidates` alone. FalkorDB ignores this property, since the FalkorDB server's own `TIMEOUT`
+  is the only deadline there.
 
 | `embabel.dice.store.scoped-read.timeout`
 | `Duration`

@@ -70,6 +70,19 @@ and the consumer PRs that deliver it).
 
 ### Added
 
+- `dice-storage-falkordb` and `dice-storage-falkordb-autoconfigure` provide durable proposition
+  and chunk-history storage through Drivine, native structured reads, and optional exact vector
+  search. Select `embabel.dice.store.type=falkordb` with the auto-configuration module. A filtered
+  vector search fails with `ScopedReadException(EXACT_VECTOR_BUDGET_EXCEEDED)` when more rows match
+  than `embabel.dice.store.exact-vector.max-candidates` allows. `exact-vector.timeout` does not
+  apply, since the FalkorDB server's own `TIMEOUT` is the only deadline, and the unfiltered search
+  and clustering have no cap and scan every proposition. FalkorDB has no vector index, so
+  `findApproximateSimilarWithScores` and with it proposition revision use the exact search there
+  and are subject to the cap.
+  **Compatibility: additive.** Existing Neo4j and in-memory selections retain their behavior.
+  FalkorDB applications must declare Jedis 8.0.1 directly; see
+  [configuration and migration](docs/falkordb.md).
+
 - Reads across several contexts in `dice`. **EXPERIMENTAL** (shape may change before 1.0).
   `ScopedPropositionReader` reads a host-chosen `ContextReadScope`, and narrowing only adds
   conditions. Filters, grants and exclusions apply in the store before ranking, counting and
