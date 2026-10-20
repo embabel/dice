@@ -202,4 +202,15 @@ class InMemoryPropositionRepositoryClusterTest {
         // First cluster should have more or equal similar items than second
         assertTrue(clusters[0].similar.size >= clusters[1].similar.size)
     }
+
+    @Test
+    fun `E2 the anchor is the id that sorts first by code point`() {
+        // U+FF61 sorts before U+10000 by code point but after it in UTF-16.
+        setEmbedding("same", floatArrayOf(1f, 0f, 0f))
+        repo.save(proposition("same").copy(id = "𐀀"))
+        repo.save(proposition("same").copy(id = "｡"))
+        val clusters = repo.findClusters(similarityThreshold = 0.9)
+        assertEquals(listOf("｡"), clusters.map { it.anchor.id })
+        assertEquals(listOf("𐀀"), clusters.single().similar.map { it.match.id })
+    }
 }

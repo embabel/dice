@@ -113,7 +113,7 @@ interface VectorSearchCapable {
      *
      * Each cluster has an anchor proposition and a list of similar propositions
      * above the similarity threshold. Clusters are deduplicated so that each
-     * pair appears only once (the proposition with the lower ID is the anchor).
+     * pair appears only once (the proposition whose ID sorts first by code point is the anchor).
      *
      * @param similarityThreshold Minimum cosine similarity to include in a cluster
      * @param topK Maximum number of similar items per cluster
@@ -137,7 +137,7 @@ interface VectorSearchCapable {
                 ),
             )
                 .filter { it.match.id != anchor.id && it.match.id in candidateIds }
-                .filter { anchor.id < it.match.id }
+                .filter { CodePointOrder.compare(anchor.id, it.match.id) < 0 }
                 .take(topK)
 
             if (similar.isNotEmpty()) Cluster(anchor = anchor, similar = similar) else null

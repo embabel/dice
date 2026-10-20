@@ -19,8 +19,8 @@ import com.embabel.dice.proposition.PropositionKey
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.ReadClock
 import com.embabel.dice.proposition.ScopedReadSpec
+import com.embabel.dice.proposition.store.ScopedReadRules
 import java.time.Instant
-import java.util.Arrays
 
 internal data class CompiledScopedPredicate(val predicate: String, val parameters: Map<String, Any?>) {
     /** The ORDER BY for this predicate; it uses the ranking clock that compile bound. */
@@ -35,7 +35,7 @@ internal object ScopedReadCypher {
             // Ties sort on this rank, not on the context string: when an index seek on the scope list
             // supplies p.contextId, Neo4j compares those parameter strings in UTF-16 order.
             "contextRank" to spec.scope.contextIdValues.distinct()
-                .sortedWith { a, b -> Arrays.compare(a.codePoints().toArray(), b.codePoints().toArray()) }
+                .sortedWith(ScopedReadRules.CODE_POINT_ORDER)
                 .withIndex().associate { it.value to it.index },
             "rankAsOf" to clock.asOf.toString(),
             "rankDecayK" to clock.rankingDecayK,
@@ -139,5 +139,6 @@ private fun orderClause(order: PropositionQuery.OrderBy): String {
     }
     // Ties break by context, then id, in code point order. Ids are read from the node, which Neo4j
     // compares by code point; contexts go through contextRank (see compile).
+    // This mirrors ScopedReadRules.CODE_POINT_ORDER, the tie order every store follows.
     return (primary?.let { "$it DESC, " } ?: "") + "${'$'}contextRank[p.contextId] ASC, p.id ASC"
 }
