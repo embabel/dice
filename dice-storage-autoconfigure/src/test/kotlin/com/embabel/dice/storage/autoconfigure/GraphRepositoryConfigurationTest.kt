@@ -305,6 +305,7 @@ class GraphRepositoryConfigurationTest {
                 val repository = context.getBean(DrivinePropositionRepository::class.java)
                 assertThat(repository.supportsScopedReads).isFalse()
                 assertThat(repository.supportsScopedVectors).isFalse()
+                assertThat(repository.supportsStrictPolicyReads).isFalse()
             }
         }
         assertThat(output).contains("Scoped and policy reads are off")
@@ -321,6 +322,7 @@ class GraphRepositoryConfigurationTest {
             val repository = context.getBean(DrivinePropositionRepository::class.java)
             assertThat(repository.supportsScopedReads).isFalse()
             assertThat(repository.supportsScopedVectors).isFalse()
+            assertThat(repository.supportsStrictPolicyReads).isFalse()
             assertThat(assertFailsWith<ScopedReadException> { repository.count(spec, clock) }.failure)
                 .isEqualTo(ScopedReadFailure.SCOPED_READ_UNSUPPORTED)
         }
@@ -346,6 +348,7 @@ class GraphRepositoryConfigurationTest {
             val repository = context.getBean(DrivinePropositionRepository::class.java)
             assertThat(repository.supportsScopedReads).isTrue()
             assertThat(repository.supportsScopedVectors).isTrue()
+            assertThat(repository.supportsStrictPolicyReads).isTrue()
             verifyNoInteractions(driver)
             // A read lands on the physical database behind the resolved name.
             assertLegacyBudget(repository, 10_000, Duration.ofSeconds(5))

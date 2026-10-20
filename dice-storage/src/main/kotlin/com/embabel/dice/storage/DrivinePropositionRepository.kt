@@ -27,6 +27,8 @@ import com.embabel.dice.proposition.ContextReadScope
 import com.embabel.dice.proposition.ContextSetVectorSearchCapable
 import com.embabel.dice.proposition.ExactVectorBudget
 import com.embabel.dice.proposition.ReadClock
+import com.embabel.dice.proposition.StrictPolicyReadCapable
+import com.embabel.dice.proposition.StrictReadRow
 import com.embabel.dice.proposition.ScopedReadSpec
 import com.embabel.dice.proposition.ScopedReadException
 import com.embabel.dice.proposition.ScopedReadFailure
@@ -153,7 +155,7 @@ class DrivinePropositionRepository private constructor(
     private val scopedReadTimeout: Duration,
     private val exactVectorBudget: ExactVectorBudget,
 ) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable,
-    ContextSetVectorSearchCapable {
+    ContextSetVectorSearchCapable, StrictPolicyReadCapable {
 
     /** Builds a repository with scoped reads turned off; [withNativeReadExecutor] turns them on. */
     constructor(
@@ -239,6 +241,21 @@ class DrivinePropositionRepository private constructor(
     override fun keywordOverlap(
         spec: ScopedReadSpec, clock: ReadClock, tokens: List<String>, limit: Int,
     ): List<Proposition> = scopedReads().keywordOverlap(spec, clock, tokens, limit)
+
+    override val supportsStrictPolicyReads: Boolean get() = nativeReadExecutor != null
+
+    private fun policyReads(): DrivinePolicyReadOperations = DrivinePolicyReadOperations(scopedReads())
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    override fun queryByGrantOrder(
+        spec: ScopedReadSpec, clock: ReadClock, rows: List<StrictReadRow>, limit: Int, timeout: Duration,
+    ): List<Proposition> = policyReads().queryByGrantOrder(spec, clock, rows, limit, timeout)
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    override fun keywordByApprovedText(
+        spec: ScopedReadSpec, clock: ReadClock, rows: List<StrictReadRow>,
+        tokens: List<String>, limit: Int, timeout: Duration,
+    ): List<Proposition> = policyReads().keywordByApprovedText(spec, clock, rows, tokens, limit, timeout)
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
 
