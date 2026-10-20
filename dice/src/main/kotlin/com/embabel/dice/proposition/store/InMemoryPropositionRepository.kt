@@ -22,12 +22,16 @@ import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
+import com.embabel.dice.proposition.ContextReadScope
+import com.embabel.dice.proposition.ContextSetReadCapable
 import com.embabel.dice.proposition.Proposition
-import com.embabel.dice.proposition.ProvenanceScanningSourceRevisionQueries
-import com.embabel.dice.proposition.ProvenanceSubtractionCapable
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.ProvenanceScanningSourceRevisionQueries
+import com.embabel.dice.proposition.ProvenanceSubtractionCapable
+import com.embabel.dice.proposition.ReadClock
+import com.embabel.dice.proposition.ScopedReadSpec
 import com.embabel.dice.proposition.matchesFilters
 import com.embabel.dice.provenance.ProvenanceEntry
 import org.slf4j.LoggerFactory
@@ -48,12 +52,30 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class InMemoryPropositionRepository(
     private val embeddingService: EmbeddingService? = null,
-) : PropositionRepository, ProvenanceScanningSourceRevisionQueries, ProvenanceSubtractionCapable {
+) : PropositionRepository, ContextSetReadCapable, ProvenanceScanningSourceRevisionQueries, ProvenanceSubtractionCapable {
 
     private val logger = LoggerFactory.getLogger(InMemoryPropositionRepository::class.java)
 
     private val propositions = ConcurrentHashMap<String, Proposition>()
     private val embeddings = ConcurrentHashMap<String, FloatArray>()
+
+    private val scopedReads = LocalScopedReadOperations { propositions.values }
+
+    override fun query(
+        spec: ScopedReadSpec,
+        clock: ReadClock,
+        order: PropositionQuery.OrderBy,
+        limit: Int,
+    ): List<Proposition> = scopedReads.query(spec, clock, order, limit)
+
+    override fun count(spec: ScopedReadSpec, clock: ReadClock): Long = scopedReads.count(spec, clock)
+
+    override fun keywordOverlap(
+        spec: ScopedReadSpec,
+        clock: ReadClock,
+        tokens: List<String>,
+        limit: Int,
+    ): List<Proposition> = scopedReads.keywordOverlap(spec, clock, tokens, limit)
 
     override val luceneSyntaxNotes: String
         get() = "no lucene support"

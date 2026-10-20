@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.temporal
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import java.time.Instant
 
 /**
@@ -76,7 +77,11 @@ data class TemporalMetadata @JvmOverloads constructor(
     /**
      * Whether this fact is current as of now.
      *
+     * Left out of JSON: the answer depends on when you ask, so a saved copy would hold a stale
+     * value. JSON that still carries it, such as files written by older versions, reads fine.
+     *
      * @return true if the fact is valid and not invalidated at the present instant
      */
+    @JsonIgnore
     fun isCurrent(): Boolean = isCurrentAsOf(Instant.now())
 }

@@ -89,6 +89,23 @@ internal fun PropositionQuery.matchesFilters(
 }
 
 /**
+ * How this ordering ranks propositions, or null when it does not rank them. Effective confidence is
+ * judged at [asOf] with [decayK]. The composable query and the local scoped reads both sort with
+ * it, so they cannot drift apart. Equal rows are left in the order they came; callers add a tie-break.
+ */
+internal fun PropositionQuery.OrderBy.rowComparator(asOf: Instant, decayK: Double): Comparator<Proposition>? =
+    when (this) {
+        PropositionQuery.OrderBy.NONE -> null
+        PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC ->
+            compareByDescending<Proposition> { it.effectiveConfidenceAt(asOf, decayK) }
+        PropositionQuery.OrderBy.CREATED_DESC -> compareByDescending<Proposition> { it.created }
+        PropositionQuery.OrderBy.REVISED_DESC -> compareByDescending<Proposition> { it.lastTouched }
+        PropositionQuery.OrderBy.LAST_ACCESSED_DESC -> compareByDescending<Proposition> { it.lastAccessed }
+        PropositionQuery.OrderBy.REINFORCE_COUNT_DESC -> compareByDescending<Proposition> { it.reinforceCount }
+        PropositionQuery.OrderBy.IMPORTANCE_DESC -> compareByDescending<Proposition> { it.importance }
+    }
+
+/**
  * Base persistence port for propositions: CRUD, identity lookups, and the composable query.
  *
  * A consumer that only needs store-and-retrieve can depend on this contract alone, without
@@ -328,26 +345,7 @@ interface PropositionStore {
         val matchedCount = resultList.size
 
         // Apply ordering
-        resultList = when (query.orderBy) {
-            PropositionQuery.OrderBy.NONE -> resultList
-            PropositionQuery.OrderBy.EFFECTIVE_CONFIDENCE_DESC ->
-                resultList.sortedByDescending { it.effectiveConfidenceAt(asOf, query.decayK) }
-
-            PropositionQuery.OrderBy.CREATED_DESC ->
-                resultList.sortedByDescending { it.created }
-
-            PropositionQuery.OrderBy.REVISED_DESC ->
-                resultList.sortedByDescending { it.lastTouched }
-
-            PropositionQuery.OrderBy.LAST_ACCESSED_DESC ->
-                resultList.sortedByDescending { it.lastAccessed }
-
-            PropositionQuery.OrderBy.REINFORCE_COUNT_DESC ->
-                resultList.sortedByDescending { it.reinforceCount }
-
-            PropositionQuery.OrderBy.IMPORTANCE_DESC ->
-                resultList.sortedByDescending { it.importance }
-        }
+        query.orderBy.rowComparator(asOf, query.decayK)?.let { resultList = resultList.sortedWith(it) }
 
         // Apply limit
         query.limit?.let { limit ->
