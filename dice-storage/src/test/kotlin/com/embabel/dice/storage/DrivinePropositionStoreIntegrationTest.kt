@@ -571,6 +571,42 @@ class DrivinePropositionStoreIntegrationTest {
         )
     }
 
+    /**
+     * A fact used yesterday but last revised a month ago decays from yesterday, in Kotlin and in every
+     * scoped read. The sweep must store that same value, or confidence-ranked legacy reads would rank a
+     * recently used fact below where every other backend puts it.
+     */
+    @Test
+    fun `I1 materializeAll anchors decay on the later of content revision and access`() {
+        val now = Instant.now()
+        val used = repository.save(
+            prop(
+                "used fact",
+                confidence = 0.9,
+                decay = 0.2,
+                contentRevised = now.minus(Duration.ofDays(30)),
+                lastAccessed = now.minus(Duration.ofDays(1)),
+            ),
+        )
+        val revisionAnchored = used.copy(lastAccessed = used.contentRevised).effectiveConfidenceAt(Instant.now())
+        val accessAnchored = used.effectiveConfidenceAt(Instant.now())
+        assertTrue(
+            kotlin.math.abs(accessAnchored - revisionAnchored) > 1e-3,
+            "premise: the access anchor must change the value (access=$accessAnchored revision=$revisionAnchored)",
+        )
+        persistenceManager.execute(QuerySpecification.withStatement("MATCH (p:Proposition) SET p.effectiveConfidence = -999.0"))
+
+        decayManager.materializeAll()
+
+        val stored = storedEffectiveConfidence(used.id)
+        assertNotNull(stored, "no effectiveConfidence materialised for the used fact")
+        val expected = used.effectiveConfidenceAt(Instant.now())
+        assertTrue(
+            kotlin.math.abs(expected - stored!!) < 1e-6,
+            "access-anchored decay mismatch: cypher=$stored kotlin=$expected",
+        )
+    }
+
     @Test
     fun `materialize(context) only refreshes its own context`() {
         val a = repository.save(prop("in A", context = "ctx-a", confidence = 0.9))
