@@ -41,7 +41,12 @@ import com.embabel.dice.storage.DrivineProjectionRecordStore
 import com.embabel.dice.storage.ExtractionRunSchema
 import com.embabel.dice.storage.GraphDecayManager
 import com.embabel.dice.storage.LineageSchema
+import com.embabel.dice.storage.Neo4jScopedReadExecutor
 import com.embabel.dice.storage.diceStorageCatalog
+import org.drivine.connection.DataSourceMap
+import org.drivine.connection.DatabaseRegistry
+import org.drivine.connection.DatabaseType
+import org.drivine.connection.Neo4jConnectionProvider
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.schema.RangeIndexSpec
@@ -91,14 +96,52 @@ class DiceStorageAutoConfiguration {
         ai: Ai,
         transactionManager: PlatformTransactionManager,
         embeddingServices: ObjectProvider<EmbeddingService>,
+        properties: DiceStoreProperties,
+        databaseRegistry: ObjectProvider<DatabaseRegistry>,
+        dataSources: ObjectProvider<DataSourceMap>,
     ): PropositionRepository {
         logger.info(
             "Wiring graph proposition store (Drivine/Neo4j), vector index '{}'",
             DrivinePropositionRepository.VECTOR_INDEX,
         )
-        return DrivinePropositionRepository(
+        val repository = DrivinePropositionRepository(
             graphObjectManager, persistenceManager, storeEmbeddingService("graph", ai, embeddingServices), transactionManager,
-        )
+        ).withExactVectorBudget(properties.exactVector.toBudget())
+            .withScopedReadTimeout(properties.scopedRead.timeout)
+        val executor = nativeReadExecutor(persistenceManager, databaseRegistry.ifAvailable, dataSources.ifAvailable)
+        return if (executor != null) repository.withNativeReadExecutor(executor) else repository
+    }
+
+    /**
+     * The executor behind scoped and policy reads, or null when they cannot run here. They talk to
+     * Neo4j through its own driver, so any other database, a context without Drivine's registry
+     * and data sources, or a Neo4j provider with no data source entry leaves them off. That last
+     * one happens when the provider was registered in code or came from a ConnectionProvider bean.
+     * The store then reports them unsupported, and this says so once at startup instead of failing
+     * there.
+     *
+     * The name goes through the registry the same way the executor's own lookup does, so the
+     * zero-config `"default"` finds the data source of the provider it stands for.
+     */
+    private fun nativeReadExecutor(manager: PersistenceManager, registry: DatabaseRegistry?, sources: DataSourceMap?): Neo4jScopedReadExecutor? {
+        if (registry == null || sources == null) {
+            logger.warn("Scoped and policy reads are off for the graph proposition store: Drivine's DatabaseRegistry or DataSourceMap bean is missing")
+            return null
+        }
+        val name = registry.resolveDatabaseName(manager.database) ?: manager.database
+        if (manager.type != DatabaseType.NEO4J || registry.connectionProvider(name) !is Neo4jConnectionProvider) {
+            logger.warn("Scoped and policy reads are off for the graph proposition store: database '{}' ({}) has no Neo4j connection provider, and they need one", manager.database, manager.type)
+            return null
+        }
+        if (sources.dataSources[name] == null) {
+            logger.warn(
+                "Scoped and policy reads are off for the graph proposition store: database '{}' has no Drivine data source named '{}'",
+                manager.database,
+                name,
+            )
+            return null
+        }
+        return Neo4jScopedReadExecutor.from(manager, registry, sources)
     }
 
     /**
