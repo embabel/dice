@@ -10,6 +10,10 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- Drivine 0.1.9, in step with embabel-chat-store and embabel-agent-rag-graph. 0.1.9 cascades a
+  delete through every level of a recursive view. **Compatibility: behavioral.** A host on Drivine
+  0.1.8 moves to 0.1.9 with it.
+
 - Drivine 0.1.8, in step with embabel-chat-store and embabel-agent-rag-graph, so a host that uses
   them together resolves one Drivine. **Compatibility: behavioral.** A host on Drivine 0.1.6 moves
   to 0.1.8 with it.
