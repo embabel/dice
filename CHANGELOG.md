@@ -10,6 +10,14 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- Drivine 0.3.0, in step with embabel-chat-store and embabel-agent-rag-graph. 0.3.0 drops the
+  compiled constructor a Kotlin call to `UniquenessConstraintSpec` with a defaulted argument links
+  to, so a library built on 0.2.0 can fail with `NoSuchMethodError` on 0.3.0, and a host resolves
+  the Drivine its libraries were built on. No source changes. A Neo4j index in the way of a
+  uniqueness constraint is now reported as `EnsureResult.BlockedByIndex` rather than thrown, and a
+  failed constraint counts as a violation only when the data shows a repeated key.
+  **Compatibility: behavioral.** A host on Drivine 0.2.0 moves to 0.3.0 with it.
+
 - Drivine 0.2.0, in step with embabel-chat-store 0.7.0 and embabel-agent-rag-graph 0.6.0. Drivine is
   not binary-compatible across minor versions, so a host resolves the one Drivine its libraries were
   built on. **Compatibility: behavioral.** A host on Drivine 0.1.9 moves to 0.2.0 with it.
