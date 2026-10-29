@@ -10,6 +10,13 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- Drivine 0.4.0, in step with embabel-chat-store and embabel-agent-rag-graph. 0.4.0's changes are
+  in Drivine's Cypher-to-SQL compilers and its Oracle, Postgres and SQLite backends; its schema
+  specs, annotations, starter and codegen are unchanged. Unlike 0.3.0, it is binary-compatible
+  with dice-storage built on 0.3.0: every Drivine method and field that build links to is still
+  there. No source changes. **Compatibility: behavioral.** A host on Drivine 0.3.0 can move to
+  0.4.0 with or without this build.
+
 - Drivine 0.3.0, in step with embabel-chat-store and embabel-agent-rag-graph. 0.3.0 drops the
   compiled constructor a Kotlin call to `UniquenessConstraintSpec` with a defaulted argument links
   to, so a library built on 0.2.0 can fail with `NoSuchMethodError` on 0.3.0, and a host resolves
