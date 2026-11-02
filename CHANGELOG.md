@@ -10,6 +10,15 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- Drivine 0.4.1, in step with embabel-chat-store and embabel-agent-rag-graph. 0.4.1 is mostly
+  work in Drivine's Cypher-to-SQL compilers, plus `@CaseInsensitive` and an `ignoreCase` option on
+  its index and constraint specs; its starter and codegen jars are unchanged. It is
+  binary-compatible with dice-storage built on 0.4.0: every Drivine method and field that build
+  links to is still there. No source changes. Two behaviour changes: `randomUUID()` on Oracle
+  needs Oracle 23.9 or later, and a value of a known kind is now refused where an operator or
+  function takes another, as Neo4j does. **Compatibility: behavioral.** A host on Drivine 0.4.0
+  can move to 0.4.1 with or without this build.
+
 - Drivine 0.4.0, in step with embabel-chat-store and embabel-agent-rag-graph. 0.4.0's changes are
   in Drivine's Cypher-to-SQL compilers and its Oracle, Postgres and SQLite backends; its schema
   specs, annotations, starter and codegen are unchanged. Unlike 0.3.0, it is binary-compatible
