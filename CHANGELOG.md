@@ -10,6 +10,15 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- Drivine 0.5.0, in step with embabel-chat-store and embabel-agent-rag-graph. 0.5.0's changes are
+  in Drivine's Cypher-to-SQL compilers and its Oracle, Postgres and SQLite backends; its starter,
+  Spring and codegen jars are unchanged. It is binary-compatible with dice-storage built on 0.4.1:
+  every Drivine method and field that build links to is still there. No source changes. Behaviour
+  changes: full-text search on Postgres, SQLite and Oracle without Oracle Text now scores by BM25,
+  as Neo4j does, so hit order and what passes a score threshold can change there; and compiled
+  writes on Postgres plan their per-row reads as nested loops. **Compatibility: behavioral.** A
+  host on Drivine 0.4.1 can move to 0.5.0 with or without this build.
+
 - Drivine 0.4.1, in step with embabel-chat-store and embabel-agent-rag-graph. 0.4.1 is mostly
   work in Drivine's Cypher-to-SQL compilers, plus `@CaseInsensitive` and an `ignoreCase` option on
   its index and constraint specs; its starter and codegen jars are unchanged. It is
