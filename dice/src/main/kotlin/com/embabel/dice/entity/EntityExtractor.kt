@@ -20,6 +20,8 @@ import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.fasterxml.jackson.annotation.JsonPropertyDescription
+import com.fasterxml.jackson.annotation.JsonSetter
+import com.fasterxml.jackson.annotation.Nulls
 
 /**
  * Extracts entities from text chunks.
@@ -68,6 +70,9 @@ internal data class ExtractedEntityInfo(
     @field:JsonPropertyDescription("UUID if identifying a specific existing entity")
     val id: String? = null,
     @field:JsonPropertyDescription("Additional properties as key-value pairs")
+    // A model with nothing to say about a property often writes null rather
+    // than leaving it out. Those entries are skipped as the reply is read.
+    @param:JsonSetter(contentNulls = Nulls.SKIP)
     val properties: Map<String, Any> = emptyMap(),
 ) {
 

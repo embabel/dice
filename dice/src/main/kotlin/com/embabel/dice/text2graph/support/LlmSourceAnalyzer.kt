@@ -26,6 +26,8 @@ import com.embabel.dice.text2graph.SourceAnalyzer
 import com.embabel.dice.text2graph.SuggestedRelationship
 import com.embabel.dice.text2graph.SuggestedRelationships
 import com.fasterxml.jackson.annotation.JsonPropertyDescription
+import com.fasterxml.jackson.annotation.JsonSetter
+import com.fasterxml.jackson.annotation.Nulls
 import org.slf4j.LoggerFactory
 import org.springframework.boot.context.properties.ConfigurationProperties
 
@@ -148,6 +150,9 @@ internal data class SuggestedEntityInfo(
     @param:JsonPropertyDescription("Will be a UUID. Include only if provided")
     private val id: String? = null,
     @field:JsonPropertyDescription("Map from property name to value")
+    // A model with nothing to say about a property often writes null rather
+    // than leaving it out. Those entries are skipped as the reply is read.
+    @param:JsonSetter(contentNulls = Nulls.SKIP)
     val properties: Map<String, Any> = emptyMap(),
 ) {
 
