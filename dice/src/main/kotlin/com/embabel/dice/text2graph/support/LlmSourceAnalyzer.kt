@@ -148,7 +148,9 @@ internal data class SuggestedEntityInfo(
     @param:JsonPropertyDescription("Will be a UUID. Include only if provided")
     private val id: String? = null,
     @field:JsonPropertyDescription("Map from property name to value")
-    val properties: Map<String, Any> = emptyMap(),
+    // Values are nullable because a model with nothing to say about a property
+    // often writes null rather than leaving it out.
+    val properties: Map<String, Any?> = emptyMap(),
 ) {
 
     fun toSuggestedEntity(chunkId: String): SuggestedEntity {
@@ -158,7 +160,7 @@ internal data class SuggestedEntityInfo(
             summary = summary,
             chunkId = chunkId,
             id = id,
-            properties = properties,
+            properties = properties.mapNotNull { (key, value) -> value?.let { key to it } }.toMap(),
         )
     }
 }

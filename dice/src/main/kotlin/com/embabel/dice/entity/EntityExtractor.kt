@@ -68,7 +68,9 @@ internal data class ExtractedEntityInfo(
     @field:JsonPropertyDescription("UUID if identifying a specific existing entity")
     val id: String? = null,
     @field:JsonPropertyDescription("Additional properties as key-value pairs")
-    val properties: Map<String, Any> = emptyMap(),
+    // Values are nullable because a model with nothing to say about a property
+    // often writes null rather than leaving it out.
+    val properties: Map<String, Any?> = emptyMap(),
 ) {
 
     fun toSuggestedEntity(chunkId: String): SuggestedEntity {
@@ -78,7 +80,7 @@ internal data class ExtractedEntityInfo(
             summary = summary,
             chunkId = chunkId,
             id = id,
-            properties = properties,
+            properties = properties.mapNotNull { (key, value) -> value?.let { key to it } }.toMap(),
         )
     }
 }
