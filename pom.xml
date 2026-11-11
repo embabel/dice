@@ -118,6 +118,8 @@
             is set here and test scope dependencies inherit it.
         -->
         <mockito-kotlin.version>5.4.0</mockito-kotlin.version>
+        <!-- check compares each module's public API with its committed listing; update rewrites the listing -->
+        <api.listing.mode>check</api.listing.mode>
     </properties>
 
     <dependencyManagement>
@@ -209,6 +211,49 @@
     </repositories>
 
     <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <!--
+                        Compares a module's compiled public API with the listing committed under its api
+                        directory, so an API change always shows up in review. A module opts in by naming
+                        this plugin in its own build.
+                    -->
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-antrun-plugin</artifactId>
+                    <version>3.1.0</version>
+                    <dependencies>
+                        <dependency>
+                            <groupId>org.jetbrains.kotlin</groupId>
+                            <artifactId>abi-tools</artifactId>
+                            <version>${kotlin.version}</version>
+                        </dependency>
+                    </dependencies>
+                    <executions>
+                        <execution>
+                            <id>public-api-listing</id>
+                            <phase>verify</phase>
+                            <goals>
+                                <goal>run</goal>
+                            </goals>
+                            <configuration>
+                                <target>
+                                    <exec executable="${java.home}/bin/java" failonerror="true">
+                                        <arg value="-cp"/>
+                                        <arg pathref="maven.plugin.classpath"/>
+                                        <arg file="${maven.multiModuleProjectDirectory}/build-support/ApiListing.java"/>
+                                        <arg value="${api.listing.mode}"/>
+                                        <arg file="${project.build.outputDirectory}"/>
+                                        <arg file="${project.basedir}/api"/>
+                                        <arg value="${project.artifactId}"/>
+                                    </exec>
+                                </target>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
             <plugin>
                 <!--
