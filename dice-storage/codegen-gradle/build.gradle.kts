@@ -1,9 +1,9 @@
 // Gradle build for Drivine KSP code generation.
 //
-// Why a separate Gradle build: Drivine's KSP processor (drivine4j-codegen) targets the
-// Kotlin 2.2 / KSP2 toolchain, while dice-storage is compiled by Maven with Kotlin 2.1.10
-// (pinned via the tuProlog constraint). This build runs the processor under Kotlin 2.2 and
-// emits plain Kotlin DSL sources that the Maven build then compiles with 2.1.10.
+// Why a separate Gradle build: Drivine's KSP processor (drivine4j-codegen) runs on the KSP2
+// toolchain, which Maven cannot drive. This build runs the processor and emits plain Kotlin DSL
+// sources that the Maven build then compiles. Keep the Kotlin plugin version below equal to the
+// Kotlin version the Maven build resolves (./mvnw help:evaluate -Dexpression=kotlin.version).
 //
 // Scope is deliberately narrow: it reads ONLY the annotated graph model package
 // (com/embabel/dice/storage/model), which depends on nothing but Drivine annotations and the
@@ -20,7 +20,7 @@
 // Run manually with: ./gradlew kspKotlin
 
 plugins {
-    kotlin("jvm") version "2.2.0"
+    kotlin("jvm") version "2.2.21"
     id("com.google.devtools.ksp") version "2.2.20-2.0.4"
 }
 
@@ -31,7 +31,7 @@ version = "0.1.1-SNAPSHOT"
 // so the pom is the single source of truth and the KSP DSL is generated against the *same* Drivine it
 // is later compiled against. This was previously hardcoded and had already drifted from the pom
 // (0.0.57 here vs 0.0.58 there). The fallback keeps a standalone `./gradlew kspKotlin` working.
-val drivineVersion = (findProperty("drivineVersion") as String?) ?: "0.5.0"
+val drivineVersion = (findProperty("drivineVersion") as String?) ?: "0.6.2"
 
 repositories {
     mavenCentral()

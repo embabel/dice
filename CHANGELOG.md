@@ -10,6 +10,22 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- Drivine 0.6.2. Since 0.5.0 the index and constraint spec classes in `org.drivine.schema`
+  (`VectorIndexSpec`, `UniquenessConstraintSpec`, `RangeIndexSpec` and the others) ship in
+  Drivine's `drivine-cypher-compiler-jvm` artifact, in the same package, so a host must not
+  exclude that artifact. No source changes. Behaviour changes: on SQLite, graph ids use
+  AUTOINCREMENT and a database file made by an earlier Drivine is refused; a statement run outside
+  a transaction is now committed; and on Oracle the `@CaseInsensitive` text copy is stored as a
+  CLOB. **Compatibility: behavioral.** A host on Drivine 0.5.0 moves to 0.6.2 with it.
+
+- embabel-agent 1.5.4 and embabel-build-parent 2.0.4. No source changes. embabel-agent 1.5.4
+  removes `LlmReference.toolObject()` and changes the `UserMessage` constructor; DICE calls
+  neither. The parent moves the managed Jackson 2 line to 2.21.7. **Compatibility: behavioral.**
+  A host moves to embabel-agent 1.5.4 with it.
+
+- Every module compiles with Kotlin 2.2.21, the version the build parent manages. `dice-storage`
+  and `dice-storage-autoconfigure` no longer override it to 2.2.0. **Compatibility: additive.**
+
 - Drivine 0.5.0, in step with embabel-chat-store and embabel-agent-rag-graph. 0.5.0's changes are
   in Drivine's Cypher-to-SQL compilers and its Oracle, Postgres and SQLite backends; its starter,
   Spring and codegen jars are unchanged. It is binary-compatible with dice-storage built on 0.4.1:

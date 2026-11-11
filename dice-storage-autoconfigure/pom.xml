@@ -19,11 +19,6 @@
         <tag>HEAD</tag>
     </scm>
 
-    <properties>
-        <!-- Matches dice-storage: consumes its Kotlin 2.2 metadata (see that module's note). -->
-        <kotlin.version>2.2.0</kotlin.version>
-    </properties>
-
     <dependencies>
         <dependency>
             <groupId>com.embabel.dice</groupId>

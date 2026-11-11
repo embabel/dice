@@ -77,6 +77,5 @@ than editing facts.
 
 ==== The tuProlog pin
 
-DICE pins tuProlog to 1.0.4. The 1.1.x series is built with Kotlin 2.2.x and is binary-incompatible
-with the `dice` module's Kotlin 2.1.10. This constrains DICE's build, not yours — but if you bring
-your own tuProlog, match the pinned version.
+DICE pins tuProlog to 1.0.4. This constrains DICE's build, not yours. If you bring your own
+tuProlog, match the pinned version.
