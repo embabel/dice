@@ -103,6 +103,26 @@ thing. DICE keeps resolution serial regardless of the `ExtractionExecutionStrate
 cross-chunk identity holds however extraction was dispatched. See
 <<features-concurrent-extraction>>.
 
+==== Mention grounding
+
+A model can attach a mention to a claim that does not name that entity. Before resolution, the
+pipeline checks each mention against the text of its own proposition. A mention whose span is blank
+or not in that text is ungrounded. The comparison ignores letter case, runs of whitespace, Unicode
+composition and width forms, and typographic quotes and hyphens. Accents count.
+
+Ungrounded mentions are reported in an `UngroundedMentionsFound` event, one per chunk, and by
+default they are otherwise left alone. To have them removed before resolution, so they are never
+resolved or minted:
+
+[source,java]
+----
+pipeline = pipeline.withUngroundedMentions(UngroundedMentionHandling.DROP);
+----
+
+The proposition is always kept. This differs from a `MentionFilter`, described next: a mention a
+filter rejects stays on the proposition unresolved, while a dropped ungrounded mention is removed
+from it.
+
 ==== Mention filtering
 
 Not every mention deserves resolution. A `MentionFilter` runs before resolution and drops

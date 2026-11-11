@@ -97,6 +97,15 @@ and the consumer PRs that deliver it).
 
 ### Added
 
+- `PropositionPipeline` checks each mention an extractor returns against the text of its own
+  proposition before entity resolution, and emits one `UngroundedMentionsFound` event per chunk
+  listing every mention whose span is blank or does not appear in that text, with the reason. The
+  comparison ignores letter case, runs of whitespace, Unicode composition and width forms, and
+  typographic quotes and hyphens, and is otherwise literal. By default the mentions are kept.
+  `withUngroundedMentions(UngroundedMentionHandling.DROP)` removes them before resolution, so they
+  are never resolved, never minted as an entity and not left on the proposition; the proposition
+  itself is always kept. **Compatibility: additive.**
+
 - A Kotlin DSL for stamping in `dice-metamodel`. **EXPERIMENTAL** (shape may change
   before 1.0): `MetamodelVersion(dictionary) { }` and `DeclaredSchema(dictionary) { }`
   take a receiver block, so the call site is a sequence of statements with no receiver
