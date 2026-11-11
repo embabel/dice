@@ -110,6 +110,15 @@ data class LlmPropositionReviser(
 
     private val logger = LoggerFactory.getLogger(LlmPropositionReviser::class.java)
 
+    /** A similar (not identical) proposition: a small confidence lift, capped, and slower decay. */
+    private val reinforcementRule = ReinforcementRule(
+        confidence = { existing, new -> (existing.confidence + new.confidence * 0.1).coerceAtMost(0.95) },
+        decayFactor = 0.85,
+        mergeProvenance = true,
+        countReinforcement = true,
+        touchLastAccessed = true,
+    )
+
     /** LLM options used for classification calls — falls back to [llmOptions] when [classifyLlmOptions] is null. */
     private val effectiveClassifyLlm: LlmOptions get() = classifyLlmOptions ?: llmOptions
 
@@ -687,23 +696,6 @@ data class LlmPropositionReviser(
      * Reinforce an existing proposition with new supporting evidence.
      * Slightly boosts confidence and adds grounding.
      */
-    private fun reinforceProposition(existing: Proposition, new: Proposition): Proposition {
-        // Smaller confidence boost for similar (not identical)
-        val boostedConfidence = (existing.confidence + new.confidence * 0.1).coerceAtMost(0.95)
-        // Slow decay slightly — corroborating evidence extends shelf life
-        val slowedDecay = (existing.decay * 0.85).coerceAtLeast(0.0)
-        // Combine grounding and the richer provenance entries (both deduplicated)
-        val combinedGrounding = (existing.grounding + new.grounding).distinct()
-        val combinedProvenance = (existing.provenanceEntries + new.provenanceEntries).distinct()
-
-        return existing.copy(
-            confidence = boostedConfidence,
-            decay = slowedDecay,
-            grounding = combinedGrounding,
-            provenanceEntries = combinedProvenance,
-            reinforceCount = existing.reinforceCount + 1,
-            contentRevised = Instant.now(),
-            lastAccessed = Instant.now(),
-        )
-    }
+    private fun reinforceProposition(existing: Proposition, new: Proposition): Proposition =
+        reinforce(existing, new, reinforcementRule)
 }
