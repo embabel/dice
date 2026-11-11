@@ -29,11 +29,11 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.TemporalQueryCapable
 import com.embabel.dice.proposition.VectorSearchCapable
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
-import com.embabel.dice.proposition.store.Neo4jRagPropositionRepository
+import com.embabel.dice.proposition.store.RagAdapterPropositionRepository
 import com.embabel.agent.rag.service.RetrievableIdentifier
 
 /**
- * Thin bridge that wires a [Neo4jRagPropositionRepository] into the TCK's [PropositionRepository]
+ * Thin bridge that wires a [RagAdapterPropositionRepository] into the TCK's [PropositionRepository]
  * variable without modifying the adapter itself.
  *
  * The adapter intentionally doesn't declare [GraphTraversalCapable] or [TemporalQueryCapable] — it
@@ -44,7 +44,7 @@ import com.embabel.agent.rag.service.RetrievableIdentifier
  * Every call routes straight through to the adapter unchanged.
  */
 private class TckPropositionRepositoryBridge(
-    private val adapter: Neo4jRagPropositionRepository,
+    private val adapter: RagAdapterPropositionRepository,
 ) : PropositionRepository,
     VectorSearchCapable by adapter,
     GraphTraversalCapable,
@@ -69,7 +69,7 @@ private class TckPropositionRepositoryBridge(
 
 /**
  * Concrete, CI-runnable instantiation of the canonical-flow contract against the
- * [Neo4jRagPropositionRepository] adapter, running entirely offline — no Docker, driver,
+ * [RagAdapterPropositionRepository] adapter, running entirely offline — no Docker, driver,
  * graph database, embedding model, or LLM required.
  *
  * The adapter composes two offline doubles:
@@ -96,7 +96,7 @@ class Neo4jAdapterCanonicalFlowTest : AbstractCanonicalFlowTest() {
         val entityRepository = InMemoryNamedEntityDataRepository(
             dataDictionary = DataDictionary.fromClasses("neo4j-adapter-tck"),
         )
-        val adapter = Neo4jRagPropositionRepository(crud = crud, entityRepository = entityRepository)
+        val adapter = RagAdapterPropositionRepository(crud = crud, entityRepository = entityRepository)
         return TckPropositionRepositoryBridge(adapter)
     }
 }
