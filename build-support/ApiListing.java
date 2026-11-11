@@ -109,7 +109,8 @@ public final class ApiListing {
 
     /** Writes the listing in update mode. Otherwise reports whether the committed file matches. */
     private static boolean sync(Path file, String actual, boolean update) throws IOException {
-        String committed = Files.exists(file) ? Files.readString(file, StandardCharsets.UTF_8) : "";
+        // Git can check a listing out with Windows line endings; the generated text always uses \n.
+        String committed = Files.exists(file) ? Files.readString(file, StandardCharsets.UTF_8).replace("\r\n", "\n") : "";
         if (committed.equals(actual)) {
             return true;
         }
