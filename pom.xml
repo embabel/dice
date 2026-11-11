@@ -238,7 +238,8 @@
                             </goals>
                             <configuration>
                                 <target>
-                                    <exec executable="${java.home}/bin/java" failonerror="true">
+                                    <exec executable="${java.home}/bin/java" failonerror="false"
+                                          resultproperty="api.listing.exit" errorproperty="api.listing.error">
                                         <arg value="-cp"/>
                                         <arg pathref="maven.plugin.classpath"/>
                                         <arg file="${maven.multiModuleProjectDirectory}/build-support/ApiListing.java"/>
@@ -247,6 +248,14 @@
                                         <arg file="${project.basedir}/api"/>
                                         <arg value="${project.artifactId}"/>
                                     </exec>
+                                    <!-- Put the program's own explanation in the build error, so it shows in quiet mode too -->
+                                    <fail message="${api.listing.error}">
+                                        <condition>
+                                            <not>
+                                                <equals arg1="${api.listing.exit}" arg2="0"/>
+                                            </not>
+                                        </condition>
+                                    </fail>
                                 </target>
                             </configuration>
                         </execution>
