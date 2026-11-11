@@ -36,6 +36,31 @@ class MentionGroundingTest {
     private fun proposition(text: String, vararg mentions: SuggestedMention) =
         SuggestedProposition(text = text, mentions = mentions.toList(), confidence = 0.9)
 
+    /** Every look-alike character paired with the plain character it folds to. */
+    private val lookalikes: List<Pair<Char, Char>> = listOf(
+        0x2018.toChar() to 0x27.toChar(),
+        0x2019.toChar() to 0x27.toChar(),
+        0x201B.toChar() to 0x27.toChar(),
+        0x02BC.toChar() to 0x27.toChar(),
+        0x2032.toChar() to 0x27.toChar(),
+        0x00B4.toChar() to 0x27.toChar(),
+        0x201C.toChar() to 0x22.toChar(),
+        0x201D.toChar() to 0x22.toChar(),
+        0x2010.toChar() to 0x2D.toChar(),
+        0x2011.toChar() to 0x2D.toChar(),
+        0x2012.toChar() to 0x2D.toChar(),
+        0x2013.toChar() to 0x2D.toChar(),
+        0x2212.toChar() to 0x2D.toChar(),
+    )
+
+    /** Every invisible character that is dropped before comparing. */
+    private val invisibles: List<Char> = listOf(
+        0x00AD.toChar(),
+        0x200B.toChar(),
+        0x2060.toChar(),
+        0xFEFF.toChar(),
+    )
+
     @Test
     fun `E1 empty and whitespace-only spans are blank`() {
         assertEquals(Reason.BLANK_SPAN, reason("", "Bob likes tea"))
@@ -141,6 +166,36 @@ class MentionGroundingTest {
     @Test
     fun `E16 an invisible character between a letter and its accent is ignored`() {
         assertGrounded("Jos\u00e9", "Jose\u200b\u0301 lives in Lima")
+    }
+
+    @Test
+    fun `E17 every look-alike character matches its plain form in both directions`() {
+        for ((variant, plain) in lookalikes) {
+            val code = "U+%04X".format(variant.code)
+            assertNull(
+                reason("Ab" + plain + "Cd", "See Ab" + variant + "Cd now"),
+                "$code should match its plain form",
+            )
+            assertNull(
+                reason("Ab" + variant + "Cd", "See Ab" + plain + "Cd now"),
+                "plain form should match $code",
+            )
+        }
+    }
+
+    @Test
+    fun `E18 every invisible character is ignored inside a span or a text`() {
+        for (c in invisibles) {
+            val code = "U+%04X".format(c.code)
+            assertNull(reason("AbCd", "See Ab" + c + "Cd now"), "$code inside the text should be ignored")
+            assertNull(reason("Ab" + c + "Cd", "See AbCd now"), "$code inside the span should be ignored")
+        }
+    }
+
+    @Test
+    fun `E19 the character walks cover thirteen look-alikes and four invisibles`() {
+        assertEquals(13, lookalikes.size)
+        assertEquals(4, invisibles.size)
     }
 
     @Test
