@@ -47,9 +47,9 @@ backend that implements nothing extra still behaves correctly — just more slow
 | `dice`
 | A store that survives a restart without any infrastructure.
 
-| `Neo4jRagPropositionRepository`
+| `RagAdapterPropositionRepository`
 | `dice`
-| Propositions inside an embabel-agent RAG-backed Neo4j.
+| Propositions kept in a store of your choice, next to the entities in embabel-agent's RAG entity repository.
 
 | `DrivinePropositionRepository`
 | `dice-storage`
