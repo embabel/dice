@@ -33,9 +33,9 @@ mvn test -pl dice
 mvn verify -pl dice-storage   # integration tests need Docker
 ```
 
-**Kotlin versions:** `dice` uses Kotlin 2.1.10 (pinned by `embabel-build-parent` at Java 21). `dice-storage` and `dice-storage-autoconfigure` use Kotlin 2.2.0 — they need the 2.2 compiler for Drivine's KSP-generated `where { }` DSL which uses Kotlin context parameters (`-Xcontext-parameters`).
+**Kotlin version:** every module compiles with Kotlin 2.2.21, which `embabel-build-parent` manages. No module overrides it. `dice-storage` and `dice-storage-autoconfigure` need a 2.2 compiler for Drivine's KSP-generated `where { }` DSL, which uses Kotlin context parameters (`-Xcontext-parameters`).
 
-**tuProlog pin:** `tuprolog.version=1.0.4` — do not upgrade to 1.1.x without first upgrading to Kotlin 2.2.21+.
+**tuProlog pin:** `tuprolog.version=1.0.4`. The 1.1.x series needs Kotlin 2.2.21 or later, which the build now uses. Lift the pin in a change of its own, never as a side effect.
 
 **Docker / Testcontainers:** `dice-storage` integration tests spin up a Neo4j container via `testcontainers:neo4j`. Docker must be running. The root pom pins `api.version=1.41` as a Surefire JVM system property to satisfy the engine's minimum API version — without it, container-backed tests silently fail with HTTP 400.
 

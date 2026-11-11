@@ -2,7 +2,7 @@
 
 This is the core of DICE. It owns the domain model, every SPI interface, the extraction and revision pipelines, entity resolution, projectors, incremental analysis, in-memory stores, Prolog integration, and optional REST endpoints. The two storage modules depend on this one, not the other way round.
 
-Kotlin 2.1.10, Java 21. `embabel-agent-api` and `embabel-agent-rag-core` are `provided` — the consumer supplies them at runtime.
+Kotlin 2.2.21 (from the build parent), Java 21. `embabel-agent-api` and `embabel-agent-rag-core` are `provided` — the consumer supplies them at runtime.
 
 ## Central types
 
@@ -86,7 +86,7 @@ These map onto the lifecycle in [proposition-lifecycle](../docs/design/propositi
 - **`contextId` first.** `PropositionQuery` has no `create()` factory on purpose. Always scope with `forContextId`/`againstContext` or `mentioningEntity`. Calling `findAll()` without a context filter can be expensive.
 - **Decay clock vs. admin clock.** `contentRevised` is the decay anchor — it resets when text, mentions, or confidence changes. `metadataRevised` records administrative touches (status, pin, grounding, metadata). Helpers like `withStatus()`, `withPinned()`, `withGrounding()`, and `withMetadataValue()` touch only `metadataRevised`. Use `withText()` or `withConfidence()` to reset the decay clock.
 - **`PropositionStore` vs. `PropositionRepository`.** Inject `PropositionStore` if you only need basic persistence. Inject `PropositionRepository` when you need vector search, clustering, or the RAG bridge.
-- **tuProlog 1.0.4 pin.** The 1.1.x series requires Kotlin 2.2+; `dice` is on 2.1.10. Do not upgrade tuProlog without upgrading Kotlin first.
+- **tuProlog 1.0.4 pin.** The 1.1.x series needs Kotlin 2.2.21 or later, which the build now uses. Lift the pin in a change of its own, never as a side effect.
 - **Kotlin `-Xjvm-default=all`.** The Kotlin compiler flag is set in the pom so that default interface methods are accessible from Java. Don't remove it or Java callers will lose default implementations.
 - **Java interop on `ContextId`.** `ContextId` is a Kotlin value class. Java code can't construct it directly — use `SourceAnalysisContext.withContextId("my-id")` and read it back with `getContextIdValue()`.
 - **Provenance is append-only on `save()`.** `PropositionRepository.save()` never drops provenance entries it didn't load — the safe default for bulk re-saves and decay sweeps. Use `setProvenance()` / `clearProvenance()` to authoritatively replace evidence.

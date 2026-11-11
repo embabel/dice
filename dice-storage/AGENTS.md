@@ -2,7 +2,7 @@
 
 This module is the Drivine/Neo4j implementation of the core `dice` store SPIs. It provides durable, graph-backed implementations of `PropositionRepository`, `ChunkHistoryStore`, and `DecayManager`. Everything in here is a concrete backend; the interfaces and domain model live in the `dice` module.
 
-Kotlin 2.2.0 (one minor version above `dice`'s 2.1.10 — see below). Java 21.
+Kotlin 2.2.21 (from the build parent). Java 21.
 
 ## What it implements
 
@@ -54,7 +54,7 @@ The `codegen-gradle/` directory holds a nested Gradle project that runs Drivine'
 
 ## Why Kotlin 2.2 here
 
-Drivine's generated `where { }` DSL uses Kotlin context parameters (`-Xcontext-parameters`), which is a Kotlin 2.2 feature. The `dice` core is pinned to 2.1.10 by the tuProlog dependency. Kotlin 2.2 can read 2.1.10 class metadata (`-Xskip-metadata-version-check` is set in the pom), so depending on `dice` from here is fine.
+Drivine's generated `where { }` DSL uses Kotlin context parameters (`-Xcontext-parameters`), which is a Kotlin 2.2 feature. The build parent manages Kotlin 2.2.21 for every module, so this module no longer sets its own Kotlin version.
 
 ## Integration tests need Docker
 
