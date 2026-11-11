@@ -4211,10 +4211,6 @@ public final class com/embabel/dice/proposition/RelationshipTypes {
 	public static final field ROLE_PROPERTY Ljava/lang/String;
 }
 
-public final class com/embabel/dice/proposition/RelationshipTypesKt {
-	public static final fun apiListingProbe ()I
-}
-
 public final class com/embabel/dice/proposition/SourceRevisionEventEmittingPropositionRepository : com/embabel/dice/proposition/EventEmittingPropositionRepository, com/embabel/dice/proposition/ProvenanceSubtractionCapable, com/embabel/dice/proposition/SourceRevisionQueryCapable {
 	public fun <init> (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/common/DiceEventListener;)V
 	public synthetic fun <init> (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/common/DiceEventListener;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
