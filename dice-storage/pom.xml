@@ -22,11 +22,9 @@
     <properties>
         <!--
             Drivine's generated query DSL uses Kotlin context parameters (-Xcontext-parameters),
-            a 2.2 feature. dice-core stays on 2.1.10 (tuProlog pin); only the storage modules,
-            which consume the generated DSL, compile with 2.2. Kotlin 2.2 reads 2.1.10 metadata,
-            so depending on dice-core / embabel-agent is fine.
+            a Kotlin 2.2 feature. The build parent manages a 2.2 compiler, so this module takes
+            its Kotlin version from the parent like every other module.
         -->
-        <kotlin.version>2.2.0</kotlin.version>
         <!-- Gradle wrapper for the KSP codegen step; overridden to gradlew.bat on Windows (see profiles) -->
         <gradlew.executable>${project.basedir}/codegen-gradle/gradlew</gradlew.executable>
     </properties>
@@ -184,7 +182,7 @@
                         <arg>-Xjsr305=strict</arg>
                         <arg>-Xjvm-default=all</arg>
                         <arg>-Xcontext-parameters</arg>
-                        <!-- allow the 2.2 compiler to read 2.1.10 metadata from dice-core / embabel-agent -->
+                        <!-- tolerate metadata from dice-core and embabel-agent built by a different Kotlin patch version -->
                         <arg>-Xskip-metadata-version-check</arg>
                     </args>
                     <!--

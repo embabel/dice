@@ -1,9 +1,9 @@
 // Gradle build for Drivine KSP code generation.
 //
-// Why a separate Gradle build: Drivine's KSP processor (drivine4j-codegen) targets the
-// Kotlin 2.2 / KSP2 toolchain, while dice-storage is compiled by Maven with Kotlin 2.1.10
-// (pinned via the tuProlog constraint). This build runs the processor under Kotlin 2.2 and
-// emits plain Kotlin DSL sources that the Maven build then compiles with 2.1.10.
+// Why a separate Gradle build: Drivine's KSP processor (drivine4j-codegen) runs on the KSP2
+// toolchain, which Maven cannot drive. This build runs the processor and emits plain Kotlin DSL
+// sources that the Maven build then compiles. Keep the Kotlin plugin version below equal to the
+// Kotlin version the Maven build resolves (./mvnw help:evaluate -Dexpression=kotlin.version).
 //
 // Scope is deliberately narrow: it reads ONLY the annotated graph model package
 // (com/embabel/dice/storage/model), which depends on nothing but Drivine annotations and the
@@ -20,7 +20,7 @@
 // Run manually with: ./gradlew kspKotlin
 
 plugins {
-    kotlin("jvm") version "2.2.0"
+    kotlin("jvm") version "2.2.21"
     id("com.google.devtools.ksp") version "2.2.20-2.0.4"
 }
 
