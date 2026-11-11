@@ -140,6 +140,31 @@ sequenceDiagram
     Pipeline-->>Caller: aggregated, UNSAVED result
 ```
 
+## Mention grounding
+
+A model sometimes attaches a mention to a proposition that does not name that entity, usually
+because it saw the entity elsewhere in the chunk. Resolving that mention can link the proposition to
+the wrong thing, or mint an entity nothing in the claim supports. So before any mention becomes a
+resolver candidate, the pipeline checks it against the text of its own proposition. A mention is
+ungrounded when its span is blank or does not appear in that text.
+
+The comparison is literal containment after both sides are normalised: Unicode compatibility
+composition (NFKC), typographic quotes, apostrophes and hyphens folded to their plain forms,
+invisible characters removed, runs of whitespace collapsed, and letter case ignored. Accents are
+significant, and a span inside a longer word counts as present. The check sits in the pipeline
+rather than in an extractor, so it applies to every `PropositionExtractor`, and it runs before the
+optional `MentionFilter`.
+
+Each chunk with an ungrounded mention emits one `UngroundedMentionsFound` event carrying the
+mentions, the text they were attached to and the reason (`BLANK_SPAN` or
+`SPAN_NOT_IN_PROPOSITION`). What happens to the mentions is the caller's choice. The default,
+`UngroundedMentionHandling.KEEP`, leaves them in place, because some prompts deliberately ask for a
+canonical name the proposition text does not spell out. `withUngroundedMentions(UngroundedMentionHandling.DROP)`
+removes them before resolution, so they are never resolved, never minted and not left on the
+proposition; the proposition itself is always kept, and the suggestions carried in the chunk result
+are then the grounded ones. A proposition that loses every mention is revised and retrieved like any
+other proposition without mentions.
+
 ## Execution strategies
 
 How the extraction stage is dispatched is a pluggable choice, separated from the pipeline behind a
