@@ -1,0 +1,178 @@
+public final class com/embabel/dice/report/LinkKind : java/lang/Enum {
+	public static final field AMBIGUOUS Lcom/embabel/dice/report/LinkKind;
+	public static final field EXPLICIT Lcom/embabel/dice/report/LinkKind;
+	public static final field INFERRED Lcom/embabel/dice/report/LinkKind;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/report/LinkKind;
+	public static fun values ()[Lcom/embabel/dice/report/LinkKind;
+}
+
+public final class com/embabel/dice/report/LlmRationaleProjector : com/embabel/dice/report/RationaleProjector {
+	public static final field Companion Lcom/embabel/dice/report/LlmRationaleProjector$Companion;
+	public fun <init> (Lcom/embabel/common/ai/model/LlmOptions;Lcom/embabel/agent/api/common/Ai;)V
+	public final fun copy (Lcom/embabel/common/ai/model/LlmOptions;Lcom/embabel/agent/api/common/Ai;)Lcom/embabel/dice/report/LlmRationaleProjector;
+	public static synthetic fun copy$default (Lcom/embabel/dice/report/LlmRationaleProjector;Lcom/embabel/common/ai/model/LlmOptions;Lcom/embabel/agent/api/common/Ai;ILjava/lang/Object;)Lcom/embabel/dice/report/LlmRationaleProjector;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun rationale (Lcom/embabel/dice/operations/PropositionGroup;)Lcom/embabel/dice/report/RationaleArtifact;
+	public fun rationale (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/report/RationaleArtifact;
+	public fun toString ()Ljava/lang/String;
+	public static final fun withLlm (Lcom/embabel/common/ai/model/LlmOptions;)Lcom/embabel/dice/report/LlmRationaleProjector$Companion$Builder;
+}
+
+public final class com/embabel/dice/report/LlmRationaleProjector$Companion {
+	public final fun withLlm (Lcom/embabel/common/ai/model/LlmOptions;)Lcom/embabel/dice/report/LlmRationaleProjector$Companion$Builder;
+}
+
+public final class com/embabel/dice/report/LlmRationaleProjector$Companion$Builder {
+	public fun <init> (Lcom/embabel/common/ai/model/LlmOptions;)V
+	public final fun withAi (Lcom/embabel/agent/api/common/Ai;)Lcom/embabel/dice/report/LlmRationaleProjector;
+}
+
+public final class com/embabel/dice/report/RationaleArtifact : com/embabel/dice/proposition/Projection {
+	public fun <init> (Ljava/lang/String;Ljava/util/List;)V
+	public fun <init> (Ljava/lang/String;Ljava/util/List;D)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/util/List;DILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/util/List;
+	public final fun component3 ()D
+	public final fun copy (Ljava/lang/String;Ljava/util/List;D)Lcom/embabel/dice/report/RationaleArtifact;
+	public static synthetic fun copy$default (Lcom/embabel/dice/report/RationaleArtifact;Ljava/lang/String;Ljava/util/List;DILjava/lang/Object;)Lcom/embabel/dice/report/RationaleArtifact;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getConfidence ()D
+	public fun getDecay ()D
+	public fun getSourcePropositionIds ()Ljava/util/List;
+	public final fun getText ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class com/embabel/dice/report/RationaleProjector {
+	public abstract fun rationale (Lcom/embabel/dice/operations/PropositionGroup;)Lcom/embabel/dice/report/RationaleArtifact;
+	public abstract fun rationale (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/report/RationaleArtifact;
+}
+
+public final class com/embabel/dice/report/RationaleResponse {
+	public fun <init> (Ljava/lang/String;D)V
+	public synthetic fun <init> (Ljava/lang/String;DILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()D
+	public final fun copy (Ljava/lang/String;D)Lcom/embabel/dice/report/RationaleResponse;
+	public static synthetic fun copy$default (Lcom/embabel/dice/report/RationaleResponse;Ljava/lang/String;DILjava/lang/Object;)Lcom/embabel/dice/report/RationaleResponse;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getConfidence ()D
+	public final fun getRationale ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/report/Report : com/embabel/dice/proposition/Projection {
+	public static final field Companion Lcom/embabel/dice/report/Report$Companion;
+	public fun <init> (Ljava/lang/String;ILjava/util/Map;Ljava/util/Map;Ljava/util/List;Ljava/util/List;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()I
+	public final fun component3 ()Ljava/util/Map;
+	public final fun component4 ()Ljava/util/Map;
+	public final fun component5 ()Ljava/util/List;
+	public final fun component6 ()Ljava/util/List;
+	public final fun copy (Ljava/lang/String;ILjava/util/Map;Ljava/util/Map;Ljava/util/List;Ljava/util/List;)Lcom/embabel/dice/report/Report;
+	public static synthetic fun copy$default (Lcom/embabel/dice/report/Report;Ljava/lang/String;ILjava/util/Map;Ljava/util/Map;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/report/Report;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getByLevel ()Ljava/util/Map;
+	public final fun getByStatus ()Ljava/util/Map;
+	public fun getConfidence ()D
+	public fun getDecay ()D
+	public static final fun getEMPTY ()Lcom/embabel/dice/report/Report;
+	public fun getSourcePropositionIds ()Ljava/util/List;
+	public final fun getTitle ()Ljava/lang/String;
+	public final fun getTopByConfidence ()Ljava/util/List;
+	public final fun getTotalCount ()I
+	public fun hashCode ()I
+	public final fun summary ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/report/Report$Companion {
+	public final fun getEMPTY ()Lcom/embabel/dice/report/Report;
+}
+
+public abstract interface class com/embabel/dice/report/ReportProjector {
+	public abstract fun report (Ljava/util/List;Ljava/lang/String;)Lcom/embabel/dice/report/Report;
+	public static synthetic fun report$default (Lcom/embabel/dice/report/ReportProjector;Ljava/util/List;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/report/Report;
+}
+
+public final class com/embabel/dice/report/ReviewStatus : java/lang/Enum {
+	public static final field ACCEPTED Lcom/embabel/dice/report/ReviewStatus;
+	public static final field CANDIDATE Lcom/embabel/dice/report/ReviewStatus;
+	public static final field REJECTED Lcom/embabel/dice/report/ReviewStatus;
+	public static final field STALE Lcom/embabel/dice/report/ReviewStatus;
+	public static final field SUPERSEDED Lcom/embabel/dice/report/ReviewStatus;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/report/ReviewStatus;
+	public static fun values ()[Lcom/embabel/dice/report/ReviewStatus;
+}
+
+public final class com/embabel/dice/report/SemanticLink : com/embabel/dice/proposition/Projection {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/report/LinkKind;Ljava/util/List;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/report/LinkKind;Ljava/util/List;Lcom/embabel/dice/report/ReviewStatus;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/report/LinkKind;Ljava/util/List;Lcom/embabel/dice/report/ReviewStatus;D)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/report/LinkKind;Ljava/util/List;Lcom/embabel/dice/report/ReviewStatus;DLjava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/report/LinkKind;Ljava/util/List;Lcom/embabel/dice/report/ReviewStatus;DLjava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/util/List;
+	public final fun component4 ()Lcom/embabel/dice/report/LinkKind;
+	public final fun component5 ()Ljava/util/List;
+	public final fun component6 ()Lcom/embabel/dice/report/ReviewStatus;
+	public final fun component7 ()D
+	public final fun component8 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/report/LinkKind;Ljava/util/List;Lcom/embabel/dice/report/ReviewStatus;DLjava/lang/String;)Lcom/embabel/dice/report/SemanticLink;
+	public static synthetic fun copy$default (Lcom/embabel/dice/report/SemanticLink;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/report/LinkKind;Ljava/util/List;Lcom/embabel/dice/report/ReviewStatus;DLjava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/report/SemanticLink;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getConfidence ()D
+	public final fun getConnectingEntityIds ()Ljava/util/List;
+	public fun getDecay ()D
+	public final fun getKind ()Lcom/embabel/dice/report/LinkKind;
+	public final fun getRationale ()Ljava/lang/String;
+	public final fun getReviewStatus ()Lcom/embabel/dice/report/ReviewStatus;
+	public final fun getSourceEntityId ()Ljava/lang/String;
+	public fun getSourcePropositionIds ()Ljava/util/List;
+	public final fun getTargetEntityId ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+	public final fun withConfidence (D)Lcom/embabel/dice/report/SemanticLink;
+	public final fun withRationale (Ljava/lang/String;)Lcom/embabel/dice/report/SemanticLink;
+	public final fun withReviewStatus (Lcom/embabel/dice/report/ReviewStatus;)Lcom/embabel/dice/report/SemanticLink;
+}
+
+public abstract interface class com/embabel/dice/report/SemanticLinkDiscoverer {
+	public abstract fun discover (Ljava/util/List;)Ljava/util/List;
+}
+
+public final class com/embabel/dice/report/StructuredReportProjector : com/embabel/dice/report/ReportProjector {
+	public static final field Companion Lcom/embabel/dice/report/StructuredReportProjector$Companion;
+	public fun <init> ()V
+	public fun <init> (I)V
+	public synthetic fun <init> (IILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun copy (I)Lcom/embabel/dice/report/StructuredReportProjector;
+	public static synthetic fun copy$default (Lcom/embabel/dice/report/StructuredReportProjector;IILjava/lang/Object;)Lcom/embabel/dice/report/StructuredReportProjector;
+	public static final fun create ()Lcom/embabel/dice/report/StructuredReportProjector;
+	public static final fun create (I)Lcom/embabel/dice/report/StructuredReportProjector;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun report (Ljava/util/List;Ljava/lang/String;)Lcom/embabel/dice/report/Report;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/report/StructuredReportProjector$Companion {
+	public final fun create ()Lcom/embabel/dice/report/StructuredReportProjector;
+	public final fun create (I)Lcom/embabel/dice/report/StructuredReportProjector;
+	public static synthetic fun create$default (Lcom/embabel/dice/report/StructuredReportProjector$Companion;IILjava/lang/Object;)Lcom/embabel/dice/report/StructuredReportProjector;
+}
+
+public final class com/embabel/dice/report/TwoHopSemanticLinkDiscoverer : com/embabel/dice/report/SemanticLinkDiscoverer {
+	public fun <init> ()V
+	public fun discover (Ljava/util/List;)Ljava/util/List;
+}
+

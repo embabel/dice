@@ -1,0 +1,150 @@
+public abstract interface class com/embabel/dice/ingestion/ArtifactOutcome {
+	public abstract fun getSourceId ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/ingestion/ArtifactOutcome$Deduplicated : com/embabel/dice/ingestion/ArtifactOutcome {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/ingestion/ArtifactOutcome$Deduplicated;
+	public static synthetic fun copy$default (Lcom/embabel/dice/ingestion/ArtifactOutcome$Deduplicated;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/ingestion/ArtifactOutcome$Deduplicated;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getContentHash ()Ljava/lang/String;
+	public fun getSourceId ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/ingestion/ArtifactOutcome$Failed : com/embabel/dice/ingestion/ArtifactOutcome {
+	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/Throwable;
+	public final fun copy (Ljava/lang/String;Ljava/lang/Throwable;)Lcom/embabel/dice/ingestion/ArtifactOutcome$Failed;
+	public static synthetic fun copy$default (Lcom/embabel/dice/ingestion/ArtifactOutcome$Failed;Ljava/lang/String;Ljava/lang/Throwable;ILjava/lang/Object;)Lcom/embabel/dice/ingestion/ArtifactOutcome$Failed;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCause ()Ljava/lang/Throwable;
+	public fun getSourceId ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/ingestion/ArtifactOutcome$Ingested : com/embabel/dice/ingestion/ArtifactOutcome {
+	public fun <init> (Ljava/lang/String;Ljava/util/List;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/util/List;
+	public final fun copy (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/ingestion/ArtifactOutcome$Ingested;
+	public static synthetic fun copy$default (Lcom/embabel/dice/ingestion/ArtifactOutcome$Ingested;Ljava/lang/String;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/ingestion/ArtifactOutcome$Ingested;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getPropositions ()Ljava/util/List;
+	public fun getSourceId ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/ingestion/InMemoryIngestionLedger : com/embabel/dice/ingestion/IngestionLedger {
+	public fun <init> ()V
+	public fun forget (Ljava/lang/String;)V
+	public fun record (Ljava/lang/String;)V
+	public fun recordIfAbsent (Ljava/lang/String;)Z
+	public fun seen (Ljava/lang/String;)Z
+}
+
+public final class com/embabel/dice/ingestion/IngestedArtifact {
+	public static final field Companion Lcom/embabel/dice/ingestion/IngestedArtifact$Companion;
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceLocator;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceLocator;Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceLocator;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/spi/AuthorityTier;)V
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceLocator;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/spi/AuthorityTier;Ljava/time/Instant;)V
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceLocator;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/spi/AuthorityTier;Ljava/time/Instant;Ljava/time/Instant;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceLocator;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/spi/AuthorityTier;Ljava/time/Instant;Ljava/time/Instant;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Lcom/embabel/dice/provenance/SourceLocator;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Lcom/embabel/dice/spi/AuthorityTier;
+	public final fun component6 ()Ljava/time/Instant;
+	public final fun component7 ()Ljava/time/Instant;
+	public final fun copy (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceLocator;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/spi/AuthorityTier;Ljava/time/Instant;Ljava/time/Instant;)Lcom/embabel/dice/ingestion/IngestedArtifact;
+	public static synthetic fun copy$default (Lcom/embabel/dice/ingestion/IngestedArtifact;Ljava/lang/String;Lcom/embabel/dice/provenance/SourceLocator;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/spi/AuthorityTier;Ljava/time/Instant;Ljava/time/Instant;ILjava/lang/Object;)Lcom/embabel/dice/ingestion/IngestedArtifact;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getContentHash ()Ljava/lang/String;
+	public final fun getCreatedAt ()Ljava/time/Instant;
+	public final fun getIngestedAt ()Ljava/time/Instant;
+	public final fun getLocator ()Lcom/embabel/dice/provenance/SourceLocator;
+	public final fun getSourceId ()Ljava/lang/String;
+	public final fun getText ()Ljava/lang/String;
+	public final fun getTrust ()Lcom/embabel/dice/spi/AuthorityTier;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+	public final fun withContentHash (Ljava/lang/String;)Lcom/embabel/dice/ingestion/IngestedArtifact;
+	public static final fun withSourceId (Ljava/lang/String;)Lcom/embabel/dice/ingestion/IngestedArtifact$WithSourceId;
+	public final fun withTimestamps ()Lcom/embabel/dice/ingestion/IngestedArtifact;
+	public final fun withTimestamps (Ljava/time/Instant;)Lcom/embabel/dice/ingestion/IngestedArtifact;
+	public final fun withTimestamps (Ljava/time/Instant;Ljava/time/Instant;)Lcom/embabel/dice/ingestion/IngestedArtifact;
+	public static synthetic fun withTimestamps$default (Lcom/embabel/dice/ingestion/IngestedArtifact;Ljava/time/Instant;Ljava/time/Instant;ILjava/lang/Object;)Lcom/embabel/dice/ingestion/IngestedArtifact;
+	public final fun withTrust (Lcom/embabel/dice/spi/AuthorityTier;)Lcom/embabel/dice/ingestion/IngestedArtifact;
+}
+
+public final class com/embabel/dice/ingestion/IngestedArtifact$Companion {
+	public final fun withSourceId (Ljava/lang/String;)Lcom/embabel/dice/ingestion/IngestedArtifact$WithSourceId;
+}
+
+public final class com/embabel/dice/ingestion/IngestedArtifact$WithLocator {
+	public final fun withText (Ljava/lang/String;)Lcom/embabel/dice/ingestion/IngestedArtifact;
+}
+
+public final class com/embabel/dice/ingestion/IngestedArtifact$WithSourceId {
+	public final fun withLocator (Lcom/embabel/dice/provenance/SourceLocator;)Lcom/embabel/dice/ingestion/IngestedArtifact$WithLocator;
+}
+
+public final class com/embabel/dice/ingestion/IngestionBatch {
+	public static final field Companion Lcom/embabel/dice/ingestion/IngestionBatch$Companion;
+	public fun <init> ()V
+	public fun <init> (Ljava/util/List;)V
+	public synthetic fun <init> (Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/util/List;
+	public final fun copy (Ljava/util/List;)Lcom/embabel/dice/ingestion/IngestionBatch;
+	public static synthetic fun copy$default (Lcom/embabel/dice/ingestion/IngestionBatch;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/ingestion/IngestionBatch;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getArtifacts ()Ljava/util/List;
+	public fun hashCode ()I
+	public static final fun of ([Lcom/embabel/dice/ingestion/IngestedArtifact;)Lcom/embabel/dice/ingestion/IngestionBatch;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/ingestion/IngestionBatch$Companion {
+	public final fun of ([Lcom/embabel/dice/ingestion/IngestedArtifact;)Lcom/embabel/dice/ingestion/IngestionBatch;
+}
+
+public abstract interface class com/embabel/dice/ingestion/IngestionHandler {
+	public fun ingest (Lcom/embabel/dice/ingestion/IngestedArtifact;Lcom/embabel/dice/common/SourceAnalysisContext;)Lcom/embabel/dice/ingestion/IngestionResult;
+	public abstract fun ingest (Lcom/embabel/dice/ingestion/IngestionBatch;Lcom/embabel/dice/common/SourceAnalysisContext;)Lcom/embabel/dice/ingestion/IngestionResult;
+}
+
+public abstract interface class com/embabel/dice/ingestion/IngestionLedger {
+	public abstract fun forget (Ljava/lang/String;)V
+	public abstract fun record (Ljava/lang/String;)V
+	public fun recordIfAbsent (Ljava/lang/String;)Z
+	public abstract fun seen (Ljava/lang/String;)Z
+}
+
+public final class com/embabel/dice/ingestion/IngestionResult {
+	public fun <init> (Ljava/util/List;)V
+	public final fun component1 ()Ljava/util/List;
+	public final fun copy (Ljava/util/List;)Lcom/embabel/dice/ingestion/IngestionResult;
+	public static synthetic fun copy$default (Lcom/embabel/dice/ingestion/IngestionResult;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/ingestion/IngestionResult;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getOutcomes ()Ljava/util/List;
+	public final fun getPropositions ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/ingestion/support/TextIngestionHandler : com/embabel/dice/ingestion/IngestionHandler {
+	public fun <init> (Lcom/embabel/dice/pipeline/PropositionPipeline;)V
+	public fun <init> (Lcom/embabel/dice/pipeline/PropositionPipeline;Lcom/embabel/dice/ingestion/IngestionLedger;)V
+	public fun <init> (Lcom/embabel/dice/pipeline/PropositionPipeline;Lcom/embabel/dice/ingestion/IngestionLedger;Lcom/embabel/dice/common/ContentHasher;)V
+	public synthetic fun <init> (Lcom/embabel/dice/pipeline/PropositionPipeline;Lcom/embabel/dice/ingestion/IngestionLedger;Lcom/embabel/dice/common/ContentHasher;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun ingest (Lcom/embabel/dice/ingestion/IngestionBatch;Lcom/embabel/dice/common/SourceAnalysisContext;)Lcom/embabel/dice/ingestion/IngestionResult;
+}
+
