@@ -70,13 +70,15 @@ jobs:
 
   notify:
     needs: [build]
-    if: failure() && github.ref == 'refs/heads/main'
+    if: always() && github.ref == 'refs/heads/main' && needs.build.result == 'failure'
     uses: embabel/embabel-build/.github/workflows/discord-notify.yml@main
     secrets: inherit
 
   notify-recovery:
     needs: [build]
-    if: success() && github.ref == 'refs/heads/main'
+    if: always() && github.ref == 'refs/heads/main' && needs.build.result == 'success'
+    permissions:
+      actions: read
     uses: embabel/embabel-build/.github/workflows/notify-recovery.yml@main
     with:
       branch: main
