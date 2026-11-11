@@ -51,7 +51,7 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * All cases run against in-memory repositories — no Docker or live graph required.
  */
-class Neo4jRagPropositionRepositoryTest {
+class RagAdapterPropositionRepositoryTest {
 
     private val contextId = ContextId("fragment-test")
 
@@ -87,7 +87,7 @@ class Neo4jRagPropositionRepositoryTest {
 
     @Test
     fun `declares vector search and omits graph and temporal capabilities`() {
-        val adapter = Neo4jRagPropositionRepository(
+        val adapter = RagAdapterPropositionRepository(
             crud = InMemoryPropositionRepository(),
             entityRepository = entityRepository(),
         )
@@ -109,7 +109,7 @@ class Neo4jRagPropositionRepositoryTest {
     @Test
     fun `delegates CRUD to the supplementary store`() {
         val crud = InMemoryPropositionRepository()
-        val adapter = Neo4jRagPropositionRepository(crud = crud, entityRepository = entityRepository())
+        val adapter = RagAdapterPropositionRepository(crud = crud, entityRepository = entityRepository())
 
         val saved = adapter.save(proposition("A knows B"))
 
@@ -123,7 +123,7 @@ class Neo4jRagPropositionRepositoryTest {
     @Test
     fun `forwards every vector member to the supplementary store when it backs vector search`() {
         val vectorCrud = vectorBackedCrud()
-        val vectorAdapter = Neo4jRagPropositionRepository(crud = vectorCrud, entityRepository = entityRepository())
+        val vectorAdapter = RagAdapterPropositionRepository(crud = vectorCrud, entityRepository = entityRepository())
         val request = TextSimilaritySearchRequest(query = "A likes B", similarityThreshold = 0.5, topK = 10)
         val query = PropositionQuery()
 
@@ -154,7 +154,7 @@ class Neo4jRagPropositionRepositoryTest {
     fun `every vector member degrades to empty when the supplementary store is not vector-capable`() {
         val request = TextSimilaritySearchRequest(query = "A likes B", similarityThreshold = 0.5, topK = 10)
         val query = PropositionQuery()
-        val adapter = Neo4jRagPropositionRepository(
+        val adapter = RagAdapterPropositionRepository(
             crud = NonVectorPropositionStore(),
             entityRepository = entityRepository(),
         )
@@ -177,6 +177,16 @@ class Neo4jRagPropositionRepositoryTest {
             assertDoesNotThrow<List<Cluster<Proposition>>> { adapter.findClusters(0.5, 10, query) }.isEmpty(),
             "findClusters degrades to empty when the store cannot back vectors",
         )
+    }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun `the old name still builds the same store`() {
+        val viaOldName: PropositionStore = Neo4jRagPropositionRepository(
+            crud = InMemoryPropositionRepository(),
+            entityRepository = entityRepository(),
+        )
+        assertEquals(RagAdapterPropositionRepository::class, viaOldName::class)
     }
 
     /**

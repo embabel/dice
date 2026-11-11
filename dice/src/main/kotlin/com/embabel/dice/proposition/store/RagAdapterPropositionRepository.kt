@@ -28,10 +28,9 @@ import org.slf4j.LoggerFactory
 
 /**
  * Reference proposition store that backs persistence through Embabel's
- * [NamedEntityDataRepository] SPI — which is Neo4j-backed at runtime in a typical deployment,
- * hence the descriptive name — without ever importing a graph driver or emitting Cypher from
+ * [NamedEntityDataRepository] SPI without ever importing a graph driver or emitting Cypher from
  * production code. The store stays hexagonal: it talks to the SPI port, and the consuming
- * application supplies whatever concrete (Neo4j or otherwise) implementation it likes.
+ * application supplies whatever concrete implementation it likes.
  *
  * ## Composition
  *
@@ -73,12 +72,12 @@ import org.slf4j.LoggerFactory
  * @param entityRepository the entity/relationship/vector backend supplied by the consumer; held
  *   for the entity-axis projection path and never surfaced in this store's public signatures
  */
-class Neo4jRagPropositionRepository(
+class RagAdapterPropositionRepository(
     private val crud: PropositionStore,
     val entityRepository: NamedEntityDataRepository,
 ) : PropositionStore by crud, VectorSearchCapable {
 
-    private val logger = LoggerFactory.getLogger(Neo4jRagPropositionRepository::class.java)
+    private val logger = LoggerFactory.getLogger(RagAdapterPropositionRepository::class.java)
 
     /**
      * Disambiguates the diamond between [VectorSearchCapable.query] and [PropositionStore.query]
@@ -133,3 +132,13 @@ class Neo4jRagPropositionRepository(
         (crud as? VectorSearchCapable)?.findClusters(similarityThreshold, topK, query)
             ?: emptyList()
 }
+
+/**
+ * The name this store had before it was renamed. It never depended on Neo4j, so the name now says
+ * what it is: an adapter over embabel-agent's RAG entity repository.
+ */
+@Deprecated(
+    message = "Renamed to RagAdapterPropositionRepository.",
+    replaceWith = ReplaceWith("RagAdapterPropositionRepository"),
+)
+typealias Neo4jRagPropositionRepository = RagAdapterPropositionRepository
