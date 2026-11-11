@@ -36,14 +36,14 @@ commitment. They get pinned at the 1.0 release.
 | Only needed for the graph backend. The in-memory and JSON-file backends need no Neo4j.
 
 | Kotlin
-| 2.1.10 (`dice`), 2.2.0 (`dice-storage`, `dice-storage-autoconfigure`)
+| 2.2.21 (every module)
 | A build concern, not a consumer one. The storage modules need the 2.2 compiler for Drivine's
   KSP-generated `where { }` DSL, which uses context parameters.
 
 | tuProlog (2p-kt)
 | 1.0.4, pinned
-| 1.1.x is built with Kotlin 2.2.x and is binary-incompatible with `dice`'s Kotlin 2.1.10. Upgrading
-  requires Kotlin 2.2.21+.
+| The 1.1.x series needs Kotlin 2.2.21 or later, which DICE now builds with. The pin stays until
+  a release moves it.
 |===
 
 ==== Feature availability by module
