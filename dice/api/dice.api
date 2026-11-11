@@ -4140,6 +4140,18 @@ public abstract interface class com/embabel/dice/proposition/PropositionReposito
 	public fun vectorSearch (Lcom/embabel/common/core/types/TextSimilaritySearchRequest;Ljava/lang/Class;)Ljava/util/List;
 }
 
+public final class com/embabel/dice/proposition/PropositionStatus : java/lang/Enum {
+	public static final field ACTIVE Lcom/embabel/dice/proposition/PropositionStatus;
+	public static final field CONTRADICTED Lcom/embabel/dice/proposition/PropositionStatus;
+	public static final field PROMOTED Lcom/embabel/dice/proposition/PropositionStatus;
+	public static final field QUARANTINED Lcom/embabel/dice/proposition/PropositionStatus;
+	public static final field STALE Lcom/embabel/dice/proposition/PropositionStatus;
+	public static final field SUPERSEDED Lcom/embabel/dice/proposition/PropositionStatus;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/proposition/PropositionStatus;
+	public static fun values ()[Lcom/embabel/dice/proposition/PropositionStatus;
+}
+
 public abstract interface class com/embabel/dice/proposition/PropositionStore {
 	public fun addProvenance (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/proposition/Proposition;
 	public fun clearProvenance (Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;

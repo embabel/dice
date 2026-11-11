@@ -41,15 +41,21 @@ public final class ApiListing {
         Path apiDir = Path.of(args[2]);
         String module = args[3];
 
-        // The dump tool matches the annotation on a class itself, so a nested class or companion of an
-        // experimental type would be listed as stable. Split the full dump by owner instead.
-        Set<String> experimentalTypes = new HashSet<>();
-        for (String block : blocks(dump(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(EXPERIMENTAL), Set.of())))) {
-            experimentalTypes.add(typeName(block));
+        // A type is experimental when the marker sits on the type itself: leaving marked declarations
+        // out drops the whole type. A marker on an enum entry or a member only drops that member, so
+        // its owner stays stable. A nested type or companion follows its experimental owner.
+        Set<String> all = new HashSet<>();
+        String full = dump(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of()));
+        for (String block : blocks(full)) {
+            all.add(typeName(block));
+        }
+        Set<String> experimentalTypes = new HashSet<>(all);
+        for (String block : blocks(dump(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of(EXPERIMENTAL))))) {
+            experimentalTypes.remove(typeName(block));
         }
         StringBuilder stableListing = new StringBuilder();
         StringBuilder experimentalListing = new StringBuilder();
-        for (String block : blocks(dump(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of())))) {
+        for (String block : blocks(full)) {
             String name = typeName(block);
             boolean isExperimental = experimentalTypes.contains(name)
                     || experimentalTypes.stream().anyMatch(owner -> name.startsWith(owner + "$"));
