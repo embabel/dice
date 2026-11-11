@@ -134,13 +134,21 @@ internal object MentionGrounding {
         )
     }
 
+    /**
+     * Folds look-alikes and drops invisible characters on both sides of composing. Before, because
+     * composing would otherwise split an acute-accent apostrophe into a space and an accent, and an
+     * invisible character would keep a letter apart from its accent. After, because composing can
+     * itself produce a look-alike, such as a non-breaking hyphen turning into a plain Unicode hyphen.
+     */
     private fun normalise(text: String): String {
-        val composed = Normalizer.normalize(text, Normalizer.Form.NFKC)
-        val cleaned = buildString(composed.length) {
-            composed.forEach { c ->
-                if (c !in INVISIBLE) append(LOOKALIKES[c] ?: c)
-            }
+        val composed = Normalizer.normalize(foldAndStrip(text), Normalizer.Form.NFKC)
+        return foldAndStrip(composed).replace(WHITESPACE_RUN, " ").trim()
+    }
+
+    /** Drops invisible characters and swaps each look-alike for its plain form. */
+    private fun foldAndStrip(text: String): String = buildString(text.length) {
+        text.forEach { c ->
+            if (c !in INVISIBLE) append(LOOKALIKES[c] ?: c)
         }
-        return cleaned.replace(WHITESPACE_RUN, " ").trim()
     }
 }

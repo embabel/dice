@@ -133,6 +133,17 @@ class MentionGroundingTest {
     }
 
     @Test
+    fun `E15 an acute-accent apostrophe matches a straight one both ways`() {
+        assertGrounded("O'Brien", "O\u00b4Brien runs the lab")
+        assertGrounded("O\u00b4Brien", "O'Brien runs the lab")
+    }
+
+    @Test
+    fun `E16 an invisible character between a letter and its accent is ignored`() {
+        assertGrounded("Jos\u00e9", "Jose\u200b\u0301 lives in Lima")
+    }
+
+    @Test
     fun `I1 every proposition comes back in order even when it loses all its mentions`() {
         val suggested = SuggestedPropositions(
             chunkId = "chunk-1",
