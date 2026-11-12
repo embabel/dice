@@ -164,6 +164,15 @@ class StoreCapabilities private constructor(
         }
 
     /**
+     * Narrows a descriptor for a store that has no similarity search.
+     *
+     * @return A descriptor that does not support [StoreCapability.FILTERED_VECTOR_SEARCH] and
+     *   whose filtering mode is [VectorFiltering.NONE].
+     */
+    fun withoutSimilaritySearch(): StoreCapabilities =
+        StoreCapabilities(supported - StoreCapability.FILTERED_VECTOR_SEARCH, VectorFiltering.NONE)
+
+    /**
      * States the filtering mode of a store that does not filter first.
      *
      * @param vectorFiltering [VectorFiltering.AFTER_TOP_K], [VectorFiltering.NONE] or

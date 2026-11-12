@@ -63,10 +63,7 @@ class StoreDialectJavaInteropTest {
 
     @Test
     void aStoreWithNoSimilaritySearchNarrowsTheDialectsCapabilities() {
-        StoreCapabilities filtersFirst = StoreCapabilities.of(
-                StoreCapability.FILTERED_VECTOR_SEARCH, StoreCapability.ATOMIC_WRITES);
-
-        StoreCapabilities runStore = filtersFirst.without(StoreCapability.FILTERED_VECTOR_SEARCH);
+        StoreCapabilities runStore = dialect.getCapabilities().withoutSimilaritySearch();
 
         assertEquals(StoreCapabilities.of(StoreCapability.ATOMIC_WRITES), runStore);
         assertEquals(VectorFiltering.NONE, runStore.getVectorFiltering());

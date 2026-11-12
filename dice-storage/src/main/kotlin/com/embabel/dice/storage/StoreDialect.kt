@@ -63,7 +63,7 @@ interface StoreDialect {
     /**
      * The most that stores on this database can do. A store publishes the part that applies to
      * it: the proposition store publishes all of it, and a store with no similarity search
-     * removes that capability with `without`.
+     * narrows it with `withoutSimilaritySearch`.
      */
     val capabilities: StoreCapabilities
 

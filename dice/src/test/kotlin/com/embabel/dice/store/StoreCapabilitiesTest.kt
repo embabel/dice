@@ -32,6 +32,7 @@ import org.junit.jupiter.api.Test
  *
  * E1 The filtering mode follows from the capabilities.
  * E2 with and without return new descriptors that keep the mode in step.
+ * E2b withoutSimilaritySearch gives mode NONE from either filtering mode.
  * E3 A filtering mode that disagrees with the capabilities is rejected.
  * E4 The block and the chain give equal descriptors.
  * E5 The supported set is read-only.
@@ -95,6 +96,15 @@ class StoreCapabilitiesTest {
         assertEquals(VectorFiltering.BEFORE_TOP_K, b.vectorFiltering)
         assertFalse(a.supports(StoreCapability.FILTERED_VECTOR_SEARCH))
         assertEquals(StoreCapabilities.of(StoreCapability.ATOMIC_WRITES), b.without(StoreCapability.FILTERED_VECTOR_SEARCH))
+    }
+
+    @Test
+    fun `E2b withoutSimilaritySearch gives mode NONE from either filtering mode`() {
+        val writesOnly = StoreCapabilities.of(StoreCapability.ATOMIC_WRITES)
+        val filtersAfter = writesOnly.withVectorFiltering(VectorFiltering.AFTER_TOP_K)
+        val filtersFirst = writesOnly.with(StoreCapability.FILTERED_VECTOR_SEARCH)
+        assertEquals(writesOnly, filtersAfter.withoutSimilaritySearch())
+        assertEquals(writesOnly, filtersFirst.withoutSimilaritySearch())
     }
 
     @Test
