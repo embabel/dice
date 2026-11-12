@@ -1,0 +1,230 @@
+[[how-to-verify-a-backend]]
+=== Verify a storage backend
+
+*Prerequisites*: a class that implements a DICE store interface, and JUnit Jupiter 6 in its test
+build.
+
+`dice-store-conformance` holds one abstract JUnit suite for each store interface. A test extends a
+suite and returns the store from one method. Each inherited test states one documented behaviour of
+the interface, so a failing test names what the store does not keep.
+
+[source,xml]
+----
+<dependency>
+    <groupId>com.embabel.dice</groupId>
+    <artifactId>dice-store-conformance</artifactId>
+    <version>{dice-version}</version>
+    <scope>test</scope>
+</dependency>
+----
+
+[source,java]
+----
+class PropositionStoreContractJavaInteropTest extends AbstractPropositionStoreContractTest {
+
+    @Override
+    protected PropositionStore store() {
+        return new InMemoryPropositionRepository();
+    }
+}
+----
+
+Return your own store where the example returns the in-memory one. The same test in Kotlin:
+
+[source,kotlin]
+----
+class InMemoryPropositionStoreContractTest : AbstractPropositionStoreContractTest() {
+    override fun store(): PropositionStore = InMemoryPropositionRepository()
+}
+----
+
+==== The suites
+
+The suites are in `com.embabel.dice.conformance`. Each factory method returns a store in the state
+its row describes.
+
+[cols="3,2,4", options="header"]
+|===
+| Suite | Store interface | The factory supplies
+
+| `AbstractPropositionStoreContractTest`
+| `PropositionStore`
+| A store that holds no propositions.
+
+| `AbstractExtractionRunStoreContractTest`
+| `ExtractionRunStore`
+| A store that holds no runs and announces to the listener the factory receives.
+
+| `AbstractPropositionRunLinkStoreContractTest`
+| `PropositionRunLinkStore`
+| A store that already holds the suite's fixture runs and propositions, and no links. The test
+  also implements `deleteProposition`.
+
+| `AbstractMetamodelVersionStoreContractTest`
+| `SweptBaselineStore`
+| A store that holds no versions.
+
+| `AbstractDriftReportStoreContractTest`
+| `DriftReportStore`
+| A store that holds no reports.
+
+| `AbstractChunkHistoryStoreContractTest`
+| `ChunkHistoryStore`
+| A store that holds no history.
+
+| `AbstractCollectorRecordStoreContractTest`
+| `CollectorRecordStore`
+| A store that holds no records and no runs.
+
+| `AbstractCollectorTraceStoreContractTest`
+| `CollectorTraceStore` and `CollectorTraceQuery`
+| A store that holds no trace rows. Override `query(store)` when the read side is another object.
+
+| `AbstractProjectionRecordStoreContractTest`
+| `ProjectionRecordStore`
+| A store that holds no records.
+
+| `AbstractFilteredVectorSearchContractTest`
+| `FilteredVectorSearch`, through `StoreCapabilities`
+| A store that holds no propositions and embeds with `ConformanceEmbeddingService`.
+|===
+
+A Java test can extend every suite. `DriftReportStore` and `CollectorTraceStore` have methods that
+take `ContextId`, a Kotlin value class, so a store that implements them is written in Kotlin. A Java
+`ChunkHistoryStore` cannot override `clearByContext` for the same reason. The other store interfaces
+can be implemented in Java.
+
+==== A store that outlives a test
+
+A database keeps what one test wrote. Empty the store before each test, so every case starts from
+the state its factory describes.
+
+[source,java]
+----
+class ChunkHistoryStoreContractJavaInteropTest extends AbstractChunkHistoryStoreContractTest {
+
+    private static final ChunkHistoryStore STORE = new InMemoryChunkHistoryStore();
+
+    @BeforeEach
+    void emptyTheStore() {
+        STORE.clearAll();
+    }
+
+    @Override
+    protected ChunkHistoryStore store() {
+        return STORE;
+    }
+}
+----
+
+A test class that already has a base class holds each suite as a `@Nested` inner class.
+
+==== A store that is built once
+
+`AbstractExtractionRunStoreContractTest` passes a listener to its factory, and some cases ask for a
+store more than once. A store that is built once, such as a Spring bean, is built with a listener
+that forwards to the one the case supplies.
+
+[source,java]
+----
+class ExtractionRunStoreContractJavaInteropTest extends AbstractExtractionRunStoreContractTest {
+
+    private final RedirectableListener events = new RedirectableListener();
+    private final ExtractionRunStore runs = new InMemoryExtractionRunStore(events);
+
+    @Override
+    protected ExtractionRunStore store(DiceEventListener listener) {
+        events.redirectTo(listener);
+        return runs;
+    }
+
+    /** Forwards each event to the listener it was last pointed at. */
+    static final class RedirectableListener implements DiceEventListener {
+
+        private volatile DiceEventListener target = event -> { };
+
+        void redirectTo(DiceEventListener listener) {
+            target = listener;
+        }
+
+        @Override
+        public void onEvent(DiceEvent event) {
+            target.onEvent(event);
+        }
+    }
+}
+----
+
+==== Turn one case off
+
+A store that breaks one documented behaviour overrides that case with `@Disabled` and a message
+that states the defect. The override repeats `@Test`.
+
+[source,java]
+----
+    @Test
+    @Disabled("AppendOnlyProjectionRecordStore keeps the interface default for markStaleByProposition, which marks nothing")
+    @Override
+    public void markStaleByPropositionMarksEveryRecordOfTheProposition() {
+    }
+----
+
+A method that an interface documents with a no-op default, such as `ChunkHistoryStore.clearAll` or
+`ProjectionRecordStore.markStaleByProposition`, is tested. A store that keeps the default fails
+that case. The suites for `PropositionStore`, `ExtractionRunStore`, `PropositionRunLinkStore` and
+`SweptBaselineStore` have final cases, which a subclass cannot override.
+
+==== Similarity search
+
+`AbstractFilteredVectorSearchContractTest` reads the `StoreCapabilities` a store publishes and tests
+what the store declares.
+
+[cols="1,3", options="header"]
+|===
+| The store declares | The suite checks
+
+| `FILTERED_VECTOR_SEARCH`
+| K matches come back, at K of 1 and of 5, when K exist under a filter that leaves out 121 nearer
+  propositions. Each of `entityId`, `minLevel`, `pinned`, `minConfidence`, `createdAfter` and
+  `minEffectiveConfidence` is applied, or refused with `UnsupportedCapabilityException`. Matches are
+  closest first, a match that scores exactly the floor is returned, equal scores keep one order,
+  and scores are cosine similarity within 0.01.
+
+| `VectorFiltering.AFTER_TOP_K`
+| The filtered search of `VectorSearchCapable` returns at most K propositions. Each one matches the
+  filter, and they are closest first. When K covers every stored proposition, every match comes
+  back.
+
+| `VectorFiltering.NONE`, or no descriptor
+| Every search case is reported as skipped, with a message that names the capability.
+|===
+
+The suite has to know how close each stored proposition is to the search text. The store under test
+embeds with `ConformanceEmbeddingService`, which maps a test text to a vector at a known angle
+through `ConformanceEmbeddings`. `expectedVectorFiltering()` names the mode the store is meant to
+declare. One case fails when the descriptor says another mode, so a store whose descriptor is not
+wired does not pass by being skipped.
+
+[source,java]
+----
+class FilteredVectorSearchContractJavaInteropTest extends AbstractFilteredVectorSearchContractTest {
+
+    @Override
+    protected PropositionStore store() {
+        return new InMemoryPropositionRepository(new ConformanceEmbeddingService());
+    }
+
+    @Override
+    protected VectorFiltering expectedVectorFiltering() {
+        return VectorFiltering.UNDECLARED;
+    }
+}
+----
+
+A store that picks a window of candidates, filters it and then cuts to K passes the K-matches cases
+when the window holds 126 candidates or more, or grows with K by a factor of 122 or more. A store
+with such a window overrides `excludedCount()` to return a number above the window. A store whose
+index rounds vectors overrides `scoreTolerance()`.
+
+NOTE: The suites, `ConformanceEmbeddings` and `ConformanceEmbeddingService` are experimental. Their
+API may change before 1.0.
