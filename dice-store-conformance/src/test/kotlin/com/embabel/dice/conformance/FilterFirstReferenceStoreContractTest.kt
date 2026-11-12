@@ -16,6 +16,7 @@
 package com.embabel.dice.conformance
 
 import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.store.VectorFiltering
 
 /**
  * Runs the [AbstractFilteredVectorSearchContractTest] suite against [FilterFirstReferenceStore]. It
@@ -23,4 +24,6 @@ import com.embabel.dice.proposition.PropositionStore
  */
 class FilterFirstReferenceStoreContractTest : AbstractFilteredVectorSearchContractTest() {
     override fun store(): PropositionStore = FilterFirstReferenceStore()
+
+    override fun expectedVectorFiltering(): VectorFiltering = VectorFiltering.BEFORE_TOP_K
 }

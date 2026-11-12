@@ -16,15 +16,18 @@
 package com.embabel.dice.conformance
 
 import com.embabel.agent.core.ContextId
+import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.proposition.VectorSearchCapable
 import com.embabel.dice.store.FilteredVectorSearch
 import com.embabel.dice.store.StoreCapabilities
 import com.embabel.dice.store.StoreCapability
 import com.embabel.dice.store.UnsupportedCapabilityException
+import com.embabel.dice.store.VectorFiltering
 import com.embabel.dice.store.VectorSearchRequest
 import org.jetbrains.annotations.ApiStatus
 import org.junit.jupiter.api.Assertions.assertAll
@@ -36,6 +39,7 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.function.Executable
+import org.opentest4j.AssertionFailedError
 import java.time.Instant
 
 /**
@@ -57,6 +61,15 @@ import java.time.Instant
  * `pinned`, `minConfidence`, `createdAfter` and `minEffectiveConfidence`. For each field the store
  * returns the five propositions that pass it, or refuses the filter with
  * [UnsupportedCapabilityException]. The case names every field the store gets wrong in one run.
+ *
+ * One case runs for a store that declares [VectorFiltering.AFTER_TOP_K]. Such a store picks the
+ * nearest K and then drops the ones that fail the filter. The case checks that every result passes
+ * the filter, that results come back closest first and that a K covering every stored proposition
+ * returns every match. It does not expect K results from a smaller K. A store that declares
+ * [VectorFiltering.AFTER_TOP_K] and has no working [VectorSearchCapable] search fails the case.
+ *
+ * One case checks the declared vector filtering mode against [expectedVectorFiltering]. A test that
+ * names its mode fails when the store's descriptor reports another.
  *
  * EXPERIMENTAL. This API may change before 1.0.
  */
@@ -86,6 +99,15 @@ abstract class AbstractFilteredVectorSearchContractTest {
      * @return The largest accepted difference. The default is 0.01.
      */
     protected open fun scoreTolerance(): Double = 0.01
+
+    /**
+     * The vector filtering mode this store is meant to declare. When a subclass returns a mode, one
+     * case fails if [StoreCapabilities.describe] reports another, so a descriptor that is not wired
+     * to the store is a failure and the other cases are not silently skipped.
+     *
+     * @return The expected mode, or null to leave the declared mode unchecked.
+     */
+    protected open fun expectedVectorFiltering(): VectorFiltering? = null
 
     private val tenant = "vector-tenant"
     private val neighbour = "vector-neighbour"
@@ -429,5 +451,56 @@ abstract class AbstractFilteredVectorSearchContractTest {
             emptyList<String>(),
             texts(search, VectorSearchRequest.forText(queryText, PropositionQuery.againstContext(tenant))),
         ) { "Every proposition is in $neighbour, so a filter on $tenant returns no matches" }
+    }
+
+    @Test
+    @DisplayName("a store that filters after the cut returns matching propositions closest first, and every match when K covers them all")
+    open fun aStoreThatFiltersAfterTheCutKeepsThatModesPromise() {
+        val store = store()
+        val capabilities = StoreCapabilities.describe(store)
+        assumeTrue(capabilities.vectorFiltering == VectorFiltering.AFTER_TOP_K) {
+            "AFTER_TOP_K is not this store's vector filtering mode (${capabilities.vectorFiltering})"
+        }
+        if (store !is VectorSearchCapable || !store.supportsVector) {
+            throw AssertionFailedError("The store declares AFTER_TOP_K and has no working VectorSearchCapable search. A store with no similarity search declares NONE.")
+        }
+        val matching = seedMatching(store)
+        (0 until 5).forEach { i ->
+            store.save(proposition("other-$i", (i + 1).toDouble(), neighbour, PropositionStatus.ACTIVE))
+        }
+        val filter = PropositionQuery.againstContext(tenant)
+
+        val cut = store.findSimilarWithScores(
+            TextSimilaritySearchRequest(query = queryText, similarityThreshold = 0.0, topK = 3),
+            filter,
+        )
+        assertTrue(cut.size <= 3) { "With K of 3 the store returns ${cut.size} results" }
+        cut.forEach { result ->
+            assertEquals(tenant, result.match.contextId.value) {
+                "The store returns ${result.match.text} from ${result.match.contextId.value}. The filter keeps only $tenant."
+            }
+        }
+        cut.zipWithNext().forEach { (closer, farther) ->
+            assertTrue(closer.score >= farther.score) {
+                "${closer.score} comes before ${farther.score}, so the results are not closest first"
+            }
+        }
+
+        val covered = store.findSimilarWithScores(
+            TextSimilaritySearchRequest(query = queryText, similarityThreshold = 0.0, topK = 10),
+            filter,
+        )
+        assertEquals(matching, covered.map { it.match.text }) {
+            "With K of 10 every stored proposition is in the cut, so the store returns the five in $tenant closest first"
+        }
+    }
+
+    @Test
+    @DisplayName("the store declares the vector filtering mode its test expects")
+    open fun theStoreDeclaresTheExpectedVectorFiltering() {
+        val expected = expectedVectorFiltering()
+        assumeTrue(expected != null) { "expectedVectorFiltering() returns null, so the declared mode is not checked" }
+        val declared = StoreCapabilities.describe(store()).vectorFiltering
+        assertEquals(expected, declared) { "The store declares $declared and its test expects $expected" }
     }
 }
