@@ -30,6 +30,7 @@ flowchart TB
     ingestion["dice-ingestion<br/>(dedup ledger)"]
     report["dice-report<br/>(rationale/reports)"]
     metamodel["dice-metamodel<br/>(schema governance)"]
+    conformance["dice-store-conformance<br/>(store suites)"]
     itest["dice-integration-tests"]
 
     storage --> dice
@@ -39,6 +40,8 @@ flowchart TB
     mcp --> dice
     ingestion --> dice
     report --> dice
+    conformance --> dice
+    conformance --> metamodel
     itest --> dice
     itest --> ingestion
     itest --> report

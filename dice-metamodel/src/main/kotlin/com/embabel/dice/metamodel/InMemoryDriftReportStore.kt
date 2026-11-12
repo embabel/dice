@@ -37,8 +37,6 @@ class InMemoryDriftReportStore : DriftReportStore {
 
     override fun saveDriftReport(report: DriftReport) {
         synchronized(reports) {
-            // Upsert on the natural key. The same schema, version, capture instant and context is one
-            // observation, so a second save overwrites the first.
             val existing = reports.indexOfFirst {
                 it.schemaName == report.schemaName &&
                     it.versionHash == report.versionHash &&

@@ -66,9 +66,24 @@ abstract class AbstractCollectorTraceStoreContractTest {
     private val ctxA = ContextId("trace-ctx-a")
     private val ctxB = ContextId("trace-ctx-b")
 
+    /**
+     * Builds one named signal score.
+     *
+     * @param name The signal name.
+     * @param score The signal's score.
+     * @return The signal score.
+     */
     private fun signal(name: String, score: Double): CollectorSignalScore =
         CollectorSignalScore(signal = name, score = score)
 
+    /**
+     * Builds a candidate edge that is not vetoed and carries one embedding signal.
+     *
+     * @param anchorId The anchor proposition.
+     * @param memberId The member proposition.
+     * @param score The edge's aggregate score, also used as the embedding score.
+     * @return The edge.
+     */
     private fun edge(anchorId: String, memberId: String, score: Double = 0.75): CollectorCandidateEdge =
         CollectorCandidateEdge(
             anchorId = anchorId,
@@ -78,9 +93,23 @@ abstract class AbstractCollectorTraceStoreContractTest {
             signals = listOf(signal("embedding", score)),
         )
 
+    /**
+     * Builds a component of two propositions.
+     *
+     * @param componentId The component's id.
+     * @param anchorId The first member.
+     * @param memberId The second member.
+     * @return The component.
+     */
     private fun component(componentId: String, anchorId: String, memberId: String): CollectorComponent =
         CollectorComponent(componentId = componentId, memberIds = listOf(anchorId, memberId))
 
+    /**
+     * Builds the undo record of a retired proposition that was active, with one folded value of each kind.
+     *
+     * @param propositionId The retired proposition.
+     * @return The undo record.
+     */
     private fun retired(propositionId: String): RetiredProposition = RetiredProposition(
         propositionId = propositionId,
         priorStatus = PropositionStatus.ACTIVE,
@@ -90,6 +119,15 @@ abstract class AbstractCollectorTraceStoreContractTest {
         foldedProvenanceEvidenceKeys = listOf("$propositionId-evidence-key"),
     )
 
+    /**
+     * Builds a merge decision that keeps one proposition and retires another.
+     *
+     * @param runId The run that made the decision.
+     * @param componentId The component the decision covers.
+     * @param survivorId The proposition that is kept.
+     * @param retiredId The proposition that is retired.
+     * @return The decision.
+     */
     private fun decision(
         runId: String,
         componentId: String,
