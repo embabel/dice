@@ -18,6 +18,7 @@ package com.embabel.dice.metamodel
 import org.jetbrains.annotations.ApiStatus
 
 import com.embabel.agent.core.ContextId
+import com.fasterxml.jackson.annotation.JsonIgnore
 import java.util.Objects
 
 /**
@@ -54,6 +55,7 @@ class DriftCheckResult(
     val contextId: ContextId? get() = report.contextId
 
     /** [contextId] as a plain string, for Java callers. `null` when the check covered the whole graph. */
+    @get:JsonIgnore
     val contextIdValue: String? get() = report.contextIdValue
 
     /** Entity type names the graph held but the schema never declared. */

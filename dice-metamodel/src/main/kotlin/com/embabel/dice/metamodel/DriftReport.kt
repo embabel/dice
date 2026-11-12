@@ -18,6 +18,7 @@ package com.embabel.dice.metamodel
 import org.jetbrains.annotations.ApiStatus
 
 import com.embabel.agent.core.ContextId
+import com.fasterxml.jackson.annotation.JsonIgnore
 import java.time.Instant
 import java.util.Objects
 
@@ -84,6 +85,7 @@ class DriftReport @JvmOverloads constructor(
     val driftedRelationshipTypes: Set<String> = immutableCopy(driftedRelationshipTypes)
 
     /** [contextId] as a plain string, for Java callers. `null` when the check covered the whole graph. */
+    @get:JsonIgnore
     val contextIdValue: String? get() = contextId?.value
 
     /** `true` when this check found anything undeclared at all. */

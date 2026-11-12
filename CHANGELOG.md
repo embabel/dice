@@ -163,7 +163,7 @@ and the consumer PRs that deliver it).
   `CollectorRunContext`, `CollapseUndoCommand`, `DriftReport` and `DriftCheckResult` gain
   `getContextIdValue()`. `CollapseUndoContextMismatchException` gains `getCommandedContextIdValue()`
   and `getActualContextIdValue()`. Each returns the `ContextId` as a `String`, and the typed Kotlin
-  properties are unchanged. In the `dice` module the new getters are left out of Jackson output, so
+  properties are unchanged. The new getters are left out of Jackson output in every module, so
   the JSON form of events and reports is the same as before. `BookmarkKey`, `HashKey`,
   `CollectorRunContext` and `CollapseUndoCommand` also gain a static `of(...)` factory that takes
   the context id as a `String`, because Java cannot call their constructors.
