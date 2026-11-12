@@ -180,6 +180,12 @@ data class Proposition(
         const val PREDICATE = "predicate"
 
         /**
+         * The decay-rate multiplier `k` that [effectiveConfidence], [effectiveConfidenceAt] and
+         * [withDecayApplied] use when the caller passes none.
+         */
+        const val DEFAULT_DECAY_K: Double = 2.0
+
+        /**
          * Java-friendly factory method to create a Proposition.
          */
         @JvmStatic
@@ -381,7 +387,8 @@ data class Proposition(
      * @param k Decay rate multiplier (default 2.0 from GUM paper)
      * @return Effective confidence after decay
      */
-    fun effectiveConfidence(k: Double = 2.0): Double =
+    @JvmOverloads
+    fun effectiveConfidence(k: Double = DEFAULT_DECAY_K): Double =
         effectiveConfidenceAt(Instant.now(), k)
 
     /**
@@ -393,7 +400,8 @@ data class Proposition(
      * @param k Decay rate multiplier (default 2.0 from GUM paper)
      * @return Effective confidence after decay as of the given time
      */
-    fun effectiveConfidenceAt(asOf: Instant, k: Double = 2.0): Double {
+    @JvmOverloads
+    fun effectiveConfidenceAt(asOf: Instant, k: Double = DEFAULT_DECAY_K): Double {
         val t = temporal
         // Explicit retraction zeroes the fact out in any mode.
         if (t?.invalidatedAt != null && !t.invalidatedAt.isAfter(asOf)) return 0.0
@@ -428,7 +436,8 @@ data class Proposition(
      * @param k Decay rate multiplier (default 2.0 from GUM paper)
      * @return Proposition with decayed confidence
      */
-    fun withDecayApplied(k: Double = 2.0): Proposition {
+    @JvmOverloads
+    fun withDecayApplied(k: Double = DEFAULT_DECAY_K): Proposition {
         val effectiveConf = effectiveConfidence(k).coerceIn(0.0, 1.0)
         return copy(confidence = effectiveConf)
     }
