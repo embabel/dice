@@ -3993,6 +3993,7 @@ public final class com/embabel/dice/proposition/Proposition : com/embabel/agent/
 	public static final fun create (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;DDDLjava/lang/String;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/PropositionStatus;ILjava/util/List;ILjava/util/Map;Ljava/lang/String;Lcom/embabel/dice/temporal/TemporalMetadata;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;)Lcom/embabel/dice/proposition/Proposition;
 	public static final fun create (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;DDDLjava/lang/String;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/PropositionStatus;ILjava/util/List;ILjava/util/Map;Ljava/lang/String;Lcom/embabel/dice/temporal/TemporalMetadata;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;Z)Lcom/embabel/dice/proposition/Proposition;
 	public static final fun create (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;DDLjava/lang/String;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/PropositionStatus;)Lcom/embabel/dice/proposition/Proposition;
+	public static final fun draft (Ljava/lang/String;Ljava/lang/String;D)Lcom/embabel/dice/proposition/PropositionDraft;
 	public final fun effectiveConfidence ()D
 	public final fun effectiveConfidence (D)D
 	public static synthetic fun effectiveConfidence$default (Lcom/embabel/dice/proposition/Proposition;DILjava/lang/Object;)D
@@ -4028,6 +4029,7 @@ public final class com/embabel/dice/proposition/Proposition : com/embabel/agent/
 	public fun getUri ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun infoString (Ljava/lang/Boolean;I)Ljava/lang/String;
+	public final fun toDraft ()Lcom/embabel/dice/proposition/PropositionDraft;
 	public fun toString ()Ljava/lang/String;
 	public final fun withConfidence (D)Lcom/embabel/dice/proposition/Proposition;
 	public final fun withDecayApplied ()Lcom/embabel/dice/proposition/Proposition;
@@ -4060,6 +4062,86 @@ public final class com/embabel/dice/proposition/Proposition$Companion {
 	public final fun create (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;DDDLjava/lang/String;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/PropositionStatus;ILjava/util/List;ILjava/util/Map;Ljava/lang/String;Lcom/embabel/dice/temporal/TemporalMetadata;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;Z)Lcom/embabel/dice/proposition/Proposition;
 	public final fun create (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;DDLjava/lang/String;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/PropositionStatus;)Lcom/embabel/dice/proposition/Proposition;
 	public static synthetic fun create$default (Lcom/embabel/dice/proposition/Proposition$Companion;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;DDDLjava/lang/String;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/PropositionStatus;ILjava/util/List;ILjava/util/Map;Ljava/lang/String;Lcom/embabel/dice/temporal/TemporalMetadata;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;ZILjava/lang/Object;)Lcom/embabel/dice/proposition/Proposition;
+	public final fun draft (Ljava/lang/String;Ljava/lang/String;D)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final synthetic fun invoke-g40hbQQ (Ljava/lang/String;Ljava/lang/String;DLkotlin/jvm/functions/Function1;)Lcom/embabel/dice/proposition/Proposition;
+}
+
+public final class com/embabel/dice/proposition/PropositionDraft {
+	public final fun getConfidence ()D
+	public final fun getContentRevised ()Ljava/time/Instant;
+	public final fun getContextId-SSYM5D4 ()Ljava/lang/String;
+	public final fun getContextIdValue ()Ljava/lang/String;
+	public final fun getCreated ()Ljava/time/Instant;
+	public final fun getDecay ()D
+	public final fun getGrounding ()Ljava/util/List;
+	public final fun getId ()Ljava/lang/String;
+	public final fun getImportance ()D
+	public final fun getLastAccessed ()Ljava/time/Instant;
+	public final fun getLevel ()I
+	public final fun getMentions ()Ljava/util/List;
+	public final fun getMetadata ()Ljava/util/Map;
+	public final fun getMetadataRevised ()Ljava/time/Instant;
+	public final fun getPinned ()Z
+	public final fun getProvenanceEntries ()Ljava/util/List;
+	public final fun getReasoning ()Ljava/lang/String;
+	public final fun getReinforceCount ()I
+	public final fun getSourceIds ()Ljava/util/List;
+	public final fun getStatus ()Lcom/embabel/dice/proposition/PropositionStatus;
+	public final fun getTemporal ()Lcom/embabel/dice/temporal/TemporalMetadata;
+	public final fun getText ()Ljava/lang/String;
+	public final fun getUri ()Ljava/lang/String;
+	public final fun toProposition ()Lcom/embabel/dice/proposition/Proposition;
+	public fun toString ()Ljava/lang/String;
+	public final fun withConfidence (D)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withContentRevised (Ljava/time/Instant;)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withCreated (Ljava/time/Instant;)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withDecay (D)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withGrounding (Ljava/util/List;)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withId (Ljava/lang/String;)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withImportance (D)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withLastAccessed (Ljava/time/Instant;)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withLevel (I)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withMentions (Ljava/util/List;)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withMetadata (Ljava/util/Map;)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withMetadataRevised (Ljava/time/Instant;)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withPinned (Z)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withProvenance (Ljava/util/List;)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withReasoning (Ljava/lang/String;)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withReinforceCount (I)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withSourceIds (Ljava/util/List;)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withStatus (Lcom/embabel/dice/proposition/PropositionStatus;)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withTemporal (Lcom/embabel/dice/temporal/TemporalMetadata;)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withText (Ljava/lang/String;)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withUri (Ljava/lang/String;)Lcom/embabel/dice/proposition/PropositionDraft;
+}
+
+public final class com/embabel/dice/proposition/PropositionDraftBuilder {
+	public final fun contentRevised (Ljava/time/Instant;)V
+	public final fun created (Ljava/time/Instant;)V
+	public final fun decay (D)V
+	public final fun grounding (Ljava/util/List;)V
+	public final fun grounding ([Ljava/lang/String;)V
+	public final fun id (Ljava/lang/String;)V
+	public final fun importance (D)V
+	public final fun lastAccessed (Ljava/time/Instant;)V
+	public final fun level (I)V
+	public final fun mentions (Ljava/util/List;)V
+	public final fun mentions ([Lcom/embabel/dice/proposition/EntityMention;)V
+	public final fun metadata (Ljava/util/Map;)V
+	public final fun metadataRevised (Ljava/time/Instant;)V
+	public final fun pinned (Z)V
+	public static synthetic fun pinned$default (Lcom/embabel/dice/proposition/PropositionDraftBuilder;ZILjava/lang/Object;)V
+	public final fun provenance (Ljava/util/List;)V
+	public final fun reasoning (Ljava/lang/String;)V
+	public final fun reinforceCount (I)V
+	public final fun sourceIds (Ljava/util/List;)V
+	public final fun sourceIds ([Ljava/lang/String;)V
+	public final fun status (Lcom/embabel/dice/proposition/PropositionStatus;)V
+	public final fun temporal (Lcom/embabel/dice/temporal/TemporalMetadata;)V
+	public final fun uri (Ljava/lang/String;)V
+}
+
+public abstract interface annotation class com/embabel/dice/proposition/PropositionDsl : java/lang/annotation/Annotation {
 }
 
 public abstract interface class com/embabel/dice/proposition/PropositionExtractor {

@@ -140,6 +140,57 @@ across threads without ceremony.
 Java callers get a `Proposition.create(...)` factory and `getContextIdValue()` for the value-class
 `ContextId`.
 
+==== Building a proposition
+
+Extraction builds propositions for you. To build one yourself, for a fixture or an import, start a
+draft with the context, the text and the confidence, name the other fields you know, and finish
+with `toProposition()`.
+
+[source,java]
+----
+Proposition fact = Proposition.draft("acme", "Alice lives in Paris", 0.9)
+        .withGrounding(List.of("chunk-1"))
+        .withDecay(0.1)
+        .withReasoning("Stated in the onboarding call")
+        .toProposition();
+----
+
+In Kotlin the same steps go in a block.
+
+[source,kotlin]
+----
+val fact = Proposition(ContextId("acme"), "Alice lives in Paris", confidence = 0.9) {
+    grounding("chunk-1")
+    decay(0.1)
+    reasoning("Stated in the onboarding call")
+}
+----
+
+Each step returns a new draft and leaves the one it is called on as it was, so a half-built draft
+can be kept and reused. A draft takes its own read-only copy of each list and of the metadata map
+it is given. It does not copy what those values hold: the lists inside a `TemporalMetadata`, the
+hints map inside an `EntityMention` and the values in the metadata map are kept as given, as
+`Proposition` keeps them. A value out of range is rejected by `toProposition()` with the same
+`IllegalArgumentException` the constructor throws.
+
+A time that is not set is filled in by `toProposition()`. `created` and `contentRevised` stand in
+for each other: with one of them set the other takes its value, and with neither set both are the
+moment `toProposition()` runs. `metadataRevised` and `lastAccessed` take the value `contentRevised`
+ends up with.
+
+A draft without an id gets a new id on every `toProposition()` call. `withId` fixes the id. For two
+calls to build equal propositions, also set a time with `withCreated` or `withContentRevised`.
+
+`toDraft()` starts a draft from an existing proposition. It copies a proposition with some fields
+changed and leaves its revision times alone, which the `with*` methods on `Proposition` do not.
+
+[source,java]
+----
+Proposition touched = fact.toDraft()
+        .withLastAccessed(Instant.now())
+        .toProposition();
+----
+
 .Try it now
 [source,java]
 ----

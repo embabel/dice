@@ -178,6 +178,16 @@ and the consumer PRs that deliver it).
   the context id as a `String`, because Java cannot call their constructors.
   **Compatibility: additive.**
 
+- A `Proposition` can be built step by step. `Proposition.draft(contextIdValue, text, confidence)`
+  returns a `PropositionDraft` with a `with*` step for every value except the context id
+  and `toProposition()` at the end, so Java names each value where `Proposition.create` takes eleven
+  positional arguments. Each step returns a new draft and leaves the one it is called on as it was.
+  `Proposition.toDraft()` starts a draft from an existing proposition. Kotlin has the same steps in
+  a block, `Proposition(contextId, text, confidence) { decay(0.1) }`. Validation is the
+  constructor's, with the same messages. `Proposition.create` and the constructor are unchanged.
+  A Kotlin project that declares its own function `Proposition(ContextId, String, Double, block)`
+  resolves that call to the library's entry once it is recompiled. **Compatibility: additive.**
+
 - `PropositionPipeline` checks each mention an extractor returns against the text of its own
   proposition before entity resolution, and emits one `UngroundedMentionsFound` event per chunk
   listing every mention whose span is blank or does not appear in that text, with the reason. The
