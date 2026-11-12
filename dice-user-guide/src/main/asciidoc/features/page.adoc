@@ -34,6 +34,9 @@ never have to guess whether a feature is active.
 
 | <<features-prolog-inference>>
 | A `PrologProjector` bean. Experimental.
+
+| <<features-scoped-reads>>
+| A store that lists `StoreCapability.SCOPED_READS`. Experimental.
 |===
 
 include::graph-storage.adoc[]
@@ -51,3 +54,5 @@ include::web-api.adoc[]
 include::api-key-security.adoc[]
 
 include::prolog-inference.adoc[]
+
+include::scoped-reads.adoc[]
