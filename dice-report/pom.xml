@@ -80,6 +80,11 @@
                     </args>
                 </configuration>
             </plugin>
+            <plugin>
+                <!-- Fails verify when the public API differs from api/dice-report*.api -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+            </plugin>
         </plugins>
     </build>
 

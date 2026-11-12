@@ -1,0 +1,1391 @@
+public final class com/embabel/dice/agent/GovernanceTools {
+	public static final field Companion Lcom/embabel/dice/agent/GovernanceTools$Companion;
+	public fun <init> (Lcom/embabel/dice/governance/GovernanceOperationsService;)V
+	public static final fun asTools (Lcom/embabel/dice/governance/GovernanceOperationsService;)Ljava/util/List;
+	public final fun declaredSchemaVersion ()Lcom/embabel/agent/api/tool/Tool$Result;
+	public final fun driftReportsInContext (Ljava/lang/String;ILjava/lang/String;)Lcom/embabel/agent/api/tool/Tool$Result;
+	public static synthetic fun driftReportsInContext$default (Lcom/embabel/dice/agent/GovernanceTools;Ljava/lang/String;ILjava/lang/String;ILjava/lang/Object;)Lcom/embabel/agent/api/tool/Tool$Result;
+	public final fun latestDriftReports (ILjava/lang/String;)Lcom/embabel/agent/api/tool/Tool$Result;
+	public static synthetic fun latestDriftReports$default (Lcom/embabel/dice/agent/GovernanceTools;ILjava/lang/String;ILjava/lang/Object;)Lcom/embabel/agent/api/tool/Tool$Result;
+	public final fun releaseQuarantinedProposition (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/agent/api/tool/Tool$Result;
+	public final fun runDriftCheck (Ljava/lang/String;)Lcom/embabel/agent/api/tool/Tool$Result;
+	public static synthetic fun runDriftCheck$default (Lcom/embabel/dice/agent/GovernanceTools;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/agent/api/tool/Tool$Result;
+}
+
+public final class com/embabel/dice/agent/GovernanceTools$Companion {
+	public final fun asTools (Lcom/embabel/dice/governance/GovernanceOperationsService;)Ljava/util/List;
+}
+
+public final class com/embabel/dice/common/ExtractionRunTransitioned : com/embabel/dice/common/DiceEvent {
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRun;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRun;Ljava/time/Instant;)V
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRun;Ljava/time/Instant;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun component2 ()Ljava/time/Instant;
+	public final fun copy (Lcom/embabel/dice/proposition/extraction/ExtractionRun;Ljava/time/Instant;)Lcom/embabel/dice/common/ExtractionRunTransitioned;
+	public static synthetic fun copy$default (Lcom/embabel/dice/common/ExtractionRunTransitioned;Lcom/embabel/dice/proposition/extraction/ExtractionRun;Ljava/time/Instant;ILjava/lang/Object;)Lcom/embabel/dice/common/ExtractionRunTransitioned;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getRun ()Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public fun getTimestamp ()Ljava/time/Instant;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/governance/DeclaredVersionDto {
+	public static final field Companion Lcom/embabel/dice/governance/DeclaredVersionDto$Companion;
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;ZLjava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/util/List;
+	public final fun component4 ()Ljava/util/List;
+	public final fun component5 ()Z
+	public final fun component6 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;ZLjava/lang/String;)Lcom/embabel/dice/governance/DeclaredVersionDto;
+	public static synthetic fun copy$default (Lcom/embabel/dice/governance/DeclaredVersionDto;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;ZLjava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/governance/DeclaredVersionDto;
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun from (Lcom/embabel/dice/metamodel/MetamodelVersion;ZLcom/embabel/dice/metamodel/MetamodelVersion;)Lcom/embabel/dice/governance/DeclaredVersionDto;
+	public final fun getContentHash ()Ljava/lang/String;
+	public final fun getEntityTypeNames ()Ljava/util/List;
+	public final fun getRelationshipNames ()Ljava/util/List;
+	public final fun getSchemaName ()Ljava/lang/String;
+	public final fun getStamped ()Z
+	public final fun getSweptVersionHash ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/governance/DeclaredVersionDto$Companion {
+	public final fun from (Lcom/embabel/dice/metamodel/MetamodelVersion;ZLcom/embabel/dice/metamodel/MetamodelVersion;)Lcom/embabel/dice/governance/DeclaredVersionDto;
+}
+
+public final class com/embabel/dice/governance/DriftCheckDto {
+	public static final field Companion Lcom/embabel/dice/governance/DriftCheckDto$Companion;
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;ZZLcom/embabel/dice/governance/MetamodelDiffDto;Lcom/embabel/dice/governance/MetamodelDiffDto;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component10 ()Lcom/embabel/dice/governance/MetamodelDiffDto;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Ljava/util/List;
+	public final fun component6 ()Ljava/util/List;
+	public final fun component7 ()Z
+	public final fun component8 ()Z
+	public final fun component9 ()Lcom/embabel/dice/governance/MetamodelDiffDto;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;ZZLcom/embabel/dice/governance/MetamodelDiffDto;Lcom/embabel/dice/governance/MetamodelDiffDto;)Lcom/embabel/dice/governance/DriftCheckDto;
+	public static synthetic fun copy$default (Lcom/embabel/dice/governance/DriftCheckDto;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;ZZLcom/embabel/dice/governance/MetamodelDiffDto;Lcom/embabel/dice/governance/MetamodelDiffDto;ILjava/lang/Object;)Lcom/embabel/dice/governance/DriftCheckDto;
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun from (Lcom/embabel/dice/metamodel/DriftCheckResult;)Lcom/embabel/dice/governance/DriftCheckDto;
+	public final fun getCapturedAt ()Ljava/lang/String;
+	public final fun getContextId ()Ljava/lang/String;
+	public final fun getDeclaredDiff ()Lcom/embabel/dice/governance/MetamodelDiffDto;
+	public final fun getDriftedEntityTypes ()Ljava/util/List;
+	public final fun getDriftedRelationshipTypes ()Ljava/util/List;
+	public final fun getHasAnyChange ()Z
+	public final fun getHasDrift ()Z
+	public final fun getSchemaName ()Ljava/lang/String;
+	public final fun getSweepImpact ()Lcom/embabel/dice/governance/MetamodelDiffDto;
+	public final fun getVersionHash ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/governance/DriftCheckDto$Companion {
+	public final fun from (Lcom/embabel/dice/metamodel/DriftCheckResult;)Lcom/embabel/dice/governance/DriftCheckDto;
+}
+
+public final class com/embabel/dice/governance/DriftReportDto {
+	public static final field Companion Lcom/embabel/dice/governance/DriftReportDto$Companion;
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;ZLcom/embabel/dice/governance/MetamodelDiffDto;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Ljava/util/List;
+	public final fun component6 ()Ljava/util/List;
+	public final fun component7 ()Z
+	public final fun component8 ()Lcom/embabel/dice/governance/MetamodelDiffDto;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;ZLcom/embabel/dice/governance/MetamodelDiffDto;)Lcom/embabel/dice/governance/DriftReportDto;
+	public static synthetic fun copy$default (Lcom/embabel/dice/governance/DriftReportDto;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;ZLcom/embabel/dice/governance/MetamodelDiffDto;ILjava/lang/Object;)Lcom/embabel/dice/governance/DriftReportDto;
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun from (Lcom/embabel/dice/metamodel/DriftReport;)Lcom/embabel/dice/governance/DriftReportDto;
+	public final fun getCapturedAt ()Ljava/lang/String;
+	public final fun getContextId ()Ljava/lang/String;
+	public final fun getDeclaredDiff ()Lcom/embabel/dice/governance/MetamodelDiffDto;
+	public final fun getDriftedEntityTypes ()Ljava/util/List;
+	public final fun getDriftedRelationshipTypes ()Ljava/util/List;
+	public final fun getHasDrift ()Z
+	public final fun getSchemaName ()Ljava/lang/String;
+	public final fun getVersionHash ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/governance/DriftReportDto$Companion {
+	public final fun from (Lcom/embabel/dice/metamodel/DriftReport;)Lcom/embabel/dice/governance/DriftReportDto;
+}
+
+public final class com/embabel/dice/governance/GovernanceOperationsService {
+	public static final field Companion Lcom/embabel/dice/governance/GovernanceOperationsService$Companion;
+	public static final field DEFAULT_REPORT_LIMIT I
+	public static final field MAX_REPORT_LIMIT I
+	public static final field MIN_REPORT_LIMIT I
+	public fun <init> (Lcom/embabel/dice/metamodel/DeclaredSchemaSource;Lcom/embabel/dice/metamodel/MetamodelVersionStore;Lcom/embabel/dice/metamodel/DriftReportStore;Lcom/embabel/dice/metamodel/DriftCheckRunner;Lcom/embabel/dice/spi/DriftSweepCapable;Lcom/embabel/dice/proposition/PropositionStore;)V
+	public final fun currentDeclaredVersion ()Lcom/embabel/dice/governance/DeclaredVersionDto;
+	public final fun latestReports (I)Ljava/util/List;
+	public final fun latestReports (ILjava/time/Instant;)Ljava/util/List;
+	public static synthetic fun latestReports$default (Lcom/embabel/dice/governance/GovernanceOperationsService;ILjava/time/Instant;ILjava/lang/Object;)Ljava/util/List;
+	public final fun releaseProposition (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/governance/ReleasedPropositionDto;
+	public final fun reportsInContext (Ljava/lang/String;I)Ljava/util/List;
+	public final fun reportsInContext (Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public static synthetic fun reportsInContext$default (Lcom/embabel/dice/governance/GovernanceOperationsService;Ljava/lang/String;ILjava/time/Instant;ILjava/lang/Object;)Ljava/util/List;
+	public final fun runCheck ()Lcom/embabel/dice/governance/DriftCheckDto;
+	public final fun runCheck (Ljava/lang/String;)Lcom/embabel/dice/governance/DriftCheckDto;
+	public static synthetic fun runCheck$default (Lcom/embabel/dice/governance/GovernanceOperationsService;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/governance/DriftCheckDto;
+}
+
+public final class com/embabel/dice/governance/GovernanceOperationsService$Companion {
+}
+
+public final class com/embabel/dice/governance/GovernanceRequestException : java/lang/RuntimeException {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class com/embabel/dice/governance/MetamodelDiffDto {
+	public static final field Companion Lcom/embabel/dice/governance/MetamodelDiffDto$Companion;
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;ZLjava/util/List;Ljava/util/List;Ljava/util/List;Ljava/util/List;Ljava/util/List;Ljava/util/List;Ljava/util/List;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component10 ()Ljava/util/List;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Z
+	public final fun component4 ()Ljava/util/List;
+	public final fun component5 ()Ljava/util/List;
+	public final fun component6 ()Ljava/util/List;
+	public final fun component7 ()Ljava/util/List;
+	public final fun component8 ()Ljava/util/List;
+	public final fun component9 ()Ljava/util/List;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;ZLjava/util/List;Ljava/util/List;Ljava/util/List;Ljava/util/List;Ljava/util/List;Ljava/util/List;Ljava/util/List;)Lcom/embabel/dice/governance/MetamodelDiffDto;
+	public static synthetic fun copy$default (Lcom/embabel/dice/governance/MetamodelDiffDto;Ljava/lang/String;Ljava/lang/String;ZLjava/util/List;Ljava/util/List;Ljava/util/List;Ljava/util/List;Ljava/util/List;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/governance/MetamodelDiffDto;
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun from (Lcom/embabel/dice/metamodel/MetamodelDiff;)Lcom/embabel/dice/governance/MetamodelDiffDto;
+	public final fun getAddedEntityTypes ()Ljava/util/List;
+	public final fun getAddedRelationships ()Ljava/util/List;
+	public final fun getChangedProperties ()Ljava/util/List;
+	public final fun getEmpty ()Z
+	public final fun getFromVersionHash ()Ljava/lang/String;
+	public final fun getModifiedEntityTypes ()Ljava/util/List;
+	public final fun getRemovedEntityTypes ()Ljava/util/List;
+	public final fun getRemovedRelationships ()Ljava/util/List;
+	public final fun getRenamedEntityTypes ()Ljava/util/List;
+	public final fun getToVersionHash ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/governance/MetamodelDiffDto$Companion {
+	public final fun from (Lcom/embabel/dice/metamodel/MetamodelDiff;)Lcom/embabel/dice/governance/MetamodelDiffDto;
+}
+
+public final class com/embabel/dice/governance/PropertyChangeDto {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/governance/PropertyChangeDto;
+	public static synthetic fun copy$default (Lcom/embabel/dice/governance/PropertyChangeDto;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/governance/PropertyChangeDto;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAfter ()Ljava/lang/String;
+	public final fun getBefore ()Ljava/lang/String;
+	public final fun getPropertyName ()Ljava/lang/String;
+	public final fun getRenamedTo ()Ljava/lang/String;
+	public final fun getTypeName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/governance/ReleasedPropositionDto {
+	public static final field Companion Lcom/embabel/dice/governance/ReleasedPropositionDto$Companion;
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZLjava/lang/String;Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Z
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZLjava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/governance/ReleasedPropositionDto;
+	public static synthetic fun copy$default (Lcom/embabel/dice/governance/ReleasedPropositionDto;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZLjava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/governance/ReleasedPropositionDto;
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun from (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/governance/ReleasedPropositionDto;
+	public final fun getContextId ()Ljava/lang/String;
+	public final fun getMetadataRevised ()Ljava/lang/String;
+	public final fun getPropositionId ()Ljava/lang/String;
+	public final fun getQuarantineReason ()Ljava/lang/String;
+	public final fun getQuarantined ()Z
+	public final fun getStatus ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/governance/ReleasedPropositionDto$Companion {
+	public final fun from (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/governance/ReleasedPropositionDto;
+}
+
+public final class com/embabel/dice/governance/TypeRenameDto {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/governance/TypeRenameDto;
+	public static synthetic fun copy$default (Lcom/embabel/dice/governance/TypeRenameDto;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/governance/TypeRenameDto;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAfter ()Ljava/lang/String;
+	public final fun getBefore ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class com/embabel/dice/projection/prolog/PrologProjector : com/embabel/dice/proposition/Projector {
+	public abstract fun project (Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/agent/core/DataDictionary;)Lcom/embabel/dice/proposition/ProjectionResult;
+	public abstract fun projectAll (Ljava/util/List;)Lcom/embabel/dice/projection/prolog/PrologProjectionResult;
+	public abstract fun projectRelationship (Lcom/embabel/dice/projection/graph/ProjectedRelationship;)Lcom/embabel/dice/projection/prolog/PrologFact;
+}
+
+public final class com/embabel/dice/proposition/PropositionPersistenceResult {
+	public static final field Companion Lcom/embabel/dice/proposition/PropositionPersistenceResult$Companion;
+	public static final field EMPTY Lcom/embabel/dice/proposition/PropositionPersistenceResult;
+	public synthetic fun <init> (Ljava/util/List;Ljava/util/Map;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun canonicalIdOf (Ljava/lang/String;)Ljava/lang/String;
+	public final fun getCanonicalIdByInputId ()Ljava/util/Map;
+	public final fun getCanonicalIds ()Ljava/util/List;
+	public final fun getCanonicalPropositions ()Ljava/util/List;
+	public final fun getDedupedInputIds ()Ljava/util/List;
+	public final fun getDistinctCanonicalPropositions ()Ljava/util/List;
+	public final fun isIdentity ()Z
+	public static final fun of (Ljava/util/List;Ljava/util/List;)Lcom/embabel/dice/proposition/PropositionPersistenceResult;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/PropositionPersistenceResult$Companion {
+	public final fun of (Ljava/util/List;Ljava/util/List;)Lcom/embabel/dice/proposition/PropositionPersistenceResult;
+}
+
+public abstract interface class com/embabel/dice/proposition/ProvenanceScanningSourceRevisionQueries : com/embabel/dice/proposition/PropositionStore, com/embabel/dice/proposition/SourceRevisionQueryCapable {
+	public fun findBySourceKey (Ljava/lang/String;Ljava/lang/String;)Ljava/util/List;
+	public fun findBySourceRevision (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceRevisionRef;)Ljava/util/List;
+	public fun findRevisionlessBySourceLocator (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceLocator;)Ljava/util/List;
+}
+
+public abstract interface class com/embabel/dice/proposition/ProvenanceSubtractionCapable {
+	public fun getSupportsProvenanceSubtraction ()Z
+	public abstract fun subtractFoldedEvidence (Ljava/lang/String;Ljava/util/List;Ljava/util/Collection;Ljava/util/Collection;)Lcom/embabel/dice/proposition/Proposition;
+	public fun subtractProvenance (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/proposition/Proposition;
+}
+
+public abstract interface class com/embabel/dice/proposition/SourceRevisionQueryCapable {
+	public abstract fun findBySourceKey (Ljava/lang/String;Ljava/lang/String;)Ljava/util/List;
+	public fun findBySourceKey-3HJnzs4 (Ljava/lang/String;Ljava/lang/String;)Ljava/util/List;
+	public abstract fun findBySourceRevision (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceRevisionRef;)Ljava/util/List;
+	public fun findBySourceRevision-3HJnzs4 (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceRevisionRef;)Ljava/util/List;
+	public abstract fun findRevisionlessBySourceLocator (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceLocator;)Ljava/util/List;
+	public fun findRevisionlessBySourceLocator-3HJnzs4 (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceLocator;)Ljava/util/List;
+	public fun getSupportsSourceRevisionQueries ()Z
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionActorRef : com/embabel/dice/proposition/extraction/ExtractionOpaqueRef {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionCohortRef : com/embabel/dice/proposition/extraction/ExtractionOpaqueRef {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionContentProfileRef {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef$Companion;
+	public static final field MAX_NAME_LENGTH I
+	public static final field MAX_VERSION_LENGTH I
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getName ()Ljava/lang/String;
+	public final fun getVersion ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionContentProfileRef$Companion {
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionDeploymentRef : com/embabel/dice/proposition/extraction/ExtractionOpaqueRef {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionExperimentRef : com/embabel/dice/proposition/extraction/ExtractionOpaqueRef {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionFailure {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionFailure$Companion;
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;Ljava/time/Instant;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;)V
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+	public final fun component2 ()Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;
+	public final fun component3 ()Ljava/lang/Integer;
+	public final fun component4 ()Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;
+	public final fun component5 ()Ljava/time/Instant;
+	public final fun component6 ()Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;
+	public final fun copy (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionFailure;Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAt ()Ljava/time/Instant;
+	public final fun getCode ()Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+	public final fun getInvocation ()Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;
+	public final fun getMeasure ()Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;
+	public final fun getProviderStatus ()Ljava/lang/Integer;
+	public final fun getStage ()Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;
+	public fun hashCode ()I
+	public static final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+	public static final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+	public static final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+	public static final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+	public static final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;Ljava/time/Instant;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+	public static final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionFailure$Companion {
+	public final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+	public final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+	public final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+	public final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+	public final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;Ljava/time/Instant;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+	public final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+	public static synthetic fun of$default (Lcom/embabel/dice/proposition/extraction/ExtractionFailure$Companion;Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionFailure;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionFailureCode : java/lang/Enum {
+	public static final field CANCELLED Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+	public static final field DECODE_FAILED Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+	public static final field INTERNAL Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+	public static final field MODEL_REFUSED Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+	public static final field MODEL_TIMEOUT Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+	public static final field MODEL_UNAVAILABLE Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+	public static final field PERSISTENCE_FAILED Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+	public static final field RATE_LIMITED Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+	public static final field SCHEMA_VIOLATION Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+	public static final field SOURCE_UNAVAILABLE Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+	public static final field UNCLASSIFIED Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+	public static fun values ()[Lcom/embabel/dice/proposition/extraction/ExtractionFailureCode;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionFailureMeasure {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure$Companion;
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;J)V
+	public final fun component1 ()Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;
+	public final fun component2 ()J
+	public final fun copy (Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;J)Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;JILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getQuantity ()Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;
+	public final fun getValue ()J
+	public fun hashCode ()I
+	public static final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;J)Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionFailureMeasure$Companion {
+	public final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;J)Lcom/embabel/dice/proposition/extraction/ExtractionFailureMeasure;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionFailureQuantity : java/lang/Enum {
+	public static final field BYTE_COUNT Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;
+	public static final field CHARACTER_COUNT Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;
+	public static final field ELAPSED_MILLIS Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;
+	public static final field ITEM_COUNT Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;
+	public static final field LIMIT_MILLIS Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;
+	public static final field RETRY_AFTER_SECONDS Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;
+	public static final field TOKEN_COUNT Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;
+	public static fun values ()[Lcom/embabel/dice/proposition/extraction/ExtractionFailureQuantity;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionFailureStage : java/lang/Enum {
+	public static final field CHUNKING Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;
+	public static final field ENTITY_RESOLUTION Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;
+	public static final field GATING Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;
+	public static final field MODEL_CALL Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;
+	public static final field PERSISTENCE Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;
+	public static final field PLANNING Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;
+	public static final field PROMPT_RENDER Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;
+	public static final field RESPONSE_DECODE Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;
+	public static final field SCHEMA_CHECK Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;
+	public static final field SOURCE_READ Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;
+	public static fun values ()[Lcom/embabel/dice/proposition/extraction/ExtractionFailureStage;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionInvocationId {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId$Companion;
+	public fun <init> (II)V
+	public final fun component1 ()I
+	public final fun component2 ()I
+	public final fun copy (II)Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;IIILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAttempt ()I
+	public final fun getInvocationIndex ()I
+	public fun hashCode ()I
+	public final fun nextAttempt ()Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;
+	public static final fun planned (I)Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionInvocationId$Companion {
+	public final fun planned (I)Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionInvocationOutcome : java/lang/Enum {
+	public static final field CANCELLED Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;
+	public static final field FAILED Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;
+	public static final field IN_FLIGHT Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;
+	public static final field SUCCEEDED Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun isTerminal ()Z
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;
+	public static fun values ()[Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionInvocationRecord {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionInvocationRecord$Companion;
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;Ljava/lang/String;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;Ljava/lang/String;Ljava/time/Instant;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;Ljava/lang/String;Ljava/time/Instant;Ljava/time/Instant;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;Ljava/lang/String;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;Ljava/lang/String;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;)V
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;Ljava/lang/String;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;
+	public final fun component2 ()Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/time/Instant;
+	public final fun component5 ()Ljava/time/Instant;
+	public final fun component6 ()Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public final fun component7 ()Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+	public final fun copy (Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;Ljava/lang/String;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;)Lcom/embabel/dice/proposition/extraction/ExtractionInvocationRecord;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionInvocationRecord;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;Ljava/lang/String;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionInvocationRecord;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAttempt ()I
+	public final fun getConfiguredService ()Ljava/lang/String;
+	public final fun getFinishedAt ()Ljava/time/Instant;
+	public final fun getId ()Lcom/embabel/dice/proposition/extraction/ExtractionInvocationId;
+	public final fun getInvocationIndex ()I
+	public final fun getOutcome ()Lcom/embabel/dice/proposition/extraction/ExtractionInvocationOutcome;
+	public final fun getProviderResponse ()Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+	public final fun getStartedAt ()Ljava/time/Instant;
+	public final fun getUsage ()Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public fun hashCode ()I
+	public static final fun plan (I)Ljava/util/List;
+	public static final fun planned (I)Lcom/embabel/dice/proposition/extraction/ExtractionInvocationRecord;
+	public final fun retry ()Lcom/embabel/dice/proposition/extraction/ExtractionInvocationRecord;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionInvocationRecord$Companion {
+	public final fun plan (I)Ljava/util/List;
+	public final fun planned (I)Lcom/embabel/dice/proposition/extraction/ExtractionInvocationRecord;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionModelUsage {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage$Companion;
+	public fun <init> ()V
+	public fun <init> (Ljava/lang/Integer;)V
+	public fun <init> (Ljava/lang/Integer;Ljava/lang/Integer;)V
+	public fun <init> (Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)V
+	public fun <init> (Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)V
+	public fun <init> (Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)V
+	public synthetic fun <init> (Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/Integer;
+	public final fun component2 ()Ljava/lang/Integer;
+	public final fun component3 ()Ljava/lang/Integer;
+	public final fun component4 ()Ljava/lang/Integer;
+	public final fun component5 ()Ljava/lang/Integer;
+	public final fun copy (Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun from (Lcom/embabel/agent/core/Usage;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public final fun getCachedInputTokens ()Ljava/lang/Integer;
+	public final fun getInputTokens ()Ljava/lang/Integer;
+	public final fun getOutputTokens ()Ljava/lang/Integer;
+	public final fun getReasoningTokens ()Ljava/lang/Integer;
+	public final fun getTotalTokens ()Ljava/lang/Integer;
+	public fun hashCode ()I
+	public static final fun of ()Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public static final fun of (Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public static final fun of (Ljava/lang/Integer;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public static final fun of (Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public static final fun of (Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public static final fun of (Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionModelUsage$Companion {
+	public final fun from (Lcom/embabel/agent/core/Usage;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public final fun of ()Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public final fun of (Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public final fun of (Ljava/lang/Integer;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public final fun of (Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public final fun of (Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public final fun of (Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+	public static synthetic fun of$default (Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage$Companion;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionModelUsage;
+}
+
+public abstract class com/embabel/dice/proposition/extraction/ExtractionOpaqueRef {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionOpaqueRef$Companion;
+	public static final field TOKEN_PREVIEW_LENGTH I
+	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun equals (Ljava/lang/Object;)Z
+	public final fun getToken ()Ljava/lang/String;
+	public final fun hashCode ()I
+	public final fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionOpaqueRef$Companion {
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionPersonalizationRef : com/embabel/dice/proposition/extraction/ExtractionOpaqueRef {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts$Companion;
+	public fun <init> ()V
+	public fun <init> (Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFinishReason ()Ljava/lang/String;
+	public final fun getResponseId ()Ljava/lang/String;
+	public final fun getResponseModel ()Ljava/lang/String;
+	public final fun getSystemFingerprint ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun of ()Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+	public static final fun of (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts$Companion {
+	public final fun of ()Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+	public final fun of (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+	public static synthetic fun of$default (Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts$Companion;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionProviderResponseFacts;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionReplayFidelity : java/lang/Enum {
+	public static final field APPROXIMATE Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity$Companion;
+	public static final field METADATA Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;
+	public static final field NONE Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static final fun strongest ()Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;
+	public static fun values ()[Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionReplayFidelity$Companion {
+	public final fun strongest ()Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRequest {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionRequest$Companion;
+	public static final field NONE Lcom/embabel/dice/proposition/extraction/ExtractionRequest;
+	public fun <init> ()V
+	public fun <init> (Lcom/embabel/dice/provenance/SourceLocator;)V
+	public fun <init> (Lcom/embabel/dice/provenance/SourceLocator;Lcom/embabel/dice/provenance/SourceRevisionRef;)V
+	public fun <init> (Lcom/embabel/dice/provenance/SourceLocator;Lcom/embabel/dice/provenance/SourceRevisionRef;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;)V
+	public fun <init> (Lcom/embabel/dice/provenance/SourceLocator;Lcom/embabel/dice/provenance/SourceRevisionRef;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)V
+	public synthetic fun <init> (Lcom/embabel/dice/provenance/SourceLocator;Lcom/embabel/dice/provenance/SourceRevisionRef;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lcom/embabel/dice/provenance/SourceLocator;
+	public final fun component2 ()Lcom/embabel/dice/provenance/SourceRevisionRef;
+	public final fun component3 ()Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;
+	public final fun component4 ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public final fun copy (Lcom/embabel/dice/provenance/SourceLocator;Lcom/embabel/dice/provenance/SourceRevisionRef;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRequest;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionRequest;Lcom/embabel/dice/provenance/SourceLocator;Lcom/embabel/dice/provenance/SourceRevisionRef;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRequest;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCurrentRun ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public final fun getProfile ()Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;
+	public final fun getSourceLocator ()Lcom/embabel/dice/provenance/SourceLocator;
+	public final fun getSourceRevision ()Lcom/embabel/dice/provenance/SourceRevisionRef;
+	public fun hashCode ()I
+	public final fun isEmpty ()Z
+	public fun toString ()Ljava/lang/String;
+	public final fun withCurrentRun (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRequest;
+	public final fun withProfile (Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRequest;
+	public final fun withSourceLocator (Lcom/embabel/dice/provenance/SourceLocator;)Lcom/embabel/dice/proposition/extraction/ExtractionRequest;
+	public final fun withSourceRevision (Lcom/embabel/dice/provenance/SourceRevisionRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRequest;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRequest$Companion {
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRequestRef : com/embabel/dice/proposition/extraction/ExtractionOpaqueRef {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig : com/embabel/common/ai/model/LlmHyperparameters {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig$Companion;
+	public fun <init> ()V
+	public fun <init> (Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;Ljava/lang/String;Ljava/time/Duration;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;Ljava/lang/String;Ljava/time/Duration;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component10 ()Ljava/lang/String;
+	public final fun component11 ()Ljava/time/Duration;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/Double;
+	public final fun component4 ()Ljava/lang/Double;
+	public final fun component5 ()Ljava/lang/Integer;
+	public final fun component6 ()Ljava/lang/Integer;
+	public final fun component7 ()Ljava/lang/Double;
+	public final fun component8 ()Ljava/lang/Double;
+	public final fun component9 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;Ljava/lang/String;Ljava/time/Duration;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;Ljava/lang/String;Ljava/time/Duration;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun from (Lcom/embabel/common/ai/model/LlmOptions;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static final fun from (Lcom/embabel/common/ai/model/LlmOptions;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static final fun from (Lcom/embabel/common/ai/model/LlmOptions;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static final fun from (Lcom/embabel/common/ai/model/LlmOptions;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public fun getFrequencyPenalty ()Ljava/lang/Double;
+	public fun getMaxTokens ()Ljava/lang/Integer;
+	public final fun getModelRole ()Ljava/lang/String;
+	public fun getPresencePenalty ()Ljava/lang/Double;
+	public final fun getRequestedModel ()Ljava/lang/String;
+	public final fun getSelectionFingerprint ()Ljava/lang/String;
+	public fun getTemperature ()Ljava/lang/Double;
+	public final fun getThinkingFingerprint ()Ljava/lang/String;
+	public final fun getTimeout ()Ljava/time/Duration;
+	public fun getTopK ()Ljava/lang/Integer;
+	public fun getTopP ()Ljava/lang/Double;
+	public fun hashCode ()I
+	public static final fun of ()Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static final fun of (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;Ljava/lang/String;Ljava/time/Duration;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig$Companion {
+	public final fun from (Lcom/embabel/common/ai/model/LlmOptions;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun from (Lcom/embabel/common/ai/model/LlmOptions;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun from (Lcom/embabel/common/ai/model/LlmOptions;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun from (Lcom/embabel/common/ai/model/LlmOptions;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static synthetic fun from$default (Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig$Companion;Lcom/embabel/common/ai/model/LlmOptions;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun of ()Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun of (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;Ljava/lang/String;Ljava/time/Duration;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public static synthetic fun of$default (Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig$Companion;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;Ljava/lang/String;Ljava/time/Duration;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRun {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionRun$Companion;
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;Ljava/util/List;JILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;Ljava/util/List;JLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;Ljava/util/List;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun attemptsOf (I)Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCohortRef ()Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;
+	public final fun getContextId-SSYM5D4 ()Ljava/lang/String;
+	public final fun getContextIdValue ()Ljava/lang/String;
+	public final fun getCounts ()Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public final fun getExperimentRef ()Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;
+	public final fun getFailures ()Ljava/util/List;
+	public final fun getFingerprints ()Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;
+	public final fun getFinishedAt ()Ljava/time/Instant;
+	public final fun getInvocations ()Ljava/util/List;
+	public final fun getLineage ()Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public final fun getParentRef ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public final fun getProfile ()Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;
+	public final fun getRef ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public final fun getReplayFidelity ()Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;
+	public final fun getRequestedModel ()Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;
+	public final fun getRootRef ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public final fun getRuntime ()Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public final fun getSourceRevisions ()Ljava/util/List;
+	public final fun getStartedAt ()Ljava/time/Instant;
+	public final fun getStatus ()Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;
+	public final fun getSubjectRefs ()Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public final fun getVersion ()J
+	public fun hashCode ()I
+	public final fun invocationsInPlanOrder ()Ljava/util/List;
+	public final fun isRoot ()Z
+	public final fun key ()Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;Ljava/util/List;J)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRun$Companion {
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;Ljava/util/List;J)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static synthetic fun of$default (Lcom/embabel/dice/proposition/extraction/ExtractionRun$Companion;Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionContentProfileRef;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Lcom/embabel/dice/proposition/extraction/ExtractionRequestedModelConfig;Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionExperimentRef;Lcom/embabel/dice/proposition/extraction/ExtractionCohortRef;Lcom/embabel/dice/proposition/extraction/ExtractionReplayFidelity;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;Ljava/util/List;JILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunConflictException : java/lang/RuntimeException {
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Ljava/lang/String;)V
+	public final fun getKey ()Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunCounts {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts$Companion;
+	public fun <init> ()V
+	public fun <init> (I)V
+	public fun <init> (II)V
+	public fun <init> (III)V
+	public fun <init> (IIII)V
+	public fun <init> (IIIII)V
+	public fun <init> (IIIIII)V
+	public synthetic fun <init> (IIIIIIILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()I
+	public final fun component2 ()I
+	public final fun component3 ()I
+	public final fun component4 ()I
+	public final fun component5 ()I
+	public final fun component6 ()I
+	public final fun copy (IIIIII)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;IIIIIIILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getChunksProcessed ()I
+	public final fun getEntitiesResolved ()I
+	public final fun getPropositionsExtracted ()I
+	public final fun getPropositionsPersisted ()I
+	public final fun getPropositionsRejected ()I
+	public final fun getSourcesRead ()I
+	public fun hashCode ()I
+	public static final fun of ()Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public static final fun of (I)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public static final fun of (II)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public static final fun of (III)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public static final fun of (IIII)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public static final fun of (IIIII)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public static final fun of (IIIIII)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunCounts$Companion {
+	public final fun of ()Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public final fun of (I)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public final fun of (II)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public final fun of (III)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public final fun of (IIII)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public final fun of (IIIII)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public final fun of (IIIIII)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public static synthetic fun of$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts$Companion;IIIIIIILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunFingerprint {
+	public static final field HEADER_VERSION Ljava/lang/String;
+	public static final field INSTANCE Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprint;
+	public static final field INVOCATION_VERSION Ljava/lang/String;
+	public static final field TERMINAL_VERSION Ljava/lang/String;
+	public static final fun ofFields (Ljava/lang/String;Ljava/util/Map;)Ljava/lang/String;
+	public static final fun ofTerminal (Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;)Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunFingerprints {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints$Companion;
+	public fun <init> ()V
+	public fun <init> (Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMetamodelFingerprint ()Ljava/lang/String;
+	public final fun getPromptTemplateFingerprint ()Ljava/lang/String;
+	public final fun getSchemaFingerprint ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun of ()Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;
+	public static final fun of (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunFingerprints$Companion {
+	public final fun of ()Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;
+	public final fun of (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;
+	public static synthetic fun of$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints$Companion;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunFingerprints;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunKey {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionRunKey$Companion;
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-SSYM5D4 ()Ljava/lang/String;
+	public final fun component2 ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public final fun copy-3HJnzs4 (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;
+	public static synthetic fun copy-3HJnzs4$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getContextId-SSYM5D4 ()Ljava/lang/String;
+	public final fun getContextIdValue ()Ljava/lang/String;
+	public final fun getRunRef ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunKey$Companion {
+	public final fun of (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunLimits {
+	public static final field INSTANCE Lcom/embabel/dice/proposition/extraction/ExtractionRunLimits;
+	public static final field MAX_FAILURES I
+	public static final field MAX_IDENTIFIER_LENGTH I
+	public static final field MAX_INVOCATIONS I
+	public static final field MAX_PROVIDER_STATUS I
+	public static final field MAX_SOURCE_REVISIONS I
+	public static final field MIN_PROVIDER_STATUS I
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunLineage {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage$Companion;
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public static final fun childOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public static final fun childOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public static final fun childOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;I)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public final fun component1 ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public final fun component2 ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public final fun component3 ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public final fun component4 ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public final fun component5 ()I
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun fromStoredFields (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public static final fun fromStoredFields (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public static final fun fromStoredFields (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public static final fun fromStoredFields (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;I)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public final fun getParentRunRef ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public final fun getPassIndex ()I
+	public final fun getRootRunRef ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public final fun getRunRef ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public final fun getSupersedesRunRef ()Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public fun hashCode ()I
+	public final fun isRoot ()Z
+	public static final fun root (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public static final fun root (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public static final fun root (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;I)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunLineage$Companion {
+	public final fun childOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public final fun childOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public final fun childOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;I)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public static synthetic fun childOf$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage$Companion;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;IILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public final fun fromStoredFields (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public final fun fromStoredFields (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public final fun fromStoredFields (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public final fun fromStoredFields (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;I)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public static synthetic fun fromStoredFields$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage$Companion;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;IILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public final fun root (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public final fun root (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public final fun root (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;I)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+	public static synthetic fun root$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage$Companion;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;IILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunNotFoundException : java/lang/RuntimeException {
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;)V
+	public final fun getKey ()Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunRef {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionRunRef$Companion;
+	public static final field MAX_RUN_ID_LENGTH I
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getRunId ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunRef$Companion {
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunStatus : java/lang/Enum {
+	public static final field CANCELLED Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;
+	public static final field COMPLETED Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;
+	public static final field FAILED Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;
+	public static final field RUNNING Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun isTerminal ()Z
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;
+	public static fun values ()[Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;
+}
+
+public abstract interface class com/embabel/dice/proposition/extraction/ExtractionRunStore {
+	public abstract fun ancestorsOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;I)Ljava/util/List;
+	public abstract fun childrenOf (Ljava/lang/String;Ljava/lang/String;I)Ljava/util/List;
+	public fun childrenOf-TAwONI4 (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;I)Ljava/util/List;
+	public abstract fun findRun (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public abstract fun invocationsOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;)Ljava/util/List;
+	public abstract fun recordInvocation (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationRecord;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public abstract fun runsInContext (Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public fun runsInContext-TAwONI4 (Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public abstract fun runsOfRoot (Ljava/lang/String;Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public fun runsOfRoot-g40hbQQ (Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;ILjava/time/Instant;)Ljava/util/List;
+	public abstract fun save (Lcom/embabel/dice/proposition/extraction/ExtractionRun;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public abstract fun transition (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionResult;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs$Companion;
+	public fun <init> ()V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;Lcom/embabel/dice/proposition/extraction/ExtractionPersonalizationRef;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;Lcom/embabel/dice/proposition/extraction/ExtractionPersonalizationRef;Lcom/embabel/dice/proposition/extraction/ExtractionDeploymentRef;)V
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;Lcom/embabel/dice/proposition/extraction/ExtractionPersonalizationRef;Lcom/embabel/dice/proposition/extraction/ExtractionDeploymentRef;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;
+	public final fun component2 ()Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;
+	public final fun component3 ()Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;
+	public final fun component4 ()Lcom/embabel/dice/proposition/extraction/ExtractionPersonalizationRef;
+	public final fun component5 ()Lcom/embabel/dice/proposition/extraction/ExtractionDeploymentRef;
+	public final fun copy (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;Lcom/embabel/dice/proposition/extraction/ExtractionPersonalizationRef;Lcom/embabel/dice/proposition/extraction/ExtractionDeploymentRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;Lcom/embabel/dice/proposition/extraction/ExtractionPersonalizationRef;Lcom/embabel/dice/proposition/extraction/ExtractionDeploymentRef;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getActor ()Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;
+	public final fun getDeployment ()Lcom/embabel/dice/proposition/extraction/ExtractionDeploymentRef;
+	public final fun getPersonalization ()Lcom/embabel/dice/proposition/extraction/ExtractionPersonalizationRef;
+	public final fun getRequest ()Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;
+	public final fun getSession ()Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;
+	public fun hashCode ()I
+	public static final fun of ()Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public static final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public static final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public static final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public static final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;Lcom/embabel/dice/proposition/extraction/ExtractionPersonalizationRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public static final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;Lcom/embabel/dice/proposition/extraction/ExtractionPersonalizationRef;Lcom/embabel/dice/proposition/extraction/ExtractionDeploymentRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs$Companion {
+	public final fun of ()Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;Lcom/embabel/dice/proposition/extraction/ExtractionPersonalizationRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public final fun of (Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;Lcom/embabel/dice/proposition/extraction/ExtractionPersonalizationRef;Lcom/embabel/dice/proposition/extraction/ExtractionDeploymentRef;)Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+	public static synthetic fun of$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs$Companion;Lcom/embabel/dice/proposition/extraction/ExtractionActorRef;Lcom/embabel/dice/proposition/extraction/ExtractionRequestRef;Lcom/embabel/dice/proposition/extraction/ExtractionSessionRef;Lcom/embabel/dice/proposition/extraction/ExtractionPersonalizationRef;Lcom/embabel/dice/proposition/extraction/ExtractionDeploymentRef;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunSubjectRefs;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunTransition {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition$Companion;
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;)V
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun applyTo (Lcom/embabel/dice/proposition/extraction/ExtractionRun;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public static final fun cancelled (Ljava/time/Instant;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public static final fun cancelled (Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public static final fun cancelled (Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public static final fun completed (Ljava/time/Instant;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public static final fun completed (Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public static final fun completed (Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun failed (Ljava/time/Instant;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public static final fun failed (Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public static final fun failed (Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public final fun getCounts ()Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;
+	public final fun getFailures ()Ljava/util/List;
+	public final fun getFingerprint ()Ljava/lang/String;
+	public final fun getFinishedAt ()Ljava/time/Instant;
+	public final fun getStatus ()Lcom/embabel/dice/proposition/extraction/ExtractionRunStatus;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunTransition$Companion {
+	public final fun cancelled (Ljava/time/Instant;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public final fun cancelled (Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public final fun cancelled (Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public static synthetic fun cancelled$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition$Companion;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public final fun completed (Ljava/time/Instant;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public final fun completed (Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public final fun completed (Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public static synthetic fun completed$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition$Companion;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public final fun failed (Ljava/time/Instant;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public final fun failed (Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public final fun failed (Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+	public static synthetic fun failed$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition$Companion;Ljava/time/Instant;Lcom/embabel/dice/proposition/extraction/ExtractionRunCounts;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunTransitionOutcome : java/lang/Enum {
+	public static final field APPLIED Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionOutcome;
+	public static final field REPLAYED Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionOutcome;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionOutcome;
+	public static fun values ()[Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionOutcome;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRunTransitionResult {
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRun;Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionOutcome;)V
+	public final fun component1 ()Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun component2 ()Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionOutcome;
+	public final fun copy (Lcom/embabel/dice/proposition/extraction/ExtractionRun;Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionOutcome;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionResult;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionResult;Lcom/embabel/dice/proposition/extraction/ExtractionRun;Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionOutcome;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionResult;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getOutcome ()Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionOutcome;
+	public final fun getRun ()Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public fun hashCode ()I
+	public final fun isApplied ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity$Companion;
+	public fun <init> ()V
+	public fun <init> (Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public static synthetic fun copy$default (Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getExtractor ()Ljava/lang/String;
+	public final fun getExtractorVersion ()Ljava/lang/String;
+	public final fun getHostApplication ()Ljava/lang/String;
+	public final fun getRuntime ()Ljava/lang/String;
+	public final fun getRuntimeVersion ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun of ()Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public static final fun of (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity$Companion {
+	public final fun of ()Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public final fun of (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+	public static synthetic fun of$default (Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity$Companion;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/proposition/extraction/ExtractionRuntimeIdentity;
+}
+
+public final class com/embabel/dice/proposition/extraction/ExtractionSessionRef : com/embabel/dice/proposition/extraction/ExtractionOpaqueRef {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class com/embabel/dice/proposition/extraction/InMemoryExtractionRunStore : com/embabel/dice/proposition/extraction/ExtractionRunStore {
+	public fun <init> ()V
+	public fun <init> (Lcom/embabel/dice/common/DiceEventListener;)V
+	public fun <init> (Lcom/embabel/dice/common/DiceEventListener;I)V
+	public synthetic fun <init> (Lcom/embabel/dice/common/DiceEventListener;IILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun ancestorsOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;I)Ljava/util/List;
+	public fun childrenOf (Ljava/lang/String;Ljava/lang/String;I)Ljava/util/List;
+	public fun findRun (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public fun invocationsOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;)Ljava/util/List;
+	public fun recordInvocation (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationRecord;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public fun runsInContext (Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public fun runsOfRoot (Ljava/lang/String;Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public fun save (Lcom/embabel/dice/proposition/extraction/ExtractionRun;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public fun transition (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionResult;
+}
+
+public final class com/embabel/dice/proposition/extraction/InMemoryPropositionRunLinkStore : com/embabel/dice/proposition/extraction/PropositionRunLinkStore {
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunStore;Lcom/embabel/dice/proposition/PropositionStore;)V
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunStore;Lcom/embabel/dice/proposition/PropositionStore;I)V
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunStore;Lcom/embabel/dice/proposition/PropositionStore;IILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun link (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Ljava/util/Collection;)I
+	public fun propositionsOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;I)Ljava/util/List;
+	public fun runsOf (Ljava/lang/String;Ljava/lang/String;I)Ljava/util/List;
+}
+
+public final class com/embabel/dice/proposition/extraction/LineageFailurePolicy : java/lang/Enum {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/LineageFailurePolicy$Companion;
+	public static final field DEFAULT Lcom/embabel/dice/proposition/extraction/LineageFailurePolicy;
+	public static final field LENIENT Lcom/embabel/dice/proposition/extraction/LineageFailurePolicy;
+	public static final field STRICT Lcom/embabel/dice/proposition/extraction/LineageFailurePolicy;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/LineageFailurePolicy;
+	public static fun values ()[Lcom/embabel/dice/proposition/extraction/LineageFailurePolicy;
+}
+
+public final class com/embabel/dice/proposition/extraction/LineageFailurePolicy$Companion {
+}
+
+public final class com/embabel/dice/proposition/extraction/LineageNotRecordedException : java/lang/RuntimeException {
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Ljava/lang/String;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getKey ()Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;
+}
+
+public final class com/embabel/dice/proposition/extraction/PropositionRunLinkScopeException : java/lang/RuntimeException {
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Ljava/util/List;)V
+	public final fun getKey ()Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;
+	public final fun getPropositionIds ()Ljava/util/List;
+}
+
+public abstract interface class com/embabel/dice/proposition/extraction/PropositionRunLinkStore {
+	public fun link (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Ljava/lang/String;)I
+	public abstract fun link (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Ljava/util/Collection;)I
+	public abstract fun propositionsOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;I)Ljava/util/List;
+	public abstract fun runsOf (Ljava/lang/String;Ljava/lang/String;I)Ljava/util/List;
+	public fun runsOf-TAwONI4 (Ljava/lang/String;Ljava/lang/String;I)Ljava/util/List;
+}
+
+public abstract interface class com/embabel/dice/proposition/extraction/ProtectedContentRef {
+	public abstract fun getExpiresAt ()Ljava/time/Instant;
+	public abstract fun getHandle ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/provenance/SourceIdentityBounds {
+	public static final field INSTANCE Lcom/embabel/dice/provenance/SourceIdentityBounds;
+	public static final field MAX_CHUNK_ID_LENGTH I
+	public static final field MAX_CONTENT_HASH_LENGTH I
+	public static final field MAX_SOURCE_KEY_LENGTH I
+	public static final field MAX_SOURCE_REVISION_LENGTH I
+	public static final fun requireChunkIdWithinBounds (Ljava/lang/String;)Ljava/lang/String;
+	public static final fun requireContentHashWithinBounds (Ljava/lang/String;)Ljava/lang/String;
+	public static final fun requireSourceKeyWithinBounds (Ljava/lang/String;)Ljava/lang/String;
+	public static final fun requireSourceRevisionWithinBounds (Ljava/lang/String;)Ljava/lang/String;
+}
+
+public final class com/embabel/dice/provenance/SourceRevisionRef {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/provenance/SourceRevisionRef;
+	public static synthetic fun copy$default (Lcom/embabel/dice/provenance/SourceRevisionRef;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/provenance/SourceRevisionRef;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getSourceKey ()Ljava/lang/String;
+	public final fun getSourceRevision ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/query/discovery/DiscoveryProvenanceDto {
+	public static final field Companion Lcom/embabel/dice/query/discovery/DiscoveryProvenanceDto$Companion;
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/Integer;
+	public final fun component5 ()Ljava/lang/Integer;
+	public final fun component6 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/String;)Lcom/embabel/dice/query/discovery/DiscoveryProvenanceDto;
+	public static synthetic fun copy$default (Lcom/embabel/dice/query/discovery/DiscoveryProvenanceDto;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/query/discovery/DiscoveryProvenanceDto;
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun from (Lcom/embabel/dice/provenance/ProvenanceEntry;)Lcom/embabel/dice/query/discovery/DiscoveryProvenanceDto;
+	public final fun getChunkId ()Ljava/lang/String;
+	public final fun getContentHash ()Ljava/lang/String;
+	public final fun getEndOffset ()Ljava/lang/Integer;
+	public final fun getLocator ()Ljava/lang/String;
+	public final fun getSourceRevision ()Ljava/lang/String;
+	public final fun getStartOffset ()Ljava/lang/Integer;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/query/discovery/DiscoveryProvenanceDto$Companion {
+	public final fun from (Lcom/embabel/dice/provenance/ProvenanceEntry;)Lcom/embabel/dice/query/discovery/DiscoveryProvenanceDto;
+}
+
+public final class com/embabel/dice/spi/DriftQuarantineKeys {
+	public static final field INSTANCE Lcom/embabel/dice/spi/DriftQuarantineKeys;
+	public static final field PREVIOUS_STATUS Ljava/lang/String;
+}
+
+public abstract interface class com/embabel/dice/spi/DriftSweepCapable {
+	public static final field Companion Lcom/embabel/dice/spi/DriftSweepCapable$Companion;
+	public static final field DEFAULT_BATCH_SIZE I
+	public abstract fun applyQuarantine (Lcom/embabel/dice/spi/QuarantineDecision$Quarantined;)Lcom/embabel/dice/proposition/Proposition;
+	public fun quarantineCandidates-TAwONI4 (Ljava/lang/String;Ljava/util/Set;I)Ljava/util/List;
+	public abstract fun quarantineCandidates-g40hbQQ (Ljava/lang/String;Ljava/util/Set;ILjava/lang/String;)Ljava/util/List;
+	public abstract fun releaseFromQuarantine (Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
+	public fun sweep-T8IscxI (Lcom/embabel/dice/metamodel/MetamodelDiff;Lcom/embabel/dice/spi/DriftQuarantinePolicy;Ljava/lang/String;I)Lcom/embabel/dice/spi/QuarantineResult;
+	public static synthetic fun sweep-T8IscxI$default (Lcom/embabel/dice/spi/DriftSweepCapable;Lcom/embabel/dice/metamodel/MetamodelDiff;Lcom/embabel/dice/spi/DriftQuarantinePolicy;Ljava/lang/String;IILjava/lang/Object;)Lcom/embabel/dice/spi/QuarantineResult;
+}
+
+public final class com/embabel/dice/spi/DriftSweepCapable$Companion {
+	public static final field DEFAULT_BATCH_SIZE I
+}
+
+public final class com/embabel/dice/spi/MentionTypeDriftQuarantinePolicy : com/embabel/dice/spi/DriftQuarantinePolicy {
+	public static final field Companion Lcom/embabel/dice/spi/MentionTypeDriftQuarantinePolicy$Companion;
+	public static final field SAFE_TYPE_WIDENINGS Ljava/util/Map;
+	public fun <init> ()V
+	public fun candidateMentionTypes (Lcom/embabel/dice/metamodel/MetamodelDiff;)Ljava/util/Set;
+	public fun evaluate (Lcom/embabel/dice/metamodel/MetamodelDiff;Ljava/lang/Iterable;)Lcom/embabel/dice/spi/QuarantineResult;
+}
+
+public final class com/embabel/dice/spi/MentionTypeDriftQuarantinePolicy$Companion {
+}
+
+public final class com/embabel/dice/spi/PropositionStoreDriftSweep : com/embabel/dice/spi/DriftSweepCapable {
+	public static final field RELEASE_REASON Ljava/lang/String;
+	public fun <init> (Lcom/embabel/dice/proposition/PropositionStore;)V
+	public fun <init> (Lcom/embabel/dice/proposition/PropositionStore;Lcom/embabel/dice/common/DiceEventListener;)V
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/PropositionStore;Lcom/embabel/dice/common/DiceEventListener;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun applyQuarantine (Lcom/embabel/dice/spi/QuarantineDecision$Quarantined;)Lcom/embabel/dice/proposition/Proposition;
+	public fun quarantineCandidates-g40hbQQ (Ljava/lang/String;Ljava/util/Set;ILjava/lang/String;)Ljava/util/List;
+	public fun releaseFromQuarantine (Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
+}
+
+public final class com/embabel/dice/web/rest/ExtractErrorResponse {
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Lcom/embabel/dice/web/rest/ExtractErrorResponse;
+	public static synthetic fun copy$default (Lcom/embabel/dice/web/rest/ExtractErrorResponse;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/web/rest/ExtractErrorResponse;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getError ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public class com/embabel/dice/web/rest/GovernanceController {
+	public static final field DEFAULT_LIMIT Ljava/lang/String;
+	public fun <init> (Lcom/embabel/dice/governance/GovernanceOperationsService;)V
+	public fun declaredVersion ()Lorg/springframework/http/ResponseEntity;
+	public fun handleFailure (Ljava/lang/Exception;)Lorg/springframework/http/ResponseEntity;
+	public fun handleRefusedRequest (Lcom/embabel/dice/governance/GovernanceRequestException;)Lorg/springframework/http/ResponseEntity;
+	public fun latestReports (ILjava/lang/String;)Lorg/springframework/http/ResponseEntity;
+	public fun releaseProposition (Ljava/lang/String;Ljava/lang/String;)Lorg/springframework/http/ResponseEntity;
+	public fun reportsInContext (Ljava/lang/String;ILjava/lang/String;)Lorg/springframework/http/ResponseEntity;
+	public fun runCheck ()Lorg/springframework/http/ResponseEntity;
+	public fun runCheckInContext (Ljava/lang/String;)Lorg/springframework/http/ResponseEntity;
+}
+
+public final class com/embabel/dice/web/rest/InvalidSourceProvenanceException : java/lang/RuntimeException {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class com/embabel/dice/web/rest/SourceLocatorInputDto {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/web/rest/SourceLocatorInputDto;
+	public static synthetic fun copy$default (Lcom/embabel/dice/web/rest/SourceLocatorInputDto;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/web/rest/SourceLocatorInputDto;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getConnectorId ()Ljava/lang/String;
+	public final fun getDisplay ()Ljava/lang/String;
+	public final fun getKind ()Ljava/lang/String;
+	public final fun getValue ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+

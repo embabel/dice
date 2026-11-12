@@ -1,0 +1,285 @@
+public final class com/embabel/dice/metamodel/DeclaredObservedDiff {
+	public fun <init> (Lcom/embabel/dice/metamodel/DeclaredSchema;Lcom/embabel/dice/metamodel/ObservedSchema;Ljava/util/Set;Ljava/util/Set;Ljava/util/Set;Ljava/util/Set;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDeclared ()Lcom/embabel/dice/metamodel/DeclaredSchema;
+	public final fun getDeclaredVersion ()Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public final fun getDriftedEntityTypes ()Ljava/util/Set;
+	public final fun getDriftedRelationshipTypes ()Ljava/util/Set;
+	public final fun getHasDrift ()Z
+	public final fun getObservedSchema ()Lcom/embabel/dice/metamodel/ObservedSchema;
+	public final fun getUnobservedEntityTypes ()Ljava/util/Set;
+	public final fun getUnobservedRelationshipTypes ()Ljava/util/Set;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/DeclaredSchema {
+	public static final field Companion Lcom/embabel/dice/metamodel/DeclaredSchema$Companion;
+	public fun <init> (Lcom/embabel/dice/metamodel/MetamodelVersion;Ljava/util/Set;Ljava/util/Set;Ljava/util/Set;)V
+	public synthetic fun <init> (Lcom/embabel/dice/metamodel/MetamodelVersion;Ljava/util/Set;Ljava/util/Set;Ljava/util/Set;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun from (Lcom/embabel/agent/core/DataDictionary;)Lcom/embabel/dice/metamodel/DeclaredSchema;
+	public static final fun from (Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/metamodel/GovernedTypeSelector;)Lcom/embabel/dice/metamodel/DeclaredSchema;
+	public static final fun from (Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/metamodel/GovernedTypeSelector;Lcom/embabel/dice/metamodel/SchemaAliases;)Lcom/embabel/dice/metamodel/DeclaredSchema;
+	public final fun getEntityTypeOwnLabels ()Ljava/util/Set;
+	public final fun getRelationshipTypeNames ()Ljava/util/Set;
+	public final fun getUngovernedEntityTypeNames ()Ljava/util/Set;
+	public final fun getUngovernedRelationshipTypeNames ()Ljava/util/Set;
+	public final fun getVersion ()Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public fun hashCode ()I
+	public static final fun ownLabelOf (Ljava/lang/String;)Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/DeclaredSchema$Companion {
+	public final fun from (Lcom/embabel/agent/core/DataDictionary;)Lcom/embabel/dice/metamodel/DeclaredSchema;
+	public final fun from (Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/metamodel/GovernedTypeSelector;)Lcom/embabel/dice/metamodel/DeclaredSchema;
+	public final fun from (Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/metamodel/GovernedTypeSelector;Lcom/embabel/dice/metamodel/SchemaAliases;)Lcom/embabel/dice/metamodel/DeclaredSchema;
+	public static synthetic fun from$default (Lcom/embabel/dice/metamodel/DeclaredSchema$Companion;Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/metamodel/GovernedTypeSelector;ILjava/lang/Object;)Lcom/embabel/dice/metamodel/DeclaredSchema;
+	public final synthetic fun invoke (Lcom/embabel/agent/core/DataDictionary;Lkotlin/jvm/functions/Function1;)Lcom/embabel/dice/metamodel/DeclaredSchema;
+	public static synthetic fun invoke$default (Lcom/embabel/dice/metamodel/DeclaredSchema$Companion;Lcom/embabel/agent/core/DataDictionary;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lcom/embabel/dice/metamodel/DeclaredSchema;
+	public final fun ownLabelOf (Ljava/lang/String;)Ljava/lang/String;
+}
+
+public abstract interface class com/embabel/dice/metamodel/DeclaredSchemaSource {
+	public abstract fun declare ()Lcom/embabel/dice/metamodel/DeclaredSchema;
+}
+
+public final class com/embabel/dice/metamodel/DriftCheckResult {
+	public fun <init> (Lcom/embabel/dice/metamodel/DriftReport;Lcom/embabel/dice/metamodel/MetamodelVersion;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getContextId--400sNA ()Ljava/lang/String;
+	public final fun getDeclaredDiff ()Lcom/embabel/dice/metamodel/MetamodelDiff;
+	public final fun getDeclaredVersion ()Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public final fun getDriftedEntityTypes ()Ljava/util/Set;
+	public final fun getDriftedRelationshipTypes ()Ljava/util/Set;
+	public final fun getHasAnyChange ()Z
+	public final fun getHasDrift ()Z
+	public final fun getQuarantineDiff ()Lcom/embabel/dice/metamodel/MetamodelDiff;
+	public final fun getReport ()Lcom/embabel/dice/metamodel/DriftReport;
+	public final fun getSchemaName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/DriftReport {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;Ljava/lang/String;Lcom/embabel/dice/metamodel/MetamodelDiff;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;Ljava/lang/String;Lcom/embabel/dice/metamodel/MetamodelDiff;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCapturedAt ()Ljava/time/Instant;
+	public final fun getContextId--400sNA ()Ljava/lang/String;
+	public final fun getDeclaredDiff ()Lcom/embabel/dice/metamodel/MetamodelDiff;
+	public final fun getDriftedEntityTypes ()Ljava/util/Set;
+	public final fun getDriftedRelationshipTypes ()Ljava/util/Set;
+	public final fun getHasAnyChange ()Z
+	public final fun getHasDrift ()Z
+	public final fun getSchemaName ()Ljava/lang/String;
+	public final fun getVersionHash ()Ljava/lang/String;
+	public fun hashCode ()I
+	public final fun quarantineDiff (Lcom/embabel/dice/metamodel/MetamodelVersion;)Lcom/embabel/dice/metamodel/MetamodelDiff;
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class com/embabel/dice/metamodel/GovernedTypeSelector {
+	public static final field ALL Lcom/embabel/dice/metamodel/GovernedTypeSelector;
+	public static final field Companion Lcom/embabel/dice/metamodel/GovernedTypeSelector$Companion;
+	public abstract fun governs (Lcom/embabel/agent/core/DomainType;)Z
+}
+
+public final class com/embabel/dice/metamodel/GovernedTypeSelector$Companion {
+}
+
+public final class com/embabel/dice/metamodel/MetamodelDiff {
+	public fun <init> (Lcom/embabel/dice/metamodel/MetamodelVersion;Lcom/embabel/dice/metamodel/MetamodelVersion;Ljava/util/List;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAddedEntityTypes ()Ljava/util/Set;
+	public final fun getAddedRelationships ()Ljava/util/Set;
+	public final fun getAmbiguousEntityTypeRenames ()Ljava/util/List;
+	public final fun getAmbiguousPropertyRenames ()Ljava/util/List;
+	public final fun getChanges ()Ljava/util/List;
+	public final fun getEntityTypeAliasChanges ()Ljava/util/List;
+	public final fun getFromVersion ()Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public final fun getModifiedEntityTypes ()Ljava/util/List;
+	public final fun getPropertySignatureChanges ()Ljava/util/List;
+	public final fun getRemovedEntityTypes ()Ljava/util/Set;
+	public final fun getRemovedRelationships ()Ljava/util/Set;
+	public final fun getRenamedEntityTypes ()Ljava/util/List;
+	public final fun getRenamedProperties ()Ljava/util/List;
+	public final fun getToVersion ()Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public final fun getTouchedEntityTypes ()Ljava/util/Set;
+	public fun hashCode ()I
+	public final fun isEmpty ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class com/embabel/dice/metamodel/MetamodelDiffer {
+	public fun diff (Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/agent/core/DataDictionary;)Lcom/embabel/dice/metamodel/MetamodelDiff;
+	public abstract fun diff (Lcom/embabel/dice/metamodel/MetamodelVersion;Lcom/embabel/dice/metamodel/MetamodelVersion;)Lcom/embabel/dice/metamodel/MetamodelDiff;
+}
+
+public final class com/embabel/dice/metamodel/MetamodelStamping {
+	public fun <init> (Lcom/embabel/agent/core/DataDictionary;)V
+	public fun <init> (Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/metamodel/GovernedTypeSelector;)V
+	public fun <init> (Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/metamodel/GovernedTypeSelector;Lcom/embabel/dice/metamodel/SchemaAliases;)V
+	public synthetic fun <init> (Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/metamodel/GovernedTypeSelector;Lcom/embabel/dice/metamodel/SchemaAliases;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lcom/embabel/agent/core/DataDictionary;
+	public final fun component2 ()Lcom/embabel/dice/metamodel/GovernedTypeSelector;
+	public final fun component3 ()Lcom/embabel/dice/metamodel/SchemaAliases;
+	public final fun copy (Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/metamodel/GovernedTypeSelector;Lcom/embabel/dice/metamodel/SchemaAliases;)Lcom/embabel/dice/metamodel/MetamodelStamping;
+	public static synthetic fun copy$default (Lcom/embabel/dice/metamodel/MetamodelStamping;Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/metamodel/GovernedTypeSelector;Lcom/embabel/dice/metamodel/SchemaAliases;ILjava/lang/Object;)Lcom/embabel/dice/metamodel/MetamodelStamping;
+	public final fun declare ()Lcom/embabel/dice/metamodel/DeclaredSchema;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAliases ()Lcom/embabel/dice/metamodel/SchemaAliases;
+	public final fun getDataDictionary ()Lcom/embabel/agent/core/DataDictionary;
+	public final fun getGovernedTypes ()Lcom/embabel/dice/metamodel/GovernedTypeSelector;
+	public final fun governedBy (Lcom/embabel/dice/metamodel/GovernedTypeSelector;)Lcom/embabel/dice/metamodel/MetamodelStamping;
+	public final fun governedBy (Ljava/util/Set;)Lcom/embabel/dice/metamodel/MetamodelStamping;
+	public fun hashCode ()I
+	public final fun stamp ()Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public fun toString ()Ljava/lang/String;
+	public final fun withAliases (Lcom/embabel/dice/metamodel/SchemaAliases;)Lcom/embabel/dice/metamodel/MetamodelStamping;
+}
+
+public final class com/embabel/dice/metamodel/MetamodelStampingBuilder {
+	public final fun aliases (Lcom/embabel/dice/metamodel/SchemaAliases;)V
+	public final fun aliases (Lkotlin/jvm/functions/Function1;)V
+	public final fun governedBy (Lcom/embabel/dice/metamodel/GovernedTypeSelector;)V
+	public final fun governedBy (Ljava/util/Set;)V
+	public final fun governedBy ([Ljava/lang/String;)V
+}
+
+public final class com/embabel/dice/metamodel/MetamodelVersion {
+	public static final field Companion Lcom/embabel/dice/metamodel/MetamodelVersion$Companion;
+	public fun <init> (Ljava/lang/String;Ljava/util/List;Ljava/util/Map;Ljava/util/Map;Ljava/util/List;)V
+	public fun <init> (Ljava/lang/String;Ljava/util/List;Ljava/util/Map;Ljava/util/Map;Ljava/util/List;Ljava/util/Map;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/util/List;Ljava/util/Map;Ljava/util/Map;Ljava/util/List;Ljava/util/Map;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun from (Lcom/embabel/agent/core/DataDictionary;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public static final fun from (Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/metamodel/GovernedTypeSelector;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public static final fun from (Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/metamodel/GovernedTypeSelector;Lcom/embabel/dice/metamodel/SchemaAliases;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public final fun getContentHash ()Ljava/lang/String;
+	public final fun getEntityTypeAliases ()Ljava/util/Map;
+	public final fun getEntityTypeLabels ()Ljava/util/Map;
+	public final fun getEntityTypeNames ()Ljava/util/List;
+	public final fun getEntityTypeProperties ()Ljava/util/Map;
+	public final fun getRelationshipNames ()Ljava/util/List;
+	public final fun getSchemaName ()Ljava/lang/String;
+	public final fun hasSameContentAs (Lcom/embabel/dice/metamodel/MetamodelVersion;)Z
+	public fun hashCode ()I
+	public static final fun stamping (Lcom/embabel/agent/core/DataDictionary;)Lcom/embabel/dice/metamodel/MetamodelStamping;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/MetamodelVersion$Companion {
+	public final fun from (Lcom/embabel/agent/core/DataDictionary;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public final fun from (Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/metamodel/GovernedTypeSelector;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public final fun from (Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/metamodel/GovernedTypeSelector;Lcom/embabel/dice/metamodel/SchemaAliases;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public final synthetic fun invoke (Lcom/embabel/agent/core/DataDictionary;Lkotlin/jvm/functions/Function1;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public static synthetic fun invoke$default (Lcom/embabel/dice/metamodel/MetamodelVersion$Companion;Lcom/embabel/agent/core/DataDictionary;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public final fun stamping (Lcom/embabel/agent/core/DataDictionary;)Lcom/embabel/dice/metamodel/MetamodelStamping;
+}
+
+public abstract interface class com/embabel/dice/metamodel/MetamodelVersionStore {
+	public fun findVersion (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public abstract fun latestVersion (Ljava/lang/String;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public abstract fun saveVersion (Lcom/embabel/dice/metamodel/MetamodelVersion;)V
+	public abstract fun versionHistory (Ljava/lang/String;)Ljava/util/List;
+}
+
+public final class com/embabel/dice/metamodel/ObservedSchema {
+	public fun <init> (Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;)V
+	public fun <init> (Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;Lcom/embabel/dice/metamodel/ObservedSchema$EntityTypeBasis;)V
+	public fun <init> (Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;Lcom/embabel/dice/metamodel/ObservedSchema$EntityTypeBasis;Ljava/util/Set;)V
+	public synthetic fun <init> (Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;Lcom/embabel/dice/metamodel/ObservedSchema$EntityTypeBasis;Ljava/util/Set;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCapturedAt ()Ljava/time/Instant;
+	public final fun getEntityTypeBasis ()Lcom/embabel/dice/metamodel/ObservedSchema$EntityTypeBasis;
+	public final fun getEntityTypeNames ()Ljava/util/Set;
+	public final fun getMentionTypeNames ()Ljava/util/Set;
+	public final fun getRelationshipTypeNames ()Ljava/util/Set;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/ObservedSchema$EntityTypeBasis : java/lang/Enum {
+	public static final field GRAPH_LABELS Lcom/embabel/dice/metamodel/ObservedSchema$EntityTypeBasis;
+	public static final field MENTION_TYPES Lcom/embabel/dice/metamodel/ObservedSchema$EntityTypeBasis;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/metamodel/ObservedSchema$EntityTypeBasis;
+	public static fun values ()[Lcom/embabel/dice/metamodel/ObservedSchema$EntityTypeBasis;
+}
+
+public abstract interface class com/embabel/dice/metamodel/ObservedSchemaSource {
+	public fun observe ()Lcom/embabel/dice/metamodel/ObservedSchema;
+	public abstract fun observe-8XmWVTM (Ljava/lang/String;)Lcom/embabel/dice/metamodel/ObservedSchema;
+}
+
+public final class com/embabel/dice/metamodel/PropertySignature : java/lang/Comparable {
+	public static final field Companion Lcom/embabel/dice/metamodel/PropertySignature$Companion;
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/metamodel/PropertySignature$Kind;Ljava/lang/String;Lcom/embabel/agent/core/Cardinality;)V
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/metamodel/PropertySignature$Kind;Ljava/lang/String;Lcom/embabel/agent/core/Cardinality;Ljava/util/Set;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/metamodel/PropertySignature$Kind;Ljava/lang/String;Lcom/embabel/agent/core/Cardinality;Ljava/util/Set;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun compareTo (Lcom/embabel/dice/metamodel/PropertySignature;)I
+	public synthetic fun compareTo (Ljava/lang/Object;)I
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Lcom/embabel/dice/metamodel/PropertySignature$Kind;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Lcom/embabel/agent/core/Cardinality;
+	public final fun component5 ()Ljava/util/Set;
+	public final fun copy (Ljava/lang/String;Lcom/embabel/dice/metamodel/PropertySignature$Kind;Ljava/lang/String;Lcom/embabel/agent/core/Cardinality;Ljava/util/Set;)Lcom/embabel/dice/metamodel/PropertySignature;
+	public static synthetic fun copy$default (Lcom/embabel/dice/metamodel/PropertySignature;Ljava/lang/String;Lcom/embabel/dice/metamodel/PropertySignature$Kind;Ljava/lang/String;Lcom/embabel/agent/core/Cardinality;Ljava/util/Set;ILjava/lang/Object;)Lcom/embabel/dice/metamodel/PropertySignature;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAliases ()Ljava/util/Set;
+	public final fun getCardinality ()Lcom/embabel/agent/core/Cardinality;
+	public final fun getKind ()Lcom/embabel/dice/metamodel/PropertySignature$Kind;
+	public final fun getName ()Ljava/lang/String;
+	public final fun getType ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun of (Lcom/embabel/agent/core/PropertyDefinition;)Lcom/embabel/dice/metamodel/PropertySignature;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/PropertySignature$Companion {
+	public final fun of (Lcom/embabel/agent/core/PropertyDefinition;)Lcom/embabel/dice/metamodel/PropertySignature;
+}
+
+public final class com/embabel/dice/metamodel/PropertySignature$Kind : java/lang/Enum {
+	public static final field REFERENCE Lcom/embabel/dice/metamodel/PropertySignature$Kind;
+	public static final field UNKNOWN Lcom/embabel/dice/metamodel/PropertySignature$Kind;
+	public static final field VALUE Lcom/embabel/dice/metamodel/PropertySignature$Kind;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/metamodel/PropertySignature$Kind;
+	public static fun values ()[Lcom/embabel/dice/metamodel/PropertySignature$Kind;
+}
+
+public final class com/embabel/dice/metamodel/SchemaAliases {
+	public static final field Companion Lcom/embabel/dice/metamodel/SchemaAliases$Companion;
+	public static final field NONE Lcom/embabel/dice/metamodel/SchemaAliases;
+	public fun <init> ()V
+	public fun <init> (Ljava/util/Map;)V
+	public fun <init> (Ljava/util/Map;Ljava/util/Map;)V
+	public synthetic fun <init> (Ljava/util/Map;Ljava/util/Map;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getPropertyAliases ()Ljava/util/Map;
+	public final fun getTypeAliases ()Ljava/util/Map;
+	public fun hashCode ()I
+	public final fun propertyAliasesFor (Ljava/lang/String;Ljava/lang/String;)Ljava/util/Set;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/SchemaAliases$Companion {
+}
+
+public final class com/embabel/dice/metamodel/SchemaAliasesBuilder {
+	public final fun property (Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;)V
+	public final fun type (Ljava/lang/String;Ljava/util/Set;)V
+}
+
+public abstract interface class com/embabel/dice/metamodel/TypeIdentity {
+	public abstract fun declaredNameFor (Ljava/lang/String;)Ljava/lang/String;
+	public abstract fun externalNamesFor (Ljava/lang/String;)Ljava/util/Set;
+	public abstract fun getTypeSystem ()Ljava/lang/String;
+}
+

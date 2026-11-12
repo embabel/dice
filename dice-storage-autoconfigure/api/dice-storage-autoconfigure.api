@@ -1,0 +1,178 @@
+public class com/embabel/dice/storage/autoconfigure/CollectorAutoConfiguration {
+	public fun <init> (Lcom/embabel/dice/storage/autoconfigure/CollectorProperties;)V
+	public fun collectorSurvivorPolicy ()Lcom/embabel/dice/projection/memory/collector/CollectorSurvivorPolicy;
+	public fun collectorTraceSchema ()Lorg/drivine/schema/SchemaCatalog;
+	public fun collectorTraceStorageSchema ()Lcom/embabel/dice/storage/DiceStorageSchema;
+	public fun connectedComponentsFinder ()Lcom/embabel/dice/spi/ConnectedComponentsFinder;
+	public fun drivineCollectorTraceStore (Lorg/drivine/manager/PersistenceManager;)Lcom/embabel/dice/storage/DrivineCollectorTraceStore;
+	public fun entityOverlapSignalScorer ()Lcom/embabel/dice/spi/CollectorSignalScorer;
+	public fun groundingOverlapSignalScorer ()Lcom/embabel/dice/spi/CollectorSignalScorer;
+	public fun inMemoryCollectorTraceStore ()Lcom/embabel/dice/spi/InMemoryCollectorTraceStore;
+	public fun lexicalSignalScorer ()Lcom/embabel/dice/spi/CollectorSignalScorer;
+	public fun multiSignalCollectorStrategy (Ljava/util/List;Ljava/util/List;Lcom/embabel/dice/spi/ConnectedComponentsFinder;Lcom/embabel/dice/spi/CollectorTraceStore;Lcom/embabel/dice/projection/memory/collector/CollectorSurvivorPolicy;)Lcom/embabel/dice/projection/memory/collector/MultiSignalCollectorStrategy;
+	public fun polarityVetoSignalScorer ()Lcom/embabel/dice/spi/CollectorSignalScorer;
+	public fun provenanceOverlapSignalScorer ()Lcom/embabel/dice/spi/CollectorSignalScorer;
+	public fun vectorCandidatePairSource (Lcom/embabel/dice/proposition/PropositionRepository;)Lcom/embabel/dice/spi/CandidatePairSource;
+	public fun vectorSignalScorer ()Lcom/embabel/dice/spi/CollectorSignalScorer;
+}
+
+public class com/embabel/dice/storage/autoconfigure/CollectorProperties {
+	public fun <init> ()V
+	public fun <init> (ZDLjava/util/Map;Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$SweepProperties;Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$TraceProperties;)V
+	public synthetic fun <init> (ZDLjava/util/Map;Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$SweepProperties;Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$TraceProperties;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Z
+	public final fun component2 ()D
+	public final fun component3 ()Ljava/util/Map;
+	public final fun component4 ()Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$SweepProperties;
+	public final fun component5 ()Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$TraceProperties;
+	public final fun copy (ZDLjava/util/Map;Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$SweepProperties;Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$TraceProperties;)Lcom/embabel/dice/storage/autoconfigure/CollectorProperties;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/autoconfigure/CollectorProperties;ZDLjava/util/Map;Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$SweepProperties;Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$TraceProperties;ILjava/lang/Object;)Lcom/embabel/dice/storage/autoconfigure/CollectorProperties;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getEnabled ()Z
+	public fun getMatchThreshold ()D
+	public fun getSignals ()Ljava/util/Map;
+	public fun getSweep ()Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$SweepProperties;
+	public fun getTrace ()Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$TraceProperties;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/autoconfigure/CollectorProperties$SignalProperties {
+	public fun <init> ()V
+	public fun <init> (ZLjava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;)V
+	public synthetic fun <init> (ZLjava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Z
+	public final fun component2 ()Ljava/lang/Double;
+	public final fun component3 ()Ljava/lang/Double;
+	public final fun component4 ()Ljava/lang/Integer;
+	public final fun copy (ZLjava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;)Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$SignalProperties;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$SignalProperties;ZLjava/lang/Double;Ljava/lang/Double;Ljava/lang/Integer;ILjava/lang/Object;)Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$SignalProperties;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getEnabled ()Z
+	public final fun getSimilarityThreshold ()Ljava/lang/Double;
+	public final fun getTopK ()Ljava/lang/Integer;
+	public final fun getWeight ()Ljava/lang/Double;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/autoconfigure/CollectorProperties$SweepProperties {
+	public fun <init> ()V
+	public fun <init> (Z)V
+	public synthetic fun <init> (ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Z
+	public final fun copy (Z)Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$SweepProperties;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$SweepProperties;ZILjava/lang/Object;)Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$SweepProperties;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDelta ()Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/autoconfigure/CollectorProperties$TraceProperties {
+	public fun <init> ()V
+	public fun <init> (ZLjava/lang/Integer;)V
+	public synthetic fun <init> (ZLjava/lang/Integer;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Z
+	public final fun component2 ()Ljava/lang/Integer;
+	public final fun copy (ZLjava/lang/Integer;)Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$TraceProperties;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$TraceProperties;ZLjava/lang/Integer;ILjava/lang/Object;)Lcom/embabel/dice/storage/autoconfigure/CollectorProperties$TraceProperties;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDetailRetentionDays ()Ljava/lang/Integer;
+	public final fun getEnabled ()Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public class com/embabel/dice/storage/autoconfigure/DiceDecaySchedulingConfiguration {
+	public fun <init> (Lorg/springframework/beans/factory/ObjectProvider;Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties;)V
+	public fun tick ()V
+}
+
+public class com/embabel/dice/storage/autoconfigure/DiceStorageAutoConfiguration {
+	public fun <init> ()V
+	public fun drivineChunkHistoryStore (Lorg/drivine/manager/StatelessGraphObjectManager;Lorg/drivine/manager/PersistenceManager;)Lcom/embabel/dice/incremental/ChunkHistoryStore;
+	public fun drivineCollectorRecordStore (Lorg/drivine/manager/PersistenceManager;)Lcom/embabel/dice/projection/lineage/CollectorRecordStore;
+	public fun drivineExtractionRunStore (Lorg/drivine/manager/PersistenceManager;Lorg/springframework/transaction/PlatformTransactionManager;)Lcom/embabel/dice/proposition/extraction/ExtractionRunStore;
+	public fun drivineProjectionRecordStore (Lorg/drivine/manager/PersistenceManager;)Lcom/embabel/dice/projection/lineage/ProjectionRecordStore;
+	public fun drivinePropositionRepository (Lorg/drivine/manager/StatelessGraphObjectManager;Lorg/drivine/manager/PersistenceManager;Lcom/embabel/agent/api/common/Ai;Lorg/springframework/transaction/PlatformTransactionManager;Lorg/springframework/beans/factory/ObjectProvider;)Lcom/embabel/dice/proposition/PropositionRepository;
+	public fun drivinePropositionRunLinkStore (Lorg/drivine/manager/PersistenceManager;)Lcom/embabel/dice/proposition/extraction/PropositionRunLinkStore;
+	public fun extractionRunSchema ()Lorg/drivine/schema/SchemaCatalog;
+	public fun graphDecayManager (Lcom/embabel/dice/proposition/PropositionRepository;Lorg/drivine/manager/PersistenceManager;)Lcom/embabel/dice/proposition/DecayManager;
+	public fun inMemoryChunkHistoryStore ()Lcom/embabel/dice/incremental/ChunkHistoryStore;
+	public fun inMemoryCollectorRecordStore ()Lcom/embabel/dice/projection/lineage/CollectorRecordStore;
+	public fun inMemoryDecayManager (Lcom/embabel/dice/proposition/PropositionRepository;)Lcom/embabel/dice/proposition/DecayManager;
+	public fun inMemoryProjectionRecordStore ()Lcom/embabel/dice/projection/lineage/ProjectionRecordStore;
+	public fun inMemoryPropositionRepository (Lcom/embabel/agent/api/common/Ai;Lorg/springframework/beans/factory/ObjectProvider;)Lcom/embabel/dice/proposition/PropositionRepository;
+	public fun lineageRecordSchema ()Lorg/drivine/schema/SchemaCatalog;
+	public fun lineageStorageSchema ()Lcom/embabel/dice/storage/DiceStorageSchema;
+	public fun propositionConstraintSchema ()Lorg/drivine/schema/SchemaCatalog;
+	public fun propositionVectorIndexConvergence (Lorg/drivine/manager/PersistenceManager;Lcom/embabel/agent/api/common/Ai;Lorg/springframework/beans/factory/ObjectProvider;)Lcom/embabel/dice/storage/autoconfigure/PropositionVectorIndexConvergence;
+	public fun propositionVectorIndexSchema (Lcom/embabel/agent/api/common/Ai;Lorg/springframework/beans/factory/ObjectProvider;)Lorg/drivine/schema/SchemaCatalog;
+}
+
+public final class com/embabel/dice/storage/autoconfigure/DiceStoreProperties {
+	public fun <init> ()V
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$Decay;Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$VectorIndex;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$Decay;Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$VectorIndex;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$Decay;
+	public final fun component3 ()Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$VectorIndex;
+	public final fun copy (Ljava/lang/String;Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$Decay;Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$VectorIndex;)Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties;Ljava/lang/String;Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$Decay;Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$VectorIndex;ILjava/lang/Object;)Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDecay ()Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$Decay;
+	public final fun getType ()Ljava/lang/String;
+	public final fun getVectorIndex ()Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$VectorIndex;
+	public fun hashCode ()I
+	public final fun setDecay (Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$Decay;)V
+	public final fun setType (Ljava/lang/String;)V
+	public final fun setVectorIndex (Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$VectorIndex;)V
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/autoconfigure/DiceStoreProperties$Decay {
+	public fun <init> ()V
+	public fun <init> (ZJDZ)V
+	public synthetic fun <init> (ZJDZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Z
+	public final fun component2 ()J
+	public final fun component3 ()D
+	public final fun component4 ()Z
+	public final fun copy (ZJDZ)Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$Decay;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$Decay;ZJDZILjava/lang/Object;)Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$Decay;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getEnabled ()Z
+	public final fun getIntervalMs ()J
+	public final fun getK ()D
+	public final fun getPruneStale ()Z
+	public fun hashCode ()I
+	public final fun setEnabled (Z)V
+	public final fun setIntervalMs (J)V
+	public final fun setK (D)V
+	public final fun setPruneStale (Z)V
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/autoconfigure/DiceStoreProperties$VectorIndex {
+	public fun <init> ()V
+	public fun <init> (Z)V
+	public synthetic fun <init> (ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Z
+	public final fun copy (Z)Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$VectorIndex;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$VectorIndex;ZILjava/lang/Object;)Lcom/embabel/dice/storage/autoconfigure/DiceStoreProperties$VectorIndex;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getEnabled ()Z
+	public fun hashCode ()I
+	public final fun setEnabled (Z)V
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/autoconfigure/PropositionVectorIndexConvergence {
+	public static final field Companion Lcom/embabel/dice/storage/autoconfigure/PropositionVectorIndexConvergence$Companion;
+	public final fun ensure ()Z
+}
+
+public final class com/embabel/dice/storage/autoconfigure/PropositionVectorIndexConvergence$Companion {
+}
+

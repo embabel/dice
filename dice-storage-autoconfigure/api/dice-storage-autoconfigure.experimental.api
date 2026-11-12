@@ -1,0 +1,52 @@
+public final class com/embabel/dice/storage/autoconfigure/DriftMode : java/lang/Enum {
+	public static final field OBSERVE Lcom/embabel/dice/storage/autoconfigure/DriftMode;
+	public static final field OFF Lcom/embabel/dice/storage/autoconfigure/DriftMode;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/storage/autoconfigure/DriftMode;
+	public static fun values ()[Lcom/embabel/dice/storage/autoconfigure/DriftMode;
+}
+
+public class com/embabel/dice/storage/autoconfigure/MetamodelAutoConfiguration {
+	public fun <init> ()V
+	public fun diceOwnedSchema (Ljava/util/List;)Lcom/embabel/dice/storage/DiceOwnedSchema;
+	public fun driftCheckRunner (Lcom/embabel/dice/metamodel/DeclaredSchemaSource;Lcom/embabel/dice/metamodel/MetamodelVersionStore;Lcom/embabel/dice/metamodel/ObservedSchemaSource;Lcom/embabel/dice/metamodel/DriftReportStore;Lorg/springframework/beans/factory/ObjectProvider;Lorg/springframework/beans/factory/ObjectProvider;)Lcom/embabel/dice/metamodel/DriftCheckRunner;
+	public fun driftQuarantinePolicy ()Lcom/embabel/dice/spi/DriftQuarantinePolicy;
+	public fun drivineDriftReportStore (Lorg/drivine/manager/PersistenceManager;)Lcom/embabel/dice/metamodel/DriftReportStore;
+	public fun drivineMetamodelVersionStore (Lorg/drivine/manager/PersistenceManager;)Lcom/embabel/dice/metamodel/SweptBaselineStore;
+	public fun drivineObservedSchemaSource (Lorg/drivine/manager/PersistenceManager;Lcom/embabel/dice/storage/DiceOwnedSchema;)Lcom/embabel/dice/metamodel/ObservedSchemaSource;
+	public fun governanceOperationsService (Lcom/embabel/dice/metamodel/DeclaredSchemaSource;Lcom/embabel/dice/metamodel/MetamodelVersionStore;Lcom/embabel/dice/metamodel/DriftReportStore;Lcom/embabel/dice/metamodel/DriftCheckRunner;Lcom/embabel/dice/spi/DriftSweepCapable;Lcom/embabel/dice/proposition/PropositionStore;)Lcom/embabel/dice/governance/GovernanceOperationsService;
+	public fun inMemoryMetamodelVersionStore ()Lcom/embabel/dice/metamodel/SweptBaselineStore;
+	public fun metamodelSchema ()Lorg/drivine/schema/SchemaCatalog;
+	public fun metamodelStorageSchema ()Lcom/embabel/dice/storage/DiceStorageSchema;
+	public fun propositionStoreDriftSweep (Lcom/embabel/dice/proposition/PropositionStore;Lorg/springframework/beans/factory/ObjectProvider;)Lcom/embabel/dice/spi/DriftSweepCapable;
+	public fun structuralMetamodelDiffer ()Lcom/embabel/dice/metamodel/support/StructuralMetamodelDiffer;
+}
+
+public final class com/embabel/dice/storage/autoconfigure/MetamodelProperties {
+	public fun <init> ()V
+	public fun <init> (ZLcom/embabel/dice/storage/autoconfigure/MetamodelProperties$DriftProperties;)V
+	public synthetic fun <init> (ZLcom/embabel/dice/storage/autoconfigure/MetamodelProperties$DriftProperties;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Z
+	public final fun component2 ()Lcom/embabel/dice/storage/autoconfigure/MetamodelProperties$DriftProperties;
+	public final fun copy (ZLcom/embabel/dice/storage/autoconfigure/MetamodelProperties$DriftProperties;)Lcom/embabel/dice/storage/autoconfigure/MetamodelProperties;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/autoconfigure/MetamodelProperties;ZLcom/embabel/dice/storage/autoconfigure/MetamodelProperties$DriftProperties;ILjava/lang/Object;)Lcom/embabel/dice/storage/autoconfigure/MetamodelProperties;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDrift ()Lcom/embabel/dice/storage/autoconfigure/MetamodelProperties$DriftProperties;
+	public final fun getEnabled ()Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/autoconfigure/MetamodelProperties$DriftProperties {
+	public fun <init> ()V
+	public fun <init> (Lcom/embabel/dice/storage/autoconfigure/DriftMode;)V
+	public synthetic fun <init> (Lcom/embabel/dice/storage/autoconfigure/DriftMode;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lcom/embabel/dice/storage/autoconfigure/DriftMode;
+	public final fun copy (Lcom/embabel/dice/storage/autoconfigure/DriftMode;)Lcom/embabel/dice/storage/autoconfigure/MetamodelProperties$DriftProperties;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/autoconfigure/MetamodelProperties$DriftProperties;Lcom/embabel/dice/storage/autoconfigure/DriftMode;ILjava/lang/Object;)Lcom/embabel/dice/storage/autoconfigure/MetamodelProperties$DriftProperties;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMode ()Lcom/embabel/dice/storage/autoconfigure/DriftMode;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+

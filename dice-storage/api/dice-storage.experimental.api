@@ -1,0 +1,45 @@
+public final class com/embabel/dice/storage/DiceOwnedSchema {
+	public static final field Companion Lcom/embabel/dice/storage/DiceOwnedSchema$Companion;
+	public synthetic fun <init> (Ljava/util/Map;Ljava/util/Set;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getBookkeepingRelationshipTypes ()Ljava/util/Set;
+	public final fun getLabels ()Ljava/util/Set;
+	public final fun getNodeShapes ()Ljava/util/Map;
+	public final fun ownedNodePredicate (Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/DiceOwnedSchema$Companion {
+	public final fun getCORE_NODE_FRAGMENTS ()Ljava/util/List;
+	public final fun getCORE_RELATIONSHIP_TYPES ()Ljava/util/Set;
+	public final fun of (Ljava/util/List;)Lcom/embabel/dice/storage/DiceOwnedSchema;
+}
+
+public abstract interface class com/embabel/dice/storage/DiceStorageSchema {
+	public fun getBookkeepingRelationshipTypes ()Ljava/util/Set;
+	public abstract fun specs ()Ljava/util/List;
+}
+
+public class com/embabel/dice/storage/DrivinePropositionRunLinkStore : com/embabel/dice/proposition/extraction/PropositionRunLinkStore {
+	public fun <init> (Lorg/drivine/manager/PersistenceManager;)V
+	public fun link (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Ljava/util/Collection;)I
+	protected fun propositionsInContext (Ljava/lang/String;Ljava/util/List;)Ljava/util/Set;
+	public fun propositionsOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;I)Ljava/util/List;
+	public fun runsOf (Ljava/lang/String;Ljava/lang/String;I)Ljava/util/List;
+}
+
+public final class com/embabel/dice/storage/LineageSchema : com/embabel/dice/storage/DiceStorageSchema {
+	public static final field COLLECTOR_RECORD Ljava/lang/String;
+	public static final field COLLECTOR_RUN Ljava/lang/String;
+	public static final field INSTANCE Lcom/embabel/dice/storage/LineageSchema;
+	public static final field PROJECTION_RECORD Ljava/lang/String;
+	public final fun getLABELS ()Ljava/util/List;
+	public final fun getNATURAL_KEYS ()Ljava/util/Map;
+	public final fun mergePattern (Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+	public fun specs ()Ljava/util/List;
+}
+
+public final class com/embabel/dice/storage/MetamodelSchema : com/embabel/dice/storage/DiceStorageSchema {
+	public static final field INSTANCE Lcom/embabel/dice/storage/MetamodelSchema;
+	public final fun getLABELS ()Ljava/util/List;
+	public fun specs ()Ljava/util/List;
+}
+

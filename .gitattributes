@@ -1,0 +1,2 @@
+# Generated public API listings are compared byte for byte, so keep one line-ending style everywhere
+*.api text eol=lf

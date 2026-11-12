@@ -1,0 +1,193 @@
+public abstract interface class com/embabel/dice/metamodel/DeclaredObservedDiffer {
+	public abstract fun diffAgainstObserved (Lcom/embabel/dice/metamodel/DeclaredSchema;Lcom/embabel/dice/metamodel/ObservedSchema;)Lcom/embabel/dice/metamodel/DeclaredObservedDiff;
+}
+
+public abstract interface class com/embabel/dice/metamodel/DriftCheckRunner {
+	public fun run ()Lcom/embabel/dice/metamodel/DriftCheckResult;
+	public abstract fun run-8XmWVTM (Ljava/lang/String;)Lcom/embabel/dice/metamodel/DriftCheckResult;
+}
+
+public abstract interface class com/embabel/dice/metamodel/DriftReportStore {
+	public fun driftReports (Ljava/lang/String;I)Ljava/util/List;
+	public abstract fun driftReports (Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public fun driftReportsInContext-WisJfY4 (Ljava/lang/String;Ljava/lang/String;I)Ljava/util/List;
+	public abstract fun driftReportsInContext-X4vlq90 (Ljava/lang/String;Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public fun globalDriftReports (Ljava/lang/String;I)Ljava/util/List;
+	public abstract fun globalDriftReports (Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public abstract fun saveDriftReport (Lcom/embabel/dice/metamodel/DriftReport;)V
+}
+
+public final class com/embabel/dice/metamodel/InMemoryMetamodelVersionStore : com/embabel/dice/metamodel/SweptBaselineStore {
+	public fun <init> ()V
+	public fun latestVersion (Ljava/lang/String;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public fun markSwept (Lcom/embabel/dice/metamodel/MetamodelVersion;)V
+	public fun saveVersion (Lcom/embabel/dice/metamodel/MetamodelVersion;)V
+	public fun sweptVersion (Ljava/lang/String;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public fun versionHistory (Ljava/lang/String;)Ljava/util/List;
+}
+
+public abstract interface class com/embabel/dice/metamodel/MetamodelChange {
+}
+
+public final class com/embabel/dice/metamodel/MetamodelChange$AmbiguousEntityTypeRename : com/embabel/dice/metamodel/MetamodelChange {
+	public fun <init> (Ljava/util/Set;Ljava/util/Set;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCandidates ()Ljava/util/Set;
+	public final fun getFormerNames ()Ljava/util/Set;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/MetamodelChange$AmbiguousPropertyRename : com/embabel/dice/metamodel/MetamodelChange {
+	public fun <init> (Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCandidates ()Ljava/util/Set;
+	public final fun getFormerNames ()Ljava/util/Set;
+	public final fun getTypeName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/MetamodelChange$EntityTypeAdded : com/embabel/dice/metamodel/MetamodelChange {
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Lcom/embabel/dice/metamodel/MetamodelChange$EntityTypeAdded;
+	public static synthetic fun copy$default (Lcom/embabel/dice/metamodel/MetamodelChange$EntityTypeAdded;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/metamodel/MetamodelChange$EntityTypeAdded;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getTypeName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/MetamodelChange$EntityTypeAliasesChanged : com/embabel/dice/metamodel/MetamodelChange {
+	public fun <init> (Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAfter ()Ljava/util/Set;
+	public final fun getBefore ()Ljava/util/Set;
+	public final fun getTypeName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/MetamodelChange$EntityTypeModified : com/embabel/dice/metamodel/MetamodelChange {
+	public fun <init> (Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/util/Set;)V
+	public fun <init> (Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;)V
+	public fun <init> (Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/util/Set;)V
+	public fun <init> (Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/util/Set;Ljava/util/Set;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/util/Set;Ljava/util/Set;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAddedLabels ()Ljava/util/Set;
+	public final fun getAddedProperties ()Ljava/util/Set;
+	public final fun getAddedPropertyNames ()Ljava/util/Set;
+	public final fun getRemovedLabels ()Ljava/util/Set;
+	public final fun getRemovedProperties ()Ljava/util/Set;
+	public final fun getRemovedPropertyNames ()Ljava/util/Set;
+	public final fun getTypeName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/MetamodelChange$EntityTypeRemoved : com/embabel/dice/metamodel/MetamodelChange {
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Lcom/embabel/dice/metamodel/MetamodelChange$EntityTypeRemoved;
+	public static synthetic fun copy$default (Lcom/embabel/dice/metamodel/MetamodelChange$EntityTypeRemoved;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/metamodel/MetamodelChange$EntityTypeRemoved;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getTypeName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/MetamodelChange$EntityTypeRenamed : com/embabel/dice/metamodel/MetamodelChange {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/metamodel/MetamodelChange$EntityTypeRenamed;
+	public static synthetic fun copy$default (Lcom/embabel/dice/metamodel/MetamodelChange$EntityTypeRenamed;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/metamodel/MetamodelChange$EntityTypeRenamed;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAfter ()Ljava/lang/String;
+	public final fun getBefore ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/MetamodelChange$PropertyRenamed : com/embabel/dice/metamodel/MetamodelChange {
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/metamodel/PropertySignature;Lcom/embabel/dice/metamodel/PropertySignature;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Lcom/embabel/dice/metamodel/PropertySignature;
+	public final fun component3 ()Lcom/embabel/dice/metamodel/PropertySignature;
+	public final fun copy (Ljava/lang/String;Lcom/embabel/dice/metamodel/PropertySignature;Lcom/embabel/dice/metamodel/PropertySignature;)Lcom/embabel/dice/metamodel/MetamodelChange$PropertyRenamed;
+	public static synthetic fun copy$default (Lcom/embabel/dice/metamodel/MetamodelChange$PropertyRenamed;Ljava/lang/String;Lcom/embabel/dice/metamodel/PropertySignature;Lcom/embabel/dice/metamodel/PropertySignature;ILjava/lang/Object;)Lcom/embabel/dice/metamodel/MetamodelChange$PropertyRenamed;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAfter ()Lcom/embabel/dice/metamodel/PropertySignature;
+	public final fun getBefore ()Lcom/embabel/dice/metamodel/PropertySignature;
+	public final fun getCardinalityChanged ()Z
+	public final fun getKindChanged ()Z
+	public final fun getTypeChanged ()Z
+	public final fun getTypeName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/MetamodelChange$PropertySignatureChanged : com/embabel/dice/metamodel/MetamodelChange {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/metamodel/PropertySignature;Lcom/embabel/dice/metamodel/PropertySignature;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Lcom/embabel/dice/metamodel/PropertySignature;
+	public final fun component4 ()Lcom/embabel/dice/metamodel/PropertySignature;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/metamodel/PropertySignature;Lcom/embabel/dice/metamodel/PropertySignature;)Lcom/embabel/dice/metamodel/MetamodelChange$PropertySignatureChanged;
+	public static synthetic fun copy$default (Lcom/embabel/dice/metamodel/MetamodelChange$PropertySignatureChanged;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/metamodel/PropertySignature;Lcom/embabel/dice/metamodel/PropertySignature;ILjava/lang/Object;)Lcom/embabel/dice/metamodel/MetamodelChange$PropertySignatureChanged;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAfter ()Lcom/embabel/dice/metamodel/PropertySignature;
+	public final fun getBefore ()Lcom/embabel/dice/metamodel/PropertySignature;
+	public final fun getCardinalityChanged ()Z
+	public final fun getKindChanged ()Z
+	public final fun getPropertyName ()Ljava/lang/String;
+	public final fun getTypeChanged ()Z
+	public final fun getTypeName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/MetamodelChange$RelationshipAdded : com/embabel/dice/metamodel/MetamodelChange {
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Lcom/embabel/dice/metamodel/MetamodelChange$RelationshipAdded;
+	public static synthetic fun copy$default (Lcom/embabel/dice/metamodel/MetamodelChange$RelationshipAdded;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/metamodel/MetamodelChange$RelationshipAdded;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDescriptor ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/MetamodelChange$RelationshipRemoved : com/embabel/dice/metamodel/MetamodelChange {
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Lcom/embabel/dice/metamodel/MetamodelChange$RelationshipRemoved;
+	public static synthetic fun copy$default (Lcom/embabel/dice/metamodel/MetamodelChange$RelationshipRemoved;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/metamodel/MetamodelChange$RelationshipRemoved;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDescriptor ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface annotation class com/embabel/dice/metamodel/MetamodelDsl : java/lang/annotation/Annotation {
+}
+
+public abstract interface class com/embabel/dice/metamodel/SweptBaselineStore : com/embabel/dice/metamodel/MetamodelVersionStore {
+	public abstract fun markSwept (Lcom/embabel/dice/metamodel/MetamodelVersion;)V
+	public abstract fun sweptVersion (Ljava/lang/String;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+}
+
+public final class com/embabel/dice/metamodel/support/DefaultDriftCheckRunner : com/embabel/dice/metamodel/DriftCheckRunner {
+	public fun <init> (Lcom/embabel/dice/metamodel/DeclaredSchemaSource;Lcom/embabel/dice/metamodel/MetamodelVersionStore;Lcom/embabel/dice/metamodel/ObservedSchemaSource;Lcom/embabel/dice/metamodel/DeclaredObservedDiffer;Lcom/embabel/dice/metamodel/MetamodelDiffer;Lcom/embabel/dice/metamodel/DriftReportStore;)V
+	public fun run-8XmWVTM (Ljava/lang/String;)Lcom/embabel/dice/metamodel/DriftCheckResult;
+}
+
+public final class com/embabel/dice/metamodel/support/StructuralMetamodelDiffer : com/embabel/dice/metamodel/DeclaredObservedDiffer, com/embabel/dice/metamodel/MetamodelDiffer {
+	public fun <init> ()V
+	public fun diff (Lcom/embabel/dice/metamodel/MetamodelVersion;Lcom/embabel/dice/metamodel/MetamodelVersion;)Lcom/embabel/dice/metamodel/MetamodelDiff;
+	public fun diffAgainstObserved (Lcom/embabel/dice/metamodel/DeclaredSchema;Lcom/embabel/dice/metamodel/ObservedSchema;)Lcom/embabel/dice/metamodel/DeclaredObservedDiff;
+}
+

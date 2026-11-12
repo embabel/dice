@@ -1,0 +1,665 @@
+public final class com/embabel/dice/storage/CollectorCandidateEdgeRowMapper {
+	public static final field INSTANCE Lcom/embabel/dice/storage/CollectorCandidateEdgeRowMapper;
+	public final fun edgeBindMap (Ljava/lang/String;Lcom/embabel/dice/spi/CollectorCandidateEdge;)Ljava/util/Map;
+	public final fun edgeId (Ljava/lang/String;Lcom/embabel/dice/spi/CollectorCandidateEdge;)Ljava/lang/String;
+	public final fun fromRow (Ljava/util/Map;Ljava/util/List;)Lcom/embabel/dice/spi/CollectorCandidateEdge;
+	public final fun signalBindMap (Ljava/lang/String;Lcom/embabel/dice/spi/CollectorCandidateEdge;Lcom/embabel/dice/spi/CollectorSignalScore;)Ljava/util/Map;
+	public final fun signalFromRow (Ljava/util/Map;)Lcom/embabel/dice/spi/CollectorSignalScore;
+}
+
+public final class com/embabel/dice/storage/CollectorComponentRowMapper {
+	public static final field INSTANCE Lcom/embabel/dice/storage/CollectorComponentRowMapper;
+	public final fun bindMap (Ljava/lang/String;Lcom/embabel/dice/spi/CollectorComponent;)Ljava/util/Map;
+	public final fun componentId (Ljava/lang/String;Lcom/embabel/dice/spi/CollectorComponent;)Ljava/lang/String;
+	public final fun fromRow (Ljava/util/Map;)Lcom/embabel/dice/spi/CollectorComponent;
+}
+
+public final class com/embabel/dice/storage/CollectorDecisionRowMapper {
+	public static final field INSTANCE Lcom/embabel/dice/storage/CollectorDecisionRowMapper;
+	public final fun bindMap (Ljava/lang/String;Lcom/embabel/dice/spi/CollectorDecision;)Ljava/util/Map;
+	public final fun decisionId (Ljava/lang/String;Lcom/embabel/dice/spi/CollectorDecision;)Ljava/lang/String;
+	public final fun fromRow (Ljava/util/Map;Ljava/util/List;)Lcom/embabel/dice/spi/CollectorDecision;
+	public final fun retiredBindMap (Ljava/lang/String;Lcom/embabel/dice/spi/CollectorDecision;Lcom/embabel/dice/spi/RetiredProposition;)Ljava/util/Map;
+	public final fun retiredFromRow (Ljava/util/Map;)Lcom/embabel/dice/spi/RetiredProposition;
+}
+
+public final class com/embabel/dice/storage/CollectorRecordRowMapper {
+	public static final field INSTANCE Lcom/embabel/dice/storage/CollectorRecordRowMapper;
+	public final fun bindMap (Lcom/embabel/dice/projection/lineage/CollectorRecord;)Ljava/util/Map;
+	public final fun fromRow (Ljava/util/Map;)Lcom/embabel/dice/projection/lineage/CollectorRecord;
+}
+
+public final class com/embabel/dice/storage/CollectorRunRowMapper {
+	public static final field INSTANCE Lcom/embabel/dice/storage/CollectorRunRowMapper;
+	public final fun bindMap (Lcom/embabel/dice/projection/lineage/CollectorRun;)Ljava/util/Map;
+	public final fun fromRow (Ljava/util/Map;)Lcom/embabel/dice/projection/lineage/CollectorRun;
+}
+
+public final class com/embabel/dice/storage/CollectorTraceSchema : com/embabel/dice/storage/DiceStorageSchema {
+	public static final field INSTANCE Lcom/embabel/dice/storage/CollectorTraceSchema;
+	public fun getBookkeepingRelationshipTypes ()Ljava/util/Set;
+	public final fun getLABELS ()Ljava/util/List;
+	public fun specs ()Ljava/util/List;
+}
+
+public final class com/embabel/dice/storage/DiceStorageSchemaKt {
+	public static final fun diceStorageCatalog (Ljava/util/List;)Lorg/drivine/schema/SchemaCatalog;
+}
+
+public final class com/embabel/dice/storage/DriftReportRowMapper {
+	public static final field GLOBAL_CONTEXT_KEY Ljava/lang/String;
+	public static final field INSTANCE Lcom/embabel/dice/storage/DriftReportRowMapper;
+	public final fun bindMap (Lcom/embabel/dice/metamodel/DriftReport;)Ljava/util/Map;
+	public final fun contextKeyFor-8XmWVTM (Ljava/lang/String;)Ljava/lang/String;
+	public final fun fromRow (Ljava/util/Map;)Lcom/embabel/dice/metamodel/DriftReport;
+}
+
+public class com/embabel/dice/storage/DrivineChunkHistoryStore : com/embabel/dice/incremental/ChunkHistoryStore {
+	public fun <init> (Lorg/drivine/manager/StatelessGraphObjectManager;Lorg/drivine/manager/PersistenceManager;)V
+	public fun clearByContext-GRzcY08 (Ljava/lang/String;)V
+	public fun getLastBookmark (Lcom/embabel/dice/incremental/BookmarkKey;)Lcom/embabel/dice/incremental/AnalysisBookmark;
+	public fun isProcessed (Lcom/embabel/dice/incremental/HashKey;)Z
+	public fun recordProcessed (Lcom/embabel/dice/incremental/ProcessedChunkRecord;)V
+}
+
+public class com/embabel/dice/storage/DrivineCollectorRecordStore : com/embabel/dice/projection/lineage/CollectorRecordStore {
+	public fun <init> (Lorg/drivine/manager/PersistenceManager;)V
+	public fun all ()Ljava/util/List;
+	public fun findByProposition (Ljava/lang/String;)Ljava/util/List;
+	public fun findByRun (Ljava/lang/String;)Ljava/util/List;
+	public fun findRun (Ljava/lang/String;)Lcom/embabel/dice/projection/lineage/CollectorRun;
+	public fun record (Lcom/embabel/dice/projection/lineage/CollectorRecord;)V
+	public fun recordRun (Lcom/embabel/dice/projection/lineage/CollectorRun;)V
+	public fun runs ()Ljava/util/List;
+}
+
+public class com/embabel/dice/storage/DrivineCollectorTraceStore : com/embabel/dice/spi/CollectorTraceQuery, com/embabel/dice/spi/CollectorTraceStore {
+	public fun <init> (Lorg/drivine/manager/PersistenceManager;)V
+	public fun deleteTracesForContext-GRzcY08 (Ljava/lang/String;)V
+	public fun findDecisionForProposition (Ljava/lang/String;)Lcom/embabel/dice/spi/CollectorDecision;
+	public fun findDecisionRetiring (Ljava/lang/String;)Lcom/embabel/dice/spi/CollectorDecision;
+	public fun findDecisionsByRun (Ljava/lang/String;)Ljava/util/List;
+	public fun findEdgesByRun (Ljava/lang/String;)Ljava/util/List;
+	public fun recordCandidateEdges (Ljava/lang/String;Ljava/util/List;)V
+	public fun recordComponents (Ljava/lang/String;Ljava/util/List;)V
+	public fun recordDecision (Ljava/lang/String;Lcom/embabel/dice/spi/CollectorDecision;)V
+	public fun recordRunContext-sZMPnk8 (Ljava/lang/String;Ljava/lang/String;)V
+}
+
+public class com/embabel/dice/storage/DrivineDriftReportStore : com/embabel/dice/metamodel/DriftReportStore {
+	public fun <init> (Lorg/drivine/manager/PersistenceManager;)V
+	public fun driftReports (Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public fun driftReportsInContext-X4vlq90 (Ljava/lang/String;Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public fun globalDriftReports (Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public fun saveDriftReport (Lcom/embabel/dice/metamodel/DriftReport;)V
+}
+
+public class com/embabel/dice/storage/DrivineExtractionRunStore : com/embabel/dice/proposition/extraction/ExtractionRunStore {
+	public fun <init> (Lorg/drivine/manager/PersistenceManager;Lorg/springframework/transaction/PlatformTransactionManager;)V
+	public fun <init> (Lorg/drivine/manager/PersistenceManager;Lorg/springframework/transaction/PlatformTransactionManager;Ljava/time/Clock;)V
+	public fun <init> (Lorg/drivine/manager/PersistenceManager;Lorg/springframework/transaction/PlatformTransactionManager;Ljava/time/Clock;Lcom/embabel/dice/common/DiceEventListener;)V
+	public synthetic fun <init> (Lorg/drivine/manager/PersistenceManager;Lorg/springframework/transaction/PlatformTransactionManager;Ljava/time/Clock;Lcom/embabel/dice/common/DiceEventListener;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun ancestorsOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;I)Ljava/util/List;
+	public fun childrenOf (Ljava/lang/String;Ljava/lang/String;I)Ljava/util/List;
+	public fun findRun (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public fun invocationsOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;)Ljava/util/List;
+	public fun recordInvocation (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Lcom/embabel/dice/proposition/extraction/ExtractionInvocationRecord;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public fun runsInContext (Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public fun runsOfRoot (Ljava/lang/String;Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public fun save (Lcom/embabel/dice/proposition/extraction/ExtractionRun;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public fun transition (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;)Lcom/embabel/dice/proposition/extraction/ExtractionRunTransitionResult;
+}
+
+public class com/embabel/dice/storage/DrivineMetamodelVersionStore : com/embabel/dice/metamodel/SweptBaselineStore {
+	public fun <init> (Lorg/drivine/manager/PersistenceManager;Ljava/time/Clock;)V
+	public synthetic fun <init> (Lorg/drivine/manager/PersistenceManager;Ljava/time/Clock;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun findVersion (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public fun latestVersion (Ljava/lang/String;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public fun markSwept (Lcom/embabel/dice/metamodel/MetamodelVersion;)V
+	public fun saveVersion (Lcom/embabel/dice/metamodel/MetamodelVersion;)V
+	public fun sweptVersion (Ljava/lang/String;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+	public fun versionHistory (Ljava/lang/String;)Ljava/util/List;
+}
+
+public class com/embabel/dice/storage/DrivineObservedSchemaSource : com/embabel/dice/metamodel/ObservedSchemaSource {
+	public fun <init> (Lorg/drivine/manager/PersistenceManager;Lcom/embabel/dice/storage/DiceOwnedSchema;Ljava/time/Clock;)V
+	public synthetic fun <init> (Lorg/drivine/manager/PersistenceManager;Lcom/embabel/dice/storage/DiceOwnedSchema;Ljava/time/Clock;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun observe ()Lcom/embabel/dice/metamodel/ObservedSchema;
+	public fun observe-8XmWVTM (Ljava/lang/String;)Lcom/embabel/dice/metamodel/ObservedSchema;
+}
+
+public final class com/embabel/dice/storage/DrivineObservedSchemaSourceKt {
+	public static final fun getINFRASTRUCTURE_LABELS ()Ljava/util/Set;
+}
+
+public class com/embabel/dice/storage/DrivineProjectionRecordStore : com/embabel/dice/projection/lineage/ProjectionRecordStore {
+	public fun <init> (Lorg/drivine/manager/PersistenceManager;)V
+	public fun all ()Ljava/util/List;
+	public fun findByContext (Ljava/lang/String;)Ljava/util/List;
+	public fun findByProposition (Ljava/lang/String;)Ljava/util/List;
+	public fun findByRun (Ljava/lang/String;)Ljava/util/List;
+	public fun findByTarget (Ljava/lang/String;)Ljava/util/List;
+	public fun findByTargetRef (Ljava/lang/String;)Ljava/util/List;
+	public fun findStale ()Ljava/util/List;
+	public fun markStaleByProposition (Ljava/lang/String;)I
+	public fun record (Lcom/embabel/dice/projection/lineage/ProjectionRecord;)V
+}
+
+public class com/embabel/dice/storage/DrivinePropositionRepository : com/embabel/dice/proposition/GraphQueryCapable, com/embabel/dice/proposition/PropositionRepository, com/embabel/dice/proposition/ProvenanceSubtractionCapable, com/embabel/dice/proposition/SourceRevisionQueryCapable {
+	public static final field Companion Lcom/embabel/dice/storage/DrivinePropositionRepository$Companion;
+	public static final field VECTOR_INDEX Ljava/lang/String;
+	public static final field VECTOR_INDEX_LABEL Ljava/lang/String;
+	public static final field VECTOR_INDEX_PROPERTY Ljava/lang/String;
+	public fun <init> (Lorg/drivine/manager/StatelessGraphObjectManager;Lorg/drivine/manager/PersistenceManager;Lcom/embabel/common/ai/model/EmbeddingService;Lorg/springframework/transaction/PlatformTransactionManager;Ljava/lang/String;)V
+	public synthetic fun <init> (Lorg/drivine/manager/StatelessGraphObjectManager;Lorg/drivine/manager/PersistenceManager;Lcom/embabel/common/ai/model/EmbeddingService;Lorg/springframework/transaction/PlatformTransactionManager;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun clearAll ()I
+	public fun clearByContext (Ljava/lang/String;)I
+	public fun clearByContextPrefix (Ljava/lang/String;)I
+	public fun count ()I
+	public fun count (Lcom/embabel/dice/proposition/PropositionQuery;)I
+	public fun delete (Ljava/lang/String;)Z
+	public fun findAbstractionsOf (Ljava/lang/String;)Ljava/util/List;
+	public fun findAll ()Ljava/util/List;
+	public fun findAll (Z)Ljava/util/List;
+	public fun findByContextId-GRzcY08 (Ljava/lang/String;)Ljava/util/List;
+	public fun findByEntity (Lcom/embabel/agent/rag/service/RetrievableIdentifier;)Ljava/util/List;
+	public fun findByGrounding (Ljava/lang/String;)Ljava/util/List;
+	public fun findById (Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
+	public fun findByMinLevel (I)Ljava/util/List;
+	public fun findBySourceKey (Ljava/lang/String;Ljava/lang/String;)Ljava/util/List;
+	public fun findBySourceRevision (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceRevisionRef;)Ljava/util/List;
+	public fun findByStatus (Lcom/embabel/dice/proposition/PropositionStatus;)Ljava/util/List;
+	public fun findClusters (DILcom/embabel/dice/proposition/PropositionQuery;)Ljava/util/List;
+	public fun findRevisionlessBySourceLocator (Ljava/lang/String;Lcom/embabel/dice/provenance/SourceLocator;)Ljava/util/List;
+	public fun findSimilarWithScores (Lcom/embabel/common/core/types/TextSimilaritySearchRequest;)Ljava/util/List;
+	public fun findSimilarWithScores (Lcom/embabel/common/core/types/TextSimilaritySearchRequest;Lcom/embabel/dice/proposition/PropositionQuery;)Ljava/util/List;
+	public fun getHonorsContextFilter ()Z
+	public fun getLuceneSyntaxNotes ()Ljava/lang/String;
+	public fun getStoreType ()Lcom/embabel/dice/proposition/PropositionStoreType;
+	public fun keywordOverlap (Lcom/embabel/dice/proposition/PropositionQuery;Ljava/util/List;I)Ljava/util/List;
+	public fun neighborhood (Ljava/lang/String;I)Lcom/embabel/dice/query/graph/GraphNeighborhood;
+	public fun neighborhood-4FP-N9U (Ljava/lang/String;ILjava/lang/String;)Lcom/embabel/dice/query/graph/GraphNeighborhood;
+	public fun neighborhood-xFKS4ws (Ljava/lang/String;ILjava/lang/String;I)Lcom/embabel/dice/query/graph/GraphNeighborhood;
+	public fun pathBetween (Ljava/lang/String;Ljava/lang/String;)Ljava/util/List;
+	public fun pathBetween-4FP-N9U (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/util/List;
+	public fun pathBetween-xFKS4ws (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)Ljava/util/List;
+	public fun query (Lcom/embabel/dice/proposition/PropositionQuery;)Ljava/util/List;
+	public fun query (Lcom/embabel/dice/proposition/PropositionQuery;Z)Ljava/util/List;
+	public fun reembedAll ()Lcom/embabel/dice/proposition/PropositionReembedReport;
+	public fun save (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/proposition/Proposition;
+	public fun setProvenance (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/proposition/Proposition;
+	public fun subtractFoldedEvidence (Ljava/lang/String;Ljava/util/List;Ljava/util/Collection;Ljava/util/Collection;)Lcom/embabel/dice/proposition/Proposition;
+	public fun touchAccessed (Ljava/util/Collection;)V
+	public fun whyExplain (Ljava/lang/String;)Lcom/embabel/dice/query/graph/PropositionLineage;
+	public fun whyExplain-HfYjZ7c (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/query/graph/PropositionLineage;
+}
+
+public final class com/embabel/dice/storage/DrivinePropositionRepository$Companion {
+	public final fun vectorIndexSpec (I)Lorg/drivine/schema/VectorIndexSpec;
+}
+
+public final class com/embabel/dice/storage/ExtractionInvocationRowMapper {
+	public static final field INSTANCE Lcom/embabel/dice/storage/ExtractionInvocationRowMapper;
+	public final fun bindMap (Lcom/embabel/dice/proposition/extraction/ExtractionInvocationRecord;)Ljava/util/Map;
+	public final fun fingerprint (Lcom/embabel/dice/proposition/extraction/ExtractionInvocationRecord;)Ljava/lang/String;
+	public final fun fromRow (Ljava/util/Map;)Lcom/embabel/dice/proposition/extraction/ExtractionInvocationRecord;
+}
+
+public final class com/embabel/dice/storage/ExtractionRunRowMapper {
+	public static final field INSTANCE Lcom/embabel/dice/storage/ExtractionRunRowMapper;
+	public final fun fromRow (Ljava/util/Map;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	public final fun headerBindMap (Lcom/embabel/dice/proposition/extraction/ExtractionRun;)Ljava/util/Map;
+	public final fun headerFingerprint (Ljava/util/Map;)Ljava/lang/String;
+	public final fun lineageKeyOf (Lcom/embabel/dice/proposition/extraction/ExtractionRunLineage;)Ljava/lang/String;
+	public final fun terminalBindMap (Lcom/embabel/dice/proposition/extraction/ExtractionRunTransition;)Ljava/util/Map;
+}
+
+public final class com/embabel/dice/storage/ExtractionRunSchema {
+	public static final field ENDED_BY_REL Ljava/lang/String;
+	public static final field INSTANCE Lcom/embabel/dice/storage/ExtractionRunSchema;
+	public static final field INVOCATION_LABEL Ljava/lang/String;
+	public static final field MAX_CONTEXT_ID_LENGTH I
+	public static final field PRODUCED_BY_RUN_REL Ljava/lang/String;
+	public static final field RECORDED_REL Ljava/lang/String;
+	public static final field RUN_LABEL Ljava/lang/String;
+	public static final field TERMINAL_WRITE_LABEL Ljava/lang/String;
+	public final fun getLABELS ()Ljava/util/List;
+	public final fun requireStorableTenant-GRzcY08 (Ljava/lang/String;)V
+	public final fun specs ()Ljava/util/List;
+}
+
+public final class com/embabel/dice/storage/GraphDecayManager : com/embabel/dice/proposition/DecayManager {
+	public fun <init> (Lcom/embabel/dice/proposition/PropositionRepository;Lorg/drivine/manager/PersistenceManager;)V
+	public fun materialize-GRzcY08 (Ljava/lang/String;)V
+	public fun materializeAll ()V
+}
+
+public final class com/embabel/dice/storage/MetamodelVersionRowMapper {
+	public static final field INSTANCE Lcom/embabel/dice/storage/MetamodelVersionRowMapper;
+	public final fun bindMap (Lcom/embabel/dice/metamodel/MetamodelVersion;Ljava/time/Instant;)Ljava/util/Map;
+	public final fun fromRow (Ljava/util/Map;)Lcom/embabel/dice/metamodel/MetamodelVersion;
+}
+
+public final class com/embabel/dice/storage/ProjectionRecordRowMapper {
+	public static final field INSTANCE Lcom/embabel/dice/storage/ProjectionRecordRowMapper;
+	public final fun bindMap (Lcom/embabel/dice/projection/lineage/ProjectionRecord;)Ljava/util/Map;
+	public final fun fromRow (Ljava/util/Map;)Lcom/embabel/dice/projection/lineage/ProjectionRecord;
+}
+
+public final class com/embabel/dice/storage/PropositionGraphMapper {
+	public static final field INSTANCE Lcom/embabel/dice/storage/PropositionGraphMapper;
+	public final fun toProposition (Lcom/embabel/dice/storage/model/PropositionView;)Lcom/embabel/dice/proposition/Proposition;
+	public final fun toProposition (Lcom/embabel/dice/storage/model/PropositionWithProvenanceView;)Lcom/embabel/dice/proposition/Proposition;
+	public final fun toProvenanceView (Lcom/embabel/dice/proposition/Proposition;Ljava/util/List;)Lcom/embabel/dice/storage/model/PropositionWithProvenanceView;
+	public static synthetic fun toProvenanceView$default (Lcom/embabel/dice/storage/PropositionGraphMapper;Lcom/embabel/dice/proposition/Proposition;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/storage/model/PropositionWithProvenanceView;
+	public final fun toView (Lcom/embabel/dice/proposition/Proposition;Ljava/util/List;Ljava/lang/String;)Lcom/embabel/dice/storage/model/PropositionView;
+	public static synthetic fun toView$default (Lcom/embabel/dice/storage/PropositionGraphMapper;Lcom/embabel/dice/proposition/Proposition;Ljava/util/List;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/storage/model/PropositionView;
+}
+
+public final class com/embabel/dice/storage/model/DerivedFrom {
+	public fun <init> (Lcom/embabel/dice/storage/model/SourceNode;)V
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/storage/model/SourceNode;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/Integer;Lcom/embabel/dice/storage/model/SourceNode;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Lcom/embabel/dice/storage/model/SourceNode;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/String;Lcom/embabel/dice/storage/model/SourceNode;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/String;Lcom/embabel/dice/storage/model/SourceNode;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/String;Lcom/embabel/dice/storage/model/SourceNode;Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/String;Lcom/embabel/dice/storage/model/SourceNode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/String;Lcom/embabel/dice/storage/model/SourceNode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/Integer;
+	public final fun component3 ()Ljava/lang/Integer;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Lcom/embabel/dice/storage/model/SourceNode;
+	public final fun component6 ()Ljava/lang/String;
+	public final fun component7 ()Ljava/lang/String;
+	public final fun component8 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/String;Lcom/embabel/dice/storage/model/SourceNode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/storage/model/DerivedFrom;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/model/DerivedFrom;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/String;Lcom/embabel/dice/storage/model/SourceNode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/storage/model/DerivedFrom;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getChunkId ()Ljava/lang/String;
+	public final fun getContentHash ()Ljava/lang/String;
+	public final fun getDisplay ()Ljava/lang/String;
+	public final fun getEndOffset ()Ljava/lang/Integer;
+	public final fun getEntryKey ()Ljava/lang/String;
+	public final fun getSource ()Lcom/embabel/dice/storage/model/SourceNode;
+	public final fun getSourceRevision ()Ljava/lang/String;
+	public final fun getStartOffset ()Ljava/lang/Integer;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/model/DerivedFromProperties : org/drivine/query/dsl/NodeReference {
+	public fun <init> (Ljava/lang/String;)V
+	public final fun getChunkId ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getContentHash ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getDisplay ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getEndOffset ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getEntryKey ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public fun getNodeAlias ()Ljava/lang/String;
+	public final fun getSource ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getSourceRevision ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getStartOffset ()Lorg/drivine/query/dsl/PropertyReference;
+}
+
+public final class com/embabel/dice/storage/model/Mention {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/storage/model/Mention;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/model/Mention;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/storage/model/Mention;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getId ()Ljava/lang/String;
+	public final fun getResolvedId ()Ljava/lang/String;
+	public final fun getRole ()Ljava/lang/String;
+	public final fun getSpan ()Ljava/lang/String;
+	public final fun getType ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/model/MentionProperties : org/drivine/query/dsl/NodeReference {
+	public fun <init> (Ljava/lang/String;)V
+	public final fun getId ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public fun getNodeAlias ()Ljava/lang/String;
+	public final fun getResolvedId ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getRole ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getSpan ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getType ()Lorg/drivine/query/dsl/StringPropertyReference;
+}
+
+public final class com/embabel/dice/storage/model/MentionQueryDsl : org/drivine/query/dsl/ResolvableNodeReference {
+	public static final field Companion Lcom/embabel/dice/storage/model/MentionQueryDsl$Companion;
+	public fun <init> ()V
+	public fun getBagPrefixes ()Ljava/util/List;
+	public fun getFieldKeyPaths ()Ljava/util/Map;
+	public final fun getId ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public fun getNodeAlias ()Ljava/lang/String;
+	public final fun getResolvedId ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getRole ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getSpan ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getType ()Lorg/drivine/query/dsl/StringPropertyReference;
+}
+
+public final class com/embabel/dice/storage/model/MentionQueryDsl$Companion {
+	public final fun getINSTANCE ()Lcom/embabel/dice/storage/model/MentionQueryDsl;
+}
+
+public final class com/embabel/dice/storage/model/ProcessedChunkNode {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IILjava/time/Instant;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()I
+	public final fun component6 ()I
+	public final fun component7 ()Ljava/time/Instant;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IILjava/time/Instant;)Lcom/embabel/dice/storage/model/ProcessedChunkNode;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/model/ProcessedChunkNode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IILjava/time/Instant;ILjava/lang/Object;)Lcom/embabel/dice/storage/model/ProcessedChunkNode;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getContentHash ()Ljava/lang/String;
+	public final fun getContextId ()Ljava/lang/String;
+	public final fun getEndIndex ()I
+	public final fun getId ()Ljava/lang/String;
+	public final fun getProcessedAt ()Ljava/time/Instant;
+	public final fun getSourceId ()Ljava/lang/String;
+	public final fun getStartIndex ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/model/ProcessedChunkNodeQueryDsl : org/drivine/query/dsl/ResolvableNodeReference {
+	public static final field Companion Lcom/embabel/dice/storage/model/ProcessedChunkNodeQueryDsl$Companion;
+	public fun <init> ()V
+	public fun getBagPrefixes ()Ljava/util/List;
+	public final fun getContentHash ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getContextId ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getEndIndex ()Lorg/drivine/query/dsl/PropertyReference;
+	public fun getFieldKeyPaths ()Ljava/util/Map;
+	public final fun getId ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public fun getNodeAlias ()Ljava/lang/String;
+	public final fun getProcessedAt ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getSourceId ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getStartIndex ()Lorg/drivine/query/dsl/PropertyReference;
+}
+
+public final class com/embabel/dice/storage/model/ProcessedChunkNodeQueryDsl$Companion {
+	public final fun getINSTANCE ()Lcom/embabel/dice/storage/model/ProcessedChunkNodeQueryDsl;
+}
+
+public final class com/embabel/dice/storage/model/PropositionNode {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DDDLjava/lang/String;Ljava/util/List;Ljava/util/List;Ljava/lang/String;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/lang/String;ZIILjava/util/List;Ljava/lang/Double;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;Ljava/util/List;Ljava/util/Map;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DDDLjava/lang/String;Ljava/util/List;Ljava/util/List;Ljava/lang/String;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/lang/String;ZIILjava/util/List;Ljava/lang/Double;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;Ljava/util/List;Ljava/util/Map;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component10 ()Ljava/lang/String;
+	public final fun component11 ()Ljava/time/Instant;
+	public final fun component12 ()Ljava/time/Instant;
+	public final fun component13 ()Ljava/time/Instant;
+	public final fun component14 ()Ljava/time/Instant;
+	public final fun component15 ()Ljava/time/Instant;
+	public final fun component16 ()Ljava/lang/String;
+	public final fun component17 ()Z
+	public final fun component18 ()I
+	public final fun component19 ()I
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component20 ()Ljava/util/List;
+	public final fun component21 ()Ljava/lang/Double;
+	public final fun component22 ()Ljava/time/Instant;
+	public final fun component23 ()Ljava/time/Instant;
+	public final fun component24 ()Ljava/time/Instant;
+	public final fun component25 ()Ljava/time/Instant;
+	public final fun component26 ()Ljava/time/Instant;
+	public final fun component27 ()Ljava/util/List;
+	public final fun component28 ()Ljava/util/List;
+	public final fun component29 ()Ljava/util/Map;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component30 ()Ljava/lang/String;
+	public final fun component4 ()D
+	public final fun component5 ()D
+	public final fun component6 ()D
+	public final fun component7 ()Ljava/lang/String;
+	public final fun component8 ()Ljava/util/List;
+	public final fun component9 ()Ljava/util/List;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DDDLjava/lang/String;Ljava/util/List;Ljava/util/List;Ljava/lang/String;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/lang/String;ZIILjava/util/List;Ljava/lang/Double;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;Ljava/util/List;Ljava/util/Map;Ljava/lang/String;)Lcom/embabel/dice/storage/model/PropositionNode;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/model/PropositionNode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DDDLjava/lang/String;Ljava/util/List;Ljava/util/List;Ljava/lang/String;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/lang/String;ZIILjava/util/List;Ljava/lang/Double;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;Ljava/util/List;Ljava/util/Map;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/storage/model/PropositionNode;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getConfidence ()D
+	public final fun getContentRevised ()Ljava/time/Instant;
+	public final fun getContextId ()Ljava/lang/String;
+	public final fun getContradicts ()Ljava/util/List;
+	public final fun getCreated ()Ljava/time/Instant;
+	public final fun getDecay ()D
+	public final fun getDecayUpdatedAt ()Ljava/time/Instant;
+	public final fun getEffectiveConfidence ()Ljava/lang/Double;
+	public final fun getEmbedding ()Ljava/util/List;
+	public final fun getGrounding ()Ljava/util/List;
+	public final fun getId ()Ljava/lang/String;
+	public final fun getImportance ()D
+	public final fun getInvalidatedAt ()Ljava/time/Instant;
+	public final fun getLastAccessed ()Ljava/time/Instant;
+	public final fun getLastTouched ()Ljava/time/Instant;
+	public final fun getLevel ()I
+	public final fun getMetadata ()Ljava/util/Map;
+	public final fun getMetadataRevised ()Ljava/time/Instant;
+	public final fun getObservedAt ()Ljava/time/Instant;
+	public final fun getPinned ()Z
+	public final fun getReasoning ()Ljava/lang/String;
+	public final fun getReinforceCount ()I
+	public final fun getSourceIds ()Ljava/util/List;
+	public final fun getStamp ()Ljava/lang/String;
+	public final fun getStatus ()Ljava/lang/String;
+	public final fun getSupersedes ()Ljava/util/List;
+	public final fun getText ()Ljava/lang/String;
+	public final fun getUri ()Ljava/lang/String;
+	public final fun getValidFrom ()Ljava/time/Instant;
+	public final fun getValidTo ()Ljava/time/Instant;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/model/PropositionNodeProperties : org/drivine/query/dsl/NodeReference {
+	public fun <init> (Ljava/lang/String;)V
+	public final fun getConfidence ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getContentRevised ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getContextId ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getContradicts ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getCreated ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getDecay ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getDecayUpdatedAt ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getEffectiveConfidence ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getEmbedding ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getGrounding ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getId ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getImportance ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getInvalidatedAt ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getLastAccessed ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getLastTouched ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getLevel ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getMetadata ()Lorg/drivine/query/dsl/PropertyBagReference;
+	public final fun getMetadataRevised ()Lorg/drivine/query/dsl/PropertyReference;
+	public fun getNodeAlias ()Ljava/lang/String;
+	public final fun getObservedAt ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getPinned ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getReasoning ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getReinforceCount ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getSourceIds ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getStamp ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getStatus ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getSupersedes ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getText ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getUri ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getValidFrom ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getValidTo ()Lorg/drivine/query/dsl/PropertyReference;
+}
+
+public final class com/embabel/dice/storage/model/PropositionNodeQueryDsl : org/drivine/query/dsl/ResolvableNodeReference {
+	public static final field Companion Lcom/embabel/dice/storage/model/PropositionNodeQueryDsl$Companion;
+	public fun <init> ()V
+	public fun getBagPrefixes ()Ljava/util/List;
+	public final fun getConfidence ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getContentRevised ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getContextId ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getContradicts ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getCreated ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getDecay ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getDecayUpdatedAt ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getEffectiveConfidence ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getEmbedding ()Lorg/drivine/query/dsl/PropertyReference;
+	public fun getFieldKeyPaths ()Ljava/util/Map;
+	public final fun getGrounding ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getId ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getImportance ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getInvalidatedAt ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getLastAccessed ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getLastTouched ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getLevel ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getMetadata ()Lorg/drivine/query/dsl/PropertyBagReference;
+	public final fun getMetadataRevised ()Lorg/drivine/query/dsl/PropertyReference;
+	public fun getNodeAlias ()Ljava/lang/String;
+	public final fun getObservedAt ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getPinned ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getReasoning ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getReinforceCount ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getSourceIds ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getStamp ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getStatus ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getSupersedes ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getText ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getUri ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getValidFrom ()Lorg/drivine/query/dsl/PropertyReference;
+	public final fun getValidTo ()Lorg/drivine/query/dsl/PropertyReference;
+}
+
+public final class com/embabel/dice/storage/model/PropositionNodeQueryDsl$Companion {
+	public final fun getINSTANCE ()Lcom/embabel/dice/storage/model/PropositionNodeQueryDsl;
+}
+
+public final class com/embabel/dice/storage/model/PropositionView {
+	public fun <init> (Lcom/embabel/dice/storage/model/PropositionNode;Ljava/util/List;)V
+	public synthetic fun <init> (Lcom/embabel/dice/storage/model/PropositionNode;Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lcom/embabel/dice/storage/model/PropositionNode;
+	public final fun component2 ()Ljava/util/List;
+	public final fun copy (Lcom/embabel/dice/storage/model/PropositionNode;Ljava/util/List;)Lcom/embabel/dice/storage/model/PropositionView;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/model/PropositionView;Lcom/embabel/dice/storage/model/PropositionNode;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/storage/model/PropositionView;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMentions ()Ljava/util/List;
+	public final fun getProposition ()Lcom/embabel/dice/storage/model/PropositionNode;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/model/PropositionViewQueryDsl {
+	public static final field Companion Lcom/embabel/dice/storage/model/PropositionViewQueryDsl$Companion;
+	public fun <init> ()V
+	public final fun getMentions ()Lcom/embabel/dice/storage/model/MentionProperties;
+	public final fun getProposition ()Lcom/embabel/dice/storage/model/PropositionNodeProperties;
+}
+
+public final class com/embabel/dice/storage/model/PropositionViewQueryDsl$Companion {
+	public final fun getINSTANCE ()Lcom/embabel/dice/storage/model/PropositionViewQueryDsl;
+}
+
+public final class com/embabel/dice/storage/model/PropositionViewQueryDslKt {
+	public static final fun getMentions (Lorg/drivine/query/dsl/FieldsBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
+	public static final fun getMentions (Lorg/drivine/query/dsl/OrderBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
+	public static final fun getMentions (Lorg/drivine/query/dsl/SeekBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
+	public static final fun getMentions (Lorg/drivine/query/dsl/WhereBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
+	public static final fun getProposition (Lorg/drivine/query/dsl/FieldsBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
+	public static final fun getProposition (Lorg/drivine/query/dsl/OrderBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
+	public static final fun getProposition (Lorg/drivine/query/dsl/SeekBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
+	public static final fun getProposition (Lorg/drivine/query/dsl/WhereBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
+}
+
+public final class com/embabel/dice/storage/model/PropositionWithProvenanceView {
+	public fun <init> (Lcom/embabel/dice/storage/model/PropositionNode;Ljava/util/List;Ljava/util/List;)V
+	public synthetic fun <init> (Lcom/embabel/dice/storage/model/PropositionNode;Ljava/util/List;Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lcom/embabel/dice/storage/model/PropositionNode;
+	public final fun component2 ()Ljava/util/List;
+	public final fun component3 ()Ljava/util/List;
+	public final fun copy (Lcom/embabel/dice/storage/model/PropositionNode;Ljava/util/List;Ljava/util/List;)Lcom/embabel/dice/storage/model/PropositionWithProvenanceView;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/model/PropositionWithProvenanceView;Lcom/embabel/dice/storage/model/PropositionNode;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/storage/model/PropositionWithProvenanceView;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMentions ()Ljava/util/List;
+	public final fun getProposition ()Lcom/embabel/dice/storage/model/PropositionNode;
+	public final fun getProvenance ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/model/PropositionWithProvenanceViewQueryDsl {
+	public static final field Companion Lcom/embabel/dice/storage/model/PropositionWithProvenanceViewQueryDsl$Companion;
+	public fun <init> ()V
+	public final fun getMentions ()Lcom/embabel/dice/storage/model/MentionProperties;
+	public final fun getProposition ()Lcom/embabel/dice/storage/model/PropositionNodeProperties;
+	public final fun getProvenance ()Lcom/embabel/dice/storage/model/DerivedFromProperties;
+}
+
+public final class com/embabel/dice/storage/model/PropositionWithProvenanceViewQueryDsl$Companion {
+	public final fun getINSTANCE ()Lcom/embabel/dice/storage/model/PropositionWithProvenanceViewQueryDsl;
+}
+
+public final class com/embabel/dice/storage/model/PropositionWithProvenanceViewQueryDslKt {
+	public static final fun getMentions (Lorg/drivine/query/dsl/FieldsBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
+	public static final fun getMentions (Lorg/drivine/query/dsl/OrderBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
+	public static final fun getMentions (Lorg/drivine/query/dsl/SeekBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
+	public static final fun getMentions (Lorg/drivine/query/dsl/WhereBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
+	public static final fun getProposition (Lorg/drivine/query/dsl/FieldsBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
+	public static final fun getProposition (Lorg/drivine/query/dsl/OrderBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
+	public static final fun getProposition (Lorg/drivine/query/dsl/SeekBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
+	public static final fun getProposition (Lorg/drivine/query/dsl/WhereBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
+	public static final fun getProvenance (Lorg/drivine/query/dsl/FieldsBuilder;)Lcom/embabel/dice/storage/model/DerivedFromProperties;
+	public static final fun getProvenance (Lorg/drivine/query/dsl/OrderBuilder;)Lcom/embabel/dice/storage/model/DerivedFromProperties;
+	public static final fun getProvenance (Lorg/drivine/query/dsl/SeekBuilder;)Lcom/embabel/dice/storage/model/DerivedFromProperties;
+	public static final fun getProvenance (Lorg/drivine/query/dsl/WhereBuilder;)Lcom/embabel/dice/storage/model/DerivedFromProperties;
+}
+
+public final class com/embabel/dice/storage/model/SourceNode {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()Ljava/lang/String;
+	public final fun component7 ()Ljava/lang/String;
+	public final fun component8 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/storage/model/SourceNode;
+	public static synthetic fun copy$default (Lcom/embabel/dice/storage/model/SourceNode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/storage/model/SourceNode;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getConnectorId ()Ljava/lang/String;
+	public final fun getContentHash ()Ljava/lang/String;
+	public final fun getDisplay ()Ljava/lang/String;
+	public final fun getExternalId ()Ljava/lang/String;
+	public final fun getKey ()Ljava/lang/String;
+	public final fun getKind ()Ljava/lang/String;
+	public final fun getPath ()Ljava/lang/String;
+	public final fun getUri ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/storage/model/SourceNodeQueryDsl : org/drivine/query/dsl/ResolvableNodeReference {
+	public static final field Companion Lcom/embabel/dice/storage/model/SourceNodeQueryDsl$Companion;
+	public fun <init> ()V
+	public fun getBagPrefixes ()Ljava/util/List;
+	public final fun getConnectorId ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getContentHash ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getDisplay ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getExternalId ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public fun getFieldKeyPaths ()Ljava/util/Map;
+	public final fun getKey ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getKind ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public fun getNodeAlias ()Ljava/lang/String;
+	public final fun getPath ()Lorg/drivine/query/dsl/StringPropertyReference;
+	public final fun getUri ()Lorg/drivine/query/dsl/StringPropertyReference;
+}
+
+public final class com/embabel/dice/storage/model/SourceNodeQueryDsl$Companion {
+	public final fun getINSTANCE ()Lcom/embabel/dice/storage/model/SourceNodeQueryDsl;
+}
+

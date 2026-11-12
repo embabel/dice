@@ -10,6 +10,11 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- The build now checks the committed public API listings of the published modules. `./mvnw verify` fails when
+  a module's compiled public API differs from its `api/*.api` file. To update the listings after an API change,
+  run `./mvnw -B -DskipTests -Dapi.listing.mode=update clean verify`. **Compatibility: additive.** A build
+  change only; consumers see no difference.
+
 - Drivine 0.6.2. Since 0.5.0 the index and constraint spec classes in `org.drivine.schema`
   (`VectorIndexSpec`, `UniquenessConstraintSpec`, `RangeIndexSpec` and the others) ship in
   Drivine's `drivine-cypher-compiler-jvm` artifact, in the same package, so a host must not
