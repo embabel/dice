@@ -34,8 +34,8 @@ import org.slf4j.LoggerFactory
  *
  * ## Composition
  *
- * Propositions are not native graph nodes — the entity SPI stores `NamedEntityData`, not
- * [Proposition]. This adapter therefore composes two collaborators:
+ * The entity SPI stores `NamedEntityData`, so a [Proposition] is held in a separate store. This
+ * adapter composes two collaborators:
  *
  * - [crud]: a supplementary durable [PropositionStore] that actually holds the [Proposition]
  *   objects (CRUD, identity, the composable [query]). All base-port members delegate here.
@@ -47,7 +47,7 @@ import org.slf4j.LoggerFactory
  * ## Declared capabilities (honest fragments only)
  *
  * The store declares exactly [PropositionStore] and [VectorSearchCapable]. Every
- * [VectorSearchCapable] member — both [findSimilarWithScores] overloads and [findClusters] — is
+ * [VectorSearchCapable] member (both [findSimilarWithScores] overloads and [findClusters]) is
  * forwarded to the supplementary store when that store is itself vector-capable, so any
  * backend-pushed-down filtering or clustering override on the supplementary store is honoured
  * rather than bypassed. When the supplementary store is not vector-capable, every vector member
@@ -59,13 +59,12 @@ import org.slf4j.LoggerFactory
  *
  * The proposition capability fragments (`GraphTraversalCapable` for the abstraction hierarchy,
  * `TemporalQueryCapable` for time-window/effective-confidence queries) are proposition-scoped,
- * whereas the [NamedEntityDataRepository] SPI is entity-scoped — the proposition-vs-entity axis
- * mismatch. The SPI exposes only 1-hop entity navigation (`findRelated`) and no temporal surface,
- * so neither proposition fragment can be served honestly here. Declaring a fragment this store
- * cannot back would make a caller's `supportsGraph` report `true` while results came back empty —
- * dishonest. Omission is the honest
- * signal: a caller using `PropositionStoreTemplate` sees `supportsGraph == false` and gets empty,
- * typed results from the graph/temporal paths, never an exception. Full multi-hop / path-between
+ * and the [NamedEntityDataRepository] SPI is entity-scoped. The SPI exposes only 1-hop entity
+ * navigation (`findRelated`) and no temporal surface, so neither proposition fragment can be
+ * served honestly here. Declaring a fragment this store cannot back would make a caller's
+ * `supportsGraph` report `true` while results came back empty. With the fragments omitted, a
+ * caller using `PropositionStoreTemplate` sees `supportsGraph == false` and gets empty, typed
+ * results from the graph/temporal paths, never an exception. Full multi-hop / path-between
  * traversal is deferred to a future native graph-query adapter.
  *
  * The class is open so the deprecated [Neo4jRagPropositionRepository] can extend it.
