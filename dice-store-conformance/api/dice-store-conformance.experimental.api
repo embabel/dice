@@ -132,6 +132,22 @@ public abstract class com/embabel/dice/conformance/AbstractMetamodelVersionStore
 	public final fun versionHistory is newest first ()V
 }
 
+public abstract class com/embabel/dice/conformance/AbstractProjectionRecordStoreContractTest {
+	public fun <init> ()V
+	public fun aNewStoreHoldsNoRecords ()V
+	public fun aRecordReadsBackWithEveryField ()V
+	public fun anUnknownKeyHasNoRecords ()V
+	public fun findByContextReturnsOnlyThatContextsRecords ()V
+	public fun findByPropositionReturnsOnlyThatPropositionsRecords ()V
+	public fun findByRunReturnsOnlyThatRunsRecords ()V
+	public fun findByTargetRefReturnsTheRecordsThatPointAtThatArtifact ()V
+	public fun findByTargetReturnsOnlyThatTargetsRecords ()V
+	public fun findStaleReturnsOnlyStaleRecords ()V
+	public fun markStaleByPropositionMarksEveryRecordOfTheProposition ()V
+	public fun markStaleByPropositionReportsZeroWhenNothingChanges ()V
+	protected abstract fun store ()Lcom/embabel/dice/projection/lineage/ProjectionRecordStore;
+}
+
 public abstract class com/embabel/dice/conformance/AbstractPropositionRunLinkStoreContractTest {
 	public fun <init> ()V
 	public final fun a link against a run this tenant does not hold is rejected ()V
