@@ -20,17 +20,11 @@ import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionQuery;
 import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.proposition.PropositionStore;
-import com.embabel.dice.store.AbstractionTraversal;
-import com.embabel.dice.store.AtomicWrites;
 import com.embabel.dice.store.CapabilityReporting;
 import com.embabel.dice.store.FilteredVectorSearch;
-import com.embabel.dice.store.FullTextSearch;
-import com.embabel.dice.store.FullTextSearchRequest;
 import com.embabel.dice.store.SimilarityScore;
 import com.embabel.dice.store.StoreCapabilities;
 import com.embabel.dice.store.StoreCapability;
-import com.embabel.dice.store.TraversalDirection;
-import com.embabel.dice.store.TraversalRequest;
 import com.embabel.dice.store.UnsupportedCapabilityException;
 import com.embabel.dice.store.VectorFiltering;
 import com.embabel.dice.store.VectorMatch;
@@ -42,7 +36,6 @@ import java.lang.reflect.Modifier;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -112,37 +105,17 @@ class StoreContractJavaInteropTest {
         }
     }
 
-    /** A store that publishes its capabilities and implements the interface of each one. */
-    private static final class CapableStore extends PlainStore
-            implements CapabilityReporting, FilteredVectorSearch, FullTextSearch, AbstractionTraversal, AtomicWrites {
+    /** A store that publishes its capabilities and implements the interface of the one it lists. */
+    private static final class CapableStore extends PlainStore implements CapabilityReporting, FilteredVectorSearch {
 
         @Override
         public StoreCapabilities getCapabilities() {
-            return StoreCapabilities.of(
-                    StoreCapability.FILTERED_VECTOR_SEARCH,
-                    StoreCapability.FULL_TEXT_SEARCH,
-                    StoreCapability.ABSTRACTION_TRAVERSAL,
-                    StoreCapability.ATOMIC_WRITES);
+            return StoreCapabilities.of(StoreCapability.FILTERED_VECTOR_SEARCH);
         }
 
         @Override
         public List<VectorMatch> findNearest(VectorSearchRequest request) {
             return List.of();
-        }
-
-        @Override
-        public List<Proposition> findMatching(FullTextSearchRequest request) {
-            return List.of();
-        }
-
-        @Override
-        public List<Proposition> traverse(TraversalRequest request) {
-            return List.of();
-        }
-
-        @Override
-        public <T> T atomically(Supplier<T> work) {
-            return work.get();
         }
     }
 
@@ -177,14 +150,14 @@ class StoreContractJavaInteropTest {
     void aCallerFindsACapabilityOnAStoreThatPublishesIt() {
         PropositionStore store = new CapableStore();
 
-        FullTextSearch search = StoreCapabilities.find(store, FullTextSearch.class);
+        FilteredVectorSearch search = StoreCapabilities.find(store, FilteredVectorSearch.class);
         assertNotNull(search);
-        assertTrue(search.findMatching(FullTextSearchRequest.forText("peanut allergy", ALICE)).isEmpty());
+        assertTrue(search.findNearest(VectorSearchRequest.forText("peanut allergy", ALICE)).isEmpty());
 
         StoreCapabilities capabilities = StoreCapabilities.describe(store);
-        assertTrue(capabilities.supports(StoreCapability.ATOMIC_WRITES));
+        assertTrue(capabilities.supports(StoreCapability.FILTERED_VECTOR_SEARCH));
         assertEquals(VectorFiltering.BEFORE_TOP_K, capabilities.getVectorFiltering());
-        assertEquals(4, capabilities.getSupported().size());
+        assertEquals(1, capabilities.getSupported().size());
     }
 
     @Test
@@ -193,74 +166,49 @@ class StoreContractJavaInteropTest {
 
         assertSame(StoreCapabilities.UNDECLARED, StoreCapabilities.describe(store));
         assertEquals(VectorFiltering.UNDECLARED, StoreCapabilities.describe(store).getVectorFiltering());
-        assertNull(StoreCapabilities.find(store, FullTextSearch.class));
+        assertNull(StoreCapabilities.find(store, FilteredVectorSearch.class));
         assertThrows(IllegalArgumentException.class, () -> StoreCapabilities.find(store, Runnable.class));
     }
 
     @Test
     void aDescriptorIsBuiltWithAChain() {
-        StoreCapabilities capabilities = StoreCapabilities.of(StoreCapability.ATOMIC_WRITES)
-                .with(StoreCapability.FULL_TEXT_SEARCH)
-                .withVectorFiltering(VectorFiltering.AFTER_TOP_K);
+        StoreCapabilities filtersAfter = StoreCapabilities.NONE.withVectorFiltering(VectorFiltering.AFTER_TOP_K);
 
-        assertTrue(capabilities.supports(StoreCapability.FULL_TEXT_SEARCH));
-        assertFalse(capabilities.supports(StoreCapability.FILTERED_VECTOR_SEARCH));
-        assertEquals(VectorFiltering.AFTER_TOP_K, capabilities.getVectorFiltering());
+        assertFalse(filtersAfter.supports(StoreCapability.FILTERED_VECTOR_SEARCH));
+        assertEquals(VectorFiltering.AFTER_TOP_K, filtersAfter.getVectorFiltering());
         assertEquals(VectorFiltering.NONE, StoreCapabilities.NONE.getVectorFiltering());
+        assertEquals(VectorFiltering.BEFORE_TOP_K,
+                StoreCapabilities.NONE.with(StoreCapability.FILTERED_VECTOR_SEARCH).getVectorFiltering());
         assertThrows(IllegalArgumentException.class,
                 () -> StoreCapabilities.NONE.withVectorFiltering(VectorFiltering.BEFORE_TOP_K));
     }
 
     @Test
-    void requestsAreBuiltWithChains() {
-        VectorSearchRequest vector = VectorSearchRequest.forText("What does Alice like to eat?", ALICE)
+    void aRequestIsBuiltWithAChain() {
+        VectorSearchRequest request = VectorSearchRequest.forText("What does Alice like to eat?", ALICE)
                 .withTopK(5)
                 .withMinScore(SimilarityScore.ofCosine(0.6));
-        assertEquals(5, vector.getTopK());
-        assertEquals(ALICE, vector.getFilter());
+
+        assertEquals(5, request.getTopK());
+        assertEquals(ALICE, request.getFilter());
         assertEquals(10, VectorSearchRequest.DEFAULT_TOP_K);
         assertNull(VectorSearchRequest.forText("cats", ALICE).getMinScore());
-
-        FullTextSearchRequest text = FullTextSearchRequest.forText("peanut allergy", ALICE).withLimit(20);
-        assertEquals(20, text.getLimit());
-        assertEquals(10, FullTextSearchRequest.DEFAULT_LIMIT);
-
-        TraversalRequest traversal = TraversalRequest.abstractionsOf("p1", ALICE).withMaxDepth(3).withLimit(7);
-        assertEquals(TraversalDirection.TO_ABSTRACTIONS, traversal.getDirection());
-        assertEquals(3, traversal.getMaxDepth());
-        assertEquals(TraversalDirection.TO_SOURCES, TraversalRequest.sourcesOf("p1", ALICE).getDirection());
-        assertEquals(16, TraversalRequest.MAX_DEPTH);
-        assertEquals(100, TraversalRequest.DEFAULT_LIMIT);
-
-        assertThrows(IllegalArgumentException.class, () -> vector.withTopK(0));
-        assertThrows(IllegalArgumentException.class, () -> FullTextSearchRequest.forText("cats", ALICE.withLimit(3)));
-        assertThrows(IllegalArgumentException.class, () -> traversal.withMaxDepth(17));
-    }
-
-    @Test
-    void atomicWritesTakeALambdaWithOrWithoutAResult() {
-        AtomicWrites writes = new CapableStore();
-        List<String> ran = new ArrayList<>();
-
-        String kept = writes.atomically(() -> "kept");
-        writes.runAtomically(() -> ran.add("ran"));
-
-        assertEquals("kept", kept);
-        assertEquals(List.of("ran"), ran);
+        assertThrows(IllegalArgumentException.class, () -> request.withTopK(0));
+        assertThrows(IllegalArgumentException.class, () -> VectorSearchRequest.forText("cats", ALICE.withLimit(3)));
     }
 
     @Test
     void aRefusalIsCaughtByTypeAndNamesItsCapability() {
-        FullTextSearch refusing = request -> {
-            throw new UnsupportedCapabilityException(StoreCapability.FULL_TEXT_SEARCH, "no text index");
+        FilteredVectorSearch refusing = request -> {
+            throw new UnsupportedCapabilityException(StoreCapability.FILTERED_VECTOR_SEARCH, "no vector index");
         };
 
         UnsupportedCapabilityException refusal = assertThrows(UnsupportedCapabilityException.class,
-                () -> refusing.findMatching(FullTextSearchRequest.forText("cats", ALICE)));
+                () -> refusing.findNearest(VectorSearchRequest.forText("cats", ALICE)));
 
-        assertEquals(StoreCapability.FULL_TEXT_SEARCH, refusal.getCapability());
+        assertEquals(StoreCapability.FILTERED_VECTOR_SEARCH, refusal.getCapability());
         assertTrue(refusal instanceof UnsupportedOperationException);
-        assertSame(FullTextSearch.class, StoreCapability.FULL_TEXT_SEARCH.getContract());
+        assertSame(FilteredVectorSearch.class, StoreCapability.FILTERED_VECTOR_SEARCH.getContract());
     }
 
     @Test
@@ -268,8 +216,7 @@ class StoreContractJavaInteropTest {
         // A block entry takes a Kotlin receiver lambda, which Java would have to end with
         // "return Unit.INSTANCE". Java has the chains, so the block entries are synthetic.
         int hidden = 0;
-        for (Class<?> owner : List.of(StoreCapabilities.class, VectorSearchRequest.class,
-                FullTextSearchRequest.class, TraversalRequest.class)) {
+        for (Class<?> owner : List.of(StoreCapabilities.class, VectorSearchRequest.class)) {
             Class<?> companion = Class.forName(owner.getName() + "$Companion");
             for (Method method : companion.getDeclaredMethods()) {
                 boolean takesABlock = List.of(method.getParameterTypes()).contains(kotlin.jvm.functions.Function1.class);
@@ -282,6 +229,6 @@ class StoreContractJavaInteropTest {
                 }
             }
         }
-        assertEquals(5, hidden);
+        assertEquals(2, hidden);
     }
 }

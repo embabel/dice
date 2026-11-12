@@ -27,7 +27,7 @@ import org.jetbrains.annotations.ApiStatus
  *
  * ```java
  * throw new UnsupportedCapabilityException(
- *     StoreCapability.FULL_TEXT_SEARCH, "this store cannot filter text search by effective confidence");
+ *     StoreCapability.FILTERED_VECTOR_SEARCH, "this store cannot filter by effective confidence");
  * ```
  *
  * EXPERIMENTAL. This API may change before 1.0.

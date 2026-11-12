@@ -33,15 +33,6 @@ enum class StoreCapability(val contract: Class<*>) {
 
     /** Similarity search that filters before it picks the nearest K. */
     FILTERED_VECTOR_SEARCH(FilteredVectorSearch::class.java),
-
-    /** Ranked word search over proposition text. */
-    FULL_TEXT_SEARCH(FullTextSearch::class.java),
-
-    /** Follows abstraction links to a depth in the database. */
-    ABSTRACTION_TRAVERSAL(AbstractionTraversal::class.java),
-
-    /** Commits several writes together or none of them. */
-    ATOMIC_WRITES(AtomicWrites::class.java),
 }
 
 /**
@@ -82,27 +73,26 @@ enum class VectorFiltering {
  * the capability's interface, or null.
  *
  * ```java
- * FullTextSearch search = StoreCapabilities.find(store, FullTextSearch.class);
+ * FilteredVectorSearch search = StoreCapabilities.find(store, FilteredVectorSearch.class);
  * if (search != null) {
- *     List<Proposition> matches = search.findMatching(request);
+ *     List<VectorMatch> matches = search.findNearest(request);
  * }
  * VectorFiltering filtering = StoreCapabilities.describe(store).getVectorFiltering();
  * ```
  *
  * ```kotlin
- * val search = StoreCapabilities.find<FullTextSearch>(store)
+ * val search = StoreCapabilities.find<FilteredVectorSearch>(store)
  * ```
  *
  * A store author builds one with a chain in Java or a block in Kotlin. Both give the same value.
  *
  * ```java
- * StoreCapabilities capabilities = StoreCapabilities
- *     .of(StoreCapability.FILTERED_VECTOR_SEARCH, StoreCapability.ATOMIC_WRITES);
+ * StoreCapabilities capabilities = StoreCapabilities.of(StoreCapability.FILTERED_VECTOR_SEARCH);
  * ```
  *
  * ```kotlin
  * val capabilities = StoreCapabilities {
- *     add(StoreCapability.FILTERED_VECTOR_SEARCH, StoreCapability.ATOMIC_WRITES)
+ *     add(StoreCapability.FILTERED_VECTOR_SEARCH)
  * }
  * ```
  *
@@ -154,7 +144,8 @@ class StoreCapabilities private constructor(
     /**
      * @param capability The capability to remove.
      * @return A descriptor that does not support [capability]. Removing
-     *   [StoreCapability.FILTERED_VECTOR_SEARCH] sets [VectorFiltering.NONE].
+     *   [StoreCapability.FILTERED_VECTOR_SEARCH] from a descriptor that supports it sets
+     *   [VectorFiltering.NONE].
      */
     fun without(capability: StoreCapability): StoreCapabilities =
         if (capability == StoreCapability.FILTERED_VECTOR_SEARCH && supports(capability)) {
@@ -162,15 +153,6 @@ class StoreCapabilities private constructor(
         } else {
             StoreCapabilities(supported - capability, vectorFiltering)
         }
-
-    /**
-     * Narrows a descriptor for a store that has no similarity search.
-     *
-     * @return A descriptor that does not support [StoreCapability.FILTERED_VECTOR_SEARCH] and
-     *   whose filtering mode is [VectorFiltering.NONE].
-     */
-    fun withoutSimilaritySearch(): StoreCapabilities =
-        StoreCapabilities(supported - StoreCapability.FILTERED_VECTOR_SEARCH, VectorFiltering.NONE)
 
     /**
      * States the filtering mode of a store that does not filter first.

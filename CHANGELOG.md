@@ -139,20 +139,17 @@ and the consumer PRs that deliver it).
   **Compatibility: additive.**
 
 - Store contract, **EXPERIMENTAL** (may change before 1.0). The new package
-  `com.embabel.dice.store` defines four optional capabilities of a proposition store as interfaces
-  that state the rules an implementation keeps: `FilteredVectorSearch`, `FullTextSearch`,
-  `AbstractionTraversal` and `AtomicWrites`. A store lists the ones it has in a
-  `StoreCapabilities` it publishes through `CapabilityReporting`.
-  `StoreCapabilities.find(store, FullTextSearch.class)` returns the store as that interface, or
-  null. `StoreCapabilities.describe(store)` returns the descriptor, which also carries a
+  `com.embabel.dice.store` defines `FilteredVectorSearch`, similarity search that applies the
+  filter before it picks the nearest K, as an interface that states the rules an implementation
+  keeps. A store lists it in a `StoreCapabilities` it publishes through `CapabilityReporting`.
+  `StoreCapabilities.find(store, FilteredVectorSearch.class)` returns the store as that interface,
+  or null. `StoreCapabilities.describe(store)` returns the descriptor, which also carries a
   `VectorFiltering` mode: whether similarity search filters before or after it picks the nearest
-  K. A store that publishes nothing is described as `UNDECLARED`. The request types
-  (`VectorSearchRequest`, `FullTextSearchRequest`, `TraversalRequest`) are immutable and built
-  with a chain in Java or a block in Kotlin. `SimilarityScore` is the one similarity scale, cosine
-  similarity from -1 to 1, with a factory for each native scale. A store that cannot do what it
-  is asked throws `UnsupportedCapabilityException`. In `dice-storage`, `StoreDialect` and
-  `DialectFeature` name the database-specific answers the stores need. No existing type changes.
-  See "Store contract" in the user guide reference. **Compatibility: additive.**
+  K. A store that publishes nothing is described as `UNDECLARED`. `VectorSearchRequest` is
+  immutable and built with a chain in Java or a block in Kotlin. `SimilarityScore` is the one
+  similarity scale, cosine similarity from -1 to 1, with a factory for each native scale. A store
+  that cannot do what it is asked throws `UnsupportedCapabilityException`. See "Store contract"
+  in the user guide reference. **Compatibility: additive.**
 
 - `PropositionPipeline` checks each mention an extractor returns against the text of its own
   proposition before entity resolution, and emits one `UngroundedMentionsFound` event per chunk
