@@ -110,7 +110,7 @@ data class LlmPropositionReviser(
 
     private val logger = LoggerFactory.getLogger(LlmPropositionReviser::class.java)
 
-    /** A similar (not identical) proposition: a small confidence lift, capped, and slower decay. */
+    /** A similar proposition gives a small confidence lift, capped at 0.95, and slower decay. */
     private val reinforcementRule = ReinforcementRule(
         confidence = { existing, new -> (existing.confidence + new.confidence * 0.1).coerceAtMost(0.95) },
         decayFactor = 0.85,

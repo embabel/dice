@@ -68,19 +68,18 @@ import org.slf4j.LoggerFactory
  * typed results from the graph/temporal paths, never an exception. Full multi-hop / path-between
  * traversal is deferred to a future native graph-query adapter.
  *
+ * The class is open so the deprecated [Neo4jRagPropositionRepository] can extend it.
+ *
  * @param crud the supplementary durable proposition store backing all CRUD and query operations
  * @param entityRepository the entity/relationship/vector backend supplied by the consumer; held
  *   for the entity-axis projection path and never surfaced in this store's public signatures
- *
- * This class is open only so the old name, [Neo4jRagPropositionRepository], can stay as a subclass.
  */
 open class RagAdapterPropositionRepository(
     private val crud: PropositionStore,
     val entityRepository: NamedEntityDataRepository,
 ) : PropositionStore by crud, VectorSearchCapable {
 
-    // Named for the class that was actually built, so a store made through the old name keeps
-    // logging under the old category.
+    // Named for the runtime class, so a store built through the deprecated name logs under that name.
     private val logger = LoggerFactory.getLogger(javaClass)
 
     /**

@@ -87,7 +87,7 @@ class DefaultMemoryConsolidator(
     private val reinforcementBoost: Double = 0.1,
 ) : MemoryConsolidator {
 
-    /** A session proposition that matches a stored one: a fixed confidence lift, capped at 1. */
+    /** A session proposition that matches a stored one gives a fixed confidence lift, capped at 1. */
     private val reinforcementRule = ReinforcementRule(
         confidence = { existing, _ -> (existing.confidence + reinforcementBoost).coerceAtMost(1.0) },
     )

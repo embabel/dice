@@ -36,8 +36,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 /**
- * Shows that Java code can build and use the store under both names: the current one, and the old
- * one, which is now a deprecated subclass of RagAdapterPropositionRepository.
+ * Builds and uses the store from Java under both names, RagAdapterPropositionRepository and the
+ * deprecated Neo4jRagPropositionRepository.
  */
 @SuppressWarnings("deprecation")
 class Neo4jRagPropositionRepositoryJavaInteropTest {

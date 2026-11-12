@@ -25,8 +25,7 @@ import org.junit.jupiter.api.Test
 import java.time.Instant
 
 /**
- * Records exactly what the memory consolidator's reinforce path returns today, so a later
- * refactor of reinforceProposition can show it changed nothing. The session and existing
+ * Pins what the memory consolidator's reinforce path returns. The session and existing
  * propositions share text and resolved entity, so their similarity is 1.0 and they reinforce.
  */
 class ConsolidatorReinforceCharacterisationTest {

@@ -25,9 +25,8 @@ import org.junit.jupiter.api.Test
 import java.time.Instant
 
 /**
- * Records exactly what the reviser's reinforce path returns today, so a later refactor of
- * reinforceProposition can show it changed nothing. Drives the SIMILAR branch of
- * classifiedToResult directly, so no model call is made.
+ * Pins what the reviser's reinforce path returns. Drives the SIMILAR branch of classifiedToResult
+ * directly, so no model call is made.
  */
 class ReviserReinforceCharacterisationTest {
 

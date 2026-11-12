@@ -19,9 +19,11 @@ import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.dice.proposition.PropositionStore
 
 /**
- * The name this store had before it was renamed. It never depended on Neo4j, so the new name
- * says what it is: an adapter over embabel-agent's RAG entity repository. This class stays so
- * that Java code and code compiled against the old name keep working.
+ * Deprecated name for [RagAdapterPropositionRepository]. It exists so that Java code and code
+ * compiled against this name keep working.
+ *
+ * @param crud the proposition store that holds the propositions
+ * @param entityRepository the entity backend supplied by the consumer
  */
 @Deprecated(
     message = "Renamed to RagAdapterPropositionRepository.",

@@ -19,8 +19,8 @@ import com.embabel.dice.proposition.Proposition
 import java.time.Instant
 
 /**
- * What changes on a proposition when new evidence backs it up. Each caller states its own rule;
- * [reinforce] applies it.
+ * What changes on a proposition when new evidence backs it up. Each caller states its own rule
+ * and [reinforce] applies it.
  *
  * @property confidence works out the new confidence from the existing proposition and the evidence
  * @property decayFactor multiplies the existing decay, or leaves decay alone when null
@@ -37,8 +37,13 @@ internal class ReinforcementRule(
 )
 
 /**
- * Returns [existing] strengthened by [evidence] the way [rule] says. Grounding from both is always
- * combined, without duplicates, and the content-revised time is always stamped.
+ * Strengthens a proposition with new evidence. Grounding from both is always combined, without
+ * duplicates, and the content-revised time is always stamped.
+ *
+ * @param existing the stored proposition
+ * @param evidence the proposition that backs it up
+ * @param rule what else changes
+ * @return a copy of [existing] with the rule applied
  */
 internal fun reinforce(existing: Proposition, evidence: Proposition, rule: ReinforcementRule): Proposition {
     val now = Instant.now()

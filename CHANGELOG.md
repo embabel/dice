@@ -21,8 +21,8 @@ and the consumer PRs that deliver it).
   one, with the same constructor, so Kotlin code, Java code and code already compiled against
   the old name keep working. `RagAdapterPropositionRepository` is `open` for that reason. A
   store logs under the name it was built with, so log settings for the old name still apply to
-  stores built through it. **Compatibility: additive.** Move to `RagAdapterPropositionRepository` when convenient; the old name will be
-  removed in a later major release.
+  stores built through it. **Compatibility: additive.** New code uses
+  `RagAdapterPropositionRepository`.
 
 - The `dice` module no longer depends on `org.javers:javers-core`. DICE never called it.
   **Compatibility: behavioral.** Upgrade note: a host that used javers, or the gson, classgraph

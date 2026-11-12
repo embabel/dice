@@ -69,7 +69,7 @@ private class TckPropositionRepositoryBridge(
 
 /**
  * Concrete, CI-runnable instantiation of the canonical-flow contract against the
- * [RagAdapterPropositionRepository] adapter, running entirely offline — no Docker, driver,
+ * [RagAdapterPropositionRepository] adapter, running entirely offline with no Docker, driver,
  * graph database, embedding model, or LLM required.
  *
  * The adapter composes two offline doubles:
