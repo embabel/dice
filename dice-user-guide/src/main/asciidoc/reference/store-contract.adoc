@@ -187,7 +187,8 @@ val request = FullTextSearchRequest("peanut allergy", PropositionQuery.againstCo
 }
 ----
 
-The result carries no relevance number. The position in the list is the rank.
+The result carries no relevance number. The position in the list is the rank. A text index ranks
+against every proposition it holds, so the order can depend on propositions the filter excludes.
 
 `PropositionRepository.textSearch` is a different operation. It comes from the RAG search
 interface and can answer with similarity search.

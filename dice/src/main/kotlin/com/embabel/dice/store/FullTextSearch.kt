@@ -57,7 +57,7 @@ import java.util.Objects
  *
  * The result carries no relevance number. A text index ranks against every proposition it holds,
  * so a number would describe propositions outside the filter. The position in the list is the
- * rank.
+ * rank, and it can depend on propositions the filter excludes.
  *
  * A store implements this interface only when it ranks text in its database, and then lists
  * [StoreCapability.FULL_TEXT_SEARCH].
