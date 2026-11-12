@@ -105,13 +105,17 @@ public abstract class com/embabel/dice/conformance/AbstractPropositionRunLinkSto
 	protected final fun getFixtureRunIds ()Ljava/util/List;
 	protected final fun getNeighbour-SSYM5D4 ()Ljava/lang/String;
 	protected final fun getNeighbourPropositionIds ()Ljava/util/List;
+	protected final fun getNeighbourValue ()Ljava/lang/String;
 	protected final fun getStartedAt ()Ljava/time/Instant;
 	protected final fun getTenant-SSYM5D4 ()Ljava/lang/String;
+	protected final fun getTenantValue ()Ljava/lang/String;
 	public final fun link reports exactly the ids it was given ()V
 	public final fun linking is idempotent and counts the same on a replay ()V
 	public final fun one proposition links to many runs and one run links to many propositions ()V
 	protected final fun proposition-sZMPnk8 (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
+	protected final fun propositionIn (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
 	protected final fun run-sZMPnk8 (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
+	protected final fun runIn (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
 	protected abstract fun store ()Lcom/embabel/dice/proposition/extraction/PropositionRunLinkStore;
 	public final fun the single-proposition convenience writes the same link ()V
 }

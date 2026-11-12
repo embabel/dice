@@ -112,6 +112,31 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
         grounding = listOf("chunk-1"),
     )
 
+    /** [tenant] as a plain string, for Java subclasses. */
+    protected val tenantValue: String get() = tenant.value
+
+    /** [neighbour] as a plain string, for Java subclasses. */
+    protected val neighbourValue: String get() = neighbour.value
+
+    /**
+     * Builds a fixture run from a plain context id. Java subclasses seed with this.
+     *
+     * @param runId The run id, one of [fixtureRunIds].
+     * @param contextIdValue The context the run belongs to.
+     * @return The run to save.
+     */
+    protected fun runIn(runId: String, contextIdValue: String): ExtractionRun = run(runId, ContextId(contextIdValue))
+
+    /**
+     * Builds a fixture proposition from a plain context id. Java subclasses seed with this.
+     *
+     * @param id The proposition id.
+     * @param contextIdValue The context the proposition belongs to.
+     * @return The proposition to save.
+     */
+    protected fun propositionIn(id: String, contextIdValue: String): Proposition =
+        proposition(id, ContextId(contextIdValue))
+
     private fun key(runId: String, contextId: ContextId = tenant) =
         ExtractionRunKey(contextId, ExtractionRunRef(runId))
 
