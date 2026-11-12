@@ -701,25 +701,24 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             logger.info("Updated entity: name='{}', labels={}", entity.name, entity.labels())
         }
 
-        // Built per call, because withRunLineage can bind the run link store after construction.
-        val writer = persistUnitWriter
-            ?: PersistUnitWriter.sequential(propositionRepository, entityRepository, propositionRunLinkStore)
-        val outcome = writer.write(unit)
-        if (currentRun != null) {
-            val lineageFailure = outcome.lineageFailure
-            if (lineageFailure == null) {
-                outcome.runLinks?.let {
-                    logger.info("Attributed {} propositions to extraction run {}", it, currentRun.runId)
-                }
-            } else if (lineageFailurePolicy == LineageFailurePolicy.LENIENT) {
-                logger.warn(
-                    "Lineage not recorded for extraction run {}; continuing under LENIENT policy",
-                    currentRun.runId, lineageFailure,
-                )
-            }
+        val boundWriter = persistUnitWriter
+        val outcome = if (boundWriter == null) {
+            // Built per call, because withRunLineage can bind the run link store after construction.
+            // The lineage lines are logged between the run link and the structural relationships, so
+            // an Error from the relationships cannot lose them.
+            SequentialPersistUnitWriter(propositionRepository, entityRepository, propositionRunLinkStore) { key, runLinks, lineageFailure ->
+                logRunLineage(key.runRef.runId, runLinks, lineageFailure)
+            }.write(unit)
+        } else {
+            val written = boundWriter.write(unit)
+            if (currentRun != null) logRunLineage(currentRun.runId, written.runLinks, written.lineageFailure)
+            written
         }
-        // Throws the exception the failed write raised, unwrapped.
-        val persisted = outcome.persistedOrThrow()
+        // The cause itself, whatever its type, so a caller sees the exception the failed step threw.
+        val persisted = when (outcome) {
+            is PersistOutcome.Stored -> outcome.persisted
+            is PersistOutcome.Failed -> throw outcome.cause
+        }
 
         // The distinct view, not the positional one. Inputs that deduplicated together are one
         // stored proposition, and projecting or grounding it once per input inflates the records
@@ -761,6 +760,28 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      */
     private fun recordRunLineage(unit: PersistUnit, context: SourceAnalysisContext, currentRun: ExtractionRunRef): PersistUnit =
         unit.withRun(ExtractionRunKey(context.contextId, currentRun), lineageFailurePolicy)
+
+    /**
+     * Logs how linking a unit's claims to its run went.
+     *
+     * A recorded link is logged with its count. A lineage failure is logged as a warning under
+     * [LineageFailurePolicy.LENIENT] and not logged under [LineageFailurePolicy.STRICT], where it is
+     * thrown.
+     *
+     * @param runId The id of the run the claims came from.
+     * @param runLinks What the run link store returned, or null when no link call was made.
+     * @param lineageFailure Set when a link was asked for and not recorded.
+     */
+    private fun logRunLineage(runId: String, runLinks: Int?, lineageFailure: LineageNotRecordedException?) {
+        if (lineageFailure == null) {
+            runLinks?.let { logger.info("Attributed {} propositions to extraction run {}", it, runId) }
+        } else if (lineageFailurePolicy == LineageFailurePolicy.LENIENT) {
+            logger.warn(
+                "Lineage not recorded for extraction run {}; continuing under LENIENT policy",
+                runId, lineageFailure,
+            )
+        }
+    }
 
     private fun logAllPropositions(contextId: String) {
         val all = propositionRepository.findByContextIdValue(contextId)

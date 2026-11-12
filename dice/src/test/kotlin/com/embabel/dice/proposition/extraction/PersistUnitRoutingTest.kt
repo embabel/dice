@@ -47,6 +47,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import io.mockk.verifyOrder
+import java.io.IOException
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
@@ -156,6 +157,27 @@ class PersistUnitRoutingTest {
      */
     private fun IncrementalPropositionExtraction.remember(currentRun: ExtractionRunRef? = runRef) =
         rememberText("Alice likes coffee", "source-1", user(), emptyList(), null, null, ExtractionRequest(currentRun = currentRun))
+
+    /**
+     * Runs [block] and collects what the extractor logged while it ran.
+     *
+     * @param block The call to observe.
+     * @return The log events, in order.
+     */
+    private fun logged(block: () -> Unit): List<ILoggingEvent> {
+        val logger = LoggerFactory.getLogger(IncrementalPropositionExtraction::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().also {
+            it.start()
+            logger.addAppender(it)
+        }
+        try {
+            block()
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+        return appender.list
+    }
 
     @Test
     fun `E1 with no writer bound the mentioned entity is saved and the calls run in order`() {
@@ -289,5 +311,66 @@ class PersistUnitRoutingTest {
         assertThatThrownBy { extraction.remember() }
             .isInstanceOf(LineageNotRecordedException::class.java)
             .hasMessageContaining("bind one with withRunLineage")
+    }
+
+    @Test
+    fun `E8 with no writer bound a checked exception from the claim save is thrown unchanged`() {
+        val cause = IOException("claims store unreachable")
+        val propositions = mockk<PropositionRepository>(relaxed = true)
+        every { propositions.saveAllReturningCanonical(any()) } throws cause
+        val projection = projection()
+        val extraction = extraction(propositions, projection = projection)
+
+        assertThatThrownBy { extraction.remember(null) }.isSameAs(cause)
+        verify(exactly = 0) { projection.projectAndPersist(any()) }
+    }
+
+    @Test
+    fun `E9 under lenient the lineage warning is logged when the relationships throw an Error`() {
+        val relationshipError = Error("relationships died")
+        val entities = mockk<NamedEntityDataRepository>(relaxed = true)
+        every { entities.mergeRelationship(any(), any(), any()) } throws relationshipError
+        val links = mockk<PropositionRunLinkStore>()
+        every { links.link(any(), any<Collection<String>>()) } throws IllegalStateException("link store down")
+        val extraction = extraction(answeringRepository(), entities).withRunLineage(links, LineageFailurePolicy.LENIENT)
+
+        val events = logged { assertThatThrownBy { extraction.remember() }.isSameAs(relationshipError) }
+
+        assertThat(events)
+            .anyMatch { it.level == Level.WARN && it.formattedMessage.startsWith("Lineage not recorded for extraction run") }
+    }
+
+    @Test
+    fun `E10 a bound writer's lenient lineage failure is logged as a warning`() {
+        val key = ExtractionRunKey(tenant, runRef)
+        val extraction = extraction(answeringRepository())
+            .withRunLineage(null, LineageFailurePolicy.LENIENT)
+            .withPersistUnitWriter { unit ->
+                PersistOutcome.stored(
+                    PropositionPersistenceResult.of(unit.propositions, unit.propositions),
+                    null,
+                    LineageNotRecordedException(key, "link store down"),
+                )
+            }
+
+        val events = logged { extraction.remember() }
+
+        assertThat(events)
+            .anyMatch { it.level == Level.WARN && it.formattedMessage.startsWith("Lineage not recorded for extraction run") }
+    }
+
+    @Test
+    fun `E11 with no writer bound a negative link count is logged and the chunk is stored`() {
+        val links = mockk<PropositionRunLinkStore>()
+        every { links.link(any(), any<Collection<String>>()) } returns -1
+        val projection = projection()
+        val extraction = extraction(answeringRepository(), projection = projection).withRunLineage(links)
+
+        val events = logged { extraction.remember() }
+
+        assertThat(events).anyMatch {
+            it.level == Level.INFO && it.formattedMessage == "Attributed -1 propositions to extraction run routing-run"
+        }
+        verify(exactly = 1) { projection.projectAndPersist(any()) }
     }
 }

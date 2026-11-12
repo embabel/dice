@@ -30,11 +30,17 @@ import com.embabel.dice.proposition.PropositionRepository
  * @param propositionRepository Where propositions go.
  * @param entityRepository Where entities and the structural relationships go.
  * @param runLinkStore Where propositions are linked to their run, or null when none is bound.
+ * @param afterRunLink Called once for a unit that carries a run, after the run link step and before
+ * the structural relationships, with the run, what the link store returned and the lineage failure
+ * if there was one. The count is passed as the store returned it, negative or not. It is not called
+ * when the link call throws something other than a `RuntimeException`. It must not throw.
  */
 internal class SequentialPersistUnitWriter(
     private val propositionRepository: PropositionRepository,
     private val entityRepository: NamedEntityDataRepository,
     private val runLinkStore: PropositionRunLinkStore?,
+    private val afterRunLink: (key: ExtractionRunKey, runLinks: Int?, lineageFailure: LineageNotRecordedException?) -> Unit =
+        { _, _, _ -> },
 ) : PersistUnitWriter {
 
     override fun write(unit: PersistUnit): PersistOutcome {
@@ -58,13 +64,16 @@ internal class SequentialPersistUnitWriter(
         val link = try {
             if (run == null) RunLink.NOT_ASKED else linkRun(run, persisted)
         } catch (e: Exception) {
-            // Only the link call and the check on its count can throw here, so the store was called.
+            // Only the link call can throw here, so the store was called.
             return PersistOutcome.failed(PersistStep.RUN_LINKS, e, afterPropositions + PersistStep.RUN_LINKS)
         }
         val afterRunLinks = if (link.linkCalled) afterPropositions + PersistStep.RUN_LINKS else afterPropositions
         val lineageFailure = link.lineageFailure
+        if (run != null) afterRunLink(run, link.runLinks, lineageFailure)
+        // An outcome rejects a negative count, so a store that returns one is reported with no count.
+        val runLinks = link.runLinks?.takeIf { it >= 0 }
         if (lineageFailure != null && unit.lineagePolicy == LineageFailurePolicy.STRICT) {
-            return PersistOutcome.failed(PersistStep.RUN_LINKS, lineageFailure, afterRunLinks, link.runLinks, lineageFailure)
+            return PersistOutcome.failed(PersistStep.RUN_LINKS, lineageFailure, afterRunLinks, runLinks, lineageFailure)
         }
 
         try {
@@ -74,11 +83,11 @@ internal class SequentialPersistUnitWriter(
                 PersistStep.STRUCTURAL_RELATIONSHIPS,
                 e,
                 afterRunLinks + PersistStep.STRUCTURAL_RELATIONSHIPS,
-                link.runLinks,
+                runLinks,
                 lineageFailure,
             )
         }
-        return PersistOutcome.stored(persisted, link.runLinks, lineageFailure)
+        return PersistOutcome.stored(persisted, runLinks, lineageFailure)
     }
 
     /**
@@ -90,7 +99,6 @@ internal class SequentialPersistUnitWriter(
      * @param key The run the propositions came from.
      * @param persisted What the proposition save returned.
      * @return Whether the store was called, what it returned, and the lineage failure if there was one.
-     * @throws IllegalStateException if the store returns a negative count.
      */
     private fun linkRun(key: ExtractionRunKey, persisted: PropositionPersistenceResult): RunLink {
         val store = runLinkStore
@@ -121,7 +129,6 @@ internal class SequentialPersistUnitWriter(
                 ),
             )
         }
-        check(linked >= 0) { "run link store returned a negative count: $linked" }
         return RunLink(linkCalled = true, runLinks = linked, lineageFailure = null)
     }
 
