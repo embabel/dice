@@ -53,6 +53,9 @@ class DriftCheckResult(
     /** The context the check was scoped to, or `null` when it covered the whole graph. */
     val contextId: ContextId? get() = report.contextId
 
+    /** [contextId] as a plain string, for Java callers. `null` when the check covered the whole graph. */
+    val contextIdValue: String? get() = report.contextIdValue
+
     /** Entity type names the graph held but the schema never declared. */
     val driftedEntityTypes: Set<String> get() = report.driftedEntityTypes
 
