@@ -17,6 +17,7 @@ package com.embabel.dice.proposition.extraction
 
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import org.jetbrains.annotations.ApiStatus
 
 /**
@@ -94,5 +95,54 @@ fun interface PersistUnitWriter {
             entityRepository: NamedEntityDataRepository,
             runLinkStore: PropositionRunLinkStore?,
         ): PersistUnitWriter = SequentialPersistUnitWriter(propositionRepository, entityRepository, runLinkStore)
+
+        /**
+         * A writer over the in-memory stores that puts them back when a step fails, with no run link store.
+         *
+         * A unit that carries a run fails at [PersistStep.RUN_LINKS] under
+         * [LineageFailurePolicy.STRICT], and the stores are put back.
+         * A failed unit restores claims, their embeddings and entities to what they held before the call.
+         * Units through one writer run one at a time, so use one writer per set of stores.
+         * Another thread can read a unit part way through.
+         * A write another caller makes to the same ids during a unit is overwritten when the unit is undone.
+         * Restoring an entity goes through `save`, so an entity repository with an embedder embeds it again.
+         * Relationships written before the failure stay, because the entity repository cannot remove them.
+         * [PersistOutcome.Failed.leftInStore] then holds [PersistStep.STRUCTURAL_RELATIONSHIPS].
+         *
+         * @param propositionRepository Where propositions go.
+         * @param entityRepository Where entities and the structural relationships go.
+         * @return A writer that undoes a failed unit.
+         */
+        @JvmStatic
+        fun inMemory(
+            propositionRepository: InMemoryPropositionRepository,
+            entityRepository: NamedEntityDataRepository,
+        ): PersistUnitWriter = inMemory(propositionRepository, entityRepository, null)
+
+        /**
+         * A writer over the in-memory stores that puts them back when a step fails.
+         *
+         * A failed unit restores claims, their embeddings, entities and run links to what they held
+         * before the call.
+         * Units through one writer run one at a time, so use one writer per set of stores.
+         * Another thread can read a unit part way through.
+         * A write another caller makes to the same ids during a unit is overwritten when the unit is undone.
+         * Restoring an entity goes through `save`, so an entity repository with an embedder embeds it again.
+         * Relationships written before the failure stay, because the entity repository cannot remove them.
+         * [PersistOutcome.Failed.leftInStore] then holds [PersistStep.STRUCTURAL_RELATIONSHIPS].
+         * Run links the link store evicted for old finished runs during the unit are not brought back.
+         * An undo that throws adds its step to `leftInStore` and its exception to the cause's suppressed exceptions.
+         *
+         * @param propositionRepository Where propositions go.
+         * @param entityRepository Where entities and the structural relationships go.
+         * @param runLinkStore Where a unit's propositions are linked to its run, or null for none.
+         * @return A writer that undoes a failed unit.
+         */
+        @JvmStatic
+        fun inMemory(
+            propositionRepository: InMemoryPropositionRepository,
+            entityRepository: NamedEntityDataRepository,
+            runLinkStore: InMemoryPropositionRunLinkStore?,
+        ): PersistUnitWriter = InMemoryPersistUnitWriter(propositionRepository, entityRepository, runLinkStore)
     }
 }

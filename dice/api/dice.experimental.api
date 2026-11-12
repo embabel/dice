@@ -1307,12 +1307,16 @@ public final class com/embabel/dice/proposition/extraction/PersistUnitFailedExce
 
 public abstract interface class com/embabel/dice/proposition/extraction/PersistUnitWriter {
 	public static final field Companion Lcom/embabel/dice/proposition/extraction/PersistUnitWriter$Companion;
+	public static fun inMemory (Lcom/embabel/dice/proposition/store/InMemoryPropositionRepository;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Lcom/embabel/dice/proposition/extraction/PersistUnitWriter;
+	public static fun inMemory (Lcom/embabel/dice/proposition/store/InMemoryPropositionRepository;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;Lcom/embabel/dice/proposition/extraction/InMemoryPropositionRunLinkStore;)Lcom/embabel/dice/proposition/extraction/PersistUnitWriter;
 	public static fun sequential (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Lcom/embabel/dice/proposition/extraction/PersistUnitWriter;
 	public static fun sequential (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;Lcom/embabel/dice/proposition/extraction/PropositionRunLinkStore;)Lcom/embabel/dice/proposition/extraction/PersistUnitWriter;
 	public abstract fun write (Lcom/embabel/dice/proposition/extraction/PersistUnit;)Lcom/embabel/dice/proposition/extraction/PersistOutcome;
 }
 
 public final class com/embabel/dice/proposition/extraction/PersistUnitWriter$Companion {
+	public final fun inMemory (Lcom/embabel/dice/proposition/store/InMemoryPropositionRepository;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Lcom/embabel/dice/proposition/extraction/PersistUnitWriter;
+	public final fun inMemory (Lcom/embabel/dice/proposition/store/InMemoryPropositionRepository;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;Lcom/embabel/dice/proposition/extraction/InMemoryPropositionRunLinkStore;)Lcom/embabel/dice/proposition/extraction/PersistUnitWriter;
 	public final fun sequential (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Lcom/embabel/dice/proposition/extraction/PersistUnitWriter;
 	public final fun sequential (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;Lcom/embabel/dice/proposition/extraction/PropositionRunLinkStore;)Lcom/embabel/dice/proposition/extraction/PersistUnitWriter;
 }
