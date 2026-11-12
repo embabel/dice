@@ -1,0 +1,138 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.dice.conformance
+
+import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository
+import com.embabel.dice.store.CapabilityReporting
+import com.embabel.dice.store.FilteredVectorSearch
+import com.embabel.dice.store.SimilarityScore
+import com.embabel.dice.store.StoreCapabilities
+import com.embabel.dice.store.StoreCapability
+import com.embabel.dice.store.VectorMatch
+import com.embabel.dice.store.VectorSearchRequest
+import kotlin.math.sqrt
+
+/** What a [FilterFirstReferenceStore] does wrong, so a test can show a suite case fail. */
+internal enum class ReferenceFault {
+    /** Keeps every rule. */
+    NONE,
+
+    /** Cuts to K over every proposition and then drops the ones that fail the filter. */
+    FILTERS_AFTER_CUT,
+
+    /** Takes the nearest 30 times K of every proposition, drops the ones that fail the filter and cuts to K. */
+    FILTERS_AFTER_OVER_FETCH,
+}
+
+/**
+ * An in-memory proposition store with filtered vector search, for running the filtered vector
+ * search suite inside the kit. It scans every candidate and embeds texts with
+ * [ConformanceEmbeddings.embed] at 8 dimensions.
+ *
+ * With [ReferenceFault.NONE] it keeps the rules the suite checks. Each other fault breaks one of
+ * them, so a test can show which suite case catches it.
+ *
+ * @param fault The rule this store breaks, or [ReferenceFault.NONE].
+ * @param delegate The store that holds the propositions and applies the filter.
+ */
+internal class FilterFirstReferenceStore(
+    private val fault: ReferenceFault = ReferenceFault.NONE,
+    private val delegate: InMemoryPropositionRepository = InMemoryPropositionRepository(),
+) : PropositionStore by delegate, CapabilityReporting, FilteredVectorSearch {
+
+    override val capabilities: StoreCapabilities = StoreCapabilities.of(StoreCapability.FILTERED_VECTOR_SEARCH)
+
+    override fun findNearest(request: VectorSearchRequest): List<VectorMatch> {
+        val query = embed(request.text)
+        return when {
+            query.all { it == 0.0f } -> emptyList()
+            fault == ReferenceFault.NONE ->
+                ranked(delegate.query(request.filter), query, request).take(request.topK)
+            fault == ReferenceFault.FILTERS_AFTER_CUT ->
+                filterAfterWindow(request, query, request.topK)
+            else ->
+                filterAfterWindow(request, query, request.topK * 30).take(request.topK)
+        }.map { (proposition, cosine) -> VectorMatch.of(proposition, SimilarityScore.ofCosine(cosine)) }
+    }
+
+    /**
+     * Picks the nearest [window] of every proposition and keeps the ones that match the filter.
+     *
+     * @param request The search request.
+     * @param query The embedding of the request's text.
+     * @param window How many of the nearest propositions to keep before the filter.
+     * @return The matching propositions in the window with their cosine, closest first.
+     */
+    private fun filterAfterWindow(
+        request: VectorSearchRequest,
+        query: FloatArray,
+        window: Int,
+    ): List<Pair<Proposition, Double>> {
+        val matchingIds = delegate.query(request.filter).map { it.id }.toSet()
+        return ranked(delegate.findAll(), query, request)
+            .take(window)
+            .filter { (proposition, _) -> proposition.id in matchingIds }
+    }
+
+    /**
+     * Scores candidates against the query, drops the ones without a direction or below the score
+     * floor, and orders the rest closest first, then by id.
+     *
+     * @param candidates The propositions to score.
+     * @param query The embedding of the request's text.
+     * @param request The search request, for its score floor.
+     * @return Each kept proposition with its cosine, closest first.
+     */
+    private fun ranked(
+        candidates: List<Proposition>,
+        query: FloatArray,
+        request: VectorSearchRequest,
+    ): List<Pair<Proposition, Double>> =
+        candidates
+            .map { it to embed(it.text) }
+            .filterNot { (_, vector) -> vector.all { it == 0.0f } }
+            .map { (proposition, vector) -> proposition to cosine(query, vector) }
+            .filter { (_, cosine) -> request.minScore?.let { cosine >= it.cosine } ?: true }
+            .sortedWith(compareByDescending<Pair<Proposition, Double>> { it.second }.thenBy { it.first.id })
+
+    /**
+     * Embeds a text the way the suite expects.
+     *
+     * @param text The text to embed.
+     * @return The text's 8-dimension embedding.
+     */
+    private fun embed(text: String): FloatArray = ConformanceEmbeddings.embed(text, 8)
+
+    /**
+     * Computes the cosine similarity of two vectors that are not all zeros.
+     *
+     * @param a The first vector.
+     * @param b The second vector.
+     * @return The cosine, moved into -1.0 to 1.0 when rounding lands outside.
+     */
+    private fun cosine(a: FloatArray, b: FloatArray): Double =
+        (a.indices.sumOf { a[it].toDouble() * b[it] } / (norm(a) * norm(b))).coerceIn(-1.0, 1.0)
+
+    /**
+     * Computes the length of a vector.
+     *
+     * @param v The vector.
+     * @return Its Euclidean length.
+     */
+    private fun norm(v: FloatArray): Double = sqrt(v.sumOf { it.toDouble() * it })
+}

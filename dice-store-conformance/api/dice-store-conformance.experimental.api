@@ -134,6 +134,16 @@ public abstract class com/embabel/dice/conformance/AbstractExtractionRunStoreCon
 	public final fun writes that do not end a run announce nothing ()V
 }
 
+public abstract class com/embabel/dice/conformance/AbstractFilteredVectorSearchContractTest {
+	public fun <init> ()V
+	public fun aStatusFilterIsAppliedBeforeTheCutOrRefused ()V
+	public fun aStoreThatListsFilteredVectorSearchImplementsIt ()V
+	protected fun excludedCount ()I
+	public fun kMatchesComeBackWhenANearerContextIsExcluded ()V
+	public fun matchesAreOrderedClosestFirstAndCutAfterOrdering ()V
+	protected abstract fun store ()Lcom/embabel/dice/proposition/PropositionStore;
+}
+
 public abstract class com/embabel/dice/conformance/AbstractMetamodelVersionStoreContractTest {
 	public fun <init> ()V
 	public final fun a re-save leaves the stamp where it was in the history ()V
