@@ -140,6 +140,47 @@ across threads without ceremony.
 Java callers get a `Proposition.create(...)` factory and `getContextIdValue()` for the value-class
 `ContextId`.
 
+==== Building a proposition
+
+Extraction builds propositions for you. To build one yourself, for a fixture or an import, start a
+draft with the context, the text and the confidence, name the other fields you know, and finish
+with `toProposition()`.
+
+[source,java]
+----
+Proposition fact = Proposition.draft("acme", "Alice lives in Paris", 0.9)
+        .withGrounding(List.of("chunk-1"))
+        .withDecay(0.1)
+        .withReasoning("Stated in the onboarding call")
+        .toProposition();
+----
+
+In Kotlin the same steps go in a block.
+
+[source,kotlin]
+----
+val fact = Proposition(ContextId("acme"), "Alice lives in Paris", confidence = 0.9) {
+    grounding("chunk-1")
+    decay(0.1)
+    reasoning("Stated in the onboarding call")
+}
+----
+
+A draft is immutable, so each step returns a new draft and a half-built one can be kept and reused.
+A value out of range is rejected by `toProposition()` with the same `IllegalArgumentException` the
+constructor throws. A time that is not set follows the one before it: `contentRevised` follows
+`created`, and `metadataRevised` and `lastAccessed` follow `contentRevised`.
+
+`toDraft()` starts a draft from an existing proposition. It copies a proposition with some fields
+changed and leaves its revision times alone, which the `with*` methods on `Proposition` do not.
+
+[source,java]
+----
+Proposition touched = fact.toDraft()
+        .withLastAccessed(Instant.now())
+        .toProposition();
+----
+
 .Try it now
 [source,java]
 ----
