@@ -44,6 +44,31 @@ effects, build them on `PropositionPersisted` instead.
 Each chunk in which a mention was not in its own proposition's text also emits one
 `UngroundedMentionsFound` event, listing those mentions and whether they were kept or dropped.
 
+`UngroundedMentionsFound` and `PropositionContradicted` carry the id of the context they belong to.
+Java reads it as a string with `getContextIdValue()`.
+
+[source,java]
+----
+DiceEventListener listener = event -> {
+    if (event instanceof UngroundedMentionsFound found) {
+        log.warn("{} ungrounded mentions in context {}, chunk {}",
+                found.getMentions().size(), found.getContextIdValue(), found.getChunkId());
+    }
+};
+pipeline = pipeline.withEventListener(listener);
+----
+
+Kotlin reads the typed id.
+
+[source,kotlin]
+----
+val listener = DiceEventListener { event ->
+    if (event is UngroundedMentionsFound) {
+        log.warn("{} ungrounded mentions in context {}", event.mentions.size, event.contextId.value)
+    }
+}
+----
+
 A listener that throws cannot abort a run — the pipeline wraps whatever you register in
 `SafeDiceEventListener`. The default is `DiceEventListener.DEV_NULL`, so behaviour is unchanged when
 no listener is set.

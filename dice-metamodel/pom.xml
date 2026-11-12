@@ -40,6 +40,17 @@
             <scope>provided</scope>
         </dependency>
 
+        <!--
+            For @JsonIgnore on the plain-string context id getters, so they stay out of JSON.
+            Provided: an application that serializes with Jackson already has it, and one that
+            does not never looks at the annotation.
+        -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- Retrievable, a supertype of Proposition, lives in rag-core and isn't transitive from dice -->
         <dependency>
             <groupId>com.embabel.agent</groupId>

@@ -54,7 +54,7 @@ they are independent:
 
 * `embabel.dice.store.decay.k` — used by the scheduled tick.
 * `PropositionQuery.decayK` — used when a query computes effective confidence, defaults to `2.0`.
-* `Proposition.effectiveConfidence(k)` — the direct call, defaults to `2.0`.
+* `Proposition.effectiveConfidence(k)`: the direct call. Leave `k` out and it uses `Proposition.DEFAULT_DECAY_K`, which is `2.0`.
 
 Setting the property without the query parameter means the tick and your queries disagree about how
 fast things fade. Set both, or leave both at the default.
@@ -69,6 +69,22 @@ System.out.printf("raw=%.2f  now=%.2f  in 30 days=%.2f%n",
         p.getConfidence(),
         p.effectiveConfidence(),
         p.effectiveConfidenceAt(Instant.now().plus(30, ChronoUnit.DAYS)));
+----
+
+To try another rate, pass it. In Java:
+
+[source,java]
+----
+double faster = p.effectiveConfidence(2 * Proposition.DEFAULT_DECAY_K);
+Proposition ranked = p.withDecayApplied();
+----
+
+In Kotlin:
+
+[source,kotlin]
+----
+val faster = p.effectiveConfidence(k = 2 * Proposition.DEFAULT_DECAY_K)
+val ranked = p.withDecayApplied()
 ----
 
 Run this against a claim you care about before choosing `k`. The right value is the one where a

@@ -51,6 +51,35 @@ you must get right.
 | Four separate clocks. The distinction matters — see below.
 |===
 
+==== Entity mentions
+
+Each entry in `mentions` is an `EntityMention`: the words that name something and the type you
+expect it to be. The resolved id, the role and the hints are optional, so give only what you know.
+In Java:
+
+[source,java]
+----
+// A mention that has not been resolved yet.
+var alice = new EntityMention("Alice", "Person");
+
+// The same mention once it is resolved, as the subject of the claim.
+var subject = new EntityMention("Alice", "Person", "person-alice", MentionRole.SUBJECT);
+----
+
+In Kotlin, name the arguments you pass:
+
+[source,kotlin]
+----
+val alice = EntityMention(span = "Alice", type = "Person")
+
+val subject = EntityMention(
+    span = "Alice",
+    type = "Person",
+    resolvedId = "person-alice",
+    role = MentionRole.SUBJECT,
+)
+----
+
 ==== Effective confidence is the number you use
 
 `confidence` is a historical fact: it is what the LLM thought at extraction time. It is not what you
