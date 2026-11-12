@@ -28,6 +28,22 @@ public abstract class com/embabel/dice/conformance/AbstractCollectorRecordStoreC
 	protected abstract fun store ()Lcom/embabel/dice/projection/lineage/CollectorRecordStore;
 }
 
+public abstract class com/embabel/dice/conformance/AbstractCollectorTraceStoreContractTest {
+	public fun <init> ()V
+	public fun anUnknownRunHasNoEdgesAndNoDecisions ()V
+	public fun decisionsReadBackByRunWithTheirRetiredMembers ()V
+	public fun deleteTracesForContextRemovesThatContextOnly ()V
+	public fun edgesOfOneRunAreNotReturnedForAnother ()V
+	public fun edgesReadBackByRunWithTheirSignals ()V
+	public fun findDecisionForPropositionAnswersForSurvivorAndRetiredMember ()V
+	public fun findDecisionForPropositionIsNullForAnUnknownId ()V
+	public fun findDecisionRetiringAnswersTheNewestRetirement ()V
+	public fun findDecisionRetiringIgnoresADecisionTheIdOnlySurvived ()V
+	public fun findRetirementReturnsTheUndoRecordOfARetiredMember ()V
+	protected fun query (Lcom/embabel/dice/spi/CollectorTraceStore;)Lcom/embabel/dice/spi/CollectorTraceQuery;
+	protected abstract fun store ()Lcom/embabel/dice/spi/CollectorTraceStore;
+}
+
 public abstract class com/embabel/dice/conformance/AbstractExtractionRunStoreContractTest {
 	public fun <init> ()V
 	public final fun a CANCELLED terminal record is locked the same as SUCCEEDED and FAILED, through recordInvocation ()V
