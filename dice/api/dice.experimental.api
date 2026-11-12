@@ -1305,6 +1305,18 @@ public final class com/embabel/dice/proposition/extraction/PersistUnitFailedExce
 	public final fun getStep ()Lcom/embabel/dice/proposition/extraction/PersistStep;
 }
 
+public abstract interface class com/embabel/dice/proposition/extraction/PersistUnitWriter {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/PersistUnitWriter$Companion;
+	public static fun sequential (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Lcom/embabel/dice/proposition/extraction/PersistUnitWriter;
+	public static fun sequential (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;Lcom/embabel/dice/proposition/extraction/PropositionRunLinkStore;)Lcom/embabel/dice/proposition/extraction/PersistUnitWriter;
+	public abstract fun write (Lcom/embabel/dice/proposition/extraction/PersistUnit;)Lcom/embabel/dice/proposition/extraction/PersistOutcome;
+}
+
+public final class com/embabel/dice/proposition/extraction/PersistUnitWriter$Companion {
+	public final fun sequential (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Lcom/embabel/dice/proposition/extraction/PersistUnitWriter;
+	public final fun sequential (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;Lcom/embabel/dice/proposition/extraction/PropositionRunLinkStore;)Lcom/embabel/dice/proposition/extraction/PersistUnitWriter;
+}
+
 public final class com/embabel/dice/proposition/extraction/PropositionRunLinkScopeException : java/lang/RuntimeException {
 	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Ljava/util/List;)V
 	public final fun getKey ()Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;

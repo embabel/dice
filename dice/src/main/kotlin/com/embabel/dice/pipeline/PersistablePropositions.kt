@@ -58,18 +58,11 @@ interface PersistablePropositions : EntityExtractionResult, PropositionExtractio
         val propsToSave = propositionsToPersist()
 
         // Only persist entities that are actually referenced by propositions being saved
-        val referencedEntityIds = propsToSave
-            .flatMap { it.mentions }
-            .mapNotNull { it.resolvedId }
-            .toSet()
-
-        newEntities()
-            .filter { it.id in referencedEntityIds }
+        referencedEntities(propsToSave, newEntities())
             .forEach { entity ->
                 namedEntityDataRepository.save(entity)
             }
-        updatedEntities()
-            .filter { it.id in referencedEntityIds }
+        referencedEntities(propsToSave, updatedEntities())
             .forEach { entity ->
                 namedEntityDataRepository.update(entity)
             }
@@ -138,18 +131,11 @@ interface PersistablePropositions : EntityExtractionResult, PropositionExtractio
         val propsToSave = propositionsToPersist()
 
         // Only persist entities that are actually referenced by propositions being saved
-        val referencedEntityIds = propsToSave
-            .flatMap { it.mentions }
-            .mapNotNull { it.resolvedId }
-            .toSet()
-
-        newEntities()
-            .filter { it.id in referencedEntityIds }
+        referencedEntities(propsToSave, newEntities())
             .forEach { entity ->
                 namedEntityDataRepository.save(entity)
             }
-        updatedEntities()
-            .filter { it.id in referencedEntityIds }
+        referencedEntities(propsToSave, updatedEntities())
             .forEach { entity ->
                 namedEntityDataRepository.update(entity)
             }
