@@ -366,7 +366,8 @@ class InMemoryPersistUnitWriterTest {
     @Test
     fun `E9 a failure while recording before-images fails at PREPARE and writes nothing`() {
         val stores = Stores(FaultyEntityRepository(schema, findFault = IllegalStateException("entity store down")))
-        val unit = aliceUnit().withRun(run("run-1"))
+        val key = run("run-1")
+        val unit = aliceUnit().withRun(key)
 
         val failed = failed(stores.writer.write(unit))
 
@@ -374,6 +375,7 @@ class InMemoryPersistUnitWriterTest {
         assertThat(failed.leftInStore).isEmpty()
         assertThat(stores.entities.writes).isEmpty()
         assertThat(stores.claims.count()).isZero()
+        assertThat(stores.links.linkedTo(key)).isEmpty()
     }
 
     @Test
@@ -398,5 +400,28 @@ class InMemoryPersistUnitWriterTest {
         assertThat(failed.step).isEqualTo(PersistStep.RUN_LINKS)
         assertThat(failed.leftInStore).containsExactly(PersistStep.ENTITIES)
         assertThat(failed.cause.suppressed).containsExactly(deleteFault)
+    }
+
+    @Test
+    fun `E12 a failed unit removes the run links it added and keeps the links the run already had`() {
+        val stores = Stores(FaultyEntityRepository(schema, relationshipFault = IllegalStateException("graph down")))
+        val key = run("run-1")
+        val oldTea = proposition("Alice likes coffee", "p-1")
+        val oldCat = proposition("Alice owns a dog", "p-2")
+        stores.claims.save(oldTea)
+        stores.claims.save(oldCat)
+        stores.links.link(key, listOf("p-2"))
+        val unit = PersistUnit.of(
+            listOf(proposition("Alice likes tea", "p-1"), proposition("Alice owns a cat", "p-2")),
+            listOf(entity("entity-alice")),
+            emptyList(),
+        ).withRun(key)
+
+        val failed = failed(stores.writer.write(unit))
+
+        assertThat(failed.step).isEqualTo(PersistStep.STRUCTURAL_RELATIONSHIPS)
+        assertThat(stores.claims.findById("p-1")).isSameAs(oldTea)
+        assertThat(stores.claims.findById("p-2")).isSameAs(oldCat)
+        assertThat(stores.links.linkedTo(key)).containsExactly("p-2")
     }
 }
