@@ -13,11 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.storage
+package com.embabel.dice.conformance
 
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.MetamodelVersionStore
 import com.embabel.dice.metamodel.SweptBaselineStore
+import org.jetbrains.annotations.ApiStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -32,6 +33,7 @@ import org.junit.jupiter.api.Test
  * treated each of those re-stamps as a new record would fill the history with copies of one version,
  * and one that moved a re-stamped version to the front would report the wrong stamp as the latest.
  */
+@ApiStatus.Experimental
 abstract class AbstractMetamodelVersionStoreContractTest {
 
     /**

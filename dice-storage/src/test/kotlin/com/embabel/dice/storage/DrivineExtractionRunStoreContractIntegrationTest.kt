@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.storage
 
+import com.embabel.dice.conformance.AbstractExtractionRunStoreContractTest
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.proposition.extraction.ExtractionRunStore
 import org.drivine.manager.PersistenceManager
