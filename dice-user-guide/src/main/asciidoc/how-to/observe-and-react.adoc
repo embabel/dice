@@ -41,6 +41,9 @@ Those candidate events are *pre-persistence signals*, and the distinction matter
 means the pipeline classified something, not that anything was written. If your listener has side
 effects, build them on `PropositionPersisted` instead.
 
+Each chunk in which a mention was not in its own proposition's text also emits one
+`UngroundedMentionsFound` event, listing those mentions and whether they were kept or dropped.
+
 A listener that throws cannot abort a run — the pipeline wraps whatever you register in
 `SafeDiceEventListener`. The default is `DiceEventListener.DEV_NULL`, so behaviour is unchanged when
 no listener is set.

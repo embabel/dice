@@ -30,6 +30,7 @@ import com.embabel.dice.common.PropositionRoutedToReview
 import com.embabel.dice.common.SafeDiceEventListener
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntities
+import com.embabel.dice.common.UngroundedMentionsFound
 import com.embabel.dice.common.filter.MentionFilter
 import com.embabel.dice.common.resolver.ChainedEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
@@ -65,6 +66,7 @@ import java.util.concurrent.ConcurrentHashMap
  * - [withMentionFilter] — drop low-quality entity mentions before resolution
  * - [withEventListener] — observe pipeline events
  * - [withExecutionStrategy] — control how the extraction stage is dispatched
+ * - [withUngroundedMentions] — keep or drop mentions whose span isn't in their proposition
  *
  * Example usage:
  * ```kotlin
@@ -97,6 +99,7 @@ class PropositionPipeline private constructor(
     private val mentionFilter: MentionFilter? = null,
     eventListener: DiceEventListener = DiceEventListener.DEV_NULL,
     private val executionStrategy: ExtractionExecutionStrategy = SerialExtractionStrategy,
+    private val ungroundedMentions: UngroundedMentionHandling = UngroundedMentionHandling.KEEP,
 ) {
 
     /** The original listener as supplied — propagated verbatim through `with*` copies to avoid wrapping it multiple times. */
@@ -133,7 +136,7 @@ class PropositionPipeline private constructor(
      * @return A new pipeline instance with revision enabled
      */
     fun withRevision(reviser: PropositionReviser, propositionRepository: PropositionRepository): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy)
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy, ungroundedMentions)
 
     /**
      * Add a mention filter to validate entity mentions before creating entities.
@@ -144,7 +147,7 @@ class PropositionPipeline private constructor(
      * @return A new pipeline instance with mention filtering enabled
      */
     fun withMentionFilter(filter: MentionFilter): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, filter, rawEventListener, executionStrategy)
+        PropositionPipeline(extractor, reviser, propositionRepository, filter, rawEventListener, executionStrategy, ungroundedMentions)
 
     /**
      * Register a listener for pipeline events.
@@ -153,6 +156,7 @@ class PropositionPipeline private constructor(
      * reviser is also configured — [processChunk] emits one per-proposition "candidate" event per
      * [RevisionResult] (revision-only). These candidate events are **pre-persistence** signals:
      * the canonical durable signal is `PropositionPersisted`, emitted by the repository decorator.
+     * Each chunk in which a mention's span is not in its own proposition's text also emits one [UngroundedMentionsFound].
      *
      * Defaults to [DiceEventListener.DEV_NULL]; behavior is unchanged when no listener is set.
      *
@@ -160,7 +164,7 @@ class PropositionPipeline private constructor(
      * @return A new pipeline instance with the listener registered
      */
     fun withEventListener(listener: DiceEventListener): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, listener, executionStrategy)
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, listener, executionStrategy, ungroundedMentions)
 
     /**
      * Set the [ExtractionExecutionStrategy] used to dispatch the stateless per-chunk
@@ -178,7 +182,26 @@ class PropositionPipeline private constructor(
      * @return A new pipeline instance with the strategy registered
      */
     fun withExecutionStrategy(strategy: ExtractionExecutionStrategy): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, strategy)
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, strategy, ungroundedMentions)
+
+    /**
+     * Choose what happens to a mention whose span doesn't appear in the text of the proposition
+     * it's attached to.
+     *
+     * With [UngroundedMentionHandling.KEEP], the default, such mentions go through exactly as the
+     * extractor returned them: they are resolved like any other mention and stay on the
+     * proposition. With [UngroundedMentionHandling.DROP] they are taken off their proposition
+     * before entity resolution, so they can't be resolved, minted as new entities, or left on
+     * the result. The proposition itself is always kept, even if it loses every mention.
+     *
+     * Either way, the ungrounded mentions are reported to the event listener as one
+     * [UngroundedMentionsFound] per chunk.
+     *
+     * @param handling whether to keep or drop ungrounded mentions
+     * @return A new pipeline instance with that handling
+     */
+    fun withUngroundedMentions(handling: UngroundedMentionHandling): PropositionPipeline =
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy, handling)
 
     /**
      * Carries the resolver-free output of the extraction stage for a single chunk so it can be produced
@@ -188,6 +211,7 @@ class PropositionPipeline private constructor(
         val chunk: Chunk,
         val suggestedPropositions: SuggestedPropositions,
         val suggestedEntities: SuggestedEntities,
+        val ungrounded: List<UngroundedMention>,
     )
 
     /**
@@ -198,8 +222,17 @@ class PropositionPipeline private constructor(
         logger.debug("Processing chunk: {}", chunk.id)
 
         // Step 1: Extract propositions from chunk
-        val suggestedPropositions = extractor.extract(chunk, context)
-        logger.debug("Extracted {} propositions", suggestedPropositions.propositions.size)
+        val extracted = extractor.extract(chunk, context)
+        logger.debug("Extracted {} propositions", extracted.propositions.size)
+
+        // Check every mention against its own proposition before any of them can become a
+        // resolver candidate. In DROP mode the grounded copy is what flows on to both entity
+        // creation and proposition resolution; in KEEP mode nothing changes but the report.
+        val grounding = MentionGrounding.check(extracted)
+        val suggestedPropositions = when (ungroundedMentions) {
+            UngroundedMentionHandling.DROP -> grounding.grounded
+            UngroundedMentionHandling.KEEP -> extracted
+        }
 
         // Step 2: Convert mentions to suggested entities (include source text for context)
         val suggestedEntities = extractor.toSuggestedEntities(
@@ -210,7 +243,7 @@ class PropositionPipeline private constructor(
         )
         logger.debug("Created {} suggested entities", suggestedEntities.suggestedEntities.size)
 
-        return ExtractionStageResult(chunk, suggestedPropositions, suggestedEntities)
+        return ExtractionStageResult(chunk, suggestedPropositions, suggestedEntities, grounding.ungrounded)
     }
 
     /**
@@ -223,6 +256,21 @@ class PropositionPipeline private constructor(
         context: SourceAnalysisContext,
     ): ChunkPropositionResult.Success {
         val (chunk, suggestedPropositions, suggestedEntities) = extraction
+
+        // Reported here rather than in the extraction stage because this stage is always serial,
+        // so listeners are never called from several threads at once.
+        if (extraction.ungrounded.isNotEmpty()) {
+            val sample = extraction.ungrounded.take(5).joinToString(", ") { "${it.mention.span} (${it.reason})" }
+            val message = "Found {} ungrounded mention(s) in chunk {} ({}): {}"
+            if (ungroundedMentions == UngroundedMentionHandling.DROP) {
+                logger.warn(message, extraction.ungrounded.size, chunk.id, ungroundedMentions, sample)
+            } else {
+                logger.debug(message, extraction.ungrounded.size, chunk.id, ungroundedMentions, sample)
+            }
+            eventListener.onEvent(
+                UngroundedMentionsFound(context.contextId, chunk.id, extraction.ungrounded, ungroundedMentions)
+            )
+        }
 
         // Step 3: Resolve entities using existing resolver (wrapped with known entities)
         val resolver = KnownEntityResolver.withKnownEntities(context.knownEntities, context.entityResolver)

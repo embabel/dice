@@ -45,6 +45,7 @@ flowchart TB
     UNP["PropositionUnpinned<br/>(back in scope for decay)"]
     PBC["ProjectionBatchCompleted<br/>(success / skip / fail counts)"]
     EBC["ExtractionBatchCompleted<br/>(run statistics)"]
+    UMF["UngroundedMentionsFound<br/>(mentions not in their proposition)"]
     PD["PropositionDiscovered<br/>(revision: new fact)"]
     PM["PropositionMerged<br/>(revision: identical)"]
     PR["PropositionReinforced<br/>(revision: similar)"]
@@ -60,6 +61,7 @@ flowchart TB
     DE --> UNP
     DE --> PBC
     DE --> EBC
+    DE --> UMF
     DE --> PD
     DE --> PM
     DE --> PR
@@ -92,6 +94,9 @@ new proposition against what's stored — **`PropositionDiscovered`**, **`Propos
 **`ExtractionBatchCompleted`** with run statistics at the end of a batch. These are pre-persistence
 signals about what the reviser decided; the durable record of a save is still `PropositionPersisted`.
 
+The pipeline also emits **`UngroundedMentionsFound`** for each chunk in which a mention's span was
+not in its own proposition's text, listing the mentions and saying whether they were kept or dropped.
+
 ## The emitter map
 
 Events aren't limited to the store and pipeline above — several other components emit them too. This is
@@ -101,7 +106,7 @@ every emitter in the system today, and what each one puts out:
 flowchart LR
     REPO["EventEmittingPropositionRepository<br/>(store decorator)"] -->|"PropositionPersisted<br/>PropositionStatusChanged"| L((DiceEventListener))
     PROJ["EventEmittingProjector<br/>(projection decorator)"] -->|ProjectionBatchCompleted| L
-    PIPE["PropositionPipeline<br/>(revision reconciliation)"] -->|"PropositionDiscovered<br/>PropositionMerged<br/>PropositionReinforced<br/>PropositionContradicted<br/>PropositionGeneralized<br/>PropositionRoutedToReview<br/>ExtractionBatchCompleted"| L
+    PIPE["PropositionPipeline<br/>(revision reconciliation)"] -->|"PropositionDiscovered<br/>PropositionMerged<br/>PropositionReinforced<br/>PropositionContradicted<br/>PropositionGeneralized<br/>PropositionRoutedToReview<br/>ExtractionBatchCompleted<br/>UngroundedMentionsFound"| L
     GATE["ObservableGate<br/>(admission gate decorator)"] -->|"PropositionRejected<br/>PropositionRoutedToReview<br/>PropositionProjectionSkipped<br/>PropositionDemoted"| L
     COLLECTOR["DefaultCollectorRunner<br/>(reclamation sweep)"] -->|PropositionStatusChanged| L
     DREAM["ContradictionResolutionPass<br/>(dream-loop consolidation)"] -->|PropositionRoutedToReview| L

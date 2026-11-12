@@ -18,6 +18,8 @@ package com.embabel.dice.common
 import com.embabel.agent.core.ContextId
 import com.embabel.common.core.types.Timestamped
 import com.embabel.dice.pipeline.PropositionExtractionStats
+import com.embabel.dice.pipeline.UngroundedMention
+import com.embabel.dice.pipeline.UngroundedMentionHandling
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.extraction.ExtractionRun
@@ -159,6 +161,28 @@ data class ProjectionBatchCompleted @JvmOverloads constructor(
  */
 data class ExtractionBatchCompleted @JvmOverloads constructor(
     val stats: PropositionExtractionStats,
+    override val timestamp: Instant = Instant.now(),
+) : DiceEvent
+
+/**
+ * Some mentions in a chunk didn't name anything in the proposition they were attached to.
+ *
+ * The extraction model sometimes tags a proposition with an entity its text never mentions.
+ * The pipeline checks every mention against its own proposition before resolving entities and
+ * sends one of these per chunk where it found any. Each entry carries the text of the
+ * proposition involved, and [handling] says whether the mentions were kept or dropped.
+ *
+ * @property contextId The context the chunk was analysed in.
+ * @property chunkId The chunk the mentions came from.
+ * @property mentions The ungrounded mentions, each with its proposition's text and the reason.
+ * @property handling Whether the pipeline kept these mentions or dropped them.
+ * @property timestamp When the event was created.
+ */
+data class UngroundedMentionsFound @JvmOverloads constructor(
+    val contextId: ContextId,
+    val chunkId: String,
+    val mentions: List<UngroundedMention>,
+    val handling: UngroundedMentionHandling,
     override val timestamp: Instant = Instant.now(),
 ) : DiceEvent
 
