@@ -151,6 +151,12 @@ and the consumer PRs that deliver it).
   that cannot do what it is asked throws `UnsupportedCapabilityException`. See "Store contract"
   in the user guide reference. **Compatibility: additive.**
 
+- Java can leave out the decay rate and the candidate bakeoff. `Proposition.effectiveConfidence()`,
+  `effectiveConfidenceAt(Instant)` and `withDecayApplied()` use the default rate, published as
+  `Proposition.DEFAULT_DECAY_K` (`2.0`). `EscalatingEntityResolver.create(repository)` and
+  `withoutVector(repository)` build a resolver with no bakeoff. `new EntityMention(span, type)`
+  leaves out the resolved id, the role and the hints. The forms that take the extra arguments are
+  unchanged. **Compatibility: additive.**
 - `PropositionPipeline` checks each mention an extractor returns against the text of its own
   proposition before entity resolution, and emits one `UngroundedMentionsFound` event per chunk
   listing every mention whose span is blank or does not appear in that text, with the reason. The

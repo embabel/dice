@@ -61,7 +61,14 @@ index.
 var resolver = EscalatingEntityResolver.create(entityRepository, llmCandidateBakeoff);
 
 // Ambiguity mints a new entity instead.
-var resolver = EscalatingEntityResolver.create(entityRepository, null);
+var resolver = EscalatingEntityResolver.create(entityRepository);
+----
+
+In Kotlin the second argument has a default.
+
+[source,kotlin]
+----
+val resolver = EscalatingEntityResolver.create(entityRepository)
 ----
 
 And separately, whether minting is allowed at all:
