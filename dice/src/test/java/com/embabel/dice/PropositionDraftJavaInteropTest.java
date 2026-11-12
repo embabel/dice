@@ -343,4 +343,87 @@ class PropositionDraftJavaInteropTest {
         assertEquals(List.of("chunk-1", "chunk-2"), d.getGrounding());
         assertEquals(List.of("chunk-1", "chunk-2"), d.toProposition().getGrounding());
     }
+
+    @Test
+    void i5_aDraftOfAPropositionFollowsNoneOfItsCollections() {
+        List<EntityMention> mentions = new ArrayList<>(List.of(ALICE));
+        List<String> grounding = new ArrayList<>(List.of("chunk-1"));
+        List<String> sourceIds = new ArrayList<>(List.of("s1"));
+        Map<String, Object> metadata = new HashMap<>(Map.of("trust", 0.8));
+        List<ProvenanceEntry> provenance = new ArrayList<>(List.of(FIRST_SOURCE));
+        Proposition p = Proposition.create(
+                "p-1",
+                "acme",
+                "Alice lives in Paris",
+                mentions,
+                0.9,
+                0.0,
+                0.5,
+                null,
+                grounding,
+                CREATED,
+                CREATED,
+                CREATED,
+                PropositionStatus.ACTIVE,
+                1,
+                sourceIds,
+                0,
+                metadata,
+                null,
+                null,
+                provenance);
+
+        PropositionDraft d = p.toDraft();
+        mentions.add(PARIS);
+        grounding.add("chunk-2");
+        sourceIds.add("s2");
+        metadata.put("extra", 1);
+        provenance.add(SECOND_SOURCE);
+
+        assertEquals(List.of(ALICE), d.getMentions());
+        assertEquals(List.of("chunk-1"), d.getGrounding());
+        assertEquals(List.of("s1"), d.getSourceIds());
+        assertEquals(Map.of("trust", 0.8), d.getMetadata());
+        assertEquals(List.of(FIRST_SOURCE), d.getProvenanceEntries());
+
+        Proposition built = d.toProposition();
+        assertEquals(List.of(ALICE), built.getMentions());
+        assertEquals(List.of("chunk-1"), built.getGrounding());
+        assertEquals(List.of("s1"), built.getSourceIds());
+        assertEquals(Map.of("trust", 0.8), built.getMetadata());
+        assertEquals(List.of(FIRST_SOURCE), built.getProvenanceEntries());
+    }
+
+    @Test
+    void i2_aDraftOfAPropositionRejectsChanges() {
+        Proposition p = Proposition.create(
+                "p-1",
+                "acme",
+                "Alice lives in Paris",
+                new ArrayList<>(List.of(ALICE, PARIS)),
+                0.9,
+                0.0,
+                0.5,
+                null,
+                new ArrayList<>(List.of("chunk-1", "chunk-2")),
+                CREATED,
+                CREATED,
+                CREATED,
+                PropositionStatus.ACTIVE,
+                1,
+                new ArrayList<>(List.of("s1", "s2")),
+                0,
+                new HashMap<>(Map.of("trust", 0.8, "origin", "wiki")),
+                null,
+                null,
+                new ArrayList<>(List.of(FIRST_SOURCE, SECOND_SOURCE)));
+
+        PropositionDraft d = p.toDraft();
+
+        assertThrows(UnsupportedOperationException.class, () -> d.getMentions().clear());
+        assertThrows(UnsupportedOperationException.class, () -> d.getGrounding().add("chunk-3"));
+        assertThrows(UnsupportedOperationException.class, () -> d.getSourceIds().clear());
+        assertThrows(UnsupportedOperationException.class, () -> d.getMetadata().put("extra", 1));
+        assertThrows(UnsupportedOperationException.class, () -> d.getProvenanceEntries().clear());
+    }
 }
