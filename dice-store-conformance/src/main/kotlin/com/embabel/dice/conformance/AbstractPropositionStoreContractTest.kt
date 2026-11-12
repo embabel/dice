@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.storage
+package com.embabel.dice.conformance
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.common.DiceMetadataKeys
@@ -21,6 +21,7 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionQuery.OrderBy
 import com.embabel.dice.proposition.PropositionStore
+import org.jetbrains.annotations.ApiStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import java.time.Instant
@@ -37,6 +38,7 @@ import java.time.Instant
  * - the "revised" clock, which keys on last-touched (the later of content/metadata revision), not the
  *   decay anchor, so a metadata-only touch counts as a revision.
  */
+@ApiStatus.Experimental
 abstract class AbstractPropositionStoreContractTest {
 
     /** A fresh, empty store for the test about to run. */
