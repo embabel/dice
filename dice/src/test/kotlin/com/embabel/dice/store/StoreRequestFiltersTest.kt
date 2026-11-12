@@ -16,6 +16,7 @@
 package com.embabel.dice.store
 
 import com.embabel.dice.proposition.PropositionQuery
+import com.embabel.dice.proposition.PropositionStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.Test
  * E1 A filter with no ordering and no limit comes back equal to the input.
  * E2 A filter with an ordering or a limit throws IllegalArgumentException.
  * E3 A list the caller changes after the check does not change the checked filter.
+ * E4 A collection read back from the checked filter cannot be changed.
  */
 class StoreRequestFiltersTest {
 
@@ -52,5 +54,24 @@ class StoreRequestFiltersTest {
         val checked = requireNarrowingFilter(PropositionQuery.againstContext("c").withAnyEntityIds(ids))
         ids.add("b")
         assertEquals(listOf("a"), checked.anyEntityIds)
+    }
+
+    @Test
+    fun `E4 a collection read back from the checked filter cannot be changed`() {
+        val checked = requireNarrowingFilter(
+            PropositionQuery.againstContext("c")
+                .withAnyEntityIds(listOf("a", "b"))
+                .withAllEntityIds(listOf("a", "b"))
+                .withStatuses(PropositionStatus.ACTIVE, PropositionStatus.SUPERSEDED),
+        )
+        assertThrows(UnsupportedOperationException::class.java) {
+            (checked.anyEntityIds as MutableList<String>).clear()
+        }
+        assertThrows(UnsupportedOperationException::class.java) {
+            (checked.allEntityIds as MutableList<String>).clear()
+        }
+        assertThrows(UnsupportedOperationException::class.java) {
+            (checked.statuses as MutableSet<PropositionStatus>).clear()
+        }
     }
 }

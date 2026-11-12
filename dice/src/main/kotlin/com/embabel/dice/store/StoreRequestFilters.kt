@@ -17,6 +17,7 @@ package com.embabel.dice.store
 
 import com.embabel.dice.proposition.PropositionQuery
 import org.jetbrains.annotations.ApiStatus
+import java.util.Collections
 
 /**
  * Stops a store contract block from calling into an enclosing block.
@@ -29,12 +30,13 @@ import org.jetbrains.annotations.ApiStatus
 annotation class StoreContractDsl
 
 /**
- * Checks that a filter on a store request only selects candidates, and copies its collections so
- * a list the caller keeps cannot change the request afterwards. The request sets the order and
- * the size of the result, so a filter that carries either is rejected.
+ * Checks that a filter on a store request only selects candidates, and copies its collections
+ * into read-only ones. A list the caller keeps cannot change the request afterwards, and a list
+ * read back from the request cannot be changed. The request sets the order and the size of the
+ * result, so a filter that carries either is rejected.
  *
  * @param filter The filter to check.
- * @return A copy of the filter that shares no collection with the caller.
+ * @return A copy of the filter whose collections are read-only and shared with no caller.
  * @throws IllegalArgumentException when [filter] carries an ordering or a limit.
  */
 internal fun requireNarrowingFilter(filter: PropositionQuery): PropositionQuery {
@@ -45,8 +47,8 @@ internal fun requireNarrowingFilter(filter: PropositionQuery): PropositionQuery 
         "A request filter must not carry a limit (${filter.limit}). The request sets the result size."
     }
     return filter.copy(
-        anyEntityIds = filter.anyEntityIds?.toList(),
-        allEntityIds = filter.allEntityIds?.toList(),
-        statuses = filter.statuses?.toSet(),
+        anyEntityIds = filter.anyEntityIds?.let { Collections.unmodifiableList(ArrayList(it)) },
+        allEntityIds = filter.allEntityIds?.let { Collections.unmodifiableList(ArrayList(it)) },
+        statuses = filter.statuses?.let { Collections.unmodifiableSet(LinkedHashSet(it)) },
     )
 }
