@@ -13,6 +13,21 @@ public abstract class com/embabel/dice/conformance/AbstractChunkHistoryStoreCont
 	public fun theBookmarkCarriesTheLatestRecord ()V
 }
 
+public abstract class com/embabel/dice/conformance/AbstractCollectorRecordStoreContractTest {
+	public fun <init> ()V
+	public fun aNewStoreHoldsNoRecordsAndNoRuns ()V
+	public fun aRecordReadsBackWithEveryField ()V
+	public fun aRunHeaderReadsBackByItsId ()V
+	public fun aRunWithNoRecordsKeepsItsHeader ()V
+	public fun anUnknownPropositionOrRunHasNoRecords ()V
+	public fun anUnknownRunIdHasNoHeader ()V
+	public fun findByPropositionReturnsOnlyThatPropositionsRecords ()V
+	public fun findByRunReturnsOnlyThatRunsRecords ()V
+	public fun replayingARecordKeepsItsUndoStamp ()V
+	public fun runsComeBackInTheOrderTheyWereRecorded ()V
+	protected abstract fun store ()Lcom/embabel/dice/projection/lineage/CollectorRecordStore;
+}
+
 public abstract class com/embabel/dice/conformance/AbstractExtractionRunStoreContractTest {
 	public fun <init> ()V
 	public final fun a CANCELLED terminal record is locked the same as SUCCEEDED and FAILED, through recordInvocation ()V
