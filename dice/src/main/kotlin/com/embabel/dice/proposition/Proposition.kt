@@ -240,6 +240,18 @@ data class Proposition(
             temporal = temporal,
             provenanceEntries = provenanceEntries,
         )
+
+        /**
+         * Starts a draft of a proposition that Java code fills in with named steps.
+         *
+         * @param contextIdValue the context the proposition belongs to
+         * @param text the statement in natural language
+         * @param confidence how certain the statement is, from 0.0 to 1.0
+         * @return a draft with every other value at its default
+         */
+        @JvmStatic
+        fun draft(contextIdValue: String, text: String, confidence: Double): PropositionDraft =
+            PropositionDraft.of(ContextId(contextIdValue), text, confidence)
     }
 
     init {
@@ -441,4 +453,12 @@ data class Proposition(
         val effectiveConf = effectiveConfidence(k).coerceIn(0.0, 1.0)
         return copy(confidence = effectiveConf)
     }
+
+    /**
+     * Makes a draft that holds every value of this proposition, so Java code can change a few
+     * of them and build a new proposition.
+     *
+     * @return a draft that builds a proposition equal to this one until a step changes it
+     */
+    fun toDraft(): PropositionDraft = PropositionDraft.from(this)
 }
