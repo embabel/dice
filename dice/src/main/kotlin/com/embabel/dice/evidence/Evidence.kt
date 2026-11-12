@@ -16,6 +16,7 @@
 package com.embabel.dice.evidence
 
 import com.embabel.common.core.types.ZeroToOne
+import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.spi.ConflictType
 import java.util.Collections
 import java.util.Objects
@@ -183,19 +184,24 @@ sealed interface Evidence {
      * A conclusion worked out from recorded claims.
      *
      * A caller gets this kind when the lookup answers with a conclusion that a rule, such as an abstraction or
-     * a logic query, worked out from claims in the store.
+     * a logic query, worked out from claims in the store. A conclusion that is itself a stored claim also
+     * carries its effective confidence and status.
      */
     class Derived private constructor(
         /** The conclusion text. */
         val conclusion: String,
-        /** Confidence in the conclusion, from 0.0 to 1.0. */
+        /** The stored confidence of the claim, or the confidence the rule computed, from 0.0 to 1.0. */
         val confidence: ZeroToOne,
+        /** Confidence after decay and validity are applied, from 0.0 to 1.0. Equal to [confidence] until set. */
+        val effectiveConfidence: ZeroToOne,
         /** The method and rule that worked the conclusion out. */
         val rule: DerivationRule,
         inputIds: List<String>,
         inputs: List<EvidenceItem>,
         /** The citation of the conclusion when it is itself stored as a claim. Null otherwise. */
         val citation: Citation?,
+        /** The lifecycle status of the conclusion. Set when the conclusion is itself a stored claim. Null otherwise. */
+        val status: PropositionStatus?,
     ) : Evidence {
 
         /** Ids of the claims the conclusion was worked out from. Never empty. */
@@ -207,6 +213,9 @@ sealed interface Evidence {
         init {
             require(conclusion.isNotBlank()) { "conclusion must not be blank" }
             require(confidence in 0.0..1.0) { "confidence must be between 0.0 and 1.0, was $confidence" }
+            require(effectiveConfidence in 0.0..1.0) {
+                "effectiveConfidence must be between 0.0 and 1.0, was $effectiveConfidence"
+            }
             require(this.inputIds.isNotEmpty()) { "inputIds must not be empty" }
             require(this.inputIds.all { it.isNotBlank() }) { "input ids must not be blank" }
         }
@@ -218,7 +227,7 @@ sealed interface Evidence {
          * @return the updated value
          */
         fun withInputs(inputs: List<EvidenceItem>): Derived =
-            Derived(conclusion, confidence, rule, inputIds, inputs, citation)
+            Derived(conclusion, confidence, effectiveConfidence, rule, inputIds, inputs, citation, status)
 
         /**
          * Returns a copy with [citation] set.
@@ -227,23 +236,45 @@ sealed interface Evidence {
          * @return the updated value
          */
         fun withCitation(citation: Citation): Derived =
-            Derived(conclusion, confidence, rule, inputIds, inputs, citation)
+            Derived(conclusion, confidence, effectiveConfidence, rule, inputIds, inputs, citation, status)
 
         /**
-         * Two values are equal when every property is equal. Confidence compares by its boxed value,
+         * Returns a copy with [effectiveConfidence] set.
+         *
+         * @param effectiveConfidence confidence after decay and validity are applied, from 0.0 to 1.0
+         * @return the updated value
+         * @throws IllegalArgumentException if [effectiveConfidence] is NaN or outside 0.0 to 1.0
+         */
+        fun withEffectiveConfidence(effectiveConfidence: ZeroToOne): Derived =
+            Derived(conclusion, confidence, effectiveConfidence, rule, inputIds, inputs, citation, status)
+
+        /**
+         * Returns a copy with [status] set.
+         *
+         * @param status the lifecycle status of the stored conclusion
+         * @return the updated value
+         */
+        fun withStatus(status: PropositionStatus): Derived =
+            Derived(conclusion, confidence, effectiveConfidence, rule, inputIds, inputs, citation, status)
+
+        /**
+         * Two values are equal when every property is equal. Confidences compare by their boxed value,
          * so `0.0` and `-0.0` differ.
          */
         override fun equals(other: Any?): Boolean =
             other is Derived && conclusion == other.conclusion && Objects.equals(confidence, other.confidence) &&
-                rule == other.rule && inputIds == other.inputIds && inputs == other.inputs &&
-                citation == other.citation
+                Objects.equals(effectiveConfidence, other.effectiveConfidence) && rule == other.rule &&
+                inputIds == other.inputIds && inputs == other.inputs && citation == other.citation &&
+                status == other.status
 
         /** Hash code over the same properties that [equals] compares. */
-        override fun hashCode(): Int = Objects.hash(conclusion, confidence, rule, inputIds, inputs, citation)
+        override fun hashCode(): Int =
+            Objects.hash(conclusion, confidence, effectiveConfidence, rule, inputIds, inputs, citation, status)
 
-        /** Returns the confidence, rule, input ids and citation. The conclusion text is left out. */
+        /** Returns the confidences, rule, input ids, citation and status. The conclusion text is left out. */
         override fun toString(): String =
-            "Derived(confidence=$confidence, rule=$rule, inputIds=$inputIds, citation=$citation)"
+            "Derived(confidence=$confidence, effectiveConfidence=$effectiveConfidence, rule=$rule, " +
+                "inputIds=$inputIds, citation=$citation, status=$status)"
 
         internal companion object {
 
@@ -251,10 +282,10 @@ sealed interface Evidence {
              * Calls the private constructor for the [Evidence.derived] factory.
              *
              * @param conclusion the conclusion text
-             * @param confidence confidence in the conclusion
+             * @param confidence confidence in the conclusion, also used as the effective confidence
              * @param rule the method and rule that worked the conclusion out
              * @param inputIds ids of the claims the conclusion was worked out from
-             * @return the new value, with no inputs and no citation
+             * @return the new value, with no inputs, no citation and no status
              */
             @JvmSynthetic
             internal fun create(
@@ -262,7 +293,7 @@ sealed interface Evidence {
                 confidence: ZeroToOne,
                 rule: DerivationRule,
                 inputIds: List<String>,
-            ): Derived = Derived(conclusion, confidence, rule, inputIds, emptyList(), null)
+            ): Derived = Derived(conclusion, confidence, confidence, rule, inputIds, emptyList(), null, null)
         }
     }
 

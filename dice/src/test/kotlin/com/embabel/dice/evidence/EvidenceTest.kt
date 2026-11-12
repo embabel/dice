@@ -16,6 +16,7 @@
 package com.embabel.dice.evidence
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.spi.ConflictType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -75,6 +76,82 @@ class EvidenceTest {
         assertEquals(listOf(alice), completed.inputs)
         assertEquals(citation, completed.citation)
         assertEquals(listOf("prop-1", "prop-9"), completed.inputIds)
+    }
+
+    @Test
+    fun `derived evidence starts with its confidence as its effective confidence and no status`() {
+        val derived = Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, listOf("prop-1"))
+
+        assertEquals(0.7, derived.effectiveConfidence)
+        assertNull(derived.status)
+    }
+
+    @Test
+    fun `an effective confidence outside 0 to 1 or NaN is rejected`() {
+        val derived = Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, listOf("prop-1"))
+        listOf(-0.1, 1.1, Double.NaN).forEach { value ->
+            assertThrows(IllegalArgumentException::class.java) { derived.withEffectiveConfidence(value) }
+        }
+    }
+
+    @Test
+    fun `each with method changes only its own part of derived evidence`() {
+        val citation = Citation.of("prop-50", "ctx-main")
+        val base = Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, listOf("prop-1"))
+            .withInputs(listOf(alice))
+            .withCitation(citation)
+            .withEffectiveConfidence(0.4)
+            .withStatus(PropositionStatus.SUPERSEDED)
+
+        val newCitation = Citation.of("prop-51", "ctx-main")
+        val withInputs = base.withInputs(listOf(aliceElsewhere))
+        assertEquals(listOf(aliceElsewhere), withInputs.inputs)
+        assertEquals(citation, withInputs.citation)
+        assertEquals(0.4, withInputs.effectiveConfidence)
+        assertEquals(PropositionStatus.SUPERSEDED, withInputs.status)
+
+        val withCitation = base.withCitation(newCitation)
+        assertEquals(newCitation, withCitation.citation)
+        assertEquals(listOf(alice), withCitation.inputs)
+        assertEquals(0.4, withCitation.effectiveConfidence)
+        assertEquals(PropositionStatus.SUPERSEDED, withCitation.status)
+
+        val withEffective = base.withEffectiveConfidence(0.8)
+        assertEquals(0.8, withEffective.effectiveConfidence)
+        assertEquals(citation, withEffective.citation)
+        assertEquals(listOf(alice), withEffective.inputs)
+        assertEquals(PropositionStatus.SUPERSEDED, withEffective.status)
+
+        val withStatus = base.withStatus(PropositionStatus.ACTIVE)
+        assertEquals(PropositionStatus.ACTIVE, withStatus.status)
+        assertEquals(citation, withStatus.citation)
+        assertEquals(listOf(alice), withStatus.inputs)
+        assertEquals(0.4, withStatus.effectiveConfidence)
+    }
+
+    @Test
+    fun `derived evidence differing only in effective confidence or status is not equal`() {
+        val ids = listOf("prop-1")
+        val base = Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, ids)
+            .withEffectiveConfidence(0.4)
+            .withStatus(PropositionStatus.SUPERSEDED)
+
+        assertNotEquals(base, base.withEffectiveConfidence(0.5))
+        assertNotEquals(base.withEffectiveConfidence(0.0), base.withEffectiveConfidence(-0.0))
+        assertNotEquals(base, base.withStatus(PropositionStatus.ACTIVE))
+    }
+
+    @Test
+    fun `derived evidence with every part equal is equal and shares a hash code`() {
+        val rule = DerivationRule.of("prolog").withRuleId("resident")
+        fun settled() = Evidence.derived("Alice is a resident.", 0.7, rule, listOf("prop-1"))
+            .withInputs(listOf(alice))
+            .withCitation(Citation.of("prop-50", "ctx-main"))
+            .withEffectiveConfidence(0.4)
+            .withStatus(PropositionStatus.SUPERSEDED)
+
+        assertEquals(settled(), settled())
+        assertEquals(settled().hashCode(), settled().hashCode())
     }
 
     @Test

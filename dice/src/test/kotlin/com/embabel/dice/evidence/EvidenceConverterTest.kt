@@ -24,6 +24,7 @@ import com.embabel.dice.provenance.ContentAddressedLocator
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.query.graph.PropositionLineage
 import com.embabel.dice.spi.ConflictType
+import com.embabel.dice.temporal.TemporalMetadata
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
@@ -252,6 +253,57 @@ class EvidenceConverterTest {
         )
         assertEquals(abstraction.sourceIds, unloaded.inputIds)
         assertTrue(unloaded.inputs.isEmpty())
+    }
+
+    /**
+     * Builds a lineage for a claim with no provenance, chunk ids or loaded sources.
+     *
+     * @param proposition the claim the lineage is for
+     * @return the lineage
+     */
+    private fun lineageOf(proposition: Proposition): PropositionLineage = PropositionLineage(
+        proposition = proposition,
+        provenanceEntries = emptyList(),
+        groundingChunkIds = emptyList(),
+        sources = emptyList(),
+        reinforceCount = 0,
+        status = proposition.status,
+        temporal = null,
+    )
+
+    @Test
+    fun `an abstraction carries the effective confidence and status of its claim`() {
+        val abstraction = claim("p-3", status = PropositionStatus.SUPERSEDED, level = 1, sourceIds = listOf("p-1", "p-2"))
+
+        val derived = assertInstanceOf(Evidence.Derived::class.java, converter.fromLineage(lineageOf(abstraction)))
+
+        assertEquals(abstraction.effectiveConfidenceAt(asOf, 2.0), derived.effectiveConfidence)
+        assertEquals(0.9, derived.confidence)
+        assertEquals(abstraction.status, derived.status)
+    }
+
+    @Test
+    fun `an invalidated abstraction has zero effective confidence and keeps its stored confidence`() {
+        val abstraction = claim("p-3", status = PropositionStatus.SUPERSEDED, level = 1, sourceIds = listOf("p-1", "p-2"))
+            .withTemporal(TemporalMetadata(invalidatedAt = asOf))
+
+        val derived = assertInstanceOf(Evidence.Derived::class.java, converter.fromLineage(lineageOf(abstraction)))
+
+        assertEquals(0.0, derived.effectiveConfidence)
+        assertEquals(0.9, derived.confidence)
+    }
+
+    @Test
+    fun `the decay rate multiplier sets the effective confidence of an abstraction`() {
+        val abstraction = claim("p-3", level = 1, sourceIds = listOf("p-1", "p-2"))
+
+        val derived = assertInstanceOf(
+            Evidence.Derived::class.java,
+            converter.withDecayK(4.0).fromLineage(lineageOf(abstraction)),
+        )
+
+        assertEquals(abstraction.effectiveConfidenceAt(asOf, 4.0), derived.effectiveConfidence)
+        assertNotEquals(abstraction.effectiveConfidenceAt(asOf, 2.0), derived.effectiveConfidence)
     }
 
     @Test

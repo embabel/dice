@@ -155,8 +155,9 @@ class EvidenceConverter private constructor(
     /**
      * Converts a lineage into evidence. The claim's citation takes its chunk ids and provenance from
      * the lineage. An abstraction (level above 0) becomes [Evidence.Derived] with rule
-     * [DerivationRule.ABSTRACTION], its non-blank source ids as input ids, and the loaded sources with
-     * non-blank text as inputs. No loaded sources gives empty inputs. Any other claim becomes
+     * [DerivationRule.ABSTRACTION], its non-blank source ids as input ids, the loaded sources with
+     * non-blank text as inputs, and its status. Its effective confidence comes from the converter's
+     * clock and decay rate. No loaded sources gives empty inputs. Any other claim becomes
      * [Evidence.Recorded] with one item.
      *
      * @param lineage the lineage to convert
@@ -172,6 +173,8 @@ class EvidenceConverter private constructor(
         val inputIds = nonBlank(proposition.sourceIds)
         require(inputIds.isNotEmpty()) { "an abstraction needs at least one non-blank source id" }
         return Evidence.derived(proposition.text, proposition.confidence, DerivationRule.ABSTRACTION, inputIds)
+            .withEffectiveConfidence(proposition.effectiveConfidenceAt(clock.instant(), decayK))
+            .withStatus(proposition.status)
             .withInputs(lineage.sources.filter { it.text.isNotBlank() }.map { item(it) })
             .withCitation(citation)
     }

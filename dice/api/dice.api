@@ -1746,18 +1746,22 @@ public final class com/embabel/dice/evidence/Evidence$Conflicting : com/embabel/
 }
 
 public final class com/embabel/dice/evidence/Evidence$Derived : com/embabel/dice/evidence/Evidence {
-	public synthetic fun <init> (Ljava/lang/String;DLcom/embabel/dice/evidence/DerivationRule;Ljava/util/List;Ljava/util/List;Lcom/embabel/dice/evidence/Citation;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;DDLcom/embabel/dice/evidence/DerivationRule;Ljava/util/List;Ljava/util/List;Lcom/embabel/dice/evidence/Citation;Lcom/embabel/dice/proposition/PropositionStatus;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getCitation ()Lcom/embabel/dice/evidence/Citation;
 	public final fun getConclusion ()Ljava/lang/String;
 	public final fun getConfidence ()D
+	public final fun getEffectiveConfidence ()D
 	public final fun getInputIds ()Ljava/util/List;
 	public final fun getInputs ()Ljava/util/List;
 	public final fun getRule ()Lcom/embabel/dice/evidence/DerivationRule;
+	public final fun getStatus ()Lcom/embabel/dice/proposition/PropositionStatus;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 	public final fun withCitation (Lcom/embabel/dice/evidence/Citation;)Lcom/embabel/dice/evidence/Evidence$Derived;
+	public final fun withEffectiveConfidence (D)Lcom/embabel/dice/evidence/Evidence$Derived;
 	public final fun withInputs (Ljava/util/List;)Lcom/embabel/dice/evidence/Evidence$Derived;
+	public final fun withStatus (Lcom/embabel/dice/proposition/PropositionStatus;)Lcom/embabel/dice/evidence/Evidence$Derived;
 }
 
 public final class com/embabel/dice/evidence/Evidence$Missing : com/embabel/dice/evidence/Evidence {

@@ -74,7 +74,7 @@ val item = EvidenceItem("t", citation, 0.8) {
 
 | `Evidence.Derived`
 | A derivation rule produced a conclusion from stored claims.
-| `conclusion`, `confidence`, `rule`, `inputIds`, `inputs` and `citation`. `inputs` and `citation` are set with `withInputs` and `withCitation`.
+| `conclusion`, `confidence`, `effectiveConfidence`, `rule`, `inputIds`, `inputs`, `citation` and `status`. `inputs` and `citation` are set with `withInputs` and `withCitation`. `effectiveConfidence` and `status` are set with `withEffectiveConfidence` and `withStatus`.
 
 | `Evidence.Missing`
 | The search found nothing.
@@ -174,7 +174,7 @@ val label = when (evidence) {
 
 | A lineage
 | `fromLineage(lineage)`
-| `Derived` for an abstraction, with its source claims as inputs. Otherwise `Recorded` with one item.
+| `Derived` for an abstraction, with its source claims as inputs, its effective confidence and its status. Otherwise `Recorded` with one item.
 
 | A revision contradiction
 | `fromContradiction(contradicted)`

@@ -103,6 +103,10 @@ class EvidenceJavaInteropTest {
         assertEquals(List.of(item), derived.getInputs());
         assertEquals("p-19", derived.getCitation().getPropositionId());
 
+        Evidence.Derived settled = derived.withEffectiveConfidence(0.4).withStatus(PropositionStatus.SUPERSEDED);
+        assertEquals(0.4, settled.getEffectiveConfidence());
+        assertEquals(PropositionStatus.SUPERSEDED, settled.getStatus());
+
         Evidence.Missing missing = Evidence.missing(Searched.of("support-team"));
         assertEquals("support-team", missing.getSearched().getContextIdValues().iterator().next());
 
