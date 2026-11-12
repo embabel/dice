@@ -45,7 +45,7 @@ enum class MentionRole {
  * @property role The role this entity plays in the proposition
  * @property hints Additional context for future resolution (e.g., aliases, titles)
  */
-data class EntityMention(
+data class EntityMention @JvmOverloads constructor(
     val span: String,
     val type: String,
     val resolvedId: String? = null,
