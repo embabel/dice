@@ -95,8 +95,8 @@ class Searched private constructor(
     override fun hashCode(): Int = Objects.hash(contextIds, query, filters)
 
     /**
-     * Returns the context ids, whether a query is set, and the filters. The query text is left out, so
-     * [Evidence.Missing] never prints a user's question.
+     * Returns the context ids, whether a query is set, and the filters with their values. The query text is
+     * left out, so [Evidence.Missing] never prints a user's question.
      */
     override fun toString(): String =
         "Searched(contextIds=$contextIdValues, hasQuery=${query != null}, filters=$filters)"

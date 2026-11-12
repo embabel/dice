@@ -183,6 +183,37 @@ class EvidenceJavaInteropTest {
     }
 
     @Test
+    void draftedClaimsConvertWithTheQueryDecayRate() {
+        Instant recordedAt = Instant.parse("2026-01-01T00:00:00Z");
+        Instant now = Instant.parse("2026-01-11T00:00:00Z");
+        Proposition first = Proposition.draft("support-team", "Ada wrote the first program", 0.9)
+                .withId("claim-1")
+                .withGrounding(List.of("chunk-1"))
+                .withDecay(0.05)
+                .withCreated(recordedAt)
+                .toProposition();
+        Proposition second = Proposition.draft("support-team", "Ada studied mathematics", 0.8)
+                .withId("claim-2")
+                .withCreated(recordedAt)
+                .toProposition();
+        EvidenceConverter converter = EvidenceConverter.create()
+                .withDecayK(4.0)
+                .withClock(Clock.fixed(now, ZoneOffset.UTC));
+        Evidence evidence = converter.fromPropositions(
+                List.of(first, second),
+                Searched.of("support-team").withQuery("who is Ada"),
+                RetrieverId.KEYWORD);
+
+        Evidence.Recorded recorded = assertInstanceOf(Evidence.Recorded.class, evidence);
+        assertEquals(2, recorded.getItems().size());
+        EvidenceItem item = recorded.getItems().get(0);
+        assertEquals(List.of("chunk-1"), item.getCitation().getChunkIds());
+        assertEquals(first.effectiveConfidenceAt(now, 4.0), item.getEffectiveConfidence());
+        assertNotEquals(first.effectiveConfidenceAt(now), item.getEffectiveConfidence());
+        assertEquals(Integer.valueOf(2), recorded.getItems().get(1).getRetrievals().get(0).getRank());
+    }
+
+    @Test
     void similarityResultConvertsToRecordedItemWithScore() {
         Proposition claim = claim();
 
@@ -192,6 +223,16 @@ class EvidenceJavaInteropTest {
 
         Evidence.Recorded recorded = assertInstanceOf(Evidence.Recorded.class, evidence);
         assertEquals(Double.valueOf(0.83), recorded.getItems().get(0).getScore());
+
+        EvidenceItem ranked = converter().item(SimilarityResult.create(claim, 0.83), RetrieverId.KEYWORD, 2);
+        assertEquals(Integer.valueOf(2), ranked.getRetrievals().get(0).getRank());
+
+        Evidence named = converter().fromSimilarityResults(
+                List.of(SimilarityResult.create(claim, 0.83)),
+                Searched.of("support-team").withQuery("who is Ada"),
+                RetrieverId.KEYWORD);
+        Evidence.Recorded namedRecorded = assertInstanceOf(Evidence.Recorded.class, named);
+        assertEquals(RetrieverId.KEYWORD, namedRecorded.getItems().get(0).getRetrievals().get(0).getRetriever());
     }
 
     @Test
@@ -202,7 +243,7 @@ class EvidenceJavaInteropTest {
         Retrieval walked = Retrieval.of(retriever).withHops(2);
         assertEquals(Integer.valueOf(2), walked.getHops());
 
-        assertTrue(Searched.unscoped().getContextIds().isEmpty());
+        assertTrue(Searched.unscoped().getContextIdValues().isEmpty());
         assertEquals(Set.of("support-team", "billing-team"),
                 Searched.of("support-team").withContext("billing-team").getContextIdValues());
 

@@ -1,7 +1,7 @@
 [[concepts-evidence]]
 === Evidence
 
-Evidence is what a caller that assembles model context receives. Build it with the factories below, or convert DICE results with `EvidenceConverter`. Each item carries its citation, its confidence, and the retrievals that found it, so the caller can decide what to include and cite. Evidence has four kinds, and a `switch` or `when` tells them apart.
+Evidence is what a caller that assembles model context receives. Build it with the factories below, or convert DICE results with `EvidenceConverter`. Each item carries its citation, its confidence, and the retrievals that found it, so the caller can decide what to include and cite. Evidence has four kinds, and a `switch` or `when` tells them apart. The grounding and provenance behind one claim are in its `Citation`.
 
 ==== A piece of evidence
 
@@ -13,13 +13,13 @@ Evidence is what a caller that assembles model context receives. Build it with t
 | The claim. It is never blank.
 
 | `citation`
-| The `Citation` that points to the stored claim, its context, its chunks and its URI.
+| The `Citation`: the claim id, its context, and its source material (chunk ids, provenance entries and a URI).
 
 | `confidence`
 | The stored confidence, from 0 to 1.
 
 | `effectiveConfidence`
-| The confidence after decay, from 0 to 1.
+| Confidence after decay and validity are applied, from 0 to 1.
 
 | `status`
 | The claim's `PropositionStatus`, such as `ACTIVE` or `SUPERSEDED`.
@@ -190,11 +190,22 @@ When a query sets a decay rate, pass it to the converter with `withDecayK`.
 [source,java]
 ----
 Instant recordedAt = Instant.parse("2026-01-01T00:00:00Z");
-Proposition claim = Proposition.create("claim-1", "support-team", "Ada wrote the first program",
-        List.of(), 0.9, 0.0, null, List.of("chunk-1"), recordedAt, recordedAt, PropositionStatus.ACTIVE);
-EvidenceConverter converter = EvidenceConverter.create().withDecayK(4.0);
+Instant now = Instant.parse("2026-01-11T00:00:00Z");
+Proposition first = Proposition.draft("support-team", "Ada wrote the first program", 0.9)
+        .withId("claim-1")
+        .withGrounding(List.of("chunk-1"))
+        .withDecay(0.05)
+        .withCreated(recordedAt)
+        .toProposition();
+Proposition second = Proposition.draft("support-team", "Ada studied mathematics", 0.8)
+        .withId("claim-2")
+        .withCreated(recordedAt)
+        .toProposition();
+EvidenceConverter converter = EvidenceConverter.create()
+        .withDecayK(4.0)
+        .withClock(Clock.fixed(now, ZoneOffset.UTC));
 Evidence evidence = converter.fromPropositions(
-        List.of(claim),
+        List.of(first, second),
         Searched.of("support-team").withQuery("who is Ada"),
         RetrieverId.KEYWORD);
 ----

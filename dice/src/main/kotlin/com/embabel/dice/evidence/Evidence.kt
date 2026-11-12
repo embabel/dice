@@ -89,6 +89,7 @@ class DerivationRule private constructor(
 
     override fun hashCode(): Int = Objects.hash(method, ruleId, expression, parameters)
 
+    /** Returns every property, including the rule text in [expression]. */
     override fun toString(): String =
         "DerivationRule(method=$method, ruleId=$ruleId, expression=$expression, parameters=$parameters)"
 
@@ -126,7 +127,7 @@ class DerivationRule private constructor(
  * String text = switch (evidence) {
  *     case Evidence.Recorded recorded -> recorded.getItems().size() + " claims";
  *     case Evidence.Derived derived -> derived.getConclusion();
- *     case Evidence.Missing missing -> "nothing found";
+ *     case Evidence.Missing missing -> "nothing to return";
  *     case Evidence.Conflicting conflicting -> "claims disagree";
  * };
  * ```
@@ -135,7 +136,7 @@ class DerivationRule private constructor(
  * val text = when (evidence) {
  *     is Evidence.Recorded -> "${evidence.items.size} claims"
  *     is Evidence.Derived -> evidence.conclusion
- *     is Evidence.Missing -> "nothing found"
+ *     is Evidence.Missing -> "nothing to return"
  *     is Evidence.Conflicting -> "claims disagree"
  * }
  * ```
@@ -199,7 +200,10 @@ sealed interface Evidence {
         val status: PropositionStatus?,
     ) : Evidence {
 
-        /** Ids of the claims the conclusion was worked out from. Never empty. */
+        /**
+         * Ids of the claims the conclusion was worked out from. Never empty. For a stored abstraction these are
+         * the ids in [EvidenceItem.derivedFromIds]: the claims it was abstracted from.
+         */
         val inputIds: List<String> = java.util.List.copyOf(inputIds)
 
         /** The loaded input claims, as the caller supplied them. May be empty. */
@@ -378,7 +382,8 @@ sealed interface Evidence {
         fun recorded(items: List<EvidenceItem>): Recorded = Recorded.create(items)
 
         /**
-         * Creates a [Derived] value with no loaded inputs and no citation. The list is copied.
+         * Creates a [Derived] value with no loaded inputs, no citation and no status. Its effective confidence
+         * starts equal to [confidence]. The list is copied.
          *
          * @param conclusion the conclusion text
          * @param confidence confidence in the conclusion, from 0.0 to 1.0

@@ -54,7 +54,7 @@ class EvidenceItem private constructor(
     val citation: Citation,
     /** Confidence as stored. */
     val confidence: ZeroToOne,
-    /** Confidence after time decay. Equal to [confidence] until it is changed. */
+    /** Confidence after decay and validity are applied. Equal to [confidence] until it is changed. */
     val effectiveConfidence: ZeroToOne,
     /** Lifecycle status of the claim. */
     val status: PropositionStatus,
@@ -68,7 +68,10 @@ class EvidenceItem private constructor(
     retrievals: List<Retrieval>,
 ) {
 
-    /** Ids of the claims this one was abstracted from. Empty for an observation. */
+    /**
+     * Ids of the claims this one was abstracted from. Empty for an observation. For a stored abstraction
+     * these are the ids in [Evidence.Derived.inputIds]: the claims it was abstracted from.
+     */
     val derivedFromIds: List<String> = java.util.List.copyOf(derivedFromIds)
 
     /** True when [derivedFromIds] is not empty. */
@@ -88,7 +91,7 @@ class EvidenceItem private constructor(
     /**
      * Returns a copy with [effectiveConfidence] set.
      *
-     * @param effectiveConfidence confidence after time decay, from 0.0 to 1.0
+     * @param effectiveConfidence confidence after decay and validity are applied, from 0.0 to 1.0
      * @return the updated item
      * @throws IllegalArgumentException if [effectiveConfidence] is NaN or outside 0.0 to 1.0
      */
@@ -258,7 +261,7 @@ class EvidenceItem private constructor(
 }
 
 /**
- * The receiver of the block passed to `EvidenceItem(text, citation, confidence) { }`. Kotlin only.
+ * The receiver of the block passed to `EvidenceItem(text, citation, confidence) { }`, for Kotlin callers.
  * Java callers use the `with` chain on [EvidenceItem].
  *
  * Each property left unset keeps the value from [EvidenceItem.of]. [retrieval] calls add up in call order.
@@ -266,7 +269,7 @@ class EvidenceItem private constructor(
 @EvidenceDsl
 class EvidenceItemBuilder internal constructor() {
 
-    /** Confidence after time decay, from 0.0 to 1.0. */
+    /** Confidence after decay and validity are applied, from 0.0 to 1.0. */
     var effectiveConfidence: ZeroToOne? = null
 
     /** Lifecycle status of the claim. */
