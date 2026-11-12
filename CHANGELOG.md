@@ -17,15 +17,17 @@ and the consumer PRs that deliver it).
 
 - `Neo4jRagPropositionRepository` is now `RagAdapterPropositionRepository`, in the same package.
   The store never used Neo4j itself: it joins any `PropositionStore` to embabel-agent's
-  `NamedEntityDataRepository`. Kotlin code that uses the old name still compiles, through a
-  deprecated `typealias` whose `ReplaceWith` gives the new name. Java code, and code already
-  compiled against the old name, must use `RagAdapterPropositionRepository`. The store's log
-  category follows the new class name. **Compatibility: breaking.** Migration: replace the old name
-  with `RagAdapterPropositionRepository`; nothing else about the class changes.
+  `NamedEntityDataRepository`. The old name stays as a deprecated class that extends the new
+  one, with the same constructor, so Kotlin code, Java code and code already compiled against
+  the old name keep working. `RagAdapterPropositionRepository` is `open` for that reason. A
+  store built through the new name logs under the new class name. **Compatibility:
+  additive.** Move to `RagAdapterPropositionRepository` when convenient; the old name will be
+  removed in a later major release.
 
-- The `dice` module no longer depends on `org.javers:javers-core`. DICE never called it. A host
-  that used javers, or the gson, classgraph and picocontainer jars it brings, only because DICE
-  put them on the classpath now declares them itself. **Compatibility: behavioral.**
+- The `dice` module no longer depends on `org.javers:javers-core`. DICE never called it.
+  **Compatibility: behavioral.** Upgrade note: a host that used javers, or the gson, classgraph
+  and picocontainer jars it brings, only because DICE put them on the classpath must now
+  declare `org.javers:javers-core` (or the jar it needs) in its own build.
 
 - The `dice` jar no longer contains `cypher/find_entity_by_text_distance.cypher`. Nothing in DICE
   loaded it, and it was the one query in DICE that called an APOC function. **Compatibility:
