@@ -124,6 +124,11 @@ and the consumer PRs that deliver it).
 
 ### Added
 
+- **EXPERIMENTAL** (shape may change before 1.0): `InMemoryDriftReportStore` in `dice-metamodel` is a
+  `DriftReportStore` for tests and demos that keeps reports in memory. It replaces a report saved
+  again under the same schema, version, capture instant and context, applies each read's scope
+  before its limit and returns the newest first. **Compatibility: additive.**
+
 - **EXPERIMENTAL** (shape may change before 1.0): `dice-store-conformance` is a published module of
   abstract JUnit suites for the DICE store interfaces. A backend adds it at test scope, extends a
   suite and returns its store from one method. A failing test names a documented behaviour the store
