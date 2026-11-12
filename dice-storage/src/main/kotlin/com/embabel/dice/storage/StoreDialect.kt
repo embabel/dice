@@ -41,7 +41,8 @@ import org.jetbrains.annotations.ApiStatus
  *
  *     @Override
  *     public boolean isUniquenessViolation(Throwable failure) {
- *         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+ *         Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+ *         for (Throwable cause = failure; cause != null && seen.add(cause); cause = cause.getCause()) {
  *             if (cause instanceof SQLException sql && "23505".equals(sql.getSQLState())) {
  *                 return true;
  *             }
@@ -83,7 +84,8 @@ interface StoreDialect {
      * saved the same thing first.
      *
      * A store recovers from that by reading the row that won. An implementation checks the whole
-     * cause chain and uses the database's error code where one exists.
+     * cause chain, stops when a cause repeats, and uses the database's error code where one
+     * exists.
      *
      * @param failure What the write threw.
      * @return True only for a uniqueness violation.

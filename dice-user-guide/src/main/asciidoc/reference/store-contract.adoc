@@ -299,7 +299,8 @@ final class ExampleDialect implements StoreDialect {
 
     @Override
     public boolean isUniquenessViolation(Throwable failure) {
-        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Throwable cause = failure; cause != null && seen.add(cause); cause = cause.getCause()) {
             if (cause instanceof SQLException sql && "23505".equals(sql.getSQLState())) {
                 return true;
             }

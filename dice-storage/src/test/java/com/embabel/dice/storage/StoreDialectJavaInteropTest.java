@@ -21,11 +21,15 @@ import com.embabel.dice.store.VectorFiltering;
 import org.junit.jupiter.api.Test;
 
 import java.sql.SQLException;
+import java.time.Duration;
+import java.util.Collections;
 import java.util.EnumSet;
+import java.util.IdentityHashMap;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -48,7 +52,8 @@ class StoreDialectJavaInteropTest {
 
         @Override
         public boolean isUniquenessViolation(Throwable failure) {
-            for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+            for (Throwable cause = failure; cause != null && seen.add(cause); cause = cause.getCause()) {
                 if (cause instanceof SQLException sql && "23505".equals(sql.getSQLState())) {
                     return true;
                 }
@@ -81,5 +86,16 @@ class StoreDialectJavaInteropTest {
                 new IllegalStateException("write failed", new SQLException("duplicate key", "23505"))));
         assertFalse(dialect.isUniquenessViolation(new SQLException("syntax error", "42601")));
         assertFalse(dialect.isUniquenessViolation(new IllegalStateException("boom")));
+    }
+
+    @Test
+    void aCauseChainThatLoopsEndsTheCheck() {
+        IllegalStateException inner = new IllegalStateException("inner");
+        IllegalStateException outer = new IllegalStateException("outer", inner);
+        inner.initCause(outer);
+
+        // The time limit only stops a check that never ends from hanging the build.
+        assertFalse(assertTimeoutPreemptively(Duration.ofSeconds(10),
+                () -> dialect.isUniquenessViolation(outer)));
     }
 }
