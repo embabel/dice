@@ -48,6 +48,9 @@ import org.jetbrains.annotations.ApiStatus
  * 5. A candidate with no embedding, or an all-zero embedding, is not returned and does not fail
  *    the search. A request whose text embeds to all zeros returns no matches. The scope and
  *    budget checks come first, so such a request can still be refused.
+ * 6. A store that keeps its data in a database runs the comparison, the score floor, the ordering
+ *    and the cut to K there, along with the selection. It does not load rows into the JVM to do
+ *    any of them.
  *
  * A store that implements this interface keeps every rule and lists
  * [StoreCapability.SCOPED_VECTOR_SEARCH]. The entry is independent of

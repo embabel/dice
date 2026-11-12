@@ -169,7 +169,8 @@ the spec and the read's query. That selection is the store's own work.
 * A scoped similarity search compares the text with every vector candidate, so it is exact over the
   selection.
 * A store that keeps its data in a database runs the selection, keyword matching, the ordering, the
-  limit and the count there.
+  limit and the count there. For a similarity search it also runs the comparison, the score floor
+  and the cut to K there.
 * The store never passes the read's query to a read that takes no spec.
 * One read computes effective confidence at one time: the query's `effectiveConfidenceAsOf`, or the
   time of the call.
