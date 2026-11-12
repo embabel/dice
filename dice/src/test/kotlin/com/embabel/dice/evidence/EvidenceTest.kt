@@ -1,0 +1,231 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.dice.evidence
+
+import com.embabel.agent.core.ContextId
+import com.embabel.dice.spi.ConflictType
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+
+class EvidenceTest {
+
+    private val alice = EvidenceItem.of("Alice lives in Berlin.", Citation.of("prop-1", "ctx-main"), 0.9)
+
+    private val aliceElsewhere = EvidenceItem.of("Alice lives in Paris.", Citation.of("prop-2", "ctx-main"), 0.8)
+
+    private val searched = Searched.of("ctx-main").withQuery("where does Alice live")
+
+    @Test
+    fun `recorded evidence with no items is rejected`() {
+        assertThrows(IllegalArgumentException::class.java) { Evidence.recorded(emptyList()) }
+    }
+
+    @Test
+    fun `recorded evidence holds a read-only copy of its items`() {
+        val source = mutableListOf(alice)
+        val recorded = Evidence.recorded(source)
+        source.add(aliceElsewhere)
+
+        assertEquals(listOf(alice), recorded.items)
+        assertThrows(UnsupportedOperationException::class.java) {
+            (recorded.items as MutableList<EvidenceItem>).add(aliceElsewhere)
+        }
+    }
+
+    @Test
+    fun `derived evidence rejects a blank conclusion, a confidence outside 0 to 1, and missing or blank input ids`() {
+        val rule = DerivationRule.ABSTRACTION
+        val ids = listOf("prop-1")
+        listOf<() -> Unit>(
+            { Evidence.derived(" ", 0.5, rule, ids) },
+            { Evidence.derived("Alice is a resident.", -0.1, rule, ids) },
+            { Evidence.derived("Alice is a resident.", 1.1, rule, ids) },
+            { Evidence.derived("Alice is a resident.", Double.NaN, rule, ids) },
+            { Evidence.derived("Alice is a resident.", 0.5, rule, emptyList()) },
+            { Evidence.derived("Alice is a resident.", 0.5, rule, listOf("prop-1", " ")) },
+        ).forEach { call -> assertThrows(IllegalArgumentException::class.java) { call() } }
+    }
+
+    @Test
+    fun `derived evidence starts with no inputs or citation and takes them through its with methods`() {
+        val derived = Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, listOf("prop-1", "prop-9"))
+        assertTrue(derived.inputs.isEmpty())
+        assertNull(derived.citation)
+
+        val citation = Citation.of("prop-50", "ctx-main")
+        val completed = derived.withInputs(listOf(alice)).withCitation(citation)
+
+        assertEquals(listOf(alice), completed.inputs)
+        assertEquals(citation, completed.citation)
+        assertEquals(listOf("prop-1", "prop-9"), completed.inputIds)
+    }
+
+    @Test
+    fun `conflicting evidence needs at least two items with different claim ids`() {
+        val sameClaim = EvidenceItem.of("Alice lives in Rome.", Citation.of("prop-1", "ctx-other"), 0.4)
+        assertThrows(IllegalArgumentException::class.java) {
+            Evidence.conflicting(listOf(alice), ConflictType.Contradiction)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            Evidence.conflicting(listOf(alice, sameClaim), ConflictType.Contradiction)
+        }
+
+        val conflicting = Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.WorldProgression)
+
+        assertEquals(listOf(alice, aliceElsewhere), conflicting.items)
+        assertEquals(ConflictType.WorldProgression, conflicting.conflictType)
+    }
+
+    @Test
+    fun `of gives missing evidence for no items and recorded evidence otherwise`() {
+        val missing = Evidence.of(emptyList(), searched)
+        assertTrue(missing is Evidence.Missing)
+        assertEquals(searched, (missing as Evidence.Missing).searched)
+
+        val recorded = Evidence.of(listOf(alice), searched)
+        assertTrue(recorded is Evidence.Recorded)
+        assertEquals(listOf(alice), (recorded as Evidence.Recorded).items)
+    }
+
+    @Test
+    fun `a when over the four kinds needs no else branch`() {
+        val labels = listOf(
+            Evidence.recorded(listOf(alice)),
+            Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, listOf("prop-1")),
+            Evidence.missing(searched),
+            Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Contradiction),
+        ).map(::label)
+
+        assertEquals(4, labels.toSet().size)
+    }
+
+    @Test
+    fun `values of the same kind built from equal parts are equal`() {
+        val rule = DerivationRule.of("prolog").withRuleId("resident").withParameter("maxHops", "3")
+        val pairs = listOf(
+            Evidence.recorded(listOf(alice)) to Evidence.recorded(listOf(alice)),
+            Evidence.derived("Alice is a resident.", 0.7, rule, listOf("prop-1")).withInputs(listOf(alice)) to
+                Evidence.derived("Alice is a resident.", 0.7, rule, listOf("prop-1")).withInputs(listOf(alice)),
+            Evidence.missing(searched) to Evidence.missing(Searched.of("ctx-main").withQuery("where does Alice live")),
+            Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Revision) to
+                Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Revision),
+        )
+        pairs.forEach { (first, second) ->
+            assertEquals(first, second)
+            assertEquals(first.hashCode(), second.hashCode())
+        }
+    }
+
+    @Test
+    fun `recorded and conflicting evidence holding the same items are not equal`() {
+        val items = listOf(alice, aliceElsewhere)
+        val recorded: Any = Evidence.recorded(items)
+        val conflicting: Any = Evidence.conflicting(items, ConflictType.Contradiction)
+
+        assertNotEquals(recorded, conflicting)
+    }
+
+    @Test
+    fun `derived evidence with confidence 0 and -0 are not equal`() {
+        val ids = listOf("prop-1")
+        assertNotEquals(
+            Evidence.derived("Alice is a resident.", 0.0, DerivationRule.ABSTRACTION, ids),
+            Evidence.derived("Alice is a resident.", -0.0, DerivationRule.ABSTRACTION, ids),
+        )
+    }
+
+    @Test
+    fun `a search rejects a blank context, matches the typed context, and can be unscoped`() {
+        assertThrows(IllegalArgumentException::class.java) { Searched.of(" ") }
+        assertEquals(Searched.of("a"), Searched.of(ContextId("a")))
+        assertTrue(Searched.unscoped().contextIds.isEmpty())
+    }
+
+    @Test
+    fun `contexts keep the order they were first added in`() {
+        val values = Searched.of("a").withContext("b").withContext("a").contextIdValues
+
+        assertEquals(listOf("a", "b"), values.toList())
+    }
+
+    @Test
+    fun `a search rejects a blank query and keeps filters in order, replacing a repeated name`() {
+        assertThrows(IllegalArgumentException::class.java) { Searched.unscoped().withQuery(" ") }
+
+        val filtered = Searched.unscoped()
+            .withFilter("minConfidence", "0.5")
+            .withFilter("status", "ACTIVE")
+            .withFilter("minConfidence", "0.7")
+
+        assertEquals(listOf("minConfidence" to "0.7", "status" to "ACTIVE"), filtered.filters.toList())
+        assertThrows(IllegalArgumentException::class.java) { filtered.withFilter(" ", "x") }
+        assertEquals("", filtered.withFilter("note", "").filters["note"])
+        assertThrows(UnsupportedOperationException::class.java) {
+            (filtered.filters as MutableMap<String, String>).put("x", "y")
+        }
+    }
+
+    @Test
+    fun `a derivation rule trims its method and rejects blank values`() {
+        assertThrows(IllegalArgumentException::class.java) { DerivationRule.of(" ") }
+        assertEquals("prolog", DerivationRule.of(" prolog ").method)
+        assertThrows(IllegalArgumentException::class.java) { DerivationRule.of("prolog").withRuleId(" ") }
+        assertThrows(IllegalArgumentException::class.java) { DerivationRule.of("prolog").withExpression(" ") }
+        assertEquals(DerivationRule.ABSTRACTION, DerivationRule.of("abstraction"))
+    }
+
+    @Test
+    fun `a derivation rule keeps parameters in order, replacing a repeated name`() {
+        val rule = DerivationRule.of("prolog")
+            .withParameter("maxHops", "3")
+            .withParameter("depth", "2")
+            .withParameter("maxHops", "5")
+
+        assertEquals(listOf("maxHops" to "5", "depth" to "2"), rule.parameters.toList())
+        assertThrows(IllegalArgumentException::class.java) { rule.withParameter(" ", "x") }
+        assertEquals("", rule.withParameter("note", "").parameters["note"])
+        assertThrows(UnsupportedOperationException::class.java) {
+            (rule.parameters as MutableMap<String, String>).put("x", "y")
+        }
+    }
+
+    @Test
+    fun `a provider lambda returns missing evidence that records the query`() {
+        val provider = EvidenceProvider<String> { query -> Evidence.missing(Searched.of("ctx").withQuery(query)) }
+
+        val evidence = provider.evidence("who is Ada")
+
+        assertTrue(evidence is Evidence.Missing)
+        assertEquals("who is Ada", (evidence as Evidence.Missing).searched.query)
+    }
+
+    /**
+     * Names the kind of an evidence value with a `when` that has no `else` branch.
+     *
+     * @param evidence the value to name
+     * @return a different label for each of the four kinds
+     */
+    private fun label(evidence: Evidence): String = when (evidence) {
+        is Evidence.Recorded -> "recorded"
+        is Evidence.Derived -> "derived"
+        is Evidence.Missing -> "missing"
+        is Evidence.Conflicting -> "conflicting"
+    }
+}
