@@ -1,0 +1,336 @@
+[[reference-store-contract]]
+=== Store contract
+
+The optional capabilities of a DICE proposition store, the rules a store keeps for each, and how a
+caller reads which ones a store has. The types are in `com.embabel.dice.store`. They are
+experimental and can change before 1.0.
+
+Every store implements `PropositionStore`. A capability is an interface a store implements in
+addition, and lists in the `StoreCapabilities` it publishes.
+
+[[reference-store-contract-capabilities]]
+==== Capabilities
+
+[cols="2,2,3", options="header"]
+|===
+| Capability | Interface | Meaning
+
+| `FILTERED_VECTOR_SEARCH`
+| `FilteredVectorSearch`
+| Similarity search that filters before it picks the nearest K.
+
+| `FULL_TEXT_SEARCH`
+| `FullTextSearch`
+| Ranked word search over proposition text.
+
+| `ABSTRACTION_TRAVERSAL`
+| `AbstractionTraversal`
+| Follows the links between a proposition and the propositions it was abstracted from, to a depth,
+  in the database.
+
+| `ATOMIC_WRITES`
+| `AtomicWrites`
+| Commits several writes together or none of them.
+|===
+
+`StoreCapabilities.find` returns the store as a capability's interface when the store lists that
+capability, and null when it does not.
+
+[source,java]
+----
+FullTextSearch search = StoreCapabilities.find(store, FullTextSearch.class);
+if (search != null) {
+    List<Proposition> matches = search.findMatching(
+            FullTextSearchRequest.forText("peanut allergy", PropositionQuery.againstContext("alice-session")));
+}
+----
+
+[source,kotlin]
+----
+val search = StoreCapabilities.find<FullTextSearch>(store)
+----
+
+`StoreCapabilities.describe(store)` returns the whole descriptor. A store that does not implement
+`CapabilityReporting` is described as `StoreCapabilities.UNDECLARED`, with no capability.
+
+The descriptor also carries `vectorFiltering`, which states when the store's similarity search
+applies a filter.
+
+[cols="1,4", options="header"]
+|===
+| Mode | Meaning
+
+| `BEFORE_TOP_K`
+| A filtered search returns the nearest K among the propositions that match the filter. The store
+  lists `FILTERED_VECTOR_SEARCH`.
+
+| `AFTER_TOP_K`
+| The filtered search of `VectorSearchCapable` picks the nearest K of all propositions and then
+  removes the ones that fail the filter. The result can be smaller than K, or empty, when K
+  matching propositions exist.
+
+| `NONE`
+| The store has no similarity search.
+
+| `UNDECLARED`
+| The store has not published its capabilities.
+|===
+
+[source,java]
+----
+VectorFiltering filtering = StoreCapabilities.describe(store).getVectorFiltering();
+----
+
+The descriptor states what one store instance can do with the collaborators it was built with. A
+store built with no embedder leaves `FILTERED_VECTOR_SEARCH` out. A store that wraps another
+store passes a capability through by implementing its interface and listing it.
+
+[[reference-store-contract-rules]]
+==== Rules for every capability
+
+* The filter of a request is a `PropositionQuery` that selects candidates. A filter that carries
+  an ordering or a limit throws `IllegalArgumentException`, because the request sets both.
+* Every field set on the filter is applied. A store that cannot apply a field throws
+  `UnsupportedCapabilityException`.
+* Filtering, ranking, ordering, limits and link traversal run in the database. A store does not
+  load rows and finish the work in the JVM.
+* Results that rank equally come back in the same order each time the same request runs on
+  unchanged data.
+
+`UnsupportedCapabilityException` carries the `StoreCapability`. A store throws it in place of an
+empty or partial result.
+
+[source,java]
+----
+try {
+    matches = search.findMatching(request);
+} catch (UnsupportedCapabilityException refusal) {
+    log.warn("{} is not available: {}", refusal.getCapability(), refusal.getMessage());
+}
+----
+
+[[reference-store-contract-score]]
+==== Similarity scores
+
+A `SimilarityScore` is a cosine similarity from -1.0 to 1.0. 1.0 is the same direction, 0.0 is
+orthogonal and -1.0 is opposite. Every store reports this scale, so a threshold means the same on
+each store. A store converts the number its database returns with the matching factory.
+
+[cols="2,2", options="header"]
+|===
+| The database returns | Factory
+
+| Cosine similarity, -1 to 1
+| `SimilarityScore.ofCosine(value)`
+
+| Cosine distance, 0 closest and 2 farthest
+| `SimilarityScore.ofCosineDistance(value)`
+
+| A 0 to 1 score, 1 closest and 0.5 orthogonal
+| `SimilarityScore.ofUnitInterval(value)`
+|===
+
+A value outside the range throws `IllegalArgumentException`.
+
+[source,java]
+----
+SimilarityScore floor = SimilarityScore.ofCosine(0.7);
+boolean close = match.getScore().compareTo(floor) >= 0;
+----
+
+[[reference-store-contract-vector]]
+==== Filtered similarity search
+
+`FilteredVectorSearch.findNearest` returns the propositions closest to a piece of text among the
+propositions that match a filter. The filter is applied before the nearest K are picked. An exact
+scan does this. An approximate index does it when it applies the filter while it searches.
+
+[source,java]
+----
+FilteredVectorSearch search = StoreCapabilities.find(store, FilteredVectorSearch.class);
+VectorSearchRequest request = VectorSearchRequest
+        .forText("What does Alice like to eat?", PropositionQuery.againstContext("alice-session"))
+        .withTopK(5)
+        .withMinScore(SimilarityScore.ofCosine(0.6));
+List<VectorMatch> matches = search.findNearest(request);
+----
+
+[source,kotlin]
+----
+val request = VectorSearchRequest("What does Alice like to eat?", PropositionQuery.againstContext("alice-session")) {
+    topK = 5
+    minScore = SimilarityScore.ofCosine(0.6)
+}
+----
+
+Matches are ordered closest first. A proposition with no embedding is not returned.
+
+[[reference-store-contract-text]]
+==== Full-text search
+
+`FullTextSearch.findMatching` returns propositions ordered by how well their text matches some
+words. The text is a list of words. Quotes, `+`, `-`, `*` and `AND` have no special meaning, so
+text typed by a user is passed in unchanged. Text with no searchable word returns no matches.
+
+[source,java]
+----
+List<Proposition> matches = search.findMatching(
+        FullTextSearchRequest
+                .forText("peanut allergy", PropositionQuery.againstContext("alice-session"))
+                .withLimit(20));
+----
+
+[source,kotlin]
+----
+val request = FullTextSearchRequest("peanut allergy", PropositionQuery.againstContext("alice-session")) {
+    limit = 20
+}
+----
+
+The result carries no relevance number. The position in the list is the rank.
+
+`PropositionRepository.textSearch` is a different operation. It comes from the RAG search
+interface and can answer with similarity search.
+
+[[reference-store-contract-traversal]]
+==== Abstraction traversal
+
+`AbstractionTraversal.traverse` follows the links between a proposition and the propositions it
+was abstracted from, for more than one step. It finds what a conclusion rests on, and what rests
+on a fact that is about to be retracted.
+
+[source,java]
+----
+AbstractionTraversal traversal = StoreCapabilities.find(store, AbstractionTraversal.class);
+List<Proposition> affected = traversal.traverse(
+        TraversalRequest
+                .abstractionsOf(retractedId, PropositionQuery.againstContext("alice-session"))
+                .withMaxDepth(3));
+----
+
+[source,kotlin]
+----
+val request = TraversalRequest.abstractionsOf(retractedId, PropositionQuery.againstContext("alice-session")) {
+    maxDepth = 3
+}
+----
+
+The walk visits only propositions that match the filter and does not continue through one that
+fails it. The start proposition is not returned. Results are ordered nearest first, and each
+proposition is returned once.
+
+[[reference-store-contract-atomic]]
+==== Atomic writes
+
+`AtomicWrites.atomically` runs several writes as one unit. All are kept when the work returns, and
+all are undone when it throws. Writes through other DICE stores on the same database connection
+are part of the unit. A call made inside a transaction the application opened joins that
+transaction, and a failure inside marks it for rollback. A store method that documents its own
+transaction, such as `touchAccessed`, stays outside the unit.
+
+[source,java]
+----
+AtomicWrites writes = StoreCapabilities.find(store, AtomicWrites.class);
+Proposition saved = writes.atomically(() -> {
+    Proposition proposition = store.save(claim);
+    runs.record(run);
+    return proposition;
+});
+----
+
+[source,kotlin]
+----
+val saved = writes.atomically {
+    val proposition = store.save(claim)
+    runs.record(run)
+    proposition
+}
+----
+
+[[reference-store-contract-publishing]]
+==== Publishing capabilities
+
+A store implements `CapabilityReporting` and the interface of each capability it lists.
+
+[source,java]
+----
+public final class MyStore implements PropositionStore, CapabilityReporting, FilteredVectorSearch {
+
+    @Override
+    public StoreCapabilities getCapabilities() {
+        return StoreCapabilities.of(StoreCapability.FILTERED_VECTOR_SEARCH);
+    }
+
+    // ...
+}
+----
+
+[source,kotlin]
+----
+override val capabilities = StoreCapabilities {
+    add(StoreCapability.FILTERED_VECTOR_SEARCH)
+}
+----
+
+A store whose similarity search filters after it picks the nearest K states that with
+`StoreCapabilities.of(...).withVectorFiltering(VectorFiltering.AFTER_TOP_K)`.
+
+[[reference-store-contract-dialect]]
+==== Store dialects
+
+The stores in `dice-storage` hold the queries and ask a `StoreDialect` for the answers that differ
+between databases. Support for another database is one `StoreDialect`.
+
+[source,java]
+----
+final class ExampleDialect implements StoreDialect {
+
+    @Override
+    public StoreCapabilities getCapabilities() {
+        return StoreCapabilities.of(StoreCapability.ATOMIC_WRITES)
+                .withVectorFiltering(VectorFiltering.AFTER_TOP_K);
+    }
+
+    @Override
+    public Set<DialectFeature> getFeatures() {
+        return EnumSet.noneOf(DialectFeature.class);
+    }
+
+    @Override
+    public boolean isUniquenessViolation(Throwable failure) {
+        return failure instanceof SQLException sql && "23505".equals(sql.getSQLState());
+    }
+}
+----
+
+[cols="2,4", options="header"]
+|===
+| Member | Answer
+
+| `capabilities`
+| The most that stores on this database can do. A store publishes the part that applies to it.
+
+| `features`
+| The query constructs this database accepts.
+
+| `isUniquenessViolation(failure)`
+| Whether a failed write was rejected because another writer saved the same thing first.
+|===
+
+[cols="2,4", options="header"]
+|===
+| Feature | Without it, a store
+
+| `DYNAMIC_PROPERTY_KEYS`
+| Changes a set of property keys by writing the whole property map.
+
+| `DYNAMIC_LABELS`
+| Runs one statement per label.
+
+| `VECTOR_INDEX_CALLS`
+| Uses the typed nearest-neighbour call.
+|===
+
+Three rules hold on every database. A store sends every hand-written graph query as a
+`CypherStatement`. A store writes no NUL character in a string. A store relies only on labels that
+nodes carry.
