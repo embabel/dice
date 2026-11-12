@@ -1518,6 +1518,7 @@ public final class com/embabel/dice/store/StoreCapabilities {
 	public final fun with (Lcom/embabel/dice/store/StoreCapability;)Lcom/embabel/dice/store/StoreCapabilities;
 	public final fun withVectorFiltering (Lcom/embabel/dice/store/VectorFiltering;)Lcom/embabel/dice/store/StoreCapabilities;
 	public final fun without (Lcom/embabel/dice/store/StoreCapability;)Lcom/embabel/dice/store/StoreCapabilities;
+	public final fun withoutSimilaritySearch ()Lcom/embabel/dice/store/StoreCapabilities;
 }
 
 public final class com/embabel/dice/store/StoreCapabilities$Companion {
