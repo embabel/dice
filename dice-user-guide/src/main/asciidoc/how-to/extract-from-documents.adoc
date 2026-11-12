@@ -120,16 +120,32 @@ state before the call. Relationships already written stay, and `leftInStore` rep
 `InMemoryPropositionRepository` and `InMemoryPropositionRunLinkStore`.
 |===
 
-Inside a transaction, `persistedOrThrow()` rethrows the original exception, so the transaction
-rolls back and the unit is all or nothing on a store that joins it:
+Inside a transaction, call `persistedOrThrow()`. It returns the stored result, or throws when the
+outcome is `Failed`. The transaction then rolls back, and the unit is all or nothing on a store that
+joins it.
+
+Every exception `persistedOrThrow()` throws is unchecked, so a `@Transactional` method with no
+`rollbackFor` rolls back. A cause that is a `RuntimeException` is thrown as it is. A checked cause is
+wrapped in `PersistUnitFailedException`, which carries the step that failed and has the original
+exception as its cause.
 
 [source,java]
 ----
 @Transactional
-public void ingest(Path file) {
-    var result = ingestionHandler.handle(artifactFor(file));
-    var propositions = pipeline.process(result.getChunks(), context);
+public void store(List<Chunk> chunks, SourceAnalysisContext context) {
+    var propositions = pipeline.process(chunks, context);
     writer.write(PersistUnit.of(propositions)).persistedOrThrow();
+}
+----
+
+The same method in Kotlin:
+
+[source,kotlin]
+----
+@Transactional
+fun store(chunks: List<Chunk>, context: SourceAnalysisContext) {
+    val propositions = pipeline.process(chunks, context)
+    writer.write(PersistUnit.of(propositions)).persistedOrThrow()
 }
 ----
 

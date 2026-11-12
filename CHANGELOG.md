@@ -128,6 +128,9 @@ and the consumer PRs that deliver it).
   unit. `PersistUnit` holds the claims, the entities they refer to and an optional extraction run.
   `PersistUnitWriter.write` stores it and returns a `PersistOutcome`: `Stored`, or `Failed` with the
   step that failed, the original exception and the steps whose writes may be left in the store.
+  `PersistOutcome.persistedOrThrow()` returns the stored result or throws. A `RuntimeException`
+  cause is thrown as it is, and a checked cause is wrapped in the unchecked
+  `PersistUnitFailedException`, so a Spring `@Transactional` method rolls back on either.
   `PersistUnitWriter.sequential` makes the writes in order and is all or nothing inside a caller's
   transaction that rolls back on failure. `PersistUnitWriter.inMemory` restores the in-memory
   stores when a unit fails, except relationships already written to the entity repository.

@@ -33,6 +33,7 @@ import com.embabel.dice.proposition.extraction.LineageNotRecordedException
 import com.embabel.dice.proposition.extraction.PersistOutcome
 import com.embabel.dice.proposition.extraction.PersistStep
 import com.embabel.dice.proposition.extraction.PersistUnit
+import com.embabel.dice.proposition.extraction.PersistUnitFailedException
 import com.embabel.dice.proposition.extraction.PersistUnitWriter
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.UriLocator
@@ -40,6 +41,7 @@ import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -47,7 +49,9 @@ import org.junit.jupiter.api.assertThrows
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.interceptor.DefaultTransactionAttribute
 import org.springframework.transaction.support.TransactionTemplate
+import java.io.IOException
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
 
@@ -59,6 +63,10 @@ import java.util.concurrent.atomic.AtomicReference
  * cause out of the transaction, and counts what the database holds afterwards. The last test runs
  * the same failure with no transaction and finds the claim stored, so the zero counts come from the
  * rollback.
+ *
+ * One rollback test fails the step with a checked exception. What `persistedOrThrow()` throws for it
+ * is unchecked and passes Spring's default rollback rule, which a `@Transactional` method with no
+ * `rollbackFor` uses.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class PersistUnitTransactionIntegrationTest {
@@ -247,6 +255,27 @@ class PersistUnitTransactionIntegrationTest {
     }
 
     @Test
+    fun `a checked failure reaches the transaction as an unchecked exception and rolls the claim back`() {
+        val theRun = run("unit-checked-run")
+        runStore.save(theRun)
+        val writer = writer(FailingLinks(IOException("relationships are unreachable")))
+
+        val thrown = assertThrows<PersistUnitFailedException> {
+            TransactionTemplate(transactionManager).execute {
+                writer.write(unit("unit-checked-1", "unit-checked", theRun.key())).persistedOrThrow()
+            }
+        }
+
+        assertEquals(PersistStep.STRUCTURAL_RELATIONSHIPS, thrown.step)
+        val cause = assertInstanceOf(IOException::class.java, thrown.cause)
+        val defaultRule = DefaultTransactionAttribute()
+        assertTrue(defaultRule.rollbackOn(thrown), "the default rule rolls back on what persistedOrThrow throws")
+        assertFalse(defaultRule.rollbackOn(cause), "the checked cause on its own would commit")
+        assertEquals(0L, propositionsForTenant())
+        assertEquals(0L, runLinksOf("unit-checked-1"))
+    }
+
+    @Test
     fun `without a transaction the same failure leaves the claim and reports it`() {
         val theRun = run("unit-leftover-run")
         runStore.save(theRun)
@@ -260,8 +289,14 @@ class PersistUnitTransactionIntegrationTest {
         assertEquals(1L, propositionsForTenant())
     }
 
-    /** An entity repository whose relationship writes all throw. */
-    private class FailingLinks : InMemoryNamedEntityDataRepository(DataDictionary.fromClasses("unit")) {
+    /**
+     * An entity repository whose relationship writes all throw.
+     *
+     * @param failure What each relationship write throws.
+     */
+    private class FailingLinks(
+        private val failure: Exception = IllegalStateException("relationships are down"),
+    ) : InMemoryNamedEntityDataRepository(DataDictionary.fromClasses("unit")) {
 
         /**
          * Throws for every relationship.
@@ -271,7 +306,7 @@ class PersistUnitTransactionIntegrationTest {
          * @param relationship The relationship to write.
          */
         override fun createRelationship(a: RetrievableIdentifier, b: RetrievableIdentifier, relationship: RelationshipData) {
-            throw IllegalStateException("relationships are down")
+            throw failure
         }
     }
 }
