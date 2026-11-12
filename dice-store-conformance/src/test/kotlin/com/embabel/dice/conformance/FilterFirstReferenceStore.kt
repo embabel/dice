@@ -40,6 +40,15 @@ internal enum class ReferenceFault {
 
     /** Applies every filter field except `pinned`. */
     IGNORES_PINNED,
+
+    /** Drops a match that scores exactly the floor. */
+    EXCLUSIVE_FLOOR,
+
+    /** Reports `(1 + cosine) / 2` as the score. */
+    HALVED_SCALE,
+
+    /** Scores a proposition with an all-zero embedding as 0.0 and returns it. */
+    KEEPS_ZERO_VECTORS,
 }
 
 /**
@@ -64,16 +73,25 @@ internal class FilterFirstReferenceStore(
         val query = embed(request.text)
         return when {
             query.all { it == 0.0f } -> emptyList()
-            fault == ReferenceFault.NONE ->
-                ranked(delegate.query(request.filter), query, request).take(request.topK)
             fault == ReferenceFault.IGNORES_PINNED ->
                 ranked(delegate.query(request.filter.copy(pinned = null)), query, request).take(request.topK)
             fault == ReferenceFault.FILTERS_AFTER_CUT ->
                 filterAfterWindow(request, query, request.topK)
-            else ->
+            fault == ReferenceFault.FILTERS_AFTER_OVER_FETCH ->
                 filterAfterWindow(request, query, request.topK * 30).take(request.topK)
-        }.map { (proposition, cosine) -> VectorMatch.of(proposition, SimilarityScore.ofCosine(cosine)) }
+            else ->
+                ranked(delegate.query(request.filter), query, request).take(request.topK)
+        }.map { (proposition, cosine) -> VectorMatch.of(proposition, score(cosine)) }
     }
+
+    /**
+     * Turns a cosine into the score the store reports.
+     *
+     * @param cosine The cosine similarity of a match.
+     * @return The cosine as a score, or `(1 + cosine) / 2` under [ReferenceFault.HALVED_SCALE].
+     */
+    private fun score(cosine: Double): SimilarityScore =
+        SimilarityScore.ofCosine(if (fault == ReferenceFault.HALVED_SCALE) (1.0 + cosine) / 2.0 else cosine)
 
     /**
      * Picks the nearest [window] of every proposition and keeps the ones that match the filter.
@@ -110,10 +128,31 @@ internal class FilterFirstReferenceStore(
     ): List<Pair<Proposition, Double>> =
         candidates
             .map { it to embed(it.text) }
-            .filterNot { (_, vector) -> vector.all { it == 0.0f } }
-            .map { (proposition, vector) -> proposition to cosine(query, vector) }
-            .filter { (_, cosine) -> request.minScore?.let { cosine >= it.cosine } ?: true }
+            .filterNot { (_, vector) -> fault != ReferenceFault.KEEPS_ZERO_VECTORS && vector.all { it == 0.0f } }
+            .map { (proposition, vector) -> proposition to cosineOrZero(query, vector) }
+            .filter { (_, cosine) -> request.minScore?.let { aboveFloor(cosine, it.cosine) } ?: true }
             .sortedWith(compareByDescending<Pair<Proposition, Double>> { it.second }.thenBy { it.first.id })
+
+    /**
+     * Checks a cosine against the score floor.
+     *
+     * @param cosine The cosine of a candidate.
+     * @param floor The cosine of the request's score floor.
+     * @return True when the candidate is at or above the floor, or strictly above it under
+     *   [ReferenceFault.EXCLUSIVE_FLOOR].
+     */
+    private fun aboveFloor(cosine: Double, floor: Double): Boolean =
+        if (fault == ReferenceFault.EXCLUSIVE_FLOOR) cosine > floor else cosine >= floor
+
+    /**
+     * Computes the cosine of a candidate, scoring an all-zero candidate as 0.0.
+     *
+     * @param query The embedding of the request's text.
+     * @param vector The embedding of the candidate.
+     * @return The cosine, or 0.0 when the candidate has no direction.
+     */
+    private fun cosineOrZero(query: FloatArray, vector: FloatArray): Double =
+        if (vector.all { it == 0.0f }) 0.0 else cosine(query, vector)
 
     /**
      * Embeds a text the way the suite expects.
