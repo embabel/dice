@@ -4421,6 +4421,7 @@ public class com/embabel/dice/proposition/extraction/IncrementalPropositionExtra
 	public fun rememberText (Ljava/lang/String;Ljava/lang/String;Lcom/embabel/agent/rag/model/NamedEntity;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionPerspective;Ljava/lang/Boolean;Lcom/embabel/dice/proposition/extraction/ExtractionRequest;)V
 	public static synthetic fun rememberText$default (Lcom/embabel/dice/proposition/extraction/IncrementalPropositionExtraction;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/agent/rag/model/NamedEntity;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionPerspective;Ljava/lang/Boolean;ILjava/lang/Object;)V
 	public fun trackEvent (Lcom/embabel/dice/common/SourceAnalysisRequestEvent;)V
+	public fun withPersistUnitWriter (Lcom/embabel/dice/proposition/extraction/PersistUnitWriter;)Lcom/embabel/dice/proposition/extraction/IncrementalPropositionExtraction;
 	public fun withRunLineage (Lcom/embabel/dice/proposition/extraction/PropositionRunLinkStore;)Lcom/embabel/dice/proposition/extraction/IncrementalPropositionExtraction;
 	public fun withRunLineage (Lcom/embabel/dice/proposition/extraction/PropositionRunLinkStore;Lcom/embabel/dice/proposition/extraction/LineageFailurePolicy;)Lcom/embabel/dice/proposition/extraction/IncrementalPropositionExtraction;
 }
