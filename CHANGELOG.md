@@ -130,9 +130,18 @@ and the consumer PRs that deliver it).
   before its limit and returns the newest first. **Compatibility: additive.**
 
 - **EXPERIMENTAL** (shape may change before 1.0): `dice-store-conformance` is a published module of
-  abstract JUnit suites for the DICE store interfaces. A backend adds it at test scope, extends a
-  suite and returns its store from one method. A failing test names a documented behaviour the store
-  does not keep. The suites are in `com.embabel.dice.conformance`. **Compatibility: additive.**
+  abstract JUnit suites, one for each DICE store interface, in `com.embabel.dice.conformance`. A
+  backend adds it at test scope, extends a suite and returns its store from one method. A failing
+  test names a documented behaviour the store does not keep. Nine suites cover `PropositionStore`,
+  `ExtractionRunStore`, `PropositionRunLinkStore`, `SweptBaselineStore`, `DriftReportStore`,
+  `ChunkHistoryStore`, `CollectorRecordStore`, `CollectorTraceStore` and `ProjectionRecordStore`.
+  `AbstractFilteredVectorSearchContractTest` reads the `StoreCapabilities` a store publishes. It
+  checks filter-before-K search for a store that lists `FILTERED_VECTOR_SEARCH`, checks only the
+  `AFTER_TOP_K` promise for a store that declares that mode, and is reported as skipped for a store
+  that declares neither. `ConformanceEmbeddings` and `ConformanceEmbeddingService` give the store
+  under test vectors at known angles. JUnit Jupiter is a compile dependency of the module. The user
+  guide page "Verify a storage backend" has Java and Kotlin examples.
+  **Compatibility: additive.**
 
 - **EXPERIMENTAL** (shape may change before 1.0): a chunk's extraction output can be stored as one
   unit. `PersistUnit` holds the claims, the entities they refer to and an optional extraction run.

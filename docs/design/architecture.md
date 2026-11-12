@@ -18,6 +18,7 @@ DICE is a multi-module Maven build. Each module's intent, and what it's allowed 
 | `dice-ingestion` | Content-hash dedup ledger and source adapters that sit in front of `PropositionPipeline`, so the same artifact is never extracted twice concurrently. Depends on `dice`. |
 | `dice-report` | Rationale and structured report generation over propositions and their lineage. Depends on `dice`. |
 | `dice-metamodel` | Schema governance: content-hash stamps over the governed part of a `DataDictionary`, the declared-schema contract, the version and drift-report store contracts, diffing, drift checking, and non-destructive quarantine. A leaf over `embabel-agent-api`, with no dependency on `dice`; `dice-storage` implements its store contracts. |
+| `dice-store-conformance` | Abstract JUnit suites, one for each store interface, that a backend's tests extend to check a store against the documented behaviour. JUnit Jupiter is a compile dependency. Depends on `dice` and `dice-metamodel`. |
 | `dice-integration-tests` | End-to-end tests exercising the real Neo4j backend and full pipeline across module boundaries. Depends on `dice`, `dice-ingestion`, `dice-report` (and transitively `dice-storage`). Not shipped. |
 
 ```mermaid
@@ -44,8 +45,9 @@ flowchart TB
 ```
 
 `dice-metamodel` is a leaf with no dependency on `dice` — it takes no storage, no Spring, and no
-graph driver. `dice` depends on `dice-metamodel` to read a `MetamodelDiff`. One DICE module depends on both:
-`dice-storage`, which implements the `MetamodelVersionStore` and `DriftReportStore` contracts against Neo4j.
+graph driver. `dice` depends on `dice-metamodel` to read a `MetamodelDiff`. Two DICE modules depend on both.
+`dice-storage` implements the `MetamodelVersionStore` and `DriftReportStore` contracts against Neo4j.
+`dice-store-conformance` holds the suites that test the store contracts of both.
 Quarantine marks a proposition `PropositionStatus.QUARANTINED` and is declared in `dice`, so the machinery
 stays in core logic without back-depending to the schema model.
 Spring Boot autoconfiguration lives in dedicated `*-autoconfigure` modules
