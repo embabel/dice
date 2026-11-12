@@ -89,19 +89,14 @@ class Citation private constructor(
     fun withUri(uri: String): Citation =
         Citation(propositionId, contextId, chunkIds, provenance, uri)
 
-    /**
-     * Two citations are equal when every property is equal.
-     */
     override fun equals(other: Any?): Boolean =
         other is Citation && propositionId == other.propositionId &&
                 contextId == other.contextId && chunkIds == other.chunkIds &&
                 provenance == other.provenance && uri == other.uri
 
-    /** Hash code over the same properties that [equals] compares. */
     override fun hashCode(): Int =
         java.util.Objects.hash(propositionId, contextId, chunkIds, provenance, uri)
 
-    /** Returns a short summary of the proposition id, context id and uri. */
     override fun toString(): String =
         "Citation(propositionId=$propositionId, contextId=${contextId.value}, uri=$uri)"
 

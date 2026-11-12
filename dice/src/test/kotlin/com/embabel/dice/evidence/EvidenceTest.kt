@@ -19,6 +19,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.spi.ConflictType
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -266,6 +267,38 @@ class EvidenceTest {
         assertThrows(IllegalArgumentException::class.java) { DerivationRule.of("prolog").withRuleId(" ") }
         assertThrows(IllegalArgumentException::class.java) { DerivationRule.of("prolog").withExpression(" ") }
         assertEquals(DerivationRule.ABSTRACTION, DerivationRule.of("abstraction"))
+    }
+
+    @Test
+    fun `a derivation rule method is lower-cased, so its case does not change equality`() {
+        assertEquals(DerivationRule.ABSTRACTION, DerivationRule.of("Abstraction"))
+        assertEquals("prolog", DerivationRule.of(" Prolog ").method)
+    }
+
+    @Test
+    fun `derivation rules with the same parameters added in a different order are equal`() {
+        val first = DerivationRule.of("prolog").withParameter("maxHops", "3").withParameter("depth", "2")
+        val second = DerivationRule.of("prolog").withParameter("depth", "2").withParameter("maxHops", "3")
+
+        assertEquals(first, second)
+        assertEquals(first.hashCode(), second.hashCode())
+    }
+
+    @Test
+    fun `searches over the same contexts added in a different order are equal`() {
+        assertEquals(Searched.of("a").withContext("b"), Searched.of("b").withContext("a"))
+    }
+
+    @Test
+    fun `search text leaves out the query, so a missing result does not print the question`() {
+        val search = Searched.of("ctx-main").withQuery("where does Alice live")
+        val missing = Evidence.missing(search).toString()
+
+        assertFalse(search.toString().contains("where does Alice live"))
+        assertTrue(search.toString().contains("hasQuery=true"))
+        assertFalse(missing.contains("where does Alice live"))
+        assertTrue(missing.contains("hasQuery=true"))
+        assertTrue(Searched.unscoped().toString().contains("hasQuery=false"))
     }
 
     @Test

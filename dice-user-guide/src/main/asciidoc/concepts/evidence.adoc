@@ -1,7 +1,7 @@
 [[concepts-evidence]]
 === Evidence
 
-Evidence is the material DICE hands to a caller who assembles context for a model. Each item carries its citation, its confidence, and the retrievals that found it, so the caller can decide what to include and cite. A lookup returns one of four kinds of evidence, and a `switch` or `when` can tell them apart.
+Evidence is what a caller that assembles model context receives. Build it with the factories below, or convert DICE results with `EvidenceConverter`. Each item carries its citation, its confidence, and the retrievals that found it, so the caller can decide what to include and cite. Evidence has four kinds, and a `switch` or `when` tells them apart.
 
 ==== A piece of evidence
 
@@ -31,7 +31,7 @@ Evidence is the material DICE hands to a caller who assembles context for a mode
 | The ids of the claims this item was derived from. An item with ids is derived.
 
 | `score`
-| The score from the search that found the item.
+| The final ranking score. Null when there is none.
 
 | `retrievals`
 | One `Retrieval` for each retriever that found the item, in the order they were added.
@@ -77,8 +77,8 @@ val item = EvidenceItem("t", citation, 0.8) {
 | `conclusion`, `confidence`, `effectiveConfidence`, `rule`, `inputIds`, `inputs`, `citation` and `status`. `inputs` and `citation` are set with `withInputs` and `withCitation`. `effectiveConfidence` and `status` are set with `withEffectiveConfidence` and `withStatus`.
 
 | `Evidence.Missing`
-| The search found nothing.
-| `searched`, the `Searched` that found nothing.
+| There is nothing to return, including when every result was filtered out.
+| `searched`: the contexts, query and filters that were searched.
 
 | `Evidence.Conflicting`
 | Two or more claims with different ids disagree.
@@ -158,11 +158,11 @@ val label = when (evidence) {
 
 | Scored hits
 | `fromSimilarityResults(hits, searched)`
-| `Recorded` items, with each hit's score.
+| `Recorded` items, each with the hit's score and a `Retrieval` for `RetrieverId.VECTOR`.
 
 | Scored hits, and the retriever that found them
 | `fromSimilarityResults(hits, searched, retriever)`
-| `Recorded` items, with a `Retrieval` for the retriever.
+| The same, for the retriever you name.
 
 | One claim
 | `item(proposition)`
@@ -192,7 +192,7 @@ When a query sets a decay rate, pass it to the converter with `withDecayK`.
 Instant recordedAt = Instant.parse("2026-01-01T00:00:00Z");
 Proposition claim = Proposition.create("claim-1", "support-team", "Ada wrote the first program",
         List.of(), 0.9, 0.0, null, List.of("chunk-1"), recordedAt, recordedAt, PropositionStatus.ACTIVE);
-EvidenceConverter converter = EvidenceConverter.create().withClock(Clock.fixed(recordedAt, ZoneOffset.UTC));
+EvidenceConverter converter = EvidenceConverter.create().withDecayK(4.0);
 Evidence evidence = converter.fromPropositions(
         List.of(claim),
         Searched.of("support-team").withQuery("who is Ada"),

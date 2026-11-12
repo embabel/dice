@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicInteger
 
 class EvidenceItemTest {
 
@@ -31,6 +32,20 @@ class EvidenceItemTest {
     private val vectorHit = Retrieval.of(RetrieverId.VECTOR).withRank(1).withScore(0.87)
 
     private val keywordHit = Retrieval.of(RetrieverId.KEYWORD).withRank(3)
+
+    @Test
+    fun `a blank derived id is rejected even when the caller's list returns a valid id on later reads`() {
+        val reads = AtomicInteger()
+        val ids = object : java.util.AbstractList<String>() {
+            override val size: Int get() = 1
+
+            override fun get(index: Int): String = if (reads.incrementAndGet() == 1) " " else "p-1"
+        }
+
+        assertThrows(IllegalArgumentException::class.java) {
+            EvidenceItem.of("Alice moved to Berlin.", citation, 0.5).withDerivedFromIds(ids)
+        }
+    }
 
     @Test
     fun `blank text is rejected`() {

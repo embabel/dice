@@ -50,6 +50,17 @@ class EvidenceConverterTest {
 
     private val provenance = ProvenanceEntry(locator = ContentAddressedLocator("source-a"), chunkId = "chunk-1")
 
+    /**
+     * Creates a claim with confidence 0.9 and decay 0.05, last revised ten days before [asOf].
+     *
+     * @param id the claim id
+     * @param text the claim text
+     * @param status the lifecycle status
+     * @param level the abstraction level, 0 for an observation
+     * @param sourceIds ids of the claims this one was abstracted from
+     * @param grounding ids of the grounding chunks
+     * @return the claim
+     */
     private fun claim(
         id: String,
         text: String = "Alice lives in Berlin.",

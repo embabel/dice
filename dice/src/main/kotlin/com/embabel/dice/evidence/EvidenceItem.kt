@@ -27,7 +27,7 @@ import java.util.Objects
 annotation class EvidenceDsl
 
 /**
- * One claim for a context builder, with its source, confidence, freshness, status and retrievals.
+ * One claim handed to a caller that assembles model context, with its citation, confidence and status.
  *
  * Build it with the `with` chain in Java, or with a block in Kotlin. Both give equal values.
  *
@@ -63,7 +63,7 @@ class EvidenceItem private constructor(
     /** When the content of the claim last changed. Null when not known. */
     val revisedAt: Instant?,
     derivedFromIds: List<String>,
-    /** The final ranking score. Null when the item is not ranked. */
+    /** The final ranking score. Null when there is none. */
     val score: Double?,
     retrievals: List<Retrieval>,
 ) {
@@ -82,7 +82,7 @@ class EvidenceItem private constructor(
         requireZeroToOne("confidence", confidence)
         requireZeroToOne("effectiveConfidence", effectiveConfidence)
         require(score == null || score.isFinite()) { "score must be finite, was $score" }
-        require(derivedFromIds.all { it.isNotBlank() }) { "derived ids must not be blank" }
+        require(this.derivedFromIds.all { it.isNotBlank() }) { "derived ids must not be blank" }
     }
 
     /**
@@ -196,7 +196,6 @@ class EvidenceItem private constructor(
             revisedAt == other.revisedAt && derivedFromIds == other.derivedFromIds &&
             Objects.equals(score, other.score) && retrievals == other.retrievals
 
-    /** Hash code over the same properties that [equals] compares. */
     override fun hashCode(): Int =
         Objects.hash(
             text, citation, confidence, effectiveConfidence, status,

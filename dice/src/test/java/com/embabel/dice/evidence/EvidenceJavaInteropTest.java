@@ -18,6 +18,8 @@ package com.embabel.dice.evidence;
 import com.embabel.common.core.types.SimilarityResult;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionStatus;
+import com.embabel.dice.proposition.revision.RevisionResult;
+import com.embabel.dice.query.graph.PropositionLineage;
 import com.embabel.dice.spi.ConflictType;
 import org.junit.jupiter.api.Test;
 
@@ -192,6 +194,43 @@ class EvidenceJavaInteropTest {
         assertEquals(Double.valueOf(0.83), recorded.getItems().get(0).getScore());
     }
 
+    @Test
+    void converterBuildsEachEvidenceKindFromJavaInputs() {
+        RetrieverId retriever = RetrieverId.of("my-retriever");
+        assertEquals("my-retriever", retriever.getName());
+
+        Retrieval walked = Retrieval.of(retriever).withHops(2);
+        assertEquals(Integer.valueOf(2), walked.getHops());
+
+        assertTrue(Searched.unscoped().getContextIds().isEmpty());
+        assertEquals(Set.of("support-team", "billing-team"),
+                Searched.of("support-team").withContext("billing-team").getContextIdValues());
+
+        DerivationRule rule = DerivationRule.of("prolog").withParameter("maxHops", "3");
+        assertEquals(Map.of("maxHops", "3"), rule.getParameters());
+
+        EvidenceConverter converter = EvidenceConverter.create().withDecayK(4.0);
+        Instant recordedAt = Instant.parse("2026-01-01T00:00:00Z");
+
+        Proposition claim = claim();
+        EvidenceItem item = converter.withClock(Clock.fixed(recordedAt, ZoneOffset.UTC)).item(claim);
+        assertEquals("claim-1", item.getCitation().getPropositionId());
+
+        Proposition abstraction = Proposition.create(
+                "abs-1", "support-team", "Ada is a mathematician", List.of(), 0.8, 0.0, 0.5, null, List.of(),
+                recordedAt, recordedAt, recordedAt, PropositionStatus.ACTIVE, 1, List.of("claim-1"));
+        PropositionLineage lineage = new PropositionLineage(
+                abstraction, List.of(), List.of(), List.of(claim), 0, PropositionStatus.ACTIVE, null);
+        Evidence derived = converter.withClock(Clock.fixed(recordedAt, ZoneOffset.UTC)).fromLineage(lineage);
+        assertInstanceOf(Evidence.Derived.class, derived);
+
+        RevisionResult.Contradicted contradicted =
+                new RevisionResult.Contradicted(claim, secondClaim(), ConflictType.Contradiction.INSTANCE);
+        Evidence.Conflicting conflicting =
+                converter.withClock(Clock.fixed(recordedAt, ZoneOffset.UTC)).fromContradiction(contradicted);
+        assertEquals(2, conflicting.getItems().size());
+    }
+
     /**
      * Describes an evidence value by its kind and one property of that kind.
      *
@@ -216,6 +255,27 @@ class EvidenceJavaInteropTest {
     private static EvidenceConverter converter() {
         return EvidenceConverter.create()
                 .withClock(Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC));
+    }
+
+    /**
+     * Creates a second claim with its own id, for the other side of a contradiction.
+     *
+     * @return the claim
+     */
+    private static Proposition secondClaim() {
+        Instant recordedAt = Instant.parse("2026-01-01T00:00:00Z");
+        return Proposition.create(
+                "claim-2",
+                "support-team",
+                "Ada wrote no programs.",
+                List.of(),
+                0.6,
+                0.0,
+                null,
+                List.of(),
+                recordedAt,
+                recordedAt,
+                PropositionStatus.ACTIVE);
     }
 
     /**

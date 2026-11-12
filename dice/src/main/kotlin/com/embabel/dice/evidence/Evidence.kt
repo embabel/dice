@@ -34,7 +34,7 @@ import java.util.Objects
  * ```
  */
 class DerivationRule private constructor(
-    /** What did the deriving, such as `abstraction` or `prolog`. */
+    /** The derivation method, such as `abstraction` or `prolog`. Lower case. */
     val method: String,
     /** The rule's own id. Null when the rule has none. */
     val ruleId: String?,
@@ -82,15 +82,13 @@ class DerivationRule private constructor(
     fun withParameter(name: String, value: String): DerivationRule =
         DerivationRule(method, ruleId, expression, parameters + (name to value))
 
-    /** Two rules are equal when every property is equal. */
+    /** Two rules are equal when every property is equal. Equality ignores order. */
     override fun equals(other: Any?): Boolean =
         other is DerivationRule && method == other.method && ruleId == other.ruleId &&
             expression == other.expression && parameters == other.parameters
 
-    /** Hash code over the same properties that [equals] compares. */
     override fun hashCode(): Int = Objects.hash(method, ruleId, expression, parameters)
 
-    /** Returns the method, rule id, expression and parameters. */
     override fun toString(): String =
         "DerivationRule(method=$method, ruleId=$ruleId, expression=$expression, parameters=$parameters)"
 
@@ -103,12 +101,12 @@ class DerivationRule private constructor(
         /**
          * Creates a rule for a method, with no rule id, expression or parameters.
          *
-         * @param method what did the deriving. Trimmed before it is stored.
+         * @param method the derivation method. Trimmed and lower-cased before it is stored.
          * @return the rule
          * @throws IllegalArgumentException if [method] is blank
          */
         @JvmStatic
-        fun of(method: String): DerivationRule = DerivationRule(method.trim(), null, null, emptyMap())
+        fun of(method: String): DerivationRule = DerivationRule(method.trim().lowercase(), null, null, emptyMap())
     }
 }
 
@@ -158,13 +156,10 @@ sealed interface Evidence {
             require(this.items.isNotEmpty()) { "items must not be empty" }
         }
 
-        /** Two values are equal when their items are equal. */
         override fun equals(other: Any?): Boolean = other is Recorded && items == other.items
 
-        /** Hash code over the same properties that [equals] compares. */
         override fun hashCode(): Int = items.hashCode()
 
-        /** Returns the items. */
         override fun toString(): String = "Recorded(items=$items)"
 
         internal companion object {
@@ -207,7 +202,7 @@ sealed interface Evidence {
         /** Ids of the claims the conclusion was worked out from. Never empty. */
         val inputIds: List<String> = java.util.List.copyOf(inputIds)
 
-        /** The claims named in [inputIds] that were loaded. May be empty. */
+        /** The loaded input claims, as the caller supplied them. May be empty. */
         val inputs: List<EvidenceItem> = java.util.List.copyOf(inputs)
 
         init {
@@ -221,7 +216,7 @@ sealed interface Evidence {
         }
 
         /**
-         * Returns a copy with [inputs] replaced. The list is copied. [inputIds] is left as it is.
+         * Returns a copy with [inputs] replaced. The list is copied and stored as given. [inputIds] is left as it is.
          *
          * @param inputs the loaded claims the conclusion was worked out from
          * @return the updated value
@@ -267,7 +262,6 @@ sealed interface Evidence {
                 inputIds == other.inputIds && inputs == other.inputs && citation == other.citation &&
                 status == other.status
 
-        /** Hash code over the same properties that [equals] compares. */
         override fun hashCode(): Int =
             Objects.hash(conclusion, confidence, effectiveConfidence, rule, inputIds, inputs, citation, status)
 
@@ -308,13 +302,10 @@ sealed interface Evidence {
         val searched: Searched,
     ) : Evidence {
 
-        /** Two values are equal when their searches are equal. */
         override fun equals(other: Any?): Boolean = other is Missing && searched == other.searched
 
-        /** Hash code over the same properties that [equals] compares. */
         override fun hashCode(): Int = searched.hashCode()
 
-        /** Returns the search. */
         override fun toString(): String = "Missing(searched=$searched)"
 
         internal companion object {
@@ -352,14 +343,11 @@ sealed interface Evidence {
             }
         }
 
-        /** Two values are equal when their items and conflict types are equal. */
         override fun equals(other: Any?): Boolean =
             other is Conflicting && items == other.items && conflictType == other.conflictType
 
-        /** Hash code over the same properties that [equals] compares. */
         override fun hashCode(): Int = Objects.hash(items, conflictType)
 
-        /** Returns the items and the conflict type. */
         override fun toString(): String = "Conflicting(items=$items, conflictType=$conflictType)"
 
         internal companion object {
@@ -426,7 +414,7 @@ sealed interface Evidence {
             Conflicting.create(items, conflictType)
 
         /**
-         * Recorded when there is at least one item, otherwise Missing for what was searched.
+         * Returns [Recorded] when [items] is not empty, otherwise [Missing] for [searched].
          *
          * @param items the claims found. May be empty.
          * @param searched what the lookup searched for

@@ -88,15 +88,18 @@ class Searched private constructor(
      */
     fun withFilter(name: String, value: String): Searched = Searched(contextIds, query, filters + (name to value))
 
-    /** Two searches are equal when their contexts, query and filters are equal. */
+    /** Two searches are equal when their contexts, query and filters are equal. Equality ignores order. */
     override fun equals(other: Any?): Boolean =
         other is Searched && contextIds == other.contextIds && query == other.query && filters == other.filters
 
-    /** Hash code over the same properties that [equals] compares. */
     override fun hashCode(): Int = Objects.hash(contextIds, query, filters)
 
-    /** Returns the context ids, query and filters. */
-    override fun toString(): String = "Searched(contextIds=$contextIdValues, query=$query, filters=$filters)"
+    /**
+     * Returns the context ids, whether a query is set, and the filters. The query text is left out, so
+     * [Evidence.Missing] never prints a user's question.
+     */
+    override fun toString(): String =
+        "Searched(contextIds=$contextIdValues, hasQuery=${query != null}, filters=$filters)"
 
     companion object {
 

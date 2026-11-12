@@ -26,8 +26,8 @@ import java.time.Clock
  * Converts retrieval results that carry whole claims into [Evidence] and [EvidenceItem] values.
  *
  * It converts a list of claims, a list of scored claims, a lineage and a contradiction. The decayed
- * confidence on each item comes from [Proposition.effectiveConfidenceAt] at the time [clock] reads,
- * with the decay rate multiplier [decayK]. The converter is immutable. The `with` methods return a new one.
+ * confidence on each item comes from [Proposition.effectiveConfidenceAt] at the time the converter's clock
+ * reads, with its decay rate multiplier. The converter is immutable. The `with` methods return a new one.
  *
  * ```java
  * EvidenceConverter converter = EvidenceConverter.create().withDecayK(2.0);
@@ -67,7 +67,7 @@ class EvidenceConverter private constructor(
      *
      * @param proposition the claim to convert
      * @return the item for the claim
-     * @throws IllegalArgumentException if the claim text is blank
+     * @throws IllegalArgumentException if the claim text or the claim id is blank
      */
     fun item(proposition: Proposition): EvidenceItem =
         itemWithCitation(proposition, citationFor(proposition, proposition.grounding, proposition.provenanceEntries))
@@ -80,7 +80,7 @@ class EvidenceConverter private constructor(
      * @param retriever the retriever that found the claim
      * @param rank the position of the hit in its result list, starting at 1
      * @return the item for the claim
-     * @throws IllegalArgumentException if the claim text is blank or [rank] is below 1
+     * @throws IllegalArgumentException if the claim text or the claim id is blank, or [rank] is below 1
      */
     fun item(hit: SimilarityResult<out Proposition>, retriever: RetrieverId, rank: Int): EvidenceItem {
         val score = hit.score.takeIf { it.isFinite() }
@@ -96,6 +96,7 @@ class EvidenceConverter private constructor(
      * @param propositions the claims, in result order
      * @param searched what the lookup searched for
      * @return a [Evidence.Recorded] holding the items in order, or a [Evidence.Missing]
+     * @throws IllegalArgumentException if a kept claim has a blank id
      */
     fun fromPropositions(propositions: List<Proposition>, searched: Searched): Evidence =
         Evidence.of(propositions.filter { it.text.isNotBlank() }.map { item(it) }, searched)
@@ -109,6 +110,7 @@ class EvidenceConverter private constructor(
      * @param searched what the lookup searched for
      * @param retriever the retriever that returned the claims
      * @return a [Evidence.Recorded] holding the items in order, or a [Evidence.Missing]
+     * @throws IllegalArgumentException if a kept claim has a blank id
      */
     fun fromPropositions(propositions: List<Proposition>, searched: Searched, retriever: RetrieverId): Evidence =
         Evidence.of(
@@ -127,6 +129,7 @@ class EvidenceConverter private constructor(
      * @param hits the scored claims, in result order
      * @param searched what the lookup searched for
      * @return a [Evidence.Recorded] holding the items in order, or a [Evidence.Missing]
+     * @throws IllegalArgumentException if a kept claim has a blank id
      */
     fun fromSimilarityResults(hits: List<SimilarityResult<out Proposition>>, searched: Searched): Evidence =
         fromSimilarityResults(hits, searched, RetrieverId.VECTOR)
@@ -140,6 +143,7 @@ class EvidenceConverter private constructor(
      * @param searched what the lookup searched for
      * @param retriever the retriever that returned the hits
      * @return a [Evidence.Recorded] holding the items in order, or a [Evidence.Missing]
+     * @throws IllegalArgumentException if a kept claim has a blank id
      */
     fun fromSimilarityResults(
         hits: List<SimilarityResult<out Proposition>>,
@@ -162,7 +166,8 @@ class EvidenceConverter private constructor(
      *
      * @param lineage the lineage to convert
      * @return a [Evidence.Derived] for an abstraction, otherwise a [Evidence.Recorded]
-     * @throws IllegalArgumentException if the claim text is blank, or the claim is an abstraction whose source ids are all blank
+     * @throws IllegalArgumentException if the claim text or the claim id is blank, or the claim is an abstraction
+     *   whose source ids are all blank
      */
     fun fromLineage(lineage: PropositionLineage): Evidence {
         val proposition = lineage.proposition
@@ -185,7 +190,7 @@ class EvidenceConverter private constructor(
      *
      * @param contradicted the contradiction to convert
      * @return the conflicting evidence
-     * @throws IllegalArgumentException if either claim text is blank or both claims have the same id
+     * @throws IllegalArgumentException if either claim text or claim id is blank, or both claims have the same id
      */
     fun fromContradiction(contradicted: RevisionResult.Contradicted): Evidence.Conflicting =
         Evidence.conflicting(
@@ -254,8 +259,7 @@ class EvidenceConverter private constructor(
     companion object {
 
         /**
-         * Creates a converter on the system UTC clock with decay rate multiplier 2.0, the default
-         * [Proposition.effectiveConfidenceAt] uses.
+         * Creates a converter on the system UTC clock with decay rate multiplier [Proposition.DEFAULT_DECAY_K].
          *
          * @return the new converter
          */

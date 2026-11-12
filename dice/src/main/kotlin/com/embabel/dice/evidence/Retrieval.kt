@@ -168,10 +168,8 @@ class Retrieval private constructor(
                 java.util.Objects.equals(score, other.score) && hops == other.hops &&
                 entityPath == other.entityPath
 
-    /** Hash code over the same properties that [equals] compares. */
     override fun hashCode(): Int = java.util.Objects.hash(retriever, rank, score, hops, entityPath)
 
-    /** Returns a short summary of the retriever, rank, score and hops. */
     override fun toString(): String = "Retrieval(retriever=$retriever, rank=$rank, score=$score, hops=$hops)"
 
     companion object {
