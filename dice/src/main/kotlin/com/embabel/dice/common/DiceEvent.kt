@@ -23,6 +23,7 @@ import com.embabel.dice.pipeline.UngroundedMentionHandling
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.extraction.ExtractionRun
+import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonTypeInfo
 import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
@@ -99,6 +100,7 @@ data class PropositionReinforced @JvmOverloads constructor(
  * so they can decide how to reconcile them.
  *
  * @property contextId The context in which the contradiction surfaced.
+ * @property contextIdValue [contextId] as a plain string, for Java callers.
  * @property original The proposition that already existed.
  * @property new The new proposition that contradicts it.
  * @property timestamp When the event was created.
@@ -108,7 +110,12 @@ data class PropositionContradicted @JvmOverloads constructor(
     val original: Proposition,
     val new: Proposition,
     override val timestamp: Instant = Instant.now(),
-) : DiceEvent
+) : DiceEvent {
+
+    /** [contextId] as a plain string, for Java callers. */
+    @get:JsonIgnore
+    val contextIdValue: String get() = contextId.value
+}
 
 /**
  * A higher-level proposition was formed that generalizes over a group of more specific ones.
@@ -173,6 +180,7 @@ data class ExtractionBatchCompleted @JvmOverloads constructor(
  * proposition involved, and [handling] says whether the mentions were kept or dropped.
  *
  * @property contextId The context the chunk was analysed in.
+ * @property contextIdValue [contextId] as a plain string, for Java callers.
  * @property chunkId The chunk the mentions came from.
  * @property mentions The ungrounded mentions, each with its proposition's text and the reason.
  * @property handling Whether the pipeline kept these mentions or dropped them.
@@ -184,7 +192,12 @@ data class UngroundedMentionsFound @JvmOverloads constructor(
     val mentions: List<UngroundedMention>,
     val handling: UngroundedMentionHandling,
     override val timestamp: Instant = Instant.now(),
-) : DiceEvent
+) : DiceEvent {
+
+    /** [contextId] as a plain string, for Java callers. */
+    @get:JsonIgnore
+    val contextIdValue: String get() = contextId.value
+}
 
 /**
  * An extraction run ended, and this is the call that ended it.
