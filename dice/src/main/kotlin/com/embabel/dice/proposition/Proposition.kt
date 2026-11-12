@@ -242,6 +242,28 @@ data class Proposition(
         )
 
         /**
+         * Builds a proposition from a block that sets its other values.
+         *
+         * @param contextId the context the proposition belongs to
+         * @param text the statement in natural language
+         * @param confidence how certain the statement is, from 0.0 to 1.0
+         * @param block sets the other values, such as mentions, grounding and decay
+         * @return the built proposition
+         * @throws IllegalArgumentException when a value is out of range
+         */
+        @JvmSynthetic
+        operator fun invoke(
+            contextId: ContextId,
+            text: String,
+            confidence: ZeroToOne,
+            block: PropositionDraftBuilder.() -> Unit,
+        ): Proposition =
+            PropositionDraftBuilder(PropositionDraft.of(contextId, text, confidence))
+                .apply(block)
+                .build()
+                .toProposition()
+
+        /**
          * Starts a draft of a proposition that Java code fills in with named steps.
          *
          * @param contextIdValue the context the proposition belongs to
