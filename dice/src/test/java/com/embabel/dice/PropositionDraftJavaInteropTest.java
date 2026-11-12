@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -49,6 +50,11 @@ class PropositionDraftJavaInteropTest {
     // 6. E5: an out-of-range value fails in toProposition() with the constructor's message.
     // 7. L1: p.toDraft().toProposition() equals p, and one step changes only its own field.
     // 8. E6: each build without an id generates a new id; with an id every build uses it.
+    // 9. I2: the lists and the map a draft returns reject changes.
+    // 10. I3: a later change to the caller's list or map reaches neither the draft nor a
+    //     proposition built from it.
+    // 11. I4: a proposition keeps its source ids when code tries to clear them through the draft.
+    // 12. I5: a draft made with toDraft() does not follow later changes to the proposition's list.
 
     private static final Instant CREATED = Instant.parse("2025-01-01T00:00:00Z");
     private static final Instant CONTENT_REVISED = Instant.parse("2025-02-01T00:00:00Z");
@@ -244,5 +250,97 @@ class PropositionDraftJavaInteropTest {
         PropositionDraft withId = noId.withId("p1");
         assertEquals("p1", withId.toProposition().getId());
         assertEquals("p1", withId.toProposition().getId());
+    }
+
+    @Test
+    void i2_aDraftsCollectionsRejectChanges() {
+        PropositionDraft d = Proposition.draft("acme", "Alice lives in Paris", 0.9)
+                .withMentions(List.of(ALICE, PARIS))
+                .withGrounding(List.of("chunk-1", "chunk-2"))
+                .withSourceIds(List.of("s1", "s2"))
+                .withMetadata(Map.of("trust", 0.8, "origin", "wiki"))
+                .withProvenance(List.of(FIRST_SOURCE, SECOND_SOURCE));
+
+        assertThrows(UnsupportedOperationException.class, () -> d.getMentions().clear());
+        assertThrows(UnsupportedOperationException.class, () -> d.getGrounding().add("chunk-3"));
+        assertThrows(UnsupportedOperationException.class, () -> d.getSourceIds().clear());
+        assertThrows(UnsupportedOperationException.class, () -> d.getMetadata().put("extra", 1));
+        assertThrows(UnsupportedOperationException.class, () -> d.getProvenanceEntries().clear());
+
+        PropositionDraft noSteps = Proposition.draft("acme", "Alice lives in Paris", 0.9);
+        assertThrows(UnsupportedOperationException.class, () -> noSteps.getGrounding().add("chunk-1"));
+        assertThrows(UnsupportedOperationException.class, () -> noSteps.getMetadata().put("extra", 1));
+    }
+
+    @Test
+    void i3_aLaterChangeToTheCallersCollectionReachesNothing() {
+        List<EntityMention> mentions = new ArrayList<>(List.of(ALICE));
+        List<String> grounding = new ArrayList<>(List.of("chunk-1"));
+        List<String> sourceIds = new ArrayList<>(List.of("s1"));
+        Map<String, Object> metadata = new HashMap<>(Map.of("trust", 0.8));
+        List<ProvenanceEntry> provenance = new ArrayList<>(List.of(FIRST_SOURCE));
+
+        PropositionDraft d = Proposition.draft("acme", "Alice lives in Paris", 0.9)
+                .withMentions(mentions)
+                .withGrounding(grounding)
+                .withLevel(1)
+                .withSourceIds(sourceIds)
+                .withMetadata(metadata)
+                .withProvenance(provenance);
+        Proposition p = d.toProposition();
+
+        mentions.add(PARIS);
+        grounding.add("chunk-2");
+        sourceIds.clear();
+        metadata.put("extra", 1);
+        provenance.add(SECOND_SOURCE);
+
+        assertEquals(List.of(ALICE), d.getMentions());
+        assertEquals(List.of("chunk-1"), d.getGrounding());
+        assertEquals(List.of("s1"), d.getSourceIds());
+        assertEquals(Map.of("trust", 0.8), d.getMetadata());
+        assertEquals(List.of(FIRST_SOURCE), d.getProvenanceEntries());
+
+        assertEquals(List.of(ALICE), p.getMentions());
+        assertEquals(List.of("chunk-1"), p.getGrounding());
+        assertEquals(List.of("s1"), p.getSourceIds());
+        assertEquals(Map.of("trust", 0.8), p.getMetadata());
+        assertEquals(List.of(FIRST_SOURCE), p.getProvenanceEntries());
+    }
+
+    @Test
+    void i4_aBuiltPropositionKeepsItsSourceIds() {
+        PropositionDraft d = Proposition.draft("acme", "Alice lives in Paris", 0.9)
+                .withLevel(1)
+                .withSourceIds(List.of("a", "b"));
+        Proposition p = d.toProposition();
+
+        assertThrows(UnsupportedOperationException.class, () -> d.getSourceIds().clear());
+
+        assertEquals(List.of("a", "b"), p.getSourceIds());
+        assertEquals(1, p.getLevel());
+    }
+
+    @Test
+    void i5_aDraftOfAPropositionDoesNotFollowItsList() {
+        List<String> grounding = new ArrayList<>(List.of("chunk-1", "chunk-2"));
+        Proposition p = Proposition.create(
+                "p-1",
+                "acme",
+                "Alice lives in Paris",
+                List.of(ALICE),
+                0.9,
+                0.0,
+                null,
+                grounding,
+                CREATED,
+                CREATED,
+                PropositionStatus.ACTIVE);
+
+        PropositionDraft d = p.toDraft();
+        grounding.add("chunk-3");
+
+        assertEquals(List.of("chunk-1", "chunk-2"), d.getGrounding());
+        assertEquals(List.of("chunk-1", "chunk-2"), d.toProposition().getGrounding());
     }
 }

@@ -20,6 +20,7 @@ import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.temporal.TemporalMetadata
 import java.time.Instant
+import java.util.Collections
 import java.util.UUID
 
 /**
@@ -29,6 +30,11 @@ import java.util.UUID
  * proposition with `proposition.toDraft()`. Every step returns a new draft and leaves the one it
  * is called on as it was, so a draft can be shared and reused. [toProposition] builds the
  * proposition through its primary constructor, which checks every value.
+ *
+ * The lists and the map a draft holds are read-only copies, taken when a step or `toDraft()`
+ * receives them. A call such as `draft.getSourceIds().clear()` throws
+ * `UnsupportedOperationException`. A proposition built from the draft holds the same read-only
+ * collections.
  *
  * ```java
  * Proposition fact = Proposition.draft("acme", "Alice lives in Paris", 0.9)
@@ -68,7 +74,7 @@ import java.util.UUID
  * @property temporal The valid-time and observed-time details, or null.
  * @property provenanceEntries The source material entries that support the statement.
  */
-class PropositionDraft private constructor(
+class PropositionDraft internal constructor(
     val contextId: ContextId,
     val text: String,
     val confidence: ZeroToOne,
@@ -105,8 +111,9 @@ class PropositionDraft private constructor(
     /** Sets the id; null makes [toProposition] generate one. */
     fun withId(id: String?): PropositionDraft = rebuild(id = id)
 
-    /** Replaces the mentions with a copy of [mentions]. */
-    fun withMentions(mentions: List<EntityMention>): PropositionDraft = rebuild(mentions = mentions.toList())
+    /** Replaces the mentions with a read-only copy of [mentions]. */
+    fun withMentions(mentions: List<EntityMention>): PropositionDraft =
+        rebuild(mentions = Collections.unmodifiableList(ArrayList(mentions)))
 
     /** Sets the decay. */
     fun withDecay(decay: Double): PropositionDraft = rebuild(decay = decay)
@@ -119,7 +126,7 @@ class PropositionDraft private constructor(
 
     /** Appends [chunkIds] to the grounding and removes duplicates. */
     fun withGrounding(chunkIds: List<String>): PropositionDraft =
-        rebuild(grounding = (grounding + chunkIds).distinct())
+        rebuild(grounding = Collections.unmodifiableList((grounding + chunkIds).distinct()))
 
     /** Sets the creation time. */
     fun withCreated(created: Instant): PropositionDraft = rebuild(created = created)
@@ -142,14 +149,16 @@ class PropositionDraft private constructor(
     /** Sets the abstraction level. */
     fun withLevel(level: Int): PropositionDraft = rebuild(level = level)
 
-    /** Replaces the source ids with a copy of [sourceIds]. */
-    fun withSourceIds(sourceIds: List<String>): PropositionDraft = rebuild(sourceIds = sourceIds.toList())
+    /** Replaces the source ids with a read-only copy of [sourceIds]. */
+    fun withSourceIds(sourceIds: List<String>): PropositionDraft =
+        rebuild(sourceIds = Collections.unmodifiableList(ArrayList(sourceIds)))
 
     /** Sets the reinforce count. */
     fun withReinforceCount(reinforceCount: Int): PropositionDraft = rebuild(reinforceCount = reinforceCount)
 
-    /** Replaces the metadata with a copy of [metadata]. */
-    fun withMetadata(metadata: Map<String, Any>): PropositionDraft = rebuild(metadata = metadata.toMap())
+    /** Replaces the metadata with a read-only copy of [metadata]. */
+    fun withMetadata(metadata: Map<String, Any>): PropositionDraft =
+        rebuild(metadata = Collections.unmodifiableMap(LinkedHashMap(metadata)))
 
     /** Sets the URI. */
     fun withUri(uri: String?): PropositionDraft = rebuild(uri = uri)
@@ -159,7 +168,7 @@ class PropositionDraft private constructor(
 
     /** Replaces the provenance entries with [entries], keeping each distinct entry once. */
     fun withProvenance(entries: List<ProvenanceEntry>): PropositionDraft =
-        rebuild(provenanceEntries = entries.distinct())
+        rebuild(provenanceEntries = Collections.unmodifiableList(entries.distinct()))
 
     /**
      * Builds the proposition through its primary constructor.
@@ -313,7 +322,8 @@ class PropositionDraft private constructor(
          * Starts a draft that holds every value of an existing proposition, its id and times included.
          *
          * @param proposition the proposition to copy
-         * @return a draft that builds a proposition equal to [proposition]
+         * @return a draft that builds a proposition equal to [proposition] and holds its own read-only
+         *   copies of the lists and the map
          */
         internal fun from(proposition: Proposition): PropositionDraft =
             PropositionDraft(
@@ -321,11 +331,11 @@ class PropositionDraft private constructor(
                 text = proposition.text,
                 confidence = proposition.confidence,
                 id = proposition.id,
-                mentions = proposition.mentions,
+                mentions = Collections.unmodifiableList(ArrayList(proposition.mentions)),
                 decay = proposition.decay,
                 importance = proposition.importance,
                 reasoning = proposition.reasoning,
-                grounding = proposition.grounding,
+                grounding = Collections.unmodifiableList(ArrayList(proposition.grounding)),
                 created = proposition.created,
                 contentRevised = proposition.contentRevised,
                 metadataRevised = proposition.metadataRevised,
@@ -333,12 +343,12 @@ class PropositionDraft private constructor(
                 pinned = proposition.pinned,
                 status = proposition.status,
                 level = proposition.level,
-                sourceIds = proposition.sourceIds,
+                sourceIds = Collections.unmodifiableList(ArrayList(proposition.sourceIds)),
                 reinforceCount = proposition.reinforceCount,
-                metadata = proposition.metadata,
+                metadata = Collections.unmodifiableMap(LinkedHashMap(proposition.metadata)),
                 uri = proposition.uri,
                 temporal = proposition.temporal,
-                provenanceEntries = proposition.provenanceEntries,
+                provenanceEntries = Collections.unmodifiableList(ArrayList(proposition.provenanceEntries)),
             )
     }
 }
