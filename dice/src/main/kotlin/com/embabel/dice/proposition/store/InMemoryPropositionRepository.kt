@@ -196,6 +196,53 @@ class InMemoryPropositionRepository(
         return propositions.remove(id) != null
     }
 
+    /**
+     * What this store held for some ids at one moment. A null value means the id was absent.
+     *
+     * @param propositions The proposition each id held, or null when the id was absent.
+     * @param embeddings The embedding each id held, or null when it had none.
+     */
+    internal class Snapshot internal constructor(
+        internal val propositions: Map<String, Proposition?>,
+        internal val embeddings: Map<String, FloatArray?>,
+    )
+
+    /**
+     * Records what this store holds for [ids], so [restore] can put it back.
+     *
+     * @param ids The ids to record. An id the store does not hold is recorded as absent.
+     * @return The proposition and embedding each id holds now.
+     */
+    internal fun snapshot(ids: Collection<String>): Snapshot {
+        val distinct = ids.distinct()
+        return Snapshot(
+            propositions = distinct.associateWith { propositions[it] },
+            embeddings = distinct.associateWith { embeddings[it] },
+        )
+    }
+
+    /**
+     * Puts back what [snapshot] recorded for each of its ids and leaves every other id alone.
+     *
+     * An id that was absent is removed from both maps. An id that was present gets its proposition
+     * back, and its embedding back or removed when it had none. The maps are written directly, so
+     * the embedding service is never called.
+     *
+     * @param snapshot What to put back, as returned by [snapshot].
+     */
+    internal fun restore(snapshot: Snapshot) {
+        snapshot.propositions.forEach { (id, proposition) ->
+            if (proposition == null) {
+                embeddings.remove(id)
+                propositions.remove(id)
+            } else {
+                propositions[id] = proposition
+                val embedding = snapshot.embeddings[id]
+                if (embedding == null) embeddings.remove(id) else embeddings[id] = embedding
+            }
+        }
+    }
+
     override fun count(): Int = propositions.size
 
     // ========================================================================
