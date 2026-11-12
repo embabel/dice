@@ -1,12 +1,3 @@
-public final class com/embabel/dice/storage/DialectFeature : java/lang/Enum {
-	public static final field DYNAMIC_LABELS Lcom/embabel/dice/storage/DialectFeature;
-	public static final field DYNAMIC_PROPERTY_KEYS Lcom/embabel/dice/storage/DialectFeature;
-	public static final field VECTOR_INDEX_CALLS Lcom/embabel/dice/storage/DialectFeature;
-	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/storage/DialectFeature;
-	public static fun values ()[Lcom/embabel/dice/storage/DialectFeature;
-}
-
 public final class com/embabel/dice/storage/DiceOwnedSchema {
 	public static final field Companion Lcom/embabel/dice/storage/DiceOwnedSchema$Companion;
 	public synthetic fun <init> (Ljava/util/Map;Ljava/util/Set;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -50,11 +41,5 @@ public final class com/embabel/dice/storage/MetamodelSchema : com/embabel/dice/s
 	public static final field INSTANCE Lcom/embabel/dice/storage/MetamodelSchema;
 	public final fun getLABELS ()Ljava/util/List;
 	public fun specs ()Ljava/util/List;
-}
-
-public abstract interface class com/embabel/dice/storage/StoreDialect {
-	public abstract fun getCapabilities ()Lcom/embabel/dice/store/StoreCapabilities;
-	public abstract fun getFeatures ()Ljava/util/Set;
-	public abstract fun isUniquenessViolation (Ljava/lang/Throwable;)Z
 }
 

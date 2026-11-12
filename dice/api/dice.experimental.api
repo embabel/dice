@@ -1434,50 +1434,12 @@ public final class com/embabel/dice/spi/PropositionStoreDriftSweep : com/embabel
 	public fun releaseFromQuarantine (Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
 }
 
-public abstract interface class com/embabel/dice/store/AbstractionTraversal {
-	public abstract fun traverse (Lcom/embabel/dice/store/TraversalRequest;)Ljava/util/List;
-}
-
-public abstract interface class com/embabel/dice/store/AtomicWrites {
-	public abstract fun atomically (Ljava/util/function/Supplier;)Ljava/lang/Object;
-	public fun runAtomically (Ljava/lang/Runnable;)V
-}
-
 public abstract interface class com/embabel/dice/store/CapabilityReporting {
 	public abstract fun getCapabilities ()Lcom/embabel/dice/store/StoreCapabilities;
 }
 
 public abstract interface class com/embabel/dice/store/FilteredVectorSearch {
 	public abstract fun findNearest (Lcom/embabel/dice/store/VectorSearchRequest;)Ljava/util/List;
-}
-
-public abstract interface class com/embabel/dice/store/FullTextSearch {
-	public abstract fun findMatching (Lcom/embabel/dice/store/FullTextSearchRequest;)Ljava/util/List;
-}
-
-public final class com/embabel/dice/store/FullTextSearchRequest {
-	public static final field Companion Lcom/embabel/dice/store/FullTextSearchRequest$Companion;
-	public static final field DEFAULT_LIMIT I
-	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public fun equals (Ljava/lang/Object;)Z
-	public static final fun forText (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;)Lcom/embabel/dice/store/FullTextSearchRequest;
-	public final fun getFilter ()Lcom/embabel/dice/proposition/PropositionQuery;
-	public final fun getLimit ()I
-	public final fun getText ()Ljava/lang/String;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public final fun withLimit (I)Lcom/embabel/dice/store/FullTextSearchRequest;
-}
-
-public final class com/embabel/dice/store/FullTextSearchRequest$Companion {
-	public final fun forText (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;)Lcom/embabel/dice/store/FullTextSearchRequest;
-	public final synthetic fun invoke (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;Lkotlin/jvm/functions/Function1;)Lcom/embabel/dice/store/FullTextSearchRequest;
-	public static synthetic fun invoke$default (Lcom/embabel/dice/store/FullTextSearchRequest$Companion;Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lcom/embabel/dice/store/FullTextSearchRequest;
-}
-
-public final class com/embabel/dice/store/FullTextSearchRequestBuilder {
-	public final fun getLimit ()I
-	public final fun setLimit (I)V
 }
 
 public final class com/embabel/dice/store/SimilarityScore : java/lang/Comparable {
@@ -1518,7 +1480,6 @@ public final class com/embabel/dice/store/StoreCapabilities {
 	public final fun with (Lcom/embabel/dice/store/StoreCapability;)Lcom/embabel/dice/store/StoreCapabilities;
 	public final fun withVectorFiltering (Lcom/embabel/dice/store/VectorFiltering;)Lcom/embabel/dice/store/StoreCapabilities;
 	public final fun without (Lcom/embabel/dice/store/StoreCapability;)Lcom/embabel/dice/store/StoreCapabilities;
-	public final fun withoutSimilaritySearch ()Lcom/embabel/dice/store/StoreCapabilities;
 }
 
 public final class com/embabel/dice/store/StoreCapabilities$Companion {
@@ -1535,10 +1496,7 @@ public final class com/embabel/dice/store/StoreCapabilitiesBuilder {
 }
 
 public final class com/embabel/dice/store/StoreCapability : java/lang/Enum {
-	public static final field ABSTRACTION_TRAVERSAL Lcom/embabel/dice/store/StoreCapability;
-	public static final field ATOMIC_WRITES Lcom/embabel/dice/store/StoreCapability;
 	public static final field FILTERED_VECTOR_SEARCH Lcom/embabel/dice/store/StoreCapability;
-	public static final field FULL_TEXT_SEARCH Lcom/embabel/dice/store/StoreCapability;
 	public final fun getContract ()Ljava/lang/Class;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/store/StoreCapability;
@@ -1546,47 +1504,6 @@ public final class com/embabel/dice/store/StoreCapability : java/lang/Enum {
 }
 
 public abstract interface annotation class com/embabel/dice/store/StoreContractDsl : java/lang/annotation/Annotation {
-}
-
-public final class com/embabel/dice/store/TraversalDirection : java/lang/Enum {
-	public static final field TO_ABSTRACTIONS Lcom/embabel/dice/store/TraversalDirection;
-	public static final field TO_SOURCES Lcom/embabel/dice/store/TraversalDirection;
-	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/store/TraversalDirection;
-	public static fun values ()[Lcom/embabel/dice/store/TraversalDirection;
-}
-
-public final class com/embabel/dice/store/TraversalRequest {
-	public static final field Companion Lcom/embabel/dice/store/TraversalRequest$Companion;
-	public static final field DEFAULT_LIMIT I
-	public static final field MAX_DEPTH I
-	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/store/TraversalDirection;Lcom/embabel/dice/proposition/PropositionQuery;IILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public static final fun abstractionsOf (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;)Lcom/embabel/dice/store/TraversalRequest;
-	public fun equals (Ljava/lang/Object;)Z
-	public final fun getDirection ()Lcom/embabel/dice/store/TraversalDirection;
-	public final fun getFilter ()Lcom/embabel/dice/proposition/PropositionQuery;
-	public final fun getLimit ()I
-	public final fun getMaxDepth ()I
-	public final fun getStartId ()Ljava/lang/String;
-	public fun hashCode ()I
-	public static final fun sourcesOf (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;)Lcom/embabel/dice/store/TraversalRequest;
-	public fun toString ()Ljava/lang/String;
-	public final fun withLimit (I)Lcom/embabel/dice/store/TraversalRequest;
-	public final fun withMaxDepth (I)Lcom/embabel/dice/store/TraversalRequest;
-}
-
-public final class com/embabel/dice/store/TraversalRequest$Companion {
-	public final fun abstractionsOf (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;)Lcom/embabel/dice/store/TraversalRequest;
-	public final synthetic fun abstractionsOf (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;Lkotlin/jvm/functions/Function1;)Lcom/embabel/dice/store/TraversalRequest;
-	public final fun sourcesOf (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;)Lcom/embabel/dice/store/TraversalRequest;
-	public final synthetic fun sourcesOf (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;Lkotlin/jvm/functions/Function1;)Lcom/embabel/dice/store/TraversalRequest;
-}
-
-public final class com/embabel/dice/store/TraversalRequestBuilder {
-	public final fun getLimit ()I
-	public final fun getMaxDepth ()I
-	public final fun setLimit (I)V
-	public final fun setMaxDepth (I)V
 }
 
 public final class com/embabel/dice/store/UnsupportedCapabilityException : java/lang/UnsupportedOperationException {
