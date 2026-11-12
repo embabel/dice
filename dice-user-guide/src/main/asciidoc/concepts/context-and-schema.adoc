@@ -11,15 +11,65 @@ point of every query:
 
 [source,java]
 ----
-var query = PropositionQuery.againstContext(new ContextId("user:42"));
+var query = PropositionQuery.againstContext("user:42");
 ----
 
 There is no `PropositionQuery.create()`. That is a design decision, not an omission: without a
 scope, "load everything" would be the shortest thing to write, and in a store that accumulates
 indefinitely that is a production incident waiting to happen.
 
-`ContextId` is a Kotlin value class, so it costs nothing at runtime. Java callers reach the string
-through `getContextIdValue()`, on both `Proposition` and `PropositionQuery`.
+`ContextId` is a Kotlin value class, so it costs nothing at runtime. A Java query takes the id as a
+plain string, as above. Java reads an id back with `getContextIdValue()`, which every public type
+with a `contextId` property has.
+
+[cols="2,3",options="header"]
+|===
+| Area | Types with `getContextIdValue()`
+
+| Propositions and queries
+| `Proposition`, `PropositionQuery`, `SourceAnalysisContext`
+
+| Events
+| `UngroundedMentionsFound`, `PropositionContradicted`
+
+| Incremental analysis
+| `BookmarkKey`, `HashKey`, `ProcessedChunkRecord`
+
+| Memory maintenance
+| `DreamLoopReport`, `CollectorRunContext`, `CollapseUndoCommand`
+
+| Extraction runs
+| `ExtractionRun`, `ExtractionRunKey`
+
+| Schema drift
+| `DriftReport`, `DriftCheckResult` (`null` when the check covered the whole graph)
+|===
+
+`CollapseUndoContextMismatchException` names two contexts, read with
+`getCommandedContextIdValue()` and `getActualContextIdValue()`.
+
+[source,java]
+----
+try {
+    CollectorSignalsKt.undoSingleCollapse(command, traceQuery, propositions, collectorRecords);
+} catch (CollapseUndoContextMismatchException mismatch) {
+    log.warn("Undo for context {} refused: proposition {} belongs to {}",
+            mismatch.getCommandedContextIdValue(), mismatch.getPropositionId(),
+            mismatch.getActualContextIdValue());
+}
+----
+
+Kotlin reads the typed properties.
+
+[source,kotlin]
+----
+try {
+    undoSingleCollapse(command, traceQuery, propositions, collectorRecords)
+} catch (mismatch: CollapseUndoContextMismatchException) {
+    log.warn("Undo for context {} refused: proposition {} belongs to {}",
+        mismatch.commandedContextId.value, mismatch.propositionId, mismatch.actualContextId.value)
+}
+----
 
 What a context should represent is your decision. Common choices: one per user, one per tenant, one
 per conversation, one per document collection. Contexts do not nest; if you need a hierarchy, encode
