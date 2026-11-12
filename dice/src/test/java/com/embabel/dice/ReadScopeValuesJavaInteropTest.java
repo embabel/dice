@@ -51,6 +51,9 @@ class ReadScopeValuesJavaInteropTest {
         assertThrows(IllegalArgumentException.class, () -> ContextReadScope.ofValues(List.of()));
         assertThrows(IllegalArgumentException.class,
                 () -> ContextReadScope.ofValues(Arrays.asList("alice-session", null)));
+        assertThrows(NullPointerException.class, () -> ContextReadScope.ofValues((String) null, "team-handbook"));
+        assertThrows(IllegalArgumentException.class,
+                () -> ContextReadScope.ofValues("alice-session", (String) null));
     }
 
     @Test

@@ -180,7 +180,7 @@ The store also makes these checks before it reads. They select nothing.
 | Check | Called by
 
 | `spec.requireAllowed(query)` | Every read, with the read's query or the request's filter
-| `budget.requireRows(count)` | `query` and `matchKeywords` with the rows they would return, and `findNearest` with `topK`
+| `budget.requireRows(count)` | `query` and `matchKeywords` with the query's limit, or with the rows they would return when the query sets no limit, and `findNearest` with `topK`
 | `budget.requireVectorCandidates(count)` | `findNearest` only, with the candidates that have an embedding
 |===
 
