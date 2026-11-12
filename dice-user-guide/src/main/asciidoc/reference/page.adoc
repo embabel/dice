@@ -8,3 +8,5 @@ include::configuration-properties.adoc[]
 include::package-structure.adoc[]
 
 include::extension-points.adoc[]
+
+include::store-contract.adoc[]

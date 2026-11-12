@@ -1,0 +1,181 @@
+[[reference-store-contract]]
+=== Store contract
+
+What a DICE proposition store states about its similarity search: whether it filters before it
+picks the nearest K, the rules it keeps when it does, and the one scale it reports scores on. The
+types are in `com.embabel.dice.store`. They are experimental and can change before 1.0.
+
+Every store implements `PropositionStore`. A capability is an interface a store implements in
+addition, and lists in the `StoreCapabilities` it publishes.
+
+[[reference-store-contract-capabilities]]
+==== Capabilities
+
+[cols="2,2,3", options="header"]
+|===
+| Capability | Interface | Meaning
+
+| `FILTERED_VECTOR_SEARCH`
+| `FilteredVectorSearch`
+| Similarity search that filters before it picks the nearest K.
+|===
+
+`StoreCapabilities.find` returns the store as a capability's interface when the store lists that
+capability, and null when it does not.
+
+[source,java]
+----
+FilteredVectorSearch search = StoreCapabilities.find(store, FilteredVectorSearch.class);
+if (search != null) {
+    List<VectorMatch> matches = search.findNearest(
+            VectorSearchRequest.forText("peanut allergy", PropositionQuery.againstContext("alice-session")));
+}
+----
+
+[source,kotlin]
+----
+val search = StoreCapabilities.find<FilteredVectorSearch>(store)
+----
+
+`StoreCapabilities.describe(store)` returns the whole descriptor. A store that does not implement
+`CapabilityReporting` is described as `StoreCapabilities.UNDECLARED`, with no capability.
+
+The descriptor also carries `vectorFiltering`, which states when the store's similarity search
+applies a filter.
+
+[cols="1,4", options="header"]
+|===
+| Mode | Meaning
+
+| `BEFORE_TOP_K`
+| A filtered search returns the nearest K among the propositions that match the filter. The store
+  lists `FILTERED_VECTOR_SEARCH`.
+
+| `AFTER_TOP_K`
+| The filtered search of `VectorSearchCapable` picks the nearest K of all propositions and then
+  removes the ones that fail the filter. The result can be smaller than K, or empty, when K
+  matching propositions exist.
+
+| `NONE`
+| The store has no similarity search.
+
+| `UNDECLARED`
+| The store has not published its capabilities.
+|===
+
+[source,java]
+----
+VectorFiltering filtering = StoreCapabilities.describe(store).getVectorFiltering();
+----
+
+The descriptor states what one store instance can do with the collaborators it was built with. A
+store built with no embedder leaves `FILTERED_VECTOR_SEARCH` out. A store that wraps another
+store passes a capability through by implementing its interface and listing it.
+
+[[reference-store-contract-rules]]
+==== Rules
+
+* The filter of a request is a `PropositionQuery` that selects candidates. A filter that carries
+  an ordering or a limit throws `IllegalArgumentException`, because the request sets both.
+* Every field set on the filter is applied. A store that cannot apply a field throws
+  `UnsupportedCapabilityException`.
+* Filtering, ranking, ordering and limits run in the database. A store does not load rows and
+  finish the work in the JVM.
+* Results that rank equally come back in the same order each time the same request runs on
+  unchanged data.
+
+`UnsupportedCapabilityException` carries the `StoreCapability`. A store throws it in place of an
+empty or partial result.
+
+[source,java]
+----
+try {
+    matches = search.findNearest(request);
+} catch (UnsupportedCapabilityException refusal) {
+    log.warn("{} is not available: {}", refusal.getCapability(), refusal.getMessage());
+}
+----
+
+[[reference-store-contract-score]]
+==== Similarity scores
+
+A `SimilarityScore` is a cosine similarity from -1.0 to 1.0. 1.0 is the same direction, 0.0 is
+orthogonal and -1.0 is opposite. Every store reports this scale, so a threshold means the same on
+each store. A store converts the number its database returns with the matching factory.
+
+[cols="2,2", options="header"]
+|===
+| The database returns | Factory
+
+| Cosine similarity, -1 to 1
+| `SimilarityScore.ofCosine(value)`
+
+| Cosine distance, 0 closest and 2 farthest
+| `SimilarityScore.ofCosineDistance(value)`
+
+| A 0 to 1 score, 1 closest and 0.5 orthogonal
+| `SimilarityScore.ofUnitInterval(value)`
+|===
+
+A value outside the range throws `IllegalArgumentException`.
+
+[source,java]
+----
+SimilarityScore floor = SimilarityScore.ofCosine(0.7);
+boolean close = match.getScore().compareTo(floor) >= 0;
+----
+
+[[reference-store-contract-vector]]
+==== Filtered similarity search
+
+`FilteredVectorSearch.findNearest` returns the propositions closest to a piece of text among the
+propositions that match a filter. The filter is applied before the nearest K are picked. An exact
+scan does this. An approximate index does it when it applies the filter while it searches.
+
+[source,java]
+----
+FilteredVectorSearch search = StoreCapabilities.find(store, FilteredVectorSearch.class);
+VectorSearchRequest request = VectorSearchRequest
+        .forText("What does Alice like to eat?", PropositionQuery.againstContext("alice-session"))
+        .withTopK(5)
+        .withMinScore(SimilarityScore.ofCosine(0.6));
+List<VectorMatch> matches = search.findNearest(request);
+----
+
+[source,kotlin]
+----
+val request = VectorSearchRequest("What does Alice like to eat?", PropositionQuery.againstContext("alice-session")) {
+    topK = 5
+    minScore = SimilarityScore.ofCosine(0.6)
+}
+----
+
+Matches are ordered closest first. A proposition with no embedding is not returned.
+
+[[reference-store-contract-publishing]]
+==== Publishing capabilities
+
+A store implements `CapabilityReporting` and the interface of each capability it lists.
+
+[source,java]
+----
+public final class MyStore implements PropositionStore, CapabilityReporting, FilteredVectorSearch {
+
+    @Override
+    public StoreCapabilities getCapabilities() {
+        return StoreCapabilities.of(StoreCapability.FILTERED_VECTOR_SEARCH);
+    }
+
+    // ...
+}
+----
+
+[source,kotlin]
+----
+override val capabilities = StoreCapabilities {
+    add(StoreCapability.FILTERED_VECTOR_SEARCH)
+}
+----
+
+A store whose similarity search filters after it picks the nearest K states that with
+`StoreCapabilities.NONE.withVectorFiltering(VectorFiltering.AFTER_TOP_K)`.

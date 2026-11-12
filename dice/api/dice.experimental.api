@@ -1434,6 +1434,139 @@ public final class com/embabel/dice/spi/PropositionStoreDriftSweep : com/embabel
 	public fun releaseFromQuarantine (Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
 }
 
+public abstract interface class com/embabel/dice/store/CapabilityReporting {
+	public abstract fun getCapabilities ()Lcom/embabel/dice/store/StoreCapabilities;
+}
+
+public abstract interface class com/embabel/dice/store/FilteredVectorSearch {
+	public abstract fun findNearest (Lcom/embabel/dice/store/VectorSearchRequest;)Ljava/util/List;
+}
+
+public final class com/embabel/dice/store/SimilarityScore : java/lang/Comparable {
+	public static final field Companion Lcom/embabel/dice/store/SimilarityScore$Companion;
+	public synthetic fun <init> (DLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun compareTo (Lcom/embabel/dice/store/SimilarityScore;)I
+	public synthetic fun compareTo (Ljava/lang/Object;)I
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCosine ()D
+	public final fun getUnitInterval ()D
+	public fun hashCode ()I
+	public static final fun ofCosine (D)Lcom/embabel/dice/store/SimilarityScore;
+	public static final fun ofCosineDistance (D)Lcom/embabel/dice/store/SimilarityScore;
+	public static final fun ofUnitInterval (D)Lcom/embabel/dice/store/SimilarityScore;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/store/SimilarityScore$Companion {
+	public final fun ofCosine (D)Lcom/embabel/dice/store/SimilarityScore;
+	public final fun ofCosineDistance (D)Lcom/embabel/dice/store/SimilarityScore;
+	public final fun ofUnitInterval (D)Lcom/embabel/dice/store/SimilarityScore;
+}
+
+public final class com/embabel/dice/store/StoreCapabilities {
+	public static final field Companion Lcom/embabel/dice/store/StoreCapabilities$Companion;
+	public static final field NONE Lcom/embabel/dice/store/StoreCapabilities;
+	public static final field UNDECLARED Lcom/embabel/dice/store/StoreCapabilities;
+	public synthetic fun <init> (Ljava/util/Set;Lcom/embabel/dice/store/VectorFiltering;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public static final fun describe (Lcom/embabel/dice/proposition/PropositionStore;)Lcom/embabel/dice/store/StoreCapabilities;
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun find (Lcom/embabel/dice/proposition/PropositionStore;Ljava/lang/Class;)Ljava/lang/Object;
+	public final fun getSupported ()Ljava/util/Set;
+	public final fun getVectorFiltering ()Lcom/embabel/dice/store/VectorFiltering;
+	public fun hashCode ()I
+	public static final fun of ([Lcom/embabel/dice/store/StoreCapability;)Lcom/embabel/dice/store/StoreCapabilities;
+	public final fun supports (Lcom/embabel/dice/store/StoreCapability;)Z
+	public fun toString ()Ljava/lang/String;
+	public final fun with (Lcom/embabel/dice/store/StoreCapability;)Lcom/embabel/dice/store/StoreCapabilities;
+	public final fun withVectorFiltering (Lcom/embabel/dice/store/VectorFiltering;)Lcom/embabel/dice/store/StoreCapabilities;
+	public final fun without (Lcom/embabel/dice/store/StoreCapability;)Lcom/embabel/dice/store/StoreCapabilities;
+}
+
+public final class com/embabel/dice/store/StoreCapabilities$Companion {
+	public final fun describe (Lcom/embabel/dice/proposition/PropositionStore;)Lcom/embabel/dice/store/StoreCapabilities;
+	public final fun find (Lcom/embabel/dice/proposition/PropositionStore;Ljava/lang/Class;)Ljava/lang/Object;
+	public final synthetic fun invoke (Lkotlin/jvm/functions/Function1;)Lcom/embabel/dice/store/StoreCapabilities;
+	public final fun of ([Lcom/embabel/dice/store/StoreCapability;)Lcom/embabel/dice/store/StoreCapabilities;
+}
+
+public final class com/embabel/dice/store/StoreCapabilitiesBuilder {
+	public final fun add ([Lcom/embabel/dice/store/StoreCapability;)V
+	public final fun getVectorFiltering ()Lcom/embabel/dice/store/VectorFiltering;
+	public final fun setVectorFiltering (Lcom/embabel/dice/store/VectorFiltering;)V
+}
+
+public final class com/embabel/dice/store/StoreCapability : java/lang/Enum {
+	public static final field FILTERED_VECTOR_SEARCH Lcom/embabel/dice/store/StoreCapability;
+	public final fun getContract ()Ljava/lang/Class;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/store/StoreCapability;
+	public static fun values ()[Lcom/embabel/dice/store/StoreCapability;
+}
+
+public abstract interface annotation class com/embabel/dice/store/StoreContractDsl : java/lang/annotation/Annotation {
+}
+
+public final class com/embabel/dice/store/UnsupportedCapabilityException : java/lang/UnsupportedOperationException {
+	public fun <init> (Lcom/embabel/dice/store/StoreCapability;Ljava/lang/String;)V
+	public fun <init> (Lcom/embabel/dice/store/StoreCapability;Ljava/lang/String;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Lcom/embabel/dice/store/StoreCapability;Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getCapability ()Lcom/embabel/dice/store/StoreCapability;
+}
+
+public final class com/embabel/dice/store/VectorFiltering : java/lang/Enum {
+	public static final field AFTER_TOP_K Lcom/embabel/dice/store/VectorFiltering;
+	public static final field BEFORE_TOP_K Lcom/embabel/dice/store/VectorFiltering;
+	public static final field NONE Lcom/embabel/dice/store/VectorFiltering;
+	public static final field UNDECLARED Lcom/embabel/dice/store/VectorFiltering;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/store/VectorFiltering;
+	public static fun values ()[Lcom/embabel/dice/store/VectorFiltering;
+}
+
+public final class com/embabel/dice/store/VectorMatch {
+	public static final field Companion Lcom/embabel/dice/store/VectorMatch$Companion;
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/dice/store/SimilarityScore;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getProposition ()Lcom/embabel/dice/proposition/Proposition;
+	public final fun getScore ()Lcom/embabel/dice/store/SimilarityScore;
+	public fun hashCode ()I
+	public static final fun of (Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/dice/store/SimilarityScore;)Lcom/embabel/dice/store/VectorMatch;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/store/VectorMatch$Companion {
+	public final fun of (Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/dice/store/SimilarityScore;)Lcom/embabel/dice/store/VectorMatch;
+}
+
+public final class com/embabel/dice/store/VectorSearchRequest {
+	public static final field Companion Lcom/embabel/dice/store/VectorSearchRequest$Companion;
+	public static final field DEFAULT_TOP_K I
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;ILcom/embabel/dice/store/SimilarityScore;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun forText (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;)Lcom/embabel/dice/store/VectorSearchRequest;
+	public final fun getFilter ()Lcom/embabel/dice/proposition/PropositionQuery;
+	public final fun getMinScore ()Lcom/embabel/dice/store/SimilarityScore;
+	public final fun getText ()Ljava/lang/String;
+	public final fun getTopK ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+	public final fun withMinScore (Lcom/embabel/dice/store/SimilarityScore;)Lcom/embabel/dice/store/VectorSearchRequest;
+	public final fun withTopK (I)Lcom/embabel/dice/store/VectorSearchRequest;
+}
+
+public final class com/embabel/dice/store/VectorSearchRequest$Companion {
+	public final fun forText (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;)Lcom/embabel/dice/store/VectorSearchRequest;
+	public final synthetic fun invoke (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;Lkotlin/jvm/functions/Function1;)Lcom/embabel/dice/store/VectorSearchRequest;
+	public static synthetic fun invoke$default (Lcom/embabel/dice/store/VectorSearchRequest$Companion;Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lcom/embabel/dice/store/VectorSearchRequest;
+}
+
+public final class com/embabel/dice/store/VectorSearchRequestBuilder {
+	public final fun getMinScore ()Lcom/embabel/dice/store/SimilarityScore;
+	public final fun getTopK ()I
+	public final fun setMinScore (Lcom/embabel/dice/store/SimilarityScore;)V
+	public final fun setTopK (I)V
+}
+
 public final class com/embabel/dice/web/rest/ExtractErrorResponse {
 	public fun <init> (Ljava/lang/String;)V
 	public final fun component1 ()Ljava/lang/String;
