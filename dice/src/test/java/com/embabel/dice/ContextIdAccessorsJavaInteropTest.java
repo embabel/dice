@@ -18,13 +18,16 @@ package com.embabel.dice;
 import com.embabel.dice.common.DiceEventListener;
 import com.embabel.dice.common.PropositionContradicted;
 import com.embabel.dice.common.UngroundedMentionsFound;
+import com.embabel.dice.projection.memory.DreamLoopReport;
 import com.embabel.dice.proposition.PropositionQuery;
+import com.embabel.dice.spi.CollapseUndoContextMismatchException;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Checks that Java listeners can read the context id of the events that carry one.
@@ -57,6 +60,40 @@ class ContextIdAccessorsJavaInteropTest {
         listener.onEvent(ContextIdFixtures.propositionContradicted("acme"));
 
         assertEquals(List.of("acme"), seen);
+    }
+
+    @Test
+    void chunkHistoryKeysAndRecordsExposeTheirContext() {
+        assertEquals("acme", ContextIdFixtures.bookmarkKey("acme").getContextIdValue());
+        assertEquals("acme", ContextIdFixtures.hashKey("acme").getContextIdValue());
+        assertEquals("acme", ContextIdFixtures.processedChunkRecord("acme").getContextIdValue());
+    }
+
+    @Test
+    void dreamLoopReportExposesItsContext() {
+        DreamLoopReport report = ContextIdFixtures.dreamLoopReport("acme");
+
+        assertEquals("acme", report.getContextIdValue());
+    }
+
+    @Test
+    void collectorRunContextExposesItsContext() {
+        assertEquals("acme", ContextIdFixtures.collectorRunContext("acme").getContextIdValue());
+    }
+
+    @Test
+    void collapseUndoCommandExposesItsContext() {
+        assertEquals("acme", ContextIdFixtures.collapseUndoCommand("acme").getContextIdValue());
+    }
+
+    @Test
+    void contextMismatchNamesBothContexts() {
+        CollapseUndoContextMismatchException mismatch = assertThrows(
+                CollapseUndoContextMismatchException.class,
+                () -> { throw ContextIdFixtures.collapseUndoContextMismatch("acme", "globex"); });
+
+        assertEquals("acme", mismatch.getCommandedContextIdValue());
+        assertEquals("globex", mismatch.getActualContextIdValue());
     }
 
     @Test

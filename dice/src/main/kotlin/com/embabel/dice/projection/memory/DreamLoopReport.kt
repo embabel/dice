@@ -17,6 +17,7 @@ package com.embabel.dice.projection.memory
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.operations.consolidation.ConsolidationPassResult
+import com.fasterxml.jackson.annotation.JsonIgnore
 import java.time.Instant
 
 /**
@@ -26,6 +27,7 @@ import java.time.Instant
  * were examined, changed, or newly created.
  *
  * @property contextId The context the cycle ran for.
+ * @property contextIdValue [contextId] as a plain string, for Java callers.
  * @property cycleStarted When the cycle began.
  * @property cycleCompleted When the cycle finished; defaults to construction time.
  * @property passResults Each pass's result, in registration (execution) order.
@@ -44,4 +46,9 @@ data class DreamLoopReport(
     val totalTransitioned: Int,
     val totalNewPropositions: Int,
     val triggered: Boolean,
-)
+) {
+
+    /** [contextId] as a plain string, for Java callers. */
+    @get:JsonIgnore
+    val contextIdValue: String get() = contextId.value
+}

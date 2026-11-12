@@ -56,4 +56,34 @@ class ContextIdValueJsonTest {
         assertTrue(names.contains("timestamp"), "expected a timestamp field, got $names")
         assertFalse(names.contains("contextIdValue"), "contextIdValue must not be serialized, got $names")
     }
+
+    @Test
+    fun `chunk history keys and records serialize without a contextIdValue field`() {
+        val keyNames = fieldNames(ContextIdFixtures.bookmarkKey("acme"))
+        val hashNames = fieldNames(ContextIdFixtures.hashKey("acme"))
+        val recordNames = fieldNames(ContextIdFixtures.processedChunkRecord("acme"))
+
+        assertTrue(keyNames.contains("sourceId"), "expected a sourceId field, got $keyNames")
+        assertFalse(keyNames.contains("contextIdValue"), "contextIdValue must not be serialized, got $keyNames")
+        assertTrue(hashNames.contains("contentHash"), "expected a contentHash field, got $hashNames")
+        assertFalse(hashNames.contains("contextIdValue"), "contextIdValue must not be serialized, got $hashNames")
+        assertTrue(recordNames.contains("startIndex"), "expected a startIndex field, got $recordNames")
+        assertFalse(recordNames.contains("contextIdValue"), "contextIdValue must not be serialized, got $recordNames")
+    }
+
+    @Test
+    fun `a dream loop report serializes without a contextIdValue field`() {
+        val names = fieldNames(ContextIdFixtures.dreamLoopReport("acme"))
+
+        assertTrue(names.contains("totalExamined"), "expected a totalExamined field, got $names")
+        assertFalse(names.contains("contextIdValue"), "contextIdValue must not be serialized, got $names")
+    }
+
+    @Test
+    fun `a collapse undo command serializes without a contextIdValue field`() {
+        val names = fieldNames(ContextIdFixtures.collapseUndoCommand("acme"))
+
+        assertTrue(names.contains("survivorId"), "expected a survivorId field, got $names")
+        assertFalse(names.contains("contextIdValue"), "contextIdValue must not be serialized, got $names")
+    }
 }

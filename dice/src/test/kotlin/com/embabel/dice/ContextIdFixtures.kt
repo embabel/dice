@@ -18,8 +18,16 @@ package com.embabel.dice
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.common.PropositionContradicted
 import com.embabel.dice.common.UngroundedMentionsFound
+import com.embabel.dice.incremental.BookmarkKey
+import com.embabel.dice.incremental.HashKey
+import com.embabel.dice.incremental.ProcessedChunkRecord
 import com.embabel.dice.pipeline.UngroundedMentionHandling
+import com.embabel.dice.projection.memory.DreamLoopReport
+import com.embabel.dice.projection.memory.collector.CollectorRunContext
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.spi.CollapseUndoCommand
+import com.embabel.dice.spi.CollapseUndoContextMismatchException
+import java.time.Instant
 
 /**
  * Builds events whose constructors take a [ContextId]. Java cannot call those constructors, so the
@@ -40,6 +48,40 @@ object ContextIdFixtures {
             proposition(contextId, "Alice lives in Rome"),
         )
     }
+
+    @JvmStatic
+    fun bookmarkKey(contextIdValue: String): BookmarkKey = BookmarkKey(ContextId(contextIdValue), "source-1")
+
+    @JvmStatic
+    fun hashKey(contextIdValue: String): HashKey = HashKey(ContextId(contextIdValue), "abc123")
+
+    @JvmStatic
+    fun processedChunkRecord(contextIdValue: String): ProcessedChunkRecord =
+        ProcessedChunkRecord(bookmarkKey(contextIdValue), hashKey(contextIdValue), 0, 1, Instant.EPOCH)
+
+    @JvmStatic
+    fun dreamLoopReport(contextIdValue: String): DreamLoopReport = DreamLoopReport(
+        contextId = ContextId(contextIdValue),
+        cycleStarted = Instant.EPOCH,
+        cycleCompleted = Instant.EPOCH,
+        passResults = emptyList(),
+        totalExamined = 0,
+        totalTransitioned = 0,
+        totalNewPropositions = 0,
+        triggered = true,
+    )
+
+    @JvmStatic
+    fun collectorRunContext(contextIdValue: String): CollectorRunContext =
+        CollectorRunContext("run-1", ContextId(contextIdValue))
+
+    @JvmStatic
+    fun collapseUndoCommand(contextIdValue: String): CollapseUndoCommand =
+        CollapseUndoCommand(ContextId(contextIdValue), "survivor-1", "retired-1")
+
+    @JvmStatic
+    fun collapseUndoContextMismatch(commanded: String, actual: String): CollapseUndoContextMismatchException =
+        CollapseUndoContextMismatchException(ContextId(commanded), "proposition-1", ContextId(actual))
 
     /**
      * A minimal proposition in one context.

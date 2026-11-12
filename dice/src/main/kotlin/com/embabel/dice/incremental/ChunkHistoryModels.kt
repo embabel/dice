@@ -16,6 +16,7 @@
 package com.embabel.dice.incremental
 
 import com.embabel.agent.core.ContextId
+import com.fasterxml.jackson.annotation.JsonIgnore
 import java.time.Instant
 
 /**
@@ -24,7 +25,12 @@ import java.time.Instant
 data class BookmarkKey(
     val contextId: ContextId,
     val sourceId: String,
-)
+) {
+
+    /** [contextId] as a plain string, for Java callers. */
+    @get:JsonIgnore
+    val contextIdValue: String get() = contextId.value
+}
 
 /**
  * Composite key for content-hash deduplication within a [ContextId].
@@ -33,6 +39,11 @@ data class HashKey(
     val contextId: ContextId,
     val contentHash: String,
 ) {
+
+    /** [contextId] as a plain string, for Java callers. */
+    @get:JsonIgnore
+    val contextIdValue: String get() = contextId.value
+
     override fun toString(): String =
         "HashKey(contextId=$contextId, contentHash=${contentHash.take(8)}…)"
 }
@@ -83,6 +94,11 @@ data class ProcessedChunkRecord(
     }
 
     val contextId: ContextId get() = bookmarkKey.contextId
+
+    /** [contextId] as a plain string, for Java callers. */
+    @get:JsonIgnore
+    val contextIdValue: String get() = contextId.value
+
     val sourceId: String get() = bookmarkKey.sourceId
     val contentHash: String get() = hashKey.contentHash
 
