@@ -40,7 +40,7 @@ import java.time.Instant
  * backend that disagrees with the in-memory reference fails at authoring time.
  *
  * The cases here are the ones a backend gets wrong in a way a single-backend test would miss. A
- * write that MERGEs without resolving its endpoints accepts a cross-tenant link silently. A read
+ * write that upserts without resolving its endpoints accepts a cross-tenant link silently. A read
  * that scopes on the run id and forgets the tenant returns a neighbour's rows. A batch that writes
  * as it validates leaves half a link set behind when one id is rejected.
  */
@@ -71,10 +71,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     /**
      * A proposition in [tenant] that exactly one test deletes.
      *
-     * It gets its own id because a backend may not be able to put a deleted proposition back: on
-     * Drivine, deleting a `:Proposition` with raw Cypher and re-saving the same id through the
-     * repository returns a node with a null `contextId`. One disposable fixture is cheaper than
-     * making every backend's seeding re-entrant.
+     * It gets its own id because a backend may not be able to put a deleted proposition back under
+     * the same id. One disposable fixture is cheaper than making every backend's seeding re-entrant.
      */
     protected val disposablePropositionId: String = "prop-disposable"
 
@@ -89,7 +87,7 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     protected abstract fun deleteProposition(id: String)
 
     /**
-     * A store whose backing graph already holds [fixtureRunIds] under both tenants,
+     * A store whose backend already holds [fixtureRunIds] under both tenants,
      * [fixturePropositionIds] in [tenant], [neighbourPropositionIds] in [neighbour], and no links.
      */
     protected abstract fun store(): PropositionRunLinkStore
@@ -220,8 +218,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
 
     @Test
     fun `a run cannot claim a neighbour's proposition`() {
-        // `nb-prop-1` exists — it is just someone else's. That is the case a backend that MERGEs
-        // without resolving its endpoints gets wrong, and it is not the same as an id nobody holds.
+        // `nb-prop-1` exists and belongs to another tenant. A backend that upserts without
+        // resolving its endpoints gets this case wrong. It differs from an id nobody holds.
         val store = store()
 
         val rejected = assertThrows(PropositionRunLinkScopeException::class.java) {

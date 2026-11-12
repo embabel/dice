@@ -63,10 +63,10 @@ import java.time.Instant
  * authoring time instead of in production.
  *
  * The cases here are the ones a durable backend gets wrong in a way a single-backend test would
- * miss. A `MERGE … SET` upsert passes "a terminal write is recorded" and fails "an incompatible
- * terminal rewrite is rejected", because overwriting is what MERGE does. A finder that filters in
- * memory passes every single-tenant read and fails "a page scopes before it limits". A chain walk
- * written as a recursive Cypher pattern passes on a healthy graph and hangs on a cycle.
+ * miss. An upsert that overwrites passes "a terminal write is recorded" and fails "an incompatible
+ * terminal rewrite is rejected". A finder that filters in memory passes every single-tenant read
+ * and fails "a page scopes before it limits". A chain walk written as a recursive query passes on
+ * healthy data and hangs on a cycle.
  */
 @ApiStatus.Experimental
 abstract class AbstractExtractionRunStoreContractTest {
