@@ -37,7 +37,7 @@ import org.junit.jupiter.api.Test
  * E5 The supported set is read-only.
  * E6 describe returns a reporting store's descriptor, and UNDECLARED for any other store.
  * E7 find returns the store only when it lists the capability and implements the interface.
- * E8 Each capability names its interface.
+ * E8 Each capability names its interface, and a scoped capability keeps the filtering mode.
  * E9 The refusal carries the capability, the reason and the cause.
  */
 class StoreCapabilitiesTest {
@@ -156,7 +156,17 @@ class StoreCapabilitiesTest {
     @Test
     fun `E8 each capability names its interface`() {
         assertEquals(FilteredVectorSearch::class.java, StoreCapability.FILTERED_VECTOR_SEARCH.contract)
-        assertEquals(1, StoreCapability.values().size)
+        assertEquals(ScopedReads::class.java, StoreCapability.SCOPED_READS.contract)
+        assertEquals(ScopedVectorSearch::class.java, StoreCapability.SCOPED_VECTOR_SEARCH.contract)
+        assertEquals(3, StoreCapability.values().size)
+        val scoped = StoreCapabilities.of(StoreCapability.SCOPED_READS, StoreCapability.SCOPED_VECTOR_SEARCH)
+        assertEquals(VectorFiltering.NONE, scoped.vectorFiltering)
+        assertEquals(VectorFiltering.AFTER_TOP_K, scoped.withVectorFiltering(VectorFiltering.AFTER_TOP_K).vectorFiltering)
+        assertEquals(VectorFiltering.BEFORE_TOP_K, scoped.with(StoreCapability.FILTERED_VECTOR_SEARCH).vectorFiltering)
+        assertEquals(VectorFiltering.NONE, scoped.without(StoreCapability.SCOPED_VECTOR_SEARCH).vectorFiltering)
+        val listed = StoreCapabilities.UNDECLARED.with(StoreCapability.SCOPED_READS)
+        assertTrue(listed.supports(StoreCapability.SCOPED_READS))
+        assertEquals(VectorFiltering.UNDECLARED, listed.vectorFiltering)
     }
 
     @Test
