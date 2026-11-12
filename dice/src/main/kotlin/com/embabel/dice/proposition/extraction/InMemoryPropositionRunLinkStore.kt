@@ -105,6 +105,33 @@ class InMemoryPropositionRunLinkStore @JvmOverloads constructor(
     }
 
     /**
+     * The proposition ids linked to [key], as a copy. Empty when the run has no links.
+     *
+     * Reads the map as it stands, so a link whose proposition is gone is still listed.
+     *
+     * @param key The run whose links to read.
+     * @return A copy of the run's linked proposition ids.
+     */
+    internal fun linkedTo(key: ExtractionRunKey): Set<String> =
+        synchronized(lock) { byRun[key]?.toSet() ?: emptySet() }
+
+    /**
+     * Removes the links from [key] to [propositionIds] and drops the run's entry when none are left.
+     *
+     * An id the run is not linked to is ignored.
+     *
+     * @param key The run to unlink from.
+     * @param propositionIds The proposition ids to unlink.
+     */
+    internal fun unlink(key: ExtractionRunKey, propositionIds: Collection<String>) {
+        synchronized(lock) {
+            val linked = byRun[key] ?: return
+            linked.removeAll(propositionIds.toSet())
+            if (linked.isEmpty()) byRun.remove(key)
+        }
+    }
+
+    /**
      * Drops the links of the runs linked earliest until the store holds links for at most [maxRuns]
      * runs. Called from inside the monitor a link already holds. A run the run store still reports
      * as `RUNNING` is skipped; if every candidate is running the breach is logged once and the store
