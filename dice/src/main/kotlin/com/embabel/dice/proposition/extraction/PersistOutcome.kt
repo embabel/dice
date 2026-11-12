@@ -66,8 +66,11 @@ sealed interface PersistOutcome {
     /**
      * The persistence result of a stored unit.
      *
+     * Every exception this throws is unchecked.
+     *
      * @return [Stored.persisted].
-     * @throws Exception the original [Failed.cause], rethrown as is, whatever its type.
+     * @throws RuntimeException the [Failed.cause] itself, when it is a `RuntimeException`.
+     * @throws PersistUnitFailedException around the [Failed.cause], when it is a checked exception.
      */
     fun persistedOrThrow(): PropositionPersistenceResult
 
@@ -127,8 +130,9 @@ sealed interface PersistOutcome {
         override val isStored: Boolean
             get() = false
 
-        /** Throws [cause], the same instance the step threw. */
-        override fun persistedOrThrow(): PropositionPersistenceResult = throw cause
+        /** Throws [cause] when it is a `RuntimeException`, and a [PersistUnitFailedException] around it otherwise. */
+        override fun persistedOrThrow(): PropositionPersistenceResult =
+            throw (cause as? RuntimeException ?: PersistUnitFailedException(step, cause))
 
         override fun toString(): String =
             "Failed(step=$step, cause=${describe(cause)}, leftInStore=$leftInStore, " +

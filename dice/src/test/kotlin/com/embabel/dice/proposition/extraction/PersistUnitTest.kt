@@ -137,15 +137,28 @@ class PersistUnitTest {
     }
 
     @Test
-    fun `E4 persistedOrThrow returns persisted when stored and rethrows the cause when failed`() {
+    fun `E4 persistedOrThrow returns persisted when stored and throws a RuntimeException cause unchanged`() {
         val persisted = PropositionPersistenceResult.EMPTY
-        val cause = IOException("store went away")
+        val cause = IllegalStateException("store went away")
 
         val stored = PersistOutcome.stored(persisted)
         val failed = PersistOutcome.failed(PersistStep.PROPOSITIONS, cause, setOf(PersistStep.ENTITIES))
 
         assertThat(stored.persistedOrThrow()).isSameAs(persisted)
         assertThatThrownBy { failed.persistedOrThrow() }.isSameAs(cause)
+    }
+
+    @Test
+    fun `E5 persistedOrThrow wraps a checked cause in PersistUnitFailedException with the step and the cause`() {
+        val cause = IOException("store went away")
+        val failed = PersistOutcome.failed(PersistStep.PROPOSITIONS, cause, setOf(PersistStep.ENTITIES))
+
+        assertThatThrownBy { failed.persistedOrThrow() }
+            .isInstanceOfSatisfying(PersistUnitFailedException::class.java) { thrown ->
+                assertThat(thrown.step).isEqualTo(PersistStep.PROPOSITIONS)
+                assertThat(thrown.cause).isSameAs(cause)
+                assertThat(thrown).hasMessage("persist unit failed at PROPOSITIONS")
+            }
     }
 
     @Test
