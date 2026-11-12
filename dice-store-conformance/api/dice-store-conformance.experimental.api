@@ -136,13 +136,20 @@ public abstract class com/embabel/dice/conformance/AbstractExtractionRunStoreCon
 
 public abstract class com/embabel/dice/conformance/AbstractFilteredVectorSearchContractTest {
 	public fun <init> ()V
+	public fun aFilterThatMatchesNothingReturnsNoMatches ()V
+	public fun aMatchThatScoresExactlyTheFloorIsReturned ()V
+	public fun aPropositionWithAnAllZeroEmbeddingIsNotReturned ()V
 	public fun aStatusFilterIsAppliedBeforeTheCutOrRefused ()V
 	public fun aStoreThatListsFilteredVectorSearchImplementsIt ()V
 	public fun eachFilterFieldIsAppliedOrRefused ()V
+	public fun equalScoresKeepOneOrder ()V
 	protected fun excludedCount ()I
 	public fun kMatchesComeBackWhenANearerContextIsExcluded ()V
 	public fun matchesAreOrderedClosestFirstAndCutAfterOrdering ()V
+	protected fun scoreTolerance ()D
+	public fun scoresAreCosineSimilarity ()V
 	protected abstract fun store ()Lcom/embabel/dice/proposition/PropositionStore;
+	public fun textThatEmbedsToAllZerosMatchesNothing ()V
 }
 
 public abstract class com/embabel/dice/conformance/AbstractMetamodelVersionStoreContractTest {

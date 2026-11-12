@@ -78,6 +78,15 @@ abstract class AbstractFilteredVectorSearchContractTest {
      */
     protected open fun excludedCount(): Int = 121
 
+    /**
+     * How far a score may be from the exact cosine in the case that checks the score scale. The
+     * contract states the scale and no accuracy, so the default leaves room for an index that
+     * stores rounded vectors.
+     *
+     * @return The largest accepted difference. The default is 0.01.
+     */
+    protected open fun scoreTolerance(): Double = 0.01
+
     private val tenant = "vector-tenant"
     private val neighbour = "vector-neighbour"
     private val queryText = ConformanceEmbeddings.text("query", 0.0)
@@ -314,5 +323,111 @@ abstract class AbstractFilteredVectorSearchContractTest {
         )
 
         assertAll("Filter fields the store does not apply", failures.map { message -> Executable { fail<Unit>(message) } })
+    }
+
+    @Test
+    @DisplayName("a match that scores exactly the floor is returned")
+    open fun aMatchThatScoresExactlyTheFloorIsReturned() {
+        val store = store()
+        val search = filteredSearch(store)
+        val matching = seedMatching(store)
+        val request = VectorSearchRequest.forText(queryText, PropositionQuery.againstContext(tenant)).withTopK(5)
+        val unfloored = search.findNearest(request)
+        assertTrue(unfloored.size >= 3) { "With no floor the store returns ${unfloored.size} of the 5 matches" }
+        val floor = unfloored[2].score
+
+        assertEquals(matching.take(3), texts(search, request.withMinScore(floor))) {
+            "With the floor at the third match's score $floor the store returns the three matches that score at or above it"
+        }
+    }
+
+    @Test
+    @DisplayName("equal scores come back in the same order every time")
+    open fun equalScoresKeepOneOrder() {
+        val store = store()
+        val search = filteredSearch(store)
+        listOf("tie-0", "tie-1", "tie-2").forEach { label ->
+            store.save(proposition(label, 30.0, tenant, PropositionStatus.ACTIVE))
+        }
+        store.save(proposition("after-tie", 40.0, tenant, PropositionStatus.ACTIVE))
+        val request = VectorSearchRequest.forText(queryText, PropositionQuery.againstContext(tenant))
+
+        listOf(4, 2).forEach { k ->
+            val runs = (1..3).map { search.findNearest(request.withTopK(k)).map { it.proposition.id } }
+            assertEquals(1, runs.distinct().size) {
+                "With K of $k three runs of the same request return the ids $runs. Equal scores come back in one order."
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("scores are cosine similarity from minus one to one")
+    open fun scoresAreCosineSimilarity() {
+        val store = store()
+        val search = filteredSearch(store)
+        val expected = listOf(0.0 to 1.0, 60.0 to 0.5, 90.0 to 0.0, 120.0 to -0.5, 180.0 to -1.0)
+        expected.forEach { (degrees, _) ->
+            store.save(proposition("scale-$degrees", degrees, tenant, PropositionStatus.ACTIVE))
+        }
+
+        val scores = search.findNearest(
+            VectorSearchRequest.forText(queryText, PropositionQuery.againstContext(tenant)).withTopK(5),
+        ).map { it.score.cosine }
+
+        assertEquals(expected.size, scores.size) { "The store returns the scores $scores for five propositions" }
+        expected.zip(scores).forEach { (angleAndCosine, score) ->
+            val (degrees, cosine) = angleAndCosine
+            assertEquals(cosine, score, scoreTolerance()) {
+                "The proposition at $degrees degrees scores $score. Its cosine similarity to the query is $cosine."
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("a proposition with an all-zero embedding is not returned")
+    open fun aPropositionWithAnAllZeroEmbeddingIsNotReturned() {
+        val store = store()
+        val search = filteredSearch(store)
+        store.save(
+            proposition("blank", 0.0, tenant, PropositionStatus.ACTIVE)
+                .copy(text = ConformanceEmbeddings.textWithoutDirection("blank")),
+        )
+        val directed = store.save(proposition("directed", 30.0, tenant, PropositionStatus.ACTIVE)).text
+
+        assertEquals(
+            listOf(directed),
+            texts(search, VectorSearchRequest.forText(queryText, PropositionQuery.againstContext(tenant)).withTopK(5)),
+        ) { "The store returns only the proposition whose embedding has a direction" }
+    }
+
+    @Test
+    @DisplayName("text that embeds to all zeros matches nothing")
+    open fun textThatEmbedsToAllZerosMatchesNothing() {
+        val store = store()
+        val search = filteredSearch(store)
+        seedMatching(store)
+        val request = VectorSearchRequest.forText(
+            ConformanceEmbeddings.textWithoutDirection("query"),
+            PropositionQuery.againstContext(tenant),
+        )
+
+        assertEquals(emptyList<String>(), texts(search, request)) {
+            "A request whose text embeds to all zeros returns no matches"
+        }
+    }
+
+    @Test
+    @DisplayName("a filter that matches nothing returns no matches")
+    open fun aFilterThatMatchesNothingReturnsNoMatches() {
+        val store = store()
+        val search = filteredSearch(store)
+        matchDegrees.forEachIndexed { i, degrees ->
+            store.save(proposition("match-$i", degrees, neighbour, PropositionStatus.ACTIVE))
+        }
+
+        assertEquals(
+            emptyList<String>(),
+            texts(search, VectorSearchRequest.forText(queryText, PropositionQuery.againstContext(tenant))),
+        ) { "Every proposition is in $neighbour, so a filter on $tenant returns no matches" }
     }
 }
