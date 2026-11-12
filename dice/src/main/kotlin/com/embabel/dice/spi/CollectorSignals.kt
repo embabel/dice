@@ -274,6 +274,11 @@ class CollapseUndoContextMismatchException(
     /** [actualContextId] as a plain string, for Java callers. */
     @get:JsonIgnore
     val actualContextIdValue: String get() = actualContextId.value
+
+    private companion object {
+        /** Fixed, so an instance serialized by an earlier release can still be read. */
+        private const val serialVersionUID: Long = 4887747240668435430L
+    }
 }
 
 /**
