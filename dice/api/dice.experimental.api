@@ -31,6 +31,10 @@ public final class com/embabel/dice/common/ExtractionRunTransitioned : com/embab
 	public fun toString ()Ljava/lang/String;
 }
 
+public abstract interface class com/embabel/dice/evidence/EvidenceProvider {
+	public abstract fun evidence (Ljava/lang/Object;)Lcom/embabel/dice/evidence/Evidence;
+}
+
 public final class com/embabel/dice/governance/DeclaredVersionDto {
 	public static final field Companion Lcom/embabel/dice/governance/DeclaredVersionDto$Companion;
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;ZLjava/lang/String;)V

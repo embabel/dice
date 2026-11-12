@@ -1675,6 +1675,245 @@ public final class com/embabel/dice/entity/ResolutionOutcome : java/lang/Enum {
 	public static fun values ()[Lcom/embabel/dice/entity/ResolutionOutcome;
 }
 
+public final class com/embabel/dice/evidence/Citation {
+	public static final field Companion Lcom/embabel/dice/evidence/Citation$Companion;
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getChunkIds ()Ljava/util/List;
+	public final fun getContextId-SSYM5D4 ()Ljava/lang/String;
+	public final fun getContextIdValue ()Ljava/lang/String;
+	public final fun getPropositionId ()Ljava/lang/String;
+	public final fun getProvenance ()Ljava/util/List;
+	public final fun getUri ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/evidence/Citation;
+	public fun toString ()Ljava/lang/String;
+	public final fun withChunkIds (Ljava/util/List;)Lcom/embabel/dice/evidence/Citation;
+	public final fun withProvenance (Ljava/util/List;)Lcom/embabel/dice/evidence/Citation;
+	public final fun withUri (Ljava/lang/String;)Lcom/embabel/dice/evidence/Citation;
+}
+
+public final class com/embabel/dice/evidence/Citation$Companion {
+	public final fun of (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/evidence/Citation;
+	public final fun of-sZMPnk8 (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/evidence/Citation;
+}
+
+public final class com/embabel/dice/evidence/DerivationRule {
+	public static final field ABSTRACTION Lcom/embabel/dice/evidence/DerivationRule;
+	public static final field Companion Lcom/embabel/dice/evidence/DerivationRule$Companion;
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/Map;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getExpression ()Ljava/lang/String;
+	public final fun getMethod ()Ljava/lang/String;
+	public final fun getParameters ()Ljava/util/Map;
+	public final fun getRuleId ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/DerivationRule;
+	public fun toString ()Ljava/lang/String;
+	public final fun withExpression (Ljava/lang/String;)Lcom/embabel/dice/evidence/DerivationRule;
+	public final fun withParameter (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/evidence/DerivationRule;
+	public final fun withRuleId (Ljava/lang/String;)Lcom/embabel/dice/evidence/DerivationRule;
+}
+
+public final class com/embabel/dice/evidence/DerivationRule$Companion {
+	public final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/DerivationRule;
+}
+
+public abstract interface class com/embabel/dice/evidence/Evidence {
+	public static final field Companion Lcom/embabel/dice/evidence/Evidence$Companion;
+	public static fun conflicting (Ljava/util/List;Lcom/embabel/dice/spi/ConflictType;)Lcom/embabel/dice/evidence/Evidence$Conflicting;
+	public static fun derived (Ljava/lang/String;DLcom/embabel/dice/evidence/DerivationRule;Ljava/util/List;)Lcom/embabel/dice/evidence/Evidence$Derived;
+	public static fun missing (Lcom/embabel/dice/evidence/Searched;)Lcom/embabel/dice/evidence/Evidence$Missing;
+	public static fun of (Ljava/util/List;Lcom/embabel/dice/evidence/Searched;)Lcom/embabel/dice/evidence/Evidence;
+	public static fun recorded (Ljava/util/List;)Lcom/embabel/dice/evidence/Evidence$Recorded;
+}
+
+public final class com/embabel/dice/evidence/Evidence$Companion {
+	public final fun conflicting (Ljava/util/List;Lcom/embabel/dice/spi/ConflictType;)Lcom/embabel/dice/evidence/Evidence$Conflicting;
+	public final fun derived (Ljava/lang/String;DLcom/embabel/dice/evidence/DerivationRule;Ljava/util/List;)Lcom/embabel/dice/evidence/Evidence$Derived;
+	public final fun missing (Lcom/embabel/dice/evidence/Searched;)Lcom/embabel/dice/evidence/Evidence$Missing;
+	public final fun of (Ljava/util/List;Lcom/embabel/dice/evidence/Searched;)Lcom/embabel/dice/evidence/Evidence;
+	public final fun recorded (Ljava/util/List;)Lcom/embabel/dice/evidence/Evidence$Recorded;
+}
+
+public final class com/embabel/dice/evidence/Evidence$Conflicting : com/embabel/dice/evidence/Evidence {
+	public synthetic fun <init> (Ljava/util/List;Lcom/embabel/dice/spi/ConflictType;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getConflictType ()Lcom/embabel/dice/spi/ConflictType;
+	public final fun getItems ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/evidence/Evidence$Derived : com/embabel/dice/evidence/Evidence {
+	public synthetic fun <init> (Ljava/lang/String;DLcom/embabel/dice/evidence/DerivationRule;Ljava/util/List;Ljava/util/List;Lcom/embabel/dice/evidence/Citation;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCitation ()Lcom/embabel/dice/evidence/Citation;
+	public final fun getConclusion ()Ljava/lang/String;
+	public final fun getConfidence ()D
+	public final fun getInputIds ()Ljava/util/List;
+	public final fun getInputs ()Ljava/util/List;
+	public final fun getRule ()Lcom/embabel/dice/evidence/DerivationRule;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+	public final fun withCitation (Lcom/embabel/dice/evidence/Citation;)Lcom/embabel/dice/evidence/Evidence$Derived;
+	public final fun withInputs (Ljava/util/List;)Lcom/embabel/dice/evidence/Evidence$Derived;
+}
+
+public final class com/embabel/dice/evidence/Evidence$Missing : com/embabel/dice/evidence/Evidence {
+	public synthetic fun <init> (Lcom/embabel/dice/evidence/Searched;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getSearched ()Lcom/embabel/dice/evidence/Searched;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/evidence/Evidence$Recorded : com/embabel/dice/evidence/Evidence {
+	public synthetic fun <init> (Ljava/util/List;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getItems ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/evidence/EvidenceConverter {
+	public static final field Companion Lcom/embabel/dice/evidence/EvidenceConverter$Companion;
+	public synthetic fun <init> (Ljava/time/Clock;DLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public static final fun create ()Lcom/embabel/dice/evidence/EvidenceConverter;
+	public final fun fromContradiction (Lcom/embabel/dice/proposition/revision/RevisionResult$Contradicted;)Lcom/embabel/dice/evidence/Evidence$Conflicting;
+	public final fun fromLineage (Lcom/embabel/dice/query/graph/PropositionLineage;)Lcom/embabel/dice/evidence/Evidence;
+	public final fun fromPropositions (Ljava/util/List;Lcom/embabel/dice/evidence/Searched;)Lcom/embabel/dice/evidence/Evidence;
+	public final fun fromPropositions (Ljava/util/List;Lcom/embabel/dice/evidence/Searched;Lcom/embabel/dice/evidence/RetrieverId;)Lcom/embabel/dice/evidence/Evidence;
+	public final fun fromSimilarityResults (Ljava/util/List;Lcom/embabel/dice/evidence/Searched;)Lcom/embabel/dice/evidence/Evidence;
+	public final fun fromSimilarityResults (Ljava/util/List;Lcom/embabel/dice/evidence/Searched;Lcom/embabel/dice/evidence/RetrieverId;)Lcom/embabel/dice/evidence/Evidence;
+	public final fun item (Lcom/embabel/common/core/types/SimilarityResult;Lcom/embabel/dice/evidence/RetrieverId;I)Lcom/embabel/dice/evidence/EvidenceItem;
+	public final fun item (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/evidence/EvidenceItem;
+	public final fun withClock (Ljava/time/Clock;)Lcom/embabel/dice/evidence/EvidenceConverter;
+	public final fun withDecayK (D)Lcom/embabel/dice/evidence/EvidenceConverter;
+}
+
+public final class com/embabel/dice/evidence/EvidenceConverter$Companion {
+	public final fun create ()Lcom/embabel/dice/evidence/EvidenceConverter;
+}
+
+public abstract interface annotation class com/embabel/dice/evidence/EvidenceDsl : java/lang/annotation/Annotation {
+}
+
+public final class com/embabel/dice/evidence/EvidenceItem {
+	public static final field Companion Lcom/embabel/dice/evidence/EvidenceItem$Companion;
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/evidence/Citation;DDLcom/embabel/dice/proposition/PropositionStatus;Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;Ljava/lang/Double;Ljava/util/List;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCitation ()Lcom/embabel/dice/evidence/Citation;
+	public final fun getConfidence ()D
+	public final fun getDerivedFromIds ()Ljava/util/List;
+	public final fun getEffectiveConfidence ()D
+	public final fun getRecordedAt ()Ljava/time/Instant;
+	public final fun getRetrievals ()Ljava/util/List;
+	public final fun getRevisedAt ()Ljava/time/Instant;
+	public final fun getScore ()Ljava/lang/Double;
+	public final fun getStatus ()Lcom/embabel/dice/proposition/PropositionStatus;
+	public final fun getText ()Ljava/lang/String;
+	public fun hashCode ()I
+	public final fun isDerived ()Z
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/evidence/Citation;D)Lcom/embabel/dice/evidence/EvidenceItem;
+	public fun toString ()Ljava/lang/String;
+	public final fun withDerivedFromIds (Ljava/util/List;)Lcom/embabel/dice/evidence/EvidenceItem;
+	public final fun withEffectiveConfidence (D)Lcom/embabel/dice/evidence/EvidenceItem;
+	public final fun withRecordedAt (Ljava/time/Instant;)Lcom/embabel/dice/evidence/EvidenceItem;
+	public final fun withRetrieval (Lcom/embabel/dice/evidence/Retrieval;)Lcom/embabel/dice/evidence/EvidenceItem;
+	public final fun withRetrievals (Ljava/util/List;)Lcom/embabel/dice/evidence/EvidenceItem;
+	public final fun withRevisedAt (Ljava/time/Instant;)Lcom/embabel/dice/evidence/EvidenceItem;
+	public final fun withScore (D)Lcom/embabel/dice/evidence/EvidenceItem;
+	public final fun withStatus (Lcom/embabel/dice/proposition/PropositionStatus;)Lcom/embabel/dice/evidence/EvidenceItem;
+}
+
+public final class com/embabel/dice/evidence/EvidenceItem$Companion {
+	public final synthetic fun invoke (Ljava/lang/String;Lcom/embabel/dice/evidence/Citation;DLkotlin/jvm/functions/Function1;)Lcom/embabel/dice/evidence/EvidenceItem;
+	public static synthetic fun invoke$default (Lcom/embabel/dice/evidence/EvidenceItem$Companion;Ljava/lang/String;Lcom/embabel/dice/evidence/Citation;DLkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lcom/embabel/dice/evidence/EvidenceItem;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/evidence/Citation;D)Lcom/embabel/dice/evidence/EvidenceItem;
+}
+
+public final class com/embabel/dice/evidence/EvidenceItemBuilder {
+	public final fun getDerivedFromIds ()Ljava/util/List;
+	public final fun getEffectiveConfidence ()Ljava/lang/Double;
+	public final fun getRecordedAt ()Ljava/time/Instant;
+	public final fun getRevisedAt ()Ljava/time/Instant;
+	public final fun getScore ()Ljava/lang/Double;
+	public final fun getStatus ()Lcom/embabel/dice/proposition/PropositionStatus;
+	public final fun retrieval (Lcom/embabel/dice/evidence/Retrieval;)V
+	public final fun setDerivedFromIds (Ljava/util/List;)V
+	public final fun setEffectiveConfidence (Ljava/lang/Double;)V
+	public final fun setRecordedAt (Ljava/time/Instant;)V
+	public final fun setRevisedAt (Ljava/time/Instant;)V
+	public final fun setScore (Ljava/lang/Double;)V
+	public final fun setStatus (Lcom/embabel/dice/proposition/PropositionStatus;)V
+}
+
+public final class com/embabel/dice/evidence/Retrieval {
+	public static final field Companion Lcom/embabel/dice/evidence/Retrieval$Companion;
+	public synthetic fun <init> (Lcom/embabel/dice/evidence/RetrieverId;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Integer;Ljava/util/List;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getEntityPath ()Ljava/util/List;
+	public final fun getHops ()Ljava/lang/Integer;
+	public final fun getRank ()Ljava/lang/Integer;
+	public final fun getRetriever ()Lcom/embabel/dice/evidence/RetrieverId;
+	public final fun getScore ()Ljava/lang/Double;
+	public fun hashCode ()I
+	public static final fun of (Lcom/embabel/dice/evidence/RetrieverId;)Lcom/embabel/dice/evidence/Retrieval;
+	public fun toString ()Ljava/lang/String;
+	public final fun withEntityPath (Ljava/util/List;)Lcom/embabel/dice/evidence/Retrieval;
+	public final fun withHops (I)Lcom/embabel/dice/evidence/Retrieval;
+	public final fun withRank (I)Lcom/embabel/dice/evidence/Retrieval;
+	public final fun withScore (D)Lcom/embabel/dice/evidence/Retrieval;
+}
+
+public final class com/embabel/dice/evidence/Retrieval$Companion {
+	public final fun of (Lcom/embabel/dice/evidence/RetrieverId;)Lcom/embabel/dice/evidence/Retrieval;
+}
+
+public final class com/embabel/dice/evidence/RetrieverId {
+	public static final field Companion Lcom/embabel/dice/evidence/RetrieverId$Companion;
+	public static final field ENTITY Lcom/embabel/dice/evidence/RetrieverId;
+	public static final field GRAPH_WALK Lcom/embabel/dice/evidence/RetrieverId;
+	public static final field KEYWORD Lcom/embabel/dice/evidence/RetrieverId;
+	public static final field TEMPORAL Lcom/embabel/dice/evidence/RetrieverId;
+	public static final field VECTOR Lcom/embabel/dice/evidence/RetrieverId;
+	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/RetrieverId;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/evidence/RetrieverId$Companion {
+	public final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/RetrieverId;
+}
+
+public final class com/embabel/dice/evidence/Searched {
+	public static final field Companion Lcom/embabel/dice/evidence/Searched$Companion;
+	public synthetic fun <init> (Ljava/util/Set;Ljava/lang/String;Ljava/util/Map;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getContextIdValues ()Ljava/util/Set;
+	public final fun getContextIds ()Ljava/util/Set;
+	public final fun getFilters ()Ljava/util/Map;
+	public final fun getQuery ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/Searched;
+	public fun toString ()Ljava/lang/String;
+	public static final fun unscoped ()Lcom/embabel/dice/evidence/Searched;
+	public final fun withContext (Ljava/lang/String;)Lcom/embabel/dice/evidence/Searched;
+	public final fun withContext-GRzcY08 (Ljava/lang/String;)Lcom/embabel/dice/evidence/Searched;
+	public final fun withFilter (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/evidence/Searched;
+	public final fun withQuery (Ljava/lang/String;)Lcom/embabel/dice/evidence/Searched;
+}
+
+public final class com/embabel/dice/evidence/Searched$Companion {
+	public final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/Searched;
+	public final fun of-GRzcY08 (Ljava/lang/String;)Lcom/embabel/dice/evidence/Searched;
+	public final fun unscoped ()Lcom/embabel/dice/evidence/Searched;
+}
+
 public abstract class com/embabel/dice/incremental/AbstractIncrementalAnalyzer : com/embabel/dice/incremental/IncrementalAnalyzer {
 	public fun <init> (Lcom/embabel/dice/incremental/ChunkHistoryStore;Lcom/embabel/dice/incremental/IncrementalSourceFormatter;Lcom/embabel/dice/incremental/WindowConfig;Lcom/embabel/dice/common/ContentHasher;)V
 	public synthetic fun <init> (Lcom/embabel/dice/incremental/ChunkHistoryStore;Lcom/embabel/dice/incremental/IncrementalSourceFormatter;Lcom/embabel/dice/incremental/WindowConfig;Lcom/embabel/dice/common/ContentHasher;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
