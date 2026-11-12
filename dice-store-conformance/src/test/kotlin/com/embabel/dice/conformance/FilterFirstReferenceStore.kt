@@ -37,6 +37,9 @@ internal enum class ReferenceFault {
 
     /** Takes the nearest 30 times K of every proposition, drops the ones that fail the filter and cuts to K. */
     FILTERS_AFTER_OVER_FETCH,
+
+    /** Applies every filter field except `pinned`. */
+    IGNORES_PINNED,
 }
 
 /**
@@ -63,6 +66,8 @@ internal class FilterFirstReferenceStore(
             query.all { it == 0.0f } -> emptyList()
             fault == ReferenceFault.NONE ->
                 ranked(delegate.query(request.filter), query, request).take(request.topK)
+            fault == ReferenceFault.IGNORES_PINNED ->
+                ranked(delegate.query(request.filter.copy(pinned = null)), query, request).take(request.topK)
             fault == ReferenceFault.FILTERS_AFTER_CUT ->
                 filterAfterWindow(request, query, request.topK)
             else ->
