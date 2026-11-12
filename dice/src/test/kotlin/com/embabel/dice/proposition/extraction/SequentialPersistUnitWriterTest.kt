@@ -257,4 +257,18 @@ class SequentialPersistUnitWriterTest {
         )
         assertEquals("could not attribute 1 proposition(s) to extraction run run-1", throwing.cause.message)
     }
+
+    @Test
+    fun `E13 a link store that returns a negative count fails at RUN_LINKS and merges no relationship`() {
+        val outcome = writer(RecordingLinkStore { -1 }).write(unitWithEntity().withRun(key)) as PersistOutcome.Failed
+
+        assertThat(outcome.step).isEqualTo(PersistStep.RUN_LINKS)
+        assertThat(outcome.cause).isInstanceOf(IllegalStateException::class.java)
+        assertEquals("run link store returned a negative count: -1", outcome.cause.message)
+        assertThat(outcome.lineageFailure).isNull()
+        assertThat(outcome.runLinks).isNull()
+        assertThat(outcome.leftInStore)
+            .containsExactly(PersistStep.ENTITIES, PersistStep.PROPOSITIONS, PersistStep.RUN_LINKS)
+        verify(exactly = 0) { entityRepository.mergeRelationship(any(), any(), any()) }
+    }
 }
