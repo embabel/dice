@@ -39,6 +39,7 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
@@ -156,6 +157,20 @@ class StoreContractJavaInteropTest {
         assertTrue(close.compareTo(far) > 0);
         assertEquals(SimilarityScore.ofCosine(0.0), SimilarityScore.ofUnitInterval(0.5));
         assertThrows(IllegalArgumentException.class, () -> SimilarityScore.ofCosine(1.5));
+    }
+
+    @Test
+    void aMatchIsBuiltAndReadFromJava() {
+        Instant now = Instant.now();
+        Proposition proposition = Proposition.create("p1", "alice-session", "Alice likes tea", List.of(),
+                0.9, 0.0, null, List.of(), now, now, PropositionStatus.ACTIVE);
+        SimilarityScore score = SimilarityScore.ofCosine(0.8);
+
+        VectorMatch match = VectorMatch.of(proposition, score);
+
+        assertSame(proposition, match.getProposition());
+        assertEquals(score, match.getScore());
+        assertEquals(match, VectorMatch.of(proposition, SimilarityScore.ofCosine(0.8)));
     }
 
     @Test
