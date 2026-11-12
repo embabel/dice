@@ -31,6 +31,11 @@ public final class com/embabel/dice/common/ExtractionRunTransitioned : com/embab
 	public fun toString ()Ljava/lang/String;
 }
 
+public abstract interface class com/embabel/dice/common/resolver/ScopedCandidateSearcher {
+	public fun getResolutionLevel ()Lcom/embabel/dice/common/resolver/ResolutionLevel;
+	public abstract fun search (Lcom/embabel/dice/common/SuggestedEntity;Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/store/ContextReadScope;)Lcom/embabel/dice/common/resolver/SearchResult;
+}
+
 public final class com/embabel/dice/governance/DeclaredVersionDto {
 	public static final field Companion Lcom/embabel/dice/governance/DeclaredVersionDto$Companion;
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;ZLjava/lang/String;)V
@@ -1502,6 +1507,36 @@ public final class com/embabel/dice/store/ReadScopeViolationException : java/lan
 	public final fun getContextIdValue ()Ljava/lang/String;
 }
 
+public final class com/embabel/dice/store/ScopedReadSpec {
+	public static final field Companion Lcom/embabel/dice/store/ScopedReadSpec$Companion;
+	public synthetic fun <init> (Lcom/embabel/dice/store/ContextReadScope;Ljava/util/List;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public static final fun criteria ()Lcom/embabel/dice/proposition/PropositionQuery;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFilters ()Ljava/util/List;
+	public final fun getScope ()Lcom/embabel/dice/store/ContextReadScope;
+	public fun hashCode ()I
+	public final fun narrow (Lcom/embabel/dice/proposition/PropositionQuery;)Lcom/embabel/dice/store/ScopedReadSpec;
+	public final fun narrow (Ljava/util/function/UnaryOperator;)Lcom/embabel/dice/store/ScopedReadSpec;
+	public static final fun of (Lcom/embabel/dice/store/ContextReadScope;)Lcom/embabel/dice/store/ScopedReadSpec;
+	public final fun requireAllowed (Lcom/embabel/dice/proposition/PropositionQuery;)V
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/store/ScopedReadSpec$Companion {
+	public final fun criteria ()Lcom/embabel/dice/proposition/PropositionQuery;
+	public final fun of (Lcom/embabel/dice/store/ContextReadScope;)Lcom/embabel/dice/store/ScopedReadSpec;
+}
+
+public abstract interface class com/embabel/dice/store/ScopedReads {
+	public abstract fun count (Lcom/embabel/dice/store/ScopedReadSpec;Lcom/embabel/dice/proposition/PropositionQuery;)I
+	public abstract fun matchKeywords (Lcom/embabel/dice/store/ScopedReadSpec;Lcom/embabel/dice/proposition/PropositionQuery;Ljava/util/List;Lcom/embabel/dice/store/ReadBudget;)Ljava/util/List;
+	public abstract fun query (Lcom/embabel/dice/store/ScopedReadSpec;Lcom/embabel/dice/proposition/PropositionQuery;Lcom/embabel/dice/store/ReadBudget;)Ljava/util/List;
+}
+
+public abstract interface class com/embabel/dice/store/ScopedVectorSearch {
+	public abstract fun findNearest (Lcom/embabel/dice/store/ScopedReadSpec;Lcom/embabel/dice/store/VectorSearchRequest;Lcom/embabel/dice/store/ReadBudget;)Ljava/util/List;
+}
+
 public final class com/embabel/dice/store/SimilarityScore : java/lang/Comparable {
 	public static final field Companion Lcom/embabel/dice/store/SimilarityScore$Companion;
 	public synthetic fun <init> (DLkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -1557,6 +1592,8 @@ public final class com/embabel/dice/store/StoreCapabilitiesBuilder {
 
 public final class com/embabel/dice/store/StoreCapability : java/lang/Enum {
 	public static final field FILTERED_VECTOR_SEARCH Lcom/embabel/dice/store/StoreCapability;
+	public static final field SCOPED_READS Lcom/embabel/dice/store/StoreCapability;
+	public static final field SCOPED_VECTOR_SEARCH Lcom/embabel/dice/store/StoreCapability;
 	public final fun getContract ()Ljava/lang/Class;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/store/StoreCapability;

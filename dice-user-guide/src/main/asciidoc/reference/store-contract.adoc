@@ -1,9 +1,10 @@
 [[reference-store-contract]]
 === Store contract
 
-What a DICE proposition store states about its similarity search: whether it filters before it
-picks the nearest K, the rules it keeps when it does, and the one scale it reports scores on. The
-types are in `com.embabel.dice.store`. They are experimental and can change before 1.0.
+What a DICE proposition store states about the optional things it can do: whether its similarity
+search filters before it picks the nearest K, whether it runs reads held to a set of contexts, the
+rules it keeps for each, and the one scale it reports scores on. The types are in
+`com.embabel.dice.store`. They are experimental and can change before 1.0.
 
 Every store implements `PropositionStore`. A capability is an interface a store implements in
 addition, and lists in the `StoreCapabilities` it publishes.
@@ -18,7 +19,18 @@ addition, and lists in the `StoreCapabilities` it publishes.
 | `FILTERED_VECTOR_SEARCH`
 | `FilteredVectorSearch`
 | Similarity search that filters before it picks the nearest K.
+
+| `SCOPED_READS`
+| `ScopedReads`
+| Query, count and keyword match held to a set of contexts and a budget.
+
+| `SCOPED_VECTOR_SEARCH`
+| `ScopedVectorSearch`
+| Similarity search held to a set of contexts and a budget.
 |===
+
+Capabilities are added over time. A Java `switch` expression and a Kotlin `when` over
+`StoreCapability` keep a `default` or `else` branch.
 
 `StoreCapabilities.find` returns the store as a capability's interface when the store lists that
 capability, and null when it does not.
@@ -42,6 +54,8 @@ val search = StoreCapabilities.find<FilteredVectorSearch>(store)
 
 The descriptor also carries `vectorFiltering`, which states when the store's similarity search
 applies a filter.
+The mode describes similarity search that takes no read scope. A store lists `SCOPED_VECTOR_SEARCH`
+under any mode.
 
 [cols="1,4", options="header"]
 |===

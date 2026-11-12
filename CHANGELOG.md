@@ -124,6 +124,19 @@ and the consumer PRs that deliver it).
 
 ### Added
 
+- Scoped reads, **EXPERIMENTAL** (may change before 1.0). `ContextReadScope` names the contexts a
+  read may touch: at least one, each by id. `ScopedReadSpec` joins a scope with filters, and
+  `narrow` adds a filter and keeps the ones already there. `ReadBudget` caps the rows a read
+  returns and the vector candidates a similarity search has. `ScopedReads` is the interface a
+  store implements for query, count and keyword match under a spec and a budget, and
+  `ScopedVectorSearch` is the one for similarity search. A store that implements them lists
+  `StoreCapability.SCOPED_READS` and `StoreCapability.SCOPED_VECTOR_SEARCH`. A read that names a
+  context outside its scope throws `ReadScopeViolationException`, and a read that needs more than
+  its budget throws `ReadBudgetExceededException`. `ScopedCandidateSearcher` is entity candidate
+  search that takes a scope. These are interfaces and value types. See "Scoped reads" in the user
+  guide. **Compatibility: additive.** `StoreCapability` gains entries over time, so a Kotlin
+  `when` and a Java `switch` expression over it keep an `else` or `default` branch.
+
 - **EXPERIMENTAL** (shape may change before 1.0): a chunk's extraction output can be stored as one
   unit. `PersistUnit` holds the claims, the entities they refer to and an optional extraction run.
   `PersistUnitWriter.write` stores it and returns a `PersistOutcome`: `Stored`, or `Failed` with the
