@@ -49,6 +49,7 @@ public final class com/embabel/dice/metamodel/DriftCheckResult {
 	public fun <init> (Lcom/embabel/dice/metamodel/DriftReport;Lcom/embabel/dice/metamodel/MetamodelVersion;)V
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getContextId--400sNA ()Ljava/lang/String;
+	public final fun getContextIdValue ()Ljava/lang/String;
 	public final fun getDeclaredDiff ()Lcom/embabel/dice/metamodel/MetamodelDiff;
 	public final fun getDeclaredVersion ()Lcom/embabel/dice/metamodel/MetamodelVersion;
 	public final fun getDriftedEntityTypes ()Ljava/util/Set;
@@ -70,6 +71,7 @@ public final class com/embabel/dice/metamodel/DriftReport {
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getCapturedAt ()Ljava/time/Instant;
 	public final fun getContextId--400sNA ()Ljava/lang/String;
+	public final fun getContextIdValue ()Ljava/lang/String;
 	public final fun getDeclaredDiff ()Lcom/embabel/dice/metamodel/MetamodelDiff;
 	public final fun getDriftedEntityTypes ()Ljava/util/Set;
 	public final fun getDriftedRelationshipTypes ()Ljava/util/Set;

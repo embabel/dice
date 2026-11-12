@@ -213,6 +213,7 @@ data class CollapseUndoResult(
  * [CollapseUndoContextMismatchException] before anything is written.
  *
  * @property contextId the context both propositions must belong to
+ * @property contextIdValue [contextId] as a plain string, for Java callers.
  * @property survivorId the collapse's survivor — must match the decision that retired [retiredId]
  * @property retiredId the one retired member to restore
  */
@@ -226,6 +227,25 @@ data class CollapseUndoCommand(
         require(survivorId.isNotBlank()) { "survivorId must not be blank" }
         require(retiredId.isNotBlank()) { "retiredId must not be blank" }
     }
+
+    /** [contextId] as a plain string, for Java callers. */
+    @get:JsonIgnore
+    val contextIdValue: String get() = contextId.value
+
+    companion object {
+        /**
+         * Builds an undo command from plain values. Java uses this, because it cannot call the constructor.
+         *
+         * @param contextIdValue The context both propositions must belong to.
+         * @param survivorId The collapse's survivor.
+         * @param retiredId The one retired member to restore.
+         * @return The undo command.
+         * @throws IllegalArgumentException if [survivorId] or [retiredId] is blank
+         */
+        @JvmStatic
+        fun of(contextIdValue: String, survivorId: String, retiredId: String): CollapseUndoCommand =
+            CollapseUndoCommand(ContextId(contextIdValue), survivorId, retiredId)
+    }
 }
 
 /**
@@ -233,8 +253,10 @@ data class CollapseUndoCommand(
  * so the other context's graph is left exactly as it was.
  *
  * @property commandedContextId the context the undo was issued for
+ * @property commandedContextIdValue [commandedContextId] as a plain string, for Java callers.
  * @property propositionId the proposition that failed the check
  * @property actualContextId the context that proposition really belongs to
+ * @property actualContextIdValue [actualContextId] as a plain string, for Java callers.
  */
 class CollapseUndoContextMismatchException(
     val commandedContextId: ContextId,
@@ -243,7 +265,21 @@ class CollapseUndoContextMismatchException(
 ) : IllegalArgumentException(
     "Proposition $propositionId belongs to context ${actualContextId.value}, and the undo was " +
         "issued for context ${commandedContextId.value}; refusing to touch it",
-)
+) {
+
+    /** [commandedContextId] as a plain string, for Java callers. */
+    @get:JsonIgnore
+    val commandedContextIdValue: String get() = commandedContextId.value
+
+    /** [actualContextId] as a plain string, for Java callers. */
+    @get:JsonIgnore
+    val actualContextIdValue: String get() = actualContextId.value
+
+    private companion object {
+        /** Fixed, so an instance serialized by an earlier release can still be read. */
+        private const val serialVersionUID: Long = 4887747240668435430L
+    }
+}
 
 /**
  * The undo was wired with something it cannot work from: no audit records to authorize it, or a

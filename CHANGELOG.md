@@ -157,6 +157,18 @@ and the consumer PRs that deliver it).
   `withoutVector(repository)` build a resolver with no bakeoff. `new EntityMention(span, type)`
   leaves out the resolved id, the role and the hints. The forms that take the extra arguments are
   unchanged. **Compatibility: additive.**
+
+- Java can read the context id of every public type that has one. `PropositionContradicted`,
+  `UngroundedMentionsFound`, `BookmarkKey`, `HashKey`, `ProcessedChunkRecord`, `DreamLoopReport`,
+  `CollectorRunContext`, `CollapseUndoCommand`, `DriftReport` and `DriftCheckResult` gain
+  `getContextIdValue()`. `CollapseUndoContextMismatchException` gains `getCommandedContextIdValue()`
+  and `getActualContextIdValue()`. Each returns the `ContextId` as a `String`, and the typed Kotlin
+  properties are unchanged. The new getters are left out of Jackson output in every module, so
+  the JSON form of events and reports is the same as before. `BookmarkKey`, `HashKey`,
+  `CollectorRunContext` and `CollapseUndoCommand` also gain a static `of(...)` factory that takes
+  the context id as a `String`, because Java cannot call their constructors.
+  **Compatibility: additive.**
+
 - `PropositionPipeline` checks each mention an extractor returns against the text of its own
   proposition before entity resolution, and emits one `UngroundedMentionsFound` event per chunk
   listing every mention whose span is blank or does not appear in that text, with the reason. The

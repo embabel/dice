@@ -16,6 +16,7 @@
 package com.embabel.dice.incremental
 
 import com.embabel.agent.core.ContextId
+import com.fasterxml.jackson.annotation.JsonIgnore
 import java.time.Instant
 
 /**
@@ -24,7 +25,25 @@ import java.time.Instant
 data class BookmarkKey(
     val contextId: ContextId,
     val sourceId: String,
-)
+) {
+
+    /** [contextId] as a plain string, for Java callers. */
+    @get:JsonIgnore
+    val contextIdValue: String get() = contextId.value
+
+    companion object {
+        /**
+         * Builds a key from a plain context id string. Java uses this, because it cannot call the constructor.
+         *
+         * @param contextIdValue The context the bookmark belongs to.
+         * @param sourceId The incremental source.
+         * @return The key.
+         */
+        @JvmStatic
+        fun of(contextIdValue: String, sourceId: String): BookmarkKey =
+            BookmarkKey(ContextId(contextIdValue), sourceId)
+    }
+}
 
 /**
  * Composite key for content-hash deduplication within a [ContextId].
@@ -33,8 +52,26 @@ data class HashKey(
     val contextId: ContextId,
     val contentHash: String,
 ) {
+
+    /** [contextId] as a plain string, for Java callers. */
+    @get:JsonIgnore
+    val contextIdValue: String get() = contextId.value
+
     override fun toString(): String =
         "HashKey(contextId=$contextId, contentHash=${contentHash.take(8)}…)"
+
+    companion object {
+        /**
+         * Builds a key from a plain context id string. Java uses this, because it cannot call the constructor.
+         *
+         * @param contextIdValue The context the hash belongs to.
+         * @param contentHash The hash of the content.
+         * @return The key.
+         */
+        @JvmStatic
+        fun of(contextIdValue: String, contentHash: String): HashKey =
+            HashKey(ContextId(contextIdValue), contentHash)
+    }
 }
 
 /**
@@ -83,6 +120,11 @@ data class ProcessedChunkRecord(
     }
 
     val contextId: ContextId get() = bookmarkKey.contextId
+
+    /** [contextId] as a plain string, for Java callers. */
+    @get:JsonIgnore
+    val contextIdValue: String get() = contextId.value
+
     val sourceId: String get() = bookmarkKey.sourceId
     val contentHash: String get() = hashKey.contentHash
 
