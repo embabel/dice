@@ -210,8 +210,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         policy: LineageFailurePolicy,
     ): IncrementalPropositionExtraction {
         check(propositionRunLinkStore == null || persistUnitWriter == null) {
-            "a persist unit writer is bound on this extractor; it records run links in its own store, " +
-                "so pass null here and give the run link store to the writer"
+            "a persist unit writer is bound on this extractor and records run links in its own store. " +
+                "Pass null here and give the run link store to the writer"
         }
         check(runLineageBound.compareAndSet(false, true)) {
             "run lineage is already bound on this extractor; it binds once, before the extractor " +
@@ -260,11 +260,11 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     @ApiStatus.Experimental
     open fun withPersistUnitWriter(writer: PersistUnitWriter): IncrementalPropositionExtraction {
         check(propositionRunLinkStore == null) {
-            "a run link store is bound on this extractor; a bound writer records run links in its own " +
+            "a run link store is bound on this extractor. A bound writer records run links in its own " +
                 "store, so give that store to the writer and call withRunLineage(null, policy) here"
         }
         check(persistUnitWriterBound.compareAndSet(false, true)) {
-            "a persist unit writer is already bound on this extractor; it binds once, before the " +
+            "a persist unit writer is already bound on this extractor. Bind it once, before the " +
                 "extractor starts handling events"
         }
         this.persistUnitWriter = writer
