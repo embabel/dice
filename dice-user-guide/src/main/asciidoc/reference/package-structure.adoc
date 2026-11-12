@@ -88,6 +88,10 @@ The `dice` module is organised by responsibility. This is the map for finding th
   `PropositionAbstractor`, `PropositionContraster`, and the dream-loop passes
   (`SessionConsolidationPass`, `AbstractionPass`, `ContradictionResolutionPass`, `DecaySweepPass`).
 
+| `com.embabel.dice.evidence`
+| `Evidence` and its four kinds, `EvidenceItem`, `Citation`, `Retrieval`, `Searched`,
+  `DerivationRule`, `EvidenceConverter`, `EvidenceProvider`.
+
 | `com.embabel.dice.query.graph`
 | `GraphQuery`, `GraphNeighborhood`, `GraphPath`, `PropositionLineage`.
 

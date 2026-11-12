@@ -124,6 +124,16 @@ and the consumer PRs that deliver it).
 
 ### Added
 
+- Evidence types for a host that assembles model context, in the new package
+  `com.embabel.dice.evidence`. `EvidenceItem` is one claim with its `Citation`, its stored and
+  decayed confidence, its status, when it was recorded and revised, and a `Retrieval` for each
+  retriever that found it. The sealed `Evidence` type says what a lookup found: `Recorded` claims, a
+  `Derived` conclusion with its rule and input claims, `Missing` with what was searched, or
+  `Conflicting` claims with the conflict type. `EvidenceConverter` builds evidence from lists of
+  claims, scored hits, a lineage or a revision contradiction, and an empty list converts to
+  `Missing`. `EvidenceProvider` is the interface a lookup implements to return `Evidence`.
+  **EXPERIMENTAL** (shape may change before 1.0). **Compatibility: additive.**
+
 - **EXPERIMENTAL** (shape may change before 1.0): a chunk's extraction output can be stored as one
   unit. `PersistUnit` holds the claims, the entities they refer to and an optional extraction run.
   `PersistUnitWriter.write` stores it and returns a `PersistOutcome`: `Stored`, or `Failed` with the
