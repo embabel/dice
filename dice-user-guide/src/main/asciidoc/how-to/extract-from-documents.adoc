@@ -63,6 +63,99 @@ public void ingest(Path file) {
 
 If you forget `persist`, nothing is saved and nothing complains.
 
+==== Store a chunk as one unit
+
+`persist` makes several writes in a row, and a failure part way leaves the earlier ones in place. A
+`PersistUnitWriter` stores the same data as one `PersistUnit` and returns a `PersistOutcome`. It
+does not throw when a write fails.
+
+[source,java]
+----
+PersistUnitWriter writer =
+        PersistUnitWriter.sequential(propositionRepository, namedEntityDataRepository, runLinkStore);
+
+PersistOutcome outcome = writer.write(PersistUnit.of(propositions));
+if (outcome instanceof PersistOutcome.Failed failed) {
+    log.warn("failed at {}, left in store: {}", failed.getStep(), failed.getLeftInStore(), failed.getCause());
+}
+----
+
+The same call in Kotlin:
+
+[source,kotlin]
+----
+val outcome = writer.write(PersistUnit.of(propositions))
+if (outcome is PersistOutcome.Failed) {
+    log.warn("failed at {}, left in store: {}", outcome.step, outcome.leftInStore, outcome.cause)
+}
+----
+
+A unit holds the claims to save and the new and updated entities those claims refer to.
+`withRun(runKey)` adds the extraction run to attribute them to. The writer runs four steps in order.
+
+[cols="1,3", options="header"]
+|===
+|Step |Write
+
+|`ENTITIES` |Saves new entities and updates existing ones.
+|`PROPOSITIONS` |Saves the claims.
+|`RUN_LINKS` |Links the saved claims to the extraction run, when the unit has one.
+|`STRUCTURAL_RELATIONSHIPS` |Writes the relationships between chunks, claims and entities.
+|===
+
+`PersistOutcome.Failed` carries the step that failed, the original exception, and `leftInStore`: the
+steps whose writes may still be in the store. An empty `leftInStore` means nothing from the unit is
+stored.
+
+The writer decides what a failure leaves in the store.
+
+[cols="1,3", options="header"]
+|===
+|Writer |On failure
+
+|`PersistUnitWriter.sequential(...)` |Has no transaction of its own. Earlier steps stay written and
+`leftInStore` lists them. Inside a caller's transaction that rolls back, nothing is stored.
+|`PersistUnitWriter.inMemory(...)` |Restores claims, embeddings, entities and run links to their
+state before the call. Relationships already written stay, and `leftInStore` reports them. Takes
+`InMemoryPropositionRepository` and `InMemoryPropositionRunLinkStore`.
+|===
+
+Inside a transaction, call `persistedOrThrow()`. It returns the stored result, or throws when the
+outcome is `Failed`. The transaction then rolls back, and the unit is all or nothing on a store that
+joins it.
+
+Every exception `persistedOrThrow()` throws is unchecked, so a `@Transactional` method with no
+`rollbackFor` rolls back. A cause that is a `RuntimeException` is thrown as it is. A checked cause is
+wrapped in `PersistUnitFailedException`, which carries the step that failed and has the original
+exception as its cause.
+
+[source,java]
+----
+@Transactional
+public void store(List<Chunk> chunks, SourceAnalysisContext context) {
+    var propositions = pipeline.process(chunks, context);
+    writer.write(PersistUnit.of(propositions)).persistedOrThrow();
+}
+----
+
+The same method in Kotlin:
+
+[source,kotlin]
+----
+@Transactional
+fun store(chunks: List<Chunk>, context: SourceAnalysisContext) {
+    val propositions = pipeline.process(chunks, context)
+    writer.write(PersistUnit.of(propositions)).persistedOrThrow()
+}
+----
+
+`IncrementalPropositionExtraction` stores every chunk through a writer. The default is the
+sequential writer, built from the repositories the extractor already has.
+`withPersistUnitWriter(writer)` binds a different one.
+
+NOTE: `PersistUnit`, `PersistUnitWriter` and `PersistOutcome` are experimental. Their API may change
+before 1.0.
+
 ==== Only process what changed
 
 For a corpus that grows, use incremental analysis rather than reprocessing. `ChunkHistoryStore`
