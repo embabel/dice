@@ -15,10 +15,21 @@
  */
 package com.embabel.dice
 
+import com.embabel.dice.common.PropositionContradicted
+import com.embabel.dice.common.UngroundedMentionsFound
+import com.embabel.dice.incremental.BookmarkKey
+import com.embabel.dice.incremental.HashKey
+import com.embabel.dice.incremental.ProcessedChunkRecord
+import com.embabel.dice.projection.memory.DreamLoopReport
+import com.embabel.dice.projection.memory.collector.CollectorRunContext
+import com.embabel.dice.spi.CollapseUndoCommand
+import com.embabel.dice.spi.CollapseUndoContextMismatchException
+import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -85,5 +96,29 @@ class ContextIdValueJsonTest {
 
         assertTrue(names.contains("survivorId"), "expected a survivorId field, got $names")
         assertFalse(names.contains("contextIdValue"), "contextIdValue must not be serialized, got $names")
+    }
+
+    @Test
+    fun `every context id string getter is excluded from JSON`() {
+        val getters: List<Pair<Class<*>, String>> = listOf(
+            UngroundedMentionsFound::class.java to "getContextIdValue",
+            PropositionContradicted::class.java to "getContextIdValue",
+            BookmarkKey::class.java to "getContextIdValue",
+            HashKey::class.java to "getContextIdValue",
+            ProcessedChunkRecord::class.java to "getContextIdValue",
+            DreamLoopReport::class.java to "getContextIdValue",
+            CollectorRunContext::class.java to "getContextIdValue",
+            CollapseUndoCommand::class.java to "getContextIdValue",
+            CollapseUndoContextMismatchException::class.java to "getCommandedContextIdValue",
+            CollapseUndoContextMismatchException::class.java to "getActualContextIdValue",
+        )
+        assertEquals(10, getters.size, "expected ten context id getters in the list")
+
+        for ((type, methodName) in getters) {
+            assertTrue(
+                type.getMethod(methodName).isAnnotationPresent(JsonIgnore::class.java),
+                "${type.name}.$methodName must carry @get:JsonIgnore so it stays out of JSON",
+            )
+        }
     }
 }
