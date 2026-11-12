@@ -46,7 +46,8 @@ import org.jetbrains.annotations.ApiStatus
  * 4. No match scores below [VectorSearchRequest.minScore]. Matches are ordered closest first, and
  *    the cut to K is applied after ordering.
  * 5. A candidate with no embedding, or an all-zero embedding, is not returned and does not fail
- *    the search.
+ *    the search. A request whose text embeds to all zeros returns no matches. The scope and
+ *    budget checks come first, so such a request can still be refused.
  *
  * A store that implements this interface keeps every rule and lists
  * [StoreCapability.SCOPED_VECTOR_SEARCH]. The entry is independent of

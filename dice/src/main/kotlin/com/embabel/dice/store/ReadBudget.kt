@@ -85,14 +85,14 @@ class ReadBudget private constructor(
      *
      * @param requested The vector candidates the search has.
      * @throws ReadBudgetExceededException when [maxVectorCandidates] is zero, whatever
-     *   [requested] is, and when [requested] is more than [maxVectorCandidates].
+     *   non-negative [requested] is, and when [requested] is more than [maxVectorCandidates].
      * @throws IllegalArgumentException when [requested] is negative.
      */
     fun requireVectorCandidates(requested: Int) {
+        require(requested >= 0) { "A vector candidate count must not be negative, but was $requested" }
         if (maxVectorCandidates == 0) {
             throw ReadBudgetExceededException(ReadBudgetResource.VECTOR_CANDIDATES, 0, requested)
         }
-        require(requested >= 0) { "A vector candidate count must not be negative, but was $requested" }
         if (requested > maxVectorCandidates) {
             throw ReadBudgetExceededException(ReadBudgetResource.VECTOR_CANDIDATES, maxVectorCandidates, requested)
         }

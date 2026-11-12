@@ -51,7 +51,9 @@ ScopedReadSpec spec = ScopedReadSpec.of(scope);
 val scope = ContextReadScope.of(listOf(aliceSession, teamHandbook))
 ----
 
-A scope with no context, or with a null or blank id, throws `IllegalArgumentException`. Ids are
+A scope with no context, or with a null or blank id in its collection, throws
+`IllegalArgumentException`. A null passed as the first id of `ofValues(first, more...)` throws
+`NullPointerException`. Ids are
 compared exactly, and no id stands for every context.
 
 ==== Narrowing
@@ -172,8 +174,15 @@ the spec and the read's query. That selection is the store's own work.
 * One read computes effective confidence at one time: the query's `effectiveConfidenceAsOf`, or the
   time of the call.
 
-The store also makes three checks before it reads: `spec.requireAllowed(query)`,
-`budget.requireRows(count)` and `budget.requireVectorCandidates(count)`. The checks select nothing.
+The store also makes these checks before it reads. They select nothing.
+
+|===
+| Check | Called by
+
+| `spec.requireAllowed(query)` | Every read, with the read's query or the request's filter
+| `budget.requireRows(count)` | `query` and `matchKeywords` with the rows they would return, and `findNearest` with `topK`
+| `budget.requireVectorCandidates(count)` | `findNearest` only, with the candidates that have an embedding
+|===
 
 The full rules are in the KDoc of `ScopedReads` and `ScopedVectorSearch`. The capability table is in
 <<reference-store-contract-capabilities>>.

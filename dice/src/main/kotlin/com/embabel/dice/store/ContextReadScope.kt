@@ -80,7 +80,8 @@ class ContextReadScope private constructor(contextIdValues: Collection<String>) 
          * @param first The id of a context a read may touch.
          * @param more The ids of further contexts.
          * @return The scope.
-         * @throws IllegalArgumentException when an id is blank.
+         * @throws IllegalArgumentException when an id is blank, or an id in [more] is null.
+         * @throws NullPointerException when [first] is null.
          */
         @JvmStatic
         fun ofValues(first: String, vararg more: String): ContextReadScope = ofValues(listOf(first, *more))

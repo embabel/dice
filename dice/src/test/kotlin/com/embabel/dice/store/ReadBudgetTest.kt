@@ -82,5 +82,6 @@ class ReadBudgetTest {
         val budget = ReadBudget.ofRows(10).withMaxVectorCandidates(500)
         assertThrows(IllegalArgumentException::class.java) { budget.requireRows(-1) }
         assertThrows(IllegalArgumentException::class.java) { budget.requireVectorCandidates(-1) }
+        assertThrows(IllegalArgumentException::class.java) { ReadBudget.ofRows(10).requireVectorCandidates(-1) }
     }
 }
