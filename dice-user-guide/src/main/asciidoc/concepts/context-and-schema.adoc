@@ -50,6 +50,7 @@ with a `contextId` property has.
 
 [source,java]
 ----
+CollapseUndoCommand command = CollapseUndoCommand.of("acme", survivorId, retiredId);
 try {
     CollectorSignalsKt.undoSingleCollapse(command, traceQuery, propositions, collectorRecords);
 } catch (CollapseUndoContextMismatchException mismatch) {
@@ -63,6 +64,7 @@ Kotlin reads the typed properties.
 
 [source,kotlin]
 ----
+val command = CollapseUndoCommand(ContextId("acme"), survivorId, retiredId)
 try {
     undoSingleCollapse(command, traceQuery, propositions, collectorRecords)
 } catch (mismatch: CollapseUndoContextMismatchException) {
@@ -74,6 +76,24 @@ try {
 What a context should represent is your decision. Common choices: one per user, one per tenant, one
 per conversation, one per document collection. Contexts do not nest; if you need a hierarchy, encode
 it in the value and query by prefix at your own layer.
+
+Four types that a caller builds take a `ContextId` in their constructor. Java builds them with a
+static `of(...)` that takes the id as a string.
+
+[source,java]
+----
+BookmarkKey bookmark = BookmarkKey.of("acme", "conversation-1");
+HashKey hash = HashKey.of("acme", contentHash);
+CollectorRunContext run = CollectorRunContext.of("run-1", "acme");
+CollapseUndoCommand command = CollapseUndoCommand.of("acme", survivorId, retiredId);
+----
+
+Kotlin calls the constructors.
+
+[source,kotlin]
+----
+val bookmark = BookmarkKey(ContextId("acme"), "conversation-1")
+----
 
 ==== SourceAnalysisContext
 

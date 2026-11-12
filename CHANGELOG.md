@@ -164,7 +164,10 @@ and the consumer PRs that deliver it).
   `getContextIdValue()`. `CollapseUndoContextMismatchException` gains `getCommandedContextIdValue()`
   and `getActualContextIdValue()`. Each returns the `ContextId` as a `String`, and the typed Kotlin
   properties are unchanged. In the `dice` module the new getters are left out of Jackson output, so
-  the JSON form of events and reports is the same as before. **Compatibility: additive.**
+  the JSON form of events and reports is the same as before. `BookmarkKey`, `HashKey`,
+  `CollectorRunContext` and `CollapseUndoCommand` also gain a static `of(...)` factory that takes
+  the context id as a `String`, because Java cannot call their constructors.
+  **Compatibility: additive.**
 
 - `PropositionPipeline` checks each mention an extractor returns against the text of its own
   proposition before entity resolution, and emits one `UngroundedMentionsFound` event per chunk
