@@ -151,6 +151,14 @@ and the consumer PRs that deliver it).
   that cannot do what it is asked throws `UnsupportedCapabilityException`. See "Store contract"
   in the user guide reference. **Compatibility: additive.**
 
+- Java can name the proposition extractor's builder, process one text without a null check, call an
+  extraction strategy with a lambda, and use the failure breaker. `LlmPropositionExtractor.builder(llm)`
+  returns the top-level `LlmPropositionExtractorBuilder`; `withLlm` and its nested builder are unchanged.
+  `PropositionPipeline.processText(text, sourceId, context)` is `processOnce` without a history store,
+  and its result is not nullable. `ExtractionExecutionStrategy.executeAll` takes a
+  `java.util.function.Function` and is a default method, so existing strategies have it.
+  `ConsecutiveFailureBreaker.attemptCall` takes a `Callable` and returns a
+  `ConsecutiveFailureBreaker.Outcome`. **Compatibility: additive.**
 - `PropositionPipeline` checks each mention an extractor returns against the text of its own
   proposition before entity resolution, and emits one `UngroundedMentionsFound` event per chunk
   listing every mention whose span is blank or does not appear in that text, with the reason. The

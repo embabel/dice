@@ -84,6 +84,39 @@ System.out.printf("Re-embedded %d propositions; index recreated: %s%n",
         report.getPropositions(), report.getIndexRecreated());
 ----
 
+A repository you write can stop re-embedding when the embedding service is down. DICE's own
+repositories use `ConsecutiveFailureBreaker` for this: it runs each call until a number of calls in a
+row have failed, five by default, and then skips the rest.
+
+[source,java]
+----
+var breaker = new ConsecutiveFailureBreaker();
+for (Proposition proposition : propositions) {
+    ConsecutiveFailureBreaker.Outcome<float[]> outcome =
+            breaker.attemptCall(() -> embeddingService.embed(proposition.getText()));
+    if (outcome.isSkipped()) {
+        skipped.add(proposition.getId());
+    } else if (outcome.isFailure()) {
+        failed.put(proposition.getId(), outcome.getException());
+    } else {
+        save(proposition, outcome.getValue());
+    }
+}
+----
+
+[source,kotlin]
+----
+val breaker = ConsecutiveFailureBreaker()
+for (proposition in propositions) {
+    val result = breaker.attempt { embeddingService.embed(proposition.text) }
+    when {
+        result == null -> skipped += proposition.id
+        result.isFailure -> failed[proposition.id] = result.exceptionOrNull()!!
+        else -> save(proposition, result.getOrThrow())
+    }
+}
+----
+
 ==== Example
 
 [source,java]
