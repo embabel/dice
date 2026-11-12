@@ -866,6 +866,27 @@ public final class com/embabel/dice/common/SuggestedEntity : com/embabel/dice/pr
 public abstract interface class com/embabel/dice/common/SuggestedEntityResolution : com/embabel/dice/common/Resolution {
 }
 
+public final class com/embabel/dice/common/UngroundedMentionsFound : com/embabel/dice/common/DiceEvent {
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/pipeline/UngroundedMentionHandling;Ljava/time/Instant;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/pipeline/UngroundedMentionHandling;Ljava/time/Instant;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/pipeline/UngroundedMentionHandling;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-SSYM5D4 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/util/List;
+	public final fun component4 ()Lcom/embabel/dice/pipeline/UngroundedMentionHandling;
+	public final fun component5 ()Ljava/time/Instant;
+	public final fun copy-vtO6ncc (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/pipeline/UngroundedMentionHandling;Ljava/time/Instant;)Lcom/embabel/dice/common/UngroundedMentionsFound;
+	public static synthetic fun copy-vtO6ncc$default (Lcom/embabel/dice/common/UngroundedMentionsFound;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/pipeline/UngroundedMentionHandling;Ljava/time/Instant;ILjava/lang/Object;)Lcom/embabel/dice/common/UngroundedMentionsFound;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getChunkId ()Ljava/lang/String;
+	public final fun getContextId-SSYM5D4 ()Ljava/lang/String;
+	public final fun getHandling ()Lcom/embabel/dice/pipeline/UngroundedMentionHandling;
+	public final fun getMentions ()Ljava/util/List;
+	public fun getTimestamp ()Ljava/time/Instant;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class com/embabel/dice/common/VetoedEntity : com/embabel/dice/common/SuggestedEntityResolution {
 	public fun <init> (Lcom/embabel/dice/common/SuggestedEntity;)V
 	public final fun component1 ()Lcom/embabel/dice/common/SuggestedEntity;
@@ -2245,6 +2266,7 @@ public final class com/embabel/dice/pipeline/PropositionPipeline {
 	public static final fun withExtractor (Lcom/embabel/dice/proposition/PropositionExtractor;)Lcom/embabel/dice/pipeline/PropositionPipeline;
 	public final fun withMentionFilter (Lcom/embabel/dice/common/filter/MentionFilter;)Lcom/embabel/dice/pipeline/PropositionPipeline;
 	public final fun withRevision (Lcom/embabel/dice/proposition/revision/PropositionReviser;Lcom/embabel/dice/proposition/PropositionRepository;)Lcom/embabel/dice/pipeline/PropositionPipeline;
+	public final fun withUngroundedMentions (Lcom/embabel/dice/pipeline/UngroundedMentionHandling;)Lcom/embabel/dice/pipeline/PropositionPipeline;
 }
 
 public final class com/embabel/dice/pipeline/PropositionPipeline$Companion {
@@ -2277,6 +2299,37 @@ public final class com/embabel/dice/pipeline/PropositionResults : com/embabel/di
 public final class com/embabel/dice/pipeline/SerialExtractionStrategy : com/embabel/dice/pipeline/ExtractionExecutionStrategy {
 	public static final field INSTANCE Lcom/embabel/dice/pipeline/SerialExtractionStrategy;
 	public fun execute (Ljava/util/List;Lkotlin/jvm/functions/Function1;)Ljava/util/List;
+}
+
+public final class com/embabel/dice/pipeline/UngroundedMention {
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/SuggestedMention;Lcom/embabel/dice/pipeline/UngroundedMention$Reason;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Lcom/embabel/dice/proposition/SuggestedMention;
+	public final fun component3 ()Lcom/embabel/dice/pipeline/UngroundedMention$Reason;
+	public final fun copy (Ljava/lang/String;Lcom/embabel/dice/proposition/SuggestedMention;Lcom/embabel/dice/pipeline/UngroundedMention$Reason;)Lcom/embabel/dice/pipeline/UngroundedMention;
+	public static synthetic fun copy$default (Lcom/embabel/dice/pipeline/UngroundedMention;Ljava/lang/String;Lcom/embabel/dice/proposition/SuggestedMention;Lcom/embabel/dice/pipeline/UngroundedMention$Reason;ILjava/lang/Object;)Lcom/embabel/dice/pipeline/UngroundedMention;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMention ()Lcom/embabel/dice/proposition/SuggestedMention;
+	public final fun getPropositionText ()Ljava/lang/String;
+	public final fun getReason ()Lcom/embabel/dice/pipeline/UngroundedMention$Reason;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/pipeline/UngroundedMention$Reason : java/lang/Enum {
+	public static final field BLANK_SPAN Lcom/embabel/dice/pipeline/UngroundedMention$Reason;
+	public static final field SPAN_NOT_IN_PROPOSITION Lcom/embabel/dice/pipeline/UngroundedMention$Reason;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/pipeline/UngroundedMention$Reason;
+	public static fun values ()[Lcom/embabel/dice/pipeline/UngroundedMention$Reason;
+}
+
+public final class com/embabel/dice/pipeline/UngroundedMentionHandling : java/lang/Enum {
+	public static final field DROP Lcom/embabel/dice/pipeline/UngroundedMentionHandling;
+	public static final field KEEP Lcom/embabel/dice/pipeline/UngroundedMentionHandling;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/pipeline/UngroundedMentionHandling;
+	public static fun values ()[Lcom/embabel/dice/pipeline/UngroundedMentionHandling;
 }
 
 public final class com/embabel/dice/projection/graph/AlwaysProjectPolicy : com/embabel/dice/projection/graph/ProjectionPolicy {
