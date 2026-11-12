@@ -19,11 +19,12 @@ import com.embabel.dice.store.StoreCapabilities
 import org.jetbrains.annotations.ApiStatus
 
 /**
- * The database-specific answers the DICE stores in this module need. One implementation per
- * database.
+ * The answers that differ between databases for the DICE stores in this module, one
+ * implementation per database. The stores hold the queries, and a dialect states what the
+ * database under them accepts and can do.
  *
- * The stores hold the queries. A dialect answers the questions whose answer differs between
- * databases, so support for another database is one implementation of this interface.
+ * The stores in this module do not take a dialect, so implementing this interface changes no
+ * store's behaviour.
  *
  * ```java
  * final class ExampleDialect implements StoreDialect {
@@ -67,15 +68,16 @@ import org.jetbrains.annotations.ApiStatus
 interface StoreDialect {
 
     /**
-     * The most that stores on this database can do. A store publishes the part that applies to
-     * it: the proposition store publishes all of it, and a store with no similarity search
-     * narrows it with `withoutSimilaritySearch`.
+     * The most that stores on this database can do. A store that uses the dialect publishes the
+     * part that applies to it, and a store with no similarity search narrows it with
+     * `withoutSimilaritySearch`.
      */
     val capabilities: StoreCapabilities
 
     /**
-     * The query constructs this database accepts. A store uses a construct only when it is listed
-     * here. Each [DialectFeature] documents what a store does without it.
+     * The query constructs this database accepts. A store that uses the dialect uses a construct
+     * only when it is listed here. Each [DialectFeature] documents what such a store does without
+     * it.
      */
     val features: Set<DialectFeature>
 

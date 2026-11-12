@@ -279,8 +279,9 @@ A store whose similarity search filters after it picks the nearest K states that
 [[reference-store-contract-dialect]]
 ==== Store dialects
 
-The stores in `dice-storage` hold the queries and ask a `StoreDialect` for the answers that differ
-between databases. Support for another database is one `StoreDialect`.
+A `StoreDialect` states the answers that differ between databases for the stores in `dice-storage`,
+one implementation per database. The stores do not take a dialect, so implementing one changes no
+store's behaviour.
 
 [source,java]
 ----
@@ -315,7 +316,8 @@ final class ExampleDialect implements StoreDialect {
 | Member | Answer
 
 | `capabilities`
-| The most that stores on this database can do. A store publishes the part that applies to it.
+| The most that stores on this database can do. A store that uses the dialect publishes the part
+  that applies to it.
 
 | `features`
 | The query constructs this database accepts.
