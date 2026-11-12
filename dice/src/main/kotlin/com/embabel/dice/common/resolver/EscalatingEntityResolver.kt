@@ -246,6 +246,7 @@ class EscalatingEntityResolver(
          * @param candidateBakeoff Optional LLM selector for ambiguous cases; null means mint a new entity
          */
         @JvmStatic
+        @JvmOverloads
         fun create(
             repository: NamedEntityDataRepository,
             candidateBakeoff: CandidateBakeoff? = null,
@@ -265,6 +266,7 @@ class EscalatingEntityResolver(
          * @param candidateBakeoff Optional LLM selector for ambiguous cases; null means mint a new entity
          */
         @JvmStatic
+        @JvmOverloads
         fun withoutVector(
             repository: NamedEntityDataRepository,
             candidateBakeoff: CandidateBakeoff? = null,
