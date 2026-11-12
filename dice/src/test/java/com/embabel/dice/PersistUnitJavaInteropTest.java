@@ -26,12 +26,15 @@ import com.embabel.dice.proposition.extraction.InMemoryPropositionRunLinkStore;
 import com.embabel.dice.proposition.extraction.PersistOutcome;
 import com.embabel.dice.proposition.extraction.PersistStep;
 import com.embabel.dice.proposition.extraction.PersistUnit;
+import com.embabel.dice.proposition.extraction.PersistUnitFailedException;
 import com.embabel.dice.proposition.extraction.PersistUnitWriter;
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -105,6 +108,21 @@ class PersistUnitJavaInteropTest {
         assertNull(claims.findById("java-unit-claim"));
         Exception thrown = assertThrows(Exception.class, outcome::persistedOrThrow);
         assertSame(failed.getCause(), thrown);
+    }
+
+    @Test
+    void aCheckedCauseIsCaughtAsPersistUnitFailedException() {
+        IOException cause = new IOException("store went away");
+        PersistOutcome outcome =
+                PersistOutcome.failed(PersistStep.PROPOSITIONS, cause, Set.of(PersistStep.ENTITIES));
+
+        try {
+            outcome.persistedOrThrow();
+            fail("Expected persistedOrThrow to throw");
+        } catch (PersistUnitFailedException e) {
+            assertEquals(PersistStep.PROPOSITIONS, e.getStep());
+            assertSame(cause, e.getCause());
+        }
     }
 
     @Test
