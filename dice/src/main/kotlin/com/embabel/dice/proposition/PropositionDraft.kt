@@ -34,7 +34,9 @@ import java.util.UUID
  * The lists and the map a draft holds are read-only copies, taken when a step or `toDraft()`
  * receives them. A call such as `draft.getSourceIds().clear()` throws
  * `UnsupportedOperationException`. A proposition built from the draft holds the same read-only
- * collections.
+ * collections. The draft does not copy what its values hold: the lists inside a
+ * [TemporalMetadata], the hints map inside an [EntityMention] and the values in the metadata map
+ * are kept as given, as [Proposition] keeps them.
  *
  * ```java
  * Proposition fact = Proposition.draft("acme", "Alice lives in Paris", 0.9)
@@ -44,12 +46,15 @@ import java.util.UUID
  *         .toProposition();
  * ```
  *
- * A time that is not set follows the one before it: `contentRevised` follows `created`, and
- * `metadataRevised` and `lastAccessed` follow `contentRevised`. When no time is set at all, all
- * four are the moment [toProposition] runs.
+ * A time that is not set is filled in when [toProposition] runs. `created` and `contentRevised`
+ * stand in for each other: with one of them set the other takes its value, and with neither set
+ * both are the moment [toProposition] runs. `metadataRevised` and `lastAccessed` take the value
+ * `contentRevised` ends up with.
  *
  * Each [toProposition] call on a draft without an id generates a new id, so two calls give two
- * different propositions. Set an id with [withId] to build the same proposition every time.
+ * different propositions. [withId] fixes the id. For two calls to build equal propositions, also
+ * set a time with [withCreated] or [withContentRevised], because a draft with neither takes the
+ * build moment.
  *
  * @property contextId The context the proposition belongs to.
  * @property text The statement in natural language.
@@ -60,7 +65,8 @@ import java.util.UUID
  * @property importance How much the statement matters, from 0.0 to 1.0.
  * @property reasoning Why the statement was extracted, or null.
  * @property grounding The ids of the chunks that support the statement.
- * @property created When the proposition was first created, or null to use the default.
+ * @property created When the proposition was first created, or null to follow [contentRevised],
+ *   or the build moment when both are null.
  * @property contentRevised When the content last changed, or null to follow [created].
  * @property metadataRevised When the metadata last changed, or null to follow [contentRevised].
  * @property lastAccessed When the proposition was last used, or null to follow [contentRevised].

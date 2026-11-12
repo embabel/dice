@@ -170,9 +170,9 @@ and the consumer PRs that deliver it).
   **Compatibility: additive.**
 
 - A `Proposition` can be built step by step. `Proposition.draft(contextIdValue, text, confidence)`
-  returns an immutable `PropositionDraft` with a `with*` step for every value except the context id
+  returns a `PropositionDraft` with a `with*` step for every value except the context id
   and `toProposition()` at the end, so Java names each value where `Proposition.create` takes eleven
-  positional arguments.
+  positional arguments. Each step returns a new draft and leaves the one it is called on as it was.
   `Proposition.toDraft()` starts a draft from an existing proposition. Kotlin has the same steps in
   a block, `Proposition(contextId, text, confidence) { decay(0.1) }`. Validation is the
   constructor's, with the same messages. `Proposition.create` and the constructor are unchanged.
