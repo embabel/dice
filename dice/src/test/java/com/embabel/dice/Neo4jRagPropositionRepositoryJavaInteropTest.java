@@ -21,6 +21,7 @@ import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.proposition.PropositionStore;
+import com.embabel.dice.proposition.VectorSearchCapable;
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository;
 import com.embabel.dice.proposition.store.Neo4jRagPropositionRepository;
 import com.embabel.dice.proposition.store.RagAdapterPropositionRepository;
@@ -30,30 +31,51 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 /**
- * Shows that Java code can still use the store under its old name, which is now a deprecated
- * subclass of RagAdapterPropositionRepository.
+ * Shows that Java code can build and use the store under both names: the current one, and the old
+ * one, which is now a deprecated subclass of RagAdapterPropositionRepository.
  */
 @SuppressWarnings("deprecation")
 class Neo4jRagPropositionRepositoryJavaInteropTest {
 
     @Test
+    void newNameBuildsAWorkingStoreFromJava() {
+        NamedEntityDataRepository entityRepo = entityRepository();
+        RagAdapterPropositionRepository store =
+                new RagAdapterPropositionRepository(new InMemoryPropositionRepository(), entityRepo);
+
+        assertSavesAndFinds(store);
+        assertInstanceOf(VectorSearchCapable.class, store);
+        assertSame(entityRepo, store.getEntityRepository());
+    }
+
+    @Test
     void oldNameIsVisibleToJavaAndBehavesLikeTheNewOne() {
-        NamedEntityDataRepository entityRepo = new InMemoryNamedEntityDataRepository(
-                DataDictionary.fromClasses("java-old-name"), null);
+        NamedEntityDataRepository entityRepo = entityRepository();
         Neo4jRagPropositionRepository store =
                 new Neo4jRagPropositionRepository(new InMemoryPropositionRepository(), entityRepo);
 
-        PropositionStore asStore = store;
         RagAdapterPropositionRepository asNew = store;
 
+        assertSavesAndFinds(store);
+        assertInstanceOf(VectorSearchCapable.class, store);
+        assertSame(entityRepo, asNew.getEntityRepository());
+        assertSame(entityRepo, store.getEntityRepository());
+    }
+
+    private static NamedEntityDataRepository entityRepository() {
+        return new InMemoryNamedEntityDataRepository(DataDictionary.fromClasses("java-interop"), null);
+    }
+
+    private static void assertSavesAndFinds(PropositionStore store) {
         Instant now = Instant.now();
-        Proposition saved = asStore.save(Proposition.create(
-                "java-old-name-id",
-                "java-old-name",
+        Proposition saved = store.save(Proposition.create(
+                "java-interop-id",
+                "java-interop",
                 "Alice is a software engineer",
                 List.of(),
                 0.8,
@@ -67,9 +89,8 @@ class Neo4jRagPropositionRepositoryJavaInteropTest {
                 PropositionStatus.ACTIVE
         ));
 
-        Proposition found = asStore.findById(saved.getId());
+        Proposition found = store.findById(saved.getId());
         assertNotNull(found);
         assertEquals("Alice is a software engineer", found.getText());
-        assertSame(entityRepo, asNew.getEntityRepository());
     }
 }
