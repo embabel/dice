@@ -20,8 +20,8 @@ and the consumer PRs that deliver it).
   `NamedEntityDataRepository`. The old name stays as a deprecated class that extends the new
   one, with the same constructor, so Kotlin code, Java code and code already compiled against
   the old name keep working. `RagAdapterPropositionRepository` is `open` for that reason. A
-  store built through the new name logs under the new class name. **Compatibility:
-  additive.** Move to `RagAdapterPropositionRepository` when convenient; the old name will be
+  store logs under the name it was built with, so log settings for the old name still apply to
+  stores built through it. **Compatibility: additive.** Move to `RagAdapterPropositionRepository` when convenient; the old name will be
   removed in a later major release.
 
 - The `dice` module no longer depends on `org.javers:javers-core`. DICE never called it.

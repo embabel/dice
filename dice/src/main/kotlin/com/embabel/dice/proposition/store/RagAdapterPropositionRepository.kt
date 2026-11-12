@@ -79,7 +79,9 @@ open class RagAdapterPropositionRepository(
     val entityRepository: NamedEntityDataRepository,
 ) : PropositionStore by crud, VectorSearchCapable {
 
-    private val logger = LoggerFactory.getLogger(RagAdapterPropositionRepository::class.java)
+    // Named for the class that was actually built, so a store made through the old name keeps
+    // logging under the old category.
+    private val logger = LoggerFactory.getLogger(javaClass)
 
     /**
      * Disambiguates the diamond between [VectorSearchCapable.query] and [PropositionStore.query]
