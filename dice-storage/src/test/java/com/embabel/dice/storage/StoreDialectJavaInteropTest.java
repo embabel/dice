@@ -48,7 +48,12 @@ class StoreDialectJavaInteropTest {
 
         @Override
         public boolean isUniquenessViolation(Throwable failure) {
-            return failure instanceof SQLException sql && "23505".equals(sql.getSQLState());
+            for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+                if (cause instanceof SQLException sql && "23505".equals(sql.getSQLState())) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 
@@ -72,6 +77,8 @@ class StoreDialectJavaInteropTest {
     @Test
     void aDialectTellsAUniquenessViolationFromAnotherFailure() {
         assertTrue(dialect.isUniquenessViolation(new SQLException("duplicate key", "23505")));
+        assertTrue(dialect.isUniquenessViolation(
+                new IllegalStateException("write failed", new SQLException("duplicate key", "23505"))));
         assertFalse(dialect.isUniquenessViolation(new SQLException("syntax error", "42601")));
         assertFalse(dialect.isUniquenessViolation(new IllegalStateException("boom")));
     }

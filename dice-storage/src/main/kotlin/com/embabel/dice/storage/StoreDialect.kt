@@ -41,7 +41,12 @@ import org.jetbrains.annotations.ApiStatus
  *
  *     @Override
  *     public boolean isUniquenessViolation(Throwable failure) {
- *         return failure instanceof SQLException sql && "23505".equals(sql.getSQLState());
+ *         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+ *             if (cause instanceof SQLException sql && "23505".equals(sql.getSQLState())) {
+ *                 return true;
+ *             }
+ *         }
+ *         return false;
  *     }
  * }
  * ```
