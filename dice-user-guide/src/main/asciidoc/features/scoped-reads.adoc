@@ -2,9 +2,8 @@
 === Scoped reads
 
 *Activation*: a store that lists `StoreCapability.SCOPED_READS`, and
-`StoreCapability.SCOPED_VECTOR_SEARCH` for similarity search. No store that ships with DICE lists
-either capability, so `StoreCapabilities.find` returns null on each of them. The types are the
-contract a store implements.
+`StoreCapability.SCOPED_VECTOR_SEARCH` for similarity search. `StoreCapabilities.find` returns null
+for a store that does not list the capability. The types are the contract a store implements.
 
 *Availability*: `dice`, package `com.embabel.dice.store`.
 
@@ -183,8 +182,7 @@ The full rules are in the KDoc of `ScopedReads` and `ScopedVectorSearch`. The ca
 
 `ScopedCandidateSearcher` in `com.embabel.dice.common.resolver` finds the existing entities a suggested
 entity may refer to. Its `search` method takes a `ContextReadScope`, and it returns only entities that
-a reader of one of those contexts may see. No resolver that ships with DICE takes a
-`ScopedCandidateSearcher`.
+a reader of one of those contexts may see.
 
 [source,java]
 ----
