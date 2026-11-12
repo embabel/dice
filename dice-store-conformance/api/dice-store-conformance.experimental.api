@@ -138,6 +138,7 @@ public abstract class com/embabel/dice/conformance/AbstractFilteredVectorSearchC
 	public fun <init> ()V
 	public fun aStatusFilterIsAppliedBeforeTheCutOrRefused ()V
 	public fun aStoreThatListsFilteredVectorSearchImplementsIt ()V
+	public fun eachFilterFieldIsAppliedOrRefused ()V
 	protected fun excludedCount ()I
 	public fun kMatchesComeBackWhenANearerContextIsExcluded ()V
 	public fun matchesAreOrderedClosestFirstAndCutAfterOrdering ()V

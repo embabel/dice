@@ -16,6 +16,7 @@
 package com.embabel.dice.conformance
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStatus
@@ -26,12 +27,16 @@ import com.embabel.dice.store.StoreCapability
 import com.embabel.dice.store.UnsupportedCapabilityException
 import com.embabel.dice.store.VectorSearchRequest
 import org.jetbrains.annotations.ApiStatus
+import org.junit.jupiter.api.Assertions.assertAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.function.Executable
+import java.time.Instant
 
 /**
  * Cross-backend contract for [FilteredVectorSearch]. It checks that a store applies the filter
@@ -47,6 +52,11 @@ import org.junit.jupiter.api.Test
  * that fail the filter and then cuts to K returns `min(K, N - excludedCount())` matches. The cases
  * run at K of 1 and of 5, so such a store passes only with a fixed window of `excludedCount() + 5`
  * or more, or with a window that grows with K by a factor of `excludedCount() + 1` or more.
+ *
+ * One case sets each of these filter fields in a context of its own: `entityId`, `minLevel`,
+ * `pinned`, `minConfidence`, `createdAfter` and `minEffectiveConfidence`. For each field the store
+ * returns the five propositions that pass it, or refuses the filter with
+ * [UnsupportedCapabilityException]. The case names every field the store gets wrong in one run.
  *
  * EXPERIMENTAL. This API may change before 1.0.
  */
@@ -144,6 +154,52 @@ abstract class AbstractFilteredVectorSearchContractTest {
     private fun texts(search: FilteredVectorSearch, request: VectorSearchRequest): List<String> =
         search.findNearest(request).map { it.proposition.text }
 
+    /**
+     * Seeds one filter field in a context of its own and checks the store applies or refuses it.
+     * Five propositions that fail the field sit at 1.0 to 1.4 degrees. Five that pass sit at 30 to
+     * 70 degrees.
+     *
+     * @param store The store to seed.
+     * @param search The search under test.
+     * @param field The name of the filter field. It names the context and the labels.
+     * @param filter Adds the field to a filter on the field's context.
+     * @param failing Turns a fixture proposition into one that fails the field.
+     * @param passing Turns a fixture proposition into one that passes the field.
+     * @return A message that starts with the field name when the store gets the field wrong, or null.
+     */
+    private fun fieldFailure(
+        store: PropositionStore,
+        search: FilteredVectorSearch,
+        field: String,
+        filter: (PropositionQuery) -> PropositionQuery,
+        failing: (Proposition) -> Proposition,
+        passing: (Proposition) -> Proposition,
+    ): String? {
+        val context = "vector-field-$field"
+        (0 until 5).forEach { i ->
+            store.save(failing(proposition("$field-fail-$i", 1.0 + i / 10.0, context, PropositionStatus.ACTIVE)))
+        }
+        val passingTexts = matchDegrees.mapIndexed { i, degrees ->
+            store.save(passing(proposition("$field-pass-$i", degrees, context, PropositionStatus.ACTIVE))).text
+        }
+        val request = VectorSearchRequest.forText(queryText, filter(PropositionQuery.againstContext(context)))
+            .withTopK(5)
+        return try {
+            val found = texts(search, request)
+            if (found == passingTexts) {
+                null
+            } else {
+                "$field: the store returns $found. With the $field filter applied it returns $passingTexts."
+            }
+        } catch (refused: UnsupportedCapabilityException) {
+            if (refused.capability == StoreCapability.FILTERED_VECTOR_SEARCH) {
+                null
+            } else {
+                "$field: the store refused the filter for ${refused.capability}"
+            }
+        }
+    }
+
     @Test
     @DisplayName("a store that lists filtered vector search implements it")
     open fun aStoreThatListsFilteredVectorSearchImplementsIt() {
@@ -210,5 +266,53 @@ abstract class AbstractFilteredVectorSearchContractTest {
                 "${closer.score} comes before ${farther.score}, so the matches are not closest first"
             }
         }
+    }
+
+    @Test
+    @DisplayName("each filter field is applied or refused")
+    open fun eachFilterFieldIsAppliedOrRefused() {
+        val store = store()
+        val search = filteredSearch(store)
+        val revised = Instant.parse("2026-05-31T00:00:00Z")
+        val failures = listOfNotNull(
+            fieldFailure(
+                store, search, "entityId",
+                { it.withEntityId("entity-1") },
+                { it.copy(mentions = emptyList()) },
+                { it.copy(mentions = listOf(EntityMention(span = "Alice", type = "Person", resolvedId = "entity-1"))) },
+            ),
+            fieldFailure(
+                store, search, "minLevel",
+                { it.withMinLevel(1) },
+                { it.copy(level = 0) },
+                { it.copy(level = 1, sourceIds = listOf("minLevel-source")) },
+            ),
+            fieldFailure(
+                store, search, "pinned",
+                { it.withPinned(true) },
+                { it.copy(pinned = false) },
+                { it.copy(pinned = true) },
+            ),
+            fieldFailure(
+                store, search, "minConfidence",
+                { it.withMinConfidence(0.5) },
+                { it.copy(confidence = 0.2) },
+                { it.copy(confidence = 0.9) },
+            ),
+            fieldFailure(
+                store, search, "createdAfter",
+                { it.withCreatedAfter(Instant.parse("2026-02-01T00:00:00Z")) },
+                { it.copy(created = Instant.parse("2026-01-01T00:00:00Z")) },
+                { it.copy(created = Instant.parse("2026-03-01T00:00:00Z")) },
+            ),
+            fieldFailure(
+                store, search, "minEffectiveConfidence",
+                { it.withMinEffectiveConfidence(0.5).withEffectiveConfidenceAsOf(Instant.parse("2026-06-30T00:00:00Z")) },
+                { it.copy(confidence = 0.9, decay = 1.0, contentRevised = revised, lastAccessed = revised) },
+                { it.copy(confidence = 0.9, decay = 0.0, contentRevised = revised, lastAccessed = revised) },
+            ),
+        )
+
+        assertAll("Filter fields the store does not apply", failures.map { message -> Executable { fail<Unit>(message) } })
     }
 }
