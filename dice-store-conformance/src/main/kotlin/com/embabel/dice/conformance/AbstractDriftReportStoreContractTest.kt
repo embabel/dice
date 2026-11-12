@@ -51,7 +51,15 @@ abstract class AbstractDriftReportStoreContractTest {
     private val contextB = ContextId("ctx-b")
     private val epoch = Instant.parse("2026-01-01T00:00:00Z")
 
-    /** A report captured [minute] minutes after the epoch, optionally scoped to a context. */
+    /**
+     * Saves a report captured a number of minutes after the epoch.
+     *
+     * @param store The store to save into.
+     * @param minute How many minutes after the epoch the report was captured.
+     * @param contextId The context the report is scoped to, or null for a global report.
+     * @param schema The schema the report belongs to.
+     * @return The saved report.
+     */
     private fun save(
         store: DriftReportStore,
         minute: Long,
@@ -70,6 +78,13 @@ abstract class AbstractDriftReportStoreContractTest {
         return report
     }
 
+    /**
+     * Builds a stamp of one entity type.
+     *
+     * @param schema The schema the stamp belongs to.
+     * @param typeName The one entity type.
+     * @return The stamp.
+     */
     private fun version(schema: String, typeName: String): MetamodelVersion = MetamodelVersion(
         schemaName = schema,
         entityTypeNames = listOf(typeName),

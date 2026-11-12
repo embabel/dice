@@ -31,12 +31,12 @@ import java.time.Instant
  * marked stale. Each subclass supplies an empty store and inherits the whole suite.
  *
  * Contract:
- * - E1 A record reads back with every field it was saved with.
- * - E2 Each finder returns exactly the records whose key matches, whatever their lifecycle.
- * - E3 A key that no record carries finds no records.
- * - E4 findStale returns exactly the records in the STALE lifecycle.
- * - E5 markStaleByProposition marks every record of the proposition STALE and returns how many changed.
- * - E6 markStaleByProposition returns 0 when no record changes.
+ * - A record reads back with every field it was saved with.
+ * - Each finder returns exactly the records whose key matches, whatever their lifecycle.
+ * - A key that no record carries finds no records.
+ * - findStale returns exactly the records in the STALE lifecycle.
+ * - markStaleByProposition marks every record of the proposition STALE and returns how many changed.
+ * - markStaleByProposition returns 0 when no record changes.
  *
  * A store that keeps the interface default for [ProjectionRecordStore.markStaleByProposition] fails
  * the case that marks records. The default exists for older implementations, so a current store
@@ -55,6 +55,17 @@ abstract class AbstractProjectionRecordStoreContractTest {
 
     private val t0 = Instant.parse("2026-01-01T00:00:00Z")
 
+    /**
+     * Builds a projection record for a proposition, target and run.
+     *
+     * @param propositionId The projected proposition.
+     * @param target The projection target.
+     * @param runId The run that wrote the record.
+     * @param lifecycle The record's lifecycle. Defaults to PROJECTED.
+     * @param targetRef The reference to the artifact in the target, or null.
+     * @param contextId The context the record belongs to.
+     * @return The record.
+     */
     private fun record(
         propositionId: String,
         target: String,

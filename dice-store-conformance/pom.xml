@@ -38,7 +38,7 @@
             <artifactId>junit-jupiter-api</artifactId>
         </dependency>
 
-        <!-- ContextId and the types Proposition extends; provided, supplied by the backend under test -->
+        <!-- ContextId and the types Proposition extends. The backend under test supplies them. -->
         <dependency>
             <groupId>com.embabel.agent</groupId>
             <artifactId>embabel-agent-api</artifactId>

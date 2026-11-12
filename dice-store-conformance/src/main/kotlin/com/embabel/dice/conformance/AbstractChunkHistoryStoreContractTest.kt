@@ -36,9 +36,9 @@ import java.time.Instant
  * context, and what clearing removes. Each subclass supplies an empty store and inherits the
  * whole suite.
  *
- * A store that keeps the interface default for [ChunkHistoryStore.clearByContext] fails cases 8 and
- * 10. A store that keeps the default for [ChunkHistoryStore.clearAll] fails case 9. The defaults
- * exist for older implementations, so a current store should override both.
+ * A store that keeps the interface default for [ChunkHistoryStore.clearByContext] fails the two
+ * cases that clear one context. A store that keeps the default for [ChunkHistoryStore.clearAll]
+ * fails the case that clears every context. The defaults exist for older implementations, so a current store should override both.
  *
  * The suite does not check which bookmark is last when processing times go backwards. The interface
  * does not define that case.
@@ -55,6 +55,16 @@ abstract class AbstractChunkHistoryStoreContractTest {
     private val ctxB = ContextId("chunk-ctx-b")
     private val t0 = Instant.parse("2026-01-01T00:00:00Z")
 
+    /**
+     * Builds a processed-chunk record that starts at index 0.
+     *
+     * @param contextId The context the record belongs to.
+     * @param sourceId The source the bookmark points at.
+     * @param contentHash The hash of the processed content.
+     * @param endIndex The index the processed chunk ends at.
+     * @param processedAt When the chunk was processed.
+     * @return The record.
+     */
     private fun record(
         contextId: ContextId,
         sourceId: String,

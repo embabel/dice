@@ -49,8 +49,23 @@ abstract class AbstractCollectorRecordStoreContractTest {
 
     private val t0 = Instant.parse("2026-01-01T00:00:00Z")
 
+    /**
+     * Returns the instant a number of seconds after the fixture start.
+     *
+     * @param seconds How many seconds after the fixture start.
+     * @return The instant.
+     */
     private fun at(seconds: Long): Instant = t0.plusSeconds(seconds)
 
+    /**
+     * Builds a stale-reason record marked by the `stale` strategy.
+     *
+     * @param propositionId The proposition the record marks.
+     * @param runId The run that wrote the record.
+     * @param at When the record was written. Defaults to the fixture start.
+     * @param undoneAt When the record was undone, or null if it still stands.
+     * @return The record.
+     */
     private fun record(
         propositionId: String,
         runId: String,
