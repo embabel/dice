@@ -250,7 +250,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * extraction.withPersistUnitWriter(PersistUnitWriter.inMemory(claims, entities, links))
      * ```
      *
-     * EXPERIMENTAL. The API may change before 1.0.
+     * EXPERIMENTAL.
      *
      * @param writer The writer each chunk is stored through.
      * @return this extractor.
