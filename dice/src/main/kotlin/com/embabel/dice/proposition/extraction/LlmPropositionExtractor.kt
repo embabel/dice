@@ -160,6 +160,15 @@ data class LlmPropositionExtractor(
             return Builder(llm)
         }
 
+        /**
+         * Start building an extractor that uses the given model options.
+         *
+         * @param llm the model options the extractor sends with each call
+         * @return a builder that becomes an extractor once an AI service is given
+         */
+        @JvmStatic
+        fun builder(llm: LlmOptions): LlmPropositionExtractorBuilder = LlmPropositionExtractorBuilder(llm)
+
         class Builder(
             private val llmOptions: LlmOptions,
         ) {
