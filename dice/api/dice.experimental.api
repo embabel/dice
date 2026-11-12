@@ -1230,6 +1230,81 @@ public final class com/embabel/dice/proposition/extraction/LineageNotRecordedExc
 	public final fun getKey ()Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;
 }
 
+public abstract interface class com/embabel/dice/proposition/extraction/PersistOutcome {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/PersistOutcome$Companion;
+	public static fun failed (Lcom/embabel/dice/proposition/extraction/PersistStep;Ljava/lang/Exception;Ljava/util/Set;)Lcom/embabel/dice/proposition/extraction/PersistOutcome$Failed;
+	public static fun failed (Lcom/embabel/dice/proposition/extraction/PersistStep;Ljava/lang/Exception;Ljava/util/Set;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/LineageNotRecordedException;)Lcom/embabel/dice/proposition/extraction/PersistOutcome$Failed;
+	public abstract fun getLineageFailure ()Lcom/embabel/dice/proposition/extraction/LineageNotRecordedException;
+	public abstract fun getRunLinks ()Ljava/lang/Integer;
+	public abstract fun isStored ()Z
+	public abstract fun persistedOrThrow ()Lcom/embabel/dice/proposition/PropositionPersistenceResult;
+	public static fun stored (Lcom/embabel/dice/proposition/PropositionPersistenceResult;)Lcom/embabel/dice/proposition/extraction/PersistOutcome$Stored;
+	public static fun stored (Lcom/embabel/dice/proposition/PropositionPersistenceResult;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/LineageNotRecordedException;)Lcom/embabel/dice/proposition/extraction/PersistOutcome$Stored;
+}
+
+public final class com/embabel/dice/proposition/extraction/PersistOutcome$Companion {
+	public final fun failed (Lcom/embabel/dice/proposition/extraction/PersistStep;Ljava/lang/Exception;Ljava/util/Set;)Lcom/embabel/dice/proposition/extraction/PersistOutcome$Failed;
+	public final fun failed (Lcom/embabel/dice/proposition/extraction/PersistStep;Ljava/lang/Exception;Ljava/util/Set;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/LineageNotRecordedException;)Lcom/embabel/dice/proposition/extraction/PersistOutcome$Failed;
+	public final fun stored (Lcom/embabel/dice/proposition/PropositionPersistenceResult;)Lcom/embabel/dice/proposition/extraction/PersistOutcome$Stored;
+	public final fun stored (Lcom/embabel/dice/proposition/PropositionPersistenceResult;Ljava/lang/Integer;Lcom/embabel/dice/proposition/extraction/LineageNotRecordedException;)Lcom/embabel/dice/proposition/extraction/PersistOutcome$Stored;
+}
+
+public final class com/embabel/dice/proposition/extraction/PersistOutcome$Failed : com/embabel/dice/proposition/extraction/PersistOutcome {
+	public final fun getCause ()Ljava/lang/Exception;
+	public final fun getLeftInStore ()Ljava/util/Set;
+	public fun getLineageFailure ()Lcom/embabel/dice/proposition/extraction/LineageNotRecordedException;
+	public fun getRunLinks ()Ljava/lang/Integer;
+	public final fun getStep ()Lcom/embabel/dice/proposition/extraction/PersistStep;
+	public fun isStored ()Z
+	public fun persistedOrThrow ()Lcom/embabel/dice/proposition/PropositionPersistenceResult;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/PersistOutcome$Stored : com/embabel/dice/proposition/extraction/PersistOutcome {
+	public fun getLineageFailure ()Lcom/embabel/dice/proposition/extraction/LineageNotRecordedException;
+	public final fun getPersisted ()Lcom/embabel/dice/proposition/PropositionPersistenceResult;
+	public fun getRunLinks ()Ljava/lang/Integer;
+	public fun isStored ()Z
+	public fun persistedOrThrow ()Lcom/embabel/dice/proposition/PropositionPersistenceResult;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/extraction/PersistStep : java/lang/Enum {
+	public static final field ENTITIES Lcom/embabel/dice/proposition/extraction/PersistStep;
+	public static final field PREPARE Lcom/embabel/dice/proposition/extraction/PersistStep;
+	public static final field PROPOSITIONS Lcom/embabel/dice/proposition/extraction/PersistStep;
+	public static final field RUN_LINKS Lcom/embabel/dice/proposition/extraction/PersistStep;
+	public static final field STRUCTURAL_RELATIONSHIPS Lcom/embabel/dice/proposition/extraction/PersistStep;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/PersistStep;
+	public static fun values ()[Lcom/embabel/dice/proposition/extraction/PersistStep;
+}
+
+public final class com/embabel/dice/proposition/extraction/PersistUnit {
+	public static final field Companion Lcom/embabel/dice/proposition/extraction/PersistUnit$Companion;
+	public synthetic fun <init> (Ljava/util/List;Ljava/util/List;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Lcom/embabel/dice/proposition/extraction/LineageFailurePolicy;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getLineagePolicy ()Lcom/embabel/dice/proposition/extraction/LineageFailurePolicy;
+	public final fun getNewEntities ()Ljava/util/List;
+	public final fun getPropositions ()Ljava/util/List;
+	public final fun getRun ()Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;
+	public final fun getUpdatedEntities ()Ljava/util/List;
+	public static final fun of (Lcom/embabel/dice/pipeline/PersistablePropositions;)Lcom/embabel/dice/proposition/extraction/PersistUnit;
+	public static final fun of (Ljava/util/List;Ljava/util/List;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/PersistUnit;
+	public fun toString ()Ljava/lang/String;
+	public final fun withRun (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;)Lcom/embabel/dice/proposition/extraction/PersistUnit;
+	public final fun withRun (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Lcom/embabel/dice/proposition/extraction/LineageFailurePolicy;)Lcom/embabel/dice/proposition/extraction/PersistUnit;
+}
+
+public final class com/embabel/dice/proposition/extraction/PersistUnit$Companion {
+	public final fun of (Lcom/embabel/dice/pipeline/PersistablePropositions;)Lcom/embabel/dice/proposition/extraction/PersistUnit;
+	public final fun of (Ljava/util/List;Ljava/util/List;Ljava/util/List;)Lcom/embabel/dice/proposition/extraction/PersistUnit;
+}
+
+public final class com/embabel/dice/proposition/extraction/PersistUnitFailedException : java/lang/RuntimeException {
+	public fun <init> (Lcom/embabel/dice/proposition/extraction/PersistStep;Ljava/lang/Exception;)V
+	public final fun getStep ()Lcom/embabel/dice/proposition/extraction/PersistStep;
+}
+
 public final class com/embabel/dice/proposition/extraction/PropositionRunLinkScopeException : java/lang/RuntimeException {
 	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;Ljava/util/List;)V
 	public final fun getKey ()Lcom/embabel/dice/proposition/extraction/ExtractionRunKey;
