@@ -187,6 +187,21 @@ LlmPropositionExtractor.withLlm(llmOptions)
         .withSchemaAdherence(SchemaAdherence.STRICT);
 ----
 
+To keep the builder in a variable, for example to choose the `Ai` later, start from `builder`. It
+returns `LlmPropositionExtractorBuilder`, a top-level type.
+
+[source,java]
+----
+LlmPropositionExtractorBuilder builder = LlmPropositionExtractor.builder(llmOptions);
+LlmPropositionExtractor extractor = builder.withAi(ai);
+----
+
+[source,kotlin]
+----
+val builder = LlmPropositionExtractor.builder(llmOptions)
+val extractor = builder.withAi(ai)
+----
+
 Strictness is the main lever on extraction noise. Start at `DEFAULT`; move to `STRICT` when you
 trust the schema and want the extractor to stop inventing predicates; move to `RELAXED` only while
 exploring.

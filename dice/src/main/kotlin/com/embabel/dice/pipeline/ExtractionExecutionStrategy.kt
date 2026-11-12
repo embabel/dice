@@ -19,6 +19,7 @@ import com.embabel.agent.rag.model.Chunk
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.function.Function
 
 /**
  * Controls how the [PropositionPipeline] dispatches the stateless per-chunk extraction stage.
@@ -61,6 +62,18 @@ interface ExtractionExecutionStrategy {
      * @return a list of size `chunks.size`; `result[i]` is the extraction of `chunks[i]` or `null` on failure
      */
     fun <T> execute(chunks: List<Chunk>, extract: (Chunk) -> T): List<T?>
+
+    /**
+     * This is [execute] for a `java.util.function.Function`, with the same input order and `null`
+     * slot rules. A Java caller can pass a `Function` it already holds and does not need a Kotlin
+     * function type.
+     *
+     * @param chunks the chunks to extract, in order
+     * @param extract the stateless per-chunk extraction function
+     * @return a list of size `chunks.size`; `result[i]` is the extraction of `chunks[i]` or `null` on failure
+     */
+    fun <T> executeAll(chunks: List<Chunk>, extract: Function<in Chunk, out T>): List<T?> =
+        execute(chunks) { extract.apply(it) }
 }
 
 /**

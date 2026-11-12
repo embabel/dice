@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.proposition
 
+import java.util.concurrent.Callable
+
 /**
  * Stops calling a service once [maxConsecutiveFailures] calls in a row have failed.
  *
@@ -51,6 +53,52 @@ class ConsecutiveFailureBreaker @JvmOverloads constructor(
         } catch (e: Exception) {
             consecutiveFailures++
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Runs [call] and returns its [Outcome], or a skipped outcome without running it once [tripped].
+     * An [Exception] is returned as a failure and counts towards the limit. A success resets the
+     * count, which [attempt] and [attemptCall] share. An [Error] propagates.
+     *
+     * It takes a [Callable] and returns an [Outcome] so that Java code can call it and read the result.
+     *
+     * @param call the work to run; it may throw checked exceptions
+     * @return a success with the value, a failure with the exception, or a skip if the breaker has tripped
+     */
+    fun <T> attemptCall(call: Callable<T>): Outcome<T> {
+        val result = attempt { call.call() } ?: return Outcome(skipped = true, value = null, exception = null)
+        return result.fold(
+            onSuccess = { Outcome(skipped = false, value = it, exception = null) },
+            onFailure = { Outcome(skipped = false, value = null, exception = it as Exception) },
+        )
+    }
+
+    /**
+     * The result of one [attemptCall]: a value, a failure, or a skip.
+     *
+     * @property value the call's result on success, otherwise null
+     * @property exception the exception the call threw on failure, otherwise null
+     */
+    class Outcome<T> internal constructor(
+        private val skipped: Boolean,
+        val value: T?,
+        val exception: Exception?,
+    ) {
+
+        /** True when the breaker had tripped, so the call was not run. */
+        val isSkipped: Boolean get() = skipped
+
+        /** True when the call ran and threw an exception. */
+        val isFailure: Boolean get() = exception != null
+
+        /** True when the call ran and returned a value. */
+        val isSuccess: Boolean get() = !skipped && exception == null
+
+        override fun toString(): String = when {
+            skipped -> "Outcome(skipped)"
+            exception != null -> "Outcome(failure=$exception)"
+            else -> "Outcome(success=$value)"
         }
     }
 

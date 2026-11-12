@@ -47,6 +47,24 @@ var propositions = pipeline.process(result.getChunks(), context);
 `process` handles cross-chunk entity identity for you: when minting is enabled it wraps your
 resolver so an entity minted in chunk 2 is recognised in chunk 7.
 
+==== Process one text
+
+For a single text, such as a note or a message, `processText` makes the chunk for you. The source id
+becomes the chunk id, so the propositions' grounding names your source. The result is never null.
+
+[source,java]
+----
+ChunkPropositionResult result = pipeline.processText(noteText, "note:42", context);
+----
+
+[source,kotlin]
+----
+val result = pipeline.processText(noteText, "note:42", context)
+----
+
+`processOnce` does the same and also skips a text it has seen before when you pass a
+`ChunkHistoryStore`, so its result can be null.
+
 ==== Persist within your own transaction
 
 The pipeline stores nothing. That is deliberate — DICE never decides your transaction boundary.

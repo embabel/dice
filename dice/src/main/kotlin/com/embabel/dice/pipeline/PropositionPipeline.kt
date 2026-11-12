@@ -484,6 +484,32 @@ class PropositionPipeline private constructor(
     }
 
     /**
+     * Processes a text as a single chunk, without any deduplication. Use this when no history
+     * store is involved, since the result is never null.
+     *
+     * Like [processOnce], this records nothing and returns an UNSAVED result. The caller must
+     * persist it via [PersistablePropositions.persist][PersistablePropositions.persist].
+     *
+     * The source id becomes the chunk id, so the grounding of each proposition carries it.
+     *
+     * @param text The text to process
+     * @param sourceId Identifier for the source, used as both the chunk id and the parent id
+     * @param context Analysis context with schema, entity resolver, etc.
+     * @param additionalGrounding Extra ids to add to the grounding of each proposition
+     * @return Result with propositions and entities
+     */
+    @JvmOverloads
+    fun processText(
+        text: String,
+        sourceId: String,
+        context: SourceAnalysisContext,
+        additionalGrounding: List<String> = emptyList(),
+    ): ChunkPropositionResult {
+        val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
+        return processChunk(chunk, context).withAdditionalGrounding(additionalGrounding)
+    }
+
+    /**
      * Process multiple chunks through the pipeline.
      *
      * For cross-chunk entity resolution, the context's EntityResolver is wrapped with

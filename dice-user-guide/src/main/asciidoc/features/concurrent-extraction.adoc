@@ -63,6 +63,20 @@ pipeline.withExecutionStrategy(new BatchedExtractionStrategy(batchSize));
 
 `withExecutionStrategy` returns a new pipeline, like every other `with*` method.
 
+A strategy can also be called directly, for example to test one you wrote. From Java, use
+`executeAll`, which takes a `java.util.function.Function`. Results come back in input order, with
+`null` where the function threw.
+
+[source,java]
+----
+List<String> texts = SerialExtractionStrategy.INSTANCE.executeAll(chunks, Chunk::getText);
+----
+
+[source,kotlin]
+----
+val texts = SerialExtractionStrategy.execute(chunks) { it.text }
+----
+
 ==== Example
 
 [source,java]
