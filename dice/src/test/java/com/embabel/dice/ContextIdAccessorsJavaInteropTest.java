@@ -18,16 +18,26 @@ package com.embabel.dice;
 import com.embabel.dice.common.DiceEventListener;
 import com.embabel.dice.common.PropositionContradicted;
 import com.embabel.dice.common.UngroundedMentionsFound;
+import com.embabel.dice.incremental.BookmarkKey;
+import com.embabel.dice.incremental.HashKey;
 import com.embabel.dice.projection.memory.DreamLoopReport;
+import com.embabel.dice.projection.memory.collector.CollectorRunContext;
 import com.embabel.dice.proposition.PropositionQuery;
+import com.embabel.dice.spi.CollapseUndoCommand;
 import com.embabel.dice.spi.CollapseUndoContextMismatchException;
 import org.junit.jupiter.api.Test;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Checks that Java listeners can read the context id of the events that carry one.
@@ -94,6 +104,47 @@ class ContextIdAccessorsJavaInteropTest {
 
         assertEquals("acme", mismatch.getCommandedContextIdValue());
         assertEquals("globex", mismatch.getActualContextIdValue());
+    }
+
+    @Test
+    void chunkHistoryKeysAreBuiltFromJava() {
+        BookmarkKey bookmark = BookmarkKey.of("acme", "conversation-1");
+        HashKey hash = HashKey.of("acme", "abc123");
+
+        assertEquals("acme", bookmark.getContextIdValue());
+        assertEquals("conversation-1", bookmark.getSourceId());
+        assertEquals("acme", hash.getContextIdValue());
+        assertEquals("abc123", hash.getContentHash());
+        assertEquals(ContextIdFixtures.bookmarkKey("acme").getContextIdValue(), bookmark.getContextIdValue());
+    }
+
+    @Test
+    void collectorRunContextIsBuiltFromJava() {
+        Clock clock = Clock.fixed(Instant.EPOCH, ZoneOffset.UTC);
+
+        CollectorRunContext run = CollectorRunContext.of("run-1", "acme");
+        CollectorRunContext dryRun = CollectorRunContext.of("run-2", "acme", true, clock);
+
+        assertEquals("acme", run.getContextIdValue());
+        assertEquals("run-1", run.getRunId());
+        assertFalse(run.getDryRun());
+        assertTrue(dryRun.getDryRun());
+        assertSame(clock, dryRun.getClock());
+    }
+
+    @Test
+    void collapseUndoCommandIsBuiltFromJava() {
+        CollapseUndoCommand command = CollapseUndoCommand.of("acme", "survivor-1", "retired-1");
+
+        assertEquals("acme", command.getContextIdValue());
+        assertEquals("survivor-1", command.getSurvivorId());
+        assertEquals("retired-1", command.getRetiredId());
+        assertEquals(ContextIdFixtures.collapseUndoCommand("acme"), command);
+    }
+
+    @Test
+    void collapseUndoCommandRejectsABlankId() {
+        assertThrows(IllegalArgumentException.class, () -> CollapseUndoCommand.of("acme", " ", "retired-1"));
     }
 
     @Test

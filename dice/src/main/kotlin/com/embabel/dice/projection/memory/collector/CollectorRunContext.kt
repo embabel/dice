@@ -47,4 +47,24 @@ data class CollectorRunContext(
     /** [contextId] as a plain string, for Java callers. */
     @get:JsonIgnore
     val contextIdValue: String get() = contextId.value
+
+    companion object {
+        /**
+         * Builds a run context from plain values. Java uses this, because it cannot call the constructor.
+         *
+         * @param runId The id that tags this run's trace rows.
+         * @param contextIdValue The context being swept.
+         * @param dryRun Whether the run should only preview its trace.
+         * @param clock The source of "now" for the run.
+         * @return The run context.
+         */
+        @JvmStatic
+        @JvmOverloads
+        fun of(
+            runId: String,
+            contextIdValue: String,
+            dryRun: Boolean = false,
+            clock: Clock = Clock.systemUTC(),
+        ): CollectorRunContext = CollectorRunContext(runId, ContextId(contextIdValue), dryRun, clock)
+    }
 }

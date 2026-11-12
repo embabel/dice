@@ -231,6 +231,21 @@ data class CollapseUndoCommand(
     /** [contextId] as a plain string, for Java callers. */
     @get:JsonIgnore
     val contextIdValue: String get() = contextId.value
+
+    companion object {
+        /**
+         * Builds an undo command from plain values. Java uses this, because it cannot call the constructor.
+         *
+         * @param contextIdValue The context both propositions must belong to.
+         * @param survivorId The collapse's survivor.
+         * @param retiredId The one retired member to restore.
+         * @return The undo command.
+         * @throws IllegalArgumentException if [survivorId] or [retiredId] is blank
+         */
+        @JvmStatic
+        fun of(contextIdValue: String, survivorId: String, retiredId: String): CollapseUndoCommand =
+            CollapseUndoCommand(ContextId(contextIdValue), survivorId, retiredId)
+    }
 }
 
 /**

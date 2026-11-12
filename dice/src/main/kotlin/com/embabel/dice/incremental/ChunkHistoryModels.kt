@@ -30,6 +30,19 @@ data class BookmarkKey(
     /** [contextId] as a plain string, for Java callers. */
     @get:JsonIgnore
     val contextIdValue: String get() = contextId.value
+
+    companion object {
+        /**
+         * Builds a key from a plain context id string. Java uses this, because it cannot call the constructor.
+         *
+         * @param contextIdValue The context the bookmark belongs to.
+         * @param sourceId The incremental source.
+         * @return The key.
+         */
+        @JvmStatic
+        fun of(contextIdValue: String, sourceId: String): BookmarkKey =
+            BookmarkKey(ContextId(contextIdValue), sourceId)
+    }
 }
 
 /**
@@ -46,6 +59,19 @@ data class HashKey(
 
     override fun toString(): String =
         "HashKey(contextId=$contextId, contentHash=${contentHash.take(8)}…)"
+
+    companion object {
+        /**
+         * Builds a key from a plain context id string. Java uses this, because it cannot call the constructor.
+         *
+         * @param contextIdValue The context the hash belongs to.
+         * @param contentHash The hash of the content.
+         * @return The key.
+         */
+        @JvmStatic
+        fun of(contextIdValue: String, contentHash: String): HashKey =
+            HashKey(ContextId(contextIdValue), contentHash)
+    }
 }
 
 /**
