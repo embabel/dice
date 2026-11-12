@@ -124,8 +124,8 @@ public abstract class com/embabel/dice/conformance/AbstractPropositionStoreContr
 	public fun <init> ()V
 	public final fun REVISED_DESC orders by lastTouched ()V
 	public final fun belowEffectiveConfidence keeps only propositions strictly under the threshold ()V
-	public final fun count(query) equals the number of matching propositions on both backends ()V
-	public final fun count(query) is capped by the query's limit on both backends ()V
+	public final fun count(query) equals the number of matching propositions ()V
+	public final fun count(query) is capped by the query's limit ()V
 	public final fun keywordOverlap matches case-insensitively and ranks by overlap ()V
 	public final fun keywordOverlap returns nothing for empty tokens ()V
 	public final fun minTrustScore excludes low-trust but keeps high-trust and unscored ()V

@@ -114,7 +114,7 @@ abstract class AbstractPropositionStoreContractTest {
     // ---- count(query): a filtered count agrees with the size of the same query's results ----
 
     @Test
-    fun `count(query) equals the number of matching propositions on both backends`() {
+    fun `count(query) equals the number of matching propositions`() {
         val store = store()
         store.save(propWithConfidence("high a", 0.9))
         store.save(propWithConfidence("high b", 0.8))
@@ -127,7 +127,7 @@ abstract class AbstractPropositionStoreContractTest {
     }
 
     @Test
-    fun `count(query) is capped by the query's limit on both backends`() {
+    fun `count(query) is capped by the query's limit`() {
         val store = store()
         store.save(propWithConfidence("high a", 0.9))
         store.save(propWithConfidence("high b", 0.8))
