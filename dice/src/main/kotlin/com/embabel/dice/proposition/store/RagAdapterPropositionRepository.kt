@@ -71,8 +71,10 @@ import org.slf4j.LoggerFactory
  * @param crud the supplementary durable proposition store backing all CRUD and query operations
  * @param entityRepository the entity/relationship/vector backend supplied by the consumer; held
  *   for the entity-axis projection path and never surfaced in this store's public signatures
+ *
+ * This class is open only so the old name, [Neo4jRagPropositionRepository], can stay as a subclass.
  */
-class RagAdapterPropositionRepository(
+open class RagAdapterPropositionRepository(
     private val crud: PropositionStore,
     val entityRepository: NamedEntityDataRepository,
 ) : PropositionStore by crud, VectorSearchCapable {
@@ -132,13 +134,3 @@ class RagAdapterPropositionRepository(
         (crud as? VectorSearchCapable)?.findClusters(similarityThreshold, topK, query)
             ?: emptyList()
 }
-
-/**
- * The name this store had before it was renamed. It never depended on Neo4j, so the name now says
- * what it is: an adapter over embabel-agent's RAG entity repository.
- */
-@Deprecated(
-    message = "Renamed to RagAdapterPropositionRepository.",
-    replaceWith = ReplaceWith("RagAdapterPropositionRepository"),
-)
-typealias Neo4jRagPropositionRepository = RagAdapterPropositionRepository

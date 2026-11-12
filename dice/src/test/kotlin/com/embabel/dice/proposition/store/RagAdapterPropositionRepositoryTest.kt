@@ -37,6 +37,7 @@ import com.embabel.dice.proposition.VectorSearchCapable
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
@@ -181,12 +182,19 @@ class RagAdapterPropositionRepositoryTest {
 
     @Test
     @Suppress("DEPRECATION")
-    fun `the old name still builds the same store`() {
-        val viaOldName: PropositionStore = Neo4jRagPropositionRepository(
+    fun `the old name still builds a working store`() {
+        val entityRepo = entityRepository()
+        val viaOldName = Neo4jRagPropositionRepository(
             crud = InMemoryPropositionRepository(),
-            entityRepository = entityRepository(),
+            entityRepository = entityRepo,
         )
-        assertEquals(RagAdapterPropositionRepository::class, viaOldName::class)
+        val asStore: PropositionStore = viaOldName
+        val saved = asStore.save(proposition("Old name round trip"))
+
+        assertEquals(saved, asStore.findById(saved.id))
+        assertTrue(viaOldName is RagAdapterPropositionRepository)
+        assertTrue(viaOldName is VectorSearchCapable)
+        assertSame(entityRepo, viaOldName.entityRepository)
     }
 
     /**
