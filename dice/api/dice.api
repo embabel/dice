@@ -4966,7 +4966,11 @@ public final class com/embabel/dice/proposition/store/JsonFilePropositionReposit
 	public fun save (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/proposition/Proposition;
 }
 
-public final class com/embabel/dice/proposition/store/Neo4jRagPropositionRepository : com/embabel/dice/proposition/PropositionStore, com/embabel/dice/proposition/VectorSearchCapable {
+public final class com/embabel/dice/proposition/store/Neo4jRagPropositionRepository : com/embabel/dice/proposition/store/RagAdapterPropositionRepository {
+	public fun <init> (Lcom/embabel/dice/proposition/PropositionStore;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)V
+}
+
+public class com/embabel/dice/proposition/store/RagAdapterPropositionRepository : com/embabel/dice/proposition/PropositionStore, com/embabel/dice/proposition/VectorSearchCapable {
 	public fun <init> (Lcom/embabel/dice/proposition/PropositionStore;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)V
 	public fun addProvenance (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/proposition/Proposition;
 	public fun clearProvenance (Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;

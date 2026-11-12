@@ -27,7 +27,7 @@ No Docker or live Neo4j is required. All tests run offline against deterministic
 **Concrete subclasses**
 
 - `InMemoryCanonicalFlowTest` — runs the full TCK against `InMemoryPropositionRepository`. No dependencies beyond the JVM. Always runs in CI.
-- `Neo4jAdapterCanonicalFlowTest` — runs the same TCK against `Neo4jRagPropositionRepository`, wired with an `InMemoryPropositionRepository` as its backing CRUD store and an `InMemoryNamedEntityDataRepository` for the entity axis. A thin `TckPropositionRepositoryBridge` re-declares `GraphTraversalCapable` and `TemporalQueryCapable` so the adapter satisfies the TCK's type without modification. Also runs fully offline.
+- `Neo4jAdapterCanonicalFlowTest` runs the same TCK against `RagAdapterPropositionRepository`, wired with an `InMemoryPropositionRepository` as its backing CRUD store and an `InMemoryNamedEntityDataRepository` for the entity axis. A thin `TckPropositionRepositoryBridge` re-declares `GraphTraversalCapable` and `TemporalQueryCapable` so the adapter satisfies the TCK's type without modification. Also runs fully offline.
 
 **`CollectorSweepStalesProjectionRecordTest`** — a focused cross-module test that proves the lifecycle→projection lineage cascade. A decay sweep transitions the decay candidate to STALE; `ProjectionLineageStaleCascade` (installed as the runner's listener) flips the seeded `ProjectionRecord` to `STALE`. Confirms both the emitted event and the record mutation in one test.
 

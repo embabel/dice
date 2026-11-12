@@ -91,13 +91,6 @@
             <artifactId>commons-text</artifactId>
         </dependency>
 
-        <!-- https://mvnrepository.com/artifact/org.javers/javers-core -->
-        <dependency>
-            <groupId>org.javers</groupId>
-            <artifactId>javers-core</artifactId>
-            <version>7.9.0</version>
-        </dependency>
-
         <!-- tuProlog for logic programming -->
         <dependency>
             <groupId>it.unibo.tuprolog</groupId>

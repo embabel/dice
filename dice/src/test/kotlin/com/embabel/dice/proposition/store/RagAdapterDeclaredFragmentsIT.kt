@@ -70,7 +70,7 @@ class RagAdapterDeclaredFragmentsIT {
         ).use { driver ->
             driver.session().use { it.run("MATCH (n) DETACH DELETE n") }
 
-            val adapter = Neo4jRagPropositionRepository(
+            val adapter = RagAdapterPropositionRepository(
                 crud = vectorBackedCrud(),
                 entityRepository = graphBackedRepository(driver),
             )

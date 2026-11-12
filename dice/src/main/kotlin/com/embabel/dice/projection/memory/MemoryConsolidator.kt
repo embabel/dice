@@ -17,6 +17,8 @@ package com.embabel.dice.projection.memory
 
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.revision.ReinforcementRule
+import com.embabel.dice.proposition.revision.reinforce
 import java.time.Instant
 import java.util.*
 
@@ -84,6 +86,11 @@ class DefaultMemoryConsolidator(
     private val similarityThreshold: Double = 0.7,
     private val reinforcementBoost: Double = 0.1,
 ) : MemoryConsolidator {
+
+    /** A session proposition that matches a stored one gives a fixed confidence lift, capped at 1. */
+    private val reinforcementRule = ReinforcementRule(
+        confidence = { existing, _ -> (existing.confidence + reinforcementBoost).coerceAtMost(1.0) },
+    )
 
     override fun consolidate(
         sessionPropositions: List<Proposition>,
@@ -181,16 +188,7 @@ class DefaultMemoryConsolidator(
     private fun reinforceProposition(
         existing: Proposition,
         session: Proposition,
-    ): Proposition {
-        val newConfidence = (existing.confidence + reinforcementBoost).coerceAtMost(1.0)
-        val newGrounding = (existing.grounding + session.grounding).distinct()
-
-        return existing.copy(
-            confidence = newConfidence,
-            grounding = newGrounding,
-            contentRevised = Instant.now(),
-        )
-    }
+    ): Proposition = reinforce(existing, session, reinforcementRule)
 
     /**
      * Merge multiple propositions into one.

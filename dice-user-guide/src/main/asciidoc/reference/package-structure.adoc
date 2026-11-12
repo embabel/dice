@@ -21,7 +21,7 @@ The `dice` module is organised by responsibility. This is the map for finding th
 
 | `com.embabel.dice.proposition.store`
 | `InMemoryPropositionRepository`, `JsonFilePropositionRepository`,
-  `Neo4jRagPropositionRepository`, `InMemoryDecayManager`.
+  `RagAdapterPropositionRepository`, `InMemoryDecayManager`.
 
 | `com.embabel.dice.proposition.gate`
 | Admission gates: `ExtractionGate`, `ExtractionGatePipeline`, `StandardGates`, `ObservableGate`.

@@ -15,6 +15,28 @@ and the consumer PRs that deliver it).
   run `./mvnw -B -DskipTests -Dapi.listing.mode=update clean verify`. **Compatibility: additive.** A build
   change only; consumers see no difference.
 
+- `Neo4jRagPropositionRepository` is now `RagAdapterPropositionRepository`, in the same package.
+  The store never used Neo4j itself: it joins any `PropositionStore` to embabel-agent's
+  `NamedEntityDataRepository`. The old name stays as a deprecated class that extends the new
+  one, with the same constructor, so Kotlin code, Java code and code already compiled against
+  the old name keep working. `RagAdapterPropositionRepository` is `open` for that reason. A
+  store logs under the name it was built with, so log settings for the old name still apply to
+  stores built through it. **Compatibility: additive.** New code uses
+  `RagAdapterPropositionRepository`.
+
+- The `dice` module no longer depends on `org.javers:javers-core`. DICE never called it.
+  **Compatibility: behavioral.** Upgrade note: a host that used javers, or the gson, classgraph
+  and picocontainer jars it brings, only because DICE put them on the classpath must now
+  declare `org.javers:javers-core` (or the jar it needs) in its own build.
+
+- The `dice` jar no longer contains `cypher/find_entity_by_text_distance.cypher`. Nothing in DICE
+  loaded it, and it was the one query in DICE that called an APOC function. **Compatibility:
+  behavioral.** A host that read this resource from the jar keeps its own copy.
+
+- `LlmPropositionReviser` and `DefaultMemoryConsolidator` reinforce a proposition through one
+  internal helper, each with the rule it already had. Results are the same as before.
+  **Compatibility: additive.**
+
 - Drivine 0.6.2. Since 0.5.0 the index and constraint spec classes in `org.drivine.schema`
   (`VectorIndexSpec`, `UniquenessConstraintSpec`, `RangeIndexSpec` and the others) ship in
   Drivine's `drivine-cypher-compiler-jvm` artifact, in the same package, so a host must not
