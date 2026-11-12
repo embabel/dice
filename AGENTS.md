@@ -12,6 +12,7 @@ DICE (Domain-Integrated Context Engineering) is a proposition-first knowledge su
 | `dice-report` | Output projectors over propositions: rationale (why a fact is believed, with evidence), structured report, and surprising-link discovery |
 | `dice-ingestion` | Ingestion SPI (artifacts → chunks) with a content-hash dedup ledger so the same source isn't extracted twice |
 | `dice-metamodel` | Schema versioning: `MetamodelVersion` content-hash stamps over the governed types of a `DataDictionary`, `GovernedTypeSelector`, the `DeclaredSchemaSource` opt-in, and the `MetamodelVersionStore` contract. Pure JVM, with no dependency on `dice` |
+| `dice-store-conformance` | Abstract JUnit suites, one per store interface, that a backend's tests extend to check its store against the documented behaviour. JUnit is a compile dependency |
 | `dice-integration-tests` | Test-only: the cross-feature end-to-end canonical-flow harness |
 | `dice-mcp-autoconfigure` | Spring Boot auto-configuration that exports `DiceMcpTools` over MCP via embabel-agent when `embabel.dice.mcp.enabled=true` |
 

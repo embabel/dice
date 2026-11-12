@@ -124,6 +124,11 @@ and the consumer PRs that deliver it).
 
 ### Added
 
+- **EXPERIMENTAL** (shape may change before 1.0): `dice-store-conformance` is a published module of
+  abstract JUnit suites for the DICE store interfaces. A backend adds it at test scope, extends a
+  suite and returns its store from one method. A failing test names a documented behaviour the store
+  does not keep. The suites are in `com.embabel.dice.conformance`. **Compatibility: additive.**
+
 - **EXPERIMENTAL** (shape may change before 1.0): a chunk's extraction output can be stored as one
   unit. `PersistUnit` holds the claims, the entities they refer to and an optional extraction run.
   `PersistUnitWriter.write` stores it and returns a `PersistOutcome`: `Stored`, or `Failed` with the
