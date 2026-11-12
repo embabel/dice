@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.storage
+package com.embabel.dice.conformance
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.EntityMention
@@ -27,6 +27,7 @@ import com.embabel.dice.proposition.extraction.ExtractionRunRef
 import com.embabel.dice.proposition.extraction.ExtractionRunStatus
 import com.embabel.dice.proposition.extraction.PropositionRunLinkScopeException
 import com.embabel.dice.proposition.extraction.PropositionRunLinkStore
+import org.jetbrains.annotations.ApiStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -43,6 +44,7 @@ import java.time.Instant
  * that scopes on the run id and forgets the tenant returns a neighbour's rows. A batch that writes
  * as it validates leaves half a link set behind when one id is rejected.
  */
+@ApiStatus.Experimental
 abstract class AbstractPropositionRunLinkStoreContractTest {
 
     protected val tenant: ContextId = ContextId("link-tenant")

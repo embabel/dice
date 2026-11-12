@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.storage
+package com.embabel.dice.conformance
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.common.DiceEvent
@@ -48,6 +48,7 @@ import com.embabel.dice.proposition.extraction.ExtractionRunTransition
 import com.embabel.dice.proposition.extraction.ExtractionRunTransitionOutcome
 import com.embabel.dice.proposition.extraction.ExtractionRuntimeIdentity
 import com.embabel.dice.provenance.SourceRevisionRef
+import org.jetbrains.annotations.ApiStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -67,6 +68,7 @@ import java.time.Instant
  * memory passes every single-tenant read and fails "a page scopes before it limits". A chain walk
  * written as a recursive Cypher pattern passes on a healthy graph and hangs on a cycle.
  */
+@ApiStatus.Experimental
 abstract class AbstractExtractionRunStoreContractTest {
 
     /**
