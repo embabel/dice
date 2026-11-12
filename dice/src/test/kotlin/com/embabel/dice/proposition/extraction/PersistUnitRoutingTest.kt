@@ -373,4 +373,21 @@ class PersistUnitRoutingTest {
         }
         verify(exactly = 1) { projection.projectAndPersist(any()) }
     }
+
+    @Test
+    fun `E12 a bound writer's checked cause is thrown wrapped in PersistUnitFailedException with its step`() {
+        val cause = IOException("claims store unreachable")
+        val projection = projection()
+        val extraction = extraction(answeringRepository(), projection = projection)
+            .withPersistUnitWriter {
+                PersistOutcome.failed(PersistStep.PROPOSITIONS, cause, setOf(PersistStep.ENTITIES, PersistStep.PROPOSITIONS))
+            }
+
+        assertThatThrownBy { extraction.remember() }
+            .isInstanceOfSatisfying(PersistUnitFailedException::class.java) {
+                assertThat(it.step).isEqualTo(PersistStep.PROPOSITIONS)
+                assertThat(it.cause).isSameAs(cause)
+            }
+        verify(exactly = 0) { projection.projectAndPersist(any()) }
+    }
 }

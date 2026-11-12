@@ -237,6 +237,12 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * write to the same ones.
      * Binding is one-time. Bind before the extractor starts handling events.
      *
+     * When the bound writer reports a failed write, storing the chunk throws what
+     * [PersistOutcome.persistedOrThrow] throws. A cause that is a `RuntimeException` is thrown as it
+     * is. A checked cause is wrapped in [PersistUnitFailedException], which carries the step that
+     * failed and has the original as its cause. Every exception thrown for a bound writer's failed
+     * write is unchecked.
+     *
      * From Java:
      *
      * ```java
@@ -679,8 +685,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * Under [LineageFailurePolicy.LENIENT] the failure is logged as a warning and the rest runs.
      * A bound writer decides what a failed write leaves in the store.
      *
-     * Any failed write throws the exception the writer reports, and projection and grounding do not
-     * run.
+     * A failed write throws, and projection and grounding do not run. With no writer bound, the
+     * exception is the one the failed step threw, whatever its type. With a writer bound, it is what
+     * [PersistOutcome.persistedOrThrow] throws.
      *
      * @param result What the analysis produced.
      * @param context The analysis the result belongs to. Its run, if any, is attributed.
@@ -714,10 +721,11 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             if (currentRun != null) logRunLineage(currentRun.runId, written.runLinks, written.lineageFailure)
             written
         }
-        // The cause itself, whatever its type, so a caller sees the exception the failed step threw.
+        // A bound writer's checked cause is wrapped in PersistUnitFailedException, so a Java caller
+        // can catch it. With no writer bound the cause is thrown as it is, whatever its type.
         val persisted = when (outcome) {
             is PersistOutcome.Stored -> outcome.persisted
-            is PersistOutcome.Failed -> throw outcome.cause
+            is PersistOutcome.Failed -> if (boundWriter == null) throw outcome.cause else outcome.persistedOrThrow()
         }
 
         // The distinct view, not the positional one. Inputs that deduplicated together are one
