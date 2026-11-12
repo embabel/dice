@@ -212,3 +212,11 @@ public abstract class com/embabel/dice/conformance/AbstractPropositionStoreContr
 	protected abstract fun store ()Lcom/embabel/dice/proposition/PropositionStore;
 }
 
+public final class com/embabel/dice/conformance/ConformanceEmbeddings {
+	public static final field INSTANCE Lcom/embabel/dice/conformance/ConformanceEmbeddings;
+	public static final field MIN_DIMENSIONS I
+	public static final fun embed (Ljava/lang/String;I)[F
+	public static final fun text (Ljava/lang/String;D)Ljava/lang/String;
+	public static final fun textWithoutDirection (Ljava/lang/String;)Ljava/lang/String;
+}
+
