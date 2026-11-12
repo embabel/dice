@@ -57,8 +57,11 @@ class ConsecutiveFailureBreaker @JvmOverloads constructor(
     }
 
     /**
-     * Runs [call] the same way [attempt] does, but takes a [Callable] that Java code can pass in,
-     * and returns an [Outcome] that Java code can read.
+     * Runs [call] and returns its [Outcome], or a skipped outcome without running it once [tripped].
+     * An [Exception] is returned as a failure and counts towards the limit. A success resets the
+     * count, which [attempt] and [attemptCall] share. An [Error] propagates.
+     *
+     * It takes a [Callable] and returns an [Outcome] so that Java code can call it and read the result.
      *
      * @param call the work to run; it may throw checked exceptions
      * @return a success with the value, a failure with the exception, or a skip if the breaker has tripped

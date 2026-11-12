@@ -152,7 +152,7 @@ and the consumer PRs that deliver it).
   in the user guide reference. **Compatibility: additive.**
 
 - Java can name the proposition extractor's builder, process one text without a null check, call an
-  extraction strategy with a lambda, and use the failure breaker. `LlmPropositionExtractor.builder(llm)`
+  extraction strategy with a `java.util.function.Function`, and use the failure breaker. `LlmPropositionExtractor.builder(llm)`
   returns the top-level `LlmPropositionExtractorBuilder`; `withLlm` and its nested builder are unchanged.
   `PropositionPipeline.processText(text, sourceId, context)` is `processOnce` without a history store,
   and its result is not nullable. `ExtractionExecutionStrategy.executeAll` takes a
