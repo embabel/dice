@@ -212,6 +212,23 @@ public abstract class com/embabel/dice/conformance/AbstractPropositionStoreContr
 	protected abstract fun store ()Lcom/embabel/dice/proposition/PropositionStore;
 }
 
+public final class com/embabel/dice/conformance/ConformanceEmbeddingService : com/embabel/common/ai/model/EmbeddingService {
+	public static final field Companion Lcom/embabel/dice/conformance/ConformanceEmbeddingService$Companion;
+	public static final field DEFAULT_DIMENSIONS I
+	public fun <init> ()V
+	public fun <init> (I)V
+	public synthetic fun <init> (IILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun embed (Ljava/lang/String;)[F
+	public fun embed (Ljava/util/List;)Ljava/util/List;
+	public fun getDimensions ()I
+	public fun getName ()Ljava/lang/String;
+	public fun getPricingModel ()Lcom/embabel/common/ai/model/PricingModel;
+	public fun getProvider ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/conformance/ConformanceEmbeddingService$Companion {
+}
+
 public final class com/embabel/dice/conformance/ConformanceEmbeddings {
 	public static final field INSTANCE Lcom/embabel/dice/conformance/ConformanceEmbeddings;
 	public static final field MIN_DIMENSIONS I
