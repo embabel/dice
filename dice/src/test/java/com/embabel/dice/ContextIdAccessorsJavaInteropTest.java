@@ -40,7 +40,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Checks that Java listeners can read the context id of the events that carry one.
+ * Checks that Java can read the context id of the events, keys, reports and commands that carry one,
+ * and can build the input types through their {@code of} factories.
  */
 class ContextIdAccessorsJavaInteropTest {
 
@@ -130,6 +131,16 @@ class ContextIdAccessorsJavaInteropTest {
         assertFalse(run.getDryRun());
         assertTrue(dryRun.getDryRun());
         assertSame(clock, dryRun.getClock());
+    }
+
+    @Test
+    void collectorRunContextIsBuiltFromJavaWithoutAClock() {
+        CollectorRunContext preview = CollectorRunContext.of("run-3", "acme", true);
+
+        assertEquals("run-3", preview.getRunId());
+        assertEquals("acme", preview.getContextIdValue());
+        assertTrue(preview.getDryRun());
+        assertEquals(Clock.systemUTC(), preview.getClock());
     }
 
     @Test
