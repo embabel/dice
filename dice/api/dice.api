@@ -1005,15 +1005,19 @@ public final class com/embabel/dice/common/resolver/EscalatingEntityResolver : c
 	public static final field Companion Lcom/embabel/dice/common/resolver/EscalatingEntityResolver$Companion;
 	public fun <init> (Ljava/util/List;Lcom/embabel/dice/common/resolver/CandidateBakeoff;Lcom/embabel/dice/common/resolver/ContextCompressor;Lcom/embabel/dice/common/resolver/EscalatingEntityResolver$Config;)V
 	public synthetic fun <init> (Ljava/util/List;Lcom/embabel/dice/common/resolver/CandidateBakeoff;Lcom/embabel/dice/common/resolver/ContextCompressor;Lcom/embabel/dice/common/resolver/EscalatingEntityResolver$Config;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public static final fun create (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Lcom/embabel/dice/common/resolver/EscalatingEntityResolver;
 	public static final fun create (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;Lcom/embabel/dice/common/resolver/CandidateBakeoff;)Lcom/embabel/dice/common/resolver/EscalatingEntityResolver;
 	public fun resolve (Lcom/embabel/dice/common/SuggestedEntities;Lcom/embabel/agent/core/DataDictionary;)Lcom/embabel/dice/common/Resolutions;
 	public final fun withCandidateBakeoff (Lcom/embabel/dice/common/resolver/CandidateBakeoff;)Lcom/embabel/dice/common/resolver/EscalatingEntityResolver;
+	public static final fun withoutVector (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Lcom/embabel/dice/common/resolver/EscalatingEntityResolver;
 	public static final fun withoutVector (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;Lcom/embabel/dice/common/resolver/CandidateBakeoff;)Lcom/embabel/dice/common/resolver/EscalatingEntityResolver;
 }
 
 public final class com/embabel/dice/common/resolver/EscalatingEntityResolver$Companion {
+	public final fun create (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Lcom/embabel/dice/common/resolver/EscalatingEntityResolver;
 	public final fun create (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;Lcom/embabel/dice/common/resolver/CandidateBakeoff;)Lcom/embabel/dice/common/resolver/EscalatingEntityResolver;
 	public static synthetic fun create$default (Lcom/embabel/dice/common/resolver/EscalatingEntityResolver$Companion;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;Lcom/embabel/dice/common/resolver/CandidateBakeoff;ILjava/lang/Object;)Lcom/embabel/dice/common/resolver/EscalatingEntityResolver;
+	public final fun withoutVector (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Lcom/embabel/dice/common/resolver/EscalatingEntityResolver;
 	public final fun withoutVector (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;Lcom/embabel/dice/common/resolver/CandidateBakeoff;)Lcom/embabel/dice/common/resolver/EscalatingEntityResolver;
 	public static synthetic fun withoutVector$default (Lcom/embabel/dice/common/resolver/EscalatingEntityResolver$Companion;Lcom/embabel/agent/rag/service/NamedEntityDataRepository;Lcom/embabel/dice/common/resolver/CandidateBakeoff;ILjava/lang/Object;)Lcom/embabel/dice/common/resolver/EscalatingEntityResolver;
 }
@@ -3613,6 +3617,9 @@ public abstract interface class com/embabel/dice/proposition/Derivation {
 }
 
 public final class com/embabel/dice/proposition/EntityMention : com/embabel/common/core/types/HasInfoString {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/proposition/MentionRole;)V
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/proposition/MentionRole;Ljava/util/Map;)V
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/proposition/MentionRole;Ljava/util/Map;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Ljava/lang/String;
@@ -3900,6 +3907,7 @@ public abstract interface class com/embabel/dice/proposition/Projector {
 
 public final class com/embabel/dice/proposition/Proposition : com/embabel/agent/rag/model/Retrievable, com/embabel/dice/proposition/Derivation, com/embabel/dice/proposition/ReferencesEntities {
 	public static final field Companion Lcom/embabel/dice/proposition/Proposition$Companion;
+	public static final field DEFAULT_DECAY_K D
 	public static final field PREDICATE Ljava/lang/String;
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;DDDLjava/lang/String;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;ZLjava/time/Instant;Lcom/embabel/dice/proposition/PropositionStatus;ILjava/util/List;ILjava/util/Map;Ljava/lang/String;Lcom/embabel/dice/temporal/TemporalMetadata;Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;DDDLjava/lang/String;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;ZLjava/time/Instant;Lcom/embabel/dice/proposition/PropositionStatus;ILjava/util/List;ILjava/util/Map;Ljava/lang/String;Lcom/embabel/dice/temporal/TemporalMetadata;Ljava/util/List;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -3941,8 +3949,10 @@ public final class com/embabel/dice/proposition/Proposition : com/embabel/agent/
 	public static final fun create (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;DDDLjava/lang/String;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/PropositionStatus;ILjava/util/List;ILjava/util/Map;Ljava/lang/String;Lcom/embabel/dice/temporal/TemporalMetadata;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;)Lcom/embabel/dice/proposition/Proposition;
 	public static final fun create (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;DDDLjava/lang/String;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/PropositionStatus;ILjava/util/List;ILjava/util/Map;Ljava/lang/String;Lcom/embabel/dice/temporal/TemporalMetadata;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;Z)Lcom/embabel/dice/proposition/Proposition;
 	public static final fun create (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;DDLjava/lang/String;Ljava/util/List;Ljava/time/Instant;Ljava/time/Instant;Lcom/embabel/dice/proposition/PropositionStatus;)Lcom/embabel/dice/proposition/Proposition;
+	public final fun effectiveConfidence ()D
 	public final fun effectiveConfidence (D)D
 	public static synthetic fun effectiveConfidence$default (Lcom/embabel/dice/proposition/Proposition;DILjava/lang/Object;)D
+	public final fun effectiveConfidenceAt (Ljava/time/Instant;)D
 	public final fun effectiveConfidenceAt (Ljava/time/Instant;D)D
 	public static synthetic fun effectiveConfidenceAt$default (Lcom/embabel/dice/proposition/Proposition;Ljava/time/Instant;DILjava/lang/Object;)D
 	public fun embeddableValue ()Ljava/lang/String;
@@ -3976,6 +3986,7 @@ public final class com/embabel/dice/proposition/Proposition : com/embabel/agent/
 	public fun infoString (Ljava/lang/Boolean;I)Ljava/lang/String;
 	public fun toString ()Ljava/lang/String;
 	public final fun withConfidence (D)Lcom/embabel/dice/proposition/Proposition;
+	public final fun withDecayApplied ()Lcom/embabel/dice/proposition/Proposition;
 	public final fun withDecayApplied (D)Lcom/embabel/dice/proposition/Proposition;
 	public static synthetic fun withDecayApplied$default (Lcom/embabel/dice/proposition/Proposition;DILjava/lang/Object;)Lcom/embabel/dice/proposition/Proposition;
 	public final fun withGrounding (Ljava/util/List;)Lcom/embabel/dice/proposition/Proposition;
