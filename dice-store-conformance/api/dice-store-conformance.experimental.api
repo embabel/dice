@@ -44,6 +44,23 @@ public abstract class com/embabel/dice/conformance/AbstractCollectorTraceStoreCo
 	protected abstract fun store ()Lcom/embabel/dice/spi/CollectorTraceStore;
 }
 
+public abstract class com/embabel/dice/conformance/AbstractDriftReportStoreContractTest {
+	public fun <init> ()V
+	public fun aContextReportReadsBackWithItsContext ()V
+	public fun aGlobalReportReadsBackWithEveryField ()V
+	public fun aLimitReturnsTheNewestReports ()V
+	public fun aLimitThatIsNotPositiveIsRejected ()V
+	public fun aReportReadsBackWithItsDeclaredDiff ()V
+	public fun checksOfOneSchemaAtDifferentInstantsAreSeparateReports ()V
+	public fun eachReadSeesOnlyItsOwnScope ()V
+	public fun readsComeBackNewestFirst ()V
+	public fun reportsForAnotherSchemaAreNeverReturned ()V
+	public fun savingTheSameObservationAgainReplacesIt ()V
+	public fun sinceBoundsTheWindowFromBelowAndIncludesItsOwnInstant ()V
+	protected abstract fun store ()Lcom/embabel/dice/metamodel/DriftReportStore;
+	public fun theScopeIsAppliedBeforeTheLimit ()V
+}
+
 public abstract class com/embabel/dice/conformance/AbstractExtractionRunStoreContractTest {
 	public fun <init> ()V
 	public final fun a CANCELLED terminal record is locked the same as SUCCEEDED and FAILED, through recordInvocation ()V
