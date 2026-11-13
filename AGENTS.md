@@ -101,6 +101,7 @@ The `dice` module is organized by responsibility:
 | `com.embabel.dice.operations` | Higher-level proposition operations (`PropositionAbstractor`, `PropositionContraster`) and, under `operations.consolidation`, the passes that compose the dream loop (`SessionConsolidationPass`, `AbstractionPass`, `ContradictionResolutionPass`, `DecaySweepPass`) |
 | `com.embabel.dice.text2graph` | Text-to-graph builder pipeline (`KnowledgeGraphBuilder`, `SourceAnalyzer`, entity merge/relationship resolution policies) |
 | `com.embabel.dice.provenance` | `ProvenanceEntry`, `SourceLocator` — rich evidence links from propositions back to source material |
+| `com.embabel.dice.evidence` | Evidence handed to a caller that assembles model context (`Evidence` and its four kinds, `EvidenceItem`, `Citation`, `Retrieval`, `Searched`, `DerivationRule`, `EvidenceConverter`, `EvidenceProvider`) |
 | `com.embabel.dice.query.oracle` | `Oracle`, `LlmOracle`, `PrologTools` — natural language question answering over propositions |
 | `com.embabel.dice.web.rest` | Optional REST endpoints for the pipeline and memory; activated by `spring-webmvc` on the classpath |
 | `com.embabel.dice.mcp` | `DiceMcpTools` — simplified MCP tool surface (`dice_recall`, `dice_list`, `dice_store`, `dice_get`); `contextId` on every call is a scope, not a credential |

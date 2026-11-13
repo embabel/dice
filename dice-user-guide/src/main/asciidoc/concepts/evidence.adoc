@@ -1,0 +1,222 @@
+[[concepts-evidence]]
+=== Evidence
+
+Evidence is what a caller that assembles model context receives. Build it with the factories below, or convert DICE results with `EvidenceConverter`. Each item carries its citation, its confidence, and the retrievals that found it, so the caller can decide what to include and cite. Evidence has four kinds, and a `switch` or `when` tells them apart. The grounding and provenance behind one claim are in its `Citation`.
+
+==== A piece of evidence
+
+[cols="1,3", options="header"]
+|===
+| Part | Meaning
+
+| `text`
+| The claim. It is never blank.
+
+| `citation`
+| The `Citation`: the claim id, its context, and its source material (chunk ids, provenance entries and a URI).
+
+| `confidence`
+| The stored confidence, from 0 to 1.
+
+| `effectiveConfidence`
+| Confidence after decay and validity are applied, from 0 to 1.
+
+| `status`
+| The claim's `PropositionStatus`, such as `ACTIVE` or `SUPERSEDED`.
+
+| `recordedAt` and `revisedAt`
+| When the claim was recorded and when it was last revised.
+
+| `derivedFromIds`
+| The ids of the claims this item was derived from. An item with ids is derived.
+
+| `score`
+| The final ranking score. Null when there is none.
+
+| `retrievals`
+| One `Retrieval` for each retriever that found the item, in the order they were added.
+|===
+
+[source,java]
+----
+EvidenceItem item = EvidenceItem.of("Ada wrote the first program", Citation.of("p-17", "support-team"), 0.9)
+        .withEffectiveConfidence(0.7)
+        .withScore(0.016)
+        .withRetrieval(Retrieval.of(RetrieverId.VECTOR).withRank(1).withScore(0.83));
+----
+
+In Kotlin, a block sets the optional values while the item is built.
+
+[source,kotlin]
+----
+val citation = Citation.of("prop-42", "ctx-main")
+val vectorHit = Retrieval.of(RetrieverId.VECTOR).withRank(1).withScore(0.87)
+val recordedAt = Instant.parse("2024-01-01T00:00:00Z")
+val item = EvidenceItem("t", citation, 0.8) {
+    effectiveConfidence = 0.6
+    status = PropositionStatus.SUPERSEDED
+    this.recordedAt = recordedAt
+    derivedFromIds = listOf("p-1", "p-2")
+    score = 0.42
+    retrieval(vectorHit)
+}
+----
+
+==== What a lookup found
+
+[cols="1,2,3", options="header"]
+|===
+| Kind | When you get it | What it carries
+
+| `Evidence.Recorded`
+| The search found one or more stored claims.
+| `items`, a non-empty list of `EvidenceItem`.
+
+| `Evidence.Derived`
+| A derivation rule produced a conclusion from stored claims.
+| `conclusion`, `confidence`, `effectiveConfidence`, `rule`, `inputIds`, `inputs`, `citation` and `status`. `inputs` and `citation` are set with `withInputs` and `withCitation`. `effectiveConfidence` and `status` are set with `withEffectiveConfidence` and `withStatus`.
+
+| `Evidence.Missing`
+| There is nothing to return, including when every result was filtered out.
+| `searched`: the contexts, query and filters that were searched.
+
+| `Evidence.Conflicting`
+| Two or more claims with different ids disagree.
+| `items` and `conflictType`.
+|===
+
+[source,java]
+----
+EvidenceItem item = EvidenceItem.of("Ada wrote the first program", Citation.of("p-17", "support-team"), 0.9);
+Evidence.Recorded recorded = Evidence.recorded(List.of(item));
+----
+
+[source,java]
+----
+EvidenceItem item = EvidenceItem.of("Ada wrote the first program", Citation.of("p-17", "support-team"), 0.9);
+Evidence.Derived derived = Evidence.derived(
+                "Ada is a mathematician",
+                0.8,
+                DerivationRule.of("prolog").withRuleId("grandparent").withExpression("grandparent(X, Y)"),
+                List.of("p-17"))
+        .withInputs(List.of(item))
+        .withCitation(Citation.of("p-19", "support-team"));
+----
+
+[source,java]
+----
+Evidence.Missing missing = Evidence.missing(Searched.of("support-team"));
+----
+
+[source,java]
+----
+EvidenceItem item = EvidenceItem.of("Ada wrote the first program", Citation.of("p-17", "support-team"), 0.9);
+EvidenceItem other = EvidenceItem.of("Ada wrote a note", Citation.of("p-18", "support-team"), 0.6);
+Evidence.Conflicting conflicting =
+        Evidence.conflicting(List.of(item, other), ConflictType.Contradiction.INSTANCE);
+----
+
+==== Branching on the kind
+
+`Evidence` is sealed, so the compiler checks that a `switch` or `when` covers all four kinds.
+
+[source,java]
+----
+String label = switch (evidence) {
+    case Evidence.Recorded recorded -> "recorded " + recorded.getItems().size();
+    case Evidence.Derived derived -> "derived " + derived.getConclusion();
+    case Evidence.Missing missing -> "missing " + missing.getSearched().getQuery();
+    case Evidence.Conflicting conflicting -> "conflicting " + conflicting.getItems().size();
+};
+----
+
+[source,kotlin]
+----
+val label = when (evidence) {
+    is Evidence.Recorded -> "recorded"
+    is Evidence.Derived -> "derived"
+    is Evidence.Missing -> "missing"
+    is Evidence.Conflicting -> "conflicting"
+}
+----
+
+==== Converting existing results
+
+`EvidenceConverter` turns results you already have into evidence.
+
+[cols="2,2,3", options="header"]
+|===
+| You have | Call | You get
+
+| Claims, and the retriever that found them
+| `fromPropositions(propositions, searched, retriever)`
+| `Recorded` items, with a `Retrieval` for the retriever.
+
+| Claims
+| `fromPropositions(propositions, searched)`
+| `Recorded` items.
+
+| Scored hits
+| `fromSimilarityResults(hits, searched)`
+| `Recorded` items, each with the hit's score and a `Retrieval` for `RetrieverId.VECTOR`.
+
+| Scored hits, and the retriever that found them
+| `fromSimilarityResults(hits, searched, retriever)`
+| The same, for the retriever you name.
+
+| One claim
+| `item(proposition)`
+| One `EvidenceItem`.
+
+| One scored hit, with its retriever and rank
+| `item(hit, retriever, rank)`
+| One `EvidenceItem`, with the hit's score and a `Retrieval`.
+
+| A lineage
+| `fromLineage(lineage)`
+| `Derived` for an abstraction, with its source claims as inputs, its effective confidence and its status. Otherwise `Recorded` with one item.
+
+| A revision contradiction
+| `fromContradiction(contradicted)`
+| `Conflicting`, with the original claim first and the new claim second.
+
+| An empty list of claims or hits
+| `fromPropositions` or `fromSimilarityResults`
+| `Missing`, with the `Searched`.
+|===
+
+When a query sets a decay rate, pass it to the converter with `withDecayK`.
+
+[source,java]
+----
+Instant recordedAt = Instant.parse("2026-01-01T00:00:00Z");
+Instant now = Instant.parse("2026-01-11T00:00:00Z");
+Proposition first = Proposition.draft("support-team", "Ada wrote the first program", 0.9)
+        .withId("claim-1")
+        .withGrounding(List.of("chunk-1"))
+        .withDecay(0.05)
+        .withCreated(recordedAt)
+        .toProposition();
+Proposition second = Proposition.draft("support-team", "Ada studied mathematics", 0.8)
+        .withId("claim-2")
+        .withCreated(recordedAt)
+        .toProposition();
+EvidenceConverter converter = EvidenceConverter.create()
+        .withDecayK(4.0)
+        .withClock(Clock.fixed(now, ZoneOffset.UTC));
+Evidence evidence = converter.fromPropositions(
+        List.of(first, second),
+        Searched.of("support-team").withQuery("who is Ada"),
+        RetrieverId.KEYWORD);
+----
+
+==== Returning evidence from a lookup
+
+`EvidenceProvider` is the interface a lookup implements to return `Evidence` for a query. It is experimental, and its API may change before 1.0.
+
+[source,java]
+----
+EvidenceProvider<String> provider =
+        query -> Evidence.missing(Searched.of("support-team").withQuery(query));
+Evidence evidence = provider.evidence("who is Ada");
+----

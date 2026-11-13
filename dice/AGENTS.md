@@ -71,6 +71,7 @@ These map onto the lifecycle in [proposition-lifecycle](../docs/design/propositi
 | `projection.grounding` | `GroundingResolver`, `GroundingWiringService` |
 | `text2graph` | `KnowledgeGraphBuilder`, `SourceAnalyzer`, `LlmSourceAnalyzer`, `MultiPassKnowledgeGraphBuilder`, merge policies, relationship resolution |
 | `provenance` | `ProvenanceEntry`, `SourceLocator`, `UriLocator` |
+| `evidence` | Evidence handed to a caller that assembles model context: `Evidence` and its four kinds, `EvidenceItem`, `Citation`, `Retrieval`, `Searched`, `DerivationRule`, `EvidenceConverter`, `EvidenceProvider` |
 | `query.oracle` | `Oracle`, `LlmOracle`, `PrologTools`, `ToolOracle` |
 | `query.graph` | `GraphQuery`, `GraphNeighborhood`, `GraphPath`, `PropositionLineage` — neighbourhood/path/lineage retrieval over the graph |
 | `query.discovery` | `RetrievalRouter`, `DiscoveryQuery`, `RetrievalMode`, discovery DTOs — mode-routed retrieval entry point |

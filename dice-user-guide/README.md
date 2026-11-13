@@ -94,7 +94,7 @@ Output lands in `target/dokka-aggregate`.
 | `src/main/asciidoc/user-guide.adoc` | The section order. Each section is a directory with a `page.adoc`. |
 | `overview/` | What DICE is, the architecture, the modules, the glossary. |
 | `quickstart/` | One page: dependencies through first report. |
-| `concepts/` | Five pages, read in order. |
+| `concepts/` | Six pages, read in order. |
 | `how-to/` | Task-shaped pages, prerequisites first. |
 | `features/` | One page per opt-in surface, activation condition first. |
 | `reference/` | Configuration properties, package structure, extension points. |

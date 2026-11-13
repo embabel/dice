@@ -47,6 +47,11 @@ Provenance::
 Richer evidence links than grounding: a `ProvenanceEntry` records where a claim came from and,
 through `SourceLocator`, how to get back to it.
 
+Evidence::
+What a lookup returns to a caller that assembles model context: stored claims, a derived conclusion,
+nothing, or claims that disagree. Each claim carries a `Citation` to its grounding and provenance.
+<<concepts-evidence>> describes each kind.
+
 Admission gate::
 A check that runs on pipeline output *before* the caller persists it — a confidence floor, a trust
 threshold, a projection-eligibility rule.
