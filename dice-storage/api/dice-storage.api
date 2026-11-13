@@ -56,6 +56,7 @@ public final class com/embabel/dice/storage/DriftReportRowMapper {
 
 public class com/embabel/dice/storage/DrivineChunkHistoryStore : com/embabel/dice/incremental/ChunkHistoryStore {
 	public fun <init> (Lorg/drivine/manager/StatelessGraphObjectManager;Lorg/drivine/manager/PersistenceManager;)V
+	public fun clearAll ()V
 	public fun clearByContext-GRzcY08 (Ljava/lang/String;)V
 	public fun getLastBookmark (Lcom/embabel/dice/incremental/BookmarkKey;)Lcom/embabel/dice/incremental/AnalysisBookmark;
 	public fun isProcessed (Lcom/embabel/dice/incremental/HashKey;)Z
