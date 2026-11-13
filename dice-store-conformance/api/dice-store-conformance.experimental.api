@@ -146,6 +146,7 @@ public abstract class com/embabel/dice/conformance/AbstractFilteredVectorSearchC
 	public fun equalScoresKeepOneOrder ()V
 	protected fun excludedCount ()I
 	protected fun expectedVectorFiltering ()Lcom/embabel/dice/store/VectorFiltering;
+	protected fun floorTolerance ()D
 	public fun kMatchesComeBackWhenANearerContextIsExcluded ()V
 	public fun matchesAreOrderedClosestFirstAndCutAfterOrdering ()V
 	protected fun scoreTolerance ()D

@@ -24,6 +24,7 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.proposition.VectorSearchCapable
 import com.embabel.dice.store.FilteredVectorSearch
+import com.embabel.dice.store.SimilarityScore
 import com.embabel.dice.store.StoreCapabilities
 import com.embabel.dice.store.StoreCapability
 import com.embabel.dice.store.UnsupportedCapabilityException
@@ -86,8 +87,8 @@ abstract class AbstractFilteredVectorSearchContractTest {
      * How many nearer propositions the filter leaves out in the cases that check the filter runs
      * before the cut to K. The context, status and filter field cases all use this count. A store
      * that picks a window of candidates, filters it and then cuts to K passes those cases when the
-     * window holds this many candidates plus five. A store with such a window returns a number above
-     * the window.
+     * window holds this many candidates plus five. The subclass for a store with such a window
+     * overrides this to return a number above the window.
      *
      * @return The number of excluded propositions that are nearer than every match. The default is 121.
      */
@@ -101,6 +102,16 @@ abstract class AbstractFilteredVectorSearchContractTest {
      * @return The largest accepted difference. The default is 0.01.
      */
     protected open fun scoreTolerance(): Double = 0.01
+
+    /**
+     * How far below the third match's reported score the exact-floor case puts its floor. The
+     * default is 0, so the case holds the store to an inclusive floor at the exact score it
+     * reports. A store that reports a score with less precision than it compares with returns a
+     * small number here. Any value above 0 also lets a store with an exclusive floor pass that case.
+     *
+     * @return The distance below the reported score. The default is 0.
+     */
+    protected open fun floorTolerance(): Double = 0.0
 
     /**
      * The vector filtering mode this store is meant to declare. When a subclass returns a mode, one
@@ -179,11 +190,18 @@ abstract class AbstractFilteredVectorSearchContractTest {
      * @param store The store to seed.
      * @param context The context the propositions belong to.
      * @param status The status the propositions carry.
+     * @param prefix The start of each label.
+     * @param change Turns each fixture proposition into the one that is saved.
      */
-    private fun seedNearer(store: PropositionStore, context: String, status: PropositionStatus) =
-        (0 until excludedCount()).forEach { i ->
-            store.save(proposition("near-$i", (10 + i % 190) / 10.0, context, status))
-        }
+    private fun seedNearer(
+        store: PropositionStore,
+        context: String,
+        status: PropositionStatus,
+        prefix: String = "near",
+        change: (Proposition) -> Proposition = { it },
+    ) = (0 until excludedCount()).forEach { i ->
+        store.save(change(proposition("$prefix-$i", (10 + i % 190) / 10.0, context, status)))
+    }
 
     /**
      * Returns the store as [FilteredVectorSearch], or skips the case when the store does not list
@@ -234,11 +252,7 @@ abstract class AbstractFilteredVectorSearchContractTest {
         passing: (Proposition) -> Proposition,
     ): String? {
         val context = "vector-field-$field"
-        (0 until excludedCount()).forEach { i ->
-            store.save(
-                failing(proposition("$field-fail-$i", (10 + i % 190) / 10.0, context, PropositionStatus.ACTIVE)),
-            )
-        }
+        seedNearer(store, context, PropositionStatus.ACTIVE, "$field-fail", failing)
         val passingTexts = saveMatches(store, "$field-pass", context, passing)
         val request = VectorSearchRequest.forText(queryText, filter(PropositionQuery.againstContext(context)))
         return listOf(1, 5).firstNotNullOfOrNull { k ->
@@ -385,10 +399,11 @@ abstract class AbstractFilteredVectorSearchContractTest {
         val request = VectorSearchRequest.forText(queryText, PropositionQuery.againstContext(tenant)).withTopK(5)
         val unfloored = search.findNearest(request)
         assertTrue(unfloored.size >= 3) { "With no floor the store returns ${unfloored.size} of the 5 matches" }
-        val floor = unfloored[2].score
+        val floor = SimilarityScore.ofCosine(unfloored[2].score.cosine - floorTolerance())
 
         assertEquals(matching.take(3), texts(search, request.withMinScore(floor))) {
-            "With the floor at the third match's score $floor the store returns the three matches that score at or above it"
+            "With the floor at the third match's score ${unfloored[2].score} less the floor tolerance ${floorTolerance()}, " +
+                "the store returns the three matches that score at or above it"
         }
     }
 
