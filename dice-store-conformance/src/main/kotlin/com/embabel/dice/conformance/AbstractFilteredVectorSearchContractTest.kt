@@ -117,6 +117,13 @@ abstract class AbstractFilteredVectorSearchContractTest {
     private val matchDegrees = listOf(30.0, 40.0, 50.0, 60.0, 70.0)
 
     /**
+     * The order the matching fixture is saved in, as indexes into [matchDegrees]. It is neither
+     * closest first nor farthest first, so a store that returns matches in the order it holds them
+     * fails the ordering case.
+     */
+    private val saveOrder = listOf(2, 0, 4, 1, 3)
+
+    /**
      * Builds a proposition whose text embeds at an angle from the query.
      *
      * @param label The name of the text. Every fixture proposition gets its own.
@@ -135,15 +142,33 @@ abstract class AbstractFilteredVectorSearchContractTest {
         )
 
     /**
+     * Saves five propositions at 30 to 70 degrees in [saveOrder], `prefix-0` closest.
+     *
+     * @param store The store to seed.
+     * @param prefix The start of each label.
+     * @param context The context the propositions belong to.
+     * @param change Turns each fixture proposition into the one that is saved.
+     * @return The texts of the saved propositions, closest first.
+     */
+    private fun saveMatches(
+        store: PropositionStore,
+        prefix: String,
+        context: String,
+        change: (Proposition) -> Proposition = { it },
+    ): List<String> {
+        val saved = saveOrder.associateWith { i ->
+            store.save(change(proposition("$prefix-$i", matchDegrees[i], context, PropositionStatus.ACTIVE))).text
+        }
+        return matchDegrees.indices.map { saved.getValue(it) }
+    }
+
+    /**
      * Saves the five matching propositions in [tenant], `match-0` to `match-4` at 30 to 70 degrees.
      *
      * @param store The store to seed.
      * @return The texts of the matching propositions, closest first.
      */
-    private fun seedMatching(store: PropositionStore): List<String> =
-        matchDegrees.mapIndexed { i, degrees ->
-            store.save(proposition("match-$i", degrees, tenant, PropositionStatus.ACTIVE)).text
-        }
+    private fun seedMatching(store: PropositionStore): List<String> = saveMatches(store, "match", tenant)
 
     /**
      * Saves [excludedCount] propositions that sit nearer the query than every match. Each angle is
@@ -210,9 +235,7 @@ abstract class AbstractFilteredVectorSearchContractTest {
         (0 until 5).forEach { i ->
             store.save(failing(proposition("$field-fail-$i", 1.0 + i / 10.0, context, PropositionStatus.ACTIVE)))
         }
-        val passingTexts = matchDegrees.mapIndexed { i, degrees ->
-            store.save(passing(proposition("$field-pass-$i", degrees, context, PropositionStatus.ACTIVE))).text
-        }
+        val passingTexts = saveMatches(store, "$field-pass", context, passing)
         val request = VectorSearchRequest.forText(queryText, filter(PropositionQuery.againstContext(context)))
             .withTopK(5)
         return try {
@@ -388,7 +411,7 @@ abstract class AbstractFilteredVectorSearchContractTest {
         val store = store()
         val search = filteredSearch(store)
         val expected = listOf(0.0 to 1.0, 60.0 to 0.5, 90.0 to 0.0, 120.0 to -0.5, 180.0 to -1.0)
-        expected.forEach { (degrees, _) ->
+        listOf(90.0, 0.0, 180.0, 60.0, 120.0).forEach { degrees ->
             store.save(proposition("scale-$degrees", degrees, tenant, PropositionStatus.ACTIVE))
         }
 

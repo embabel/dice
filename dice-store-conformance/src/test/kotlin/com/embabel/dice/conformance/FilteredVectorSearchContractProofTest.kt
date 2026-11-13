@@ -175,6 +175,13 @@ class FilteredVectorSearchContractProofTest {
     }
 
     @Test
+    fun `a store that does not sort by score fails the ordering case`() {
+        assertThrows<AssertionError> {
+            suiteOver(FilterFirstReferenceStore(ReferenceFault.UNSORTED)).matchesAreOrderedClosestFirstAndCutAfterOrdering()
+        }
+    }
+
+    @Test
     fun `a store that lists the capability and does not implement it fails`() {
         assertThrows<AssertionError> {
             suiteOver(ListedOnlyStore()).aStoreThatListsFilteredVectorSearchImplementsIt()
