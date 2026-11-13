@@ -186,9 +186,10 @@ what the store declares.
 | `FILTERED_VECTOR_SEARCH`
 | K matches come back, at K of 1 and of 5, when K exist under a filter that leaves out 121 nearer
   propositions. Each of `entityId`, `minLevel`, `pinned`, `minConfidence`, `createdAfter` and
-  `minEffectiveConfidence` is applied, or refused with `UnsupportedCapabilityException`. Matches are
-  closest first, a match that scores exactly the floor is returned, equal scores keep one order,
-  and scores are cosine similarity within 0.01.
+  `minEffectiveConfidence` is applied at K of 1 and of 5 with 121 nearer propositions that fail it,
+  or refused with `UnsupportedCapabilityException`. Matches are closest first, a match that scores
+  exactly the floor is returned, equal scores keep one order, and scores are cosine similarity
+  within 0.01.
 
 | `VectorFiltering.AFTER_TOP_K`
 | The filtered search of `VectorSearchCapable` returns at most K propositions. Each one matches the
@@ -221,10 +222,10 @@ class FilteredVectorSearchContractJavaInteropTest extends AbstractFilteredVector
 }
 ----
 
-A store that picks a window of candidates, filters it and then cuts to K passes the K-matches cases
-when the window holds 126 candidates or more, or grows with K by a factor of 122 or more. A store
-with such a window overrides `excludedCount()` to return a number above the window. A store whose
-index rounds vectors overrides `scoreTolerance()`.
+A store that picks a window of candidates, filters it and then cuts to K passes the K-matches and
+filter field cases when the window holds 126 candidates or more, or grows with K by a factor of 122
+or more. A store with such a window overrides `excludedCount()` to return a number above the window.
+A store whose index rounds vectors overrides `scoreTolerance()`.
 
 NOTE: The suites, `ConformanceEmbeddings` and `ConformanceEmbeddingService` are experimental. Their
 API may change before 1.0.
