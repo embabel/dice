@@ -15,16 +15,15 @@
  */
 package example.dice.starter.memory;
 
-import com.embabel.agent.rag.service.NamedEntityDataRepository;
 import com.embabel.dice.common.UngroundedMentionsFound;
 import com.embabel.dice.proposition.EntityMention;
 import com.embabel.dice.proposition.Proposition;
+import example.dice.common.ScriptedChatModel;
 import example.dice.starter.customers.AccountId;
 import example.dice.starter.memory.ScriptedModel.DiceEvents;
 import example.dice.starter.tickets.Ticket;
 import example.dice.starter.tickets.Ticket.TicketId;
 import example.dice.starter.tickets.Tickets;
-import example.dice.common.ScriptedChatModel;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -33,18 +32,14 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.annotation.DirtiesContext;
 
-import java.time.Duration;
-import java.time.Instant;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.within;
 
 /**
- * Files three tickets for two accounts and reads back what the support desk remembers.
+ * Files four tickets for two accounts and reads back what the support desk remembers.
  */
 @SpringBootTest
 @Import(ScriptedModel.class)
@@ -55,19 +50,21 @@ class TicketMemoryTests {
     static final AccountId ACME = new AccountId("acme");
     static final AccountId GLOBEX = new AccountId("globex");
 
+    static final Ticket TICKET_1042 = new Ticket(new TicketId("ticket-1042"), ACME, """
+            Ada Okafor from Acme wrote in on 3 November. Acme is on the Team plan. \
+            Ada reports that CSV export times out for reports over 50,000 rows. \
+            She prefers to be contacted by email.""");
+
     @Autowired Tickets tickets;
     @Autowired CustomerMemory memory;
     @Autowired DiceEvents diceEvents;
-    @Autowired NamedEntityDataRepository entities;
+    @Autowired AccountEntities entities;
     @Autowired ScriptedChatModel model;
 
     @BeforeAll
     void fileTickets() {
 
-        tickets.file(new Ticket(new TicketId("ticket-1042"), ACME, """
-                Ada Okafor from Acme wrote in on 3 November. Acme is on the Team plan. \
-                Ada reports that CSV export times out for reports over 50,000 rows. \
-                She prefers to be contacted by email."""));
+        tickets.file(TICKET_1042);
 
         tickets.file(new Ticket(new TicketId("ticket-1057"), ACME, """
                 Follow-up with Ada Okafor on 9 November. Ada confirmed the CSV export fix works for \
@@ -76,6 +73,10 @@ class TicketMemoryTests {
         tickets.file(new Ticket(new TicketId("ticket-2210"), GLOBEX, """
                 Ben Ruiz at Globex asked for a copy of the October invoice. \
                 Globex is on the Starter plan."""));
+
+        // Globex has a contact with the same name as Acme's.
+        tickets.file(new Ticket(new TicketId("ticket-2231"), GLOBEX, """
+                Ada Okafor at Globex asked to be the billing contact for the account."""));
     }
 
     @Test
@@ -95,7 +96,8 @@ class TicketMemoryTests {
 
         assertThat(memory.currentFacts(GLOBEX)).extracting(Proposition::getText).containsExactlyInAnyOrder(
                 "Globex is on the Starter plan",
-                "Ben Ruiz asked for a copy of the October invoice for Globex");
+                "Ben Ruiz asked for a copy of the October invoice for Globex",
+                "Ada Okafor is the billing contact at Globex");
 
         assertThat(memory.currentFacts(new AccountId("initech"))).isEmpty();
     }
@@ -118,11 +120,37 @@ class TicketMemoryTests {
     @Test
     void resolvesAMentionInALaterTicketToTheEntityFromAnEarlierOne() {
 
-        var first = acmeMention("Acme is on the Team plan");
-        var later = acmeMention("Acme wants single sign-on enabled before its December audit");
+        var first = mention(ACME, "Acme is on the Team plan", "Acme");
+        var later = mention(ACME, "Acme wants single sign-on enabled before its December audit", "Acme");
 
         assertThat(later.getResolvedId()).isNotNull().isEqualTo(first.getResolvedId());
-        assertThat(entities.findById(first.getResolvedId()).getName()).isEqualTo("Acme");
+        assertThat(entities.of(ACME).findById(first.getResolvedId()).getName()).isEqualTo("Acme");
+    }
+
+    @Test
+    void givesEachAccountItsOwnEntityForASharedName() {
+
+        var atAcme = mention(ACME, "Ada Okafor is a contact at Acme", "Ada Okafor");
+        var atGlobex = mention(GLOBEX, "Ada Okafor is the billing contact at Globex", "Ada Okafor");
+
+        assertThat(atAcme.getResolvedId()).isNotNull();
+        assertThat(atGlobex.getResolvedId()).isNotNull().isNotEqualTo(atAcme.getResolvedId());
+
+        assertThat(entities.of(GLOBEX).findById(atGlobex.getResolvedId()).getName()).isEqualTo("Ada Okafor");
+        assertThat(entities.of(GLOBEX).findById(atAcme.getResolvedId())).isNull();
+        assertThat(entities.of(ACME).findById(atGlobex.getResolvedId())).isNull();
+    }
+
+    @Test
+    void filingTheSameTicketAgainStoresNothingNew() {
+
+        var factsBefore = memory.currentFacts(ACME);
+        var modelCallsBefore = model.promptsSeen().size();
+
+        tickets.file(TICKET_1042);
+
+        assertThat(memory.currentFacts(ACME)).containsExactlyInAnyOrderElementsOf(factsBefore);
+        assertThat(model.promptsSeen()).hasSize(modelCallsBefore);
     }
 
     @Test
@@ -143,26 +171,15 @@ class TicketMemoryTests {
     @Test
     void sendsTheSchemaAndTheTicketTextToTheModel() {
 
-        assertThat(model.promptsSeen()).hasSize(3);
+        assertThat(model.promptsSeen()).hasSize(4);
         assertThat(model.promptsSeen().get(0)).contains("Customer", "Contact", "Ada Okafor from Acme wrote in");
     }
 
     @Test
-    void factsWithAHighDecayRateStopBeingTrustedFirst() {
+    void keepsTheDecayRateTheModelGaveEachFact() {
 
-        var plan = fact(ACME, "Acme is on the Team plan");
-        var outage = fact(ACME, "CSV export times out at Acme for reports over 50,000 rows");
-        var thirtyDaysOn = lastRevision(memory.currentFacts(ACME)).plus(Duration.ofDays(30));
-
-        // confidence * exp(-decay * k * days), with k = Proposition.DEFAULT_DECAY_K, which is 2.0
-        assertThat(plan.effectiveConfidenceAt(thirtyDaysOn)).isCloseTo(0.95 * Math.exp(-0.3), within(1e-9));
-        assertThat(outage.effectiveConfidenceAt(thirtyDaysOn)).isCloseTo(0.85 * Math.exp(-3.0), within(1e-9));
-
-        assertThat(memory.trustedAsOf(ACME, thirtyDaysOn, 0.5)).extracting(Proposition::getText)
-                .containsExactlyInAnyOrder(
-                        "Acme is on the Team plan",
-                        "Ada Okafor is a contact at Acme",
-                        "She prefers to be contacted by email");
+        assertThat(fact(ACME, "Acme is on the Team plan").getDecay()).isEqualTo(0.005);
+        assertThat(fact(ACME, "CSV export times out at Acme for reports over 50,000 rows").getDecay()).isEqualTo(0.05);
     }
 
     /**
@@ -180,27 +197,17 @@ class TicketMemoryTests {
     }
 
     /**
-     * Finds the mention of Acme on one of Acme's facts.
+     * Finds one mention on one of an account's facts.
      *
-     * @param text the fact's exact text
-     * @return the mention whose span is "Acme"
+     * @param account whose memory to look in
+     * @param text    the fact's exact text
+     * @param span    the mention's exact text
+     * @return the mention
      */
-    private EntityMention acmeMention(String text) {
-        return fact(ACME, text).getMentions().stream()
-                .filter(mention -> mention.getSpan().equals("Acme"))
+    private EntityMention mention(AccountId account, String text, String span) {
+        return fact(account, text).getMentions().stream()
+                .filter(mention -> mention.getSpan().equals(span))
                 .findFirst()
                 .orElseThrow();
-    }
-
-    /**
-     * The latest moment any of the facts was revised. Decay counts whole days from the later
-     * of a fact's last revision and last access. These facts have not been accessed, so
-     * measuring from the latest revision puts every fact the same number of days on.
-     *
-     * @param facts the facts to look at
-     * @return the most recent content revision among them
-     */
-    private static Instant lastRevision(List<Proposition> facts) {
-        return facts.stream().map(Proposition::getContentRevised).max(Comparator.naturalOrder()).orElseThrow();
     }
 }

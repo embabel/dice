@@ -12,7 +12,8 @@
 
     <groupId>com.embabel.dice.examples</groupId>
     <artifactId>dice-examples</artifactId>
-    <version>0.5.0-SNAPSHOT</version>
+    <!-- The examples are never published, so their own version stays as it is. -->
+    <version>1.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>DICE Examples</name>
     <description>Focused examples of the DICE API. Built on its own and never published.</description>
@@ -36,11 +37,13 @@
 
     <properties>
         <java.version>21</java.version>
+        <!-- The Kotlin version DICE is built with. -->
+        <kotlin.version>2.2.21</kotlin.version>
         <!--
-            The DICE version the examples build against: the snapshot the root pom.xml builds.
-            Keep this version in step with it. CI fails when the two differ.
+            The DICE version the examples build against. It is the version in the root pom.xml,
+            and the build stops when the two differ.
         -->
-        <dice.version>${project.version}</dice.version>
+        <dice.version>0.5.0-SNAPSHOT</dice.version>
         <!-- DICE compiles against this Embabel Agent version, so the examples run on the same one. -->
         <embabel-agent.version>1.5.4</embabel-agent.version>
         <spring-modulith.version>2.1.0</spring-modulith.version>
@@ -108,7 +111,45 @@
         </dependency>
     </dependencies>
 
-    <!-- Embabel snapshots are published here. Released versions are on Maven Central. -->
+    <build>
+        <plugins>
+            <!--
+                Reads the version from the root pom.xml and stops the build when dice.version
+                differs from it. It runs for this POM only.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <inherited>false</inherited>
+                <executions>
+                    <execution>
+                        <id>check-dice-version</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <xmlproperty file="${project.basedir}/../pom.xml" prefix="library"/>
+                                <fail message="examples/pom.xml builds against DICE ${dice.version}, but the root pom.xml is ${library.project.version}. Set dice.version to ${library.project.version}.">
+                                    <condition>
+                                        <not>
+                                            <equals arg1="${library.project.version}" arg2="${dice.version}"/>
+                                        </not>
+                                    </condition>
+                                </fail>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <!--
+        Embabel Agent releases come from the first repository. Snapshots are off for both, so
+        DICE comes from the local install.
+    -->
     <repositories>
         <repository>
             <id>embabel-releases</id>
@@ -117,6 +158,10 @@
                 <enabled>false</enabled>
             </snapshots>
         </repository>
+        <!--
+            The installed DICE POM lists this repository with snapshots on. Declared here with
+            snapshots off, it keeps Maven from fetching a published dice-metamodel.
+        -->
         <repository>
             <id>embabel-snapshots</id>
             <url>https://repo.embabel.com/artifactory/libs-snapshot</url>
@@ -124,7 +169,7 @@
                 <enabled>false</enabled>
             </releases>
             <snapshots>
-                <enabled>true</enabled>
+                <enabled>false</enabled>
             </snapshots>
         </repository>
     </repositories>

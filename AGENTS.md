@@ -39,7 +39,7 @@ mvn verify -pl dice-storage   # integration tests need Docker
 ./mvnw -B install -DskipTests
 ./mvnw -B -f examples/pom.xml verify
 ```
-CI builds them when a file under `examples/` changes and once a night, so a library change that breaks an example is otherwise found the next morning. Fix the example in the same change.
+CI builds them on every pull request and every push to main. Fix the example in the same change.
 
 **Kotlin version:** every module compiles with Kotlin 2.2.21, which `embabel-build-parent` manages. No module overrides it. `dice-storage` and `dice-storage-autoconfigure` need a 2.2 compiler for Drivine's KSP-generated `where { }` DSL, which uses Kotlin context parameters (`-Xcontext-parameters`).
 
