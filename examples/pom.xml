@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.1</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.embabel.dice.examples</groupId>
+    <artifactId>dice-examples</artifactId>
+    <version>0.5.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>DICE Examples</name>
+    <description>Focused examples of the DICE API. Built on its own and never published.</description>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+        </license>
+    </licenses>
+
+    <!--
+        This build is not part of the library reactor in the parent directory. Install the library
+        first (./mvnw -B install -DskipTests at the repository root), then build this one.
+    -->
+    <modules>
+        <module>examples-common</module>
+        <module>examples-java</module>
+        <module>examples-kotlin</module>
+    </modules>
+
+    <properties>
+        <java.version>21</java.version>
+        <!--
+            The DICE version the examples build against: the snapshot the root pom.xml builds.
+            Keep this version in step with it. CI fails when the two differ.
+        -->
+        <dice.version>${project.version}</dice.version>
+        <!-- DICE compiles against this Embabel Agent version, so the examples run on the same one. -->
+        <embabel-agent.version>1.5.4</embabel-agent.version>
+        <spring-modulith.version>2.1.0</spring-modulith.version>
+        <jmolecules.version>2025.0.2</jmolecules.version>
+        <!-- The examples are read and run from the repository. They are never deployed. -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.embabel.agent</groupId>
+                <artifactId>embabel-agent-dependencies</artifactId>
+                <version>${embabel-agent.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.embabel.dice</groupId>
+                <artifactId>dice</artifactId>
+                <version>${dice.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework.modulith</groupId>
+                <artifactId>spring-modulith-bom</artifactId>
+                <version>${spring-modulith.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.jmolecules</groupId>
+                <artifactId>jmolecules-bom</artifactId>
+                <version>${jmolecules.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.embabel.dice.examples</groupId>
+                <artifactId>examples-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- What every example needs. -->
+    <dependencies>
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice</artifactId>
+        </dependency>
+        <!-- DICE compiles against these two and takes the version the application declares. -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-rag-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <!-- Embabel snapshots are published here. Released versions are on Maven Central. -->
+    <repositories>
+        <repository>
+            <id>embabel-releases</id>
+            <url>https://repo.embabel.com/artifactory/libs-release</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+        <repository>
+            <id>embabel-snapshots</id>
+            <url>https://repo.embabel.com/artifactory/libs-snapshot</url>
+            <releases>
+                <enabled>false</enabled>
+            </releases>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+</project>

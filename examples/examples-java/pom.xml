@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.embabel.dice.examples</groupId>
+        <artifactId>dice-examples</artifactId>
+        <version>0.5.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>examples-java</artifactId>
+    <name>DICE Examples - Java</name>
+    <description>DICE in a Spring Boot application: a schema, extraction on an event, storage, and scoped queries</description>
+
+    <dependencies>
+        <!-- Brings up the Embabel Agent platform, which is where DICE gets its model from. -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-starter</artifactId>
+        </dependency>
+        <!-- Marker types that say what a class is in the domain: an identifier, an event. -->
+        <dependency>
+            <groupId>org.jmolecules</groupId>
+            <artifactId>jmolecules-ddd</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.jmolecules</groupId>
+            <artifactId>jmolecules-events</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.jspecify</groupId>
+            <artifactId>jspecify</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.embabel.dice.examples</groupId>
+            <artifactId>examples-common</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Checks that the packages under example.dice.starter only use each other's public types. -->
+        <dependency>
+            <groupId>org.springframework.modulith</groupId>
+            <artifactId>spring-modulith-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

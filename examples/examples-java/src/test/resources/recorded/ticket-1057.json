@@ -1,0 +1,24 @@
+{
+  "propositions": [
+    {
+      "text": "Ada Okafor confirmed the CSV export fix works",
+      "mentions": [
+        { "span": "Ada Okafor", "type": "Contact", "role": "SUBJECT" }
+      ],
+      "confidence": 0.9,
+      "decay": 0.02,
+      "importance": 0.6,
+      "reasoning": "Stated directly in the follow-up"
+    },
+    {
+      "text": "Acme wants single sign-on enabled before its December audit",
+      "mentions": [
+        { "span": "Acme", "type": "Customer", "role": "SUBJECT" }
+      ],
+      "confidence": 0.9,
+      "decay": 0.03,
+      "importance": 0.8,
+      "reasoning": "A dated request, so it matters less once December has passed"
+    }
+  ]
+}

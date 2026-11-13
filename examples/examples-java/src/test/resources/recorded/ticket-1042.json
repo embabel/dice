@@ -1,0 +1,46 @@
+{
+  "propositions": [
+    {
+      "text": "Acme is on the Team plan",
+      "mentions": [
+        { "span": "Acme", "type": "Customer", "role": "SUBJECT" },
+        { "span": "Team plan", "type": "Plan", "role": "OBJECT" }
+      ],
+      "confidence": 0.95,
+      "decay": 0.005,
+      "importance": 0.8,
+      "reasoning": "Stated directly in the ticket"
+    },
+    {
+      "text": "Ada Okafor is a contact at Acme",
+      "mentions": [
+        { "span": "Ada Okafor", "type": "Contact", "role": "SUBJECT" },
+        { "span": "Acme", "type": "Customer", "role": "OBJECT" }
+      ],
+      "confidence": 0.9,
+      "decay": 0.0,
+      "importance": 0.6,
+      "reasoning": "The ticket says Ada Okafor wrote in from Acme"
+    },
+    {
+      "text": "CSV export times out at Acme for reports over 50,000 rows",
+      "mentions": [
+        { "span": "Acme", "type": "Customer", "role": "SUBJECT" }
+      ],
+      "confidence": 0.85,
+      "decay": 0.05,
+      "importance": 0.7,
+      "reasoning": "Reported by the contact, and likely to change once it is fixed"
+    },
+    {
+      "text": "She prefers to be contacted by email",
+      "mentions": [
+        { "span": "Ada Okafor", "type": "Contact", "role": "SUBJECT" }
+      ],
+      "confidence": 0.8,
+      "decay": 0.0,
+      "importance": 0.5,
+      "reasoning": "Stated preference"
+    }
+  ]
+}

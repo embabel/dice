@@ -14,6 +14,7 @@ DICE (Domain-Integrated Context Engineering) is a proposition-first knowledge su
 | `dice-metamodel` | Schema versioning: `MetamodelVersion` content-hash stamps over the governed types of a `DataDictionary`, `GovernedTypeSelector`, the `DeclaredSchemaSource` opt-in, and the `MetamodelVersionStore` contract. Pure JVM, with no dependency on `dice` |
 | `dice-integration-tests` | Test-only: the cross-feature end-to-end canonical-flow harness |
 | `dice-mcp-autoconfigure` | Spring Boot auto-configuration that exports `DiceMcpTools` over MCP via embabel-agent when `embabel.dice.mcp.enabled=true` |
+| `examples` | Focused examples of the API. A separate build outside the reactor, never published: install the library, then `./mvnw -B -f examples/pom.xml verify` |
 
 ## Build & test
 
@@ -32,6 +33,13 @@ mvn install -DskipTests
 mvn test -pl dice
 mvn verify -pl dice-storage   # integration tests need Docker
 ```
+
+**Examples:** `examples/` is a separate build that the commands above do not touch. Before delivering a change to public API, install the library and check the examples still compile and pass:
+```
+./mvnw -B install -DskipTests
+./mvnw -B -f examples/pom.xml verify
+```
+CI builds them when a file under `examples/` changes and once a night, so a library change that breaks an example is otherwise found the next morning. Fix the example in the same change.
 
 **Kotlin version:** every module compiles with Kotlin 2.2.21, which `embabel-build-parent` manages. No module overrides it. `dice-storage` and `dice-storage-autoconfigure` need a 2.2 compiler for Drivine's KSP-generated `where { }` DSL, which uses Kotlin context parameters (`-Xcontext-parameters`).
 
