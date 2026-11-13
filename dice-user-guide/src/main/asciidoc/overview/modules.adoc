@@ -1,7 +1,7 @@
 [[overview-modules]]
 === Modules
 
-DICE publishes five consumer-facing artifacts under the `com.embabel.dice` group. There is no
+DICE publishes six consumer-facing artifacts under the `com.embabel.dice` group. There is no
 aggregator starter: pick the modules you need.
 
 [cols="1,2,1", options="header"]
@@ -33,6 +33,12 @@ aggregator starter: pick the modules you need.
 | An ingestion SPI turning artifacts into chunks, with a content-hash ledger so the same source is
   not extracted twice.
 | You are feeding files or documents in, rather than conversation turns.
+
+| `dice-store-conformance`
+| Abstract JUnit suites, one for each store interface, that a backend's tests extend. See
+  <<how-to-verify-a-backend>>.
+| You are writing a storage backend and want its tests to check the documented behaviour of each
+  store interface. Add it at test scope.
 |===
 
 `dice-integration-tests` is test-only: it holds the cross-feature end-to-end harness and is not

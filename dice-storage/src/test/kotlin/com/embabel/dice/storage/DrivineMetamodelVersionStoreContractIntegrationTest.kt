@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.storage
 
+import com.embabel.dice.conformance.AbstractMetamodelVersionStoreContractTest
 import com.embabel.dice.metamodel.SweptBaselineStore
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification

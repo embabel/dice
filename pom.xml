@@ -91,6 +91,7 @@
         <module>dice-report</module>
         <module>dice-ingestion</module>
         <module>dice-metamodel</module>
+        <module>dice-store-conformance</module>
         <module>dice-mcp-autoconfigure</module>
     </modules>
 
@@ -166,6 +167,11 @@
             <dependency>
                 <groupId>com.embabel.dice</groupId>
                 <artifactId>dice-mcp-autoconfigure</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.embabel.dice</groupId>
+                <artifactId>dice-store-conformance</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

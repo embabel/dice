@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.storage
+package com.embabel.dice.conformance
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.EntityMention
@@ -27,6 +27,7 @@ import com.embabel.dice.proposition.extraction.ExtractionRunRef
 import com.embabel.dice.proposition.extraction.ExtractionRunStatus
 import com.embabel.dice.proposition.extraction.PropositionRunLinkScopeException
 import com.embabel.dice.proposition.extraction.PropositionRunLinkStore
+import org.jetbrains.annotations.ApiStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -39,10 +40,11 @@ import java.time.Instant
  * backend that disagrees with the in-memory reference fails at authoring time.
  *
  * The cases here are the ones a backend gets wrong in a way a single-backend test would miss. A
- * write that MERGEs without resolving its endpoints accepts a cross-tenant link silently. A read
+ * write that upserts without resolving its endpoints accepts a cross-tenant link silently. A read
  * that scopes on the run id and forgets the tenant returns a neighbour's rows. A batch that writes
  * as it validates leaves half a link set behind when one id is rejected.
  */
+@ApiStatus.Experimental
 abstract class AbstractPropositionRunLinkStoreContractTest {
 
     protected val tenant: ContextId = ContextId("link-tenant")
@@ -69,10 +71,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     /**
      * A proposition in [tenant] that exactly one test deletes.
      *
-     * It gets its own id because a backend may not be able to put a deleted proposition back: on
-     * Drivine, deleting a `:Proposition` with raw Cypher and re-saving the same id through the
-     * repository returns a node with a null `contextId`. One disposable fixture is cheaper than
-     * making every backend's seeding re-entrant.
+     * It gets its own id because a backend may not be able to put a deleted proposition back under
+     * the same id. One disposable fixture is cheaper than making every backend's seeding re-entrant.
      */
     protected val disposablePropositionId: String = "prop-disposable"
 
@@ -87,7 +87,7 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     protected abstract fun deleteProposition(id: String)
 
     /**
-     * A store whose backing graph already holds [fixtureRunIds] under both tenants,
+     * A store whose backend already holds [fixtureRunIds] under both tenants,
      * [fixturePropositionIds] in [tenant], [neighbourPropositionIds] in [neighbour], and no links.
      */
     protected abstract fun store(): PropositionRunLinkStore
@@ -109,6 +109,31 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
         confidence = 0.9,
         grounding = listOf("chunk-1"),
     )
+
+    /** [tenant] as a plain string, for Java subclasses. */
+    protected val tenantValue: String get() = tenant.value
+
+    /** [neighbour] as a plain string, for Java subclasses. */
+    protected val neighbourValue: String get() = neighbour.value
+
+    /**
+     * Builds a fixture run from a plain context id. Java subclasses seed with this.
+     *
+     * @param runId The run id, one of [fixtureRunIds].
+     * @param contextIdValue The context the run belongs to.
+     * @return The run to save.
+     */
+    protected fun runIn(runId: String, contextIdValue: String): ExtractionRun = run(runId, ContextId(contextIdValue))
+
+    /**
+     * Builds a fixture proposition from a plain context id. Java subclasses seed with this.
+     *
+     * @param id The proposition id.
+     * @param contextIdValue The context the proposition belongs to.
+     * @return The proposition to save.
+     */
+    protected fun propositionIn(id: String, contextIdValue: String): Proposition =
+        proposition(id, ContextId(contextIdValue))
 
     private fun key(runId: String, contextId: ContextId = tenant) =
         ExtractionRunKey(contextId, ExtractionRunRef(runId))
@@ -193,8 +218,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
 
     @Test
     fun `a run cannot claim a neighbour's proposition`() {
-        // `nb-prop-1` exists — it is just someone else's. That is the case a backend that MERGEs
-        // without resolving its endpoints gets wrong, and it is not the same as an id nobody holds.
+        // `nb-prop-1` exists and belongs to another tenant. A backend that upserts without
+        // resolving its endpoints gets this case wrong. It differs from an id nobody holds.
         val store = store()
 
         val rejected = assertThrows(PropositionRunLinkScopeException::class.java) {

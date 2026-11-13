@@ -13,16 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.storage
+package com.embabel.dice.conformance.example;
 
-import com.embabel.dice.metamodel.InMemoryMetamodelVersionStore
-import com.embabel.dice.metamodel.SweptBaselineStore
+import com.embabel.dice.conformance.AbstractDriftReportStoreContractTest;
+import com.embabel.dice.metamodel.DriftReportStore;
+import com.embabel.dice.metamodel.InMemoryDriftReportStore;
 
-/**
- * Runs the [AbstractMetamodelVersionStoreContractTest] suite against the in-memory reference store.
- * No Docker, so it runs in the normal test phase — the always-on half of the cross-backend check
- * the graph IT completes.
- */
-class InMemoryMetamodelVersionStoreContractTest : AbstractMetamodelVersionStoreContractTest() {
-    override fun store(): SweptBaselineStore = InMemoryMetamodelVersionStore()
+/** Runs the drift report suite from Java over the in-memory store. */
+class DriftReportStoreContractJavaInteropTest extends AbstractDriftReportStoreContractTest {
+
+    @Override
+    protected DriftReportStore store() {
+        return new InMemoryDriftReportStore();
+    }
 }
