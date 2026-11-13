@@ -23,6 +23,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * <p>Each package below this one is a module. {@code tickets} files tickets and publishes an
  * event for each. {@code memory} listens, extracts facts from the ticket and stores them.
  * {@code customers} holds the types both use.
+ *
+ * <p>This class is the Spring Boot configuration the tests start. {@code TicketMemoryTests}
+ * boots it with a scripted model in place of a live one.
  */
 @SpringBootApplication
 class StarterApplication {

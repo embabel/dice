@@ -46,6 +46,7 @@ class ScriptedModel {
                 .whenPromptContains("Ada Okafor from Acme wrote in", new ClassPathResource("recorded/ticket-1042.json"))
                 .whenPromptContains("Follow-up with Ada Okafor", new ClassPathResource("recorded/ticket-1057.json"))
                 .whenPromptContains("Ben Ruiz at Globex", new ClassPathResource("recorded/ticket-2210.json"))
+                .whenPromptContains("Ada Okafor at Globex asked", new ClassPathResource("recorded/ticket-2231.json"))
                 .build();
     }
 

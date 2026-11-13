@@ -10,7 +10,9 @@ listener extracts facts from the ticket with DICE and stores them under the tick
 ./mvnw -B -f examples/pom.xml -pl examples-java -am verify
 ```
 
-`TicketMemoryTests` files three tickets for two accounts and asserts what is remembered.
+The example runs as tests. `StarterApplication` is the Spring Boot configuration they start, with a
+scripted model as the default model. `TicketMemoryTests` files four tickets for two accounts and
+asserts what is remembered.
 
 ## Modules
 
@@ -29,7 +31,7 @@ flowchart LR
 |---|---|---|
 | `customers` | `AccountId`, and the schema types `Customer`, `Contact`, `Plan` | |
 | `tickets` | `Ticket`, `Ticket.TicketId`, `Ticket.TicketFiled`, `Tickets` | |
-| `memory` | `CustomerMemory` | `MemoryConfiguration`, `TicketExtraction`, `UngroundedMentionLog` |
+| `memory` | `CustomerMemory` | `AccountEntities`, `MemoryConfiguration`, `TicketExtraction`, `UngroundedMentionLog` |
 
 `tickets` does not depend on `memory`. It publishes `TicketFiled`, and `memory` listens.
 
@@ -40,20 +42,29 @@ flowchart LR
 | Define a schema | `MemoryConfiguration.supportSchema` | Three domain types passed to `DataDictionary.fromClasses`. The model tags mentions with these names. |
 | Build the pipeline | `MemoryConfiguration.propositionPipeline` | `PropositionPipeline` with an LLM extractor, an event listener, and ungrounded mentions dropped. |
 | Handle pipeline events | `MemoryConfiguration.diceEvents`, `UngroundedMentionLog` | DICE events are republished as Spring events and handled with `@EventListener`. |
-| Resolve entities | `MemoryConfiguration.entityResolver` | `EscalatingEntityResolver` looks mentions up in the entity store by name. |
-| Extract and store | `TicketExtraction.on` | `processText` returns unsaved results. `persist` stores them. |
+| Resolve entities | `AccountEntities`, `TicketExtraction.on` | `EscalatingEntityResolver` looks mentions up by name in the store it is given. Each account has its own store. |
+| Extract once and store | `TicketExtraction.on`, `MemoryConfiguration.chunkHistoryStore` | The `ChunkHistoryStore` is checked for the ticket first. `processText` returns unsaved results, `persist` stores them, and only then is the ticket recorded as stored. |
 | Query | `CustomerMemory` | `PropositionQuery` scoped to one context, filtered by status, with confidence judged at a given time. |
 
 ```java
+var stored = HashKey.of(account.value(), Sha256ContentHasher.INSTANCE.hash(ticketId + "\n" + ticket.text()));
+if (history.isProcessed(stored)) {
+    return;
+}
+
+var entities = accountEntities.of(account);
+
 var context = SourceAnalysisContext
-        .withContextId(ticket.account().value())
-        .withEntityResolver(entityResolver)
+        .withContextId(account.value())
+        .withEntityResolver(EscalatingEntityResolver.withoutVector(entities))
         .withSchema(schema)
         .withMintNewEntities(true);
 
-var extracted = pipeline.processText(ticket.text(), ticket.id().value(), context);
-
+var extracted = pipeline.processText(ticket.text(), ticketId, context);
 extracted.persist(propositions, entities);
+
+history.recordProcessed(new ProcessedChunkRecord(
+        BookmarkKey.of(account.value(), ticketId), stored, 0, 1, Instant.now()));
 ```
 
 ```java
@@ -73,4 +84,6 @@ propositions.query(
 | `everyFactPointsBackAtItsTicket` | The ticket id is the source id, and each fact's grounding carries it. |
 | `resolvesAMentionInALaterTicketToTheEntityFromAnEarlierOne` | "Acme" in the second ticket resolves to the entity the first ticket created. |
 | `dropsAMentionItsSentenceNeverMakesAndReportsIt` | One recorded reply attaches "Ada Okafor" to a sentence that does not contain the name. The pipeline drops the mention, keeps the fact, and publishes `UngroundedMentionsFound`. |
-| `factsWithAHighDecayRateStopBeingTrustedFirst` | After 30 days a fact with decay 0.005 keeps 74% of its confidence and a fact with decay 0.05 keeps 5%. |
+| `givesEachAccountItsOwnEntityForASharedName` | Both accounts have a contact called Ada Okafor. Each account's mention resolves to an entity in its own store. |
+| `filingTheSameTicketAgainStoresNothingNew` | A ticket filed twice is extracted once. The second filing makes no model call. |
+| `CustomerMemoryTests.factsWithAHighDecayRateStopBeingTrustedFirst` | After 30 days a fact with decay 0.005 keeps 74% of its confidence and a fact with decay 0.05 keeps 5%. |

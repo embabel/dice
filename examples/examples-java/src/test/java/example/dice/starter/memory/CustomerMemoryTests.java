@@ -21,10 +21,12 @@ import com.embabel.dice.proposition.store.InMemoryPropositionRepository;
 import example.dice.starter.customers.AccountId;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 class CustomerMemoryTests {
 
@@ -57,5 +59,28 @@ class CustomerMemoryTests {
         repository.save(Proposition.draft("acme", "Acme is on the Team plan", 0.95).toProposition());
 
         assertThat(memory.currentFacts(new AccountId("globex"))).isEmpty();
+    }
+
+    @Test
+    void factsWithAHighDecayRateStopBeingTrustedFirst() {
+
+        var acme = new AccountId("acme");
+        var plan = Proposition.draft("acme", "Acme is on the Team plan", 0.95)
+                .withDecay(0.005)
+                .withCreated(recorded)
+                .toProposition();
+        var outage = Proposition.draft("acme", "CSV export times out at Acme for reports over 50,000 rows", 0.85)
+                .withDecay(0.05)
+                .withCreated(recorded)
+                .toProposition();
+        repository.saveAll(List.of(plan, outage));
+        var thirtyDaysOn = recorded.plus(Duration.ofDays(30));
+
+        // confidence * exp(-decay * k * days), with k = Proposition.DEFAULT_DECAY_K, which is 2.0
+        assertThat(plan.effectiveConfidenceAt(thirtyDaysOn)).isCloseTo(0.95 * Math.exp(-0.3), within(1e-9));
+        assertThat(outage.effectiveConfidenceAt(thirtyDaysOn)).isCloseTo(0.85 * Math.exp(-3.0), within(1e-9));
+
+        assertThat(memory.trustedAsOf(acme, recorded, 0.5)).containsExactlyInAnyOrder(plan, outage);
+        assertThat(memory.trustedAsOf(acme, thirtyDaysOn, 0.5)).containsExactly(plan);
     }
 }
