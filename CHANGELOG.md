@@ -124,6 +124,20 @@ and the consumer PRs that deliver it).
 
 ### Added
 
+- Scoped reads, **EXPERIMENTAL** (may change before 1.0). These are interfaces and value types. See
+  "Scoped reads" in the user guide.
+  - `ContextReadScope` names the contexts a read may touch: at least one, each by id.
+  - `ScopedReadSpec` joins a scope with filters. `narrow` adds a filter and keeps the ones already
+    there.
+  - `ReadBudget` caps the rows a read returns and the vector candidates a similarity search has.
+  - `ScopedReads` (query, count, keyword match) and `ScopedVectorSearch` (similarity search) are the
+    interfaces a store implements. It lists `StoreCapability.SCOPED_READS` and
+    `StoreCapability.SCOPED_VECTOR_SEARCH`.
+  - A read that names a context outside its scope throws `ReadScopeViolationException`. A read that
+    needs more than its budget throws `ReadBudgetExceededException`.
+  - `ScopedCandidateSearcher` is entity candidate search that takes a scope.
+  - **Compatibility: additive.** `StoreCapability` gains entries over time, so a Kotlin `when` or a
+    Java `switch` expression over it keeps an `else` or `default` branch.
 - Evidence types for a caller that assembles model context, in the new package
   `com.embabel.dice.evidence`. `EvidenceItem` is one claim with its `Citation`, its stored and
   decayed confidence, its status, when it was recorded and revised, and a `Retrieval` for each
