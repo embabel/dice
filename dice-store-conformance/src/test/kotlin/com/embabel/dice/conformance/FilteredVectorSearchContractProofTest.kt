@@ -153,6 +153,13 @@ class FilteredVectorSearchContractProofTest {
     }
 
     @Test
+    fun `a store that applies the other filter fields after a window of twice K fails the filter field case`() {
+        assertThrows<AssertionError> {
+            suiteOver(FilterFirstReferenceStore(ReferenceFault.FIELDS_AFTER_OVER_FETCH)).eachFilterFieldIsAppliedOrRefused()
+        }
+    }
+
+    @Test
     fun `a store with an exclusive floor fails the floor case`() {
         assertThrows<AssertionError> {
             suiteOver(FilterFirstReferenceStore(ReferenceFault.EXCLUSIVE_FLOOR)).aMatchThatScoresExactlyTheFloorIsReturned()

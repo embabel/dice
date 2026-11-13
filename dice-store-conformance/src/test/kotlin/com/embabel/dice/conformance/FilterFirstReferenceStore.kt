@@ -16,6 +16,7 @@
 package com.embabel.dice.conformance
 
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.store.CapabilityReporting
@@ -52,6 +53,9 @@ internal enum class ReferenceFault {
 
     /** Returns the matches in the order they were saved and cuts to K with no sort by score. */
     UNSORTED,
+
+    /** Applies context and status, takes the nearest 2 times K and then applies the other filter fields. */
+    FIELDS_AFTER_OVER_FETCH,
 }
 
 /**
@@ -90,6 +94,13 @@ internal class FilterFirstReferenceStore(
                 filterAfterWindow(request, query, request.topK)
             fault == ReferenceFault.FILTERS_AFTER_OVER_FETCH ->
                 filterAfterWindow(request, query, request.topK * 30).take(request.topK)
+            fault == ReferenceFault.FIELDS_AFTER_OVER_FETCH ->
+                filterAfterWindow(
+                    request,
+                    query,
+                    request.topK * 2,
+                    delegate.query(PropositionQuery(contextId = request.filter.contextId, statuses = request.filter.statuses)),
+                ).take(request.topK)
             else ->
                 ranked(delegate.query(request.filter), query, request).take(request.topK)
         }.map { (proposition, cosine) -> VectorMatch.of(proposition, score(cosine)) }
@@ -105,20 +116,22 @@ internal class FilterFirstReferenceStore(
         SimilarityScore.ofCosine(if (fault == ReferenceFault.HALVED_SCALE) (1.0 + cosine) / 2.0 else cosine)
 
     /**
-     * Picks the nearest [window] of every proposition and keeps the ones that match the filter.
+     * Picks the nearest [window] of the candidates and keeps the ones that match the filter.
      *
      * @param request The search request.
      * @param query The embedding of the request's text.
-     * @param window How many of the nearest propositions to keep before the filter.
+     * @param window How many of the nearest candidates to keep before the filter.
+     * @param candidates The propositions the window is taken from. The default is every proposition.
      * @return The matching propositions in the window with their cosine, closest first.
      */
     private fun filterAfterWindow(
         request: VectorSearchRequest,
         query: FloatArray,
         window: Int,
+        candidates: List<Proposition> = delegate.findAll(),
     ): List<Pair<Proposition, Double>> {
         val matchingIds = delegate.query(request.filter).map { it.id }.toSet()
-        return ranked(delegate.findAll(), query, request)
+        return ranked(candidates, query, request)
             .take(window)
             .filter { (proposition, _) -> proposition.id in matchingIds }
     }

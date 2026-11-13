@@ -58,8 +58,9 @@ import java.time.Instant
  * or more, or with a window that grows with K by a factor of `excludedCount() + 1` or more.
  *
  * One case sets each of these filter fields in a context of its own: `entityId`, `minLevel`,
- * `pinned`, `minConfidence`, `createdAfter` and `minEffectiveConfidence`. For each field the store
- * returns the five propositions that pass it, or refuses the filter with
+ * `pinned`, `minConfidence`, `createdAfter` and `minEffectiveConfidence`. Each context holds
+ * [excludedCount] propositions that fail the field and sit nearer than the five that pass it. At K
+ * of 1 and of 5 the store returns the K nearest that pass, or refuses the filter with
  * [UnsupportedCapabilityException]. The case names every field the store gets wrong in one run.
  *
  * One case runs for a store that declares [VectorFiltering.AFTER_TOP_K]. Such a store picks the
@@ -83,9 +84,10 @@ abstract class AbstractFilteredVectorSearchContractTest {
 
     /**
      * How many nearer propositions the filter leaves out in the cases that check the filter runs
-     * before the cut to K. A store that picks a window of candidates, filters it and then cuts to K
-     * passes those cases when the window holds this many candidates plus five. A store with such a
-     * window returns a number above the window.
+     * before the cut to K. The context, status and filter field cases all use this count. A store
+     * that picks a window of candidates, filters it and then cuts to K passes those cases when the
+     * window holds this many candidates plus five. A store with such a window returns a number above
+     * the window.
      *
      * @return The number of excluded propositions that are nearer than every match. The default is 121.
      */
@@ -211,9 +213,9 @@ abstract class AbstractFilteredVectorSearchContractTest {
         search.findNearest(request).map { it.proposition.text }
 
     /**
-     * Seeds one filter field in a context of its own and checks the store applies or refuses it.
-     * Five propositions that fail the field sit at 1.0 to 1.4 degrees. Five that pass sit at 30 to
-     * 70 degrees.
+     * Seeds one filter field in a context of its own and checks the store applies or refuses it at
+     * K of 1 and of 5. [excludedCount] propositions that fail the field sit at 1.0 to 19.9 degrees.
+     * Five that pass sit at 30 to 70 degrees.
      *
      * @param store The store to seed.
      * @param search The search under test.
@@ -232,24 +234,28 @@ abstract class AbstractFilteredVectorSearchContractTest {
         passing: (Proposition) -> Proposition,
     ): String? {
         val context = "vector-field-$field"
-        (0 until 5).forEach { i ->
-            store.save(failing(proposition("$field-fail-$i", 1.0 + i / 10.0, context, PropositionStatus.ACTIVE)))
+        (0 until excludedCount()).forEach { i ->
+            store.save(
+                failing(proposition("$field-fail-$i", (10 + i % 190) / 10.0, context, PropositionStatus.ACTIVE)),
+            )
         }
         val passingTexts = saveMatches(store, "$field-pass", context, passing)
         val request = VectorSearchRequest.forText(queryText, filter(PropositionQuery.againstContext(context)))
-            .withTopK(5)
-        return try {
-            val found = texts(search, request)
-            if (found == passingTexts) {
-                null
-            } else {
-                "$field: the store returns $found. With the $field filter applied it returns $passingTexts."
-            }
-        } catch (refused: UnsupportedCapabilityException) {
-            if (refused.capability == StoreCapability.FILTERED_VECTOR_SEARCH) {
-                null
-            } else {
-                "$field: the store refused the filter for ${refused.capability}"
+        return listOf(1, 5).firstNotNullOfOrNull { k ->
+            val expected = passingTexts.take(k)
+            try {
+                val found = texts(search, request.withTopK(k))
+                if (found == expected) {
+                    null
+                } else {
+                    "$field: with K of $k the store returns $found. With the $field filter applied it returns $expected."
+                }
+            } catch (refused: UnsupportedCapabilityException) {
+                if (refused.capability == StoreCapability.FILTERED_VECTOR_SEARCH) {
+                    null
+                } else {
+                    "$field: with K of $k the store refused the filter for ${refused.capability}"
+                }
             }
         }
     }
