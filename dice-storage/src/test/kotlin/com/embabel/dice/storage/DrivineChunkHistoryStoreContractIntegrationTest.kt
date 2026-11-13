@@ -56,6 +56,6 @@ class DrivineChunkHistoryStoreContractIntegrationTest : AbstractChunkHistoryStor
     }
 
     @Test
-    @Disabled("DrivineChunkHistoryStore does not override clearAll, so the call removes nothing.")
+    @Disabled("DrivineChunkHistoryStore does not override clearAll, so the call removes nothing. See embabel/dice#200.")
     override fun clearAllRemovesEveryContext() = super.clearAllRemovesEveryContext()
 }

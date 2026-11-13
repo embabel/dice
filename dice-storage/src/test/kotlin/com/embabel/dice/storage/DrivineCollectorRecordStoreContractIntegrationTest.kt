@@ -58,6 +58,6 @@ class DrivineCollectorRecordStoreContractIntegrationTest : AbstractCollectorReco
     }
 
     @Test
-    @Disabled("DrivineCollectorRecordStore reads run headers with no ordering, so insertion order is not guaranteed.")
+    @Disabled("DrivineCollectorRecordStore reads run headers with no ordering, so insertion order is not guaranteed. See embabel/dice#201.")
     override fun runsComeBackInTheOrderTheyWereRecorded() = super.runsComeBackInTheOrderTheyWereRecorded()
 }

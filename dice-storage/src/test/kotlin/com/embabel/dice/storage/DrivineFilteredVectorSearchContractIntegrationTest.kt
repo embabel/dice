@@ -30,6 +30,10 @@ import org.springframework.test.context.DynamicPropertySource
  * Runs the filtered vector search suite against the Neo4j-backed [DrivinePropositionRepository]
  * (testcontainer). The graph store publishes no capability descriptor, so the suite checks that it
  * declares [VectorFiltering.UNDECLARED] and skips the cases that need a filtering mode.
+ *
+ * When the store starts declaring a filtering mode, the test application must embed with
+ * [com.embabel.dice.conformance.ConformanceEmbeddingService]. The skipped cases place each text at a
+ * known angle from the query, and only that service puts it there.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivineFilteredVectorSearchContractIntegrationTest : AbstractFilteredVectorSearchContractTest() {

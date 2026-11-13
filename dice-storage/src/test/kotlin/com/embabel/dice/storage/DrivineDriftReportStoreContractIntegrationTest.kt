@@ -58,6 +58,6 @@ class DrivineDriftReportStoreContractIntegrationTest : AbstractDriftReportStoreC
     }
 
     @Test
-    @Disabled("DrivineDriftReportStore does not write declaredDiff, so a report reads back with no declared diff.")
+    @Disabled("DrivineDriftReportStore does not write declaredDiff, so a report reads back with no declared diff. See embabel/dice#203.")
     override fun aReportReadsBackWithItsDeclaredDiff() = super.aReportReadsBackWithItsDeclaredDiff()
 }
