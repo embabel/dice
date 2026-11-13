@@ -1,23 +1,15 @@
 # Builds the examples under examples/ and runs their tests. They sit outside the library reactor,
-# so this workflow installs the library first and then builds them against that snapshot.
-# It runs when the examples change and once a night, which is when a library change that breaks
-# an example shows up. Nothing here is published.
+# so this workflow installs the library first and then builds them against that install.
+# It runs on every pull request and every push to main, so a library change that breaks an
+# example fails here. Nothing here is published.
 
 name: Examples
 
 on:
   push:
     branches: [ main ]
-    paths:
-      - 'examples/**'
-      - '.github/workflows/examples.yml'
   pull_request:
     types: [ opened, synchronize, reopened ]
-    paths:
-      - 'examples/**'
-      - '.github/workflows/examples.yml'
-  schedule:
-    - cron: '0 6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -38,14 +30,6 @@ jobs:
           cache: maven
       - name: Install the library
         run: ./mvnw -B install -DskipTests
-      - name: Check the examples use the library version built here
-        run: |
-          LIBRARY=$(./mvnw -B -q help:evaluate -Dexpression=project.version -DforceStdout -N)
-          EXAMPLES=$(./mvnw -B -q -f examples/pom.xml help:evaluate -Dexpression=dice.version -DforceStdout -N)
-          if [ "$LIBRARY" != "$EXAMPLES" ]; then
-            echo "examples/pom.xml builds against DICE $EXAMPLES, but the root pom.xml is $LIBRARY. Set the examples version to $LIBRARY."
-            exit 1
-          fi
       - name: Build the examples
         run: ./mvnw -B -f examples/pom.xml verify
 
@@ -55,4 +39,16 @@ jobs:
     uses: embabel/embabel-build/.github/workflows/discord-notify.yml@main
     with:
       message: '❌ Examples failed'
+    secrets: inherit
+
+  notify-recovery:
+    needs: [examples]
+    if: success() && github.ref == 'refs/heads/main'
+    # The recovery check reads this workflow's earlier runs.
+    permissions:
+      actions: read
+    uses: embabel/embabel-build/.github/workflows/notify-recovery.yml@main
+    with:
+      branch: main
+      caller_run_id: ${{ github.run_id }}
     secrets: inherit

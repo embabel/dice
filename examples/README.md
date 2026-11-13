@@ -13,7 +13,7 @@ needs no API key and no running service.
 
 | Module | What it shows |
 |---|---|
-| [`examples-java`](examples-java) | DICE in a Spring Boot application: a schema, extraction on an event, storage and scoped queries. Start here. |
+| [`examples-java`](examples-java) | DICE wired with Spring Boot: a schema, extraction on an event, storage and scoped queries. Start here. |
 | [`examples-kotlin`](examples-kotlin) | The parts of the same API that read differently from Kotlin. |
 | [`examples-common`](examples-common) | Test support the examples share: the scripted model and its recorded replies. |
 
@@ -21,7 +21,7 @@ Each module has its own README. The tests are the examples.
 
 ## Build
 
-This build sits outside the library reactor and uses the DICE snapshot the repository builds.
+This build sits outside the library reactor and uses the DICE installed from this repository. It does not download DICE snapshots.
 From the repository root, install the library, then build the examples:
 
 ```bash
@@ -40,8 +40,8 @@ Build one example and what it depends on:
 
 JDK 21 is the only prerequisite.
 
-CI builds the examples when a file under `examples/` changes and once a night. A change to the
-library's public API should build them locally with the two commands above before it is delivered.
+CI builds the examples on every pull request and every push to main. A change to the library's
+public API that breaks an example fails there, so fix the example in the same change.
 
 ## Offline model
 
@@ -57,7 +57,8 @@ call.
 
 | Dependency | Version |
 |---|---|
-| DICE | The version in the root `pom.xml`, set as `dice.version` in `examples/pom.xml` |
+| DICE | The version in the root `pom.xml`, repeated as `dice.version` in `examples/pom.xml`. The build stops when the two differ. |
+| Kotlin | `2.2.21`, the version DICE is built with |
 | Embabel Agent | `1.5.4` |
 | Spring Boot | `4.1.1` |
 | Spring Modulith | `2.1.0` |
