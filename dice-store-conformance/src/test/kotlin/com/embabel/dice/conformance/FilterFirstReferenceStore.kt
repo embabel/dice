@@ -49,6 +49,9 @@ internal enum class ReferenceFault {
 
     /** Scores a proposition with an all-zero embedding as 0.0 and returns it. */
     KEEPS_ZERO_VECTORS,
+
+    /** Returns the matches in the order they were saved and cuts to K with no sort by score. */
+    UNSORTED,
 }
 
 /**
@@ -68,6 +71,14 @@ internal class FilterFirstReferenceStore(
 ) : PropositionStore by delegate, CapabilityReporting, FilteredVectorSearch {
 
     override val capabilities: StoreCapabilities = StoreCapabilities.of(StoreCapability.FILTERED_VECTOR_SEARCH)
+
+    /** The position each id was first saved at. The delegate keeps its propositions in hash order. */
+    private val savedAt = mutableMapOf<String, Int>()
+
+    override fun save(proposition: Proposition): Proposition {
+        savedAt.putIfAbsent(proposition.id, savedAt.size)
+        return delegate.save(proposition)
+    }
 
     override fun findNearest(request: VectorSearchRequest): List<VectorMatch> {
         val query = embed(request.text)
@@ -114,12 +125,13 @@ internal class FilterFirstReferenceStore(
 
     /**
      * Scores candidates against the query, drops the ones without a direction or below the score
-     * floor, and orders the rest closest first, then by id.
+     * floor, and orders the rest closest first, then by id. Under [ReferenceFault.UNSORTED] it
+     * orders them by when they were saved.
      *
      * @param candidates The propositions to score.
      * @param query The embedding of the request's text.
      * @param request The search request, for its score floor.
-     * @return Each kept proposition with its cosine, closest first.
+     * @return Each kept proposition with its cosine, in that order.
      */
     private fun ranked(
         candidates: List<Proposition>,
@@ -131,7 +143,13 @@ internal class FilterFirstReferenceStore(
             .filterNot { (_, vector) -> fault != ReferenceFault.KEEPS_ZERO_VECTORS && vector.all { it == 0.0f } }
             .map { (proposition, vector) -> proposition to cosineOrZero(query, vector) }
             .filter { (_, cosine) -> request.minScore?.let { aboveFloor(cosine, it.cosine) } ?: true }
-            .sortedWith(compareByDescending<Pair<Proposition, Double>> { it.second }.thenBy { it.first.id })
+            .sortedWith(
+                if (fault == ReferenceFault.UNSORTED) {
+                    compareBy<Pair<Proposition, Double>> { savedAt[it.first.id] }
+                } else {
+                    compareByDescending<Pair<Proposition, Double>> { it.second }.thenBy { it.first.id }
+                },
+            )
 
     /**
      * Checks a cosine against the score floor.
