@@ -56,7 +56,12 @@ class InMemoryDriftReportStoreJavaInteropTest {
         store.saveDriftReport(only);
         assertEquals(List.of(only), store.globalDriftReports("support", 1, null));
 
-        // R1, the boundary: zero is rejected.
+        assertEquals(List.of(only), store.driftReports("support", 1));
+
+        // R1, the boundary: zero and a negative limit are rejected by both reads.
         assertThrows(IllegalArgumentException.class, () -> store.globalDriftReports("support", 0));
+        assertThrows(IllegalArgumentException.class, () -> store.globalDriftReports("support", -1));
+        assertThrows(IllegalArgumentException.class, () -> store.driftReports("support", 0));
+        assertThrows(IllegalArgumentException.class, () -> store.driftReports("support", -1));
     }
 }
