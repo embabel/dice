@@ -96,18 +96,21 @@ can be implemented in Java.
 
 ==== A store that outlives a test
 
-A database keeps what one test wrote. Empty the store before each test, so every case starts from
-the state its factory describes.
+A database keeps what one test wrote. Empty the store before each test with the backend's own
+delete, so every case starts from the state its factory describes. Don't call `clearAll` for this.
+The interface gives it a default that does nothing, and a store that has not overridden it leaves
+every row in place.
 
 [source,java]
 ----
-class ChunkHistoryStoreContractJavaInteropTest extends AbstractChunkHistoryStoreContractTest {
+class MyChunkHistoryStoreContractTest extends AbstractChunkHistoryStoreContractTest {
 
-    private static final ChunkHistoryStore STORE = new InMemoryChunkHistoryStore();
+    private static final MyDatabase DATABASE = MyDatabase.connect();
+    private static final ChunkHistoryStore STORE = new MyChunkHistoryStore(DATABASE);
 
     @BeforeEach
     void emptyTheStore() {
-        STORE.clearAll();
+        DATABASE.execute("DELETE FROM processed_chunk");
     }
 
     @Override
@@ -171,8 +174,7 @@ that states the defect. The override repeats `@Test`.
 
 A method that an interface documents with a no-op default, such as `ChunkHistoryStore.clearAll` or
 `ProjectionRecordStore.markStaleByProposition`, is tested. A store that keeps the default fails
-that case. The suites for `PropositionStore`, `ExtractionRunStore`, `PropositionRunLinkStore` and
-`SweptBaselineStore` have final cases, which a subclass cannot override.
+that case. Every case in every suite is open, so a subclass can disable any of them.
 
 ==== Similarity search
 
