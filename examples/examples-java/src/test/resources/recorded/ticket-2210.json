@@ -1,0 +1,26 @@
+{
+  "propositions": [
+    {
+      "text": "Globex is on the Starter plan",
+      "mentions": [
+        { "span": "Globex", "type": "Customer", "role": "SUBJECT" },
+        { "span": "Starter plan", "type": "Plan", "role": "OBJECT" }
+      ],
+      "confidence": 0.95,
+      "decay": 0.005,
+      "importance": 0.8,
+      "reasoning": "Stated directly in the ticket"
+    },
+    {
+      "text": "Ben Ruiz asked for a copy of the October invoice for Globex",
+      "mentions": [
+        { "span": "Ben Ruiz", "type": "Contact", "role": "SUBJECT" },
+        { "span": "Globex", "type": "Customer", "role": "OBJECT" }
+      ],
+      "confidence": 0.9,
+      "decay": 0.1,
+      "importance": 0.4,
+      "reasoning": "A one-off request"
+    }
+  ]
+}

@@ -205,7 +205,7 @@ System.out.println(report.summary());
 [[quickstart-next]]
 === Where to go next
 
-* <<concepts>> — read the five concept pages in order. They define the vocabulary the rest of the
+* <<concepts>> — read the six concept pages in order. They define the vocabulary the rest of the
   guide uses.
 * <<how-to>> — task-shaped pages: extracting from documents, tuning resolution, querying, projecting
   to a graph, agent memory.

@@ -1,0 +1,58 @@
+# Builds the examples under examples/ and runs their tests. They sit outside the library reactor,
+# so this workflow installs the library first and then builds them against that snapshot.
+# It runs when the examples change and once a night, which is when a library change that breaks
+# an example shows up. Nothing here is published.
+
+name: Examples
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'examples/**'
+      - '.github/workflows/examples.yml'
+  pull_request:
+    types: [ opened, synchronize, reopened ]
+    paths:
+      - 'examples/**'
+      - '.github/workflows/examples.yml'
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  examples:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      - name: Install the library
+        run: ./mvnw -B install -DskipTests
+      - name: Check the examples use the library version built here
+        run: |
+          LIBRARY=$(./mvnw -B -q help:evaluate -Dexpression=project.version -DforceStdout -N)
+          EXAMPLES=$(./mvnw -B -q -f examples/pom.xml help:evaluate -Dexpression=dice.version -DforceStdout -N)
+          if [ "$LIBRARY" != "$EXAMPLES" ]; then
+            echo "examples/pom.xml builds against DICE $EXAMPLES, but the root pom.xml is $LIBRARY. Set the examples version to $LIBRARY."
+            exit 1
+          fi
+      - name: Build the examples
+        run: ./mvnw -B -f examples/pom.xml verify
+
+  notify:
+    needs: [examples]
+    if: failure() && github.ref == 'refs/heads/main'
+    uses: embabel/embabel-build/.github/workflows/discord-notify.yml@main
+    with:
+      message: '❌ Examples failed'
+    secrets: inherit
