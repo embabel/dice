@@ -310,6 +310,40 @@ class PropositionPipeline private constructor(
     }
 
     /**
+     * Logs one line of counts for the mentions rejected in a chunk.
+     *
+     * The line is a warning when any rejected mention was dropped or left unresolved, and a debug
+     * message when every rejected mention was only reported. Spans and reasons are logged at debug
+     * level only, because a span is source text and a reason can quote it.
+     *
+     * @param chunkId the id of the chunk
+     * @param rejected every rejection of the chunk, from the grounding check and the mention filter
+     */
+    private fun logRejections(chunkId: String, rejected: List<RejectedMention>) {
+        if (rejected.isEmpty()) return
+        val grounding = rejected.filter { it.check == RejectedMention.Check.GROUNDING }
+        val filter = rejected.filter { it.check == RejectedMention.Check.FILTER }
+        val message = "Chunk {}: {} mention(s) rejected (grounding: {} rejected, {} dropped; filter: {} rejected, {} left unresolved, {} dropped)"
+        val arguments = arrayOf<Any>(
+            chunkId,
+            rejected.size,
+            grounding.size,
+            grounding.count { it.handling == RejectedMentionHandling.DROP },
+            filter.size,
+            filter.count { it.handling == RejectedMentionHandling.LEAVE_UNRESOLVED },
+            filter.count { it.handling == RejectedMentionHandling.DROP },
+        )
+        if (rejected.any { it.handling != RejectedMentionHandling.KEEP }) {
+            logger.warn(message, *arguments)
+        } else {
+            logger.debug(message, *arguments)
+        }
+        rejected.forEach {
+            logger.debug("Rejected mention '{}' in chunk {} ({}, {}): {}", it.mention.span, chunkId, it.check, it.handling, it.reason)
+        }
+    }
+
+    /**
      * Resolution stage — resolve entities through the shared cross-chunk resolver, apply resolutions,
      * and optionally revise against existing propositions. Must stay serial so all chunks share
      * the same entity identity within a single [process] run.
@@ -322,14 +356,8 @@ class PropositionPipeline private constructor(
 
         // Reported here rather than in the extraction stage because this stage is always serial,
         // so listeners are never called from several threads at once.
+        logRejections(chunk.id, extraction.rejected)
         if (extraction.ungrounded.isNotEmpty()) {
-            val sample = extraction.ungrounded.take(5).joinToString(", ") { "${it.mention.span} (${it.reason})" }
-            val message = "Found {} ungrounded mention(s) in chunk {} ({}): {}"
-            if (ungroundedMentions == UngroundedMentionHandling.DROP) {
-                logger.warn(message, extraction.ungrounded.size, chunk.id, ungroundedMentions, sample)
-            } else {
-                logger.debug(message, extraction.ungrounded.size, chunk.id, ungroundedMentions, sample)
-            }
             eventListener.onEvent(
                 UngroundedMentionsFound(context.contextId, chunk.id, extraction.ungrounded, ungroundedMentions)
             )
