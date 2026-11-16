@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.stream.Stream;
 import org.jetbrains.kotlin.abi.tools.AbiTools;
 import org.jetbrains.kotlin.abi.tools.api.AbiFilters;
@@ -45,15 +46,20 @@ import org.objectweb.asm.Opcodes;
  * differs from the compiled classes. {@code update} mode rewrites the listings.
  *
  * <p>A class compiled from a file under the {@code --generated} source root is left out, because
- * generated code carries no compatibility promise.
+ * generated code carries no compatibility promise. The program stops when such a file name also
+ * appears under a hand-written {@code --source} root, because it cannot tell which file a class
+ * came from.
  *
- * <p>Usage: {@code ApiListing <check|update> <classes-dir> <api-dir> <module-name> [--generated=<source-root>]}
+ * <p>Usage: {@code ApiListing <check|update> <classes-dir> <api-dir> <module-name>
+ * [--generated=<source-root>] [--source=<source-root>]...}
  */
 public final class ApiListing {
 
     private static final String EXPERIMENTAL = "org.jetbrains.annotations.ApiStatus.Experimental";
 
     private static final String GENERATED = "--generated=";
+
+    private static final String SOURCE = "--source=";
 
     public static void main(String[] args) throws IOException {
         System.exit(run(args, System.out, System.err));
@@ -70,8 +76,11 @@ public final class ApiListing {
     static int run(String[] args, PrintStream out, PrintStream err) throws IOException {
         List<String> positional = new ArrayList<>();
         Path generated = null;
+        List<Path> sourceRoots = new ArrayList<>();
         for (String arg : args) {
-            if (arg.startsWith(GENERATED)) {
+            if (arg.startsWith(SOURCE)) {
+                sourceRoots.add(Path.of(arg.substring(SOURCE.length())));
+            } else if (arg.startsWith(GENERATED)) {
                 // An empty value means the module has no generated sources
                 String root = arg.substring(GENERATED.length());
                 generated = root.isBlank() ? null : Path.of(root);
@@ -82,19 +91,30 @@ public final class ApiListing {
         args = positional.toArray(String[]::new);
         if (args.length != 4 || !(args[0].equals("check") || args[0].equals("update"))) {
             err.println("Usage: ApiListing <check|update> <classes-dir> <api-dir> <module-name>"
-                    + " [--generated=<source-root>]");
+                    + " [--generated=<source-root>] [--source=<source-root>]...");
             return 2;
         }
         boolean update = args[0].equals("update");
         Path classesDir = Path.of(args[1]);
         List<File> classFiles = classFiles(classesDir);
         Map<Path, String> sourceNames = new HashMap<>();
+        Set<String> handWritten = fileNames(sourceRoots);
         if (generated != null) {
             List<File> kept = new ArrayList<>();
+            Set<String> clashes = new TreeSet<>();
             for (File classFile : classFiles) {
                 if (!isGenerated(classesDir, classFile.toPath(), generated, sourceNames)) {
                     kept.add(classFile);
+                } else if (handWritten.contains(sourceName(classFile.toPath(), sourceNames))) {
+                    clashes.add(sourceName(classFile.toPath(), sourceNames));
                 }
+            }
+            if (!clashes.isEmpty()) {
+                for (String clash : clashes) {
+                    err.println(clash + " is both generated and hand-written, so the listing cannot tell"
+                            + " their classes apart. Rename the hand-written file.");
+                }
+                return 2;
             }
             classFiles = kept;
         }
@@ -147,6 +167,24 @@ public final class ApiListing {
             }
         }
         return files;
+    }
+
+    /**
+     * Collects the names of the files under some source roots.
+     *
+     * @param roots the source roots, any of which may be missing
+     * @return the file names, such as {@code Mention.kt}
+     */
+    private static Set<String> fileNames(List<Path> roots) throws IOException {
+        Set<String> names = new HashSet<>();
+        for (Path root : roots) {
+            if (Files.isDirectory(root)) {
+                try (Stream<Path> walk = Files.walk(root)) {
+                    walk.filter(Files::isRegularFile).forEach(path -> names.add(path.getFileName().toString()));
+                }
+            }
+        }
+        return names;
     }
 
     /**

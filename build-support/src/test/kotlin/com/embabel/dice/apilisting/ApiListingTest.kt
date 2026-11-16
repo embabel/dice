@@ -82,6 +82,17 @@ class ApiListingTest {
     }
 
     @Test
+    fun `a source file name under both the generated and a hand-written root stops the program`() {
+        val generated = dir.resolve("generated")
+        generated.resolve(FIXTURE_PACKAGE).createDirectories().resolve("Stable.kt").writeText("")
+        val handWritten = dir.resolve("src")
+        handWritten.resolve("other").createDirectories().resolve("Stable.kt").writeText("")
+
+        assertEquals(2, listing("update", "--generated=$generated", "--source=$handWritten"))
+        assertTrue(err.toString().contains("Stable.kt is both generated and hand-written"), err.toString())
+    }
+
+    @Test
     fun `an empty generated source root leaves every class in`() {
         assertEquals(0, listing("update", "--generated="), err.toString())
         assertTrue(api.resolve("m.api").readText().contains("/Stable {"))

@@ -295,6 +295,8 @@
                                         <arg file="${project.basedir}/api"/>
                                         <arg value="${project.artifactId}"/>
                                         <arg value="--generated=${api.listing.generated.sources}"/>
+                                        <arg value="--source=${project.basedir}/src/main/kotlin"/>
+                                        <arg value="--source=${project.basedir}/src/main/java"/>
                                     </java>
                                     <!-- Put the program's own explanation in the build error, so it shows in quiet mode too -->
                                     <fail message="${api.listing.error}">
