@@ -117,6 +117,45 @@ data class PropositionContradicted @JvmOverloads constructor(
     /** [contextId] as a plain string, for Java callers. */
     @get:JsonIgnore
     val contextIdValue: String get() = contextId.value
+
+    companion object {
+
+        /**
+         * Builds a contradiction event for Java callers, stamped with the time of the call.
+         *
+         * @param contextIdValue The context the contradiction surfaced in, as a plain string.
+         * @param original The proposition that already existed.
+         * @param new The proposition that contradicts it.
+         * @return The contradiction event.
+         * @throws IllegalArgumentException if contextIdValue is blank
+         */
+        @JvmStatic
+        fun of(contextIdValue: String, original: Proposition, new: Proposition): PropositionContradicted {
+            require(contextIdValue.isNotBlank()) { "contextIdValue must not be blank" }
+            return PropositionContradicted(ContextId(contextIdValue), original, new)
+        }
+
+        /**
+         * Builds a contradiction event for Java callers with the timestamp you choose.
+         *
+         * @param contextIdValue The context the contradiction surfaced in, as a plain string.
+         * @param original The proposition that already existed.
+         * @param new The proposition that contradicts it.
+         * @param timestamp When the contradiction happened.
+         * @return The contradiction event.
+         * @throws IllegalArgumentException if contextIdValue is blank
+         */
+        @JvmStatic
+        fun of(
+            contextIdValue: String,
+            original: Proposition,
+            new: Proposition,
+            timestamp: Instant,
+        ): PropositionContradicted {
+            require(contextIdValue.isNotBlank()) { "contextIdValue must not be blank" }
+            return PropositionContradicted(ContextId(contextIdValue), original, new, timestamp)
+        }
+    }
 }
 
 /**
@@ -200,6 +239,53 @@ data class UngroundedMentionsFound @JvmOverloads constructor(
     /** [contextId] as a plain string, for Java callers. */
     @get:JsonIgnore
     val contextIdValue: String get() = contextId.value
+
+    companion object {
+
+        /**
+         * Builds an event about unlinked mentions for Java callers, stamped with the time of the call.
+         *
+         * @param contextIdValue The context the chunk was analysed in, as a plain string.
+         * @param chunkId The chunk the mentions came from.
+         * @param mentions The ungrounded mentions.
+         * @param handling Whether the mentions were kept or dropped.
+         * @return The event.
+         * @throws IllegalArgumentException if contextIdValue is blank
+         */
+        @JvmStatic
+        fun of(
+            contextIdValue: String,
+            chunkId: String,
+            mentions: List<UngroundedMention>,
+            handling: UngroundedMentionHandling,
+        ): UngroundedMentionsFound {
+            require(contextIdValue.isNotBlank()) { "contextIdValue must not be blank" }
+            return UngroundedMentionsFound(ContextId(contextIdValue), chunkId, mentions, handling)
+        }
+
+        /**
+         * Builds an event about unlinked mentions for Java callers with the timestamp you choose.
+         *
+         * @param contextIdValue The context the chunk was analysed in, as a plain string.
+         * @param chunkId The chunk the mentions came from.
+         * @param mentions The ungrounded mentions.
+         * @param handling Whether the mentions were kept or dropped.
+         * @param timestamp When the event was created.
+         * @return The event.
+         * @throws IllegalArgumentException if contextIdValue is blank
+         */
+        @JvmStatic
+        fun of(
+            contextIdValue: String,
+            chunkId: String,
+            mentions: List<UngroundedMention>,
+            handling: UngroundedMentionHandling,
+            timestamp: Instant,
+        ): UngroundedMentionsFound {
+            require(contextIdValue.isNotBlank()) { "contextIdValue must not be blank" }
+            return UngroundedMentionsFound(ContextId(contextIdValue), chunkId, mentions, handling, timestamp)
+        }
+    }
 }
 
 /**
