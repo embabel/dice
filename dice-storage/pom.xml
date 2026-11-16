@@ -156,6 +156,22 @@
                 </executions>
             </plugin>
 
+            <!--
+                clean also removes the Gradle build output, so the generated sources always come from
+                this build's model classes. The API listing relies on that to tell generated code apart.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-clean-plugin</artifactId>
+                <configuration>
+                    <filesets>
+                        <fileset>
+                            <directory>${project.basedir}/codegen-gradle/build</directory>
+                        </fileset>
+                    </filesets>
+                </configuration>
+            </plugin>
+
             <!-- 2. Register the generated sources with the build -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
