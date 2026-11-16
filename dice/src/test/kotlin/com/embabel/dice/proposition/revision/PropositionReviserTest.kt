@@ -233,12 +233,10 @@ class PropositionReviserTest {
     inner class AutoMergeTests {
 
         private lateinit var repository: TestPropositionRepository
-        private lateinit var reviser: TestPropositionReviser
 
         @BeforeEach
         fun setup() {
             repository = TestPropositionRepository(defaultScore = 0.97)
-            reviser = TestPropositionReviser(autoMergeThreshold = 0.95)
         }
 
         @Test
@@ -247,64 +245,42 @@ class PropositionReviserTest {
             repository.save(existing)
 
             val newProp = createProposition("Alice works as a software engineer", confidence = 0.8)
-            val result = reviser.revise(newProp, repository)
+            val result = realReviser().revise(newProp, repository)
 
             assertTrue(result is RevisionResult.Merged, "Expected Merged but got ${result::class.simpleName}")
             val merged = result as RevisionResult.Merged
             assertEquals(existing.id, merged.original.id)
             assertTrue(merged.revised.confidence > existing.confidence)
-            // Should NOT have used the LLM classify path
-            assertEquals(0, reviser.classifyCallCount, "Auto-merge should skip LLM classification")
         }
 
         @Test
         fun `score below threshold falls through to classification`() {
-            // Use a lower score that won't trigger auto-merge
             repository = TestPropositionRepository(defaultScore = 0.90)
-            reviser = TestPropositionReviser(autoMergeThreshold = 0.95)
 
             val existing = createProposition("Alice is a software engineer", confidence = 0.7)
             repository.save(existing)
 
-            // Set up classification response since auto-merge won't fire
-            reviser.nextClassification = listOf(
-                ClassifiedProposition(existing, PropositionRelation.SIMILAR, 0.7, "Related")
-            )
-
             val newProp = createProposition("Alice works as a developer", confidence = 0.8)
-            val result = reviser.revise(newProp, repository)
 
-            // Should have fallen through to classification
-            assertTrue(result is RevisionResult.Reinforced)
-            assertEquals(1, reviser.classifyCallCount, "Should have used LLM classification")
+            assertTrue(realReviser().retrieveAndFastPath(newProp, repository) is PendingClassification)
         }
 
         @Test
         fun `auto-merge disabled with threshold above 1`() {
             repository = TestPropositionRepository(defaultScore = 0.99)
-            reviser = TestPropositionReviser(autoMergeThreshold = 1.1)
 
             val existing = createProposition("Alice is a software engineer", confidence = 0.7)
             repository.save(existing)
 
-            reviser.nextClassification = listOf(
-                ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.99, "Same")
-            )
-
             val newProp = createProposition("Alice works as a software engineer", confidence = 0.8)
-            val result = reviser.revise(newProp, repository)
 
-            // Even with score 0.99, should NOT auto-merge because threshold is 1.1
-            assertEquals(1, reviser.classifyCallCount, "Should have used LLM classification when auto-merge disabled")
-            assertTrue(result is RevisionResult.Merged)
+            assertTrue(
+                realReviser().withAutoMergeThreshold(1.1).retrieveAndFastPath(newProp, repository) is PendingClassification
+            )
         }
 
         @Test
         fun `reviseAll auto-merges high-score propositions in batch`() {
-            // High score: auto-merge kicks in
-            repository = TestPropositionRepository(defaultScore = 0.97)
-            reviser = TestPropositionReviser(autoMergeThreshold = 0.95)
-
             val existing1 = createProposition("Alice is a software engineer", confidence = 0.7)
             val existing2 = createProposition("Bob is a designer", confidence = 0.6)
             repository.save(existing1)
@@ -315,11 +291,10 @@ class PropositionReviserTest {
                 createProposition("Bob works as a designer", confidence = 0.8),
             )
 
-            val results = reviser.reviseAll(props, repository)
+            val results = realReviser().reviseAll(props, repository)
 
             assertEquals(2, results.size)
             assertTrue(results.all { it is RevisionResult.Merged }, "All should be auto-merged")
-            assertEquals(0, reviser.classifyCallCount, "Auto-merge should skip all LLM calls")
         }
     }
 
