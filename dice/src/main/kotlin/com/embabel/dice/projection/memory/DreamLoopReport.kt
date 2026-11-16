@@ -18,6 +18,7 @@ package com.embabel.dice.projection.memory
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.operations.consolidation.ConsolidationPassResult
 import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
 import java.time.Instant
 
 /**
@@ -38,6 +39,7 @@ import java.time.Instant
  *   rather than a report with this set to false. Retained for forward compatibility.
  */
 data class DreamLoopReport(
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
     val cycleStarted: Instant,
     val cycleCompleted: Instant = Instant.now(),

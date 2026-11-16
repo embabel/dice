@@ -17,6 +17,7 @@ package com.embabel.dice.projection.memory.collector
 
 import com.embabel.agent.core.ContextId
 import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
 import java.time.Clock
 
 /**
@@ -27,18 +28,19 @@ import java.time.Clock
  * A runner builds this once per sweep; tests can build one directly to exercise the strategy
  * without a runner at all.
  *
- * @property runId Identifies this run in the trace store — every edge, component and decision
+ * @property runId Identifies this run in the trace store, so every edge, component and decision
  *   recorded during the run is tagged with it.
  * @property contextId The context being swept.
  * @property contextIdValue [contextId] as a plain string, for Java callers.
  * @property dryRun When true, the strategy should still compute and record its full trace but
- *   must not have any side effect beyond that (no marks are a "commitment" either way — this
+ *   must not have any side effect beyond that (no marks are a "commitment" either way. This
  *   flag is here for callers that want to preview a run's trace before acting on it).
  * @property clock Source of "now" for anything the run needs to timestamp. Defaults to the
  *   system clock; tests can supply a fixed one.
  */
 data class CollectorRunContext(
     val runId: String,
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
     val dryRun: Boolean = false,
     val clock: Clock = Clock.systemUTC(),
