@@ -17,6 +17,7 @@ package com.embabel.dice
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.common.PropositionContradicted
+import com.embabel.dice.evidence.Citation
 import com.embabel.dice.common.UngroundedMentionsFound
 import com.embabel.dice.incremental.BookmarkKey
 import com.embabel.dice.incremental.ChunkHistoryStore
@@ -26,9 +27,18 @@ import com.embabel.dice.pipeline.UngroundedMentionHandling
 import com.embabel.dice.projection.memory.DreamLoopReport
 import com.embabel.dice.projection.memory.collector.CollectorRunContext
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
+import com.embabel.dice.proposition.extraction.ExtractionRun
+import com.embabel.dice.proposition.extraction.ExtractionRunKey
+import com.embabel.dice.proposition.extraction.ExtractionRunLineage
+import com.embabel.dice.proposition.extraction.ExtractionRunRef
+import com.embabel.dice.proposition.extraction.ExtractionRunStatus
 import com.embabel.dice.spi.CollapseUndoCommand
 import com.embabel.dice.spi.CollapseUndoContextMismatchException
+import java.time.Clock
 import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 
 /**
  * Builds events whose constructors take a [ContextId]. Java cannot call those constructors, so the
@@ -93,6 +103,56 @@ object ContextIdFixtures {
     @JvmStatic
     fun collapseUndoContextMismatch(commanded: String, actual: String): CollapseUndoContextMismatchException =
         CollapseUndoContextMismatchException(ContextId(commanded), "proposition-1", ContextId(actual))
+
+    /**
+     * One ready-made value for every public type that has a `ContextId` getter, keyed by its class.
+     * The JSON guard test serializes each one and checks that the id comes out as a plain string
+     * under the property's own name. When you add a type with a `ContextId` property, add a sample
+     * here too, or the guard fails.
+     *
+     * Every sample uses the context `acme`, except the mismatch exception, which needs two
+     * different contexts and uses `commanded` and `actual`. The run context gets a stopped clock
+     * because Jackson will not write the system clock.
+     *
+     * @return The samples, keyed by their exact class.
+     */
+    @JvmStatic
+    fun jsonSamples(): Map<Class<*>, Any> {
+        val acme = ContextId("acme")
+        val samples = listOf(
+            ungroundedMentionsFound("acme"),
+            propositionContradicted("acme"),
+            bookmarkKey("acme"),
+            hashKey("acme"),
+            processedChunkRecord("acme"),
+            dreamLoopReport("acme"),
+            CollectorRunContext.of("run-1", "acme", clock = EpochClock),
+            collapseUndoCommand("acme"),
+            collapseUndoContextMismatch("commanded", "actual"),
+            proposition(acme, "Alice lives in Paris"),
+            Proposition.draft("acme", "Alice lives in Paris", 0.9),
+            PropositionQuery.againstContext("acme"),
+            ExtractionRunKey.of("acme", "run-1"),
+            ExtractionRun.of(
+                "acme",
+                ExtractionRunLineage.root(ExtractionRunRef("run-1")),
+                ExtractionRunStatus.RUNNING,
+                Instant.EPOCH,
+            ),
+            Citation.of("proposition-1", acme),
+        )
+        return samples.associateBy { it.javaClass }
+    }
+
+    /**
+     * A clock stopped at the epoch, for the run context sample. Jackson refuses to serialize the
+     * JDK's own clocks, but it writes this one as a bean with just its zone.
+     */
+    private object EpochClock : Clock() {
+        override fun getZone(): ZoneId = ZoneOffset.UTC
+        override fun withZone(zone: ZoneId): Clock = this
+        override fun instant(): Instant = Instant.EPOCH
+    }
 
     /**
      * A minimal proposition in one context.
