@@ -10,6 +10,21 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- `PropositionPipeline` applies the mention filter itself, for every `PropositionExtractor`, and
+  passes `null` as the `mentionFilter` argument of `toSuggestedEntities`. An extractor that ignores
+  that argument has its mentions filtered all the same. `LlmPropositionExtractor.toSuggestedEntities`
+  called directly with a filter asks it through `validateMentions`, which gives the same result for
+  a filter that only implements `isValid`. For rejected mentions the pipeline logs one line of
+  counts per chunk, at warning level when a mention was dropped or left unresolved and at debug
+  level otherwise. Spans are logged at debug level only, by the pipeline and by
+  `LlmPropositionExtractor`. **Compatibility: behavioral.**
+
+- With `withUngroundedMentions(UngroundedMentionHandling.DROP)`, when a dropped mention carried a
+  suggested id and no remaining mention with the same span and type has one, the resolver
+  candidates for that span and type get that id. It is the id the extractor would have used had the
+  mention stayed. It is the model's id and is not checked against the known entities.
+  **Compatibility: behavioral.**
+
 - The build now checks the committed public API listings of the published modules. `./mvnw verify` fails when
   a module's compiled public API differs from its `api/*.api` file. To update the listings after an API change,
   run `./mvnw -B -DskipTests -Dapi.listing.mode=update clean verify`. **Compatibility: additive.** A build
@@ -202,11 +217,34 @@ and the consumer PRs that deliver it).
 - `PropositionPipeline` checks each mention an extractor returns against the text of its own
   proposition before entity resolution, and emits one `UngroundedMentionsFound` event per chunk
   listing every mention whose span is blank or does not appear in that text, with the reason. The
-  comparison ignores letter case, runs of whitespace, Unicode composition and width forms, and
-  typographic quotes and hyphens, and is otherwise literal. By default the mentions are kept.
-  `withUngroundedMentions(UngroundedMentionHandling.DROP)` removes them before resolution, so they
-  are never resolved, never minted as an entity and not left on the proposition; the proposition
-  itself is always kept. **Compatibility: additive.**
+  comparison uses full case folding and ignores runs of whitespace, Unicode composition and width
+  forms, invisible characters, and the typographic variants of quotes and dashes. In scripts that
+  put spaces between words, such as Latin, Cyrillic and Greek, the span must sit at word edges, so
+  an inflected or plural form, or a name run together with a number, is a different word. A
+  mention that names a known entity of the
+  context, by suggested id, name or alias, is grounded when the text names that entity. A mention
+  of something the text only implies is ungrounded, with or without an id. By default the mentions
+  are kept. `withUngroundedMentions(UngroundedMentionHandling.DROP)` removes them before
+  resolution, so they are never resolved, never minted as an entity and not left on the
+  proposition; the proposition itself is always kept. **Compatibility: additive.**
+
+- `MentionFilter.validateMentions(proposition, context)` judges all mentions of one proposition in
+  one call and returns a `ValidationResult` per mention. The default calls `isValid` and
+  `rejectionReason`, so existing filters work unchanged. `CompositeMentionFilter` and
+  `ObservableMentionFilter` pass it on to the filters they wrap. `GroundedMentionFilter` is the
+  pipeline's grounding check as a `MentionFilter`, and `PropositionPipeline.withMentionGrounding`
+  replaces it. `withMentionFilter(filter, RejectedMentionHandling)` chooses what happens to a
+  mention the filter rejects. `KEEP` only reports it, `LEAVE_UNRESOLVED` keeps it on the
+  proposition unresolved, which is what `withMentionFilter(filter)` does, and `DROP` removes it.
+  **Compatibility: additive.**
+
+- `ChunkPropositionResult.rejectedMentions` and `PropositionResults.rejectedMentions` list every
+  mention a check rejected as a `RejectedMention`, with the chunk id, the position and text of the
+  proposition, the reason, the check and what the pipeline did. `ChunkPropositionResult.Success`
+  has a six-argument constructor that takes the list, and a four-argument constructor for Java.
+  Its five-argument constructor, `copy` and `componentN` are unchanged. `Success` is a regular
+  class with those members written out, so `Success::class.isData` is false, and its `equals`
+  includes `rejectedMentions`. **Compatibility: additive.**
 
 - A Kotlin DSL for stamping in `dice-metamodel`. **EXPERIMENTAL** (shape may change
   before 1.0): `MetamodelVersion(dictionary) { }` and `DeclaredSchema(dictionary) { }`

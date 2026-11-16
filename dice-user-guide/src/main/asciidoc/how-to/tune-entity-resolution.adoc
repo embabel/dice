@@ -108,6 +108,9 @@ pipeline = pipeline.withMentionFilter(
         new ObservableMentionFilter(new SchemaValidatedMentionFilter(dataDictionary)));
 ----
 
+A rejected mention stays on its proposition unresolved. Pass `RejectedMentionHandling.DROP` as a
+second argument to take it off the proposition as well.
+
 Tightening `SchemaAdherence` to `STRICT` has the same effect earlier still, at the extractor. See
 <<concepts-context-and-schema>>.
 

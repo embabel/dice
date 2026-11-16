@@ -108,25 +108,42 @@ cross-chunk identity holds however extraction was dispatched. See
 A model can attach a mention to a claim that does not name that entity. Before resolution, the
 pipeline checks each mention against the text of its own proposition. A mention whose span is blank
 or not in that text is ungrounded. The comparison ignores letter case, runs of whitespace, Unicode
-composition and width forms, and typographic quotes and hyphens. Accents count.
+composition and width forms, invisible characters, and the typographic variants of quotes and
+dashes. Accents count. In scripts that put spaces between words, such as Latin, Cyrillic and Greek,
+the span must sit at word edges, so "US" is not found in "focus". An inflected or plural form is a
+different word, so "Apple" is not found in "Apples", and neither is a name run together with a
+number: "iPhone" is not found in "iPhone15". Scripts that join words without spaces, such
+as Chinese, Japanese or Thai, are matched wherever the span occurs.
 
-Ungrounded mentions are reported in an `UngroundedMentionsFound` event, one per chunk, and by
-default they are otherwise left alone. To have them removed before resolution, so they are never
-resolved or minted:
+A mention that names one of the context's known entities, by its suggested id or by the entity's
+name or an alias, is also grounded when the text names that entity. A mention of something the text
+only implies, such as a hobby named `Cycling` on the claim "Alice cycles", is ungrounded, with or
+without an id.
+
+Ungrounded mentions are reported, and by default they are otherwise left alone. To have them
+removed before resolution, so they are never resolved or minted:
 
 [source,java]
 ----
 pipeline = pipeline.withUngroundedMentions(UngroundedMentionHandling.DROP);
 ----
 
-The proposition is always kept. This differs from a `MentionFilter`, described next: a mention a
-filter rejects stays on the proposition unresolved, while a dropped ungrounded mention is removed
-from it.
+The proposition is always kept. The check is itself a `MentionFilter`, `GroundedMentionFilter`, and
+`withMentionGrounding` replaces it with a check of your own:
+
+[source,java]
+----
+pipeline = pipeline.withMentionGrounding(myGroundingCheck);
+----
+
+A grounding check decides one thing, whether the text of the proposition supports the mention. What
+it rejects is reported as an ungrounded mention, with the reason `BLANK_SPAN` for a blank span and
+`SPAN_NOT_IN_PROPOSITION` for any other. A rule about something else belongs in a mention filter.
 
 ==== Mention filtering
 
-Not every mention deserves resolution. A `MentionFilter` runs before resolution and drops
-low-quality spans — vague references, overly long spans, anything the schema says cannot be an
+Not every mention deserves resolution. A `MentionFilter` runs before resolution and rejects
+low-quality spans: vague references, overly long spans, anything the schema says cannot be an
 entity. Filtering here is cheaper than resolving and then reclaiming.
 
 Shipped filters include `SchemaValidatedMentionFilter`, the context-aware filters in
@@ -137,6 +154,50 @@ what it rejected.
 ----
 pipeline = pipeline.withMentionFilter(mentionFilter);
 ----
+
+A mention the filter rejects is not resolved and stays on its proposition. A second argument
+chooses another outcome: `RejectedMentionHandling.DROP` also takes the mention off the proposition,
+and `KEEP` only reports it.
+
+[source,java]
+----
+MentionFilter noCarols = (mention, text) -> !mention.getSpan().equals("Carol");
+pipeline = pipeline.withMentionFilter(noCarols, RejectedMentionHandling.DROP);
+----
+
+The pipeline applies the filter for every `PropositionExtractor`. A filter whose verdict depends on
+the analysis overrides `validateMentions`, which receives the whole proposition and the
+`SourceAnalysisContext`:
+
+[source,java]
+----
+class KnownEntitiesOnly implements MentionFilter {
+
+    @Override
+    public boolean isValid(SuggestedMention mention, String propositionText) {
+        return true;
+    }
+
+    @Override
+    public List<ValidationResult> validateMentions(
+            SuggestedProposition proposition, SourceAnalysisContext context) {
+        Set<String> names = context.getKnownEntities().stream()
+                .map(KnownEntity::getName)
+                .collect(Collectors.toSet());
+        return proposition.getMentions().stream()
+                .<ValidationResult>map(mention -> names.contains(mention.getSpan())
+                        ? ValidationResult.Valid.INSTANCE
+                        : new ValidationResult.Invalid("not a known entity"))
+                .toList();
+    }
+}
+----
+
+The pipeline can call `validateMentions` from several threads at once, so a filter keeps no state
+between calls. A filter that wraps another filter forwards `validateMentions` to it.
+
+Every rejected mention, from grounding or from a filter, is on the result the pipeline returns. See
+<<how-to-observe-and-react>>.
 
 .Try it now
 [source,java]
