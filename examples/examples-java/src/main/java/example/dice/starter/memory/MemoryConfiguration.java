@@ -19,11 +19,8 @@ import com.embabel.agent.api.common.Ai;
 import com.embabel.agent.core.DataDictionary;
 import com.embabel.common.ai.model.LlmOptions;
 import com.embabel.dice.common.DiceEventListener;
-import com.embabel.dice.incremental.ChunkHistoryStore;
-import com.embabel.dice.incremental.InMemoryChunkHistoryStore;
 import com.embabel.dice.pipeline.PropositionPipeline;
 import com.embabel.dice.pipeline.UngroundedMentionHandling;
-import com.embabel.dice.proposition.PropositionRepository;
 import com.embabel.dice.proposition.extraction.LlmPropositionExtractor;
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository;
 import example.dice.starter.customers.Contact;
@@ -53,22 +50,14 @@ class MemoryConfiguration {
     /**
      * The fact store. With no embedding service it has no similarity search.
      *
+     * <p>The bean has the in-memory type because {@code PersistUnitWriter.inMemory}, which puts
+     * the stores back after a failed write, takes that type.
+     *
      * @return an empty in-memory store
      */
     @Bean
-    PropositionRepository propositionRepository() {
+    InMemoryPropositionRepository propositionRepository() {
         return new InMemoryPropositionRepository();
-    }
-
-    /**
-     * Remembers which tickets have been stored, per account, so a ticket that is filed again
-     * is skipped.
-     *
-     * @return an empty in-memory history
-     */
-    @Bean
-    ChunkHistoryStore chunkHistoryStore() {
-        return new InMemoryChunkHistoryStore();
     }
 
     /**

@@ -35,7 +35,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 class ScriptedModel {
 
     /**
-     * Replays one recorded reply per ticket, matched on the ticket's opening words, which the
+     * Replays one recorded reply per ticket text, matched on a few of its words, which the
      * extraction prompt contains.
      *
      * @return the scripted model
@@ -45,6 +45,9 @@ class ScriptedModel {
         return ScriptedChatModel.script()
                 .whenPromptContains("Ada Okafor from Acme wrote in", new ClassPathResource("recorded/ticket-1042.json"))
                 .whenPromptContains("Follow-up with Ada Okafor", new ClassPathResource("recorded/ticket-1057.json"))
+                // The edited ticket-2210 keeps its opening words, so its rule comes first and
+                // matches on the sentence that changed.
+                .whenPromptContains("Globex is on the Team plan", new ClassPathResource("recorded/ticket-2210-edited.json"))
                 .whenPromptContains("Ben Ruiz at Globex", new ClassPathResource("recorded/ticket-2210.json"))
                 .whenPromptContains("Ada Okafor at Globex asked", new ClassPathResource("recorded/ticket-2231.json"))
                 .build();

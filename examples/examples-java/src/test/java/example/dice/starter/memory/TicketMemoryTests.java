@@ -58,7 +58,7 @@ class TicketMemoryTests {
     @Autowired Tickets tickets;
     @Autowired CustomerMemory memory;
     @Autowired DiceEvents diceEvents;
-    @Autowired AccountEntities entities;
+    @Autowired AccountStores stores;
     @Autowired ScriptedChatModel model;
 
     @BeforeAll
@@ -124,7 +124,7 @@ class TicketMemoryTests {
         var later = mention(ACME, "Acme wants single sign-on enabled before its December audit", "Acme");
 
         assertThat(later.getResolvedId()).isNotNull().isEqualTo(first.getResolvedId());
-        assertThat(entities.of(ACME).findById(first.getResolvedId()).getName()).isEqualTo("Acme");
+        assertThat(stores.of(ACME).entities().findById(first.getResolvedId()).getName()).isEqualTo("Acme");
     }
 
     @Test
@@ -136,9 +136,9 @@ class TicketMemoryTests {
         assertThat(atAcme.getResolvedId()).isNotNull();
         assertThat(atGlobex.getResolvedId()).isNotNull().isNotEqualTo(atAcme.getResolvedId());
 
-        assertThat(entities.of(GLOBEX).findById(atGlobex.getResolvedId()).getName()).isEqualTo("Ada Okafor");
-        assertThat(entities.of(GLOBEX).findById(atAcme.getResolvedId())).isNull();
-        assertThat(entities.of(ACME).findById(atGlobex.getResolvedId())).isNull();
+        assertThat(stores.of(GLOBEX).entities().findById(atGlobex.getResolvedId()).getName()).isEqualTo("Ada Okafor");
+        assertThat(stores.of(GLOBEX).entities().findById(atAcme.getResolvedId())).isNull();
+        assertThat(stores.of(ACME).entities().findById(atGlobex.getResolvedId())).isNull();
     }
 
     @Test
