@@ -15,21 +15,27 @@
  */
 package com.embabel.dice.evidence;
 
+import com.embabel.common.core.types.SimpleSimilaritySearchResult;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.proposition.revision.RevisionResult;
 import com.embabel.dice.spi.ConflictType;
+import com.embabel.dice.temporal.TemporalMetadata;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Shows how a Java caller converts a contradiction and reads the kind of disagreement it becomes.
+ * Shows how a Java caller converts claims, scored hits and contradictions into evidence.
  */
 class EvidenceConverterJavaInteropTest {
 
@@ -100,6 +106,203 @@ class EvidenceConverterJavaInteropTest {
         Evidence.Superseded superseded = assertInstanceOf(Evidence.Superseded.class, disagreement);
         assertEquals(PropositionStatus.ACTIVE, superseded.getPrevious().get(0).getStatus());
         assertEquals(PropositionStatus.ACTIVE, superseded.getCurrent().getStatus());
+    }
+
+    @Test
+    void scoredHitsKeepTheirListPositionAsRankWhenOneIsSkipped() {
+        List<SimpleSimilaritySearchResult<Proposition>> hits = List.of(
+                new SimpleSimilaritySearchResult<>(claim("p-1", "Ada lives in London", PropositionStatus.ACTIVE), 0.9),
+                new SimpleSimilaritySearchResult<>(claim("p-2", " ", PropositionStatus.ACTIVE), 0.8),
+                new SimpleSimilaritySearchResult<>(claim("p-3", "Ada works at the library", PropositionStatus.ACTIVE), 0.7));
+
+        Evidence.Recorded recorded = assertInstanceOf(
+                Evidence.Recorded.class, converter.fromSimilarityResults(hits, Searched.of("support-team")));
+
+        assertEquals(List.of("p-1", "p-3"), propositionIds(recorded));
+        assertEquals(List.of(1, 3), ranks(recorded));
+    }
+
+    @Test
+    void claimsFromARetrieverKeepTheirListPositionAsRankWhenOneIsSkipped() {
+        List<Proposition> claims = List.of(
+                claim("p-1", "Ada lives in London", PropositionStatus.ACTIVE),
+                claim("p-2", "", PropositionStatus.ACTIVE),
+                claim("p-3", "Ada works at the library", PropositionStatus.ACTIVE));
+
+        Evidence.Recorded recorded = assertInstanceOf(
+                Evidence.Recorded.class,
+                converter.fromPropositions(claims, Searched.of("support-team"), RetrieverId.KEYWORD));
+
+        assertEquals(List.of("p-1", "p-3"), propositionIds(recorded));
+        assertEquals(List.of(1, 3), ranks(recorded));
+    }
+
+    @Test
+    void aNullHitIsRejectedWithItsIndex() {
+        List<SimpleSimilaritySearchResult<Proposition>> hits = Arrays.asList(
+                new SimpleSimilaritySearchResult<>(claim("p-1", "Ada lives in London", PropositionStatus.ACTIVE), 0.9),
+                null);
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                () -> converter.fromSimilarityResults(hits, Searched.of("support-team")));
+
+        assertTrue(thrown.getMessage().contains("hits[1]"), thrown.getMessage());
+    }
+
+    @Test
+    void aHitWithNoClaimIsRejectedWithItsIndex() {
+        List<SimpleSimilaritySearchResult<Proposition>> hits = List.of(
+                new SimpleSimilaritySearchResult<>(claim("p-1", "Ada lives in London", PropositionStatus.ACTIVE), 0.9),
+                new SimpleSimilaritySearchResult<>(null, 0.8));
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                () -> converter.fromSimilarityResults(hits, Searched.of("support-team")));
+
+        assertEquals("hits[1].match must not be null", thrown.getMessage());
+    }
+
+    @Test
+    void aListOfClaimsReadsTheClockOnce() {
+        CountingClock clock = new CountingClock(RECORDED_AT.plus(Duration.ofDays(1)));
+        List<Proposition> claims = List.of(decayingClaim("p-1"), decayingClaim("p-2"));
+
+        Evidence.Recorded recorded = assertInstanceOf(Evidence.Recorded.class,
+                converter.withClock(clock).fromPropositions(claims, Searched.of("support-team")));
+
+        assertEquals(1, clock.reads);
+        assertEquals(recorded.getItems().get(0).getEffectiveConfidence(),
+                recorded.getItems().get(1).getEffectiveConfidence());
+    }
+
+    @Test
+    void aContradictionReadsTheClockOnce() {
+        CountingClock clock = new CountingClock(RECORDED_AT.plus(Duration.ofDays(1)));
+
+        converter.withClock(clock).fromContradiction(new RevisionResult.Contradicted(
+                decayingClaim("p-1"), decayingClaim("p-2"), ConflictType.Contradiction.INSTANCE));
+
+        assertEquals(1, clock.reads);
+    }
+
+    @Test
+    void revisedAtIsTheRecordedContentRevision() {
+        Proposition stored = Proposition.create(
+                "p-1", "support-team", "Ada lives in London", List.of(), 0.8, 0.0, null, List.of(),
+                RECORDED_AT, RECORDED_AT.plus(Duration.ofDays(10)), PropositionStatus.ACTIVE);
+
+        assertNull(converter.item(stored).getRevisedAt());
+
+        Proposition revised = stored.withText("Ada lives in Camden");
+        assertEquals(revised.getContentRevised(), converter.item(revised).getRevisedAt());
+    }
+
+    @Test
+    void anItemReadsBackTheReinforceCountAndTemporalMetadataOfItsClaim() {
+        TemporalMetadata temporal = new TemporalMetadata(RECORDED_AT, RECORDED_AT, null, null, List.of("p-0"), List.of());
+        Proposition reinforced = Proposition.create(
+                "p-1", "support-team", "Ada lives in London", List.of(), 0.8, 0.0, 0.5, null, List.of(),
+                RECORDED_AT, RECORDED_AT, RECORDED_AT, PropositionStatus.ACTIVE, 0, List.of(), 3)
+                .withTemporal(temporal);
+
+        EvidenceItem item = converter.item(reinforced);
+
+        assertEquals(3, item.getReinforceCount());
+        assertEquals(temporal, item.getTemporal());
+    }
+
+    @Test
+    void nullAndBlankGroundingIdsAreLeftOut() {
+        Proposition grounded = Proposition.create(
+                "p-1", "support-team", "Ada lives in London", List.of(), 0.8, 0.0, null,
+                Arrays.asList("chunk-1", null, " "), RECORDED_AT, RECORDED_AT, PropositionStatus.ACTIVE);
+
+        assertEquals(List.of("chunk-1"), converter.item(grounded).getCitation().getChunkIds());
+    }
+
+    @Test
+    void aLaterPageIsRankedFromItsOffsetOnAFixedClock() {
+        EvidenceConverter pinned = EvidenceConverter.create().withClock(Clock.fixed(RECORDED_AT, ZoneOffset.UTC));
+        List<SimpleSimilaritySearchResult<Proposition>> page = List.of(
+                new SimpleSimilaritySearchResult<>(claim("p-11", "Ada lives in London", PropositionStatus.ACTIVE), 0.6),
+                new SimpleSimilaritySearchResult<>(claim("p-12", "Ada works at the library", PropositionStatus.ACTIVE), 0.5));
+        int offset = 10;
+
+        List<EvidenceItem> items = new ArrayList<>();
+        for (int i = 0; i < page.size(); i++) {
+            items.add(pinned.item(page.get(i), RetrieverId.VECTOR, offset + i + 1));
+        }
+        Evidence evidence = Evidence.of(items, Searched.of("support-team"));
+
+        assertEquals(List.of(11, 12), ranks(assertInstanceOf(Evidence.Recorded.class, evidence)));
+    }
+
+    /**
+     * Lists the claim id of each item in recorded evidence.
+     *
+     * @param recorded the evidence to read
+     * @return the claim ids, in item order
+     */
+    private static List<String> propositionIds(Evidence.Recorded recorded) {
+        return recorded.getItems().stream().map(item -> item.getCitation().getPropositionId()).toList();
+    }
+
+    /**
+     * Lists the rank of the single retrieval on each item in recorded evidence.
+     *
+     * @param recorded the evidence to read
+     * @return the ranks, in item order
+     */
+    private static List<Integer> ranks(Evidence.Recorded recorded) {
+        return recorded.getItems().stream().map(item -> item.getRetrievals().get(0).getRank()).toList();
+    }
+
+    /**
+     * Creates an active claim that decays, last revised and accessed at {@code RECORDED_AT}.
+     *
+     * @param id the claim id
+     * @return the claim
+     */
+    private static Proposition decayingClaim(String id) {
+        return Proposition.create(
+                id, "support-team", "Ada lives in London", List.of(), 0.8, 0.1, null, List.of(),
+                RECORDED_AT, RECORDED_AT, PropositionStatus.ACTIVE);
+    }
+
+    /**
+     * A clock that counts how often it is read and moves 30 days forward after each read.
+     */
+    private static final class CountingClock extends Clock {
+
+        private Instant next;
+
+        private int reads;
+
+        /**
+         * Creates a clock whose first read returns the given instant.
+         *
+         * @param first the instant the first read returns
+         */
+        CountingClock(Instant first) {
+            this.next = first;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            reads++;
+            Instant now = next;
+            next = next.plus(Duration.ofDays(30));
+            return now;
+        }
     }
 
     /**

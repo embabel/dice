@@ -114,7 +114,7 @@ class EvidenceConverterTest {
         assertEquals(proposition.effectiveConfidenceAt(asOf, 2.0), item.effectiveConfidence)
         assertEquals(PropositionStatus.SUPERSEDED, item.status)
         assertEquals(proposition.created, item.recordedAt)
-        assertEquals(tenDaysBefore, item.revisedAt)
+        assertNull(item.revisedAt)
         assertNull(item.score)
         assertTrue(item.retrievals.isEmpty())
         assertFalse(item.isDerived)
@@ -176,7 +176,7 @@ class EvidenceConverterTest {
     }
 
     @Test
-    fun `claims with blank text are skipped and the rest are ranked from 1`() {
+    fun `claims with blank text are skipped and the rest keep their list position as rank`() {
         val claims = listOf(claim("p-1"), claim("p-2", text = ""), claim("p-3"))
 
         val evidence = assertInstanceOf(
@@ -185,7 +185,7 @@ class EvidenceConverterTest {
         )
 
         assertEquals(listOf("p-1", "p-3"), evidence.items.map { it.citation.propositionId })
-        assertEquals(listOf(1, 2), evidence.items.map { it.retrievals.single().rank })
+        assertEquals(listOf(1, 3), evidence.items.map { it.retrievals.single().rank })
         assertTrue(evidence.items.all { it.retrievals.single().retriever == RetrieverId.KEYWORD })
     }
 

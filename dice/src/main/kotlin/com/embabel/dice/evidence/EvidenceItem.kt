@@ -61,7 +61,10 @@ class EvidenceItem private constructor(
     val status: PropositionStatus,
     /** When the claim was first recorded. Null when not known. */
     val recordedAt: Instant?,
-    /** When the content of the claim last changed. Null when not known. */
+    /**
+     * When the text, mentions or confidence of the claim last changed after it was recorded. A merge, a
+     * reinforcement and a contradiction change confidence, so they count. Null when no change is recorded.
+     */
     val revisedAt: Instant?,
     derivedFromIds: List<String>,
     derivedFrom: List<EvidenceItem>,
@@ -390,7 +393,10 @@ class EvidenceItemBuilder internal constructor() {
     /** When the claim was first recorded. */
     var recordedAt: Instant? = null
 
-    /** When the content of the claim last changed. */
+    /**
+     * When the text, mentions or confidence of the claim last changed after it was recorded. A merge, a
+     * reinforcement and a contradiction change confidence, so they count.
+     */
     var revisedAt: Instant? = null
 
     /** Ids of the claims this one was abstracted from. Left unset or empty, they come from [derivedFrom]. */
