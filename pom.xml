@@ -261,6 +261,15 @@
                                     <condition property="api.listing.updating">
                                         <equals arg1="${api.listing.mode}" arg2="update"/>
                                     </condition>
+                                    <!-- Incremental Kotlin compiles only changed files, so the listing would be partial -->
+                                    <fail message="Regenerate the API listings without -Dkotlin.compiler.incremental=true, so every class is compiled.">
+                                        <condition>
+                                            <and>
+                                                <isset property="api.listing.updating"/>
+                                                <equals arg1="${kotlin.compiler.incremental}" arg2="true"/>
+                                            </and>
+                                        </condition>
+                                    </fail>
                                     <delete dir="${project.build.outputDirectory}" if:set="api.listing.updating"/>
                                 </target>
                             </configuration>
