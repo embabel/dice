@@ -50,7 +50,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Needed to get PR information, if any
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: mvn -U -B test verify
+        # install is verify plus a copy of the library in the local repository, where the examples take it from.
+        run: mvn -U -B test install
+      # The examples sit outside the library reactor. They build against the library this job installed.
+      - name: Build the examples
+        run: mvn -B -f examples/pom.xml verify
 
   # Trigger the Publish Docs workflow if .adoc files changed (only on main branch push)
   trigger-docs:
