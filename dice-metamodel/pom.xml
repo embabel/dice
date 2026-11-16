@@ -118,7 +118,7 @@
                 </executions>
             </plugin>
             <plugin>
-                <!-- Fails verify when the public API differs from api/dice-metamodel*.api -->
+                <!-- Fails the build after compile when the public API differs from api/dice-metamodel*.api -->
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-antrun-plugin</artifactId>
             </plugin>

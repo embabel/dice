@@ -39,7 +39,7 @@ import org.objectweb.asm.Opcodes;
  * types that carry a compatibility promise. {@code <module>.experimental.api} holds the types
  * marked {@code @ApiStatus.Experimental}, and is absent when a module has none.
  *
- * <p>The build runs this in {@code check} mode during {@code verify}, and it fails when a listing
+ * <p>The build runs this in {@code check} mode right after compile, and it fails when a listing
  * differs from the compiled classes. {@code update} mode rewrites the listings.
  *
  * <p>A class compiled from a file under the {@code --generated} source root is left out, because
@@ -127,7 +127,7 @@ public final class ApiListing {
         matches &= sync(apiDir.resolve(module + ".experimental.api"), experimental, update, out, err);
         if (!matches) {
             err.println("The public API changed. Review the difference above, then regenerate the"
-                    + " listings with: ./mvnw -B -DskipTests -Dapi.listing.mode=update clean verify");
+                    + " listings with: ./mvnw -B -Dapi.listing.mode=update process-classes");
             err.println("Types you did not add come from an earlier build, and ./mvnw clean removes them.");
             return 1;
         }

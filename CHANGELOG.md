@@ -10,10 +10,11 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
-- The build now checks the committed public API listings of the published modules. `./mvnw verify` fails when
-  a module's compiled public API differs from its `api/*.api` file. To update the listings after an API change,
-  run `./mvnw -B -DskipTests -Dapi.listing.mode=update clean verify`. **Compatibility: additive.** A build
-  change only; consumers see no difference.
+- The build now checks the committed public API listings of the published modules. Right after compile, the
+  build fails when a module's compiled public API differs from its `api/*.api` file. To update the listings
+  after an API change, run `./mvnw -B -Dapi.listing.mode=update process-classes`. Drivine's generated query
+  DSL in `dice-storage` is not listed. **Compatibility: additive.** A build change only; consumers see no
+  difference.
 
 - `Neo4jRagPropositionRepository` is now `RagAdapterPropositionRepository`, in the same package.
   The store never used Neo4j itself: it joins any `PropositionStore` to embabel-agent's

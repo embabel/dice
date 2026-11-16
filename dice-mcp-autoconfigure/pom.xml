@@ -102,7 +102,7 @@
                 </configuration>
             </plugin>
             <plugin>
-                <!-- Fails verify when the public API differs from api/dice-mcp-autoconfigure*.api -->
+                <!-- Fails the build after compile when the public API differs from api/dice-mcp-autoconfigure*.api -->
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-antrun-plugin</artifactId>
             </plugin>
