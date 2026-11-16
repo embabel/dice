@@ -49,9 +49,21 @@ interface ChunkHistoryStore {
     fun recordProcessed(record: ProcessedChunkRecord)
 
     /**
-     * Remove all history for the given context. Default no-op for backward compatibility.
+     * Removes all history for one context. The default hands over to [clearByContextValue].
+     * New stores implement [clearByContextValue] and leave this one alone.
      */
-    fun clearByContext(contextId: ContextId) {}
+    fun clearByContext(contextId: ContextId) {
+        clearByContextValue(contextId.value)
+    }
+
+    /**
+     * Removes all history for one context, named by its id as a string. This is the one a store
+     * implements, in Java or Kotlin. The default does nothing. An implementation must never call
+     * [clearByContext], because that method calls this one.
+     *
+     * @param contextIdValue The context to clear, as a plain string.
+     */
+    fun clearByContextValue(contextIdValue: String) {}
 
     /**
      * Remove all history across every context. Default no-op for backward compatibility.
@@ -81,10 +93,12 @@ class InMemoryChunkHistoryStore : ChunkHistoryStore {
         )
     }
 
-    override fun clearByContext(contextId: ContextId) {
-        bookmarks.keys.removeIf { it.contextId == contextId }
-        processedHashes.removeIf { it.contextId == contextId }
+    override fun clearByContextValue(contextIdValue: String) {
+        bookmarks.keys.removeIf { it.contextId.value == contextIdValue }
+        processedHashes.removeIf { it.contextId.value == contextIdValue }
     }
+
+    override fun clearByContext(contextId: ContextId) = clearByContextValue(contextId.value)
 
     override fun clearAll() {
         bookmarks.clear()

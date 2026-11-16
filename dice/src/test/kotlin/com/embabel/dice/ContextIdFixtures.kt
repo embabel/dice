@@ -19,6 +19,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.common.PropositionContradicted
 import com.embabel.dice.common.UngroundedMentionsFound
 import com.embabel.dice.incremental.BookmarkKey
+import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.HashKey
 import com.embabel.dice.incremental.ProcessedChunkRecord
 import com.embabel.dice.pipeline.UngroundedMentionHandling
@@ -78,6 +79,16 @@ object ContextIdFixtures {
     @JvmStatic
     fun collapseUndoCommand(contextIdValue: String): CollapseUndoCommand =
         CollapseUndoCommand(ContextId(contextIdValue), "survivor-1", "retired-1")
+
+    /**
+     * Clears one context's history through the [ContextId] form, which Java cannot call directly.
+     *
+     * @param store The store to clear.
+     * @param contextIdValue The context to clear, as a plain string.
+     */
+    @JvmStatic
+    fun clearByContext(store: ChunkHistoryStore, contextIdValue: String) =
+        store.clearByContext(ContextId(contextIdValue))
 
     @JvmStatic
     fun collapseUndoContextMismatch(commanded: String, actual: String): CollapseUndoContextMismatchException =
