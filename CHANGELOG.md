@@ -222,18 +222,19 @@ and the consumer PRs that deliver it).
   put spaces between words, such as Latin, Cyrillic and Greek, the span must sit at word edges, so
   an inflected or plural form, or a name run together with a number, is a different word. A
   mention that names a known entity of the context, by suggested id, name or alias, is grounded
-  when the text names that entity. A mention
-  of something the text only implies is ungrounded, with or without an id. By default the mentions
-  are kept. `withUngroundedMentions(UngroundedMentionHandling.DROP)` removes them before
+  when the text names that entity. A mention of something the text only implies is ungrounded,
+  with or without an id. By default the mentions are kept. `withUngroundedMentions(UngroundedMentionHandling.DROP)` removes them before
   resolution, so they are never resolved, never minted as an entity and not left on the
   proposition; the proposition itself is always kept. **Compatibility: additive.**
 
 - `MentionFilter.validateMentions(proposition, context)` judges all mentions of one proposition in
   one call and returns a `ValidationResult` per mention. The default calls `isValid` and
-  `rejectionReason`, so existing filters work unchanged. `CompositeMentionFilter` and
-  `ObservableMentionFilter` pass it on to the filters they wrap. `GroundedMentionFilter` is the
-  pipeline's grounding check as a `MentionFilter`, and `PropositionPipeline.withMentionGrounding`
-  replaces it. `withMentionFilter(filter, RejectedMentionHandling)` chooses what happens to a
+  `rejectionReason`, so existing filters work unchanged. A mocked `MentionFilter` must stub
+  `validateMentions` too, because a mock returns an empty list for it and the pipeline fails the
+  chunk when the number of results does not match the number of mentions.
+  `CompositeMentionFilter` and `ObservableMentionFilter` pass it on to the filters they wrap.
+  `GroundedMentionFilter` is the pipeline's grounding check as a `MentionFilter`, and
+  `PropositionPipeline.withMentionGrounding` replaces it. `withMentionFilter(filter, RejectedMentionHandling)` chooses what happens to a
   mention the filter rejects. `KEEP` only reports it, `LEAVE_UNRESOLVED` keeps it on the
   proposition unresolved, which is what `withMentionFilter(filter)` does, and `DROP` removes it.
   **Compatibility: additive.**
