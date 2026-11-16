@@ -24,6 +24,7 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.extraction.ExtractionRun
 import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonTypeInfo
 import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
@@ -106,6 +107,7 @@ data class PropositionReinforced @JvmOverloads constructor(
  * @property timestamp When the event was created.
  */
 data class PropositionContradicted @JvmOverloads constructor(
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
     val original: Proposition,
     val new: Proposition,
@@ -187,6 +189,7 @@ data class ExtractionBatchCompleted @JvmOverloads constructor(
  * @property timestamp When the event was created.
  */
 data class UngroundedMentionsFound @JvmOverloads constructor(
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
     val chunkId: String,
     val mentions: List<UngroundedMention>,

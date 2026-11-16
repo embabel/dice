@@ -17,12 +17,14 @@ package com.embabel.dice.incremental
 
 import com.embabel.agent.core.ContextId
 import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
 import java.time.Instant
 
 /**
  * Composite key for per-source analysis bookmarks within a [ContextId].
  */
 data class BookmarkKey(
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
     val sourceId: String,
 ) {
@@ -49,6 +51,7 @@ data class BookmarkKey(
  * Composite key for content-hash deduplication within a [ContextId].
  */
 data class HashKey(
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
     val contentHash: String,
 ) {
@@ -119,6 +122,7 @@ data class ProcessedChunkRecord(
         }
     }
 
+    @get:JsonProperty("contextId")
     val contextId: ContextId get() = bookmarkKey.contextId
 
     /** [contextId] as a plain string, for Java callers. */
