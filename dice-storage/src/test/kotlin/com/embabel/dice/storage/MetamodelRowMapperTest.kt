@@ -16,6 +16,9 @@
 package com.embabel.dice.storage
 
 import com.embabel.agent.core.Cardinality
+import com.embabel.dice.metamodel.DriftReport
+import com.embabel.dice.metamodel.MetamodelChange
+import com.embabel.dice.metamodel.MetamodelDiff
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.PropertySignature
 import com.embabel.dice.metamodel.PropertySignature.Kind
@@ -276,5 +279,97 @@ class MetamodelRowMapperTest {
 
         assertEquals(version, reloaded)
         assertEquals(emptyMap<String, Set<String>>(), reloaded.entityTypeAliases)
+    }
+
+    /** A declared diff holding one change of each kind, between two versions that declare aliases. */
+    private val declaredDiff: MetamodelDiff = run {
+        val ageOne = PropertySignature("age", Kind.VALUE, "integer", Cardinality.ONE)
+        val ageOptional = PropertySignature("age", Kind.VALUE, "integer", Cardinality.OPTIONAL)
+        val tel = PropertySignature("tel", Kind.VALUE, "string", Cardinality.ONE)
+        val phone = PropertySignature("phone", Kind.VALUE, "string", Cardinality.ONE, setOf("tel"))
+        val fax = PropertySignature("fax", Kind.VALUE, "string", Cardinality.OPTIONAL)
+        val before = MetamodelVersion(
+            schemaName = "diff-schema",
+            entityTypeNames = listOf("Person", "Company", "Ledger"),
+            entityTypeLabels = mapOf("Person" to setOf("Entity", "Legacy")),
+            entityTypeProperties = mapOf("Person" to setOf(ageOne, tel, fax)),
+            relationshipNames = listOf("Person-[worksAt]->Firm"),
+        )
+        val after = MetamodelVersion(
+            schemaName = "diff-schema",
+            entityTypeNames = listOf("Human", "Company", "Invoice"),
+            entityTypeLabels = mapOf("Human" to setOf("Entity", "Agent")),
+            entityTypeProperties = mapOf("Human" to setOf(ageOptional, phone)),
+            relationshipNames = listOf("Human-[worksAt]->Company"),
+            entityTypeAliases = mapOf("Human" to setOf("Person")),
+        )
+        MetamodelDiff(
+            before,
+            after,
+            listOf(
+                MetamodelChange.EntityTypeAdded("Invoice"),
+                MetamodelChange.EntityTypeRemoved("Ledger"),
+                MetamodelChange.EntityTypeRenamed("Person", "Human"),
+                MetamodelChange.AmbiguousEntityTypeRename(setOf("Firm"), setOf("Vendor", "Company")),
+                MetamodelChange.EntityTypeAliasesChanged("Human", emptySet(), setOf("Person")),
+                MetamodelChange.EntityTypeModified("Human", setOf("Agent"), setOf("Legacy"), setOf(phone), setOf(fax)),
+                MetamodelChange.PropertyRenamed("Human", tel, phone),
+                MetamodelChange.AmbiguousPropertyRename("Human", setOf("tel"), setOf("phone", "mobile")),
+                MetamodelChange.PropertySignatureChanged("Human", "age", ageOne, ageOptional),
+                MetamodelChange.RelationshipAdded("Human-[worksAt]->Company"),
+                MetamodelChange.RelationshipRemoved("Person-[worksAt]->Firm"),
+            ),
+        )
+    }
+
+    /**
+     * A drift report captured against [declaredDiff]'s later version.
+     *
+     * @param diff The declared diff the report carries, or `null` for none.
+     * @return The report.
+     */
+    private fun report(diff: MetamodelDiff?): DriftReport = DriftReport(
+        schemaName = "diff-schema",
+        versionHash = declaredDiff.toVersion.contentHash,
+        driftedEntityTypes = setOf("Ghost"),
+        driftedRelationshipTypes = emptySet(),
+        capturedAt = savedAt,
+        declaredDiff = diff,
+    )
+
+    @Test
+    fun `a report's declared diff round-trips with every kind of change`() {
+        val report = report(declaredDiff)
+
+        val reloaded = DriftReportRowMapper.fromRow(DriftReportRowMapper.bindMap(report))
+
+        assertEquals(report, reloaded)
+        assertEquals(declaredDiff, reloaded.declaredDiff)
+    }
+
+    @Test
+    fun `a report with no declared diff binds none and a row without one reads back with none`() {
+        val report = report(null)
+        val bound = DriftReportRowMapper.bindMap(report)
+
+        assertNull(bound["declaredDiff"])
+        val reloaded = DriftReportRowMapper.fromRow(bound.filterKeys { it != "declaredDiff" })
+        assertEquals(report, reloaded)
+        assertNull(reloaded.declaredDiff)
+    }
+
+    @Test
+    fun `a stored declared diff that cannot be read fails the read, naming the property`() {
+        val stored = DriftReportRowMapper.bindMap(report(declaredDiff))
+        val written = stored["declaredDiff"] as String
+        val unknownKind = written.replace("\"kind\":\"EntityTypeAdded\"", "\"kind\":\"SomethingNew\"")
+        assertTrue(unknownKind != written, "the fixture must hold an EntityTypeAdded change to rename")
+
+        listOf("{not json", unknownKind).forEach { declared ->
+            val thrown = assertThrows<IllegalArgumentException> {
+                DriftReportRowMapper.fromRow(stored + ("declaredDiff" to declared))
+            }
+            assertTrue(thrown.message!!.contains("declaredDiff"), thrown.message)
+        }
     }
 }

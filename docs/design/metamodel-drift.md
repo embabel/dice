@@ -631,6 +631,10 @@ ahead of the scope, and can report zero global drift while plenty sits in the st
 back newest first by capture instant, compared to the nanosecond so a `since` window stays exact,
 with a per-schema counter breaking exact ties so a limited page is repeatable.
 
+A report's declared diff is stored on the same node as a JSON string in `declaredDiff`, with both
+versions written in full, so it reads back without a version store. A node with no `declaredDiff`
+reads back as a report with no declared diff.
+
 `DrivineObservedSchemaSource` takes the snapshot. Unscoped, it reads the database's own catalogue
 (`db.labels()`, `db.relationshipTypes()`) **and** asks dice's own propositions for the distinct
 `Mention.type` values they carry, reporting those in their own set; scoped to a context, it derives

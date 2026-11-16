@@ -81,8 +81,9 @@ open class DrivineDriftReportStore(
          * exists without its place in the tie-break order.
          *
          * `WITH n WHERE n.sequence IS NULL` separates the two halves. On a re-save that filters the
-         * row away, leaving the counter and the existing sequence untouched; the drifted type sets
-         * are refreshed and the report keeps its original position.
+         * row away, leaving the counter and the existing sequence untouched. The drifted type sets
+         * and the declared diff are refreshed, a declared diff of `null` removes a stored one, and
+         * the report keeps its original position.
          *
          * `SET c.lockedBy = ...` writes a property nobody reads, to take the exclusive lock on the
          * counter before the increment below reads it. On its own the increment is a
@@ -103,7 +104,8 @@ open class DrivineDriftReportStore(
                 n.driftedRelationshipTypes = ${'$'}driftedRelationshipTypes,
                 n.capturedAtEpochSecond    = ${'$'}capturedAtEpochSecond,
                 n.capturedAtNano           = ${'$'}capturedAtNano,
-                n.contextId                = ${'$'}contextId
+                n.contextId                = ${'$'}contextId,
+                n.declaredDiff             = ${'$'}declaredDiff
             WITH n
             WHERE n.sequence IS NULL
             MERGE (c:MetamodelDriftReportCounter {schemaName: ${'$'}schemaName})

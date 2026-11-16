@@ -21,8 +21,6 @@ import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.Disabled
-import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
@@ -56,8 +54,4 @@ class DrivineDriftReportStoreContractIntegrationTest : AbstractDriftReportStoreC
             persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:$label) DETACH DELETE n"))
         }
     }
-
-    @Test
-    @Disabled("DrivineDriftReportStore does not write declaredDiff, so a report reads back with no declared diff. See embabel/dice#203.")
-    override fun aReportReadsBackWithItsDeclaredDiff() = super.aReportReadsBackWithItsDeclaredDiff()
 }

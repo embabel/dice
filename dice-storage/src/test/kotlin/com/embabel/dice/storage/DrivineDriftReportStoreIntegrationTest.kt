@@ -21,10 +21,14 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.metamodel.DriftReport
+import com.embabel.dice.metamodel.MetamodelChange
+import com.embabel.dice.metamodel.MetamodelDiff
+import com.embabel.dice.metamodel.MetamodelVersion
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -463,6 +467,123 @@ class DrivineDriftReportStoreIntegrationTest {
         )
 
         assertEquals(listOf(readable), store.driftReports(schemaName, limit = 1))
+    }
+
+    // ---- Declared diff ----
+
+    /** A declared diff that drops `Person` and adds `Customer`. */
+    private val declaredDiff = MetamodelDiff(
+        MetamodelVersion(schemaName, listOf("Person"), emptyMap(), emptyMap(), emptyList()),
+        MetamodelVersion(schemaName, listOf("Customer"), emptyMap(), emptyMap(), emptyList()),
+        listOf(MetamodelChange.EntityTypeRemoved("Person"), MetamodelChange.EntityTypeAdded("Customer")),
+    )
+
+    /**
+     * Write a global report node and its counter exactly as the store wrote them before it stored a
+     * declared diff, captured one minute after the epoch with `Ghost` drifted.
+     *
+     * @return The report the node should read back as.
+     */
+    private fun writeReportWithoutDeclaredDiff(): DriftReport {
+        val instant = epoch.plusSeconds(60)
+        persistenceManager.execute(
+            QuerySpecification.withStatement(
+                """
+                CREATE (n:MetamodelDriftReport {
+                    schemaName: ${'$'}schemaName, versionHash: 'legacy-hash', capturedAt: ${'$'}capturedAt,
+                    capturedAtEpochSecond: ${'$'}second, capturedAtNano: ${'$'}nano, contextKey: ${'$'}globalKey,
+                    driftedEntityTypes: '["Ghost"]', driftedRelationshipTypes: '[]', sequence: 1
+                })
+                CREATE (c:MetamodelDriftReportCounter {schemaName: ${'$'}schemaName, sequence: 1, lockedBy: ${'$'}capturedAt})
+                """.trimIndent(),
+            ).bind(
+                mapOf(
+                    "schemaName" to schemaName,
+                    "capturedAt" to instant.toString(),
+                    "second" to instant.epochSecond,
+                    "nano" to instant.nano,
+                    "globalKey" to DriftReportRowMapper.GLOBAL_CONTEXT_KEY,
+                ),
+            ),
+        )
+        return DriftReport(schemaName, "legacy-hash", setOf("Ghost"), emptySet(), instant)
+    }
+
+    @Test
+    fun `a report written before the declared diff was stored reads back with none, beside one written now`() {
+        val earlier = writeReportWithoutDeclaredDiff()
+        val newer = DriftReport(
+            schemaName = schemaName,
+            versionHash = "hash-now",
+            driftedEntityTypes = emptySet(),
+            driftedRelationshipTypes = emptySet(),
+            capturedAt = epoch.plusSeconds(120),
+            declaredDiff = declaredDiff,
+        )
+        store.saveDriftReport(newer)
+
+        val reports = store.driftReports(schemaName, limit = 10)
+
+        assertEquals(listOf(newer, earlier), reports, "newest first, each with its own declared diff or none")
+        assertEquals(declaredDiff, reports[0].declaredDiff)
+        assertNull(reports[1].declaredDiff)
+        assertEquals(reports[1].hasDrift, reports[1].hasAnyChange)
+    }
+
+    @Test
+    fun `saving an earlier report again with a declared diff adds it and keeps the report's place`() {
+        val earlier = writeReportWithoutDeclaredDiff()
+        val withDiff = DriftReport(
+            schemaName = earlier.schemaName,
+            versionHash = earlier.versionHash,
+            driftedEntityTypes = earlier.driftedEntityTypes,
+            driftedRelationshipTypes = earlier.driftedRelationshipTypes,
+            capturedAt = earlier.capturedAt,
+            declaredDiff = declaredDiff,
+        )
+
+        store.saveDriftReport(withDiff)
+
+        assertEquals(listOf(withDiff), store.driftReports(schemaName, limit = 10))
+        assertEquals(1L, storedSequence(withDiff))
+        assertEquals(1L, counterValue(schemaName))
+    }
+
+    @Test
+    fun `saving an observation again without a declared diff removes the stored one`() {
+        val withDiff = DriftReport(schemaName, "resaved", setOf("Ghost"), emptySet(), epoch, declaredDiff = declaredDiff)
+        val withoutDiff = DriftReport(schemaName, "resaved", setOf("Ghost"), emptySet(), epoch)
+        store.saveDriftReport(withDiff)
+
+        store.saveDriftReport(withoutDiff)
+
+        val reports = store.driftReports(schemaName, limit = 10)
+        assertEquals(listOf(withoutDiff), reports)
+        assertNull(reports.single().declaredDiff)
+    }
+
+    @Test
+    fun `a report whose stored declared diff cannot be read is skipped and warned about by name`() {
+        val readable = save(1)
+        save(2)
+        persistenceManager.execute(
+            QuerySpecification.withStatement(
+                """
+                MATCH (n:MetamodelDriftReport {schemaName: ${'$'}schemaName, versionHash: 'hash-2'})
+                SET n.declaredDiff = '{not json'
+                """.trimIndent(),
+            ).bind(mapOf("schemaName" to schemaName)),
+        )
+
+        val (reports, logged) = capturingStoreWarnings { store.driftReports(schemaName, limit = 10) }
+
+        assertEquals(listOf(readable), reports, "the readable report survives and the unreadable one is dropped")
+        assertTrue(
+            logged.any {
+                it.contains("Skipping unreadable MetamodelDriftReport row") && it.contains("declaredDiff")
+            },
+            "the skip must be warned about and name the unreadable property; warnings were: $logged",
+        )
     }
 
     // ---- helpers ----
