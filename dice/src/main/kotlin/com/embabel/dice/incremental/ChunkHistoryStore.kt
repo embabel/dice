@@ -45,6 +45,10 @@ interface ChunkHistoryStore {
 
     /**
      * Record that a chunk has been processed.
+     *
+     * A caller that stores a chunk's output inside a transaction gets the record and the output
+     * committed or rolled back together only when the implementation takes part in that
+     * transaction. [InMemoryChunkHistoryStore] does not.
      */
     fun recordProcessed(record: ProcessedChunkRecord)
 

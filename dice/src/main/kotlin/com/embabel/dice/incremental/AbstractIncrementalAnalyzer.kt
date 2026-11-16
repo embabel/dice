@@ -19,6 +19,7 @@ import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.ContentHasher
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.support.Sha256ContentHasher
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import kotlin.math.max
@@ -60,8 +61,9 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
     ): R
 
     /**
-     * Called after successful processing to allow subclasses to log or post-process.
-     * Default implementation does nothing.
+     * Called once, after a window is recorded as processed, so a subclass can log or post-process.
+     * It is not called for a window that recorded nothing. When it throws, the window stays
+     * recorded. The default does nothing.
      */
     protected open fun onProcessed(
         source: IncrementalSource<T>,
@@ -75,7 +77,32 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
     override fun analyze(
         source: IncrementalSource<T>,
         context: SourceAnalysisContext,
-    ): R? {
+    ): R? = analyzeWindow(source, context)?.let { recorded(it) }
+
+    override fun analyzeNow(
+        source: IncrementalSource<T>,
+        context: SourceAnalysisContext,
+    ): R? = analyzeWindowNow(source, context)?.let { recorded(it) }
+
+    /**
+     * Analyzes the source if enough new content has accumulated, and records nothing yet.
+     *
+     * Store the window's result, then call [AnalyzedWindow.markProcessed]. A window that is not
+     * marked is analysed again by the next call, so a failed store loses nothing. [analyze] marks
+     * the window before it returns.
+     *
+     * Inside a transaction, the record commits or rolls back with the stored result only when the
+     * history store takes part in that transaction. With one that does not, mark after the commit.
+     *
+     * @param source The incremental source to analyze.
+     * @param context Analysis context including schema and entity resolver.
+     * @return The analysed window, or null when there is too little new content or the content was already processed.
+     */
+    @ApiStatus.Experimental
+    fun analyzeWindow(
+        source: IncrementalSource<T>,
+        context: SourceAnalysisContext,
+    ): AnalyzedWindow<R>? {
         val lastBookmark = historyStore.getLastBookmark(BookmarkKey(context.contextId, source.id))
         val lastIndex = lastBookmark?.endIndex ?: 0
 
@@ -92,10 +119,21 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         return processWindow(source, context, lastIndex)
     }
 
-    override fun analyzeNow(
+    /**
+     * Analyzes the source whatever the trigger interval, and records nothing yet.
+     *
+     * Store the window's result, then call [AnalyzedWindow.markProcessed]. [analyzeNow] marks the
+     * window before it returns. The transaction rule of [analyzeWindow] applies.
+     *
+     * @param source The incremental source to analyze.
+     * @param context Analysis context including schema and entity resolver.
+     * @return The analysed window, or null when the source is empty or the content was already processed.
+     */
+    @ApiStatus.Experimental
+    fun analyzeWindowNow(
         source: IncrementalSource<T>,
         context: SourceAnalysisContext,
-    ): R? {
+    ): AnalyzedWindow<R>? {
         if (source.size == 0) {
             return null
         }
@@ -106,11 +144,22 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         return processWindow(source, context, lastIndex)
     }
 
+    /**
+     * Marks a window as processed and unwraps it.
+     *
+     * @param window The window an analysis returned.
+     * @return The window's result.
+     */
+    private fun recorded(window: AnalyzedWindow<R>): R {
+        window.markProcessed()
+        return window.result
+    }
+
     private fun processWindow(
         source: IncrementalSource<T>,
         context: SourceAnalysisContext,
         lastIndex: Int,
-    ): R? {
+    ): AnalyzedWindow<R>? {
         // Calculate window with overlap
         val startIndex = max(0, lastIndex - config.overlapSize)
         val endIndex = min(source.size, startIndex + config.windowSize)
@@ -145,20 +194,35 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
 
         val result = processChunk(chunk, context)
 
-        // Record processing
-        historyStore.recordProcessed(
-            ProcessedChunkRecord(
-                bookmarkKey = BookmarkKey(context.contextId, source.id),
-                hashKey = HashKey(context.contextId, contentHash),
-                startIndex = startIndex,
-                endIndex = endIndex,
-                processedAt = Instant.now(),
-            )
+        val bookmarkKey = BookmarkKey(context.contextId, source.id)
+        val hashKey = HashKey(context.contextId, contentHash)
+        return AnalyzedWindow(
+            result,
+            record = {
+                // A bookmark that moved since the analysis means a later window covered this one.
+                // Recording this one would move the bookmark back.
+                val current = historyStore.getLastBookmark(bookmarkKey)?.endIndex ?: 0
+                if (current == lastIndex) {
+                    historyStore.recordProcessed(
+                        ProcessedChunkRecord(
+                            bookmarkKey = bookmarkKey,
+                            hashKey = hashKey,
+                            startIndex = startIndex,
+                            endIndex = endIndex,
+                            processedAt = Instant.now(),
+                        )
+                    )
+                    true
+                } else {
+                    logger.debug(
+                        "Window [{}-{}] of source {} is not recorded: the bookmark moved from {} to {}",
+                        startIndex, endIndex, bookmarkKey.sourceId, lastIndex, current
+                    )
+                    false
+                }
+            },
+            afterRecord = { onProcessed(source, startIndex, endIndex, result) },
         )
-
-        onProcessed(source, startIndex, endIndex, result)
-
-        return result
     }
 
 }
