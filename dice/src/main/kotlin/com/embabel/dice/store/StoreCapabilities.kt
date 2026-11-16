@@ -183,6 +183,28 @@ class StoreCapabilities private constructor(
         @JvmField
         val UNDECLARED: StoreCapabilities = StoreCapabilities(emptySet(), VectorFiltering.UNDECLARED)
 
+        private val capabilityByContract: Map<Class<*>, StoreCapability> =
+            StoreCapability.entries.associateBy { it.contract }
+
+        /**
+         * Reads a reporting store's declaration and checks that it can be true.
+         *
+         * @param store The store whose declaration to read.
+         * @return The declaration, the same instance the store returns.
+         * @throws IllegalStateException when the declaration is null, or lists a capability whose
+         *   interface the store does not implement.
+         */
+        private fun checkedDeclaration(store: CapabilityReporting): StoreCapabilities {
+            @Suppress("USELESS_ELVIS")
+            val declared = store.capabilities ?: throw IllegalStateException("${store.javaClass.name} returns no capabilities")
+            for (capability in declared.supported) {
+                check(capability.contract.isInstance(store)) {
+                    "${store.javaClass.name} lists $capability and does not implement ${capability.contract.name}"
+                }
+            }
+            return declared
+        }
+
         /**
          * @param capabilities The capabilities the store has.
          * @return A descriptor that supports them. Its filtering mode is
@@ -213,12 +235,14 @@ class StoreCapabilities private constructor(
          * What [store] can do. Works on any proposition store.
          *
          * @param store The store to describe.
-         * @return The store's own descriptor when it implements [CapabilityReporting], and
+         * @return The store's declaration when it implements [CapabilityReporting], and
          *   [UNDECLARED] otherwise.
+         * @throws IllegalStateException when the declaration is null, or lists a capability whose
+         *   interface the store does not implement.
          */
         @JvmStatic
         fun describe(store: PropositionStore): StoreCapabilities =
-            if (store is CapabilityReporting) store.capabilities else UNDECLARED
+            if (store is CapabilityReporting) checkedDeclaration(store) else UNDECLARED
 
         /**
          * Returns [store] as a capability interface when the store supports that capability.
@@ -228,15 +252,19 @@ class StoreCapabilities private constructor(
          *
          * @param store The store to ask.
          * @param contract A capability interface, the `contract` of a [StoreCapability].
-         * @return The store as [contract], or null when the store does not list the capability or
-         *   does not implement the interface.
+         * @return The store as [contract] when its declaration lists the capability, and null when
+         *   it does not, or when the store does not implement [CapabilityReporting].
          * @throws IllegalArgumentException when [contract] is not a capability interface.
+         * @throws IllegalStateException when the store's declaration is null, or lists any
+         *   capability, this one or another, whose interface the store does not implement.
          */
         @JvmStatic
         fun <T : Any> find(store: PropositionStore, contract: Class<T>): T? {
-            val capability = StoreCapability.values().firstOrNull { it.contract == contract }
-            requireNotNull(capability) { "${contract.name} is not a store capability interface" }
-            return if (describe(store).supports(capability) && contract.isInstance(store)) contract.cast(store) else null
+            val capability = requireNotNull(capabilityByContract[contract]) {
+                "${contract.name} is not a store capability interface"
+            }
+            if (store !is CapabilityReporting) return null
+            return if (checkedDeclaration(store).supports(capability)) contract.cast(store) else null
         }
 
         /**
@@ -246,6 +274,8 @@ class StoreCapabilities private constructor(
          * @param store The store to ask.
          * @return The store as [T], or null.
          * @throws IllegalArgumentException when [T] is not a capability interface.
+         * @throws IllegalStateException when the store's declaration is null, or lists any
+         *   capability, this one or another, whose interface the store does not implement.
          */
         @JvmSynthetic
         inline fun <reified T : Any> find(store: PropositionStore): T? = find(store, T::class.java)

@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito
 
 /**
  * Contract for StoreCapabilities, the descriptor a store publishes.
@@ -36,7 +37,7 @@ import org.junit.jupiter.api.Test
  * E4 The block and the chain give equal descriptors.
  * E5 The supported set is read-only.
  * E6 describe returns a reporting store's descriptor, and UNDECLARED for any other store.
- * E7 find returns the store only when it lists the capability and implements the interface.
+ * E7 find returns a listed capability and fails on a false listing.
  * E8 Each capability names its interface.
  * E9 The refusal carries the capability, the reason and the cause.
  */
@@ -142,12 +143,29 @@ class StoreCapabilitiesTest {
     }
 
     @Test
-    fun `E7 find returns the store only when it lists the capability and implements the interface`() {
+    fun `E7 find returns a listed capability and fails on a false listing`() {
         val store = VectorStore()
         assertSame(store, StoreCapabilities.find(store, FilteredVectorSearch::class.java))
         assertSame(store, StoreCapabilities.find<FilteredVectorSearch>(store))
         assertNull(StoreCapabilities.find(UnlistedVectorStore(), FilteredVectorSearch::class.java))
-        assertNull(StoreCapabilities.find(OverclaimingStore(), FilteredVectorSearch::class.java))
+        assertThrows(IllegalStateException::class.java) {
+            StoreCapabilities.find(OverclaimingStore(), FilteredVectorSearch::class.java)
+        }
+        val failure = assertThrows(IllegalStateException::class.java) {
+            StoreCapabilities.describe(OverclaimingStore())
+        }
+        val message = failure.message!!
+        assertTrue(message.contains("OverclaimingStore"))
+        assertTrue(message.contains("FILTERED_VECTOR_SEARCH"))
+        assertTrue(message.contains("FilteredVectorSearch"))
+        val unstubbed = Mockito.mock(
+            PropositionStore::class.java,
+            Mockito.withSettings().extraInterfaces(CapabilityReporting::class.java)
+        )
+        assertThrows(IllegalStateException::class.java) { StoreCapabilities.describe(unstubbed) }
+        assertThrows(IllegalStateException::class.java) {
+            StoreCapabilities.find(unstubbed, FilteredVectorSearch::class.java)
+        }
         assertThrows(IllegalArgumentException::class.java) {
             StoreCapabilities.find(store, Runnable::class.java)
         }
