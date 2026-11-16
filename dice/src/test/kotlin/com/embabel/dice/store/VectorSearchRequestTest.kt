@@ -17,6 +17,7 @@ package com.embabel.dice.store
 
 import com.embabel.dice.proposition.PropositionQuery
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -31,6 +32,7 @@ import org.junit.jupiter.api.Test
  * E3  A blank text, a size below 1, and a filter with an ordering or a limit throw IllegalArgumentException.
  * E4  A filter that names no context builds only through forTextAcrossContexts.
  * E5  A request across contexts keeps every other request check.
+ * E6  toString gives the length of the text and never the text.
  */
 class VectorSearchRequestTest {
 
@@ -118,5 +120,12 @@ class VectorSearchRequestTest {
         assertThrows(UnsupportedOperationException::class.java) {
             (request.filter.anyEntityIds as MutableList<String>).add("c")
         }
+    }
+
+    @Test
+    fun `E6 toString gives the length of the text and never the text`() {
+        val request = VectorSearchRequest.forText("peanut allergy", PropositionQuery.againstContext("c"))
+        assertFalse(request.toString().contains("peanut"))
+        assertTrue(request.toString().contains("text=<14 chars>"))
     }
 }

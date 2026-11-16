@@ -128,7 +128,8 @@ class VectorSearchRequest private constructor(
 
     override fun hashCode(): Int = Objects.hash(text, filter, topK, minScore)
 
-    override fun toString(): String = "VectorSearchRequest(text=$text, filter=$filter, topK=$topK, minScore=$minScore)"
+    override fun toString(): String =
+        "VectorSearchRequest(text=<${text.length} chars>, filter=$filter, topK=$topK, minScore=$minScore)"
 
     companion object {
 
