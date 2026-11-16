@@ -1085,10 +1085,10 @@ class DrivinePropositionRepository(
     ): List<SimilarityResult<Proposition>> {
         val vector = embeddingService.embed(textSimilaritySearchRequest.query).toList()
         val rawThreshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }
-        val engineThreshold = rawThreshold?.let(::toEngineScore)
+        val engineThreshold = rawThreshold?.let(CosineIndexScores::toIndexFloor)
         val results = graphObjectManager
             .loadNearest<PropositionView>(vector, textSimilaritySearchRequest.topK, engineThreshold)
-            .map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = toRawCosine(it.score)) }
+            .map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = CosineIndexScores.toCosine(it.score)) }
         logger.debug("findSimilarWithScores: {} hit(s) (topK={}, threshold={})", results.size, textSimilaritySearchRequest.topK, rawThreshold)
         return results
     }
@@ -1104,14 +1104,14 @@ class DrivinePropositionRepository(
             return super<PropositionRepository>.findSimilarWithScores(textSimilaritySearchRequest, query)
         }
         val vector = embeddingService.embed(textSimilaritySearchRequest.query).toList()
-        val threshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }?.let(::toEngineScore)
+        val threshold = textSimilaritySearchRequest.similarityThreshold.takeIf { it > 0.0 }?.let(CosineIndexScores::toIndexFloor)
         return graphObjectManager.loadNearest<PropositionView>(
             vector,
             textSimilaritySearchRequest.topK,
             threshold,
         ) {
             where { applyFilters(query, includeEffectiveConfidence = true) }
-        }.map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = toRawCosine(it.score)) }
+        }.map { SimilarityResult(match = PropositionGraphMapper.toProposition(it.value), score = CosineIndexScores.toCosine(it.score)) }
     }
 
     /**
@@ -1136,7 +1136,7 @@ class DrivinePropositionRepository(
         val byId = candidates.associateBy { it.id }
         val ids = candidates.map { it.id }
 
-        // A COSINE index scores as (1 + cosine) / 2 (see toRawCosine below); the `cosine` binding here
+        // A COSINE index scores as (1 + cosine) / 2 (see CosineIndexScores); the `cosine` binding here
         // converts back to raw cosine so the gate and the returned score are both cosine, as the
         // in-memory store returns. COSINE-only: a EUCLIDEAN index normalizes differently.
         @Suppress("UNCHECKED_CAST")
@@ -1176,22 +1176,6 @@ class DrivinePropositionRepository(
         )
         return clusters
     }
-
-    /**
-     * A Neo4j COSINE vector index reports `(1 + cosine) / 2`, not raw cosine — this converts an
-     * engine score back to the raw cosine every score in this repository's public API uses (matching
-     * the in-memory store). Paired with [toEngineScore]. COSINE-only: a EUCLIDEAN index normalizes
-     * differently.
-     */
-    private fun toRawCosine(engineScore: Double): Double = 2.0 * engineScore - 1.0
-
-    /**
-     * Converts a raw-cosine similarity threshold to the engine-normalized scale Drivine's
-     * `loadNearest` gates on, so a caller-supplied threshold (always raw cosine here) means the same
-     * thing whether it's applied by us (as in [findClusters]) or by the index itself (as in
-     * [findSimilarWithScores]). Inverse of [toRawCosine].
-     */
-    private fun toEngineScore(rawCosineThreshold: Double): Double = (1.0 + rawCosineThreshold) / 2.0
 
     /**
      * DELETE_ORPHAN (not DELETE_ALL) so shared `:Source` nodes survive unless this was their last
