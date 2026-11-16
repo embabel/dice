@@ -38,9 +38,11 @@ class CustomerMemoryTests {
         var current = Proposition.draft("acme", "Acme is on the Team plan", 0.95)
                 .withDecay(0.005)
                 .withCreated(recorded)
+                .withContentRevised(recorded)
                 .toProposition();
         var replaced = Proposition.draft("acme", "Acme is on the Starter plan", 0.9)
                 .withCreated(recorded)
+                .withContentRevised(recorded)
                 .withStatus(PropositionStatus.SUPERSEDED)
                 .toProposition();
         repository.saveAll(List.of(current, replaced));
