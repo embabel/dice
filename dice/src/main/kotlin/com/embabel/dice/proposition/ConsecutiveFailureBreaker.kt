@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.proposition
 
+import com.embabel.dice.common.attemptCatching
 import java.util.concurrent.Callable
 
 /**
@@ -44,22 +45,21 @@ class ConsecutiveFailureBreaker @JvmOverloads constructor(
     /**
      * Run [call] and return its result, or null without running it once [tripped]. An [Exception]
      * is returned as a failure and counts towards the limit; a success resets the count. An [Error]
-     * propagates.
+     * propagates. When the call is interrupted, the result is a failure and the thread's interrupt
+     * flag is set again.
      */
     fun <T> attempt(call: () -> T): Result<T>? {
         if (tripped) return null
-        return try {
-            Result.success(call()).also { consecutiveFailures = 0 }
-        } catch (e: Exception) {
-            consecutiveFailures++
-            Result.failure(e)
-        }
+        val result = attemptCatching(call)
+        if (result.isSuccess) consecutiveFailures = 0 else consecutiveFailures++
+        return result
     }
 
     /**
      * Runs [call] and returns its [Outcome], or a skipped outcome without running it once [tripped].
      * An [Exception] is returned as a failure and counts towards the limit. A success resets the
-     * count, which [attempt] and [attemptCall] share. An [Error] propagates.
+     * count, which [attempt] and [attemptCall] share. An [Error] propagates. When the call is
+     * interrupted, the result is a failure and the thread's interrupt flag is set again.
      *
      * It takes a [Callable] and returns an [Outcome] so that Java code can call it and read the result.
      *
