@@ -16,7 +16,6 @@
 package com.embabel.dice.pipeline
 
 import com.embabel.dice.proposition.SuggestedMention
-import com.embabel.dice.proposition.SuggestedPropositions
 import java.text.Normalizer
 import java.util.BitSet
 import java.util.EnumSet
@@ -46,15 +45,6 @@ data class UngroundedMention(
         SPAN_NOT_IN_PROPOSITION,
     }
 }
-
-/**
- * The result of checking a chunk's propositions: the propositions with only their grounded
- * mentions left, plus every mention that was taken out.
- */
-internal data class GroundingOutcome(
-    val grounded: SuggestedPropositions,
-    val ungrounded: List<UngroundedMention>,
-)
 
 /**
  * A text folded once, so any number of spans can be looked up in it.
@@ -168,42 +158,6 @@ internal object MentionGrounding {
      */
     fun reasonUngrounded(span: String, propositionText: String): UngroundedMention.Reason? =
         reasonUngrounded(prepare(span), prepare(propositionText))
-
-    /**
-     * Splits every proposition's mentions into grounded and ungrounded ones. Every proposition
-     * comes back, in order, even if it loses all its mentions. When nothing is ungrounded the
-     * input is returned untouched. Each proposition's text is prepared once, and a proposition
-     * without mentions is not prepared at all.
-     *
-     * @param suggested the propositions suggested for one chunk
-     * @return the propositions with their grounded mentions, and every mention taken out
-     */
-    fun check(suggested: SuggestedPropositions): GroundingOutcome {
-        val ungrounded = mutableListOf<UngroundedMention>()
-        val propositions = suggested.propositions.map { proposition ->
-            if (proposition.mentions.isEmpty()) return@map proposition
-            val text = prepare(proposition.text)
-            val kept = mutableListOf<SuggestedMention>()
-            proposition.mentions.forEach { mention ->
-                val reason = reasonUngrounded(mention.span, text)
-                if (reason == null) {
-                    kept.add(mention)
-                } else {
-                    ungrounded.add(UngroundedMention(proposition.text, mention, reason))
-                }
-            }
-            if (kept.size == proposition.mentions.size) {
-                proposition
-            } else {
-                proposition.copy(mentions = kept.toList())
-            }
-        }
-        if (ungrounded.isEmpty()) return GroundingOutcome(suggested, emptyList())
-        return GroundingOutcome(
-            grounded = suggested.copy(propositions = propositions),
-            ungrounded = ungrounded.toList(),
-        )
-    }
 
     /**
      * Tells whether a code point is dropped before comparing.

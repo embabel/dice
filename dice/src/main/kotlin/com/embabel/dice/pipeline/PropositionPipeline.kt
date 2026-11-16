@@ -31,6 +31,7 @@ import com.embabel.dice.common.SafeDiceEventListener
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.UngroundedMentionsFound
+import com.embabel.dice.common.filter.GroundedMentionFilter
 import com.embabel.dice.common.filter.MentionFilter
 import com.embabel.dice.common.resolver.ChainedEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
@@ -123,6 +124,19 @@ class PropositionPipeline private constructor(
     }
 
     private val logger = LoggerFactory.getLogger(PropositionPipeline::class.java)
+
+    /** The check that decides whether a proposition names each of its mentions. */
+    private val groundingCheck: MentionFilter = GroundedMentionFilter()
+
+    /**
+     * Maps the pipeline's handling of ungrounded mentions to the handling of a grounding rejection.
+     *
+     * @return the handling for mentions the grounding check rejects
+     */
+    private fun groundingHandling(): RejectedMentionHandling = when (ungroundedMentions) {
+        UngroundedMentionHandling.KEEP -> RejectedMentionHandling.KEEP
+        UngroundedMentionHandling.DROP -> RejectedMentionHandling.DROP
+    }
 
     /** Whether revision is enabled for this pipeline */
     val hasRevision: Boolean get() = reviser != null
@@ -226,24 +240,27 @@ class PropositionPipeline private constructor(
         logger.debug("Extracted {} propositions", extracted.propositions.size)
 
         // Check every mention against its own proposition before any of them can become a
-        // resolver candidate. In DROP mode the grounded copy is what flows on to both entity
-        // creation and proposition resolution; in KEEP mode nothing changes but the report.
-        val grounding = MentionGrounding.check(extracted)
-        val suggestedPropositions = when (ungroundedMentions) {
-            UngroundedMentionHandling.DROP -> grounding.grounded
-            UngroundedMentionHandling.KEEP -> extracted
-        }
+        // resolver candidate. In DROP mode the ungrounded mentions leave both the propositions
+        // and the candidates for entity creation. In KEEP mode nothing changes but the report.
+        val screening = MentionScreening.screen(
+            extracted = extracted,
+            context = context,
+            grounding = groundingCheck,
+            groundingHandling = groundingHandling(),
+            filter = null,
+            filterHandling = RejectedMentionHandling.LEAVE_UNRESOLVED,
+        )
 
         // Step 2: Convert mentions to suggested entities (include source text for context)
         val suggestedEntities = extractor.toSuggestedEntities(
-            suggestedPropositions,
+            screening.candidates,
             context,
             chunk.text,
             mentionFilter
         )
         logger.debug("Created {} suggested entities", suggestedEntities.suggestedEntities.size)
 
-        return ExtractionStageResult(chunk, suggestedPropositions, suggestedEntities, grounding.ungrounded)
+        return ExtractionStageResult(chunk, screening.result, suggestedEntities, screening.ungrounded)
     }
 
     /**
