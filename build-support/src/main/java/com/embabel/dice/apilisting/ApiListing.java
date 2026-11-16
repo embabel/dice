@@ -321,16 +321,26 @@ public final class ApiListing {
     }
 
     /**
+     * Brings listing text to the form the program writes: LF line endings and one newline at the end.
+     *
+     * @param text the listing text as read
+     * @return the normalised text, or an empty string when the text is blank
+     */
+    private static String normalised(String text) {
+        return text.isBlank() ? "" : text.replace("\r\n", "\n").stripTrailing() + "\n";
+    }
+
+    /**
      * Writes the listing in update mode. Otherwise reports whether the committed file matches.
      *
-     * <p>Line endings and whitespace at the end of the file are not compared, so a Windows checkout or
-     * an editor that trims the last lines does not fail the check.
+     * <p>Both modes ignore line endings and whitespace at the end of the file, so a Windows checkout or
+     * an editor that trims the last lines neither fails the check nor makes update rewrite the file.
      */
     private static boolean sync(Path file, String actual, boolean update, PrintStream out, PrintStream err)
             throws IOException {
-        String raw = Files.exists(file) ? Files.readString(file, StandardCharsets.UTF_8) : "";
+        String committed = normalised(Files.exists(file) ? Files.readString(file, StandardCharsets.UTF_8) : "");
         if (update) {
-            if (!raw.equals(actual)) {
+            if (!committed.equals(actual)) {
                 if (actual.isEmpty()) {
                     Files.deleteIfExists(file);
                 } else {
@@ -341,7 +351,6 @@ public final class ApiListing {
             }
             return true;
         }
-        String committed = raw.isBlank() ? "" : raw.replace("\r\n", "\n").stripTrailing() + "\n";
         if (committed.equals(actual)) {
             return true;
         }

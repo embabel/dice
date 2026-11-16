@@ -37,6 +37,7 @@ class ApiListingTest {
     lateinit var dir: Path
 
     private val api by lazy { dir.resolve("api") }
+    private val out = ByteArrayOutputStream()
     private val err = ByteArrayOutputStream()
 
     @Test
@@ -132,6 +133,20 @@ class ApiListingTest {
     }
 
     @Test
+    fun `update leaves a listing alone when check accepts it`() {
+        listing("update")
+        val stable = api.resolve("m.api")
+        val windows = stable.readText().trimEnd().replace("\n", "\r\n") + "\r\n\r\n"
+        stable.writeText(windows)
+        out.reset()
+
+        assertEquals(0, listing("check"))
+        assertEquals(0, listing("update"))
+        assertEquals("", out.toString())
+        assertEquals(windows, stable.readText())
+    }
+
+    @Test
     fun `update ends a listing with one newline`() {
         listing("update")
         val text = api.resolve("m.api").readText()
@@ -163,7 +178,7 @@ class ApiListingTest {
      */
     private fun listing(mode: String, vararg options: String): Int {
         val args = arrayOf(mode, fixtureClasses().toString(), api.toString(), "m", *options)
-        return ApiListing.run(args, PrintStream(ByteArrayOutputStream()), PrintStream(err))
+        return ApiListing.run(args, PrintStream(out), PrintStream(err))
     }
 
     /**
