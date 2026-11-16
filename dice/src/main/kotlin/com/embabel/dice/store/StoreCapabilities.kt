@@ -16,6 +16,7 @@
 package com.embabel.dice.store
 
 import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.proposition.VectorSearchCapable
 import org.jetbrains.annotations.ApiStatus
 import java.util.Collections
 import java.util.EnumSet
@@ -59,15 +60,24 @@ enum class VectorFiltering {
      */
     AFTER_TOP_K,
 
-    /** The store has no similarity search. */
+    /**
+     * The store has no similarity search. A store states this in its declaration.
+     * `StoreCapabilities.describe` also reports it for a store that publishes no declaration and
+     * reports no working search through `VectorSearchCapable.supportsVector`.
+     */
     NONE,
 
-    /** The store has not published its capabilities, so the mode is unknown. */
+    /**
+     * The store states no filtering mode. `StoreCapabilities.describe` reports this for a declaration
+     * that sets no mode, and for a store that publishes no declaration and reports similarity search
+     * through `VectorSearchCapable.supportsVector`.
+     */
     UNDECLARED,
 }
 
 /**
- * What a store can do. A store publishes one, and a caller reads it before using a capability.
+ * What a store can do. A store declares one, and a caller reads it through `describe` and
+ * `find`.
  *
  * A caller gets a capability with [find], which checks the descriptor and returns the store as
  * the capability's interface, or null.
@@ -240,14 +250,18 @@ class StoreCapabilities private constructor(
          * What [store] can do. Works on any proposition store.
          *
          * @param store The store to describe.
-         * @return The store's declaration when it implements [CapabilityReporting], and
-         *   [UNDECLARED] otherwise.
+         * @return The store's declaration when it implements [CapabilityReporting]. For any other store,
+         *   [UNDECLARED] when it is `VectorSearchCapable` and reports `supportsVector` true, and [NONE]
+         *   otherwise.
          * @throws IllegalStateException when the declaration is null, or lists a capability whose
          *   interface the store does not implement.
          */
         @JvmStatic
-        fun describe(store: PropositionStore): StoreCapabilities =
-            if (store is CapabilityReporting) checkedDeclaration(store) else UNDECLARED
+        fun describe(store: PropositionStore): StoreCapabilities = when {
+            store is CapabilityReporting -> checkedDeclaration(store)
+            (store as? VectorSearchCapable)?.supportsVector == true -> UNDECLARED
+            else -> NONE
+        }
 
         /**
          * Returns [store] as a capability interface when the store supports that capability.
@@ -288,15 +302,23 @@ class StoreCapabilities private constructor(
 }
 
 /**
- * Implemented by a store that publishes what it can do. Callers read it through
- * [StoreCapabilities.describe] and [StoreCapabilities.find].
+ * Implemented by a store that declares what it can do. `StoreCapabilities.describe` returns the
+ * declaration as the store's descriptor, and `StoreCapabilities.find` reads it.
+ *
+ * `VectorSearchCapable.supportsVector` speaks only for the methods of `VectorSearchCapable`.
+ * `describe` reads it for a store that does not implement this interface. A store that declares
+ * `VectorFiltering.AFTER_TOP_K` reports `supportsVector` true, and a store that declares
+ * `VectorFiltering.NONE` reports it false.
  *
  * EXPERIMENTAL. This API may change before 1.0.
  */
 @ApiStatus.Experimental
 interface CapabilityReporting {
 
-    /** What this store instance can do with the collaborators it was built with. */
+    /**
+     * What this store instance declares, with the collaborators it was built with. Every capability
+     * it lists is an interface the store implements.
+     */
     val capabilities: StoreCapabilities
 }
 

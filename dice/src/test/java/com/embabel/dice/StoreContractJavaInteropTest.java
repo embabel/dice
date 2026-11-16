@@ -16,10 +16,12 @@
 package com.embabel.dice;
 
 import com.embabel.agent.rag.service.RetrievableIdentifier;
+import com.embabel.common.ai.model.EmbeddingService;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionQuery;
 import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.proposition.PropositionStore;
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository;
 import com.embabel.dice.store.CapabilityReporting;
 import com.embabel.dice.store.FilteredVectorSearch;
 import com.embabel.dice.store.SimilarityScore;
@@ -30,6 +32,7 @@ import com.embabel.dice.store.VectorFiltering;
 import com.embabel.dice.store.VectorMatch;
 import com.embabel.dice.store.VectorSearchRequest;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -161,13 +164,20 @@ class StoreContractJavaInteropTest {
     }
 
     @Test
-    void aStoreThatPublishesNothingIsUndeclaredAndHasNoCapability() {
+    void aStoreWithNoSimilaritySearchIsDescribedAsNone() {
         PropositionStore store = new PlainStore();
 
-        assertSame(StoreCapabilities.UNDECLARED, StoreCapabilities.describe(store));
-        assertEquals(VectorFiltering.UNDECLARED, StoreCapabilities.describe(store).getVectorFiltering());
+        assertSame(StoreCapabilities.NONE, StoreCapabilities.describe(store));
+        assertEquals(VectorFiltering.NONE, StoreCapabilities.describe(store).getVectorFiltering());
         assertNull(StoreCapabilities.find(store, FilteredVectorSearch.class));
         assertThrows(IllegalArgumentException.class, () -> StoreCapabilities.find(store, Runnable.class));
+    }
+
+    @Test
+    void aStoreWithNoDeclarationIsDescribedFromItsOwnVectorSearch() {
+        assertSame(StoreCapabilities.NONE, StoreCapabilities.describe(new InMemoryPropositionRepository()));
+        assertSame(StoreCapabilities.UNDECLARED,
+                StoreCapabilities.describe(new InMemoryPropositionRepository(Mockito.mock(EmbeddingService.class))));
     }
 
     @Test

@@ -16,9 +16,15 @@
 package com.embabel.dice.store
 
 import com.embabel.agent.rag.service.RetrievableIdentifier
+import com.embabel.common.core.types.SimilarityResult
+import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.proposition.EventEmittingPropositionRepository
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.proposition.VectorSearchCapable
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -36,10 +42,11 @@ import org.mockito.Mockito
  * E3 A filtering mode that disagrees with the capabilities is rejected.
  * E4 The block and the chain give equal descriptors.
  * E5 The supported set is read-only.
- * E6 describe returns a reporting store's descriptor, and UNDECLARED for any other store.
+ * E6 describe returns a reporting store's declaration.
  * E7 find returns a listed capability and fails on a false listing.
  * E8 Each capability names its interface.
  * E9 The refusal carries the capability, the reason and the cause.
+ * E10 describe reads supportsVector only for a store with no declaration.
  */
 class StoreCapabilitiesTest {
 
@@ -75,6 +82,27 @@ class StoreCapabilitiesTest {
     /** Lists filtered similarity search and does not implement it. */
     private class OverclaimingStore : BaseOnlyStore(), CapabilityReporting {
         override val capabilities = StoreCapabilities.of(StoreCapability.FILTERED_VECTOR_SEARCH)
+    }
+
+    /** Has similarity search and reports [vector] through supportsVector. */
+    private open class SearchableStore(private val vector: Boolean) : BaseOnlyStore(), VectorSearchCapable {
+        override val supportsVector: Boolean get() = vector
+        override fun query(query: PropositionQuery): List<Proposition> = super<BaseOnlyStore>.query(query)
+        override fun findSimilarWithScores(
+            textSimilaritySearchRequest: TextSimilaritySearchRequest,
+        ): List<SimilarityResult<Proposition>> = emptyList()
+    }
+
+    /** Has similarity search and declares [capabilities]. */
+    private class DeclaringStore(
+        vector: Boolean,
+        override val capabilities: StoreCapabilities,
+    ) : SearchableStore(vector), CapabilityReporting
+
+    /** Reports no similarity search through supportsVector and declares filtered vector search. */
+    private class FilterFirstSearchableStore : SearchableStore(false), CapabilityReporting, FilteredVectorSearch {
+        override val capabilities = StoreCapabilities.of(StoreCapability.FILTERED_VECTOR_SEARCH)
+        override fun findNearest(request: VectorSearchRequest): List<VectorMatch> = emptyList()
     }
 
     @Test
@@ -146,12 +174,12 @@ class StoreCapabilitiesTest {
     }
 
     @Test
-    fun `E6 describe returns a reporting store's descriptor and UNDECLARED for any other store`() {
+    fun `E6 describe returns a reporting store's declaration`() {
         assertEquals(
             StoreCapabilities.of(StoreCapability.FILTERED_VECTOR_SEARCH),
             StoreCapabilities.describe(VectorStore())
         )
-        assertSame(StoreCapabilities.UNDECLARED, StoreCapabilities.describe(BaseOnlyStore()))
+        assertSame(StoreCapabilities.NONE, StoreCapabilities.describe(BaseOnlyStore()))
     }
 
     @Test
@@ -199,5 +227,28 @@ class StoreCapabilitiesTest {
         assertTrue(refusal.message!!.contains("no vector index"))
         assertSame(cause, refusal.cause)
         assertNull(UnsupportedCapabilityException(StoreCapability.FILTERED_VECTOR_SEARCH, "no vector index").cause)
+    }
+
+    @Test
+    fun `E10 describe reads supportsVector only for a store with no declaration`() {
+        val afterCut = StoreCapabilities.of().withVectorFiltering(VectorFiltering.AFTER_TOP_K)
+        assertSame(StoreCapabilities.NONE, StoreCapabilities.describe(SearchableStore(false)))
+        assertSame(StoreCapabilities.UNDECLARED, StoreCapabilities.describe(SearchableStore(true)))
+        assertSame(afterCut, StoreCapabilities.describe(DeclaringStore(false, afterCut)))
+        assertSame(afterCut, StoreCapabilities.describe(DeclaringStore(true, afterCut)))
+        assertSame(StoreCapabilities.NONE, StoreCapabilities.describe(DeclaringStore(true, StoreCapabilities.NONE)))
+        assertSame(
+            afterCut,
+            StoreCapabilities.describe(object : BaseOnlyStore(), CapabilityReporting {
+                override val capabilities = afterCut
+            })
+        )
+        val store = FilterFirstSearchableStore()
+        assertEquals(VectorFiltering.BEFORE_TOP_K, StoreCapabilities.describe(store).vectorFiltering)
+        assertSame(store, StoreCapabilities.find<FilteredVectorSearch>(store))
+        assertSame(
+            StoreCapabilities.NONE,
+            StoreCapabilities.describe(EventEmittingPropositionRepository(InMemoryPropositionRepository()))
+        )
     }
 }
