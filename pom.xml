@@ -238,7 +238,7 @@
                     <executions>
                         <execution>
                             <id>public-api-listing</id>
-                            <phase>verify</phase>
+                            <phase>process-classes</phase>
                             <goals>
                                 <goal>run</goal>
                             </goals>
