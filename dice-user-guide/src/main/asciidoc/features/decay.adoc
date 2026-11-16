@@ -59,6 +59,30 @@ they are independent:
 Setting the property without the query parameter means the tick and your queries disagree about how
 fast things fade. Set both, or leave both at the default.
 
+==== Decay queries from Java
+
+Stores that implement `TemporalQueryCapable`, `PropositionRepository` among them, answer three queries
+that rank by decayed confidence. Each takes `k` as its last argument. Leave it out and the default rate
+applies.
+
+[source,java]
+----
+Instant end = Instant.now();
+Instant start = end.minus(90, ChronoUnit.DAYS);
+
+// Everything, highest effective confidence first.
+List<Proposition> ranked = repository.findAllOrderedByEffectiveConfidence();
+
+// Only propositions at or above 0.5 right now.
+List<Proposition> confident = repository.findByEffectiveConfidenceAbove(0.5);
+
+// Propositions created in a window, ranked by confidence at the end of the window.
+List<Proposition> quarter = repository.findByCreatedBetweenOrderedByEffectiveConfidence(start, end);
+----
+
+The window query also takes an `asOf` instant before `k`. Without it, the ranking is measured at the end
+of the window.
+
 ==== Example
 
 [source,java]
