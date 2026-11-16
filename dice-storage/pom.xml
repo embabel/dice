@@ -27,8 +27,10 @@
         -->
         <!-- Gradle wrapper for the KSP codegen step; overridden to gradlew.bat on Windows (see profiles) -->
         <gradlew.executable>${project.basedir}/codegen-gradle/gradlew</gradlew.executable>
+        <!-- Where the KSP codegen step writes Drivine's query DSL -->
+        <drivine.generated.sources>${project.basedir}/codegen-gradle/build/generated/ksp/main/kotlin</drivine.generated.sources>
         <!-- Drivine's generated query DSL carries no compatibility promise, so the API listing leaves it out -->
-        <api.listing.generated.sources>${project.basedir}/codegen-gradle/build/generated/ksp/main/kotlin</api.listing.generated.sources>
+        <api.listing.generated.sources>${drivine.generated.sources}</api.listing.generated.sources>
     </properties>
 
     <dependencies>
@@ -168,7 +170,7 @@
                         </goals>
                         <configuration>
                             <sources>
-                                <source>${project.basedir}/codegen-gradle/build/generated/ksp/main/kotlin</source>
+                                <source>${drivine.generated.sources}</source>
                             </sources>
                         </configuration>
                     </execution>
@@ -215,7 +217,7 @@
                         <configuration>
                             <sourceDirs>
                                 <source>${project.basedir}/src/main/kotlin</source>
-                                <source>${project.basedir}/codegen-gradle/build/generated/ksp/main/kotlin</source>
+                                <source>${drivine.generated.sources}</source>
                             </sourceDirs>
                         </configuration>
                     </execution>
