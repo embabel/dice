@@ -237,6 +237,26 @@
                     </dependencies>
                     <executions>
                         <execution>
+                            <!--
+                                Update mode starts from an empty class directory, so a class left from an
+                                earlier build cannot reach a listing. The Kotlin compiler rebuilds every
+                                class on each run anyway, and check mode keeps the directory as it is.
+                            -->
+                            <id>public-api-listing-fresh-classes</id>
+                            <phase>initialize</phase>
+                            <goals>
+                                <goal>run</goal>
+                            </goals>
+                            <configuration>
+                                <target xmlns:if="ant:if">
+                                    <condition property="api.listing.updating">
+                                        <equals arg1="${api.listing.mode}" arg2="update"/>
+                                    </condition>
+                                    <delete dir="${project.build.outputDirectory}" if:set="api.listing.updating"/>
+                                </target>
+                            </configuration>
+                        </execution>
+                        <execution>
                             <id>public-api-listing</id>
                             <phase>process-classes</phase>
                             <goals>

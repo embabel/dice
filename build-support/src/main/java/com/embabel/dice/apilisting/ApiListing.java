@@ -99,6 +99,7 @@ public final class ApiListing {
         if (!matches) {
             err.println("The public API changed. Review the difference above, then regenerate the"
                     + " listings with: ./mvnw -B -DskipTests -Dapi.listing.mode=update clean verify");
+            err.println("Types you did not add come from an earlier build, and ./mvnw clean removes them.");
             return 1;
         }
         return 0;
