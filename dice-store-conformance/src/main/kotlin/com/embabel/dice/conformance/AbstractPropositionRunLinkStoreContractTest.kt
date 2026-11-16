@@ -31,6 +31,7 @@ import org.jetbrains.annotations.ApiStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import java.time.Instant
 
@@ -141,7 +142,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     // ---- the write ----
 
     @Test
-    open fun `a link is readable from both ends`() {
+    @DisplayName("a link is readable from both ends")
+    open fun aLinkIsReadableFromBothEnds() {
         val store = store()
 
         assertEquals(2, store.link(key("link-run-a"), listOf("prop-1", "prop-2")))
@@ -154,7 +156,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    open fun `linking is idempotent and counts the same on a replay`() {
+    @DisplayName("linking is idempotent and counts the same on a replay")
+    open fun linkingIsIdempotentAndCountsTheSameOnAReplay() {
         val store = store()
 
         val first = store.link(key("link-run-a"), listOf("prop-1", "prop-2"))
@@ -165,7 +168,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    open fun `a repeated id in one call is one link`() {
+    @DisplayName("a repeated id in one call is one link")
+    open fun aRepeatedIdInOneCallIsOneLink() {
         val store = store()
 
         assertEquals(1, store.link(key("link-run-a"), listOf("prop-1", "prop-1", "prop-1")))
@@ -173,7 +177,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    open fun `one proposition links to many runs and one run links to many propositions`() {
+    @DisplayName("one proposition links to many runs and one run links to many propositions")
+    open fun onePropositionLinksToManyRunsAndOneRunLinksToManyPropositions() {
         // The many-to-many claim, which is what makes re-extraction expressible at all.
         val store = store()
 
@@ -189,7 +194,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    open fun `an empty batch is a no-op`() {
+    @DisplayName("an empty batch is a no-op")
+    open fun anEmptyBatchIsANoOp() {
         val store = store()
 
         assertEquals(0, store.link(key("link-run-a"), emptyList()))
@@ -197,7 +203,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    open fun `the single-proposition convenience writes the same link`() {
+    @DisplayName("the single-proposition convenience writes the same link")
+    open fun theSinglePropositionConvenienceWritesTheSameLink() {
         val store = store()
 
         assertEquals(1, store.link(key("link-run-a"), "prop-2"))
@@ -207,7 +214,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     // ---- the tenant guard ----
 
     @Test
-    open fun `a link against a run this tenant does not hold is rejected`() {
+    @DisplayName("a link against a run this tenant does not hold is rejected")
+    open fun aLinkAgainstARunThisTenantDoesNotHoldIsRejected() {
         val store = store()
 
         assertThrows(ExtractionRunNotFoundException::class.java) {
@@ -217,7 +225,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    open fun `a run cannot claim a neighbour's proposition`() {
+    @DisplayName("a run cannot claim a neighbour's proposition")
+    open fun aRunCannotClaimANeighboursProposition() {
         // `nb-prop-1` exists and belongs to another tenant. A backend that upserts without
         // resolving its endpoints gets this case wrong. It differs from an id nobody holds.
         val store = store()
@@ -232,7 +241,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    open fun `a link naming a proposition nobody holds is rejected and writes nothing`() {
+    @DisplayName("a link naming a proposition nobody holds is rejected and writes nothing")
+    open fun aLinkNamingAPropositionNobodyHoldsIsRejectedAndWritesNothing() {
         val store = store()
 
         val rejected = assertThrows(PropositionRunLinkScopeException::class.java) {
@@ -247,7 +257,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     // ---- bounded, scoped reads ----
 
     @Test
-    open fun `both reads are bounded and ordered by id`() {
+    @DisplayName("both reads are bounded and ordered by id")
+    open fun bothReadsAreBoundedAndOrderedById() {
         val store = store()
         store.link(key("link-run-a"), listOf("prop-3", "prop-1", "prop-2"))
         store.link(key("link-run-b"), listOf("prop-1"))
@@ -260,7 +271,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    open fun `both reads reject a limit that is not positive`() {
+    @DisplayName("both reads reject a limit that is not positive")
+    open fun bothReadsRejectALimitThatIsNotPositive() {
         val store = store()
 
         listOf(0, -1).forEach { limit ->
@@ -274,7 +286,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    open fun `every read fails closed across tenants`() {
+    @DisplayName("every read fails closed across tenants")
+    open fun everyReadFailsClosedAcrossTenants() {
         // Both tenants hold a run called `link-run-a`. Only the neighbour's has links, and nothing
         // this tenant asks returns them.
         val store = store()
@@ -293,7 +306,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    open fun `link reports exactly the ids it was given`() {
+    @DisplayName("link reports exactly the ids it was given")
+    open fun linkReportsExactlyTheIdsItWasGiven() {
         // The number is the batch's own size, on the first write and on a replay. A backend that
         // returned "how many were new" would report 2 then 0 and invite a caller to read 0 as
         // failure; one that linked a subset and returned that subset's size would be reporting a
@@ -306,7 +320,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    open fun `a link to a deleted proposition disappears from both reads`() {
+    @DisplayName("a link to a deleted proposition disappears from both reads")
+    open fun aLinkToADeletedPropositionDisappearsFromBothReads() {
         // A link is about a claim that exists. Delete the claim and the lineage goes with it: on a
         // graph because the edge is detached with the node, and a reference implementation has to
         // agree rather than keep answering from a map the deletion never reached. Otherwise
@@ -335,7 +350,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    open fun `a read for an unknown proposition or run is empty rather than an error`() {
+    @DisplayName("a read for an unknown proposition or run is empty rather than an error")
+    open fun aReadForAnUnknownPropositionOrRunIsEmptyRatherThanAnError() {
         val store = store()
 
         assertTrue(store.runsOf(tenant, "prop-nowhere", 10).isEmpty())

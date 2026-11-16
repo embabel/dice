@@ -63,75 +63,75 @@ public abstract class com/embabel/dice/conformance/AbstractDriftReportStoreContr
 
 public abstract class com/embabel/dice/conformance/AbstractExtractionRunStoreContractTest {
 	public fun <init> ()V
-	public fun a CANCELLED terminal record is locked the same as SUCCEEDED and FAILED, through recordInvocation ()V
-	public fun a chain walk stops rather than crossing into another tenant ()V
-	public fun a changed IN_FLIGHT record updates in place through recordInvocation, clearing an omitted fact ()V
-	public fun a delayed IN_FLIGHT write does not replace a terminal record for the same attempt ()V
-	public fun a first save lands at version 0, an accepted update raises it by one, and a replay leaves it alone ()V
-	public fun a first save must name version 0 ()V
-	public fun a header save embedding a brand-new invocation never creates the row ()V
-	public fun a header save embedding a changed invocation never updates the stored row ()V
-	public fun a header save embedding an empty invocation list never deletes a stored row ()V
-	public fun a header save racing with a recordInvocation write settles independently and neither is lost ()V
-	public fun a page is newest first and tie-broken by run id ()V
-	public fun a page scopes before it limits ()V
-	public fun a rebuilt terminal write with the same payload replays ()V
-	public fun a rejected terminal write announces nothing ()V
-	public fun a replay after an interleaved invocation record is still a replay ()V
-	public fun a retry carrying different counts and failures replays, and the first write's outcome stands ()V
-	public fun a retry differing only in finish time is an incompatible rewrite, for every terminal status ()V
-	public fun a run with several attempts reads back equal to the run that was saved ()V
-	public fun a running run carrying a finish time is rejected ()V
-	public fun a same-outcome write that differs from a terminal record is rejected too ()V
-	public fun a save changing exactly one owned header field bumps the version as a genuinely accepted write ()V
-	public fun a save that disagrees with the stored run's lineage is rejected ()V
-	public fun a save that disagrees with the stored run's start time is rejected ()V
-	public fun a save whose content already matches what is stored replays as a no-op at a stale version ()V
-	public fun a saved run starts running and is readable by its key ()V
-	public fun a stale header save carrying an old invocation snapshot leaves the newer stored invocation intact ()V
-	public fun a stale header save is rejected, and the header it read is left in place ()V
-	public fun a stale-version resend replays as a no-op even with a terminal invocation recorded since ()V
-	public fun a terminal record rejects a recordInvocation resend that differs in exactly one field ()V
-	public fun a terminal record with absent timing rejects a recordInvocation resend that clears its start time ()V
-	public fun a terminal record's identical replay through recordInvocation lands back at its stored position ()V
-	public fun a terminal run is not re-openable and takes no more records ()V
-	public fun a terminal status cannot enter through save ()V
-	public fun a terminal write against a run nobody started is rejected ()V
-	public fun a terminal write through the store preserves every field it does not own, header version included ()V
-	public fun a whole lineage comes back from its root reference ()V
-	public fun an IN_FLIGHT record accepts a recordInvocation update that differs in exactly one field ()V
-	public fun an accepted header save replaces the whole header at once ()V
-	public fun an applied transition announces the run once, and a replay announces nothing ()V
-	public fun an empty run completes ()V
-	public fun an incompatible terminal rewrite is rejected and changes nothing ()V
-	public fun children are one hop down the parent axis ()V
-	public fun concurrent terminal writers announce the run exactly once between them ()V
-	public fun each terminal edge is reachable from running ()V
-	public fun every failure code comes back from save unchanged and outlives a terminal write that keeps it ()V
-	public fun every failure code comes back from transition unchanged and survives its own replay ()V
-	public fun every page rejects a limit that is not positive ()V
-	public fun every read fails closed across tenants ()V
-	public fun every replay fidelity value comes back from save unchanged and outlives a terminal write ()V
-	public fun every terminal status announces the run it ended ()V
-	public fun keeping counts and replacing them are different claims on the run that lands, and the digest sees neither ()V
-	public fun no edge leaves a terminal state ()V
-	public fun null counts and failures on a transition keep what the stored run held, and values replace them ()V
-	public fun recording against a run nobody started is rejected ()V
-	public fun recording an invocation does not move the header version ()V
-	public fun records are keyed by invocation and attempt and read back in plan order ()V
-	public fun repeating the same terminal invocation write is idempotent ()V
-	public fun since bounds the window at or after the instant given ()V
+	public fun aCancelledTerminalRecordIsLockedTheSameAsSucceededAndFailedThroughRecordInvocation ()V
+	public fun aChainWalkStopsRatherThanCrossingIntoAnotherTenant ()V
+	public fun aChangedInFlightRecordUpdatesInPlaceThroughRecordInvocationClearingAnOmittedFact ()V
+	public fun aDelayedInFlightWriteDoesNotReplaceATerminalRecordForTheSameAttempt ()V
+	public fun aFirstSaveLandsAtVersion0AnAcceptedUpdateRaisesItByOneAndAReplayLeavesItAlone ()V
+	public fun aFirstSaveMustNameVersion0 ()V
+	public fun aHeaderSaveEmbeddingABrandNewInvocationNeverCreatesTheRow ()V
+	public fun aHeaderSaveEmbeddingAChangedInvocationNeverUpdatesTheStoredRow ()V
+	public fun aHeaderSaveEmbeddingAnEmptyInvocationListNeverDeletesAStoredRow ()V
+	public fun aHeaderSaveRacingWithARecordInvocationWriteSettlesIndependentlyAndNeitherIsLost ()V
+	public fun aPageIsNewestFirstAndTieBrokenByRunId ()V
+	public fun aPageScopesBeforeItLimits ()V
+	public fun aRebuiltTerminalWriteWithTheSamePayloadReplays ()V
+	public fun aRejectedTerminalWriteAnnouncesNothing ()V
+	public fun aReplayAfterAnInterleavedInvocationRecordIsStillAReplay ()V
+	public fun aRetryCarryingDifferentCountsAndFailuresReplaysAndTheFirstWritesOutcomeStands ()V
+	public fun aRetryDifferingOnlyInFinishTimeIsAnIncompatibleRewriteForEveryTerminalStatus ()V
+	public fun aRunWithSeveralAttemptsReadsBackEqualToTheRunThatWasSaved ()V
+	public fun aRunningRunCarryingAFinishTimeIsRejected ()V
+	public fun aSameOutcomeWriteThatDiffersFromATerminalRecordIsRejectedToo ()V
+	public fun aSaveChangingExactlyOneOwnedHeaderFieldBumpsTheVersionAsAGenuinelyAcceptedWrite ()V
+	public fun aSaveThatDisagreesWithTheStoredRunsLineageIsRejected ()V
+	public fun aSaveThatDisagreesWithTheStoredRunsStartTimeIsRejected ()V
+	public fun aSaveWhoseContentAlreadyMatchesWhatIsStoredReplaysAsANoOpAtAStaleVersion ()V
+	public fun aSavedRunStartsRunningAndIsReadableByItsKey ()V
+	public fun aStaleHeaderSaveCarryingAnOldInvocationSnapshotLeavesTheNewerStoredInvocationIntact ()V
+	public fun aStaleHeaderSaveIsRejectedAndTheHeaderItReadIsLeftInPlace ()V
+	public fun aStaleVersionResendReplaysAsANoOpEvenWithATerminalInvocationRecordedSince ()V
+	public fun aTerminalRecordRejectsARecordInvocationResendThatDiffersInExactlyOneField ()V
+	public fun aTerminalRecordWithAbsentTimingRejectsARecordInvocationResendThatClearsItsStartTime ()V
+	public fun aTerminalRecordsIdenticalReplayThroughRecordInvocationLandsBackAtItsStoredPosition ()V
+	public fun aTerminalRunIsNotReOpenableAndTakesNoMoreRecords ()V
+	public fun aTerminalStatusCannotEnterThroughSave ()V
+	public fun aTerminalWriteAgainstARunNobodyStartedIsRejected ()V
+	public fun aTerminalWriteThroughTheStorePreservesEveryFieldItDoesNotOwnHeaderVersionIncluded ()V
+	public fun aWholeLineageComesBackFromItsRootReference ()V
+	public fun anAcceptedHeaderSaveReplacesTheWholeHeaderAtOnce ()V
+	public fun anAppliedTransitionAnnouncesTheRunOnceAndAReplayAnnouncesNothing ()V
+	public fun anEmptyRunCompletes ()V
+	public fun anInFlightRecordAcceptsARecordInvocationUpdateThatDiffersInExactlyOneField ()V
+	public fun anIncompatibleTerminalRewriteIsRejectedAndChangesNothing ()V
+	public fun childrenAreOneHopDownTheParentAxis ()V
+	public fun concurrentTerminalWritersAnnounceTheRunExactlyOnceBetweenThem ()V
+	public fun eachTerminalEdgeIsReachableFromRunning ()V
+	public fun everyFailureCodeComesBackFromSaveUnchangedAndOutlivesATerminalWriteThatKeepsIt ()V
+	public fun everyFailureCodeComesBackFromTransitionUnchangedAndSurvivesItsOwnReplay ()V
+	public fun everyPageRejectsALimitThatIsNotPositive ()V
+	public fun everyReadFailsClosedAcrossTenants ()V
+	public fun everyReplayFidelityValueComesBackFromSaveUnchangedAndOutlivesATerminalWrite ()V
+	public fun everyTerminalStatusAnnouncesTheRunItEnded ()V
+	public fun keepingCountsAndReplacingThemAreDifferentClaimsOnTheRunThatLandsAndTheDigestSeesNeither ()V
+	public fun noEdgeLeavesATerminalState ()V
+	public fun nullCountsAndFailuresOnATransitionKeepWhatTheStoredRunHeldAndValuesReplaceThem ()V
+	public fun recordingAgainstARunNobodyStartedIsRejected ()V
+	public fun recordingAnInvocationDoesNotMoveTheHeaderVersion ()V
+	public fun recordsAreKeyedByInvocationAndAttemptAndReadBackInPlanOrder ()V
+	public fun repeatingTheSameTerminalInvocationWriteIsIdempotent ()V
+	public fun sinceBoundsTheWindowAtOrAfterTheInstantGiven ()V
 	protected final fun store ()Lcom/embabel/dice/proposition/extraction/ExtractionRunStore;
 	protected abstract fun store (Lcom/embabel/dice/common/DiceEventListener;)Lcom/embabel/dice/proposition/extraction/ExtractionRunStore;
-	public fun the chain walk is bounded, excludes the run, and stops at an unresolvable parent ()V
-	public fun the chain walk terminates on a cycle ()V
-	public fun the same terminal write replays as success ()V
-	public fun two concurrent IN_FLIGHT writers on different attempts both land, losing neither ()V
-	public fun two tenants holding the same run id never collide ()V
-	public fun two threads racing to end one run produce exactly one applied transition ()V
-	public fun two threads racing to record conflicting terminal outcomes for one attempt produce exactly one accepted write ()V
-	public fun two threads racing to save the same header produce exactly one accepted write ()V
-	public fun writes that do not end a run announce nothing ()V
+	public fun theChainWalkIsBoundedExcludesTheRunAndStopsAtAnUnresolvableParent ()V
+	public fun theChainWalkTerminatesOnACycle ()V
+	public fun theSameTerminalWriteReplaysAsSuccess ()V
+	public fun twoConcurrentInFlightWritersOnDifferentAttemptsBothLandLosingNeither ()V
+	public fun twoTenantsHoldingTheSameRunIdNeverCollide ()V
+	public fun twoThreadsRacingToEndOneRunProduceExactlyOneAppliedTransition ()V
+	public fun twoThreadsRacingToRecordConflictingTerminalOutcomesForOneAttemptProduceExactlyOneAcceptedWrite ()V
+	public fun twoThreadsRacingToSaveTheSameHeaderProduceExactlyOneAcceptedWrite ()V
+	public fun writesThatDoNotEndARunAnnounceNothing ()V
 }
 
 public abstract class com/embabel/dice/conformance/AbstractFilteredVectorSearchContractTest {
@@ -158,17 +158,17 @@ public abstract class com/embabel/dice/conformance/AbstractFilteredVectorSearchC
 
 public abstract class com/embabel/dice/conformance/AbstractMetamodelVersionStoreContractTest {
 	public fun <init> ()V
-	public fun a re-save leaves the stamp where it was in the history ()V
-	public fun findVersion returns null for a hash the schema has never stored ()V
-	public fun latestVersion is null for a schema with no versions ()V
-	public fun markSwept moves the swept baseline to that version ()V
-	public fun one schema's writes are invisible to another ()V
-	public fun re-saving a version leaves one record ()V
-	public fun re-saving an existing, unreconciled stamp never moves the swept baseline either ()V
-	public fun saveVersion alone never moves an already-established swept baseline ()V
+	public fun aReSaveLeavesTheStampWhereItWasInTheHistory ()V
+	public fun findVersionReturnsNullForAHashTheSchemaHasNeverStored ()V
+	public fun latestVersionIsNullForASchemaWithNoVersions ()V
+	public fun markSweptMovesTheSweptBaselineToThatVersion ()V
+	public fun oneSchemasWritesAreInvisibleToAnother ()V
+	public fun reSavingAVersionLeavesOneRecord ()V
+	public fun reSavingAnExistingUnreconciledStampNeverMovesTheSweptBaselineEither ()V
+	public fun saveVersionAloneNeverMovesAnAlreadyEstablishedSweptBaseline ()V
 	protected abstract fun store ()Lcom/embabel/dice/metamodel/SweptBaselineStore;
-	public fun sweptVersion is null until markSwept is called ()V
-	public fun versionHistory is newest first ()V
+	public fun sweptVersionIsNullUntilMarkSweptIsCalled ()V
+	public fun versionHistoryIsNewestFirst ()V
 }
 
 public abstract class com/embabel/dice/conformance/AbstractProjectionRecordStoreContractTest {
@@ -189,18 +189,18 @@ public abstract class com/embabel/dice/conformance/AbstractProjectionRecordStore
 
 public abstract class com/embabel/dice/conformance/AbstractPropositionRunLinkStoreContractTest {
 	public fun <init> ()V
-	public fun a link against a run this tenant does not hold is rejected ()V
-	public fun a link is readable from both ends ()V
-	public fun a link naming a proposition nobody holds is rejected and writes nothing ()V
-	public fun a link to a deleted proposition disappears from both reads ()V
-	public fun a read for an unknown proposition or run is empty rather than an error ()V
-	public fun a repeated id in one call is one link ()V
-	public fun a run cannot claim a neighbour's proposition ()V
-	public fun an empty batch is a no-op ()V
-	public fun both reads are bounded and ordered by id ()V
-	public fun both reads reject a limit that is not positive ()V
+	public fun aLinkAgainstARunThisTenantDoesNotHoldIsRejected ()V
+	public fun aLinkIsReadableFromBothEnds ()V
+	public fun aLinkNamingAPropositionNobodyHoldsIsRejectedAndWritesNothing ()V
+	public fun aLinkToADeletedPropositionDisappearsFromBothReads ()V
+	public fun aReadForAnUnknownPropositionOrRunIsEmptyRatherThanAnError ()V
+	public fun aRepeatedIdInOneCallIsOneLink ()V
+	public fun aRunCannotClaimANeighboursProposition ()V
+	public fun anEmptyBatchIsANoOp ()V
+	public fun bothReadsAreBoundedAndOrderedById ()V
+	public fun bothReadsRejectALimitThatIsNotPositive ()V
 	protected abstract fun deleteProposition (Ljava/lang/String;)V
-	public fun every read fails closed across tenants ()V
+	public fun everyReadFailsClosedAcrossTenants ()V
 	protected final fun getDisposablePropositionId ()Ljava/lang/String;
 	protected final fun getFixturePropositionIds ()Ljava/util/List;
 	protected final fun getFixtureRunIds ()Ljava/util/List;
@@ -210,27 +210,27 @@ public abstract class com/embabel/dice/conformance/AbstractPropositionRunLinkSto
 	protected final fun getStartedAt ()Ljava/time/Instant;
 	protected final fun getTenant-SSYM5D4 ()Ljava/lang/String;
 	protected final fun getTenantValue ()Ljava/lang/String;
-	public fun link reports exactly the ids it was given ()V
-	public fun linking is idempotent and counts the same on a replay ()V
-	public fun one proposition links to many runs and one run links to many propositions ()V
+	public fun linkReportsExactlyTheIdsItWasGiven ()V
+	public fun linkingIsIdempotentAndCountsTheSameOnAReplay ()V
+	public fun onePropositionLinksToManyRunsAndOneRunLinksToManyPropositions ()V
 	protected final fun proposition-sZMPnk8 (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
 	protected final fun propositionIn (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
 	protected final fun run-sZMPnk8 (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
 	protected final fun runIn (Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/proposition/extraction/ExtractionRun;
 	protected abstract fun store ()Lcom/embabel/dice/proposition/extraction/PropositionRunLinkStore;
-	public fun the single-proposition convenience writes the same link ()V
+	public fun theSinglePropositionConvenienceWritesTheSameLink ()V
 }
 
 public abstract class com/embabel/dice/conformance/AbstractPropositionStoreContractTest {
 	public fun <init> ()V
-	public fun REVISED_DESC orders by lastTouched ()V
-	public fun belowEffectiveConfidence keeps only propositions strictly under the threshold ()V
-	public fun count(query) equals the number of matching propositions ()V
-	public fun count(query) is capped by the query's limit ()V
-	public fun keywordOverlap matches case-insensitively and ranks by overlap ()V
-	public fun keywordOverlap returns nothing for empty tokens ()V
-	public fun minTrustScore excludes low-trust but keeps high-trust and unscored ()V
-	public fun revisedAfter filters on lastTouched, so a recent metadata touch keeps an old-content proposition ()V
+	public fun belowEffectiveConfidenceKeepsOnlyPropositionsStrictlyUnderTheThreshold ()V
+	public fun countQueryEqualsTheNumberOfMatchingPropositions ()V
+	public fun countQueryIsCappedByTheQuerysLimit ()V
+	public fun keywordOverlapMatchesCaseInsensitivelyAndRanksByOverlap ()V
+	public fun keywordOverlapReturnsNothingForEmptyTokens ()V
+	public fun minTrustScoreExcludesLowTrustButKeepsHighTrustAndUnscored ()V
+	public fun revisedAfterFiltersOnLastTouchedSoARecentMetadataTouchKeepsAnOldContentProposition ()V
+	public fun revisedDescOrdersByLastTouched ()V
 	protected abstract fun store ()Lcom/embabel/dice/proposition/PropositionStore;
 }
 
