@@ -173,10 +173,17 @@ hints map inside an `EntityMention` and the values in the metadata map are kept 
 `Proposition` keeps them. A value out of range is rejected by `toProposition()` with the same
 `IllegalArgumentException` the constructor throws.
 
-A time that is not set is filled in by `toProposition()`. `created` and `contentRevised` stand in
-for each other: with one of them set the other takes its value, and with neither set both are the
-moment `toProposition()` runs. `metadataRevised` and `lastAccessed` take the value `contentRevised`
-ends up with.
+`withGrounding` adds to the grounding and drops repeats. To replace the grounding, or clear it with an
+empty list, use `withExactGrounding`, which keeps the ids in the order you give them. In a Kotlin
+block the grounding starts empty, and each `grounding(...)` call adds to it.
+
+A time that is not set takes the constructor's default when `toProposition()` runs. `created`,
+`contentRevised` and `metadataRevised` take the moment `toProposition()` runs, and `lastAccessed`
+takes the value `contentRevised` ends up with. Decay is measured from `contentRevised`, so set it
+when you import an older fact.
+
+Draft steps do not move revision times. A step such as `withLastAccessed` changes only the field it
+names, so `contentRevised` and `metadataRevised` stay as you set them, or unset.
 
 A draft without an id gets a new id on every `toProposition()` call. `withId` fixes the id. For two
 calls to build equal propositions, also set a time with `withCreated` or `withContentRevised`.
@@ -195,7 +202,7 @@ Proposition touched = fact.toDraft()
 [source,java]
 ----
 var p = propositionRepository.query(
-        PropositionQuery.againstContext(new ContextId("quickstart"))).get(0);
+        PropositionQuery.againstContext("quickstart")).get(0);
 
 System.out.printf("raw=%.2f effective=%.2f decay=%.2f reinforced=%d status=%s%n",
         p.getConfidence(), p.effectiveConfidence(), p.getDecay(),
