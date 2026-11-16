@@ -1,5 +1,23 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.dice.apilisting;
+
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,15 +46,27 @@ public final class ApiListing {
     private static final String EXPERIMENTAL = "org.jetbrains.annotations.ApiStatus.Experimental";
 
     public static void main(String[] args) throws IOException {
+        System.exit(run(args, System.out, System.err));
+    }
+
+    /**
+     * Checks or rewrites the listings and returns the exit status.
+     *
+     * @param args the same arguments as {@link #main}
+     * @param out where update mode reports the files it wrote
+     * @param err where problems and listing differences go
+     * @return 0 when the listings match or were written, 1 when they differ, 2 on bad input
+     */
+    static int run(String[] args, PrintStream out, PrintStream err) throws IOException {
         if (args.length != 4 || !(args[0].equals("check") || args[0].equals("update"))) {
-            System.err.println("Usage: ApiListing <check|update> <classes-dir> <api-dir> <module-name>");
-            System.exit(2);
+            err.println("Usage: ApiListing <check|update> <classes-dir> <api-dir> <module-name>");
+            return 2;
         }
         boolean update = args[0].equals("update");
         List<File> classFiles = classFiles(Path.of(args[1]));
         if (classFiles.isEmpty()) {
-            System.err.println("No compiled classes under " + args[1] + ". Compile the module first.");
-            System.exit(2);
+            err.println("No compiled classes under " + args[1] + ". Compile the module first.");
+            return 2;
         }
         Path apiDir = Path.of(args[2]);
         String module = args[3];
@@ -64,13 +94,14 @@ public final class ApiListing {
         String stable = stableListing.toString();
         String experimental = experimentalListing.toString();
 
-        boolean matches = sync(apiDir.resolve(module + ".api"), stable, update);
-        matches &= sync(apiDir.resolve(module + ".experimental.api"), experimental, update);
+        boolean matches = sync(apiDir.resolve(module + ".api"), stable, update, out, err);
+        matches &= sync(apiDir.resolve(module + ".experimental.api"), experimental, update, out, err);
         if (!matches) {
-            System.err.println("The public API changed. Review the difference above, then regenerate the"
+            err.println("The public API changed. Review the difference above, then regenerate the"
                     + " listings with: ./mvnw -B -DskipTests -Dapi.listing.mode=update clean verify");
-            System.exit(1);
+            return 1;
         }
+        return 0;
     }
 
     private static List<File> classFiles(Path classesDir) throws IOException {
@@ -108,7 +139,8 @@ public final class ApiListing {
     }
 
     /** Writes the listing in update mode. Otherwise reports whether the committed file matches. */
-    private static boolean sync(Path file, String actual, boolean update) throws IOException {
+    private static boolean sync(Path file, String actual, boolean update, PrintStream out, PrintStream err)
+            throws IOException {
         // Git can check a listing out with Windows line endings; the generated text always uses \n.
         String committed = Files.exists(file) ? Files.readString(file, StandardCharsets.UTF_8).replace("\r\n", "\n") : "";
         if (committed.equals(actual)) {
@@ -121,15 +153,15 @@ public final class ApiListing {
                 Files.createDirectories(file.getParent());
                 Files.writeString(file, actual, StandardCharsets.UTF_8);
             }
-            System.out.println("Updated " + file);
+            out.println("Updated " + file);
             return true;
         }
         Path generated = Files.createTempFile("api-listing", ".api");
         Path empty = Files.createTempFile("api-listing-empty", ".api");
         try {
             Files.writeString(generated, actual, StandardCharsets.UTF_8);
-            System.err.println(file + " does not match the compiled classes:");
-            System.err.println(AbiTools.INSTANCE.filesDiff((Files.exists(file) ? file : empty).toFile(), generated.toFile()));
+            err.println(file + " does not match the compiled classes:");
+            err.println(AbiTools.INSTANCE.filesDiff((Files.exists(file) ? file : empty).toFile(), generated.toFile()));
         } finally {
             Files.delete(generated);
             Files.delete(empty);

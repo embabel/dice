@@ -242,7 +242,7 @@
                                           resultproperty="api.listing.exit" errorproperty="api.listing.error">
                                         <arg value="-cp"/>
                                         <arg pathref="maven.plugin.classpath"/>
-                                        <arg file="${maven.multiModuleProjectDirectory}/build-support/ApiListing.java"/>
+                                        <arg file="${maven.multiModuleProjectDirectory}/build-support/src/main/java/com/embabel/dice/apilisting/ApiListing.java"/>
                                         <arg value="${api.listing.mode}"/>
                                         <arg file="${project.build.outputDirectory}"/>
                                         <arg file="${project.basedir}/api"/>
@@ -297,7 +297,7 @@
 
     <profiles>
         <!--
-            Integration tests and the user guide are built by default but are not published.
+            Integration tests, the user guide and the API listing program are built by default but are not published.
             activeByDefault profiles switch off when any other profile in this POM is activated,
             so the Maven Central release (-Psonatype) builds only the published modules above.
         -->
@@ -309,6 +309,7 @@
             <modules>
                 <module>dice-integration-tests</module>
                 <module>dice-user-guide</module>
+                <module>build-support</module>
             </modules>
         </profile>
         <!--
