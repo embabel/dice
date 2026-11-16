@@ -40,6 +40,7 @@ data class BookmarkKey(
          * @param contextIdValue The context the bookmark belongs to.
          * @param sourceId The incremental source.
          * @return The key.
+         * @throws IllegalArgumentException if contextIdValue is blank
          */
         @JvmStatic
         fun of(contextIdValue: String, sourceId: String): BookmarkKey =
@@ -70,6 +71,7 @@ data class HashKey(
          * @param contextIdValue The context the hash belongs to.
          * @param contentHash The hash of the content.
          * @return The key.
+         * @throws IllegalArgumentException if contextIdValue is blank
          */
         @JvmStatic
         fun of(contextIdValue: String, contentHash: String): HashKey =
