@@ -126,6 +126,10 @@
             compiler's metadata, so raise it when the build parent raises the Kotlin version.
         -->
         <abi-tools.version>2.2.21</abi-tools.version>
+        <!-- Reads the source file name of a compiled class, so the listing can leave generated code out -->
+        <asm.version>9.8</asm.version>
+        <!-- A module with generated sources sets this to their root, and the listing leaves them out -->
+        <api.listing.generated.sources></api.listing.generated.sources>
     </properties>
 
     <dependencyManagement>
@@ -234,6 +238,11 @@
                             <artifactId>abi-tools</artifactId>
                             <version>${abi-tools.version}</version>
                         </dependency>
+                        <dependency>
+                            <groupId>org.ow2.asm</groupId>
+                            <artifactId>asm</artifactId>
+                            <version>${asm.version}</version>
+                        </dependency>
                     </dependencies>
                     <executions>
                         <execution>
@@ -285,6 +294,7 @@
                                         <arg file="${project.build.outputDirectory}"/>
                                         <arg file="${project.basedir}/api"/>
                                         <arg value="${project.artifactId}"/>
+                                        <arg value="--generated=${api.listing.generated.sources}"/>
                                     </java>
                                     <!-- Put the program's own explanation in the build error, so it shows in quiet mode too -->
                                     <fail message="${api.listing.error}">

@@ -28,6 +28,9 @@ import java.util.Set;
 import java.util.stream.Stream;
 import org.jetbrains.kotlin.abi.tools.AbiTools;
 import org.jetbrains.kotlin.abi.tools.api.AbiFilters;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.Opcodes;
 
 /**
  * Keeps a module's public API listing in step with its compiled classes.
@@ -39,11 +42,16 @@ import org.jetbrains.kotlin.abi.tools.api.AbiFilters;
  * <p>The build runs this in {@code check} mode during {@code verify}, and it fails when a listing
  * differs from the compiled classes. {@code update} mode rewrites the listings.
  *
- * <p>Usage: {@code ApiListing <check|update> <classes-dir> <api-dir> <module-name>}
+ * <p>A class compiled from a file under the {@code --generated} source root is left out, because
+ * generated code carries no compatibility promise.
+ *
+ * <p>Usage: {@code ApiListing <check|update> <classes-dir> <api-dir> <module-name> [--generated=<source-root>]}
  */
 public final class ApiListing {
 
     private static final String EXPERIMENTAL = "org.jetbrains.annotations.ApiStatus.Experimental";
+
+    private static final String GENERATED = "--generated=";
 
     public static void main(String[] args) throws IOException {
         System.exit(run(args, System.out, System.err));
@@ -58,14 +66,35 @@ public final class ApiListing {
      * @return 0 when the listings match or were written, 1 when they differ, 2 on bad input
      */
     static int run(String[] args, PrintStream out, PrintStream err) throws IOException {
+        List<String> positional = new ArrayList<>();
+        Path generated = null;
+        for (String arg : args) {
+            if (arg.startsWith(GENERATED)) {
+                // An empty value means the module has no generated sources
+                String root = arg.substring(GENERATED.length());
+                generated = root.isBlank() ? null : Path.of(root);
+            } else {
+                positional.add(arg);
+            }
+        }
+        args = positional.toArray(String[]::new);
         if (args.length != 4 || !(args[0].equals("check") || args[0].equals("update"))) {
-            err.println("Usage: ApiListing <check|update> <classes-dir> <api-dir> <module-name>");
+            err.println("Usage: ApiListing <check|update> <classes-dir> <api-dir> <module-name>"
+                    + " [--generated=<source-root>]");
             return 2;
         }
         boolean update = args[0].equals("update");
-        List<File> classFiles = classFiles(Path.of(args[1]));
+        Path classesDir = Path.of(args[1]);
+        List<File> classFiles = classFiles(classesDir);
+        if (generated != null) {
+            for (File classFile : List.copyOf(classFiles)) {
+                if (isGenerated(classesDir, classFile.toPath(), generated)) {
+                    classFiles.remove(classFile);
+                }
+            }
+        }
         if (classFiles.isEmpty()) {
-            err.println("No compiled classes under " + args[1] + ". Compile the module first.");
+            err.println("No compiled classes to list under " + args[1] + ". Compile the module first.");
             return 2;
         }
         Path apiDir = Path.of(args[2]);
@@ -113,6 +142,48 @@ public final class ApiListing {
             }
         }
         return files;
+    }
+
+    /**
+     * Tells whether a class was compiled from a file under the generated source root.
+     *
+     * <p>The source file name comes from the outermost class, because a class the compiler copies
+     * from an inline function names the inline function's file. A class with no source file name is
+     * kept.
+     *
+     * @param classesDir the module's class directory
+     * @param classFile a class file under it
+     * @param generatedRoot the generated source root
+     * @return true when the source file exists under the root, in the class's package directory
+     */
+    private static boolean isGenerated(Path classesDir, Path classFile, Path generatedRoot) throws IOException {
+        String fileName = classFile.getFileName().toString();
+        int nested = fileName.indexOf('$');
+        Path outer = nested > 0 ? classFile.resolveSibling(fileName.substring(0, nested) + ".class") : classFile;
+        String source = sourceFile(Files.exists(outer) ? outer : classFile);
+        if (source == null) {
+            return false;
+        }
+        Path packageDir = classesDir.relativize(classFile).getParent();
+        Path sourceDir = packageDir == null ? generatedRoot : generatedRoot.resolve(packageDir.toString());
+        return Files.isRegularFile(sourceDir.resolve(source));
+    }
+
+    /**
+     * Reads the source file name a class records, such as {@code Mention.kt}.
+     *
+     * @param classFile the class file
+     * @return the name, or null when the class records none
+     */
+    private static String sourceFile(Path classFile) throws IOException {
+        String[] source = new String[1];
+        new ClassReader(Files.readAllBytes(classFile)).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public void visitSource(String file, String debug) {
+                source[0] = file;
+            }
+        }, ClassReader.SKIP_CODE | ClassReader.SKIP_FRAMES);
+        return source[0];
     }
 
     /** Splits a dump into one block per type. */

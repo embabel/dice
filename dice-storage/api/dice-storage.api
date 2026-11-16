@@ -289,19 +289,6 @@ public final class com/embabel/dice/storage/model/DerivedFrom {
 	public fun toString ()Ljava/lang/String;
 }
 
-public final class com/embabel/dice/storage/model/DerivedFromProperties : org/drivine/query/dsl/NodeReference {
-	public fun <init> (Ljava/lang/String;)V
-	public final fun getChunkId ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getContentHash ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getDisplay ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getEndOffset ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getEntryKey ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public fun getNodeAlias ()Ljava/lang/String;
-	public final fun getSource ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getSourceRevision ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getStartOffset ()Lorg/drivine/query/dsl/PropertyReference;
-}
-
 public final class com/embabel/dice/storage/model/Mention {
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -320,33 +307,6 @@ public final class com/embabel/dice/storage/model/Mention {
 	public final fun getType ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
-}
-
-public final class com/embabel/dice/storage/model/MentionProperties : org/drivine/query/dsl/NodeReference {
-	public fun <init> (Ljava/lang/String;)V
-	public final fun getId ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public fun getNodeAlias ()Ljava/lang/String;
-	public final fun getResolvedId ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getRole ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getSpan ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getType ()Lorg/drivine/query/dsl/StringPropertyReference;
-}
-
-public final class com/embabel/dice/storage/model/MentionQueryDsl : org/drivine/query/dsl/ResolvableNodeReference {
-	public static final field Companion Lcom/embabel/dice/storage/model/MentionQueryDsl$Companion;
-	public fun <init> ()V
-	public fun getBagPrefixes ()Ljava/util/List;
-	public fun getFieldKeyPaths ()Ljava/util/Map;
-	public final fun getId ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public fun getNodeAlias ()Ljava/lang/String;
-	public final fun getResolvedId ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getRole ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getSpan ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getType ()Lorg/drivine/query/dsl/StringPropertyReference;
-}
-
-public final class com/embabel/dice/storage/model/MentionQueryDsl$Companion {
-	public final fun getINSTANCE ()Lcom/embabel/dice/storage/model/MentionQueryDsl;
 }
 
 public final class com/embabel/dice/storage/model/ProcessedChunkNode {
@@ -370,25 +330,6 @@ public final class com/embabel/dice/storage/model/ProcessedChunkNode {
 	public final fun getStartIndex ()I
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
-}
-
-public final class com/embabel/dice/storage/model/ProcessedChunkNodeQueryDsl : org/drivine/query/dsl/ResolvableNodeReference {
-	public static final field Companion Lcom/embabel/dice/storage/model/ProcessedChunkNodeQueryDsl$Companion;
-	public fun <init> ()V
-	public fun getBagPrefixes ()Ljava/util/List;
-	public final fun getContentHash ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getContextId ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getEndIndex ()Lorg/drivine/query/dsl/PropertyReference;
-	public fun getFieldKeyPaths ()Ljava/util/Map;
-	public final fun getId ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public fun getNodeAlias ()Ljava/lang/String;
-	public final fun getProcessedAt ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getSourceId ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getStartIndex ()Lorg/drivine/query/dsl/PropertyReference;
-}
-
-public final class com/embabel/dice/storage/model/ProcessedChunkNodeQueryDsl$Companion {
-	public final fun getINSTANCE ()Lcom/embabel/dice/storage/model/ProcessedChunkNodeQueryDsl;
 }
 
 public final class com/embabel/dice/storage/model/PropositionNode {
@@ -461,83 +402,6 @@ public final class com/embabel/dice/storage/model/PropositionNode {
 	public fun toString ()Ljava/lang/String;
 }
 
-public final class com/embabel/dice/storage/model/PropositionNodeProperties : org/drivine/query/dsl/NodeReference {
-	public fun <init> (Ljava/lang/String;)V
-	public final fun getConfidence ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getContentRevised ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getContextId ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getContradicts ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getCreated ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getDecay ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getDecayUpdatedAt ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getEffectiveConfidence ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getEmbedding ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getGrounding ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getId ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getImportance ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getInvalidatedAt ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getLastAccessed ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getLastTouched ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getLevel ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getMetadata ()Lorg/drivine/query/dsl/PropertyBagReference;
-	public final fun getMetadataRevised ()Lorg/drivine/query/dsl/PropertyReference;
-	public fun getNodeAlias ()Ljava/lang/String;
-	public final fun getObservedAt ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getPinned ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getReasoning ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getReinforceCount ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getSourceIds ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getStamp ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getStatus ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getSupersedes ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getText ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getUri ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getValidFrom ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getValidTo ()Lorg/drivine/query/dsl/PropertyReference;
-}
-
-public final class com/embabel/dice/storage/model/PropositionNodeQueryDsl : org/drivine/query/dsl/ResolvableNodeReference {
-	public static final field Companion Lcom/embabel/dice/storage/model/PropositionNodeQueryDsl$Companion;
-	public fun <init> ()V
-	public fun getBagPrefixes ()Ljava/util/List;
-	public final fun getConfidence ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getContentRevised ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getContextId ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getContradicts ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getCreated ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getDecay ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getDecayUpdatedAt ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getEffectiveConfidence ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getEmbedding ()Lorg/drivine/query/dsl/PropertyReference;
-	public fun getFieldKeyPaths ()Ljava/util/Map;
-	public final fun getGrounding ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getId ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getImportance ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getInvalidatedAt ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getLastAccessed ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getLastTouched ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getLevel ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getMetadata ()Lorg/drivine/query/dsl/PropertyBagReference;
-	public final fun getMetadataRevised ()Lorg/drivine/query/dsl/PropertyReference;
-	public fun getNodeAlias ()Ljava/lang/String;
-	public final fun getObservedAt ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getPinned ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getReasoning ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getReinforceCount ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getSourceIds ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getStamp ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getStatus ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getSupersedes ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getText ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getUri ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getValidFrom ()Lorg/drivine/query/dsl/PropertyReference;
-	public final fun getValidTo ()Lorg/drivine/query/dsl/PropertyReference;
-}
-
-public final class com/embabel/dice/storage/model/PropositionNodeQueryDsl$Companion {
-	public final fun getINSTANCE ()Lcom/embabel/dice/storage/model/PropositionNodeQueryDsl;
-}
-
 public final class com/embabel/dice/storage/model/PropositionView {
 	public fun <init> (Lcom/embabel/dice/storage/model/PropositionNode;Ljava/util/List;)V
 	public synthetic fun <init> (Lcom/embabel/dice/storage/model/PropositionNode;Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -550,28 +414,6 @@ public final class com/embabel/dice/storage/model/PropositionView {
 	public final fun getProposition ()Lcom/embabel/dice/storage/model/PropositionNode;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
-}
-
-public final class com/embabel/dice/storage/model/PropositionViewQueryDsl {
-	public static final field Companion Lcom/embabel/dice/storage/model/PropositionViewQueryDsl$Companion;
-	public fun <init> ()V
-	public final fun getMentions ()Lcom/embabel/dice/storage/model/MentionProperties;
-	public final fun getProposition ()Lcom/embabel/dice/storage/model/PropositionNodeProperties;
-}
-
-public final class com/embabel/dice/storage/model/PropositionViewQueryDsl$Companion {
-	public final fun getINSTANCE ()Lcom/embabel/dice/storage/model/PropositionViewQueryDsl;
-}
-
-public final class com/embabel/dice/storage/model/PropositionViewQueryDslKt {
-	public static final fun getMentions (Lorg/drivine/query/dsl/FieldsBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
-	public static final fun getMentions (Lorg/drivine/query/dsl/OrderBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
-	public static final fun getMentions (Lorg/drivine/query/dsl/SeekBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
-	public static final fun getMentions (Lorg/drivine/query/dsl/WhereBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
-	public static final fun getProposition (Lorg/drivine/query/dsl/FieldsBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
-	public static final fun getProposition (Lorg/drivine/query/dsl/OrderBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
-	public static final fun getProposition (Lorg/drivine/query/dsl/SeekBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
-	public static final fun getProposition (Lorg/drivine/query/dsl/WhereBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
 }
 
 public final class com/embabel/dice/storage/model/PropositionWithProvenanceView {
@@ -588,33 +430,6 @@ public final class com/embabel/dice/storage/model/PropositionWithProvenanceView 
 	public final fun getProvenance ()Ljava/util/List;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
-}
-
-public final class com/embabel/dice/storage/model/PropositionWithProvenanceViewQueryDsl {
-	public static final field Companion Lcom/embabel/dice/storage/model/PropositionWithProvenanceViewQueryDsl$Companion;
-	public fun <init> ()V
-	public final fun getMentions ()Lcom/embabel/dice/storage/model/MentionProperties;
-	public final fun getProposition ()Lcom/embabel/dice/storage/model/PropositionNodeProperties;
-	public final fun getProvenance ()Lcom/embabel/dice/storage/model/DerivedFromProperties;
-}
-
-public final class com/embabel/dice/storage/model/PropositionWithProvenanceViewQueryDsl$Companion {
-	public final fun getINSTANCE ()Lcom/embabel/dice/storage/model/PropositionWithProvenanceViewQueryDsl;
-}
-
-public final class com/embabel/dice/storage/model/PropositionWithProvenanceViewQueryDslKt {
-	public static final fun getMentions (Lorg/drivine/query/dsl/FieldsBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
-	public static final fun getMentions (Lorg/drivine/query/dsl/OrderBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
-	public static final fun getMentions (Lorg/drivine/query/dsl/SeekBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
-	public static final fun getMentions (Lorg/drivine/query/dsl/WhereBuilder;)Lcom/embabel/dice/storage/model/MentionProperties;
-	public static final fun getProposition (Lorg/drivine/query/dsl/FieldsBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
-	public static final fun getProposition (Lorg/drivine/query/dsl/OrderBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
-	public static final fun getProposition (Lorg/drivine/query/dsl/SeekBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
-	public static final fun getProposition (Lorg/drivine/query/dsl/WhereBuilder;)Lcom/embabel/dice/storage/model/PropositionNodeProperties;
-	public static final fun getProvenance (Lorg/drivine/query/dsl/FieldsBuilder;)Lcom/embabel/dice/storage/model/DerivedFromProperties;
-	public static final fun getProvenance (Lorg/drivine/query/dsl/OrderBuilder;)Lcom/embabel/dice/storage/model/DerivedFromProperties;
-	public static final fun getProvenance (Lorg/drivine/query/dsl/SeekBuilder;)Lcom/embabel/dice/storage/model/DerivedFromProperties;
-	public static final fun getProvenance (Lorg/drivine/query/dsl/WhereBuilder;)Lcom/embabel/dice/storage/model/DerivedFromProperties;
 }
 
 public final class com/embabel/dice/storage/model/SourceNode {
@@ -641,24 +456,4 @@ public final class com/embabel/dice/storage/model/SourceNode {
 	public final fun getUri ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
-}
-
-public final class com/embabel/dice/storage/model/SourceNodeQueryDsl : org/drivine/query/dsl/ResolvableNodeReference {
-	public static final field Companion Lcom/embabel/dice/storage/model/SourceNodeQueryDsl$Companion;
-	public fun <init> ()V
-	public fun getBagPrefixes ()Ljava/util/List;
-	public final fun getConnectorId ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getContentHash ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getDisplay ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getExternalId ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public fun getFieldKeyPaths ()Ljava/util/Map;
-	public final fun getKey ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getKind ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public fun getNodeAlias ()Ljava/lang/String;
-	public final fun getPath ()Lorg/drivine/query/dsl/StringPropertyReference;
-	public final fun getUri ()Lorg/drivine/query/dsl/StringPropertyReference;
-}
-
-public final class com/embabel/dice/storage/model/SourceNodeQueryDsl$Companion {
-	public final fun getINSTANCE ()Lcom/embabel/dice/storage/model/SourceNodeQueryDsl;
 }

@@ -71,6 +71,23 @@ class ApiListingTest {
     }
 
     @Test
+    fun `classes compiled from a generated source root are left out`() {
+        val generated = dir.resolve("generated")
+        generated.resolve(FIXTURE_PACKAGE).createDirectories().resolve("Stable.kt").writeText("")
+
+        assertEquals(0, listing("update", "--generated=$generated"), err.toString())
+        val stable = api.resolve("m.api").readText()
+        assertFalse(stable.contains("/Stable {"))
+        assertTrue(stable.contains("/MixedFunctionsKt {"))
+    }
+
+    @Test
+    fun `an empty generated source root leaves every class in`() {
+        assertEquals(0, listing("update", "--generated="), err.toString())
+        assertTrue(api.resolve("m.api").readText().contains("/Stable {"))
+    }
+
+    @Test
     fun `whitespace at the end of a listing does not count as a change`() {
         listing("update")
         val stable = api.resolve("m.api")
@@ -97,10 +114,11 @@ class ApiListingTest {
      * Runs the program over the fixture classes as a module named `m`.
      *
      * @param mode check or update
+     * @param options extra arguments after the module name
      * @return the exit status
      */
-    private fun listing(mode: String): Int {
-        val args = arrayOf(mode, fixtureClasses().toString(), api.toString(), "m")
+    private fun listing(mode: String, vararg options: String): Int {
+        val args = arrayOf(mode, fixtureClasses().toString(), api.toString(), "m", *options)
         return ApiListing.run(args, PrintStream(ByteArrayOutputStream()), PrintStream(err))
     }
 

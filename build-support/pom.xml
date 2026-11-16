@@ -23,6 +23,11 @@
             <artifactId>abi-tools</artifactId>
             <version>${abi-tools.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.ow2.asm</groupId>
+            <artifactId>asm</artifactId>
+            <version>${asm.version}</version>
+        </dependency>
 
         <!-- Test: Kotlin fixtures give the program real Kotlin metadata to read -->
         <dependency>
