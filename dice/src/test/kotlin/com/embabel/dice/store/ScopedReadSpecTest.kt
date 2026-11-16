@@ -15,151 +15,161 @@
  */
 package com.embabel.dice.store
 
-import com.embabel.agent.core.ContextId
-import com.embabel.dice.proposition.PropositionQuery
-import com.embabel.dice.proposition.PropositionStatus
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.lang.reflect.Modifier
+import java.lang.reflect.Type
 import java.time.Instant
+import java.util.EnumSet
 import java.util.function.UnaryOperator
 
 /**
  * Tests for [ScopedReadSpec].
  *
  * Contract:
- * E1 A new spec has the scope it was given and no filter.
- * E2 narrow keeps the filter whole, copies its collections and keeps the scope.
- * E3 narrow adds to the filters a spec has, and the function form adds the same filter as the query form.
- * E4 A filter or a query that names a context outside the scope throws ReadScopeViolationException with the allowed contexts.
- * E5 A filter that carries an ordering, a limit or effectiveConfidenceAsOf throws IllegalArgumentException.
- * E6 requireAllowed passes a query with no context or a context in the scope, ordering and limit included.
- * E7 A spec narrowed to one context refuses a filter or a query for another context of the scope.
- * E8 criteria names no context and sets no criteria.
- * E9 PropositionQuery has the fields the scope check was written against.
- * E10 VectorSearchRequest has the fields the scope check was written against.
+ * E1 A new spec has the scope it was built from and no filter.
+ * E2 narrow adds a filter and keeps the filters and the contexts a spec has, and the function form adds the same filter.
+ * E3 A filter that carries an instant is rejected.
+ * E4 Narrowing to contexts keeps only those contexts and every filter.
+ * E5 A context the spec does not allow is refused with a read refusal that names only the contexts the spec allows.
+ * E6 Narrowing to no context or to a blank id is rejected.
+ * E7 A narrowed spec names no context it dropped, in its scope, its text form or a refusal. Its filters bind only code that passes it on.
+ * E8 Narrowing by criteria that set nothing returns the same spec.
+ * E9 requireOnly checks every filter and names the first criterion a store does not apply.
+ * E10 No scoped type refers to PropositionQuery, in a signature, a generic argument or a field.
  */
 class ScopedReadSpecTest {
 
     private val scope = ContextReadScope.ofValues("A", "B")
+    private val confident = ReadCriteria.empty().withMinConfidence(0.8)
 
     @Test
-    fun `E1 a new spec has the scope it was given and no filter`() {
+    fun `E1 a new spec has the scope it was built from and no filter`() {
         val spec = ScopedReadSpec.of(scope)
         assertSame(scope, spec.scope)
         assertTrue(spec.filters.isEmpty())
-    }
-
-    @Test
-    fun `E2 narrow keeps the filter whole and copies its collections`() {
-        val entities = mutableListOf("e1")
-        val filter = PropositionQuery(
-            contextId = ContextId("A"), anyEntityIds = entities, statuses = setOf(PropositionStatus.ACTIVE),
-            minConfidence = 0.6, minEffectiveConfidence = 0.3, decayK = 7.0, pinned = false,
-        )
-        val spec = ScopedReadSpec.of(scope).narrow(filter)
-        entities.add("outsider")
-        assertEquals(filter.copy(anyEntityIds = listOf("e1")), spec.filters.single())
-        assertEquals(scope, spec.scope)
         assertThrows(UnsupportedOperationException::class.java) {
-            (spec.filters as MutableList<PropositionQuery>).clear()
+            (spec.scope.contextIdValues as MutableSet<String>).add("C")
         }
     }
 
     @Test
-    fun `E3 narrow adds to the filters a spec has`() {
-        val first = ScopedReadSpec.of(scope).narrow(PropositionQuery(minConfidence = 0.8))
-        val second = first.narrow(PropositionQuery(contextId = ContextId("B"), decayK = 4.0))
-        assertEquals(1, first.filters.size)
+    fun `E2 narrow adds a filter and keeps the filters and the contexts a spec has`() {
+        val first = ScopedReadSpec.of(scope).narrow(confident)
+        val second = first.narrow(ReadCriteria.empty().withPinned(true))
+        assertEquals(listOf(confident), first.filters)
         assertEquals(first.filters, second.filters.dropLast(1))
-        assertEquals(listOf(null, "B"), second.filters.map { it.contextId?.value })
-        assertEquals(scope, second.scope)
-        val byFunction = ScopedReadSpec.of(scope).narrow(UnaryOperator<PropositionQuery> { it.withMinConfidence(0.8) })
+        assertEquals(first.scope, second.scope)
+        val byFunction = ScopedReadSpec.of(scope).narrow(UnaryOperator<ReadCriteria> { it.withMinConfidence(0.8) })
         assertEquals(first, byFunction)
-    }
-
-    @Test
-    fun `E4 a filter or a query that names a context outside the scope is refused`() {
-        val spec = ScopedReadSpec.of(scope).narrow(PropositionQuery(minConfidence = 0.8))
-        val refusal = assertThrows(ReadScopeViolationException::class.java) {
-            spec.narrow(PropositionQuery.againstContext("C"))
-        }
-        assertEquals("C", refusal.contextIdValue)
-        assertEquals(setOf("A", "B"), refusal.allowedContextIdValues)
-        assertThrows(ReadScopeViolationException::class.java) {
-            spec.requireAllowed(PropositionQuery.againstContext("a"))
+        assertThrows(UnsupportedOperationException::class.java) {
+            (second.filters as MutableList<ReadCriteria>).clear()
         }
     }
 
     @Test
-    fun `E5 a filter that carries an ordering, a limit or an instant is rejected`() {
+    fun `E3 a filter that carries an instant is rejected`() {
+        val timed = ReadCriteria.empty()
+            .withMinEffectiveConfidence(0.3)
+            .withEffectiveConfidenceAsOf(Instant.parse("2026-01-01T00:00:00Z"))
+        assertThrows(IllegalArgumentException::class.java) { ScopedReadSpec.of(scope).narrow(timed) }
+    }
+
+    @Test
+    fun `E4 narrowing to contexts keeps only those contexts and every filter`() {
+        val onlyA = ScopedReadSpec.of(scope).narrow(confident).narrowToContexts("A")
+        assertEquals(setOf("A"), onlyA.scope.contextIdValues)
+        assertEquals(listOf(confident), onlyA.filters)
+        assertEquals(onlyA, onlyA.narrowToContexts(listOf("A", "A")))
+        assertEquals(scope, ScopedReadSpec.of(scope).narrowToContexts("B", "A").scope)
+    }
+
+    @Test
+    fun `E5 a refusal is a read refusal that names only the contexts the spec allows`() {
         val spec = ScopedReadSpec.of(scope)
-        val asOf = Instant.parse("2026-01-01T00:00:00Z")
-        assertThrows(IllegalArgumentException::class.java) { spec.narrow(PropositionQuery().orderedByCreated()) }
-        assertThrows(IllegalArgumentException::class.java) { spec.narrow(PropositionQuery().withLimit(5)) }
-        assertThrows(IllegalArgumentException::class.java) {
-            spec.narrow(PropositionQuery(minEffectiveConfidence = 0.3, effectiveConfidenceAsOf = asOf))
-        }
+        val outside = assertThrows(ReadScopeViolationException::class.java) { spec.narrowToContexts("A", "C") }
+        assertEquals("C", outside.contextIdValue)
+        assertEquals(setOf("A", "B"), outside.allowedContextIdValues)
+        assertTrue(ReadRefusedException::class.java.isInstance(outside))
+        assertFalse(IllegalArgumentException::class.java.isInstance(outside))
+        val onlyA = spec.narrowToContexts("A")
+        val narrowed = assertThrows(ReadScopeViolationException::class.java) { onlyA.narrowToContexts("B") }
+        assertEquals("B", narrowed.contextIdValue)
+        assertEquals(setOf("A"), narrowed.allowedContextIdValues)
+        assertThrows(ReadScopeViolationException::class.java) { spec.narrowToContexts("a") }
     }
 
     @Test
-    fun `E6 requireAllowed passes a query in the scope with its ordering and limit`() {
+    fun `E6 narrowing to no context or to a blank id is rejected`() {
         val spec = ScopedReadSpec.of(scope)
-        spec.requireAllowed(PropositionQuery.againstContext("B").orderedByCreated().withLimit(5))
-        spec.requireAllowed(PropositionQuery())
-        assertTrue(spec.filters.isEmpty())
+        assertThrows(IllegalArgumentException::class.java) { spec.narrowToContexts(emptyList()) }
+        assertThrows(IllegalArgumentException::class.java) { spec.narrowToContexts("A", " ") }
     }
 
     @Test
-    fun `E7 a spec narrowed to one context refuses another context of the scope`() {
-        val onlyA = ScopedReadSpec.of(scope).narrow(PropositionQuery.againstContext("A"))
-        onlyA.requireAllowed(PropositionQuery.againstContext("A"))
-        assertEquals(2, onlyA.narrow(PropositionQuery.againstContext("A")).filters.size)
-        val refusal = assertThrows(ReadScopeViolationException::class.java) {
-            onlyA.requireAllowed(PropositionQuery.againstContext("B"))
-        }
-        assertEquals("B", refusal.contextIdValue)
-        assertEquals(setOf("A"), refusal.allowedContextIdValues)
-        assertThrows(ReadScopeViolationException::class.java) {
-            onlyA.narrow(PropositionQuery.againstContext("B"))
-        }
-    }
-
-    @Test
-    fun `E8 criteria names no context and sets no criteria`() {
-        assertEquals(PropositionQuery(), ScopedReadSpec.criteria())
-    }
-
-    @Test
-    fun `E9 a new query field turns this test red until the scope check covers it`() {
-        // requireAllowed reads contextId, the only field here that names a context. A new field
-        // that names one must be checked there before it is added to this list.
-        val fields = PropositionQuery::class.java.declaredFields
-            .filterNot { Modifier.isStatic(it.modifiers) || it.isSynthetic }
-            .map { it.name }
-            .toSet()
-        assertEquals(
-            setOf(
-                "contextId", "entityId", "anyEntityIds", "allEntityIds", "statuses", "minLevel", "maxLevel",
-                "createdAfter", "createdBefore", "revisedAfter", "revisedBefore", "accessedAfter", "accessedBefore",
-                "minConfidence", "minEffectiveConfidence", "effectiveConfidenceAsOf", "decayK", "minImportance",
-                "minReinforceCount", "minTrustScore", "pinned", "orderBy", "limit", "belowEffectiveConfidence",
-            ),
-            fields,
+    fun `E7 a narrowed spec names no context it dropped and its filters bind only code that passes it on`() {
+        val wide = ScopedReadSpec.of(ContextReadScope.ofValues("alpha", "bravo", "charlie")).narrow(confident)
+        val narrowed = wide.narrowToContexts("alpha")
+        val refusal = assertThrows(ReadScopeViolationException::class.java) { narrowed.narrowToContexts("bravo") }
+        val told = listOf(
+            narrowed.scope.contextIdValues.toString(),
+            narrowed.scope.toString(),
+            narrowed.toString(),
+            refusal.allowedContextIdValues.toString(),
         )
+        assertTrue(told.none { it.contains("bravo") || it.contains("charlie") })
+        assertFalse(refusal.message.orEmpty().contains("charlie"))
+
+        // The scope and the factory are public, so a holder can build a spec over the same
+        // contexts with no filter. The KDoc says so, and this pins it.
+        val rebuilt = ScopedReadSpec.of(narrowed.scope)
+        assertEquals(narrowed.scope, rebuilt.scope)
+        assertTrue(rebuilt.filters.isEmpty())
     }
 
     @Test
-    fun `E10 a new request field turns this test red until the scope check covers it`() {
-        // A scoped similarity search checks the request's filter, the only field here that can
-        // name a context.
-        val fields = VectorSearchRequest::class.java.declaredFields
-            .filterNot { Modifier.isStatic(it.modifiers) || it.isSynthetic }
-            .map { it.name }
-            .toSet()
-        assertEquals(setOf("text", "filter", "topK", "minScore"), fields)
+    fun `E8 narrowing by criteria that set nothing returns the same spec`() {
+        val spec = ScopedReadSpec.of(scope).narrow(confident)
+        assertSame(spec, spec.narrow(ReadCriteria.empty()))
+        assertSame(spec, spec.narrow(UnaryOperator<ReadCriteria> { it }))
+        assertEquals(2, spec.narrow(ReadCriteria.empty().withDecayK(4.0)).filters.size)
+    }
+
+    @Test
+    fun `E9 requireOnly checks every filter and names the first criterion a store does not apply`() {
+        val spec = ScopedReadSpec.of(scope).narrow(confident).narrow(ReadCriteria.empty().withPinned(true))
+        spec.requireOnly(EnumSet.of(ReadCriterion.MIN_CONFIDENCE, ReadCriterion.PINNED), StoreCapability.SCOPED_READS)
+        ScopedReadSpec.of(scope).requireOnly(emptySet(), StoreCapability.SCOPED_READS)
+        val refusal = assertThrows(UnsupportedCapabilityException::class.java) {
+            spec.requireOnly(setOf(ReadCriterion.MIN_CONFIDENCE), StoreCapability.SCOPED_READS)
+        }
+        assertEquals(StoreCapability.SCOPED_READS, refusal.capability)
+        assertTrue(refusal.message.orEmpty().contains("PINNED"))
+    }
+
+    @Test
+    fun `E10 no scoped type refers to PropositionQuery`() {
+        // A PropositionQuery that names no context matches every context in an ordinary read, so
+        // no scoped type may accept, return or hold one, erased or as a generic argument.
+        val scoped: List<Class<*>> = listOf(
+            ScopedReadSpec::class.java, ScopedReadSpec.Companion::class.java,
+            ReadCriteria::class.java, ReadCriteria.Companion::class.java, ReadCriteriaBuilder::class.java,
+            ReadQuery::class.java, ReadQuery.Companion::class.java, ReadQueryBuilder::class.java,
+            ReadKeywordQuery::class.java, ReadKeywordQuery.Companion::class.java, ReadKeywordQueryBuilder::class.java,
+            ReadVectorSearchRequest::class.java, ReadVectorSearchRequest.Companion::class.java,
+            ReadVectorSearchRequestBuilder::class.java,
+            ReadCriterion::class.java, ReadOrder::class.java,
+            ScopedReads::class.java, ScopedVectorSearch::class.java,
+        )
+        val named: List<Type> = scoped.flatMap { type ->
+            type.declaredMethods.flatMap { it.genericParameterTypes.toList() + it.genericReturnType } +
+                type.declaredConstructors.flatMap { it.genericParameterTypes.toList() } +
+                type.declaredFields.map { it.genericType }
+        }
+        assertTrue(named.size > scoped.size)
+        assertTrue(named.none { it.typeName.contains("PropositionQuery") })
     }
 }

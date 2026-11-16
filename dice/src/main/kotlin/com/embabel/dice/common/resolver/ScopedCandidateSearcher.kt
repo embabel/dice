@@ -26,8 +26,11 @@ import org.jetbrains.annotations.ApiStatus
  *
  * ```java
  * ScopedCandidateSearcher searcher = (suggested, schema, scope) -> SearchResult.empty();
- * SearchResult found = searcher.search(suggested, schema, ContextReadScope.ofValues("alice-session"));
+ * SearchResult found = searcher.search(suggested, schema, spec.getScope());
  * ```
+ *
+ * Code that reads under a [com.embabel.dice.store.ScopedReadSpec] passes the spec's scope, so
+ * the search touches the contexts the reads touch.
  *
  * An implementation keeps these rules:
  *
@@ -45,11 +48,7 @@ import org.jetbrains.annotations.ApiStatus
  * EXPERIMENTAL. This API may change before 1.0.
  */
 @ApiStatus.Experimental
-interface ScopedCandidateSearcher {
-
-    /** Which [ResolutionLevel] a confident match from this searcher counts as. */
-    val resolutionLevel: ResolutionLevel
-        get() = ResolutionLevel.HEURISTIC_MATCH
+fun interface ScopedCandidateSearcher {
 
     /**
      * @param suggested The entity to find matches for.
