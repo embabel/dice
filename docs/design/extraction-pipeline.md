@@ -174,7 +174,9 @@ is in that text. It also accepts a mention that names a known entity of the anal
 `suggestedId` or by a span equal to the entity's name or an alias, when the text contains that
 entity's name or an alias. Names are compared the way `KnownEntityResolver` compares them, so a
 title or a suffix makes no difference. A known entity the text does not name is treated like any
-other mention. A blank span is never grounded.
+other mention. `KnownEntityResolver` matches by name before it looks at an id and takes the first
+match, so a span that is the name of several known entities is grounded only when the text names
+every one of them. A blank span is never grounded.
 
 Grounding defaults to `KEEP` because the stock prompt asks for mentions the text only implies, such
 as a `Cycling` mention on the proposition "Alice cycles". Such a mention is ungrounded, with or

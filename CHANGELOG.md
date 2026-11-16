@@ -222,7 +222,8 @@ and the consumer PRs that deliver it).
   put spaces between words, such as Latin, Cyrillic and Greek, the span must sit at word edges, so
   an inflected or plural form, or a name run together with a number, is a different word. A
   mention that names a known entity of the context, by suggested id, name or alias, is grounded
-  when the text names that entity. A mention of something the text only implies is ungrounded,
+  when the text names that entity, and when several known entities share that name the text must
+  name all of them. A mention of something the text only implies is ungrounded,
   with or without an id. By default the mentions are kept. `withUngroundedMentions(UngroundedMentionHandling.DROP)` removes them before
   resolution, so they are never resolved, never minted as an entity and not left on the
   proposition; the proposition itself is always kept. **Compatibility: additive.**

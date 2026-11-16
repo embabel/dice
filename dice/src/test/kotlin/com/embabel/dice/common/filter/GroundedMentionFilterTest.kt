@@ -178,4 +178,13 @@ class GroundedMentionFilterTest {
             judge(context(thomas), "Tom moved to Paris", mention("Dr. Thomas"), mention("Thomas Jr.")),
         )
     }
+
+    @Test
+    fun `E17 a name shared with a known entity the text does not name grounds nothing`() {
+        val known = context(knownPerson("p-bob", "Bob", "Pat"), knownPerson("p-alice", "Alice", "Pat"))
+        assertEquals(listOf(notInText), judge(known, "Alice waved", mention("Pat")))
+        assertEquals(listOf(notInText), judge(known, "Alice waved", mention("Pat", "p-alice")))
+        assertEquals(listOf(Valid), judge(known, "Alice waved to Bob", mention("Pat")))
+        assertEquals(listOf(Valid), judge(known, "Alice waved", mention("Ally", "p-alice")))
+    }
 }
