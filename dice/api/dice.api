@@ -2547,6 +2547,8 @@ public final class com/embabel/dice/pipeline/PropositionPipeline {
 	public final fun withExecutionStrategy (Lcom/embabel/dice/pipeline/ExtractionExecutionStrategy;)Lcom/embabel/dice/pipeline/PropositionPipeline;
 	public static final fun withExtractor (Lcom/embabel/dice/proposition/PropositionExtractor;)Lcom/embabel/dice/pipeline/PropositionPipeline;
 	public final fun withMentionFilter (Lcom/embabel/dice/common/filter/MentionFilter;)Lcom/embabel/dice/pipeline/PropositionPipeline;
+	public final fun withMentionFilter (Lcom/embabel/dice/common/filter/MentionFilter;Lcom/embabel/dice/pipeline/RejectedMentionHandling;)Lcom/embabel/dice/pipeline/PropositionPipeline;
+	public final fun withMentionGrounding (Lcom/embabel/dice/common/filter/MentionFilter;)Lcom/embabel/dice/pipeline/PropositionPipeline;
 	public final fun withRevision (Lcom/embabel/dice/proposition/revision/PropositionReviser;Lcom/embabel/dice/proposition/PropositionRepository;)Lcom/embabel/dice/pipeline/PropositionPipeline;
 	public final fun withUngroundedMentions (Lcom/embabel/dice/pipeline/UngroundedMentionHandling;)Lcom/embabel/dice/pipeline/PropositionPipeline;
 }

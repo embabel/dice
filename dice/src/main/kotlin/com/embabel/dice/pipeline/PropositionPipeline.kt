@@ -68,6 +68,7 @@ import java.util.concurrent.ConcurrentHashMap
  * - [withEventListener] — observe pipeline events
  * - [withExecutionStrategy] — control how the extraction stage is dispatched
  * - [withUngroundedMentions] — keep or drop mentions whose span isn't in their proposition
+ * - [withMentionGrounding]: replace the check that decides whether a mention is grounded
  *
  * Example usage:
  * ```kotlin
@@ -101,6 +102,8 @@ class PropositionPipeline private constructor(
     eventListener: DiceEventListener = DiceEventListener.DEV_NULL,
     private val executionStrategy: ExtractionExecutionStrategy = SerialExtractionStrategy,
     private val ungroundedMentions: UngroundedMentionHandling = UngroundedMentionHandling.KEEP,
+    private val groundingCheck: MentionFilter = GroundedMentionFilter(),
+    private val mentionFilterHandling: RejectedMentionHandling = RejectedMentionHandling.LEAVE_UNRESOLVED,
 ) {
 
     /** The original listener as supplied — propagated verbatim through `with*` copies to avoid wrapping it multiple times. */
@@ -125,9 +128,6 @@ class PropositionPipeline private constructor(
 
     private val logger = LoggerFactory.getLogger(PropositionPipeline::class.java)
 
-    /** The check that decides whether a proposition names each of its mentions. */
-    private val groundingCheck: MentionFilter = GroundedMentionFilter()
-
     /**
      * Maps the pipeline's handling of ungrounded mentions to the handling of a grounding rejection.
      *
@@ -150,18 +150,54 @@ class PropositionPipeline private constructor(
      * @return A new pipeline instance with revision enabled
      */
     fun withRevision(reviser: PropositionReviser, propositionRepository: PropositionRepository): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy, ungroundedMentions)
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy, ungroundedMentions, groundingCheck, mentionFilterHandling)
 
     /**
      * Add a mention filter to validate entity mentions before creating entities.
-     * When enabled, low-quality mentions (vague references, overly long spans, etc.)
-     * are filtered out before entity resolution.
+     * A mention the filter rejects is not resolved and stays on its proposition.
+     * The pipeline applies the filter for every extractor and hands the extractor no filter.
      *
      * @param filter The mention filter to use
      * @return A new pipeline instance with mention filtering enabled
      */
     fun withMentionFilter(filter: MentionFilter): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, filter, rawEventListener, executionStrategy, ungroundedMentions)
+        withMentionFilter(filter, RejectedMentionHandling.LEAVE_UNRESOLVED)
+
+    /**
+     * Add a mention filter and choose what happens to a mention it rejects.
+     *
+     * With [RejectedMentionHandling.KEEP] the rejection is only reported, and the mention is
+     * resolved and stays on its proposition. With [RejectedMentionHandling.LEAVE_UNRESOLVED] the
+     * mention is not offered to the entity resolver and stays on its proposition. With
+     * [RejectedMentionHandling.DROP] the mention is not offered to the entity resolver and is
+     * taken off its proposition. The proposition itself is always kept.
+     *
+     * The pipeline applies the filter for every extractor and hands the extractor no filter.
+     * Every rejection is listed in [ChunkPropositionResult.rejectedMentions].
+     *
+     * @param filter The mention filter to use
+     * @param handling What happens to a mention the filter rejects
+     * @return A new pipeline instance with that filter and handling
+     */
+    fun withMentionFilter(filter: MentionFilter, handling: RejectedMentionHandling): PropositionPipeline =
+        PropositionPipeline(extractor, reviser, propositionRepository, filter, rawEventListener, executionStrategy, ungroundedMentions, groundingCheck, handling)
+
+    /**
+     * Replace the check that decides whether a mention is grounded. The default is
+     * [GroundedMentionFilter]. [withUngroundedMentions] still chooses whether a mention the check
+     * rejects is kept or dropped.
+     *
+     * The check answers one question: is the mention supported by the text of its proposition.
+     * Its rejections are reported as ungrounded mentions, with reason
+     * [UngroundedMention.Reason.BLANK_SPAN] for a blank span and
+     * [UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION] for any other. A rule about anything
+     * else goes in [withMentionFilter].
+     *
+     * @param check The grounding check to use
+     * @return A new pipeline instance with that grounding check
+     */
+    fun withMentionGrounding(check: MentionFilter): PropositionPipeline =
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy, ungroundedMentions, check, mentionFilterHandling)
 
     /**
      * Register a listener for pipeline events.
@@ -171,6 +207,8 @@ class PropositionPipeline private constructor(
      * [RevisionResult] (revision-only). These candidate events are **pre-persistence** signals:
      * the canonical durable signal is `PropositionPersisted`, emitted by the repository decorator.
      * Each chunk in which a mention's span is not in its own proposition's text also emits one [UngroundedMentionsFound].
+     * Every rejected mention, from the grounding check or the mention filter, is also listed on the
+     * chunk result in [ChunkPropositionResult.rejectedMentions].
      *
      * Defaults to [DiceEventListener.DEV_NULL]; behavior is unchanged when no listener is set.
      *
@@ -178,7 +216,7 @@ class PropositionPipeline private constructor(
      * @return A new pipeline instance with the listener registered
      */
     fun withEventListener(listener: DiceEventListener): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, listener, executionStrategy, ungroundedMentions)
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, listener, executionStrategy, ungroundedMentions, groundingCheck, mentionFilterHandling)
 
     /**
      * Set the [ExtractionExecutionStrategy] used to dispatch the stateless per-chunk
@@ -196,7 +234,7 @@ class PropositionPipeline private constructor(
      * @return A new pipeline instance with the strategy registered
      */
     fun withExecutionStrategy(strategy: ExtractionExecutionStrategy): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, strategy, ungroundedMentions)
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, strategy, ungroundedMentions, groundingCheck, mentionFilterHandling)
 
     /**
      * Choose what happens to a mention whose span doesn't appear in the text of the proposition
@@ -209,13 +247,17 @@ class PropositionPipeline private constructor(
      * the result. The proposition itself is always kept, even if it loses every mention.
      *
      * Either way, the ungrounded mentions are reported to the event listener as one
-     * [UngroundedMentionsFound] per chunk.
+     * [UngroundedMentionsFound] per chunk, and listed on the chunk result in
+     * [ChunkPropositionResult.rejectedMentions].
+     *
+     * When a dropped mention carried a suggested id and no remaining mention with the same span
+     * and type has one, the resolver candidates for that span and type get that id.
      *
      * @param handling whether to keep or drop ungrounded mentions
      * @return A new pipeline instance with that handling
      */
     fun withUngroundedMentions(handling: UngroundedMentionHandling): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy, handling)
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy, handling, groundingCheck, mentionFilterHandling)
 
     /**
      * Carries the resolver-free output of the extraction stage for a single chunk so it can be produced
@@ -226,6 +268,7 @@ class PropositionPipeline private constructor(
         val suggestedPropositions: SuggestedPropositions,
         val suggestedEntities: SuggestedEntities,
         val ungrounded: List<UngroundedMention>,
+        val rejected: List<RejectedMention>,
     )
 
     /**
@@ -242,13 +285,15 @@ class PropositionPipeline private constructor(
         // Check every mention against its own proposition before any of them can become a
         // resolver candidate. In DROP mode the ungrounded mentions leave both the propositions
         // and the candidates for entity creation. In KEEP mode nothing changes but the report.
+        // The caller's filter runs here too, so the extractor is handed no filter and each
+        // mention is judged by the filter once.
         val screening = MentionScreening.screen(
             extracted = extracted,
             context = context,
             grounding = groundingCheck,
             groundingHandling = groundingHandling(),
-            filter = null,
-            filterHandling = RejectedMentionHandling.LEAVE_UNRESOLVED,
+            filter = mentionFilter,
+            filterHandling = mentionFilterHandling,
         )
 
         // Step 2: Convert mentions to suggested entities (include source text for context)
@@ -256,11 +301,12 @@ class PropositionPipeline private constructor(
             screening.candidates,
             context,
             chunk.text,
-            mentionFilter
+            null
         )
         logger.debug("Created {} suggested entities", suggestedEntities.suggestedEntities.size)
 
-        return ExtractionStageResult(chunk, screening.result, suggestedEntities, screening.ungrounded)
+        val rejected = screening.rejected.map { if (it.chunkId == chunk.id) it else it.copy(chunkId = chunk.id) }
+        return ExtractionStageResult(chunk, screening.result, suggestedEntities, screening.ungrounded, rejected)
     }
 
     /**
@@ -383,6 +429,7 @@ class PropositionPipeline private constructor(
             entityResolutions = resolutions,
             propositions = propositions,
             revisionResults = revisionResults,
+            rejectedMentions = extraction.rejected,
         )
     }
 
