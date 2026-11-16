@@ -78,8 +78,9 @@ They read Kotlin metadata, so `internal` declarations stay out. The `abi-tools.v
 pom sets their version, apart from the Kotlin compiler version. Raise it when the Kotlin version moves.
 
 Generated code is left out. A module names its generated source root in `api.listing.generated.sources`, as
-`dice-storage` does for Drivine's query DSL. A file facade (`FooKt`) whose top-level functions are all
-experimental goes to the experimental listing.
+`dice-storage` does for Drivine's query DSL, whose output `./mvnw clean` also deletes. The check stops when a
+generated file has the same name as a hand-written one, because it cannot tell their classes apart. A file
+facade (`FooKt`) whose top-level functions are all experimental goes to the experimental listing.
 
 A marker on an enum entry, or on a member of a stable type, moves nothing and does not show in the count.
 Count the types (stable, then experimental):
