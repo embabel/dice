@@ -18,20 +18,27 @@ package com.embabel.dice;
 import com.embabel.agent.rag.model.Chunk;
 import com.embabel.dice.pipeline.BatchedExtractionStrategy;
 import com.embabel.dice.pipeline.ExtractionExecutionStrategy;
+import com.embabel.dice.pipeline.ParallelExtractionStrategy;
 import com.embabel.dice.pipeline.SerialExtractionStrategy;
 import kotlin.jvm.functions.Function1;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Checks that a Java caller can run an extraction strategy with a plain
  * java.util.function.Function, and that a strategy written in Java gets that method for free.
+ * It also checks that an Error from the extraction reaches the caller, while an ordinary
+ * exception still becomes a null slot.
  */
 class ExtractionExecutionStrategyJavaInteropTest {
 
@@ -39,6 +46,13 @@ class ExtractionExecutionStrategyJavaInteropTest {
             Chunk.create("alpha", "doc-1"),
             Chunk.create("beta", "doc-1"),
             Chunk.create("gamma", "doc-1"));
+
+    private final ExecutorService executor = Executors.newFixedThreadPool(2);
+
+    @AfterEach
+    void tearDown() {
+        executor.shutdownNow();
+    }
 
     @Test
     void serialStrategyReturnsTextsInInputOrder() {
@@ -102,5 +116,49 @@ class ExtractionExecutionStrategyJavaInteropTest {
         List<String> results = SerialExtractionStrategy.INSTANCE.executeAll(chunks, describe);
 
         assertEquals(Arrays.asList("seen", "seen", "seen"), results);
+    }
+
+    @Test
+    void serialStrategyLetsErrorReachCaller() {
+        assertThrows(AssertionError.class,
+                () -> SerialExtractionStrategy.INSTANCE.executeAll(chunks, c -> {
+                    throw new AssertionError("boom");
+                }));
+    }
+
+    @Test
+    void parallelStrategyLetsErrorReachCaller() {
+        ParallelExtractionStrategy strategy = new ParallelExtractionStrategy(executor);
+
+        assertThrows(AssertionError.class,
+                () -> strategy.executeAll(chunks, c -> {
+                    throw new AssertionError("boom");
+                }));
+    }
+
+    @Test
+    void batchedStrategyLetsErrorReachCaller() {
+        BatchedExtractionStrategy strategy = new BatchedExtractionStrategy(2, executor);
+
+        assertThrows(AssertionError.class,
+                () -> strategy.executeAll(chunks, c -> {
+                    throw new AssertionError("boom");
+                }));
+    }
+
+    @Test
+    void runtimeExceptionStillGivesNullSlotOnPooledStrategies() {
+        Function<Chunk, String> failOnBeta = chunk -> {
+            if (chunk.getText().equals("beta")) {
+                throw new RuntimeException("extraction failed");
+            }
+            return chunk.getText();
+        };
+
+        List<String> parallel = new ParallelExtractionStrategy(executor).executeAll(chunks, failOnBeta);
+        List<String> batched = new BatchedExtractionStrategy(2, executor).executeAll(chunks, failOnBeta);
+
+        assertEquals(Arrays.asList("alpha", null, "gamma"), parallel);
+        assertEquals(Arrays.asList("alpha", null, "gamma"), batched);
     }
 }

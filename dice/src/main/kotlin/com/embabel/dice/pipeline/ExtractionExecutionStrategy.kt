@@ -16,10 +16,23 @@
 package com.embabel.dice.pipeline
 
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.dice.common.attemptCatching
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.function.Function
+
+/**
+ * Waits for [future] and hands back its value. An Error thrown during extraction arrives wrapped
+ * in a [CompletionException], so this unwraps it and rethrows the Error as it was.
+ */
+private fun <T> joinRethrowingErrors(future: CompletableFuture<T>): T =
+    try {
+        future.join()
+    } catch (e: CompletionException) {
+        throw (e.cause as? Error) ?: e
+    }
 
 /**
  * Controls how the [PropositionPipeline] dispatches the stateless per-chunk extraction stage.
@@ -29,14 +42,15 @@ import java.util.function.Function
  * ## Contract
  * - **Input order is preserved**: the returned list has exactly `chunks.size` elements and
  *   `result[i]` corresponds to `chunks[i]` (or `null` if extraction of `chunks[i]` failed).
- * - **Failure is a `null` slot**: when `extract(chunk)` throws, that slot becomes `null` rather
- *   than propagating the exception. The pipeline maps a `null` slot to a
+ * - **Failure is a `null` slot**: when `extract(chunk)` throws an Exception, that slot is `null`.
+ *   An Error is not caught and reaches the caller of [execute]. An interrupt gives a `null` slot
+ *   and sets the thread's interrupt flag again. The pipeline maps a `null` slot to a
  *   [ChunkPropositionResult.Failed]. No element is ever dropped or reordered.
  *
  * ## Executor ownership
  * Each implementation owns its execution mechanism. The [execute] signature intentionally
- * does not mention [ExecutorService] — any executor is an injected implementation detail.
- * A caller-supplied executor is never shut down by the strategy — its lifecycle stays the
+ * does not mention [ExecutorService], because any executor is an injected implementation detail.
+ * A caller-supplied executor is never shut down by the strategy, so its lifecycle stays the
  * caller's. When a strategy creates its own pool (the no-executor constructors), that pool is
  * the strategy's to clean up: both concurrent strategies are [AutoCloseable], and [close]
  * shuts down only an internally-created pool.
@@ -82,7 +96,7 @@ interface ExtractionExecutionStrategy {
  */
 object SerialExtractionStrategy : ExtractionExecutionStrategy {
     override fun <T> execute(chunks: List<Chunk>, extract: (Chunk) -> T): List<T?> =
-        chunks.map { runCatching { extract(it) }.getOrNull() }
+        chunks.map { attemptCatching { extract(it) }.getOrNull() }
 }
 
 /**
@@ -114,9 +128,9 @@ class ParallelExtractionStrategy private constructor(
     override fun <T> execute(chunks: List<Chunk>, extract: (Chunk) -> T): List<T?> =
         chunks.map { chunk ->
             CompletableFuture.supplyAsync({
-                runCatching { extract(chunk) }.getOrElse { null }
+                attemptCatching { extract(chunk) }.getOrNull()
             }, executor)
-        }.map { it.join() }
+        }.map { joinRethrowingErrors(it) }
 
     /** Shuts down an internally-created pool; a no-op when the executor was caller-supplied. */
     override fun close() {
@@ -126,7 +140,7 @@ class ParallelExtractionStrategy private constructor(
 
 /**
  * Processes chunks in fixed-size windows: each window fans out concurrently on the injected
- * [executor] and is fully joined before the next window starts. This is the rate-limit lever —
+ * [executor] and is fully joined before the next window starts. This is the rate-limit lever:
  * it caps in-flight `extract()` calls to [batchSize] at a time. Results are returned in input order.
  *
  * `BatchedExtractionStrategy(batchSize = 1)` is the safe degrade-to-serial path until extractor
@@ -158,9 +172,9 @@ class BatchedExtractionStrategy private constructor(
         chunks.chunked(batchSize).flatMap { window ->
             window.map { chunk ->
                 CompletableFuture.supplyAsync({
-                    runCatching { extract(chunk) }.getOrElse { null }
+                    attemptCatching { extract(chunk) }.getOrNull()
                 }, executor)
-            }.map { it.join() }
+            }.map { joinRethrowingErrors(it) }
         }
 
     /** Shuts down an internally-created pool; a no-op when the executor was caller-supplied. */
