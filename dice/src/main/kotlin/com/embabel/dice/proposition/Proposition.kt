@@ -15,7 +15,9 @@
  */
 package com.embabel.dice.proposition
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.model.Retrievable
 import com.embabel.common.core.types.ZeroToOne
@@ -112,6 +114,7 @@ enum class PropositionStatus {
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class Proposition(
     override val id: String = UUID.randomUUID().toString(),
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
     val text: String,
     override val mentions: List<EntityMention>,
@@ -140,9 +143,11 @@ data class Proposition(
 ) : Derivation, ReferencesEntities, Retrievable {
 
     /**
-     * Java-friendly accessor for contextId value.
+     * Java-friendly accessor for the context id as a plain string. It is a convenience
+     * only, so it stays out of the JSON; the context is written once, under `contextId`.
      */
     @get:JvmName("getContextIdValue")
+    @get:JsonIgnore
     val contextIdValue: String get() = contextId.value
 
     /**
