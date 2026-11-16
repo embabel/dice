@@ -57,14 +57,9 @@ interface TemporalQueryCapable {
     fun findByRevisedBetween(start: Instant, end: Instant): List<Proposition> =
         findAll().filter { it.lastTouched in start..end }
 
-    /**
-     * Find all propositions ordered by effective confidence (highest first).
-     * Applies time-based decay to confidence scores.
-     *
-     * @return Propositions ordered by decayed confidence, using the default decay rate
-     */
-    fun findAllOrderedByEffectiveConfidence(): List<Proposition> =
-        findAllOrderedByEffectiveConfidence(Proposition.DEFAULT_DECAY_K)
+    // ========================================================================
+    // Effective confidence queries - apply decay for ranking
+    // ========================================================================
 
     /**
      * Find all propositions ordered by effective confidence (highest first).
@@ -77,15 +72,6 @@ interface TemporalQueryCapable {
         findAll().sortedByDescending { it.effectiveConfidence(k) }
 
     /**
-     * Find propositions with effective confidence above a threshold, using the default decay rate.
-     *
-     * @param threshold Minimum effective confidence (after decay)
-     * @return Propositions with effective confidence >= threshold, ordered by confidence
-     */
-    fun findByEffectiveConfidenceAbove(threshold: Double): List<Proposition> =
-        findByEffectiveConfidenceAbove(threshold, Proposition.DEFAULT_DECAY_K)
-
-    /**
      * Find propositions with effective confidence above a threshold.
      *
      * @param threshold Minimum effective confidence (after decay)
@@ -96,28 +82,6 @@ interface TemporalQueryCapable {
         findAll()
             .filter { it.effectiveConfidence(k) >= threshold }
             .sortedByDescending { it.effectiveConfidence(k) }
-
-    /**
-     * Find propositions from a time range, ordered by effective confidence as of the end of the range.
-     *
-     * @param start Start of creation range
-     * @param end End of creation range
-     * @return Propositions from range, ordered by effective confidence at the end of the range
-     */
-    fun findByCreatedBetweenOrderedByEffectiveConfidence(start: Instant, end: Instant): List<Proposition> =
-        findByCreatedBetweenOrderedByEffectiveConfidence(start = start, end = end, k = Proposition.DEFAULT_DECAY_K)
-
-    /**
-     * Find propositions from a time range, ordered by effective confidence as of a point in time.
-     * Useful for temporal analysis: "What was most confidently true during Q1?"
-     *
-     * @param start Start of creation range
-     * @param end End of creation range
-     * @param asOf Calculate effective confidence as of this time
-     * @return Propositions from range, ordered by effective confidence at the given time
-     */
-    fun findByCreatedBetweenOrderedByEffectiveConfidence(start: Instant, end: Instant, asOf: Instant): List<Proposition> =
-        findByCreatedBetweenOrderedByEffectiveConfidence(start, end, asOf, Proposition.DEFAULT_DECAY_K)
 
     /**
      * Find propositions from a time range, ordered by effective confidence as of a point in time.

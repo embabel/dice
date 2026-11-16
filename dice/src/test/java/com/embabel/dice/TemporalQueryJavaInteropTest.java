@@ -26,14 +26,14 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Checks that Java callers can run the temporal queries on TemporalQueryCapable without
- * passing the decay-rate multiplier k.
+ * Checks that Java callers can run the temporal queries on TemporalQueryCapable by passing
+ * Proposition.DEFAULT_DECAY_K explicitly, the way a Java developer would.
  *
  * Contract:
  * R1: the store is a plain lambda, so TemporalQueryCapable must stay a single-method interface.
- * E1: the no-argument ordered query equals the call with Proposition.DEFAULT_DECAY_K and puts the fresh proposition first.
- * E2: the threshold query equals the two-argument call with DEFAULT_DECAY_K and leaves the decayed proposition out.
- * E3: the two-argument window query equals (start, end, end) and (start, end, end, DEFAULT_DECAY_K).
+ * E1: the ordered query called with DEFAULT_DECAY_K puts the fresh proposition first.
+ * E2: the threshold query called with a threshold and DEFAULT_DECAY_K leaves the decayed proposition out.
+ * E3: the window query called with (start, end, end, DEFAULT_DECAY_K) returns both propositions, fresh first.
  * I1: a query never changes the propositions the store returns.
  */
 class TemporalQueryJavaInteropTest {
@@ -59,42 +59,39 @@ class TemporalQueryJavaInteropTest {
 
     private final TemporalQueryCapable store = () -> List.of(fresh, old);
 
-    // E1: no-argument ordered query uses the default decay rate and puts the fresh proposition first.
+    // E1: ordered query called with the default decay rate puts the fresh proposition first.
     @Test
-    void findAllOrderedByEffectiveConfidenceNeedsNoArgument() {
-        List<Proposition> result = store.findAllOrderedByEffectiveConfidence();
+    void findAllOrderedByEffectiveConfidenceTakesDefaultDecayRate() {
+        List<Proposition> result = store.findAllOrderedByEffectiveConfidence(Proposition.DEFAULT_DECAY_K);
 
-        assertEquals(store.findAllOrderedByEffectiveConfidence(Proposition.DEFAULT_DECAY_K), result);
         assertSame(fresh, result.get(0));
+        assertEquals(List.of(fresh, old), result);
     }
 
-    // E2: threshold query uses the default decay rate and leaves out the decayed proposition.
+    // E2: threshold query called with the default decay rate leaves out the decayed proposition.
     @Test
-    void findByEffectiveConfidenceAboveNeedsNoK() {
-        List<Proposition> result = store.findByEffectiveConfidenceAbove(0.5);
+    void findByEffectiveConfidenceAboveTakesDefaultDecayRate() {
+        List<Proposition> result = store.findByEffectiveConfidenceAbove(0.5, Proposition.DEFAULT_DECAY_K);
 
-        assertEquals(store.findByEffectiveConfidenceAbove(0.5, Proposition.DEFAULT_DECAY_K), result);
         assertEquals(List.of(fresh), result);
     }
 
-    // E3: window query with two arguments matches the three- and four-argument forms with end as asOf.
+    // E3: window query with end as asOf and the default decay rate returns both propositions, fresh first.
     @Test
-    void findByCreatedBetweenOrderedByEffectiveConfidenceNeedsNoAsOfOrK() {
+    void findByCreatedBetweenOrderedByEffectiveConfidenceTakesAsOfAndDecayRate() {
         Instant start = NOW.minus(400, ChronoUnit.DAYS);
         Instant end = NOW.plus(1, ChronoUnit.DAYS);
 
-        List<Proposition> result = store.findByCreatedBetweenOrderedByEffectiveConfidence(start, end);
+        List<Proposition> result = store.findByCreatedBetweenOrderedByEffectiveConfidence(start, end, end, Proposition.DEFAULT_DECAY_K);
 
-        assertEquals(store.findByCreatedBetweenOrderedByEffectiveConfidence(start, end, end), result);
-        assertEquals(store.findByCreatedBetweenOrderedByEffectiveConfidence(start, end, end, Proposition.DEFAULT_DECAY_K), result);
         assertEquals(List.of(fresh, old), result);
     }
 
     // R1 and I1: the store is still a lambda and queries leave the propositions untouched.
     @Test
     void queriesDoNotChangeTheStoredPropositions() {
-        store.findAllOrderedByEffectiveConfidence();
-        store.findByEffectiveConfidenceAbove(0.5);
+        store.findAllOrderedByEffectiveConfidence(Proposition.DEFAULT_DECAY_K);
+        store.findByEffectiveConfidenceAbove(0.5, Proposition.DEFAULT_DECAY_K);
 
         assertEquals(0.9, fresh.getConfidence(), 1e-12);
         assertEquals(0.5, old.getDecay(), 1e-12);
