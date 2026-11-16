@@ -37,10 +37,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * E1: a scoped report writes its context as "contextId" with the plain id string.
  * E2: a whole-graph report writes "contextId" as JSON null.
+ * E3: a scoped check result writes "contextId" as the plain id string, both at its top level and
+ *     inside its nested "report".
  * I1: no key in the JSON contains a dash, so the compiler-mangled name never leaks out.
  * I2: no "contextIdValue" key is written, because that accessor is for Java callers only.
+ * I3: the check result's top level and nested report carry no dashed key.
+ * I4: the check result's top level and nested report carry no "contextIdValue" key.
  *
- * Only DriftReport is covered here. DriftCheckResult is checked in its own item.
+ * DriftReport and DriftCheckResult are both covered here.
  */
 class DriftContextIdJsonJavaTest {
 
@@ -126,6 +130,50 @@ class DriftContextIdJsonJavaTest {
                         keysOf(mapper.valueToTree(report)).contains("contextIdValue"),
                         "contextIdValue must not be serialized");
             }
+        }
+    }
+
+    @Test
+    void e3_scopedCheckResultWritesContextIdAsAcmeAtBothLevels() {
+        DriftCheckResult result = DriftContextIdFixtures.scopedResult("acme");
+
+        for (ObjectMapper mapper : bothMappers()) {
+            JsonNode json = mapper.valueToTree(result);
+            JsonNode topLevel = json.get(CONTEXT_KEY);
+            JsonNode nested = json.get("report") == null ? null : json.get("report").get(CONTEXT_KEY);
+
+            assertNotNull(topLevel, "expected a top-level contextId key, got " + keysOf(json));
+            assertEquals("acme", topLevel.asText());
+            assertNotNull(nested, "expected a contextId key in report, got " + keysOf(json.get("report")));
+            assertEquals("acme", nested.asText());
+        }
+    }
+
+    @Test
+    void i3_noCheckResultKeyContainsADash() {
+        DriftCheckResult result = DriftContextIdFixtures.scopedResult("acme");
+
+        for (ObjectMapper mapper : bothMappers()) {
+            JsonNode json = mapper.valueToTree(result);
+            for (String key : keysOf(json)) {
+                assertFalse(key.contains("-"), "top-level key must not contain a dash, got " + key);
+            }
+            for (String key : keysOf(json.get("report"))) {
+                assertFalse(key.contains("-"), "report key must not contain a dash, got " + key);
+            }
+        }
+    }
+
+    @Test
+    void i4_noCheckResultLevelWritesContextIdValue() {
+        DriftCheckResult result = DriftContextIdFixtures.scopedResult("acme");
+
+        for (ObjectMapper mapper : bothMappers()) {
+            JsonNode json = mapper.valueToTree(result);
+            assertFalse(keysOf(json).contains("contextIdValue"),
+                    "top-level contextIdValue must not be serialized, got " + keysOf(json));
+            assertFalse(keysOf(json.get("report")).contains("contextIdValue"),
+                    "report contextIdValue must not be serialized, got " + keysOf(json.get("report")));
         }
     }
 }
