@@ -22,8 +22,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.jetbrains.kotlin.abi.tools.AbiTools;
@@ -86,12 +88,15 @@ public final class ApiListing {
         boolean update = args[0].equals("update");
         Path classesDir = Path.of(args[1]);
         List<File> classFiles = classFiles(classesDir);
+        Map<Path, String> sourceNames = new HashMap<>();
         if (generated != null) {
-            for (File classFile : List.copyOf(classFiles)) {
-                if (isGenerated(classesDir, classFile.toPath(), generated)) {
-                    classFiles.remove(classFile);
+            List<File> kept = new ArrayList<>();
+            for (File classFile : classFiles) {
+                if (!isGenerated(classesDir, classFile.toPath(), generated, sourceNames)) {
+                    kept.add(classFile);
                 }
             }
+            classFiles = kept;
         }
         if (classFiles.isEmpty()) {
             err.println("No compiled classes to list under " + args[1] + ". Compile the module first.");
@@ -145,28 +150,48 @@ public final class ApiListing {
     }
 
     /**
-     * Tells whether a class was compiled from a file under the generated source root.
-     *
-     * <p>The source file name comes from the outermost class, because a class the compiler copies
-     * from an inline function names the inline function's file. A class with no source file name is
-     * kept.
+     * Tells whether a class was compiled from a file under the generated source root. A class with no
+     * source file name is kept.
      *
      * @param classesDir the module's class directory
      * @param classFile a class file under it
      * @param generatedRoot the generated source root
+     * @param sourceNames source file names already read, by outermost class file
      * @return true when the source file exists under the root, in the class's package directory
      */
-    private static boolean isGenerated(Path classesDir, Path classFile, Path generatedRoot) throws IOException {
-        String fileName = classFile.getFileName().toString();
-        int nested = fileName.indexOf('$');
-        Path outer = nested > 0 ? classFile.resolveSibling(fileName.substring(0, nested) + ".class") : classFile;
-        String source = sourceFile(Files.exists(outer) ? outer : classFile);
-        if (source == null) {
+    private static boolean isGenerated(Path classesDir, Path classFile, Path generatedRoot,
+            Map<Path, String> sourceNames) throws IOException {
+        String source = sourceName(classFile, sourceNames);
+        if (source.isEmpty()) {
             return false;
         }
         Path packageDir = classesDir.relativize(classFile).getParent();
         Path sourceDir = packageDir == null ? generatedRoot : generatedRoot.resolve(packageDir.toString());
         return Files.isRegularFile(sourceDir.resolve(source));
+    }
+
+    /**
+     * Finds the source file name for a class, read once per outermost class.
+     *
+     * <p>The name comes from the outermost class, because a class the compiler copies from an inline
+     * function names the inline function's file.
+     *
+     * @param classFile the class file
+     * @param sourceNames source file names already read, by outermost class file
+     * @return the name, or an empty string when the class records none
+     */
+    private static String sourceName(Path classFile, Map<Path, String> sourceNames) throws IOException {
+        String fileName = classFile.getFileName().toString();
+        int nested = fileName.indexOf('$');
+        Path outer = nested > 0 ? classFile.resolveSibling(fileName.substring(0, nested) + ".class") : classFile;
+        Path read = Files.exists(outer) ? outer : classFile;
+        String cached = sourceNames.get(read);
+        if (cached == null) {
+            String source = sourceFile(read);
+            cached = source == null ? "" : source;
+            sourceNames.put(read, cached);
+        }
+        return cached;
     }
 
     /**
