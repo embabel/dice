@@ -111,9 +111,16 @@ data class LlmPropositionReviser(
     private val logger = LoggerFactory.getLogger(LlmPropositionReviser::class.java)
 
     /** A similar proposition gives a small confidence lift, capped at 0.95, and slower decay. */
-    private val reinforcementRule = ReinforcementRule(
+    private val similarRule = ReinforcementRule(
         confidence = { existing, new -> (existing.confidence + new.confidence * 0.1).coerceAtMost(0.95) },
         decayFactor = 0.85,
+        touchLastAccessed = true,
+    )
+
+    /** An identical proposition gives a larger confidence lift, capped at 0.99, and slower decay still. */
+    private val identicalRule = ReinforcementRule(
+        confidence = { existing, new -> (existing.confidence + new.confidence * 0.3).coerceAtMost(0.99) },
+        decayFactor = 0.7,
         touchLastAccessed = true,
     )
 
@@ -667,33 +674,30 @@ data class LlmPropositionReviser(
         }
 
     /**
-     * Merge two propositions that express identical information.
-     * Combines grounding, boosts confidence, uses most recent text.
+     * Reinforces the stored proposition with one that states the same thing. Confidence rises by
+     * three tenths of the new proposition's confidence up to 0.99 and never falls. Decay is
+     * multiplied by 0.7. The new proposition's grounding, provenance entries and source ids are
+     * folded in and the reinforce count goes up by one. The stored text is kept. When the stored
+     * proposition already holds all of the new one's evidence it is returned unchanged.
+     *
+     * @param existing the stored proposition
+     * @param new the proposition that states the same thing
+     * @return the reinforced copy of [existing], or [existing] itself when nothing new arrives
      */
-    private fun mergePropositions(existing: Proposition, new: Proposition): Proposition {
-        // Boost confidence when we see the same information again
-        val boostedConfidence = (existing.confidence + new.confidence * 0.3).coerceAtMost(0.99)
-        // Slow decay — repeated confirmation means the fact is durable
-        val slowedDecay = (existing.decay * 0.7).coerceAtLeast(0.0)
-        // Combine grounding and the richer provenance entries (both deduplicated)
-        val combinedGrounding = (existing.grounding + new.grounding).distinct()
-        val combinedProvenance = (existing.provenanceEntries + new.provenanceEntries).distinct()
-
-        return existing.copy(
-            confidence = boostedConfidence,
-            decay = slowedDecay,
-            grounding = combinedGrounding,
-            provenanceEntries = combinedProvenance,
-            reinforceCount = existing.reinforceCount + 1,
-            contentRevised = Instant.now(),
-            lastAccessed = Instant.now(),
-        )
-    }
+    private fun mergePropositions(existing: Proposition, new: Proposition): Proposition =
+        reinforce(existing, new, identicalRule)
 
     /**
-     * Reinforce an existing proposition with new supporting evidence.
-     * Slightly boosts confidence and adds grounding.
+     * Reinforces the stored proposition with a similar one. Confidence rises by one tenth of the
+     * new proposition's confidence up to 0.95 and never falls. Decay is multiplied by 0.85. The new
+     * proposition's grounding, provenance entries and source ids are folded in and the reinforce
+     * count goes up by one. The stored text is kept. When the stored proposition already holds all
+     * of the new one's evidence it is returned unchanged.
+     *
+     * @param existing the stored proposition
+     * @param new the similar proposition
+     * @return the reinforced copy of [existing], or [existing] itself when nothing new arrives
      */
     private fun reinforceProposition(existing: Proposition, new: Proposition): Proposition =
-        reinforce(existing, new, reinforcementRule)
+        reinforce(existing, new, similarRule)
 }
