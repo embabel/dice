@@ -121,11 +121,34 @@ class ConsolidatorReinforceCharacterisationTest {
             existing.copy(
                 confidence = r.confidence,
                 grounding = r.grounding,
+                provenanceEntries = listOf(pA, pB),
+                reinforceCount = 3,
                 contentRevised = r.contentRevised,
                 metadataRevised = r.metadataRevised,
             ),
             r,
         )
+    }
+
+    @Test
+    fun `the session proposition's provenance is added without duplicates`() {
+        assertEquals(listOf(pA, pB), reinforcedFrom(existing()).provenanceEntries)
+    }
+
+    @Test
+    fun `reinforce count goes up by one`() {
+        assertEquals(3, reinforcedFrom(existing()).reinforceCount)
+    }
+
+    @Test
+    fun `a session proposition whose evidence is already held leaves the stored one unchanged`() {
+        val existing = existing()
+        val held = proposition(confidence = 0.3, grounding = listOf("g1"), provenance = listOf(pA))
+        val result = DefaultMemoryConsolidator().consolidate(listOf(held), listOf(existing))
+        assertEquals(listOf(existing), result.reinforced)
+        assertTrue(result.promoted.isEmpty(), "promoted ${result.promoted}")
+        assertTrue(result.discarded.isEmpty(), "discarded ${result.discarded}")
+        assertTrue(result.merged.isEmpty(), "merged ${result.merged}")
     }
 
     @Test

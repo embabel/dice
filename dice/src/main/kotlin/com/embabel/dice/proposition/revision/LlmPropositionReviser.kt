@@ -114,8 +114,6 @@ data class LlmPropositionReviser(
     private val reinforcementRule = ReinforcementRule(
         confidence = { existing, new -> (existing.confidence + new.confidence * 0.1).coerceAtMost(0.95) },
         decayFactor = 0.85,
-        mergeProvenance = true,
-        countReinforcement = true,
         touchLastAccessed = true,
     )
 

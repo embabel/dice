@@ -25,24 +25,21 @@ import java.time.Instant
  *
  * @property confidence works out the new confidence from the existing proposition and the evidence
  * @property decayFactor multiplies the existing decay, or leaves decay alone when null
- * @property mergeProvenance when true, adds the evidence's provenance entries to the existing ones
- * @property countReinforcement when true, adds one to the reinforce count
  * @property touchLastAccessed when true, stamps the last-accessed time with the revision time
  */
 internal class ReinforcementRule(
     val confidence: (existing: Proposition, evidence: Proposition) -> Double,
     val decayFactor: Double? = null,
-    val mergeProvenance: Boolean = false,
-    val countReinforcement: Boolean = false,
     val touchLastAccessed: Boolean = false,
 )
 
 /**
  * Strengthens a stored proposition with new evidence.
  *
- * The evidence's grounding and source ids are folded in with [Proposition.absorbEvidence].
- * Confidence never goes below the stored value. One instant is stamped on both the content and
- * metadata revision times.
+ * The evidence's grounding, provenance entries and source ids are folded in with
+ * [Proposition.absorbEvidence]. The reinforce count goes up by one for new evidence. Confidence
+ * never goes below the stored value. One instant is stamped on both the content and metadata
+ * revision times.
  *
  * The stored proposition comes back as it is in two cases. The evidence has the same id, or the
  * evidence names a source and the stored proposition already holds all of it. A source is a
@@ -66,8 +63,7 @@ internal fun reinforce(existing: Proposition, evidence: Proposition, rule: Reinf
     return folded.copy(
         confidence = rule.confidence(existing, evidence).coerceIn(existing.confidence, 1.0),
         decay = rule.decayFactor?.let { (existing.decay * it).coerceIn(0.0, 1.0) } ?: existing.decay,
-        provenanceEntries = if (rule.mergeProvenance) folded.provenanceEntries else existing.provenanceEntries,
-        reinforceCount = if (rule.countReinforcement) existing.reinforceCount + 1 else existing.reinforceCount,
+        reinforceCount = existing.reinforceCount + 1,
         contentRevised = now,
         metadataRevised = now,
         lastAccessed = if (rule.touchLastAccessed) now else existing.lastAccessed,
