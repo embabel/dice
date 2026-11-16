@@ -31,6 +31,9 @@ import java.util.UUID
  * is called on as it was, so a draft can be shared and reused. [toProposition] builds the
  * proposition through its primary constructor, which checks every value.
  *
+ * A step sets one value and nothing else. It does not move contentRevised or metadataRevised,
+ * which the methods of the same name on Proposition do.
+ *
  * The lists and the map a draft holds are read-only copies, taken when a step or `toDraft()`
  * receives them. A call such as `draft.getSourceIds().clear()` throws
  * `UnsupportedOperationException`. A proposition built from the draft holds the same read-only
@@ -154,10 +157,16 @@ class PropositionDraft private constructor(
     /** The context id as a plain string, for Java callers. */
     val contextIdValue: String get() = contextId.value
 
-    /** Sets the text. */
+    /**
+     * Sets the text.
+     * Unlike Proposition.withText, this leaves contentRevised as it is.
+     */
     fun withText(text: String): PropositionDraft = PropositionDraft(origin, values.copy(text = text))
 
-    /** Sets the confidence. */
+    /**
+     * Sets the confidence.
+     * Unlike Proposition.withConfidence, this leaves contentRevised as it is.
+     */
     fun withConfidence(confidence: Double): PropositionDraft = PropositionDraft(origin, values.copy(confidence = confidence))
 
     /** Sets the id; null makes [toProposition] generate one. */
@@ -179,6 +188,7 @@ class PropositionDraft private constructor(
     /**
      * Appends [chunkIds] to the grounding and removes duplicates.
      * To replace or clear the grounding, use [withExactGrounding].
+     * Unlike Proposition.withGrounding, this leaves metadataRevised as it is.
      */
     fun withGrounding(chunkIds: List<String>): PropositionDraft =
         PropositionDraft(origin, values.copy(grounding = Collections.unmodifiableList((grounding + chunkIds).distinct())))
@@ -199,10 +209,16 @@ class PropositionDraft private constructor(
     /** Sets the time the proposition was last used. */
     fun withLastAccessed(lastAccessed: Instant): PropositionDraft = PropositionDraft(origin, values.copy(lastAccessed = lastAccessed))
 
-    /** Sets whether the proposition is pinned. */
+    /**
+     * Sets whether the proposition is pinned.
+     * Unlike Proposition.withPinned, this leaves metadataRevised as it is.
+     */
     fun withPinned(pinned: Boolean): PropositionDraft = PropositionDraft(origin, values.copy(pinned = pinned))
 
-    /** Sets the lifecycle status. */
+    /**
+     * Sets the lifecycle status.
+     * Unlike Proposition.withStatus, this leaves metadataRevised as it is.
+     */
     fun withStatus(status: PropositionStatus): PropositionDraft = PropositionDraft(origin, values.copy(status = status))
 
     /** Sets the abstraction level. */
@@ -222,10 +238,17 @@ class PropositionDraft private constructor(
     /** Sets the URI. */
     fun withUri(uri: String?): PropositionDraft = PropositionDraft(origin, values.copy(uri = uri))
 
-    /** Sets the temporal details. */
+    /**
+     * Sets the temporal details.
+     * Unlike Proposition.withTemporal, this leaves metadataRevised as it is.
+     */
     fun withTemporal(temporal: TemporalMetadata?): PropositionDraft = PropositionDraft(origin, values.copy(temporal = temporal))
 
-    /** Replaces the provenance entries with a read-only copy of [entries], as given. */
+    /**
+     * Replaces the provenance entries with a read-only copy of [entries], as given.
+     * Unlike Proposition.withProvenance, this leaves metadataRevised as it is.
+     * It also keeps duplicate entries, which Proposition.withProvenance removes.
+     */
     fun withProvenance(entries: List<ProvenanceEntry>): PropositionDraft =
         PropositionDraft(origin, values.copy(provenanceEntries = Collections.unmodifiableList(ArrayList(entries))))
 

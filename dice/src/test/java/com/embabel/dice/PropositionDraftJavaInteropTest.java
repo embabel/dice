@@ -499,4 +499,14 @@ class PropositionDraftJavaInteropTest {
         assertEquals(2, rebuilt.getProvenanceEntries().size());
         assertEquals(p, rebuilt);
     }
+
+    @Test
+    void aStepLeavesContentRevisedAloneUnlikeProposition() {
+        Proposition fact = Proposition.draft("acme", "Alice lives in Paris", 0.9)
+                .withContentRevised(CONTENT_REVISED)
+                .toProposition();
+
+        assertEquals(CONTENT_REVISED, fact.toDraft().withText("x").toProposition().getContentRevised());
+        assertNotEquals(CONTENT_REVISED, fact.withText("x").getContentRevised());
+    }
 }
