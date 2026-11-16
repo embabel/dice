@@ -99,15 +99,9 @@ class EvidenceJavaInteropTest {
                         0.8,
                         DerivationRule.of("prolog").withRuleId("grandparent").withExpression("grandparent(X, Y)"),
                         List.of("p-17"))
-                .withInputs(List.of(item))
-                .withCitation(Citation.of("p-19", "support-team"));
+                .withInputs(List.of(item));
         assertEquals("prolog", derived.getRule().getMethod());
         assertEquals(List.of(item), derived.getInputs());
-        assertEquals("p-19", derived.getCitation().getPropositionId());
-
-        Evidence.Derived settled = derived.withEffectiveConfidence(0.4).withStatus(PropositionStatus.SUPERSEDED);
-        assertEquals(0.4, settled.getEffectiveConfidence());
-        assertEquals(PropositionStatus.SUPERSEDED, settled.getStatus());
 
         Evidence.Missing missing = Evidence.missing(Searched.of("support-team"));
         assertEquals("support-team", missing.getSearched().getContextIdValues().iterator().next());

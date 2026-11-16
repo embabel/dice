@@ -175,6 +175,50 @@ class EvidenceKindsJavaInteropTest {
         assertTrue(first.toString().startsWith("Superseded(current="), first.toString());
     }
 
+    @Test
+    void ruleTextLeavesOutTheExpressionAndParameterValues() {
+        DerivationRule rule = DerivationRule.of("prolog")
+                .withRuleId("grandparent")
+                .withExpression("grandparent(X, Y)")
+                .withParameter("maxHops", "secret-value");
+
+        String text = rule.toString();
+
+        assertFalse(text.contains("grandparent(X, Y)"), text);
+        assertFalse(text.contains("secret-value"), text);
+        assertTrue(text.contains("hasExpression=true"), text);
+        assertTrue(text.contains("maxHops"), text);
+        assertEquals(
+                "DerivationRule(method=prolog, ruleId=grandparent, hasExpression=true, parameterNames=[maxHops])",
+                text);
+    }
+
+    @Test
+    void derivedTextLeavesOutTheConclusionAndTheRuleExpression() {
+        DerivationRule rule = DerivationRule.of("prolog").withExpression("grandparent(X, Y)");
+        Evidence.Derived grandparent =
+                Evidence.derived("Ada is a grandparent of Byron", 0.8, rule, List.of("p-17"));
+
+        String text = grandparent.toString();
+
+        assertFalse(text.contains("Ada is a grandparent of Byron"), text);
+        assertFalse(text.contains("grandparent(X, Y)"), text);
+        assertEquals("Derived(confidence=0.8, rule=" + rule + ", inputIds=[p-17])", text);
+    }
+
+    @Test
+    void derivedValuesFromEqualPartsAreEqual() {
+        DerivationRule rule = DerivationRule.of("prolog").withRuleId("grandparent").withParameter("maxHops", "3");
+        Evidence.Derived first = Evidence.derived("Ada was a programmer", 0.7, rule, List.of("p-1", "p-2"))
+                .withInputs(List.of(source2));
+        Evidence.Derived second = Evidence.derived("Ada was a programmer", 0.7, rule, List.of("p-1", "p-2"))
+                .withInputs(List.of(source2));
+
+        assertEquals(first, second);
+        assertEquals(first.hashCode(), second.hashCode());
+        assertNotEquals(first, second.withInputs(List.of(source1)));
+    }
+
     /**
      * Names the kind of an evidence value with a switch that has no default branch.
      *

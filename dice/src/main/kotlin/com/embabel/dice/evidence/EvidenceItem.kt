@@ -77,8 +77,8 @@ class EvidenceItem private constructor(
 ) {
 
     /**
-     * Ids of the claims this one was abstracted from. Empty for an observation. For a stored abstraction
-     * these are the ids in [Evidence.Derived.inputIds]: the claims it was abstracted from.
+     * Ids of the stored claims this one was abstracted from. Empty for an observation. An abstraction is still
+     * a stored claim, so it reaches a caller as an item in [Evidence.Recorded].
      */
     val derivedFromIds: List<String> = EvidenceChecks.copyOf("derivedFromIds", derivedFromIds)
 
