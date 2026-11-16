@@ -214,20 +214,28 @@ class PropositionDraftJavaInteropTest {
 
     @Test
     void e5_anOutOfRangeValueFailsWhenTheDraftIsBuilt() {
-        PropositionDraft badConfidence = Proposition.draft("acme", "Alice lives in Paris", 1.5);
+        PropositionDraft badConfidence = assertDoesNotThrow(
+                () -> Proposition.draft("acme", "Alice lives in Paris", 1.5));
         IllegalArgumentException confidence =
                 assertThrows(IllegalArgumentException.class, badConfidence::toProposition);
         assertEquals("Confidence must be between 0.0 and 1.0", confidence.getMessage());
 
-        PropositionDraft badDecay = Proposition.draft("acme", "Alice lives in Paris", 0.9).withDecay(-0.1);
+        PropositionDraft badDecay = assertDoesNotThrow(
+                () -> Proposition.draft("acme", "Alice lives in Paris", 0.9).withDecay(-0.1));
         IllegalArgumentException decay =
                 assertThrows(IllegalArgumentException.class, badDecay::toProposition);
         assertEquals("Decay must be between 0.0 and 1.0", decay.getMessage());
 
-        PropositionDraft badLevel = Proposition.draft("acme", "Alice lives in Paris", 0.9).withLevel(1);
+        PropositionDraft badLevel = assertDoesNotThrow(
+                () -> Proposition.draft("acme", "Alice lives in Paris", 0.9).withLevel(1));
         IllegalArgumentException level =
                 assertThrows(IllegalArgumentException.class, badLevel::toProposition);
         assertEquals("Abstracted propositions (level > 0) must have sourceIds", level.getMessage());
+    }
+
+    @Test
+    void l1_everyFieldSetSurvivesADraftRoundTrip() {
+        assertEquals(everyFieldSet(), everyFieldSet().toDraft().toProposition());
     }
 
     @Test
