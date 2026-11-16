@@ -910,17 +910,20 @@ public final class com/embabel/dice/common/filter/CompositeMentionFilter : com/e
 	public fun <init> (Ljava/util/List;)V
 	public fun isValid (Lcom/embabel/dice/proposition/SuggestedMention;Ljava/lang/String;)Z
 	public fun rejectionReason (Lcom/embabel/dice/proposition/SuggestedMention;)Ljava/lang/String;
+	public fun validateMentions (Lcom/embabel/dice/proposition/SuggestedProposition;Lcom/embabel/dice/common/SourceAnalysisContext;)Ljava/util/List;
 }
 
 public abstract interface class com/embabel/dice/common/filter/MentionFilter {
 	public abstract fun isValid (Lcom/embabel/dice/proposition/SuggestedMention;Ljava/lang/String;)Z
 	public fun rejectionReason (Lcom/embabel/dice/proposition/SuggestedMention;)Ljava/lang/String;
+	public fun validateMentions (Lcom/embabel/dice/proposition/SuggestedProposition;Lcom/embabel/dice/common/SourceAnalysisContext;)Ljava/util/List;
 }
 
 public final class com/embabel/dice/common/filter/ObservableMentionFilter : com/embabel/dice/common/filter/MentionFilter {
 	public fun <init> (Lcom/embabel/dice/common/filter/MentionFilter;Lio/micrometer/core/instrument/MeterRegistry;)V
 	public fun isValid (Lcom/embabel/dice/proposition/SuggestedMention;Ljava/lang/String;)Z
 	public fun rejectionReason (Lcom/embabel/dice/proposition/SuggestedMention;)Ljava/lang/String;
+	public fun validateMentions (Lcom/embabel/dice/proposition/SuggestedProposition;Lcom/embabel/dice/common/SourceAnalysisContext;)Ljava/util/List;
 }
 
 public final class com/embabel/dice/common/filter/PropositionDuplicateFilter : com/embabel/dice/common/filter/MentionFilter {

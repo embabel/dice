@@ -15,7 +15,10 @@
  */
 package com.embabel.dice.common.filter
 
+import com.embabel.dice.common.SourceAnalysisContext
+import com.embabel.dice.common.validation.ValidationResult
 import com.embabel.dice.proposition.SuggestedMention
+import com.embabel.dice.proposition.SuggestedProposition
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tag
 
@@ -59,5 +62,24 @@ class ObservableMentionFilter(
 
     override fun rejectionReason(mention: SuggestedMention): String? {
         return delegate.rejectionReason(mention)
+    }
+
+    /**
+     * Asks the delegate once for the whole proposition and counts each result.
+     *
+     * @param proposition The proposition whose mentions are judged
+     * @param context The analysis context of the run
+     * @return The delegate's results
+     */
+    override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> {
+        val results = delegate.validateMentions(proposition, context)
+        proposition.mentions.zip(results).forEach { (mention, result) ->
+            val tags = listOf(
+                Tag.of("entity.type", mention.type),
+                Tag.of("valid", result.isValid.toString())
+            )
+            meterRegistry.counter("dice.mentions.validated", tags).increment()
+        }
+        return results
     }
 }

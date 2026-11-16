@@ -15,7 +15,10 @@
  */
 package com.embabel.dice.common.filter
 
+import com.embabel.dice.common.SourceAnalysisContext
+import com.embabel.dice.common.validation.ValidationResult
 import com.embabel.dice.proposition.SuggestedMention
+import com.embabel.dice.proposition.SuggestedProposition
 
 /**
  * Filters that require proposition context beyond just the mention span.
@@ -76,4 +79,28 @@ class CompositeMentionFilter(
             filter.rejectionReason(mention)
         }
     }
+
+    /**
+     * Asks each filter only about the mentions the filters before it accepted.
+     *
+     * A filter that sees every mention is handed the same proposition instance. The first
+     * rejection for a mention is its result.
+     *
+     * @param proposition The proposition whose mentions are judged
+     * @param context The analysis context of the run
+     * @return One result per mention, in the order of `proposition.mentions`
+     * @throws IllegalStateException if a filter returns a different number of results than the mentions it was asked about
+     */
+    override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> =
+        filters.fold(proposition.mentions.map<SuggestedMention, ValidationResult> { ValidationResult.Valid }) { verdicts, filter ->
+            val open = verdicts.indices.filter { verdicts[it].isValid }
+            if (open.isEmpty()) return@fold verdicts
+            val asked = if (open.size == verdicts.size) proposition else proposition.copy(mentions = open.map { proposition.mentions[it] })
+            val results = filter.validateMentions(asked, context)
+            check(results.size == open.size) {
+                "${filter::class.java.name} returned ${results.size} results for ${open.size} mentions"
+            }
+            val byIndex = open.zip(results).toMap()
+            verdicts.mapIndexed { index, verdict -> byIndex[index] ?: verdict }
+        }
 }
