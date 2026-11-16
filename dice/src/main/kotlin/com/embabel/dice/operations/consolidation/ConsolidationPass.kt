@@ -55,13 +55,14 @@ interface ConsolidationPass {
 
     /**
      * Same as [run] for callers that have a plain string context id, so they don't need to
-     * wrap it in a [ContextId] first.
+     * wrap it in a [ContextId] first. It has its own name so Kotlin calls to [run] never
+     * have two overloads to choose between.
      *
      * @param contextIdValue The id of the context the snapshot belongs to.
      * @param propositions The pre-fetched snapshot to consolidate.
      * @return What changed (if anything), or why nothing did.
      */
-    fun run(contextIdValue: String, propositions: List<Proposition>): ConsolidationPassResult =
+    fun runValue(contextIdValue: String, propositions: List<Proposition>): ConsolidationPassResult =
         run(ContextId(contextIdValue), propositions)
 
     companion object {

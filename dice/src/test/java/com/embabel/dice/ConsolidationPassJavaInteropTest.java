@@ -47,7 +47,7 @@ class ConsolidationPassJavaInteropTest {
                 "tidy",
                 (ctx, props) -> new ConsolidationPassResult.NoOp("tidy", ctx));
 
-        ConsolidationPassResult result = pass.run("acme", List.of());
+        ConsolidationPassResult result = pass.runValue("acme", List.of());
 
         assertInstanceOf(ConsolidationPassResult.NoOp.class, result);
         assertEquals("acme", ((ConsolidationPassResult.NoOp) result).getReason());
