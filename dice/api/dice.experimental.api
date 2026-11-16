@@ -1478,6 +1478,7 @@ public final class com/embabel/dice/store/StoreCapabilities {
 	public final fun getSupported ()Ljava/util/Set;
 	public final fun getVectorFiltering ()Lcom/embabel/dice/store/VectorFiltering;
 	public fun hashCode ()I
+	public final fun implementedBy (Lcom/embabel/dice/proposition/PropositionStore;)Lcom/embabel/dice/store/StoreCapabilities;
 	public static final fun of ([Lcom/embabel/dice/store/StoreCapability;)Lcom/embabel/dice/store/StoreCapabilities;
 	public final fun supports (Lcom/embabel/dice/store/StoreCapability;)Z
 	public fun toString ()Ljava/lang/String;
@@ -1548,6 +1549,7 @@ public final class com/embabel/dice/store/VectorSearchRequest {
 	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;ILcom/embabel/dice/store/SimilarityScore;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun equals (Ljava/lang/Object;)Z
 	public static final fun forText (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;)Lcom/embabel/dice/store/VectorSearchRequest;
+	public static final fun forTextAcrossContexts (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;)Lcom/embabel/dice/store/VectorSearchRequest;
 	public final fun getFilter ()Lcom/embabel/dice/proposition/PropositionQuery;
 	public final fun getMinScore ()Lcom/embabel/dice/store/SimilarityScore;
 	public final fun getText ()Ljava/lang/String;
@@ -1560,6 +1562,8 @@ public final class com/embabel/dice/store/VectorSearchRequest {
 
 public final class com/embabel/dice/store/VectorSearchRequest$Companion {
 	public final fun forText (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;)Lcom/embabel/dice/store/VectorSearchRequest;
+	public final fun forTextAcrossContexts (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;)Lcom/embabel/dice/store/VectorSearchRequest;
+	public final synthetic fun forTextAcrossContexts (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;Lkotlin/jvm/functions/Function1;)Lcom/embabel/dice/store/VectorSearchRequest;
 	public final synthetic fun invoke (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;Lkotlin/jvm/functions/Function1;)Lcom/embabel/dice/store/VectorSearchRequest;
 	public static synthetic fun invoke$default (Lcom/embabel/dice/store/VectorSearchRequest$Companion;Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionQuery;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lcom/embabel/dice/store/VectorSearchRequest;
 }
