@@ -108,7 +108,7 @@ class GroundedMentionFilterTest {
     }
 
     @Test
-    fun `E10 names are compared after folding`() {
+    fun `E10 names are compared ignoring case`() {
         assertEquals(listOf(Valid), judge(context(thomas), "Tom moved to Paris", mention("THOMAS")))
     }
 
@@ -186,5 +186,12 @@ class GroundedMentionFilterTest {
         assertEquals(listOf(notInText), judge(known, "Alice waved", mention("Pat", "p-alice")))
         assertEquals(listOf(Valid), judge(known, "Alice waved to Bob", mention("Pat")))
         assertEquals(listOf(Valid), judge(known, "Alice waved", mention("Ally", "p-alice")))
+    }
+
+    @Test
+    fun `E18 a span grounds through a known entity only when entity resolution would match the name`() {
+        val known = context(knownPerson("p-heinz", "Heinz", "Stra\u00DFe"))
+        assertEquals(listOf(notInText), judge(known, "Heinz moved to Paris", mention("STRASSE")))
+        assertEquals(listOf(Valid), judge(known, "Heinz moved to Paris", mention("STRA\u00DFE")))
     }
 }

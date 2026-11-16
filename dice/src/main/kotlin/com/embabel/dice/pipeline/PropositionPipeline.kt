@@ -269,6 +269,7 @@ class PropositionPipeline private constructor(
         val suggestedEntities: SuggestedEntities,
         val ungrounded: List<UngroundedMention>,
         val rejected: List<RejectedMention>,
+        val unresolved: List<Set<Int>>,
     )
 
     /**
@@ -306,7 +307,7 @@ class PropositionPipeline private constructor(
         logger.debug("Created {} suggested entities", suggestedEntities.suggestedEntities.size)
 
         val rejected = screening.rejected.map { if (it.chunkId == chunk.id) it else it.copy(chunkId = chunk.id) }
-        return ExtractionStageResult(chunk, screening.result, suggestedEntities, screening.ungrounded, rejected)
+        return ExtractionStageResult(chunk, screening.result, suggestedEntities, screening.ungrounded, rejected, screening.unresolved)
     }
 
     /**
@@ -348,6 +349,36 @@ class PropositionPipeline private constructor(
      * and optionally revise against existing propositions. Must stay serial so all chunks share
      * the same entity identity within a single [process] run.
      */
+    /**
+     * Takes the resolved id off each mention that a check left unresolved.
+     *
+     * Resolution assigns ids by span and type, so a rejected mention would otherwise share the id
+     * of an accepted mention with the same span and type. Positions are matched only when the
+     * extractor returned one proposition per screened proposition with the same number of mentions.
+     *
+     * @param propositions the propositions the extractor resolved
+     * @param screened the screened propositions they were resolved from
+     * @param unresolved for each screened proposition, the positions of mentions to leave unresolved
+     * @return [propositions] when nothing changes, otherwise a copy without those ids
+     */
+    private fun leaveUnresolved(
+        propositions: List<Proposition>,
+        screened: SuggestedPropositions,
+        unresolved: List<Set<Int>>,
+    ): List<Proposition> {
+        if (unresolved.all { it.isEmpty() } || propositions.size != screened.propositions.size) return propositions
+        return propositions.mapIndexed { index, proposition ->
+            val positions = unresolved.getOrNull(index).orEmpty()
+            if (positions.isEmpty() ||
+                proposition.mentions.size != screened.propositions[index].mentions.size ||
+                positions.none { proposition.mentions[it].resolvedId != null }
+            ) proposition
+            else proposition.copy(mentions = proposition.mentions.mapIndexed { position, mention ->
+                if (position in positions) mention.copy(resolvedId = null) else mention
+            })
+        }
+    }
+
     private fun resolveStage(
         extraction: ExtractionStageResult,
         context: SourceAnalysisContext,
@@ -397,7 +428,11 @@ class PropositionPipeline private constructor(
         // back to its source chunk. Done before revision so merges union the entries and a brand
         // new proposition keeps its grounding.
         val propositions = stampProvenance(
-            extractor.resolvePropositions(suggestedPropositions, resolutions, context),
+            leaveUnresolved(
+                extractor.resolvePropositions(suggestedPropositions, resolutions, context),
+                suggestedPropositions,
+                extraction.unresolved,
+            ),
             chunk,
             context,
         )

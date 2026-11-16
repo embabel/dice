@@ -371,6 +371,45 @@ class PropositionPipelineScreeningTest {
         assertTrue(result.rejectedMentions.all { it.chunkId == "c1" }, "rejected: ${result.rejectedMentions}")
     }
 
+    @Test
+    fun `E14 a mention left unresolved gets no id from an accepted mention with the same span`() {
+        val secondAliceRejected = object : MentionFilter {
+            override fun isValid(mention: SuggestedMention, propositionText: String): Boolean = true
+            override fun rejectionReason(mention: SuggestedMention): String? = null
+            override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext) =
+                proposition.mentions.mapIndexed { index, _ ->
+                    if (index == 1) ValidationResult.Invalid("second") else ValidationResult.Valid
+                }
+        }
+        val twoAlices = proposition(aliceMetBob, alice, alice)
+
+        val result = pipeline(SuggestingPropositionExtractor.of(twoAlices))
+            .withMentionFilter(secondAliceRejected)
+            .processChunk(chunk(), context().withMintNewEntities(true))
+
+        val mentions = result.propositions.single().mentions
+        assertEquals(listOf("Alice", "Alice"), mentions.map { it.span })
+        assertNotNull(mentions[0].resolvedId)
+        assertNull(mentions[1].resolvedId)
+    }
+
+    @Test
+    fun `E15 a mention left unresolved in one proposition gets no id from the same mention accepted in another`() {
+        val carolOnlyWithBob = object : MentionFilter {
+            override fun isValid(mention: SuggestedMention, propositionText: String): Boolean =
+                !(mention.span == "Carol" && propositionText == aliceMetCarol)
+            override fun rejectionReason(mention: SuggestedMention): String? = "not here"
+        }
+
+        val result = pipeline(SuggestingPropositionExtractor.of(bothGrounded(), proposition("Carol met Bob", carol, bob)))
+            .withMentionFilter(carolOnlyWithBob)
+            .processChunk(chunk(), context().withMintNewEntities(true))
+
+        val (first, second) = result.propositions
+        assertNull(first.mentions.single { it.span == "Carol" }.resolvedId)
+        assertNotNull(second.mentions.single { it.span == "Carol" }.resolvedId)
+    }
+
     private fun inMemoryRepo(): PropositionRepository = object : PropositionRepository {
         private val store = mutableMapOf<String, Proposition>()
         override val luceneSyntaxNotes: String = "test"

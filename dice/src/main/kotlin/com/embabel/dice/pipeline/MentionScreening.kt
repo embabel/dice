@@ -28,11 +28,14 @@ import com.embabel.dice.proposition.SuggestedPropositions
  * @property result the propositions with the dropped mentions taken off, which is what the chunk keeps
  * @property candidates the propositions whose mentions are offered to the entity resolver
  * @property rejected every rejection, the grounding check's first, then the filter's
+ * @property unresolved for each proposition of [result], the positions of the mentions that must
+ * stay unresolved, because a check rejected them with [RejectedMentionHandling.LEAVE_UNRESOLVED]
  */
 internal data class ScreeningOutcome(
     val result: SuggestedPropositions,
     val candidates: SuggestedPropositions,
     val rejected: List<RejectedMention>,
+    val unresolved: List<Set<Int>> = emptyList(),
 ) {
     /** The grounding rejections in the form the UngroundedMentionsFound event carries. */
     val ungrounded: List<UngroundedMention>
@@ -124,9 +127,16 @@ internal object MentionScreening {
             if ((unresolved - dropped).isEmpty()) kept
             else keep(verdict.proposition, verdict.proposition.mentions.indices.filterNot { it in dropped || it in unresolved })
         }
+        val unresolved = verdicts.map { verdict ->
+            val dropped = removed(verdict, RejectedMentionHandling.DROP, groundingHandling, filterHandling)
+            val left = removed(verdict, RejectedMentionHandling.LEAVE_UNRESOLVED, groundingHandling, filterHandling) - dropped
+            if (left.isEmpty()) emptySet()
+            else verdict.proposition.mentions.indices.filterNot { it in dropped }
+                .withIndex().filter { it.value in left }.map { it.index }.toSet()
+        }
         val result = rebuild(extracted, resultPropositions)
         val candidates = withIdHints(rebuild(result, candidatePropositions), rejected)
-        return ScreeningOutcome(result, candidates, rejected)
+        return ScreeningOutcome(result, candidates, rejected, unresolved)
     }
 
     /**

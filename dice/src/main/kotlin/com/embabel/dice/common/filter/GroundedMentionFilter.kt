@@ -35,7 +35,7 @@ import com.embabel.dice.proposition.SuggestedProposition
  * names that same entity. The text names a known entity when the entity's name or one of its
  * aliases appears in the text at word edges. The mention names the entity when its suggested id is
  * the entity's id, or when its span and one of the entity's names are equal after name
- * normalization and folding. The extraction prompt asks for the canonical name with the entity's
+ * normalization, ignoring case, which is how entity resolution matches a known entity. The extraction prompt asks for the canonical name with the entity's
  * id, so with Thomas known under the alias Tom, the mention "Thomas" on the text
  * "Tom moved to Paris" is grounded.
  *
@@ -91,7 +91,7 @@ internal object KnownEntityGrounding {
         val known by lazy { knownEntities.mapNotNull { knownForms(it, text, prepare) } }
         return proposition.mentions.map { mention ->
             val reason = MentionGrounding.reasonUngrounded(prepare(mention.span), text)
-            if (reason == UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION && namesOneOf(mention, known, prepare)) null else reason
+            if (reason == UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION && namesOneOf(mention, known)) null else reason
         }
     }
 
@@ -99,10 +99,10 @@ internal object KnownEntityGrounding {
      * A known entity's id and name forms, and whether the proposition text names it.
      *
      * @property id the entity's id, or null when it is blank
-     * @property names the entity's name forms after name normalization and folding
+     * @property names the entity's name forms after name normalization
      * @property inText true when one of the entity's names is in the text at word edges
      */
-    private class KnownForms(val id: String?, val names: Set<String>, val inText: Boolean)
+    private class KnownForms(val id: String?, val names: List<String>, val inText: Boolean)
 
     /**
      * Collects a known entity's id and names, and checks whether the text names the entity.
@@ -118,7 +118,7 @@ internal object KnownEntityGrounding {
         val id: String? = known.id
         return KnownForms(
             id = id?.takeIf { it.isNotBlank() },
-            names = forms.map { prepare(NormalizedNameCandidateSearcher.normalizeName(it)).folded }.filter { it.isNotEmpty() }.toSet(),
+            names = forms.map { NormalizedNameCandidateSearcher.normalizeName(it) }.filter { it.isNotBlank() },
             inText = forms.any { MentionGrounding.reasonUngrounded(prepare(it), text) == null },
         )
     }
@@ -133,13 +133,12 @@ internal object KnownEntityGrounding {
      *
      * @param mention the mention
      * @param known the known entities of the analysis with their names
-     * @param prepare folds a text so spans can be looked up in it
      * @return true when the mention can only resolve to a known entity the text names
      */
-    private fun namesOneOf(mention: SuggestedMention, known: List<KnownForms>, prepare: (String) -> PreparedText): Boolean {
+    private fun namesOneOf(mention: SuggestedMention, known: List<KnownForms>): Boolean {
         if (known.none { it.inText }) return false
-        val name = prepare(NormalizedNameCandidateSearcher.normalizeName(mention.span)).folded
-        val sameName = if (name.isEmpty()) emptyList() else known.filter { name in it.names }
+        val name = NormalizedNameCandidateSearcher.normalizeName(mention.span)
+        val sameName = if (name.isBlank()) emptyList() else known.filter { forms -> forms.names.any { it.equals(name, ignoreCase = true) } }
         if (sameName.isNotEmpty()) return sameName.all { it.inText }
         val id = mention.suggestedId?.takeIf { it.isNotBlank() } ?: return false
         return known.any { it.inText && it.id == id }
