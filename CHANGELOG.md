@@ -124,16 +124,29 @@ and the consumer PRs that deliver it).
 
 ### Added
 
-- Evidence types for a caller that assembles model context, in the new package
-  `com.embabel.dice.evidence`. `EvidenceItem` is one claim with its `Citation`, its stored and
-  decayed confidence, its status, when it was recorded and revised, and a `Retrieval` for each
-  retriever that found it. The sealed `Evidence` type says what a lookup found: `Recorded` claims,
-  a `Derived` conclusion with its rule and input claims, `Missing` with what was searched, or
-  `Conflicting` claims with the conflict type. A `Derived` conclusion that is a stored claim also
-  carries its effective confidence and status. `EvidenceConverter` builds evidence from lists of
-  claims, scored hits, a lineage or a revision contradiction, and an empty list converts to
-  `Missing`. `EvidenceProvider`, **EXPERIMENTAL** (shape may change before 1.0), is the interface a
-  lookup implements to return `Evidence`. **Compatibility: additive.**
+- Evidence types for a caller that assembles model context, in the package
+  `com.embabel.dice.evidence`, **EXPERIMENTAL** (shape may change before 1.0). The package is new in
+  this unreleased version, and every type in it is marked `@ApiStatus.Experimental`. `EvidenceItem` is
+  one claim with its `Citation`, its stored and decayed confidence, its status, its reinforce count and
+  temporal metadata, when it was recorded and last revised, the ids and loaded copies of the claims it
+  was abstracted from, and a `Retrieval` for each retriever that found it. The sealed `Evidence` type
+  has five kinds: `Recorded` claims, a `Derived` conclusion worked out at lookup time with its rule
+  and inputs, `Missing` with what was searched, `Conflicting` claims, and `Superseded` for a claim that
+  replaced earlier ones. `Conflicting` and `Superseded` are both an `Evidence.Disagreement` with a
+  conflict type. `Citation.sameClaimAs` tells claims apart by id and context. `EvidenceConverter`
+  builds items and evidence from lists of claims, scored hits, a lineage or a revision contradiction.
+  A stored claim, including an abstraction, always converts to an item, a rank is the entry's position
+  in the list passed in, and each call reads the clock once. `EvidenceProvider` is the interface a
+  lookup implements to return `Evidence`. A null list element throws `IllegalArgumentException` with
+  the list name and index. **Compatibility: additive.**
+
+- `Proposition.getLastContentRevision()` returns when a proposition's text, mentions or confidence was
+  last revised, or null when no revision is recorded. A proposition whose text, mentions or confidence
+  is revised (through `withText`, `withResolvedMentions`, `withConfidence`, a reinforcement or a
+  reviser merge) carries one more metadata entry, `dice.content.revised` set to `true`, under the new key
+  `DiceMetadataKeys.CONTENT_REVISED`. A caller that compares a revised proposition's whole metadata map
+  sees this extra entry. A consolidator merge creates a new claim without the entry.
+  **Compatibility: behavioral.**
 
 - **EXPERIMENTAL** (shape may change before 1.0): a chunk's extraction output can be stored as one
   unit. `PersistUnit` holds the claims, the entities they refer to and an optional extraction run.
