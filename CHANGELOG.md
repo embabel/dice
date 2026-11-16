@@ -122,6 +122,39 @@ and the consumer PRs that deliver it).
   `StaleObjectException` when the proposition is changed by another writer on each of the three
   attempts.
 
+- `Proposition`, `ExtractionRunKey` and `Citation` JSON no longer write `contextIdValue`. Each still
+  writes `contextId`, which holds the same string. **Compatibility: behavioral.** Upgrade: a
+  consumer that reads `contextIdValue` from this JSON reads `contextId` instead. Stored
+  `Proposition` files that still carry `contextIdValue` load as before.
+
+- The extraction strategies and `PropositionPipeline.process` no longer turn an `Error` into a null
+  slot or a `Failed` chunk. An `Error` now reaches the caller. Exceptions are handled as before.
+  **Compatibility: behavioral.** Upgrade: code that relied on an `Error` coming back as a null slot
+  or a `Failed` chunk must catch the `Error` where it calls `execute` or `process`.
+
+- `ConsecutiveFailureBreaker` sets the thread's interrupt flag again when a call is interrupted. The
+  interrupt still counts as one failure. **Compatibility: behavioral.** Upgrade: code that checks
+  `Thread.interrupted()` after a breaker call now sees the interrupt, and should handle it as it
+  would any other interrupt.
+
+- Draft times follow the constructor. A `PropositionDraft` used to give every unset time the value
+  of `created`. Now an unset `contentRevised`, `metadataRevised` or `lastAccessed` takes the
+  constructor's default: the build moment, or for `lastAccessed` the value of `contentRevised`.
+  Decay runs from `contentRevised`, so set `contentRevised` as well as `created` when you import an
+  older fact. **Compatibility: behavioral.** Upgrade: a draft that sets only `created` to import an
+  older fact now decays from the build moment until it also sets `contentRevised`.
+
+- `PropositionDraft.withProvenance` keeps the list as given, duplicates included.
+  `Proposition.withProvenance` still removes duplicates, so the two can differ on the same list.
+  **Compatibility: behavioral.** Upgrade: a draft that passes a list with repeated entries now keeps
+  the repeats.
+
+- `ChunkHistoryStore.clearByContext(ContextId)` now forwards to `clearByContextValue(String)`, which
+  holds the work. **Compatibility: behavioral.** Upgrade: a Kotlin `ChunkHistoryStore` that
+  overrides only `clearByContext(ContextId)` should move its work into `clearByContextValue`. Until
+  it does, a call to `clearByContextValue` reaches the default, which does nothing. The two DICE
+  stores already do this.
+
 ### Added
 
 - Evidence types for a caller that assembles model context, in the new package
@@ -183,8 +216,8 @@ and the consumer PRs that deliver it).
   `CollectorRunContext`, `CollapseUndoCommand`, `DriftReport` and `DriftCheckResult` gain
   `getContextIdValue()`. `CollapseUndoContextMismatchException` gains `getCommandedContextIdValue()`
   and `getActualContextIdValue()`. Each returns the `ContextId` as a `String`, and the typed Kotlin
-  properties are unchanged. The new getters are left out of Jackson output in every module, so
-  the JSON form of events and reports is the same as before. `BookmarkKey`, `HashKey`,
+  properties are unchanged. A public type with a `contextId` property writes it under the key `contextId`, with or without
+  Jackson's Kotlin module, and does not write `contextIdValue`. `BookmarkKey`, `HashKey`,
   `CollectorRunContext` and `CollapseUndoCommand` also gain a static `of(...)` factory that takes
   the context id as a `String`, because Java cannot call their constructors.
   **Compatibility: additive.**
@@ -914,6 +947,38 @@ and the consumer PRs that deliver it).
   **Compatibility: behavioral.** A caller offering a source key, revision, chunk id or content hash
   longer than its limit now gets a rejection where it previously got an oversized index entry.
   Nothing a real connector emits comes close to any of the four.
+
+- Java can pass a context id as a `String` to more of the API. `ConsolidationPass.run`,
+  `DreamLoopOrchestrator.consolidate` and `consolidateNow`, `MemoryMaintenanceOrchestrator.maintain`,
+  `CollectorRunner.runValue` and `collectValue`, and `ChunkHistoryStore.clearByContextValue` each
+  have a `String` form beside the `ContextId` one, and `ConsolidationPass.of(name, body)` builds a
+  pass from a `String` function. The new forms are default methods, so existing implementations get
+  them, and the `ContextId` forms keep their names. A Kotlin class that already declares a member
+  with the same signature as one of these needs `override` on it. **Compatibility: additive.**
+
+- `PropositionContradicted`, `UngroundedMentionsFound`, `DreamLoopReport`,
+  `CollapseUndoContextMismatchException` and `DriftReport` gain `of(...)` factories that take the
+  context id as a `String`. **Compatibility: additive.**
+
+- `TemporalQueryCapable` gains Java-callable default methods: `findAllOrderedByEffectiveConfidence()`,
+  `findByEffectiveConfidenceAbove(double)`, and two `findByCreatedBetweenOrderedByEffectiveConfidence`
+  overloads, one of them with an `asOf` instant. Each uses the one decay constant,
+  `Proposition.DEFAULT_DECAY_K`. **Compatibility: additive.**
+
+- `ExtractionExecutionStrategy.attemptAll(chunks, extract)` runs an extraction over a list of chunks
+  and returns one `ChunkOutcome` per chunk, in the same order. A `ChunkOutcome` has `getChunk()`,
+  `getValue()`, `getException()`, `isSuccess()` and `isFailure()`, so a Java caller reads each
+  outcome without checking slots for null. `attemptAll` is a default method, so existing strategies
+  get it, and `executeAll` is unchanged. **Compatibility: additive.**
+
+- `PropositionDraft.withExactGrounding(List<String>)` sets the grounding to exactly the ids given, in
+  order, and an empty list clears it. Where `withGrounding` adds ids, this replaces the list.
+  **Compatibility: additive.**
+
+- `LlmPropositionExtractorBuilder` and `Outcome` have public constructors, so Java can build them
+  directly. `Outcome`'s constructor now checks its arguments and throws `IllegalArgumentException`
+  for a combination no factory makes, such as a skipped outcome that carries a value.
+  **Compatibility: additive.**
 
 ### Fixed
 
