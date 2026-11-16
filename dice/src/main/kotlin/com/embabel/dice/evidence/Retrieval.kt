@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.evidence
 
+import org.jetbrains.annotations.ApiStatus
+
 /**
  * Name of a retriever, such as the vector index or the graph walk that produced a hit.
  *
@@ -24,6 +26,7 @@ package com.embabel.dice.evidence
  * RetrieverId id = RetrieverId.of(" Vector ");  // equal to RetrieverId.VECTOR
  * ```
  */
+@ApiStatus.Experimental
 class RetrieverId private constructor(
     /** The normalized retriever name. */
     val name: String,
@@ -92,6 +95,7 @@ class RetrieverId private constructor(
  *     .withEntityPath(List.of("alice", "acme", "berlin"));  // hops == 2
  * ```
  */
+@ApiStatus.Experimental
 class Retrieval private constructor(
     /** The retriever that produced this hit. */
     val retriever: RetrieverId,

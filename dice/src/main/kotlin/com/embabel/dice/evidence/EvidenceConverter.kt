@@ -23,6 +23,7 @@ import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.query.graph.PropositionLineage
 import com.embabel.dice.spi.ConflictType
 import com.embabel.dice.temporal.TemporalMetadata
+import org.jetbrains.annotations.ApiStatus
 import java.time.Clock
 import java.time.Instant
 
@@ -38,6 +39,7 @@ import java.time.Instant
  * Evidence evidence = converter.fromSimilarityResults(hits, Searched.of("ctx-main").withQuery("Where does Alice live?"));
  * ```
  */
+@ApiStatus.Experimental
 class EvidenceConverter private constructor(
     private val clock: Clock,
     private val decayK: Double,

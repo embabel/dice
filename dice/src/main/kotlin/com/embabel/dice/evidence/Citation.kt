@@ -17,6 +17,7 @@ package com.embabel.dice.evidence
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.provenance.ProvenanceEntry
+import org.jetbrains.annotations.ApiStatus
 
 /**
  * Identifies a stored claim, the context it lives in, and the source material it was extracted from.
@@ -34,6 +35,7 @@ import com.embabel.dice.provenance.ProvenanceEntry
  * val citation = Citation.of("prop-42", ContextId("ctx-main"))
  * ```
  */
+@ApiStatus.Experimental
 class Citation private constructor(
     /** Id of the stored claim. */
     val propositionId: String,

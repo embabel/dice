@@ -16,6 +16,7 @@
 package com.embabel.dice.evidence
 
 import com.embabel.agent.core.ContextId
+import org.jetbrains.annotations.ApiStatus
 import java.util.Collections
 import java.util.Objects
 
@@ -30,6 +31,7 @@ import java.util.Objects
  *     .withFilter("minConfidence", "0.5");
  * ```
  */
+@ApiStatus.Experimental
 class Searched private constructor(
     contextIds: Set<ContextId>,
     /** The question or search text. Null for a plain listing. */

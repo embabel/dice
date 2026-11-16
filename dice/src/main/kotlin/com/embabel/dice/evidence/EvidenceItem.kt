@@ -18,12 +18,14 @@ package com.embabel.dice.evidence
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.temporal.TemporalMetadata
+import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
 import java.util.Objects
 
 /**
  * Restricts an EvidenceItem block to the innermost builder, so an outer builder is not reached by accident.
  */
+@ApiStatus.Experimental
 @DslMarker
 annotation class EvidenceDsl
 
@@ -48,6 +50,7 @@ annotation class EvidenceDsl
  * Confidence values are checked to lie between 0.0 and 1.0. Scores must be finite. The `with` methods
  * return a new item and leave this one unchanged.
  */
+@ApiStatus.Experimental
 class EvidenceItem private constructor(
     /** The claim text, as it is shown to a model. Stored as given. */
     val text: String,
@@ -381,6 +384,7 @@ class EvidenceItem private constructor(
  *
  * Each property left unset keeps the value from [EvidenceItem.of]. [retrieval] calls add up in call order.
  */
+@ApiStatus.Experimental
 @EvidenceDsl
 class EvidenceItemBuilder internal constructor() {
 

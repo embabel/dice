@@ -18,6 +18,7 @@ package com.embabel.dice.evidence
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.spi.ConflictType
+import org.jetbrains.annotations.ApiStatus
 import java.util.Collections
 import java.util.Objects
 
@@ -33,6 +34,7 @@ import java.util.Objects
  *     .withParameter("maxHops", "3");
  * ```
  */
+@ApiStatus.Experimental
 class DerivationRule private constructor(
     /** The derivation method, such as `prolog`. Lower case. */
     val method: String,
@@ -145,6 +147,7 @@ class DerivationRule private constructor(
  * }
  * ```
  */
+@ApiStatus.Experimental
 sealed interface Evidence {
 
     /**
