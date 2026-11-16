@@ -118,6 +118,16 @@ public final class ApiListing {
             }
             classFiles = kept;
         }
+        Set<String> stale = new TreeSet<>();
+        if (!sourceRoots.isEmpty()) {
+            for (File classFile : classFiles) {
+                String source = sourceName(classFile.toPath(), sourceNames);
+                String relative = classesDir.relativize(classFile.toPath()).toString().replace(File.separatorChar, '/');
+                if (!source.isEmpty() && !handWritten.contains(source) && !relative.contains("$")) {
+                    stale.add(relative.substring(0, relative.length() - ".class".length()));
+                }
+            }
+        }
         if (classFiles.isEmpty()) {
             err.println("No compiled classes to list under " + args[1] + ". Compile the module first.");
             return 2;
@@ -153,7 +163,10 @@ public final class ApiListing {
         if (!matches) {
             err.println("The public API changed. Review the difference above, then regenerate the"
                     + " listings with: ./mvnw -B -Dapi.listing.mode=update process-classes");
-            err.println("Types you did not add come from an earlier build, and ./mvnw clean removes them.");
+            if (!stale.isEmpty()) {
+                err.println("These classes have no source file, so they come from an earlier build and"
+                        + " ./mvnw clean removes them: " + String.join(", ", stale));
+            }
             return 1;
         }
         return 0;

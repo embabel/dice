@@ -99,6 +99,28 @@ class ApiListingTest {
     }
 
     @Test
+    fun `a real API change does not blame an earlier build`() {
+        val sources = sourceRoot("Stable.kt", "ExperimentalFunctions.kt", "MixedFunctions.kt")
+        listing("update", sources)
+        val stable = api.resolve("m.api")
+        stable.writeText(stable.readText().replace("longestFirst", "shortestFirst"))
+
+        assertEquals(1, listing("check", sources))
+        assertFalse(err.toString().contains("earlier build"), err.toString())
+    }
+
+    @Test
+    fun `a class whose source file is gone is named as left from an earlier build`() {
+        listing("update")
+        val stable = api.resolve("m.api")
+        stable.writeText(stable.readText().replace(Regex("public final class [^\\n]*/MixedFunctionsKt \\{[^}]*}\\n\\n"), ""))
+
+        assertEquals(1, listing("check", sourceRoot("Stable.kt", "ExperimentalFunctions.kt")))
+        val hint = err.toString().lines().filter { it.contains("earlier build") }
+        assertTrue(hint.any { it.contains("$FIXTURE_PACKAGE/MixedFunctionsKt") }, err.toString())
+    }
+
+    @Test
     fun `whitespace at the end of a listing does not count as a change`() {
         listing("update")
         val stable = api.resolve("m.api")
@@ -131,6 +153,18 @@ class ApiListingTest {
     private fun listing(mode: String, vararg options: String): Int {
         val args = arrayOf(mode, fixtureClasses().toString(), api.toString(), "m", *options)
         return ApiListing.run(args, PrintStream(ByteArrayOutputStream()), PrintStream(err))
+    }
+
+    /**
+     * Writes empty hand-written source files into a source root.
+     *
+     * @param names the file names
+     * @return the `--source` argument for the root
+     */
+    private fun sourceRoot(vararg names: String): String {
+        val root = dir.resolve("src").resolve(FIXTURE_PACKAGE).createDirectories()
+        names.forEach { root.resolve(it).writeText("") }
+        return "--source=" + dir.resolve("src")
     }
 
     /**
