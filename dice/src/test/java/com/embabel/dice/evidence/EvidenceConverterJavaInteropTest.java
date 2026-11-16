@@ -19,6 +19,7 @@ import com.embabel.common.core.types.SimpleSimilaritySearchResult;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.proposition.revision.RevisionResult;
+import com.embabel.dice.query.graph.PropositionLineage;
 import com.embabel.dice.spi.ConflictType;
 import com.embabel.dice.temporal.TemporalMetadata;
 import org.junit.jupiter.api.Test;
@@ -234,6 +235,224 @@ class EvidenceConverterJavaInteropTest {
         Evidence evidence = Evidence.of(items, Searched.of("support-team"));
 
         assertEquals(List.of(11, 12), ranks(assertInstanceOf(Evidence.Recorded.class, evidence)));
+    }
+
+    @Test
+    void anAbstractionConvertsToTheSameItemThroughEveryMethod() {
+        Proposition abstraction = abstraction("abs-1", List.of("p-1", "p-2"));
+        PropositionLineage lineage = lineage(abstraction, List.of(
+                claim("p-1", "Ada lives in London", PropositionStatus.ACTIVE),
+                claim("p-2", "Ada works at the library", PropositionStatus.ACTIVE)));
+
+        List<EvidenceItem> items = List.of(
+                converter.item(abstraction),
+                single(converter.fromPropositions(List.of(abstraction), Searched.of("support-team"))),
+                single(converter.fromSimilarityResults(
+                        List.of(new SimpleSimilaritySearchResult<>(abstraction, 0.9)), Searched.of("support-team"))),
+                converter.item(lineage));
+
+        for (EvidenceItem item : items) {
+            assertEquals("Ada is a mathematician", item.getText());
+            assertTrue(item.getCitation().sameClaimAs(Citation.of("abs-1", "support-team")));
+            assertEquals(0.8, item.getConfidence());
+            assertEquals(List.of("p-1", "p-2"), item.getDerivedFromIds());
+            assertTrue(item.isDerived());
+        }
+        assertEquals(List.of("p-1", "p-2"), propositionIds(items.get(3).getDerivedFrom()));
+        assertTrue(items.get(0).getDerivedFrom().isEmpty());
+    }
+
+    @Test
+    void aListMixingAnObservationAndAnAbstractionIsOneRecordedInInputOrder() {
+        List<Proposition> claims = List.of(
+                abstraction("abs-1", List.of("p-1")),
+                claim("p-1", "Ada lives in London", PropositionStatus.ACTIVE));
+
+        Evidence.Recorded recorded = assertInstanceOf(
+                Evidence.Recorded.class, converter.fromPropositions(claims, Searched.of("support-team")));
+
+        assertEquals(List.of("abs-1", "p-1"), propositionIds(recorded));
+        assertTrue(recorded.getItems().get(0).isDerived());
+        assertFalse(recorded.getItems().get(1).isDerived());
+    }
+
+    @Test
+    void aLineageConvertsToRecordedEvidenceWithOneItem() {
+        PropositionLineage lineage = lineage(abstraction("abs-1", List.of("p-1")),
+                List.of(claim("p-1", "Ada lives in London", PropositionStatus.ACTIVE)));
+
+        Evidence.Recorded recorded = converter.fromLineage(lineage);
+
+        assertEquals(List.of(converter.item(lineage)), recorded.getItems());
+    }
+
+    @Test
+    void theLineageStandingWinsOverItsClaim() {
+        TemporalMetadata invalidated = new TemporalMetadata(null, null, null, RECORDED_AT, List.of(), List.of());
+        PropositionLineage lineage = new PropositionLineage(
+                claim("p-1", "Ada lives in London", PropositionStatus.ACTIVE),
+                List.of(), List.of("chunk-9"), List.of(), 4, PropositionStatus.SUPERSEDED, invalidated);
+
+        EvidenceItem item = converter.item(lineage);
+
+        assertEquals(PropositionStatus.SUPERSEDED, item.getStatus());
+        assertEquals(4, item.getReinforceCount());
+        assertEquals(invalidated, item.getTemporal());
+        assertEquals(List.of("chunk-9"), item.getCitation().getChunkIds());
+        assertEquals(0.0, item.getEffectiveConfidence());
+        assertEquals(0.8, item.getConfidence());
+    }
+
+    @Test
+    void aLineageWithNoTemporalMetadataUsesItsClaims() {
+        TemporalMetadata invalidated = new TemporalMetadata(null, null, null, RECORDED_AT, List.of(), List.of());
+        Proposition retracted = claim("p-1", "Ada lives in London", PropositionStatus.ACTIVE).withTemporal(invalidated);
+        PropositionLineage lineage = new PropositionLineage(
+                retracted, List.of(), List.of(), List.of(), 0, PropositionStatus.ACTIVE, null);
+
+        EvidenceItem item = converter.item(lineage);
+
+        assertEquals(invalidated, item.getTemporal());
+        assertEquals(0.0, item.getEffectiveConfidence());
+    }
+
+    @Test
+    void aNegativeLineageReinforceCountIsRejected() {
+        PropositionLineage lineage = new PropositionLineage(
+                claim("p-1", "Ada lives in London", PropositionStatus.ACTIVE),
+                List.of(), List.of(), List.of(), -1, PropositionStatus.ACTIVE, null);
+
+        IllegalArgumentException thrown =
+                assertThrows(IllegalArgumentException.class, () -> converter.item(lineage));
+
+        assertEquals("lineage.reinforceCount must not be negative, was -1", thrown.getMessage());
+    }
+
+    @Test
+    void aNullLoadedSourceIsRejectedWithItsIndex() {
+        PropositionLineage lineage = lineage(abstraction("abs-1", List.of("p-1")),
+                Arrays.asList(claim("p-1", "Ada lives in London", PropositionStatus.ACTIVE), null));
+
+        IllegalArgumentException thrown =
+                assertThrows(IllegalArgumentException.class, () -> converter.fromLineage(lineage));
+
+        assertEquals("lineage.sources[1] must not be null", thrown.getMessage());
+    }
+
+    @Test
+    void aLoadedSourceTheClaimDoesNotNameIsRejected() {
+        PropositionLineage lineage = lineage(abstraction("abs-1", List.of("p-1")),
+                List.of(claim("p-9", "Ada lives in London", PropositionStatus.ACTIVE)));
+
+        IllegalArgumentException thrown =
+                assertThrows(IllegalArgumentException.class, () -> converter.fromLineage(lineage));
+
+        assertEquals("lineage.sources[0] is claim 'p-9', which the source ids of claim 'abs-1' do not name",
+                thrown.getMessage());
+    }
+
+    @Test
+    void aLoadedSourceOnAnObservationIsRejected() {
+        PropositionLineage lineage = lineage(claim("p-3", "Ada lives in London", PropositionStatus.ACTIVE),
+                List.of(claim("p-1", "Ada lives in Marylebone", PropositionStatus.ACTIVE)));
+
+        IllegalArgumentException thrown =
+                assertThrows(IllegalArgumentException.class, () -> converter.item(lineage));
+
+        assertEquals("lineage.sources[0] is claim 'p-1', which the source ids of claim 'p-3' do not name",
+                thrown.getMessage());
+    }
+
+    @Test
+    void aRepeatedSourceAndABlankSourceAreDropped() {
+        PropositionLineage lineage = lineage(abstraction("abs-1", List.of("p-1", "p-2")), List.of(
+                claim("p-1", "Ada lives in London", PropositionStatus.ACTIVE),
+                claim("p-2", " ", PropositionStatus.ACTIVE),
+                claim("p-1", "Ada lives in Camden", PropositionStatus.ACTIVE)));
+
+        EvidenceItem item = converter.item(lineage);
+
+        assertEquals(List.of("p-1"), propositionIds(item.getDerivedFrom()));
+        assertEquals("Ada lives in London", item.getDerivedFrom().get(0).getText());
+        assertEquals(List.of("p-1", "p-2"), item.getDerivedFromIds());
+    }
+
+    @Test
+    void anAbstractionWithOnlyBlankSourceIdsConvertsWithNoSourceIdsEverywhere() {
+        Proposition abstraction = abstraction("abs-1", List.of(" ", ""));
+
+        List<EvidenceItem> items = List.of(
+                converter.item(abstraction),
+                single(converter.fromPropositions(List.of(abstraction), Searched.of("support-team"))),
+                single(converter.fromSimilarityResults(
+                        List.of(new SimpleSimilaritySearchResult<>(abstraction, 0.9)), Searched.of("support-team"))),
+                converter.item(lineage(abstraction, List.of())));
+
+        for (EvidenceItem item : items) {
+            assertTrue(item.getDerivedFromIds().isEmpty());
+            assertFalse(item.isDerived());
+        }
+    }
+
+    @Test
+    void aLineageWithTwoSourcesReadsTheClockOnce() {
+        CountingClock clock = new CountingClock(RECORDED_AT.plus(Duration.ofDays(1)));
+        PropositionLineage lineage = lineage(abstraction("abs-1", List.of("p-1", "p-2")),
+                List.of(decayingClaim("p-1"), decayingClaim("p-2")));
+
+        EvidenceItem item = converter.withClock(clock).item(lineage);
+
+        assertEquals(1, clock.reads);
+        assertEquals(item.getDerivedFrom().get(0).getEffectiveConfidence(),
+                item.getDerivedFrom().get(1).getEffectiveConfidence());
+    }
+
+    /**
+     * Reads the one item of recorded evidence.
+     *
+     * @param evidence the evidence to read, which must be recorded with one item
+     * @return the item
+     */
+    private static EvidenceItem single(Evidence evidence) {
+        List<EvidenceItem> items = assertInstanceOf(Evidence.Recorded.class, evidence).getItems();
+        assertEquals(1, items.size());
+        return items.get(0);
+    }
+
+    /**
+     * Lists the claim id of each item.
+     *
+     * @param items the items to read
+     * @return the claim ids, in item order
+     */
+    private static List<String> propositionIds(List<EvidenceItem> items) {
+        return items.stream().map(item -> item.getCitation().getPropositionId()).toList();
+    }
+
+    /**
+     * Creates an active abstraction at level 1 in the `support-team` context with no decay.
+     *
+     * @param id the claim id
+     * @param sourceIds ids of the claims it was abstracted from
+     * @return the abstraction
+     */
+    private static Proposition abstraction(String id, List<String> sourceIds) {
+        return Proposition.create(
+                id, "support-team", "Ada is a mathematician", List.of(), 0.8, 0.0, 0.5, null, List.of(),
+                RECORDED_AT, RECORDED_AT, RECORDED_AT, PropositionStatus.ACTIVE, 1, sourceIds);
+    }
+
+    /**
+     * Builds a lineage that takes its standing from the claim, with no provenance or chunk ids.
+     *
+     * @param proposition the claim the lineage is for
+     * @param sources the loaded source claims
+     * @return the lineage
+     */
+    private static PropositionLineage lineage(Proposition proposition, List<Proposition> sources) {
+        return new PropositionLineage(
+                proposition, List.of(), List.of(), sources, proposition.getReinforceCount(),
+                proposition.getStatus(), proposition.getTemporal());
     }
 
     /**

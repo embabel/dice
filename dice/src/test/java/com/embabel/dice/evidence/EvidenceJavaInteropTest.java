@@ -265,8 +265,8 @@ class EvidenceJavaInteropTest {
                 recordedAt, recordedAt, recordedAt, PropositionStatus.ACTIVE, 1, List.of("claim-1"));
         PropositionLineage lineage = new PropositionLineage(
                 abstraction, List.of(), List.of(), List.of(claim), 0, PropositionStatus.ACTIVE, null);
-        Evidence derived = converter.withClock(Clock.fixed(recordedAt, ZoneOffset.UTC)).fromLineage(lineage);
-        assertInstanceOf(Evidence.Derived.class, derived);
+        Evidence.Recorded recorded = converter.withClock(Clock.fixed(recordedAt, ZoneOffset.UTC)).fromLineage(lineage);
+        assertEquals(List.of("claim-1"), recorded.getItems().get(0).getDerivedFromIds());
 
         RevisionResult.Contradicted contradicted =
                 new RevisionResult.Contradicted(claim, secondClaim(), ConflictType.Contradiction.INSTANCE);

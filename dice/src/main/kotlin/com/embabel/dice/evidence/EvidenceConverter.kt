@@ -22,6 +22,7 @@ import com.embabel.dice.proposition.revision.RevisionResult
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.query.graph.PropositionLineage
 import com.embabel.dice.spi.ConflictType
+import com.embabel.dice.temporal.TemporalMetadata
 import java.time.Clock
 import java.time.Instant
 
@@ -179,33 +180,43 @@ class EvidenceConverter private constructor(
     }
 
     /**
-     * Converts a lineage into evidence. The claim's citation takes its chunk ids and provenance from
-     * the lineage. An abstraction (level above 0) becomes [Evidence.Derived] with rule
-     * [DerivationRule.ABSTRACTION], its non-blank source ids as input ids, the loaded sources with
-     * non-blank text as inputs, and its status. Its effective confidence comes from the converter's
-     * clock and decay rate. No loaded sources gives empty inputs. Any other claim becomes
-     * [Evidence.Recorded] with one item.
+     * Converts a lineage into one item. The item takes its status, reinforce count, chunk ids and provenance
+     * from the lineage, and its temporal metadata too when the lineage has some, otherwise the claim's.
+     * The decayed confidence is worked out with that temporal metadata. The loaded sources become
+     * [EvidenceItem.derivedFrom]. A source with blank text is left out, and so is a source whose id an
+     * earlier kept source already has.
      *
      * @param lineage the lineage to convert
-     * @return a [Evidence.Derived] for an abstraction, otherwise a [Evidence.Recorded]
-     * @throws IllegalArgumentException if the claim text or the claim id is blank, or the claim is an abstraction
-     *   whose source ids are all blank
+     * @return the item for the lineage's claim
+     * @throws IllegalArgumentException if the lineage's reinforce count is negative, [PropositionLineage.sources]
+     *   holds a null or a claim the claim's source ids do not name, or a kept claim's text or id is blank
      */
-    fun fromLineage(lineage: PropositionLineage): Evidence {
-        val now = clock.instant()
-        val proposition = lineage.proposition
-        val citation = citationFor(proposition, lineage.groundingChunkIds, lineage.provenanceEntries)
-        if (proposition.level == 0) {
-            return Evidence.recorded(listOf(convert(proposition, now, citation)))
+    fun item(lineage: PropositionLineage): EvidenceItem {
+        require(lineage.reinforceCount >= 0) {
+            "lineage.reinforceCount must not be negative, was ${lineage.reinforceCount}"
         }
-        val inputIds = usableIds(proposition.sourceIds)
-        require(inputIds.isNotEmpty()) { "an abstraction needs at least one non-blank source id" }
-        return Evidence.derived(proposition.text, proposition.confidence, DerivationRule.ABSTRACTION, inputIds)
-            .withEffectiveConfidence(proposition.effectiveConfidenceAt(now, decayK))
-            .withStatus(proposition.status)
-            .withInputs(lineage.sources.filter { it.text.isNotBlank() }.map { convert(it, now) })
-            .withCitation(citation)
+        val proposition = lineage.proposition
+        val sources = keptSources(proposition, lineage.sources)
+        val now = clock.instant()
+        return convert(
+            proposition,
+            now,
+            citation = citationFor(proposition, lineage.groundingChunkIds, lineage.provenanceEntries),
+            status = lineage.status,
+            reinforceCount = lineage.reinforceCount,
+            temporal = lineage.temporal ?: proposition.temporal,
+            derivedFrom = sources.map { convert(it, now) },
+        )
     }
+
+    /**
+     * Converts a lineage into recorded evidence holding the one item [item] builds for it.
+     *
+     * @param lineage the lineage to convert
+     * @return a [Evidence.Recorded] with one item
+     * @throws IllegalArgumentException for the same reasons as [item]
+     */
+    fun fromLineage(lineage: PropositionLineage): Evidence.Recorded = Evidence.recorded(listOf(item(lineage)))
 
     /**
      * Converts a contradiction by its conflict type, which the result keeps.
@@ -236,17 +247,22 @@ class EvidenceConverter private constructor(
 
     /**
      * Builds the item for a claim in one construction. Every conversion goes through here.
-     * The item takes the claim's confidence, status, reinforce count and temporal metadata, its
-     * creation time as [EvidenceItem.recordedAt] and its recorded content revision as
-     * [EvidenceItem.revisedAt].
+     * The item takes the claim's confidence, its creation time as [EvidenceItem.recordedAt] and its
+     * recorded content revision as [EvidenceItem.revisedAt]. Status, reinforce count and temporal
+     * metadata are the claim's unless the caller passes others.
      *
      * @param proposition the claim to convert
      * @param now the time the decayed confidence is worked out at
      * @param citation the citation the item carries
      * @param score the finite score, or null for none
      * @param retrieval the retriever's hit for the claim, or null for none
+     * @param status the status the item carries
+     * @param reinforceCount the reinforce count the item carries
+     * @param temporal the temporal metadata the item carries and the decayed confidence is worked out with
+     * @param derivedFrom the loaded claims this one was abstracted from
      * @return the item
-     * @throws IllegalArgumentException if the claim text or the claim id is blank
+     * @throws IllegalArgumentException if the claim text or the claim id is blank, or a loaded claim cites an
+     *   id the claim's source ids do not name
      */
     private fun convert(
         proposition: Proposition,
@@ -254,20 +270,25 @@ class EvidenceConverter private constructor(
         citation: Citation = citationFor(proposition, proposition.grounding, proposition.provenanceEntries),
         score: Double? = null,
         retrieval: Retrieval? = null,
+        status: PropositionStatus = proposition.status,
+        reinforceCount: Int = proposition.reinforceCount,
+        temporal: TemporalMetadata? = proposition.temporal,
+        derivedFrom: List<EvidenceItem> = emptyList(),
     ): EvidenceItem {
         require(proposition.text.isNotBlank()) { "claim text must not be blank, claim ${proposition.id}" }
+        val decaying = if (temporal == proposition.temporal) proposition else proposition.copy(temporal = temporal)
         return EvidenceItem.create(
             text = proposition.text,
             citation = citation,
             confidence = proposition.confidence,
-            effectiveConfidence = proposition.effectiveConfidenceAt(now, decayK),
-            status = proposition.status,
+            effectiveConfidence = decaying.effectiveConfidenceAt(now, decayK),
+            status = status,
             recordedAt = proposition.created,
             revisedAt = proposition.lastContentRevision,
             derivedFromIds = usableIds(proposition.sourceIds),
-            derivedFrom = emptyList(),
-            reinforceCount = proposition.reinforceCount,
-            temporal = proposition.temporal,
+            derivedFrom = derivedFrom,
+            reinforceCount = reinforceCount,
+            temporal = temporal,
             score = score,
             retrievals = listOfNotNull(retrieval),
         )
@@ -342,6 +363,28 @@ class EvidenceConverter private constructor(
     private fun retrieval(retriever: RetrieverId, rank: Int, score: Double?): Retrieval {
         val ranked = Retrieval.of(retriever).withRank(rank)
         return score?.let { ranked.withScore(it) } ?: ranked
+    }
+
+    /**
+     * Picks the loaded sources of a lineage that become its item's loaded claims. Each source must be named
+     * by the claim's non-blank source ids. A source with blank text is left out, and so is a source whose id
+     * an earlier kept source already has.
+     *
+     * @param proposition the lineage's claim
+     * @param sources the lineage's loaded sources
+     * @return the kept sources, in order
+     * @throws IllegalArgumentException if [sources] holds a null, or a source the claim's source ids do not name
+     */
+    private fun keptSources(proposition: Proposition, sources: List<Proposition>): List<Proposition> {
+        val named = usableIds(proposition.sourceIds).toSet()
+        val keptIds = HashSet<String>()
+        return EvidenceChecks.copyOf("lineage.sources", sources).filterIndexed { index, source ->
+            require(source.id in named) {
+                "lineage.sources[$index] is claim '${source.id}', which the source ids of claim " +
+                    "'${proposition.id}' do not name"
+            }
+            source.text.isNotBlank() && keptIds.add(source.id)
+        }
     }
 
     /**

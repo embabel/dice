@@ -238,7 +238,7 @@ class EvidenceConverterTest {
     }
 
     @Test
-    fun `the lineage of an abstraction is derived from its sources`() {
+    fun `the lineage of an abstraction is one item holding its loaded sources`() {
         val abstraction = claim("p-3", text = "Alice is settled in Berlin.", level = 1, sourceIds = listOf("p-1", "p-2"))
         val lineage = PropositionLineage(
             proposition = abstraction,
@@ -250,20 +250,17 @@ class EvidenceConverterTest {
             temporal = null,
         )
 
-        val derived = assertInstanceOf(Evidence.Derived::class.java, converter.fromLineage(lineage))
+        val item = converter.fromLineage(lineage).items.single()
 
-        assertEquals(abstraction.text, derived.conclusion)
-        assertEquals(DerivationRule.ABSTRACTION, derived.rule)
-        assertEquals(abstraction.sourceIds, derived.inputIds)
-        assertEquals(2, derived.inputs.size)
-        assertEquals("p-3", derived.citation?.propositionId)
+        assertEquals(abstraction.text, item.text)
+        assertEquals("p-3", item.citation.propositionId)
+        assertEquals(abstraction.sourceIds, item.derivedFromIds)
+        assertEquals(listOf("p-1", "p-2"), item.derivedFrom.map { it.citation.propositionId })
+        assertTrue(item.isDerived)
 
-        val unloaded = assertInstanceOf(
-            Evidence.Derived::class.java,
-            converter.fromLineage(lineage.copy(sources = emptyList())),
-        )
-        assertEquals(abstraction.sourceIds, unloaded.inputIds)
-        assertTrue(unloaded.inputs.isEmpty())
+        val unloaded = converter.item(lineage.copy(sources = emptyList()))
+        assertEquals(abstraction.sourceIds, unloaded.derivedFromIds)
+        assertTrue(unloaded.derivedFrom.isEmpty())
     }
 
     /**
@@ -286,11 +283,11 @@ class EvidenceConverterTest {
     fun `an abstraction carries the effective confidence and status of its claim`() {
         val abstraction = claim("p-3", status = PropositionStatus.SUPERSEDED, level = 1, sourceIds = listOf("p-1", "p-2"))
 
-        val derived = assertInstanceOf(Evidence.Derived::class.java, converter.fromLineage(lineageOf(abstraction)))
+        val item = converter.item(lineageOf(abstraction))
 
-        assertEquals(abstraction.effectiveConfidenceAt(asOf, 2.0), derived.effectiveConfidence)
-        assertEquals(0.9, derived.confidence)
-        assertEquals(abstraction.status, derived.status)
+        assertEquals(abstraction.effectiveConfidenceAt(asOf, 2.0), item.effectiveConfidence)
+        assertEquals(0.9, item.confidence)
+        assertEquals(abstraction.status, item.status)
     }
 
     @Test
@@ -298,27 +295,24 @@ class EvidenceConverterTest {
         val abstraction = claim("p-3", status = PropositionStatus.SUPERSEDED, level = 1, sourceIds = listOf("p-1", "p-2"))
             .withTemporal(TemporalMetadata(invalidatedAt = asOf))
 
-        val derived = assertInstanceOf(Evidence.Derived::class.java, converter.fromLineage(lineageOf(abstraction)))
+        val item = converter.item(lineageOf(abstraction))
 
-        assertEquals(0.0, derived.effectiveConfidence)
-        assertEquals(0.9, derived.confidence)
+        assertEquals(0.0, item.effectiveConfidence)
+        assertEquals(0.9, item.confidence)
     }
 
     @Test
     fun `the decay rate multiplier sets the effective confidence of an abstraction`() {
         val abstraction = claim("p-3", level = 1, sourceIds = listOf("p-1", "p-2"))
 
-        val derived = assertInstanceOf(
-            Evidence.Derived::class.java,
-            converter.withDecayK(4.0).fromLineage(lineageOf(abstraction)),
-        )
+        val item = converter.withDecayK(4.0).item(lineageOf(abstraction))
 
-        assertEquals(abstraction.effectiveConfidenceAt(asOf, 4.0), derived.effectiveConfidence)
-        assertNotEquals(abstraction.effectiveConfidenceAt(asOf, 2.0), derived.effectiveConfidence)
+        assertEquals(abstraction.effectiveConfidenceAt(asOf, 4.0), item.effectiveConfidence)
+        assertNotEquals(abstraction.effectiveConfidenceAt(asOf, 2.0), item.effectiveConfidence)
     }
 
     @Test
-    fun `the lineage of an abstraction whose source ids are all blank is rejected`() {
+    fun `the lineage of an abstraction whose source ids are all blank has no source ids`() {
         val abstraction = claim("p-3", level = 1, sourceIds = listOf(" "))
         val lineage = PropositionLineage(
             proposition = abstraction,
@@ -330,7 +324,10 @@ class EvidenceConverterTest {
             temporal = null,
         )
 
-        assertThrows(IllegalArgumentException::class.java) { converter.fromLineage(lineage) }
+        val item = converter.fromLineage(lineage).items.single()
+
+        assertTrue(item.derivedFromIds.isEmpty())
+        assertFalse(item.isDerived)
     }
 
     @Test
