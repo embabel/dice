@@ -164,7 +164,8 @@ sealed interface Evidence {
             require(this.items.isNotEmpty()) { "items must not be empty" }
         }
 
-        override fun equals(other: Any?): Boolean = other is Recorded && items == other.items
+        override fun equals(other: Any?): Boolean =
+            other is Recorded && EvidenceItem.sameItems(items, other.items)
 
         override fun hashCode(): Int = items.hashCode()
 
@@ -235,7 +236,7 @@ sealed interface Evidence {
          */
         override fun equals(other: Any?): Boolean =
             other is Derived && conclusion == other.conclusion && Objects.equals(confidence, other.confidence) &&
-                rule == other.rule && inputIds == other.inputIds && inputs == other.inputs
+                rule == other.rule && inputIds == other.inputIds && EvidenceItem.sameItems(inputs, other.inputs)
 
         override fun hashCode(): Int = Objects.hash(conclusion, confidence, rule, inputIds, inputs)
 
@@ -339,7 +340,7 @@ sealed interface Evidence {
         }
 
         override fun equals(other: Any?): Boolean =
-            other is Conflicting && items == other.items && conflictType == other.conflictType
+            other is Conflicting && conflictType == other.conflictType && EvidenceItem.sameItems(items, other.items)
 
         override fun hashCode(): Int = Objects.hash(items, conflictType)
 
@@ -398,8 +399,8 @@ sealed interface Evidence {
         }
 
         override fun equals(other: Any?): Boolean =
-            other is Superseded && current == other.current && previous == other.previous &&
-                conflictType == other.conflictType
+            other is Superseded && conflictType == other.conflictType &&
+                EvidenceItem.sameItems(listOf(current) + previous, listOf(other.current) + other.previous)
 
         override fun hashCode(): Int = Objects.hash(current, previous, conflictType)
 

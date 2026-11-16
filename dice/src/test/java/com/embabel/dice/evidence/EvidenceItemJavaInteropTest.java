@@ -154,6 +154,56 @@ class EvidenceItemJavaInteropTest {
         assertNotEquals(first, second);
     }
 
+    @Test
+    void deepChainsBuiltSeparatelyAreEqual() {
+        EvidenceItem first = chainOfSingleSources(20_000, "Ada was born in 1815", "Ada wrote the first program");
+        EvidenceItem second = chainOfSingleSources(20_000, "Ada was born in 1815", "Ada wrote the first program");
+
+        assertTrue(first.equals(second));
+        assertTrue(second.equals(first));
+        assertEquals(first.hashCode(), second.hashCode());
+    }
+
+    @Test
+    void deepChainsThatDifferAtTheTopOrTheBottomAreNotEqual() {
+        EvidenceItem chain = chainOfSingleSources(20_000, "Ada was born in 1815", "Ada wrote the first program");
+        EvidenceItem otherTop = chainOfSingleSources(20_000, "Ada was born in 1815", "Ada wrote the second program");
+        EvidenceItem otherLeaf = chainOfSingleSources(20_000, "Ada was born in 1816", "Ada wrote the first program");
+
+        assertNotEquals(chain, otherTop);
+        assertNotEquals(chain, otherLeaf);
+        assertNotEquals(otherLeaf, chain);
+    }
+
+    @Test
+    void deepChainsWithEqualHashesThatDifferAtTheLeafAreNotEqual() {
+        // "Aa" and "BB" have the same String hash, so every level hashes alike and only the leaf text differs.
+        EvidenceItem first = chainOfSingleSources(20_000, "Aa", "Ada wrote the first program");
+        EvidenceItem second = chainOfSingleSources(20_000, "BB", "Ada wrote the first program");
+
+        assertEquals(first.hashCode(), second.hashCode());
+        assertFalse(first.equals(second));
+        assertFalse(second.equals(first));
+    }
+
+    /**
+     * Builds a chain where c-0 is an observation and each later claim c-n is abstracted from c-(n-1) alone.
+     *
+     * @param length the number of claims in the chain
+     * @param leafText the text of c-0
+     * @param topText the text of the last claim
+     * @return the last claim in the chain
+     */
+    private static EvidenceItem chainOfSingleSources(int length, String leafText, String topText) {
+        EvidenceItem previous = EvidenceItem.of(leafText, Citation.of("c-0", "support-team"), 0.8);
+        for (int n = 1; n < length; n++) {
+            String text = n == length - 1 ? topText : "Ada claim " + n;
+            previous = EvidenceItem.of(text, Citation.of("c-" + n, "support-team"), 0.7)
+                    .withDerivedFrom(List.of(previous));
+        }
+        return previous;
+    }
+
     /**
      * Builds a chain where p-0 and p-1 are observations and each later claim p-n is abstracted from the
      * two before it, p-(n-1) and p-(n-2).

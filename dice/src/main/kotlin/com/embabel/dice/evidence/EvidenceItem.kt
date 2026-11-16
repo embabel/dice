@@ -20,6 +20,7 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.temporal.TemporalMetadata
 import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
+import java.util.ArrayDeque
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.Objects
@@ -248,25 +249,19 @@ class EvidenceItem private constructor(
      * so `0.0` and `-0.0` differ.
      */
     override fun equals(other: Any?): Boolean =
-        this === other || (other is EvidenceItem && hash == other.hash && sameAs(other, IdentityHashMap()))
+        this === other || (other is EvidenceItem && hash == other.hash && sameItems(listOf(this), listOf(other)))
 
     override fun hashCode(): Int = hash
 
     /**
-     * Compares every property with [other], loaded claims last. Two items whose hashes differ are unequal at
-     * once. A pair of loaded claims found equal is recorded in [equalPairs] and not compared again, so two
-     * separately built graphs that share ancestors compare each pair of item objects once.
+     * Compares the properties of this item with [other], leaving out the loaded claims themselves. The number of
+     * loaded claims is compared, so the caller can pair them up by index.
      *
      * @param other the item to compare with
-     * @param equalPairs for each item object, the item objects already found equal to it in this comparison
-     * @return true when every property is equal
+     * @return true when every property other than the loaded claims is equal
      */
-    private fun sameAs(
-        other: EvidenceItem,
-        equalPairs: IdentityHashMap<EvidenceItem, MutableSet<EvidenceItem>>,
-    ): Boolean {
-        if (hash != other.hash) return false
-        val fieldsEqual = text == other.text && citation == other.citation &&
+    private fun ownPartsEqual(other: EvidenceItem): Boolean =
+        text == other.text && citation == other.citation &&
             Objects.equals(confidence, other.confidence) &&
             Objects.equals(effectiveConfidence, other.effectiveConfidence) &&
             status == other.status && recordedAt == other.recordedAt &&
@@ -274,19 +269,6 @@ class EvidenceItem private constructor(
             reinforceCount == other.reinforceCount && temporal == other.temporal &&
             Objects.equals(score, other.score) && retrievals == other.retrievals &&
             derivedFrom.size == other.derivedFrom.size
-        if (!fieldsEqual) return false
-        derivedFrom.forEachIndexed { index, mine ->
-            val theirs = other.derivedFrom[index]
-            if (mine !== theirs) {
-                val known = equalPairs.getOrPut(mine) { Collections.newSetFromMap(IdentityHashMap()) }
-                if (theirs !in known) {
-                    if (!mine.sameAs(theirs, equalPairs)) return false
-                    known.add(theirs)
-                }
-            }
-        }
-        return true
-    }
 
     /**
      * Builds a copy of this item with the given parts replaced.
@@ -383,6 +365,54 @@ class EvidenceItem private constructor(
                 text, citation, confidence, effectiveConfidence, status, recordedAt, revisedAt,
                 derivedFromIds, derivedFrom, reinforceCount, temporal, score, retrievals,
             )
+
+        /**
+         * Compares two lists of items in order, with every property of each item and of its loaded claims equal.
+         *
+         * The comparison keeps a stack of item pairs still to compare, so a deep chain of loaded claims does not
+         * grow the call stack. A pair whose hashes differ is unequal at once. Each pair of item objects is
+         * compared once for the whole call, so lists whose items share loaded claims compare the shared part once.
+         *
+         * @param left the first list
+         * @param right the second list
+         * @return true when both lists have the same size and the items at each index are equal
+         */
+        @JvmSynthetic
+        internal fun sameItems(left: List<EvidenceItem>, right: List<EvidenceItem>): Boolean {
+            if (left.size != right.size) return false
+            val seen = IdentityHashMap<EvidenceItem, MutableSet<EvidenceItem>>()
+            val pending = ArrayDeque<EvidenceItem>()
+
+            /**
+             * Queues a pair for comparison unless it is the same object or was queued before.
+             *
+             * @param mine the item from the first graph
+             * @param theirs the item at the same place in the second graph
+             * @return false when the hashes already show the pair is unequal
+             */
+            fun offer(mine: EvidenceItem, theirs: EvidenceItem): Boolean {
+                if (mine === theirs) return true
+                if (mine.hash != theirs.hash) return false
+                if (seen.getOrPut(mine) { Collections.newSetFromMap(IdentityHashMap()) }.add(theirs)) {
+                    pending.push(theirs)
+                    pending.push(mine)
+                }
+                return true
+            }
+
+            for (index in left.indices) {
+                if (!offer(left[index], right[index])) return false
+            }
+            while (pending.isNotEmpty()) {
+                val mine = pending.pop()
+                val theirs = pending.pop()
+                if (!mine.ownPartsEqual(theirs)) return false
+                for (index in mine.derivedFrom.indices) {
+                    if (!offer(mine.derivedFrom[index], theirs.derivedFrom[index])) return false
+                }
+            }
+            return true
+        }
 
         /**
          * Creates an item in Kotlin, setting the optional values in [block].

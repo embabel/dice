@@ -19,6 +19,7 @@ import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.spi.ConflictType;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -244,6 +245,38 @@ class EvidenceKindsJavaInteropTest {
         assertEquals(first, second);
         assertEquals(first.hashCode(), second.hashCode());
         assertNotEquals(first, second.withInputs(List.of(source1)));
+    }
+
+    @Test
+    void recordedValuesWhoseItemsShareALoadedClaimCompareQuickly() {
+        Evidence.Recorded first = recordedSharingOneSource(2_000, 2_000);
+        Evidence.Recorded second = recordedSharingOneSource(2_000, 2_000);
+
+        boolean equal = assertTimeoutPreemptively(Duration.ofSeconds(2), () -> first.equals(second));
+
+        assertTrue(equal);
+    }
+
+    /**
+     * Builds a recorded value whose items each load the same shared claim, which in turn loads its own leaves.
+     *
+     * @param roots the number of items in the value
+     * @param leaves the number of claims the shared claim loads
+     * @return the new value
+     */
+    private static Evidence.Recorded recordedSharingOneSource(int roots, int leaves) {
+        List<EvidenceItem> loaded = new ArrayList<>();
+        for (int n = 0; n < leaves; n++) {
+            loaded.add(EvidenceItem.of("Ada note " + n, Citation.of("leaf-" + n, "support-team"), 0.8));
+        }
+        EvidenceItem shared = EvidenceItem.of("Ada studied mathematics", Citation.of("shared", "support-team"), 0.7)
+                .withDerivedFrom(loaded);
+        List<EvidenceItem> items = new ArrayList<>();
+        for (int n = 0; n < roots; n++) {
+            items.add(EvidenceItem.of("Ada claim " + n, Citation.of("root-" + n, "support-team"), 0.6)
+                    .withDerivedFrom(List.of(shared)));
+        }
+        return Evidence.recorded(items);
     }
 
     /**
