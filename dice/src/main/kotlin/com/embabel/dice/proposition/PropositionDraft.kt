@@ -19,6 +19,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.temporal.TemporalMetadata
+import com.fasterxml.jackson.annotation.JsonCreator
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonProperty
 import java.time.Instant
@@ -298,6 +299,68 @@ class PropositionDraft private constructor(
         // A proposition with the constructor's defaults. A draft that starts from scratch takes
         // its default values from here, so the defaults live in one place.
         private val TEMPLATE = Proposition(contextId = ContextId("template"), text = "", mentions = emptyList(), confidence = 0.0)
+
+        /**
+         * Reads a draft from the flat JSON the first draft format wrote, one key per value.
+         * The draft starts with no origin, so a value the JSON leaves out takes the
+         * constructor's default when the proposition is built.
+         *
+         * @param contextId the context id as a plain string
+         * @return a draft holding the values from the JSON
+         */
+        @JvmStatic
+        @JsonCreator
+        private fun fromJson(
+            @JsonProperty("contextId") contextId: String,
+            @JsonProperty("text") text: String,
+            @JsonProperty("confidence") confidence: ZeroToOne,
+            @JsonProperty("id") id: String?,
+            @JsonProperty("mentions") mentions: List<EntityMention>,
+            @JsonProperty("decay") decay: ZeroToOne,
+            @JsonProperty("importance") importance: ZeroToOne,
+            @JsonProperty("reasoning") reasoning: String?,
+            @JsonProperty("grounding") grounding: List<String>,
+            @JsonProperty("created") created: Instant?,
+            @JsonProperty("contentRevised") contentRevised: Instant?,
+            @JsonProperty("metadataRevised") metadataRevised: Instant?,
+            @JsonProperty("lastAccessed") lastAccessed: Instant?,
+            @JsonProperty("pinned") pinned: Boolean,
+            @JsonProperty("status") status: PropositionStatus,
+            @JsonProperty("level") level: Int,
+            @JsonProperty("sourceIds") sourceIds: List<String>,
+            @JsonProperty("reinforceCount") reinforceCount: Int,
+            @JsonProperty("metadata") metadata: Map<String, Any>,
+            @JsonProperty("uri") uri: String?,
+            @JsonProperty("temporal") temporal: TemporalMetadata?,
+            @JsonProperty("provenanceEntries") provenanceEntries: List<ProvenanceEntry>,
+        ): PropositionDraft =
+            PropositionDraft(
+                origin = null,
+                values = Values(
+                    contextId = ContextId(contextId),
+                    text = text,
+                    confidence = confidence,
+                    id = id,
+                    mentions = Collections.unmodifiableList(ArrayList(mentions)),
+                    decay = decay,
+                    importance = importance,
+                    reasoning = reasoning,
+                    grounding = Collections.unmodifiableList(ArrayList(grounding)),
+                    created = created,
+                    contentRevised = contentRevised,
+                    metadataRevised = metadataRevised,
+                    lastAccessed = lastAccessed,
+                    pinned = pinned,
+                    status = status,
+                    level = level,
+                    sourceIds = Collections.unmodifiableList(ArrayList(sourceIds)),
+                    reinforceCount = reinforceCount,
+                    metadata = Collections.unmodifiableMap(LinkedHashMap(metadata)),
+                    uri = uri,
+                    temporal = temporal,
+                    provenanceEntries = Collections.unmodifiableList(ArrayList(provenanceEntries)),
+                ),
+            )
 
         /**
          * Starts a draft with the three values every proposition needs and defaults for the rest.
