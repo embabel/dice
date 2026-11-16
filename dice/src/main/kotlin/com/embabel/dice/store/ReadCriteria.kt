@@ -447,11 +447,15 @@ class ReadCriteria private constructor(
  * [ScopedReadSpec.requireOnly] before it reads.
  *
  * ```java
- * private static final Set<ReadCriterion> APPLIED =
- *     EnumSet.of(ReadCriterion.ENTITY_ID, ReadCriterion.STATUSES, ReadCriterion.MIN_CONFIDENCE);
+ * private static final Set<ReadCriterion> APPLIED = EnumSet.of(
+ *     ReadCriterion.ENTITY_ID, ReadCriterion.STATUSES, ReadCriterion.MIN_CONFIDENCE,
+ *     ReadCriterion.EFFECTIVE_CONFIDENCE_AS_OF, ReadCriterion.DECAY_K);
  *
  * criteria.requireOnly(APPLIED, StoreCapability.SCOPED_READS);
  * ```
+ *
+ * Every store lists [EFFECTIVE_CONFIDENCE_AS_OF] and [DECAY_K]. They only set how effective
+ * confidence is computed, so a store that never filters or orders by it still accepts them.
  *
  * The store names each entry. It does not use `EnumSet.allOf` or `values()`, because an entry
  * added later would then pass unchecked and be skipped.
