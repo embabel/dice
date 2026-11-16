@@ -55,10 +55,11 @@ internal object EvidenceChecks {
      *   the same id
      */
     fun requireLoadedClaimsNamed(loadedName: String, loaded: List<EvidenceItem>, idsName: String, ids: List<String>) {
+        val named = ids.toHashSet()
         val firstIndexById = HashMap<String, Int>()
         loaded.forEachIndexed { index, claim ->
             val id = claim.citation.propositionId
-            require(id in ids) { "$loadedName[$index] cites claim '$id', which is not in $idsName" }
+            require(id in named) { "$loadedName[$index] cites claim '$id', which is not in $idsName" }
             val earlier = firstIndexById.putIfAbsent(id, index)
             require(earlier == null) { "$loadedName[$earlier] and $loadedName[$index] cite the same claim id '$id'" }
         }
