@@ -16,6 +16,8 @@
 package com.embabel.dice.proposition
 
 import com.embabel.agent.core.ContextId
+import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
 import java.time.Duration
 import java.time.Instant
 
@@ -45,6 +47,7 @@ import java.time.Instant
  */
 data class PropositionQuery(
     // Scope filters
+    @get:JsonProperty("contextId")
     val contextId: ContextId? = null,
     val entityId: String? = null,
     val anyEntityIds: List<String>? = null,
@@ -115,6 +118,7 @@ data class PropositionQuery(
     /**
      * Get the context ID value as a String (Java-friendly).
      */
+    @JsonIgnore
     fun getContextIdValue(): String? = contextId?.value
 
     // ========================================================================
