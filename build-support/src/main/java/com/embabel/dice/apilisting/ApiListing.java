@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.BiFunction;
 import java.util.stream.Stream;
 import org.jetbrains.kotlin.abi.tools.AbiTools;
 import org.jetbrains.kotlin.abi.tools.api.AbiFilters;
@@ -74,6 +75,20 @@ public final class ApiListing {
      * @return 0 when the listings match or were written, 1 when they differ, 2 on bad input
      */
     static int run(String[] args, PrintStream out, PrintStream err) throws IOException {
+        return run(args, out, err, ApiListing::dump);
+    }
+
+    /**
+     * Checks or rewrites the listings, reading the classes with the given dump function.
+     *
+     * @param args the same arguments as {@link #main}
+     * @param out where update mode reports the files it wrote
+     * @param err where problems and listing differences go
+     * @param dumper prints the ABI dump of some class files with some filters
+     * @return 0 when the listings match or were written, 1 when they differ, 2 on bad input
+     */
+    static int run(String[] args, PrintStream out, PrintStream err, BiFunction<List<File>, AbiFilters, String> dumper)
+            throws IOException {
         List<String> positional = new ArrayList<>();
         Path generated = null;
         List<Path> sourceRoots = new ArrayList<>();
@@ -135,25 +150,30 @@ public final class ApiListing {
         Path apiDir = Path.of(args[2]);
         String module = args[3];
 
-        // A type is experimental when the marker sits on the type itself: leaving marked declarations
-        // out drops the whole type. A marker on an enum entry or a member only drops that member, so
-        // its owner stays stable. A nested type or companion follows its experimental owner.
-        Set<String> all = new HashSet<>();
-        List<String> full = blocks(dump(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of())));
-        for (String block : full) {
-            all.add(typeName(block));
-        }
-        Set<String> experimentalTypes = new HashSet<>(all);
-        for (String block : blocks(dump(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of(EXPERIMENTAL))))) {
-            experimentalTypes.remove(typeName(block));
-        }
         List<String> stableBlocks = new ArrayList<>();
         List<String> experimentalBlocks = new ArrayList<>();
-        for (String block : full) {
-            String name = typeName(block);
-            boolean isExperimental = experimentalTypes.contains(name)
-                    || experimentalTypes.stream().anyMatch(owner -> name.startsWith(owner + "$"));
-            (isExperimental ? experimentalBlocks : stableBlocks).add(block);
+        try {
+            // A type is experimental when the marker sits on the type itself: leaving marked declarations
+            // out drops the whole type. A marker on an enum entry or a member only drops that member, so
+            // its owner stays stable. A nested type or companion follows its experimental owner.
+            Set<String> all = new HashSet<>();
+            List<String> full = blocks(dumper.apply(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of())));
+            for (String block : full) {
+                all.add(typeName(block));
+            }
+            Set<String> experimentalTypes = new HashSet<>(all);
+            for (String block : blocks(dumper.apply(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of(EXPERIMENTAL))))) {
+                experimentalTypes.remove(typeName(block));
+            }
+            for (String block : full) {
+                String name = typeName(block);
+                boolean isExperimental = experimentalTypes.contains(name)
+                        || experimentalTypes.stream().anyMatch(owner -> name.startsWith(owner + "$"));
+                (isExperimental ? experimentalBlocks : stableBlocks).add(block);
+            }
+        } catch (IllegalStateException e) {
+            err.println(e.getMessage());
+            return 2;
         }
         String stable = listing(stableBlocks);
         String experimental = listing(experimentalBlocks);

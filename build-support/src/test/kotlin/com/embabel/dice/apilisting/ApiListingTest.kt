@@ -139,6 +139,17 @@ class ApiListingTest {
     }
 
     @Test
+    fun `an unreadable dump stops the program with a message`() {
+        val args = arrayOf("check", fixtureClasses().toString(), api.toString(), "m")
+        val status = ApiListing.run(args, PrintStream(ByteArrayOutputStream()), PrintStream(err)) { _, _ ->
+            "public final object a/B {\n}\n"
+        }
+
+        assertEquals(2, status)
+        assertTrue(err.toString().contains("Cannot read a type name from the listing line: public final object a/B {"))
+    }
+
+    @Test
     fun `a listing line without a class keyword is rejected`() {
         assertThrows(IllegalStateException::class.java) { ApiListing.typeName("public final object a/B {") }
     }
