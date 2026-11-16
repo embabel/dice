@@ -199,7 +199,7 @@ class ScopedReadsJavaInteropTest {
         VectorSearchRequest request = VectorSearchRequest.forText("peanut allergy", ScopedReadSpec.criteria());
         ReadBudgetExceededException refusal = assertThrows(ReadBudgetExceededException.class,
                 () -> search.findNearest(active, request, ReadBudget.ofRows(200)));
-        assertEquals(ReadBudgetResource.VECTOR_CANDIDATES, refusal.getResource());
+        assertEquals(ReadBudgetResource.VECTOR_SEARCH, refusal.getResource());
         assertEquals(0, refusal.getAllowed());
         ReadBudgetExceededException tooMany = assertThrows(ReadBudgetExceededException.class,
                 () -> search.findNearest(active, request, ReadBudget.ofRows(200).withMaxVectorCandidates(2)));

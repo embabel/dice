@@ -97,35 +97,3 @@ class ContextReadScope private constructor(contextIdValues: Collection<String>) 
         fun of(contextIds: Collection<ContextId>): ContextReadScope = ofValues(contextIds.map { it.value })
     }
 }
-
-/**
- * Thrown when a filter or a read names a context it may not touch. Nothing is read.
- *
- * ```java
- * try {
- *     readUnder(spec);
- * } catch (ReadScopeViolationException refusal) {
- *     log.warn("Refused {}. Allowed: {}", refusal.getContextIdValue(), refusal.getAllowedContextIdValues());
- * }
- * ```
- *
- * EXPERIMENTAL. This API may change before 1.0.
- *
- * @param allowedContextIdValues The contexts the filter or read was held to.
- * @property contextIdValue The context it named that is not one of them.
- */
-@ApiStatus.Experimental
-class ReadScopeViolationException(
-    allowedContextIdValues: Collection<String>,
-    val contextIdValue: String,
-) : IllegalArgumentException("Context '$contextIdValue' is not one this read may touch") {
-
-    /** The contexts the filter or read was held to. Read-only. */
-    val allowedContextIdValues: Set<String> =
-        Collections.unmodifiableSet(LinkedHashSet(allowedContextIdValues))
-
-    private companion object {
-        /** Fixed, so a serialized instance stays readable when the class changes. */
-        private const val serialVersionUID: Long = 1L
-    }
-}

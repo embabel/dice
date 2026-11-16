@@ -19,13 +19,9 @@ import com.embabel.dice.store.ContextReadScope;
 import com.embabel.dice.store.ReadBudget;
 import com.embabel.dice.store.ReadBudgetExceededException;
 import com.embabel.dice.store.ReadBudgetResource;
-import com.embabel.dice.store.ReadScopeViolationException;
+import com.embabel.dice.store.ReadRefusedException;
 import org.junit.jupiter.api.Test;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.util.Arrays;
 import java.util.List;
 
@@ -35,8 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The read scope and the read budget used from Java: a host builds both, and a store makes the
- * budget checks and reads the two failures.
+ * The read scope and the read budget used from Java: a host builds a scope and a budget, a store
+ * makes the budget checks, and a caller catches a refusal.
  */
 class ReadScopeValuesJavaInteropTest {
 
@@ -57,50 +53,64 @@ class ReadScopeValuesJavaInteropTest {
     }
 
     @Test
-    void aScopeViolationIsCaughtByTypeAndNamesTheContext() {
-        ReadScopeViolationException refusal = assertThrows(ReadScopeViolationException.class, () -> {
-            throw new ReadScopeViolationException(SCOPE.getContextIdValues(), "bob-session");
-        });
-
-        assertEquals("bob-session", refusal.getContextIdValue());
-        assertEquals(SCOPE.getContextIdValues(), refusal.getAllowedContextIdValues());
-        assertTrue(refusal instanceof IllegalArgumentException);
-    }
-
-    @Test
-    void aScopeViolationSurvivesJavaSerialization() throws Exception {
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        try (ObjectOutputStream out = new ObjectOutputStream(bytes)) {
-            out.writeObject(new ReadScopeViolationException(SCOPE.getContextIdValues(), "bob-session"));
-        }
-
-        try (ObjectInputStream in = new ObjectInputStream(new ByteArrayInputStream(bytes.toByteArray()))) {
-            ReadScopeViolationException copy = (ReadScopeViolationException) in.readObject();
-            assertEquals("bob-session", copy.getContextIdValue());
-            assertEquals(SCOPE.getContextIdValues(), copy.getAllowedContextIdValues());
-        }
-    }
-
-    @Test
     void aBudgetIsBuiltWithAChainAndRefusesMoreThanItAllows() {
         ReadBudget budget = ReadBudget.ofRows(200).withMaxVectorCandidates(5_000);
 
         assertEquals(200, budget.getMaxRows());
         assertEquals(5_000, budget.getMaxVectorCandidates());
+        assertTrue(budget.isVectorSearchAllowed());
         budget.requireRows(200);
+        budget.requireVectorSearch();
         budget.requireVectorCandidates(5_000);
 
         ReadBudgetExceededException refusal =
                 assertThrows(ReadBudgetExceededException.class, () -> budget.requireRows(201));
         assertEquals(ReadBudgetResource.ROWS, refusal.getResource());
         assertEquals(200, refusal.getAllowed());
-        assertEquals(201, refusal.getRequested());
-
-        ReadBudgetExceededException noSearch = assertThrows(ReadBudgetExceededException.class,
-                () -> ReadBudget.ofRows(200).requireVectorCandidates(0));
-        assertEquals(ReadBudgetResource.VECTOR_CANDIDATES, noSearch.getResource());
-        assertEquals(0, noSearch.getAllowed());
+        assertEquals(201L, refusal.getRequested());
         assertThrows(IllegalArgumentException.class, () -> ReadBudget.ofRows(Integer.MAX_VALUE));
         assertEquals(Integer.MAX_VALUE - 1, ReadBudget.MAX_CAP);
+    }
+
+    @Test
+    void aStorePassesTheCountItsDatabaseReturnedAsALong() {
+        ReadBudget budget = ReadBudget.ofRows(200).withMaxVectorCandidates(5_000);
+        long counted = 4_294_967_301L;
+
+        ReadBudgetExceededException rows =
+                assertThrows(ReadBudgetExceededException.class, () -> budget.requireRows(counted));
+        ReadBudgetExceededException candidates =
+                assertThrows(ReadBudgetExceededException.class, () -> budget.requireVectorCandidates(counted));
+
+        assertEquals(counted, rows.getRequested());
+        assertEquals(ReadBudgetResource.VECTOR_CANDIDATES, candidates.getResource());
+        assertEquals(counted, candidates.getRequested());
+        assertThrows(IllegalArgumentException.class, () -> budget.requireRows(-1L));
+    }
+
+    @Test
+    void aBudgetRefusalIsCaughtByItsBaseTypeAndIsNotAnArgumentError() {
+        ReadRefusedException refusal = assertThrows(ReadRefusedException.class,
+                () -> ReadBudget.ofRows(200).requireRows(201));
+
+        assertTrue(refusal instanceof ReadBudgetExceededException);
+        assertFalse(IllegalArgumentException.class.isInstance(refusal));
+        assertFalse(UnsupportedOperationException.class.isInstance(refusal));
+    }
+
+    @Test
+    void aBudgetWithNoCandidateCapSaysSimilaritySearchIsNotEnabled() {
+        ReadBudget rowsOnly = ReadBudget.ofRows(200);
+
+        assertFalse(rowsOnly.isVectorSearchAllowed());
+        ReadBudgetExceededException refusal =
+                assertThrows(ReadBudgetExceededException.class, rowsOnly::requireVectorSearch);
+        assertEquals(ReadBudgetResource.VECTOR_SEARCH, refusal.getResource());
+        assertEquals(0, refusal.getAllowed());
+        assertEquals(0L, refusal.getRequested());
+        assertTrue(refusal.getMessage().contains("Similarity search is not enabled on this budget"));
+        ReadBudgetExceededException counted =
+                assertThrows(ReadBudgetExceededException.class, () -> rowsOnly.requireVectorCandidates(0));
+        assertEquals(ReadBudgetResource.VECTOR_SEARCH, counted.getResource());
     }
 }
