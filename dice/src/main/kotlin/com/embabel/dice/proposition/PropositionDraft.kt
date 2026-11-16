@@ -250,12 +250,12 @@ class PropositionDraft private constructor(
     fun withTemporal(temporal: TemporalMetadata?): PropositionDraft = PropositionDraft(origin, values.copy(temporal = temporal))
 
     /**
-     * Replaces the provenance entries with a read-only copy of [entries], as given.
+     * Replaces the provenance entries with a read-only copy of [entries] that drops duplicates,
+     * keeping the first of each, as Proposition.withProvenance does.
      * Unlike Proposition.withProvenance, this leaves metadataRevised as it is.
-     * It also keeps duplicate entries, which Proposition.withProvenance removes.
      */
     fun withProvenance(entries: List<ProvenanceEntry>): PropositionDraft =
-        PropositionDraft(origin, values.copy(provenanceEntries = Collections.unmodifiableList(ArrayList(entries))))
+        PropositionDraft(origin, values.copy(provenanceEntries = Collections.unmodifiableList(entries.distinct())))
 
     /**
      * Builds the proposition through its primary constructor.

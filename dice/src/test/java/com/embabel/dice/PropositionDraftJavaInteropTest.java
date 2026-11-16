@@ -459,17 +459,28 @@ class PropositionDraftJavaInteropTest {
     }
 
     @Test
-    void withProvenanceKeepsARepeatedEntryAsGiven() {
-        Proposition p = Proposition.draft("acme", "Alice lives in Paris", 0.9)
-                .withProvenance(List.of(FIRST_SOURCE, FIRST_SOURCE))
+    void withProvenanceDropsRepeatedEntriesKeepingTheFirst() {
+        Proposition p = Proposition.draft("acme", "x", 0.9)
+                .withProvenance(List.of(FIRST_SOURCE, FIRST_SOURCE, SECOND_SOURCE))
                 .toProposition();
 
-        assertEquals(2, p.getProvenanceEntries().size());
-        assertEquals(List.of(FIRST_SOURCE, FIRST_SOURCE), p.getProvenanceEntries());
+        assertEquals(List.of(FIRST_SOURCE, SECOND_SOURCE), p.getProvenanceEntries());
     }
 
     @Test
-    void toDraftRoundTripKeepsARepeatedProvenanceEntry() {
+    void withProvenanceMatchesPropositionWithProvenanceOnRepeatedEntries() {
+        List<ProvenanceEntry> repeated = List.of(FIRST_SOURCE, FIRST_SOURCE, SECOND_SOURCE);
+        Proposition base = Proposition.draft("acme", "x", 0.9).toProposition();
+
+        Proposition fromDraft = Proposition.draft("acme", "x", 0.9)
+                .withProvenance(repeated)
+                .toProposition();
+
+        assertEquals(base.withProvenance(repeated).getProvenanceEntries(), fromDraft.getProvenanceEntries());
+    }
+
+    @Test
+    void toDraftRoundTripDropsARepeatedProvenanceEntry() {
         Proposition p = Proposition.create(
                 "p-dup",
                 "acme",
@@ -496,8 +507,8 @@ class PropositionDraftJavaInteropTest {
                 .withProvenance(p.getProvenanceEntries())
                 .toProposition();
 
-        assertEquals(2, rebuilt.getProvenanceEntries().size());
-        assertEquals(p, rebuilt);
+        assertEquals(List.of(FIRST_SOURCE), rebuilt.getProvenanceEntries());
+        assertEquals(2, p.getProvenanceEntries().size());
     }
 
     @Test
