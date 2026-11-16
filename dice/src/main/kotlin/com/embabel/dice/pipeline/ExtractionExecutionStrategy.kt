@@ -80,7 +80,7 @@ interface ExtractionExecutionStrategy {
     /**
      * This is [execute] for a `java.util.function.Function`, with the same input order and `null`
      * slot rules. A Java caller can pass a `Function` it already holds and does not need a Kotlin
-     * function type.
+     * function type. If you need to know which chunks failed and why, use [attemptAll] instead.
      *
      * @param chunks the chunks to extract, in order
      * @param extract the stateless per-chunk extraction function
@@ -88,6 +88,28 @@ interface ExtractionExecutionStrategy {
      */
     fun <T> executeAll(chunks: List<Chunk>, extract: Function<in Chunk, out T>): List<T?> =
         execute(chunks) { extract.apply(it) }
+
+    /**
+     * Like [executeAll], but every chunk comes back as a [ChunkOutcome] that says whether it worked,
+     * which chunk it was, and the exception if it failed. Outcomes are in input order. If the
+     * strategy leaves a slot empty, that chunk is reported as a failure.
+     *
+     * @param chunks the chunks to extract, in order
+     * @param extract the stateless per-chunk extraction function
+     * @return one outcome per chunk, in the same order as `chunks`
+     */
+    fun <T> attemptAll(chunks: List<Chunk>, extract: Function<in Chunk, out T>): List<ChunkOutcome<T>> =
+        execute(chunks) { chunk ->
+            attemptCatching { extract.apply(chunk) }.fold(
+                { ChunkOutcome.success(chunk, it) },
+                { ChunkOutcome.failure<T>(chunk, it as Exception) },
+            )
+        }.mapIndexed { i, outcome ->
+            outcome ?: ChunkOutcome.failure<T>(
+                chunks[i],
+                IllegalStateException("The strategy returned no result for chunk ${chunks[i].id}"),
+            )
+        }
 }
 
 /**

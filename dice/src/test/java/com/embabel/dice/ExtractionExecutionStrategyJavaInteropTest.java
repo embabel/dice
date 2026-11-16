@@ -17,6 +17,7 @@ package com.embabel.dice;
 
 import com.embabel.agent.rag.model.Chunk;
 import com.embabel.dice.pipeline.BatchedExtractionStrategy;
+import com.embabel.dice.pipeline.ChunkOutcome;
 import com.embabel.dice.pipeline.ExtractionExecutionStrategy;
 import com.embabel.dice.pipeline.ParallelExtractionStrategy;
 import com.embabel.dice.pipeline.SerialExtractionStrategy;
@@ -32,7 +33,10 @@ import java.util.concurrent.Executors;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Checks that a Java caller can run an extraction strategy with a plain
@@ -160,5 +164,57 @@ class ExtractionExecutionStrategyJavaInteropTest {
 
         assertEquals(Arrays.asList("alpha", null, "gamma"), parallel);
         assertEquals(Arrays.asList("alpha", null, "gamma"), batched);
+    }
+
+    @Test
+    void serialStrategyAttemptAllReportsEachOutcome() {
+        assertAttemptAllReportsEachOutcome(SerialExtractionStrategy.INSTANCE);
+    }
+
+    @Test
+    void parallelStrategyAttemptAllReportsEachOutcome() {
+        assertAttemptAllReportsEachOutcome(new ParallelExtractionStrategy(executor));
+    }
+
+    @Test
+    void batchedStrategyAttemptAllReportsEachOutcome() {
+        assertAttemptAllReportsEachOutcome(new BatchedExtractionStrategy(2, executor));
+    }
+
+    /**
+     * Runs attemptAll with a function that succeeds, returns null, and throws, then checks each
+     * outcome comes back in input order and keeps its own chunk.
+     */
+    private void assertAttemptAllReportsEachOutcome(ExtractionExecutionStrategy strategy) {
+        Function<Chunk, String> extract = chunk -> {
+            switch (chunk.getText()) {
+                case "alpha":
+                    return "alpha";
+                case "beta":
+                    return null;
+                default:
+                    throw new IllegalStateException("bad");
+            }
+        };
+
+        List<ChunkOutcome<String>> outcomes = strategy.attemptAll(chunks, extract);
+
+        assertEquals(3, outcomes.size());
+
+        ChunkOutcome<String> first = outcomes.get(0);
+        assertTrue(first.isSuccess());
+        assertEquals("alpha", first.getValue());
+        assertSame(chunks.get(0), first.getChunk());
+
+        ChunkOutcome<String> second = outcomes.get(1);
+        assertTrue(second.isSuccess());
+        assertNull(second.getValue());
+        assertNull(second.getException());
+        assertSame(chunks.get(1), second.getChunk());
+
+        ChunkOutcome<String> third = outcomes.get(2);
+        assertTrue(third.isFailure());
+        assertEquals("bad", third.getException().getMessage());
+        assertSame(chunks.get(2), third.getChunk());
     }
 }
