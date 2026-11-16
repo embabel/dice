@@ -110,6 +110,31 @@ try {
 }
 ----
 
+[[reference-store-contract-scoped]]
+==== Scoped reads
+
+`ScopedReads` and `ScopedVectorSearch` take a `ScopedReadSpec`, which names the contexts, and a
+request built on `ReadCriteria`, which has no context field. They do not accept a `PropositionQuery`,
+so a query that names no context cannot reach a scoped read.
+
+[cols="2,3", options="header"]
+|===
+| Failure | When
+
+| `ReadScopeViolationException`
+| A spec is narrowed to a context it does not allow.
+
+| `ReadBudgetExceededException`
+| A read needs more rows or vector candidates than its `ReadBudget` allows, or the budget allows no
+  similarity search.
+
+| `UnsupportedCapabilityException`
+| The store does not apply a `ReadCriterion` or a `ReadOrder` the spec or the request sets.
+|===
+
+The first two extend `ReadRefusedException`, which is a `RuntimeException` and is not an
+`IllegalArgumentException`. <<features-scoped-reads>> has the types and the rules a store keeps.
+
 [[reference-store-contract-score]]
 ==== Similarity scores
 
