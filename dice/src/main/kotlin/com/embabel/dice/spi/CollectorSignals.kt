@@ -24,6 +24,7 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.proposition.ProvenanceSubtractionCapable
 import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
 import org.slf4j.LoggerFactory
 import java.time.Instant
 
@@ -218,6 +219,7 @@ data class CollapseUndoResult(
  * @property retiredId the one retired member to restore
  */
 data class CollapseUndoCommand(
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
     val survivorId: String,
     val retiredId: String,
@@ -259,8 +261,10 @@ data class CollapseUndoCommand(
  * @property actualContextIdValue [actualContextId] as a plain string, for Java callers.
  */
 class CollapseUndoContextMismatchException(
+    @get:JsonProperty("commandedContextId")
     val commandedContextId: ContextId,
     val propositionId: String,
+    @get:JsonProperty("actualContextId")
     val actualContextId: ContextId,
 ) : IllegalArgumentException(
     "Proposition $propositionId belongs to context ${actualContextId.value}, and the undo was " +
