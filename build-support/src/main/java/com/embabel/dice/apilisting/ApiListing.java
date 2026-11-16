@@ -75,8 +75,8 @@ public final class ApiListing {
         // out drops the whole type. A marker on an enum entry or a member only drops that member, so
         // its owner stays stable. A nested type or companion follows its experimental owner.
         Set<String> all = new HashSet<>();
-        String full = dump(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of()));
-        for (String block : blocks(full)) {
+        List<String> full = blocks(dump(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of())));
+        for (String block : full) {
             all.add(typeName(block));
         }
         Set<String> experimentalTypes = new HashSet<>(all);
@@ -85,7 +85,7 @@ public final class ApiListing {
         }
         StringBuilder stableListing = new StringBuilder();
         StringBuilder experimentalListing = new StringBuilder();
-        for (String block : blocks(full)) {
+        for (String block : full) {
             String name = typeName(block);
             boolean isExperimental = experimentalTypes.contains(name)
                     || experimentalTypes.stream().anyMatch(owner -> name.startsWith(owner + "$"));
@@ -126,9 +126,13 @@ public final class ApiListing {
     }
 
     /** Reads the type name from a block's first line, such as {@code public final class a/b/C : a/b/D \{}. */
-    private static String typeName(String block) {
+    static String typeName(String block) {
         String header = block.substring(0, block.indexOf('\n') < 0 ? block.length() : block.indexOf('\n'));
-        String afterKeyword = header.substring(header.indexOf(" class ") + " class ".length());
+        int keyword = header.indexOf(" class ");
+        if (keyword < 0) {
+            throw new IllegalStateException("Cannot read a type name from the listing line: " + header);
+        }
+        String afterKeyword = header.substring(keyword + " class ".length());
         return afterKeyword.split(" ")[0];
     }
 

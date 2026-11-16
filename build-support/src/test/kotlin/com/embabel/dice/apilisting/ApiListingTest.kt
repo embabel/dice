@@ -18,6 +18,7 @@ package com.embabel.dice.apilisting
 import com.embabel.dice.apilisting.fixture.Stable
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -67,6 +68,11 @@ class ApiListingTest {
         assertEquals(1, listing("check"))
         val changed = err.toString().lines().filter { it.startsWith("-\t") || it.startsWith("+\t") }
         assertEquals(2, changed.size, err.toString())
+    }
+
+    @Test
+    fun `a listing line without a class keyword is rejected`() {
+        assertThrows(IllegalStateException::class.java) { ApiListing.typeName("public final object a/B {") }
     }
 
     /**
