@@ -211,13 +211,14 @@ and the consumer PRs that deliver it).
   leaves out the resolved id, the role and the hints. The forms that take the extra arguments are
   unchanged. **Compatibility: additive.**
 
-- Java can read the context id of every public type that has one. `PropositionContradicted`,
+- Java can read the context id of these types as a `String`. `PropositionContradicted`,
   `UngroundedMentionsFound`, `BookmarkKey`, `HashKey`, `ProcessedChunkRecord`, `DreamLoopReport`,
   `CollectorRunContext`, `CollapseUndoCommand`, `DriftReport` and `DriftCheckResult` gain
   `getContextIdValue()`. `CollapseUndoContextMismatchException` gains `getCommandedContextIdValue()`
   and `getActualContextIdValue()`. Each returns the `ContextId` as a `String`, and the typed Kotlin
-  properties are unchanged. A public type with a `contextId` property writes it under the key `contextId`, with or without
-  Jackson's Kotlin module, and does not write `contextIdValue`. `BookmarkKey`, `HashKey`,
+  properties are unchanged. A public type with a `contextId` property writes it under the key
+  `contextId`, with or without Jackson's Kotlin module, and does not write `contextIdValue`.
+  `BookmarkKey`, `HashKey`,
   `CollectorRunContext` and `CollapseUndoCommand` also gain a static `of(...)` factory that takes
   the context id as a `String`, because Java cannot call their constructors.
   **Compatibility: additive.**
