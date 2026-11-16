@@ -42,8 +42,8 @@ data class CollectorRunContext(
     val runId: String,
     @get:JsonProperty("contextId")
     val contextId: ContextId,
-    val dryRun: Boolean = false,
-    val clock: Clock = Clock.systemUTC(),
+    val dryRun: Boolean = DEFAULT_DRY_RUN,
+    val clock: Clock = defaultClock(),
 ) {
 
     /** [contextId] as a plain string, for Java callers. */
@@ -51,6 +51,11 @@ data class CollectorRunContext(
     val contextIdValue: String get() = contextId.value
 
     companion object {
+
+        private const val DEFAULT_DRY_RUN = false
+
+        private fun defaultClock(): Clock = Clock.systemUTC()
+
         /**
          * Builds a run context from plain values. Java uses this, because it cannot call the constructor.
          *
@@ -59,14 +64,15 @@ data class CollectorRunContext(
          * @param dryRun Whether the run should only preview its trace.
          * @param clock The source of "now" for the run.
          * @return The run context.
+         * @throws IllegalArgumentException if contextIdValue is blank
          */
         @JvmStatic
         @JvmOverloads
         fun of(
             runId: String,
             contextIdValue: String,
-            dryRun: Boolean = false,
-            clock: Clock = Clock.systemUTC(),
+            dryRun: Boolean = DEFAULT_DRY_RUN,
+            clock: Clock = defaultClock(),
         ): CollectorRunContext = CollectorRunContext(runId, ContextId(contextIdValue), dryRun, clock)
     }
 }
