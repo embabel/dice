@@ -26,6 +26,7 @@ import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.common.filter.MentionFilter
+import com.embabel.dice.common.validation.ValidationResult
 import com.embabel.dice.proposition.MentionKey
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionExtractor
@@ -311,15 +312,20 @@ data class LlmPropositionExtractor(
         val uniqueMentions = mutableMapOf<MentionKey, SuggestedMention>()
 
         for (proposition in suggestedPropositions.propositions) {
-            for (mention in proposition.mentions) {
+            val verdicts = if (mentionFilter == null || proposition.mentions.isEmpty()) {
+                null
+            } else {
+                mentionFilter.validateMentions(proposition, context).also {
+                    check(it.size == proposition.mentions.size) {
+                        "${mentionFilter::class.java.name} returned ${it.size} results for ${proposition.mentions.size} mentions"
+                    }
+                }
+            }
 
-                // Apply filter if provided
-                if (mentionFilter != null && !mentionFilter.isValid(mention, proposition.text)) {
-                    logger.warn(
-                        "Filtered mention '{}': {}",
-                        mention.span,
-                        mentionFilter.rejectionReason(mention)
-                    )
+            for ((index, mention) in proposition.mentions.withIndex()) {
+                val verdict = verdicts?.get(index)
+                if (verdict is ValidationResult.Invalid) {
+                    logger.debug("Filtered mention '{}': {}", mention.span, verdict.reason)
                     continue
                 }
 

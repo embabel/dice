@@ -54,7 +54,8 @@ interface PropositionExtractor {
      * @param suggestedPropositions Propositions from extract()
      * @param context The source analysis context
      * @param sourceText Optional source text for context during entity resolution
-     * @param mentionFilter Optional filter to validate mentions before creating entities
+     * @param mentionFilter Optional filter applied to the mentions before entities are created, asked
+     *   through [MentionFilter.validateMentions]. [com.embabel.dice.pipeline.PropositionPipeline] screens mentions itself and passes null.
      * @return SuggestedEntities suitable for EntityResolver.resolve()
      */
     fun toSuggestedEntities(
