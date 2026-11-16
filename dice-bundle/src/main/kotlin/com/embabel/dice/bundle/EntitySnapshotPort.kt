@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.bundle
 
+import org.jetbrains.annotations.ApiStatus
+
 /**
  * A snapshot of an entity that lives in the consuming application's own graph — dice never owns
  * these entities itself; it only ever sees the opaque [com.embabel.dice.proposition.EntityMention.resolvedId]
@@ -29,6 +31,7 @@ package com.embabel.dice.bundle
  *   are welcome here (including pipes, tabs, newlines, and quotes) — this travels through the same
  *   Jackson mapper as the rest of the bundle, so escaping is handled for you.
  */
+@ApiStatus.Experimental
 data class EntitySnapshot(
     val id: String,
     val type: String,
@@ -40,6 +43,7 @@ data class EntitySnapshot(
  * snapshots. A single-method interface so a consumer can hand over a lambda over its own entity
  * store rather than write a class.
  */
+@ApiStatus.Experimental
 fun interface EntitySnapshotExporter {
     fun snapshotsFor(resolvedIds: Set<String>): List<EntitySnapshot>
 }
@@ -49,11 +53,13 @@ fun interface EntitySnapshotExporter {
  * calls this before propositions are saved, so that by the time a proposition's mentions land,
  * the entities they resolve to already exist.
  */
+@ApiStatus.Experimental
 fun interface EntitySnapshotImporter {
     fun importSnapshots(snapshots: List<EntitySnapshot>)
 }
 
 /** Convenience combination of both directions, for callers that want to wire one object for both. */
+@ApiStatus.Experimental
 interface EntitySnapshotPort : EntitySnapshotExporter, EntitySnapshotImporter
 
 /**
@@ -61,6 +67,7 @@ interface EntitySnapshotPort : EntitySnapshotExporter, EntitySnapshotImporter
  * entities section genuinely optional — a consumer that doesn't own any entity data never has to
  * wire anything, and dice keeps working standalone with bare resolvedId strings on mentions.
  */
+@ApiStatus.Experimental
 object NoOpEntitySnapshotPort : EntitySnapshotPort {
     override fun snapshotsFor(resolvedIds: Set<String>): List<EntitySnapshot> = emptyList()
     override fun importSnapshots(snapshots: List<EntitySnapshot>) = Unit

@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.bundle
 
+import org.jetbrains.annotations.ApiStatus
 import java.nio.ByteBuffer
 import java.util.Base64
 
@@ -28,6 +29,7 @@ import java.util.Base64
  *   no length prefix) and base64-encoded. The vector's length is the decoded byte count divided by
  *   4. Use [EmbeddingCodec] to produce and read this rather than hand-rolling the encoding.
  */
+@ApiStatus.Experimental
 data class EmbeddingEntry(
     val propositionId: String,
     val vectorBase64: String,
@@ -38,6 +40,7 @@ data class EmbeddingEntry(
  * Kept as a small standalone codec so both the bundle side and a port implementation (e.g. a
  * storage-backed [EmbeddingImporter]) can share the exact same encoding.
  */
+@ApiStatus.Experimental
 object EmbeddingCodec {
 
     /** Encode [vector] as big-endian float32 bytes, base64-encoded. */
@@ -64,6 +67,7 @@ object EmbeddingCodec {
  * embedded, or the stored value is corrupt/unreadable) — a bundle simply omits that proposition
  * from its embeddings section rather than failing the whole export.
  */
+@ApiStatus.Experimental
 fun interface EmbeddingExporter {
     fun embeddingFor(propositionId: String): List<Float>?
 }
@@ -72,11 +76,13 @@ fun interface EmbeddingExporter {
  * Import-side SPI: persist a vector for a proposition id, so a re-import doesn't have to pay to
  * re-embed at LLM cost.
  */
+@ApiStatus.Experimental
 fun interface EmbeddingImporter {
     fun importEmbedding(propositionId: String, vector: List<Float>)
 }
 
 /** Convenience combination of both directions, for callers that want to wire one object for both. */
+@ApiStatus.Experimental
 interface EmbeddingPort : EmbeddingExporter, EmbeddingImporter
 
 /**
@@ -84,6 +90,7 @@ interface EmbeddingPort : EmbeddingExporter, EmbeddingImporter
  * section stay genuinely optional — a consumer that doesn't wire a real embedding store just
  * re-embeds at import time as it always has.
  */
+@ApiStatus.Experimental
 object NoOpEmbeddingPort : EmbeddingPort {
     override fun embeddingFor(propositionId: String): List<Float>? = null
     override fun importEmbedding(propositionId: String, vector: List<Float>) = Unit

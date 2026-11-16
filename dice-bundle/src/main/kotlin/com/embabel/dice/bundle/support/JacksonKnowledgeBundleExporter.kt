@@ -19,6 +19,7 @@ import com.embabel.dice.bundle.KnowledgeBundle
 import com.embabel.dice.bundle.KnowledgeBundleExporter
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import java.io.OutputStream
 import java.io.Writer
@@ -39,6 +40,7 @@ import java.io.Writer
  * The mapper is created once at construction and shared across calls; it is
  * thread-safe after configuration.
  */
+@ApiStatus.Experimental
 class JacksonKnowledgeBundleExporter : KnowledgeBundleExporter {
 
     private val logger = LoggerFactory.getLogger(JacksonKnowledgeBundleExporter::class.java)

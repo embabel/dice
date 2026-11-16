@@ -18,6 +18,7 @@ package com.embabel.dice.bundle
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 
 /**
@@ -44,11 +45,15 @@ import org.slf4j.LoggerFactory
  * @param embeddingExporter Optional collaborator that supplies each proposition's stored embedding
  *   vector (see [EmbeddingPort]). Defaults to [NoOpEmbeddingPort], which contributes nothing —
  *   the bundle's `embeddings` section stays empty and a later import simply re-embeds as before.
+ * @param metamodelContentHashSource Supplies the current declared metamodel hash for the bundle's
+ *   context. Defaults to [NoOpMetamodelContentHashSource], which leaves the envelope unstamped.
  */
+@ApiStatus.Experimental
 class KnowledgeBundleAssembler(
     private val repository: PropositionRepository,
     private val entitySnapshotExporter: EntitySnapshotExporter = NoOpEntitySnapshotPort,
     private val embeddingExporter: EmbeddingExporter = NoOpEmbeddingPort,
+    private val metamodelContentHashSource: MetamodelContentHashSource = NoOpMetamodelContentHashSource,
 ) {
 
     private val logger = LoggerFactory.getLogger(KnowledgeBundleAssembler::class.java)
@@ -80,6 +85,7 @@ class KnowledgeBundleAssembler(
             propositions,
             entities = entitiesFor(propositions),
             embeddings = embeddingsFor(propositions),
+            metamodelContentHash = metamodelContentHashSource.contentHash(ctxId),
         )
     }
 
@@ -116,6 +122,7 @@ class KnowledgeBundleAssembler(
                 propositions,
                 entities = entitiesFor(propositions),
                 embeddings = embeddingsFor(propositions),
+                metamodelContentHash = metamodelContentHashSource.contentHash(contextId),
             )
         }
     }

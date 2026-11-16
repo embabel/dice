@@ -13,11 +13,14 @@ hazard restoring one can trigger.
 `EntitySnapshotExporter` and an `EmbeddingExporter` — to pull in the entity data and vectors that
 travel alongside the propositions. Both default to no-ops (`NoOpEntitySnapshotPort`,
 `NoOpEmbeddingPort`), so a bundle without either wired is still fully valid, just without those
-sections. A `KnowledgeBundleExporter` (the shipped one is `JacksonKnowledgeBundleExporter`) then
+sections. A `MetamodelContentHashSource` can also stamp the envelope with the declared metamodel
+hash for that context; its no-op default leaves the field absent. A `KnowledgeBundleExporter` (the
+shipped one is `JacksonKnowledgeBundleExporter`) then
 serializes the envelope to JSON. On the way back in, a `KnowledgeBundleImporter`
 (`JacksonKnowledgeBundleImporter`) parses the JSON and writes propositions into a target
 `PropositionStore`, optionally calling an `EntitySnapshotImporter` and `EmbeddingImporter` to
-restore the other two sections.
+restore the other two sections. If both the bundle and target context have metamodel hashes and
+they differ, import continues and reports a typed `BundleImportAdvisory.MetamodelMismatch`.
 
 ```mermaid
 flowchart LR
@@ -25,6 +28,7 @@ flowchart LR
         REPO[(PropositionRepository)] --> ASM[KnowledgeBundleAssembler]
         ESP[EntitySnapshotPort<br/>optional] -.-> ASM
         EMP1[EmbeddingPort<br/>optional] -.-> ASM
+        MM1[MetamodelContentHashSource<br/>optional] -.-> ASM
         ASM --> BUNDLE[KnowledgeBundle]
         BUNDLE --> EXP[KnowledgeBundleExporter<br/>Jackson impl]
         EXP --> JSON[/JSON file/]
@@ -34,6 +38,7 @@ flowchart LR
         IMP --> STORE[(PropositionStore)]
         IMP -.-> ESI[EntitySnapshotImporter<br/>optional]
         IMP -.-> EMI[EmbeddingImporter<br/>optional]
+        MM2[MetamodelContentHashSource<br/>optional] -.-> IMP
     end
 ```
 
@@ -66,6 +71,7 @@ sequenceDiagram
 
     Caller->>Importer: importFromString(json, store, conflictPolicy, targetContextId="ctx-A")
     Importer->>Importer: check formatVersion (exact match against supportedVersions)
+    Importer->>Importer: compare metamodel hashes (advisory only)
     Importer->>Importer: applyEntities() — before any proposition is saved
     loop each proposition
         Importer->>Importer: re-scope to targetContextId if set
@@ -89,7 +95,7 @@ field, as `BundleImportOutcome.UnknownFormatVersion` before the payload is ever 
 `entities` and `embeddings` were added without bumping this constant, because both are additive,
 default-empty fields — an older importer reading a bundle that carries them still works (unknown
 properties are ignored), and a newer importer reading an older bundle without them just gets empty
-sections.
+sections. `metamodelContentHash` follows the same additive rule.
 
 ### Envelope (`KnowledgeBundle`)
 
@@ -102,6 +108,16 @@ sections.
 | `metadata` | map of string→string | yes (default `{}`) | Free-form (author, description, tags). |
 | `entities` | array of EntitySnapshot | yes (default `[]`) | Present only if an `EntitySnapshotExporter` was wired at export time. |
 | `embeddings` | array of EmbeddingEntry | yes (default `[]`) | Present only if an `EmbeddingExporter` was wired at export time. |
+| `metamodelContentHash` | string | yes (default `null`) | Hash of the declared metamodel used at assembly time. If the target supplies a different hash, import continues and returns a `MetamodelMismatch` advisory. |
+
+### Metamodel compatibility
+
+The bundle module deliberately does not depend on `dice-metamodel`. It accepts an opaque hash
+through `MetamodelContentHashSource`, records that value in the envelope, and compares it with the
+target context's current value during import. Missing hashes preserve compatibility with bundles
+and applications that do not use metamodel governance. A mismatch is diagnostic, not a format
+error: propositions are still imported, and callers can inspect `ImportResult.advisories` to decide
+whether to quarantine, review, or accept the restored knowledge.
 
 ### Proposition
 

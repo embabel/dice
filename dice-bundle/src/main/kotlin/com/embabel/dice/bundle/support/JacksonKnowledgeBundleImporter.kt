@@ -17,6 +17,7 @@ package com.embabel.dice.bundle.support
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.bundle.BundleImportOutcome
+import com.embabel.dice.bundle.BundleImportAdvisory
 import com.embabel.dice.bundle.EmbeddingCodec
 import com.embabel.dice.bundle.EmbeddingImporter
 import com.embabel.dice.bundle.EntitySnapshotImporter
@@ -24,11 +25,14 @@ import com.embabel.dice.bundle.ImportConflictPolicy
 import com.embabel.dice.bundle.ImportResult
 import com.embabel.dice.bundle.KnowledgeBundle
 import com.embabel.dice.bundle.KnowledgeBundleImporter
+import com.embabel.dice.bundle.MetamodelContentHashSource
+import com.embabel.dice.bundle.NoOpMetamodelContentHashSource
 import com.embabel.dice.bundle.PropositionImportNote
 import com.embabel.dice.proposition.PropositionStore
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.io.InputStream
@@ -71,12 +75,16 @@ import java.io.Reader
  * @param embeddingImporter Optional collaborator that persists [KnowledgeBundle.embeddings] vectors.
  *   Same nullable-not-no-op reasoning as [entitySnapshotImporter]: a present `embeddings` section
  *   with no importer wired is noted, not dropped silently.
+ * @param metamodelContentHashSource Supplies the target context's current metamodel hash. A
+ *   mismatch with [KnowledgeBundle.metamodelContentHash] is returned as a non-blocking advisory.
  */
+@ApiStatus.Experimental
 class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
     private val supportedVersions: Set<String> = setOf(KnowledgeBundle.FORMAT_VERSION),
     private val maxBundleBytes: Int = DEFAULT_MAX_BUNDLE_BYTES,
     private val entitySnapshotImporter: EntitySnapshotImporter? = null,
     private val embeddingImporter: EmbeddingImporter? = null,
+    private val metamodelContentHashSource: MetamodelContentHashSource = NoOpMetamodelContentHashSource,
 ) : KnowledgeBundleImporter {
 
     private val logger = LoggerFactory.getLogger(JacksonKnowledgeBundleImporter::class.java)
@@ -272,6 +280,7 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
         var rejected = 0
         val notes = mutableListOf<PropositionImportNote>()
         val overwriteFailures = mutableListOf<String>()
+        val advisories = metamodelAdvisories(bundle, effectiveContextId)
         // IDs already processed in THIS bundle. A bundle may legally carry the same ID twice
         // (KnowledgeBundle.from leaves dedup to the caller). Without this guard the repeat would
         // be written — and counted — a second time under OVERWRITE; instead we skip it with a note
@@ -424,6 +433,30 @@ class JacksonKnowledgeBundleImporter @JvmOverloads constructor(
                 rejected = rejected,
                 notes = notes,
                 overwriteFailures = overwriteFailures,
+                advisories = advisories,
+            ),
+        )
+    }
+
+    private fun metamodelAdvisories(
+        bundle: KnowledgeBundle,
+        effectiveContextId: ContextId,
+    ): List<BundleImportAdvisory> {
+        val bundleHash = bundle.metamodelContentHash ?: return emptyList()
+        val targetHash = metamodelContentHashSource.contentHash(effectiveContextId) ?: return emptyList()
+        if (bundleHash == targetHash) return emptyList()
+
+        logger.warn(
+            "Bundle metamodel hash {} differs from target hash {} for context {}; import will continue",
+            bundleHash,
+            targetHash,
+            effectiveContextId.value,
+        )
+        return listOf(
+            BundleImportAdvisory.MetamodelMismatch(
+                contextId = effectiveContextId,
+                bundleContentHash = bundleHash,
+                targetContentHash = targetHash,
             ),
         )
     }

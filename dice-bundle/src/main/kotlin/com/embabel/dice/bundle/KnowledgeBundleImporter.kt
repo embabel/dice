@@ -15,7 +15,9 @@
  */
 package com.embabel.dice.bundle
 
+import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.PropositionStore
+import org.jetbrains.annotations.ApiStatus
 import java.io.InputStream
 import java.io.Reader
 
@@ -23,6 +25,7 @@ import java.io.Reader
  * Policy governing what to do when a proposition being imported already exists
  * (by ID) in the target [PropositionStore].
  */
+@ApiStatus.Experimental
 enum class ImportConflictPolicy {
 
     /**
@@ -54,6 +57,7 @@ enum class ImportConflictPolicy {
  * @property propositionId The ID of the affected proposition.
  * @property reason Human-readable explanation.
  */
+@ApiStatus.Experimental
 data class PropositionImportNote(
     val propositionId: String,
     val reason: String,
@@ -80,6 +84,7 @@ data class PropositionImportNote(
  *   present in [notes] and counted in [rejected]; this list exists so a caller can reconcile them
  *   without having to parse note text.
  */
+@ApiStatus.Experimental
 data class ImportResult(
     val imported: Int,
     val overwritten: Int,
@@ -87,9 +92,23 @@ data class ImportResult(
     val rejected: Int,
     val notes: List<PropositionImportNote> = emptyList(),
     val overwriteFailures: List<String> = emptyList(),
+    val advisories: List<BundleImportAdvisory> = emptyList(),
 ) {
     /** Total number of propositions the bundle contained. */
     val total: Int get() = imported + overwritten + skipped + rejected
+}
+
+/** Non-blocking compatibility information discovered while importing a bundle. */
+@ApiStatus.Experimental
+sealed interface BundleImportAdvisory {
+
+    /** The bundle was assembled under a different metamodel than the target context currently uses. */
+    @ApiStatus.Experimental
+    data class MetamodelMismatch(
+        val contextId: ContextId,
+        val bundleContentHash: String,
+        val targetContentHash: String,
+    ) : BundleImportAdvisory
 }
 
 /**
@@ -97,6 +116,7 @@ data class ImportResult(
  *
  * Failure is modelled as a sealed type rather than an exception, same as `ProjectionResult` elsewhere in the library.
  */
+@ApiStatus.Experimental
 sealed interface BundleImportOutcome {
 
     /**
@@ -106,6 +126,7 @@ sealed interface BundleImportOutcome {
      * @property bundle The deserialised bundle.
      * @property result Aggregate import counts.
      */
+    @ApiStatus.Experimental
     data class Success(
         val bundle: KnowledgeBundle,
         val result: ImportResult,
@@ -118,6 +139,7 @@ sealed interface BundleImportOutcome {
      * @property foundVersion The version string encountered in the bundle.
      * @property supportedVersions Version strings this importer can handle.
      */
+    @ApiStatus.Experimental
     data class UnknownFormatVersion(
         val foundVersion: String,
         val supportedVersions: Set<String>,
@@ -133,6 +155,7 @@ sealed interface BundleImportOutcome {
      * @property reason Human-readable description of the parse failure.
      * @property cause The underlying exception, if available.
      */
+    @ApiStatus.Experimental
     data class ParseFailure(
         val reason: String,
         val cause: Throwable? = null,
@@ -168,6 +191,7 @@ sealed interface BundleImportOutcome {
  *
  * The default implementation is [support.JacksonKnowledgeBundleImporter].
  */
+@ApiStatus.Experimental
 interface KnowledgeBundleImporter {
 
     /**

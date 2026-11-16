@@ -18,6 +18,7 @@ package com.embabel.dice.bundle
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.Proposition
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
 
 /**
@@ -57,8 +58,12 @@ import java.time.Instant
  *   [EmbeddingPort]), so a re-import doesn't have to re-embed at LLM cost. Absent or empty is a
  *   fully valid bundle; propositions with no matching entry are simply re-embedded on import as
  *   they always have been.
+ * @property metamodelContentHash Optional content hash of the declared metamodel used when the
+ *   bundle was assembled. This is a plain string so `dice-bundle` remains independent of
+ *   `dice-metamodel`; importers treat a mismatch as advisory.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
+@ApiStatus.Experimental
 data class KnowledgeBundle(
     val formatVersion: String = FORMAT_VERSION,
     val contextId: ContextId,
@@ -67,6 +72,7 @@ data class KnowledgeBundle(
     val metadata: Map<String, String> = emptyMap(),
     val entities: List<EntitySnapshot> = emptyList(),
     val embeddings: List<EmbeddingEntry> = emptyList(),
+    val metamodelContentHash: String? = null,
 ) {
     companion object {
 
@@ -110,6 +116,7 @@ data class KnowledgeBundle(
          *   (e.g. caching or idempotency checks).
          * @param entities Optional entity snapshots to carry alongside [propositions]; defaults to none.
          * @param embeddings Optional embedding vectors to carry alongside [propositions]; defaults to none.
+         * @param metamodelContentHash Optional declared metamodel content hash.
          * @return A new [KnowledgeBundle] stamped with [createdAt].
          * @throws IllegalArgumentException if any proposition belongs to a context other than [contextId].
          */
@@ -122,6 +129,7 @@ data class KnowledgeBundle(
             createdAt: Instant = Instant.now(),
             entities: List<EntitySnapshot> = emptyList(),
             embeddings: List<EmbeddingEntry> = emptyList(),
+            metamodelContentHash: String? = null,
         ): KnowledgeBundle {
             val foreign = propositions.filter { it.contextId != contextId }
             require(foreign.isEmpty()) {
@@ -136,6 +144,7 @@ data class KnowledgeBundle(
                 createdAt = createdAt,
                 entities = entities,
                 embeddings = embeddings,
+                metamodelContentHash = metamodelContentHash,
             )
         }
 
@@ -156,6 +165,15 @@ data class KnowledgeBundle(
             createdAt: Instant = Instant.now(),
             entities: List<EntitySnapshot> = emptyList(),
             embeddings: List<EmbeddingEntry> = emptyList(),
-        ): KnowledgeBundle = from(ContextId(contextIdValue), propositions, metadata, createdAt, entities, embeddings)
+            metamodelContentHash: String? = null,
+        ): KnowledgeBundle = from(
+            ContextId(contextIdValue),
+            propositions,
+            metadata,
+            createdAt,
+            entities,
+            embeddings,
+            metamodelContentHash,
+        )
     }
 }

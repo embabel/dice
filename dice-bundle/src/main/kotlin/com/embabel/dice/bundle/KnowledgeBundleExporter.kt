@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.bundle
 
+import org.jetbrains.annotations.ApiStatus
 import java.io.OutputStream
 import java.io.Writer
 
@@ -24,6 +25,7 @@ import java.io.Writer
  * The default implementation ([support.JacksonKnowledgeBundleExporter]) uses Jackson JSON.
  * Callers that need a different format (e.g., CBOR, Protobuf) provide their own implementation.
  */
+@ApiStatus.Experimental
 interface KnowledgeBundleExporter {
 
     /**
