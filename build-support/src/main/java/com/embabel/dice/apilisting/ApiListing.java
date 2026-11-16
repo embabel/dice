@@ -83,16 +83,16 @@ public final class ApiListing {
         for (String block : blocks(dump(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of(EXPERIMENTAL))))) {
             experimentalTypes.remove(typeName(block));
         }
-        StringBuilder stableListing = new StringBuilder();
-        StringBuilder experimentalListing = new StringBuilder();
+        List<String> stableBlocks = new ArrayList<>();
+        List<String> experimentalBlocks = new ArrayList<>();
         for (String block : full) {
             String name = typeName(block);
             boolean isExperimental = experimentalTypes.contains(name)
                     || experimentalTypes.stream().anyMatch(owner -> name.startsWith(owner + "$"));
-            (isExperimental ? experimentalListing : stableListing).append(block).append("\n\n");
+            (isExperimental ? experimentalBlocks : stableBlocks).add(block);
         }
-        String stable = stableListing.toString();
-        String experimental = experimentalListing.toString();
+        String stable = listing(stableBlocks);
+        String experimental = listing(experimentalBlocks);
 
         boolean matches = sync(apiDir.resolve(module + ".api"), stable, update, out, err);
         matches &= sync(apiDir.resolve(module + ".experimental.api"), experimental, update, out, err);
@@ -142,33 +142,51 @@ public final class ApiListing {
         return listing.toString();
     }
 
-    /** Writes the listing in update mode. Otherwise reports whether the committed file matches. */
+    /**
+     * Joins type blocks into listing text: one blank line between blocks and one newline at the end.
+     *
+     * @param blocks the type blocks in listing order
+     * @return the listing text, or an empty string when there are no blocks
+     */
+    private static String listing(List<String> blocks) {
+        return blocks.isEmpty() ? "" : String.join("\n\n", blocks) + "\n";
+    }
+
+    /**
+     * Writes the listing in update mode. Otherwise reports whether the committed file matches.
+     *
+     * <p>Line endings and whitespace at the end of the file are not compared, so a Windows checkout or
+     * an editor that trims the last lines does not fail the check.
+     */
     private static boolean sync(Path file, String actual, boolean update, PrintStream out, PrintStream err)
             throws IOException {
-        // Git can check a listing out with Windows line endings; the generated text always uses \n.
-        String committed = Files.exists(file) ? Files.readString(file, StandardCharsets.UTF_8).replace("\r\n", "\n") : "";
+        String raw = Files.exists(file) ? Files.readString(file, StandardCharsets.UTF_8) : "";
+        if (update) {
+            if (!raw.equals(actual)) {
+                if (actual.isEmpty()) {
+                    Files.deleteIfExists(file);
+                } else {
+                    Files.createDirectories(file.getParent());
+                    Files.writeString(file, actual, StandardCharsets.UTF_8);
+                }
+                out.println("Updated " + file);
+            }
+            return true;
+        }
+        String committed = raw.isBlank() ? "" : raw.replace("\r\n", "\n").stripTrailing() + "\n";
         if (committed.equals(actual)) {
             return true;
         }
-        if (update) {
-            if (actual.isEmpty()) {
-                Files.deleteIfExists(file);
-            } else {
-                Files.createDirectories(file.getParent());
-                Files.writeString(file, actual, StandardCharsets.UTF_8);
-            }
-            out.println("Updated " + file);
-            return true;
-        }
+        Path expected = Files.createTempFile("api-listing-committed", ".api");
         Path generated = Files.createTempFile("api-listing", ".api");
-        Path empty = Files.createTempFile("api-listing-empty", ".api");
         try {
+            Files.writeString(expected, committed, StandardCharsets.UTF_8);
             Files.writeString(generated, actual, StandardCharsets.UTF_8);
             err.println(file + " does not match the compiled classes:");
-            err.println(AbiTools.INSTANCE.filesDiff((Files.exists(file) ? file : empty).toFile(), generated.toFile()));
+            err.println(AbiTools.INSTANCE.filesDiff(expected.toFile(), generated.toFile()));
         } finally {
+            Files.delete(expected);
             Files.delete(generated);
-            Files.delete(empty);
         }
         return false;
     }

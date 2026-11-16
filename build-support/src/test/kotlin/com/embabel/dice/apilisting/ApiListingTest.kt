@@ -71,6 +71,24 @@ class ApiListingTest {
     }
 
     @Test
+    fun `whitespace at the end of a listing does not count as a change`() {
+        listing("update")
+        val stable = api.resolve("m.api")
+        val text = stable.readText().trimEnd()
+        for (ending in listOf("", "\n", "\n\n\n", "\r\n")) {
+            stable.writeText(text + ending)
+            assertEquals(0, listing("check"), "ending " + ending.length + ": " + err)
+        }
+    }
+
+    @Test
+    fun `update ends a listing with one newline`() {
+        listing("update")
+        val text = api.resolve("m.api").readText()
+        assertTrue(text.endsWith("}\n") && !text.endsWith("\n\n"))
+    }
+
+    @Test
     fun `a listing line without a class keyword is rejected`() {
         assertThrows(IllegalStateException::class.java) { ApiListing.typeName("public final object a/B {") }
     }

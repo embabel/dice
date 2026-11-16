@@ -42,4 +42,3 @@ public final class com/embabel/dice/storage/MetamodelSchema : com/embabel/dice/s
 	public final fun getLABELS ()Ljava/util/List;
 	public fun specs ()Ljava/util/List;
 }
-

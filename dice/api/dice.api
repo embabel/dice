@@ -7314,4 +7314,3 @@ public final class com/embabel/dice/web/rest/security/InMemoryApiKeyAuthenticato
 	public final fun withKey (Ljava/lang/String;)Lcom/embabel/dice/web/rest/security/InMemoryApiKeyAuthenticator;
 	public final fun withKeys ([Ljava/lang/String;)Lcom/embabel/dice/web/rest/security/InMemoryApiKeyAuthenticator;
 }
-

@@ -284,4 +284,3 @@ public abstract interface class com/embabel/dice/metamodel/TypeIdentity {
 	public abstract fun externalNamesFor (Ljava/lang/String;)Ljava/util/Set;
 	public abstract fun getTypeSystem ()Ljava/lang/String;
 }
-
