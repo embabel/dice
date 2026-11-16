@@ -49,12 +49,16 @@ import java.util.Objects
  *    An exact scan keeps this rule. An approximate index keeps it when it applies the filter while
  *    it searches, and the matches are then the nearest the index finds.
  * 2. Every field set on the filter is applied. Effective confidence is computed as of the
- *    filter's `effectiveConfidenceAsOf`, or the time of the call when that is null. A store that
- *    cannot apply a field throws [UnsupportedCapabilityException]. It never ignores one.
+ *    filter's `effectiveConfidenceAsOf`, or the time of the call when that is null, and
+ *    one call uses that one time for every candidate. A store that cannot apply a field throws
+ *    [UnsupportedCapabilityException]. It never ignores one.
  * 3. No match scores below [VectorSearchRequest.minScore]. A match that scores equal to it is
  *    returned.
  * 4. Matches are ordered closest first. Matches with equal scores come back in the same order
  *    each time the same request runs on unchanged data. The cut to K is applied after ordering.
+ *    A request whose filter sets `minEffectiveConfidence` or `belowEffectiveConfidence` and no
+ *    `effectiveConfidenceAsOf` is evaluated at the time of each call, so its matches can differ
+ *    between calls. Set `effectiveConfidenceAsOf` for a request that must repeat.
  * 5. A proposition with no embedding, or an all-zero embedding, is not returned and does not fail
  *    the search. A request whose text embeds to all zeros returns no matches.
  * 6. Candidate selection, filtering, the score floor, ordering and the cut to K run in the
