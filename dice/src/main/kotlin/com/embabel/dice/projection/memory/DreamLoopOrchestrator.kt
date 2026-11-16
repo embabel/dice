@@ -73,7 +73,7 @@ interface DreamLoopOrchestrator : MemoryMaintenanceOrchestrator {
      * @return The cycle report when the cycle ran, or `null` if the threshold wasn't met.
      * @throws IllegalArgumentException if contextIdValue is blank.
      */
-    fun consolidate(contextIdValue: String): DreamLoopReport? = consolidate(ContextId(contextIdValue))
+    fun consolidateValue(contextIdValue: String): DreamLoopReport? = consolidate(ContextId(contextIdValue))
 
     /**
      * Run a consolidation cycle unconditionally, taking the context as a plain string.
@@ -84,7 +84,7 @@ interface DreamLoopOrchestrator : MemoryMaintenanceOrchestrator {
      * @return The cycle report; never `null`.
      * @throws IllegalArgumentException if contextIdValue is blank.
      */
-    fun consolidateNow(contextIdValue: String): DreamLoopReport = consolidateNow(ContextId(contextIdValue))
+    fun consolidateNowValue(contextIdValue: String): DreamLoopReport = consolidateNow(ContextId(contextIdValue))
 
     /**
      * Add a pass and return a new orchestrator with it appended. Registration order is

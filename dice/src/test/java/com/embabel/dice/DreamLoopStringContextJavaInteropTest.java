@@ -28,8 +28,8 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * Contract:
  * R1: a blank context id is rejected with an IllegalArgumentException.
- * E1: consolidateNow(id) always returns a report for that id, even on an empty store.
- * E2: consolidate(id) returns null when the change threshold is not met.
+ * E1: consolidateNowValue(id) always returns a report for that id, even on an empty store.
+ * E2: consolidateValue(id) returns null when the change threshold is not met.
  * I1: an empty store stays empty after a cycle runs.
  */
 class DreamLoopStringContextJavaInteropTest {
@@ -40,7 +40,7 @@ class DreamLoopStringContextJavaInteropTest {
     // E1: a forced cycle on an empty store still returns a report for the given id.
     @Test
     void consolidateNowReturnsReportForStringContextId() {
-        DreamLoopReport report = orchestrator.consolidateNow("acme");
+        DreamLoopReport report = orchestrator.consolidateNowValue("acme");
 
         assertEquals("acme", report.getContextIdValue());
         assertEquals(0, report.getTotalExamined());
@@ -49,19 +49,19 @@ class DreamLoopStringContextJavaInteropTest {
     // E2: the threshold-gated trigger skips an empty store and returns null.
     @Test
     void consolidateReturnsNullWhenThresholdNotMet() {
-        assertNull(orchestrator.consolidate("acme"));
+        assertNull(orchestrator.consolidateValue("acme"));
     }
 
     // R1: a blank id is refused before any cycle runs.
     @Test
     void consolidateNowRejectsBlankStringContextId() {
-        assertThrows(IllegalArgumentException.class, () -> orchestrator.consolidateNow(" "));
+        assertThrows(IllegalArgumentException.class, () -> orchestrator.consolidateNowValue(" "));
     }
 
     // R1: the threshold-gated trigger refuses a blank id too.
     @Test
     void consolidateRejectsBlankStringContextId() {
-        assertThrows(IllegalArgumentException.class, () -> orchestrator.consolidate(""));
+        assertThrows(IllegalArgumentException.class, () -> orchestrator.consolidateValue(""));
     }
 
     // I1: running a cycle on an empty store leaves it empty.
@@ -70,7 +70,7 @@ class DreamLoopStringContextJavaInteropTest {
         InMemoryPropositionRepository repository = new InMemoryPropositionRepository();
         DefaultDreamLoopOrchestrator fresh = DefaultDreamLoopOrchestrator.withRepository(repository);
 
-        fresh.consolidateNow("acme");
+        fresh.consolidateNowValue("acme");
 
         assertTrue(repository.findAll().isEmpty());
     }

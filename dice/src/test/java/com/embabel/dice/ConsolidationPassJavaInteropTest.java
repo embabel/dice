@@ -62,7 +62,7 @@ class ConsolidationPassJavaInteropTest {
         DreamLoopReport report = DefaultDreamLoopOrchestrator
                 .withRepository(new InMemoryPropositionRepository())
                 .withPass(pass)
-                .consolidateNow("acme");
+                .consolidateNowValue("acme");
 
         assertEquals(1, report.getPassResults().size());
         ConsolidationPassResult result = report.getPassResults().get(0);

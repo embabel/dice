@@ -91,7 +91,7 @@ interface MemoryMaintenanceOrchestrator {
      * @return Result summarizing all changes made
      * @throws IllegalArgumentException if contextIdValue is blank.
      */
-    fun maintain(contextIdValue: String): MaintenanceResult = maintain(ContextId(contextIdValue))
+    fun maintainValue(contextIdValue: String): MaintenanceResult = maintain(ContextId(contextIdValue))
 
     /**
      * Run all maintenance stages for a context given as a plain string, with session propositions.
@@ -103,7 +103,7 @@ interface MemoryMaintenanceOrchestrator {
      * @return Result summarizing all changes made
      * @throws IllegalArgumentException if contextIdValue is blank.
      */
-    fun maintain(contextIdValue: String, sessionPropositions: List<Proposition>): MaintenanceResult =
+    fun maintainValue(contextIdValue: String, sessionPropositions: List<Proposition>): MaintenanceResult =
         maintain(ContextId(contextIdValue), sessionPropositions)
 
     /**
