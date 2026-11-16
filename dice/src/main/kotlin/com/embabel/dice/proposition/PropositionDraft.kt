@@ -302,8 +302,8 @@ class PropositionDraft private constructor(
 
         /**
          * Reads a draft from the flat JSON the first draft format wrote, one key per value.
-         * The draft starts with no origin, so a value the JSON leaves out takes the
-         * constructor's default when the proposition is built.
+         * The draft starts with no origin. A key that is missing fails the read unless its
+         * value may be null, in which case it reads as null.
          *
          * @param contextId the context id as a plain string
          * @return a draft holding the values from the JSON

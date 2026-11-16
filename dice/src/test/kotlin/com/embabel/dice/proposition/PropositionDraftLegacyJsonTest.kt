@@ -27,8 +27,6 @@ import org.junit.jupiter.api.Test
 // E1: a flat JSON object in the shape main wrote reads into a draft whose getters hold the same values.
 // E2: a draft read from that JSON builds a proposition with the same values.
 // E3: a draft written to JSON and read back has the same getter values as the draft it came from.
-// E4: a draft read from JSON has no origin, so its proposition takes the constructor defaults for
-//     any value the JSON left out. This test uses null times, which build to the build moment.
 class PropositionDraftLegacyJsonTest {
 
     private val mapper = jacksonObjectMapper()
