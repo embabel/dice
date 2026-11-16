@@ -221,8 +221,8 @@ and the consumer PRs that deliver it).
   forms, invisible characters, and the typographic variants of quotes and dashes. In scripts that
   put spaces between words, such as Latin, Cyrillic and Greek, the span must sit at word edges, so
   an inflected or plural form, or a name run together with a number, is a different word. A
-  mention that names a known entity of the
-  context, by suggested id, name or alias, is grounded when the text names that entity. A mention
+  mention that names a known entity of the context, by suggested id, name or alias, is grounded
+  when the text names that entity. A mention
   of something the text only implies is ungrounded, with or without an id. By default the mentions
   are kept. `withUngroundedMentions(UngroundedMentionHandling.DROP)` removes them before
   resolution, so they are never resolved, never minted as an entity and not left on the
