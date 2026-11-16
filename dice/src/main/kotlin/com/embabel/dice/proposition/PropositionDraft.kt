@@ -156,72 +156,72 @@ class PropositionDraft private constructor(private val values: Values) {
     val contextIdValue: String get() = contextId.value
 
     /** Sets the text. */
-    fun withText(text: String): PropositionDraft = rebuild(text = text)
+    fun withText(text: String): PropositionDraft = PropositionDraft(values.copy(text = text))
 
     /** Sets the confidence. */
-    fun withConfidence(confidence: Double): PropositionDraft = rebuild(confidence = confidence)
+    fun withConfidence(confidence: Double): PropositionDraft = PropositionDraft(values.copy(confidence = confidence))
 
     /** Sets the id; null makes [toProposition] generate one. */
-    fun withId(id: String?): PropositionDraft = rebuild(id = id)
+    fun withId(id: String?): PropositionDraft = PropositionDraft(values.copy(id = id))
 
     /** Replaces the mentions with a read-only copy of [mentions]. */
     fun withMentions(mentions: List<EntityMention>): PropositionDraft =
-        rebuild(mentions = Collections.unmodifiableList(ArrayList(mentions)))
+        PropositionDraft(values.copy(mentions = Collections.unmodifiableList(ArrayList(mentions))))
 
     /** Sets the decay. */
-    fun withDecay(decay: Double): PropositionDraft = rebuild(decay = decay)
+    fun withDecay(decay: Double): PropositionDraft = PropositionDraft(values.copy(decay = decay))
 
     /** Sets the importance. */
-    fun withImportance(importance: Double): PropositionDraft = rebuild(importance = importance)
+    fun withImportance(importance: Double): PropositionDraft = PropositionDraft(values.copy(importance = importance))
 
     /** Sets the reasoning. */
-    fun withReasoning(reasoning: String?): PropositionDraft = rebuild(reasoning = reasoning)
+    fun withReasoning(reasoning: String?): PropositionDraft = PropositionDraft(values.copy(reasoning = reasoning))
 
     /** Appends [chunkIds] to the grounding and removes duplicates. */
     fun withGrounding(chunkIds: List<String>): PropositionDraft =
-        rebuild(grounding = Collections.unmodifiableList((grounding + chunkIds).distinct()))
+        PropositionDraft(values.copy(grounding = Collections.unmodifiableList((grounding + chunkIds).distinct())))
 
     /** Sets the creation time. */
-    fun withCreated(created: Instant): PropositionDraft = rebuild(created = created)
+    fun withCreated(created: Instant): PropositionDraft = PropositionDraft(values.copy(created = created))
 
     /** Sets the time the content last changed. */
-    fun withContentRevised(contentRevised: Instant): PropositionDraft = rebuild(contentRevised = contentRevised)
+    fun withContentRevised(contentRevised: Instant): PropositionDraft = PropositionDraft(values.copy(contentRevised = contentRevised))
 
     /** Sets the time the metadata last changed. */
-    fun withMetadataRevised(metadataRevised: Instant): PropositionDraft = rebuild(metadataRevised = metadataRevised)
+    fun withMetadataRevised(metadataRevised: Instant): PropositionDraft = PropositionDraft(values.copy(metadataRevised = metadataRevised))
 
     /** Sets the time the proposition was last used. */
-    fun withLastAccessed(lastAccessed: Instant): PropositionDraft = rebuild(lastAccessed = lastAccessed)
+    fun withLastAccessed(lastAccessed: Instant): PropositionDraft = PropositionDraft(values.copy(lastAccessed = lastAccessed))
 
     /** Sets whether the proposition is pinned. */
-    fun withPinned(pinned: Boolean): PropositionDraft = rebuild(pinned = pinned)
+    fun withPinned(pinned: Boolean): PropositionDraft = PropositionDraft(values.copy(pinned = pinned))
 
     /** Sets the lifecycle status. */
-    fun withStatus(status: PropositionStatus): PropositionDraft = rebuild(status = status)
+    fun withStatus(status: PropositionStatus): PropositionDraft = PropositionDraft(values.copy(status = status))
 
     /** Sets the abstraction level. */
-    fun withLevel(level: Int): PropositionDraft = rebuild(level = level)
+    fun withLevel(level: Int): PropositionDraft = PropositionDraft(values.copy(level = level))
 
     /** Replaces the source ids with a read-only copy of [sourceIds]. */
     fun withSourceIds(sourceIds: List<String>): PropositionDraft =
-        rebuild(sourceIds = Collections.unmodifiableList(ArrayList(sourceIds)))
+        PropositionDraft(values.copy(sourceIds = Collections.unmodifiableList(ArrayList(sourceIds))))
 
     /** Sets the reinforce count. */
-    fun withReinforceCount(reinforceCount: Int): PropositionDraft = rebuild(reinforceCount = reinforceCount)
+    fun withReinforceCount(reinforceCount: Int): PropositionDraft = PropositionDraft(values.copy(reinforceCount = reinforceCount))
 
     /** Replaces the metadata with a read-only copy of [metadata]. */
     fun withMetadata(metadata: Map<String, Any>): PropositionDraft =
-        rebuild(metadata = Collections.unmodifiableMap(LinkedHashMap(metadata)))
+        PropositionDraft(values.copy(metadata = Collections.unmodifiableMap(LinkedHashMap(metadata))))
 
     /** Sets the URI. */
-    fun withUri(uri: String?): PropositionDraft = rebuild(uri = uri)
+    fun withUri(uri: String?): PropositionDraft = PropositionDraft(values.copy(uri = uri))
 
     /** Sets the temporal details. */
-    fun withTemporal(temporal: TemporalMetadata?): PropositionDraft = rebuild(temporal = temporal)
+    fun withTemporal(temporal: TemporalMetadata?): PropositionDraft = PropositionDraft(values.copy(temporal = temporal))
 
     /** Replaces the provenance entries with [entries], keeping each distinct entry once. */
     fun withProvenance(entries: List<ProvenanceEntry>): PropositionDraft =
-        rebuild(provenanceEntries = Collections.unmodifiableList(entries.distinct()))
+        PropositionDraft(values.copy(provenanceEntries = Collections.unmodifiableList(entries.distinct())))
 
     /**
      * Builds the proposition through its primary constructor.
@@ -259,83 +259,6 @@ class PropositionDraft private constructor(private val values: Values) {
     }
 
     override fun toString(): String = "PropositionDraft(contextId=${contextId.value}, text=$text)"
-
-    /**
-     * Makes a new draft that keeps every value of this one except those passed in.
-     *
-     * @param contextId the context
-     * @param text the text
-     * @param confidence the confidence
-     * @param id the id, or null
-     * @param mentions the mentions
-     * @param decay the decay
-     * @param importance the importance
-     * @param reasoning the reasoning, or null
-     * @param grounding the grounding chunk ids
-     * @param created the creation time, or null
-     * @param contentRevised the content change time, or null
-     * @param metadataRevised the metadata change time, or null
-     * @param lastAccessed the last use time, or null
-     * @param pinned whether the proposition is pinned
-     * @param status the lifecycle status
-     * @param level the abstraction level
-     * @param sourceIds the source proposition ids
-     * @param reinforceCount the reinforce count
-     * @param metadata the extra values
-     * @param uri the URI, or null
-     * @param temporal the temporal details, or null
-     * @param provenanceEntries the provenance entries
-     * @return the new draft
-     */
-    private fun rebuild(
-        contextId: ContextId = this.contextId,
-        text: String = this.text,
-        confidence: ZeroToOne = this.confidence,
-        id: String? = this.id,
-        mentions: List<EntityMention> = this.mentions,
-        decay: ZeroToOne = this.decay,
-        importance: ZeroToOne = this.importance,
-        reasoning: String? = this.reasoning,
-        grounding: List<String> = this.grounding,
-        created: Instant? = this.created,
-        contentRevised: Instant? = this.contentRevised,
-        metadataRevised: Instant? = this.metadataRevised,
-        lastAccessed: Instant? = this.lastAccessed,
-        pinned: Boolean = this.pinned,
-        status: PropositionStatus = this.status,
-        level: Int = this.level,
-        sourceIds: List<String> = this.sourceIds,
-        reinforceCount: Int = this.reinforceCount,
-        metadata: Map<String, Any> = this.metadata,
-        uri: String? = this.uri,
-        temporal: TemporalMetadata? = this.temporal,
-        provenanceEntries: List<ProvenanceEntry> = this.provenanceEntries,
-    ): PropositionDraft = PropositionDraft(
-        Values(
-            contextId = contextId,
-            text = text,
-            confidence = confidence,
-            id = id,
-            mentions = mentions,
-            decay = decay,
-            importance = importance,
-            reasoning = reasoning,
-            grounding = grounding,
-            created = created,
-            contentRevised = contentRevised,
-            metadataRevised = metadataRevised,
-            lastAccessed = lastAccessed,
-            pinned = pinned,
-            status = status,
-            level = level,
-            sourceIds = sourceIds,
-            reinforceCount = reinforceCount,
-            metadata = metadata,
-            uri = uri,
-            temporal = temporal,
-            provenanceEntries = provenanceEntries,
-        )
-    )
 
     internal companion object {
 
