@@ -586,6 +586,42 @@ class DrivineDriftReportStoreIntegrationTest {
         )
     }
 
+    @Test
+    fun `a report whose stored declared diff is in an unsupported format version is skipped and warned about`() {
+        val readable = save(1)
+        val laterFormat = DriftReport(
+            schemaName = schemaName,
+            versionHash = "hash-2",
+            driftedEntityTypes = setOf("Ghost"),
+            driftedRelationshipTypes = emptySet(),
+            capturedAt = epoch.plusSeconds(120),
+            declaredDiff = declaredDiff,
+        )
+        store.saveDriftReport(laterFormat)
+        val stored = DriftReportRowMapper.bindMap(laterFormat)["declaredDiff"] as String
+        val version2 = stored.replaceFirst("{\"version\":1,", "{\"version\":2,")
+        assertTrue(version2 != stored, "the stored value must start with its format version")
+        persistenceManager.execute(
+            QuerySpecification.withStatement(
+                """
+                MATCH (n:MetamodelDriftReport {schemaName: ${'$'}schemaName, versionHash: 'hash-2'})
+                SET n.declaredDiff = ${'$'}declaredDiff
+                """.trimIndent(),
+            ).bind(mapOf("schemaName" to schemaName, "declaredDiff" to version2)),
+        )
+
+        val (reports, logged) = capturingStoreWarnings { store.driftReports(schemaName, limit = 10) }
+
+        assertEquals(listOf(readable), reports, "the readable report survives and the later format is dropped")
+        assertTrue(
+            logged.any {
+                it.contains("Skipping unreadable MetamodelDriftReport row") &&
+                    it.contains("declaredDiff") && it.contains("unsupported format version 2")
+            },
+            "the skip must be warned about and name the property and the version; warnings were: $logged",
+        )
+    }
+
     // ---- helpers ----
 
     /** The `sequence` a report node holds. It is storage bookkeeping, so read it straight out. */

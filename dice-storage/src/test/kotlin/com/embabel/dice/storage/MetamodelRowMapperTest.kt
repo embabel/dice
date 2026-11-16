@@ -372,4 +372,96 @@ class MetamodelRowMapperTest {
             assertTrue(thrown.message!!.contains("declaredDiff"), thrown.message)
         }
     }
+
+    /** The stored text of [declaredDiff]'s two versions, everything in the document before its changes. */
+    private val storedDiffHead =
+        """{"version":1,""" +
+            """"fromVersion":{"schemaName":"diff-schema","entityTypeNames":["Company","Ledger","Person"],""" +
+            """"entityTypeLabels":{"Person":["Entity","Legacy"]},"entityTypeProperties":{"Person":[""" +
+            """{"name":"age","kind":"VALUE","type":"integer","cardinality":"ONE"},""" +
+            """{"name":"fax","kind":"VALUE","type":"string","cardinality":"OPTIONAL"},""" +
+            """{"name":"tel","kind":"VALUE","type":"string","cardinality":"ONE"}]},""" +
+            """"relationshipNames":["Person-[worksAt]->Firm"]},""" +
+            """"toVersion":{"schemaName":"diff-schema","entityTypeNames":["Company","Human","Invoice"],""" +
+            """"entityTypeLabels":{"Human":["Agent","Entity"]},"entityTypeProperties":{"Human":[""" +
+            """{"name":"age","kind":"VALUE","type":"integer","cardinality":"OPTIONAL"},""" +
+            """{"name":"phone","kind":"VALUE","type":"string","cardinality":"ONE","aliases":["tel"]}]},""" +
+            """"relationshipNames":["Human-[worksAt]->Company"],"entityTypeAliases":{"Human":["Person"]}},"""
+
+    /** The stored text of each of [declaredDiff]'s changes, one per change kind, in the diff's order. */
+    private val storedChanges = listOf(
+        """{"kind":"EntityTypeAdded","typeName":"Invoice"}""",
+        """{"kind":"EntityTypeRemoved","typeName":"Ledger"}""",
+        """{"kind":"EntityTypeRenamed","before":"Person","after":"Human"}""",
+        """{"kind":"AmbiguousEntityTypeRename","formerNames":["Firm"],"candidates":["Company","Vendor"]}""",
+        """{"kind":"EntityTypeAliasesChanged","typeName":"Human","before":[],"after":["Person"]}""",
+        """{"kind":"EntityTypeModified","typeName":"Human","addedLabels":["Agent"],"removedLabels":["Legacy"],""" +
+            """"addedProperties":[{"name":"phone","kind":"VALUE","type":"string","cardinality":"ONE","aliases":["tel"]}],""" +
+            """"removedProperties":[{"name":"fax","kind":"VALUE","type":"string","cardinality":"OPTIONAL"}]}""",
+        """{"kind":"PropertyRenamed","typeName":"Human",""" +
+            """"before":{"name":"tel","kind":"VALUE","type":"string","cardinality":"ONE"},""" +
+            """"after":{"name":"phone","kind":"VALUE","type":"string","cardinality":"ONE","aliases":["tel"]}}""",
+        """{"kind":"AmbiguousPropertyRename","typeName":"Human","formerNames":["tel"],"candidates":["mobile","phone"]}""",
+        """{"kind":"PropertySignatureChanged","typeName":"Human","propertyName":"age",""" +
+            """"before":{"name":"age","kind":"VALUE","type":"integer","cardinality":"ONE"},""" +
+            """"after":{"name":"age","kind":"VALUE","type":"integer","cardinality":"OPTIONAL"}}""",
+        """{"kind":"RelationshipAdded","descriptor":"Human-[worksAt]->Company"}""",
+        """{"kind":"RelationshipRemoved","descriptor":"Person-[worksAt]->Firm"}""",
+    )
+
+    /** The exact `declaredDiff` value stored for [declaredDiff]. */
+    private val storedDeclaredDiff = storedDiffHead + """"changes":[""" + storedChanges.joinToString(",") + "]}"
+
+    @Test
+    fun `a declared diff is stored as exactly the format 1 text, one entry per change kind`() {
+        assertEquals(11, storedChanges.size)
+        assertEquals(storedChanges.size, storedChanges.map { it.substringBefore("\",") }.toSet().size)
+
+        val written = DriftReportRowMapper.bindMap(report(declaredDiff))["declaredDiff"] as String
+
+        assertEquals(storedDeclaredDiff, written)
+    }
+
+    @Test
+    fun `the format 1 text reads back as the declared diff it was written from`() {
+        val stored = DriftReportRowMapper.bindMap(report(null)) + ("declaredDiff" to storedDeclaredDiff)
+
+        assertEquals(declaredDiff, DriftReportRowMapper.fromRow(stored).declaredDiff)
+    }
+
+    @Test
+    fun `fields a stored declared diff adds beyond format 1 are ignored on read`() {
+        val withAddedFields = storedDeclaredDiff
+            .replaceFirst("{", """{"addedLater":{"note":"top level"},""")
+            .replace(""""schemaName":"diff-schema"""", """"schemaName":"diff-schema","addedLater":true""")
+            .replace("""{"kind":"""", """{"addedLater":[1,2],"kind":"""")
+            .replace(""""cardinality":"ONE"""", """"cardinality":"ONE","addedLater":"in a signature"""")
+        assertEquals(1, Regex("\"addedLater\":\\{").findAll(withAddedFields).count())
+        assertEquals(2, Regex("\"addedLater\":true").findAll(withAddedFields).count())
+        assertEquals(11, Regex("\"addedLater\":\\[1,2]").findAll(withAddedFields).count())
+        assertTrue(withAddedFields.contains("\"addedLater\":\"in a signature\""))
+        val stored = DriftReportRowMapper.bindMap(report(null)) + ("declaredDiff" to withAddedFields)
+
+        assertEquals(declaredDiff, DriftReportRowMapper.fromRow(stored).declaredDiff)
+    }
+
+    @Test
+    fun `a stored declared diff in any format version other than 1 fails the read, naming the property`() {
+        val stored = DriftReportRowMapper.bindMap(report(null))
+        val unsupported = listOf(
+            storedDeclaredDiff.replaceFirst("\"version\":1", "\"version\":2"),
+            storedDeclaredDiff.replaceFirst("\"version\":1", "\"version\":0"),
+            storedDeclaredDiff.replaceFirst("\"version\":1", "\"version\":\"1\""),
+            storedDeclaredDiff.replaceFirst("\"version\":1,", ""),
+        )
+        assertTrue(unsupported.none { it == storedDeclaredDiff }, "every fixture must alter the version")
+
+        unsupported.forEach { declared ->
+            val thrown = assertThrows<IllegalArgumentException> {
+                DriftReportRowMapper.fromRow(stored + ("declaredDiff" to declared))
+            }
+            assertTrue(thrown.message!!.contains("declaredDiff"), thrown.message)
+            assertTrue(thrown.message!!.contains("version"), thrown.message)
+        }
+    }
 }

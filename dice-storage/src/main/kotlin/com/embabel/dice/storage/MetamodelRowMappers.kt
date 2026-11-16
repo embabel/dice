@@ -28,6 +28,9 @@ import java.time.Instant
 
 private val objectMapper = ObjectMapper()
 
+/** The format version written into every stored declared diff, and the only one a read accepts. */
+private const val DECLARED_DIFF_FORMAT_VERSION = 1
+
 /**
  * Translate metamodel versions to and from the property maps the Neo4j graph store reads and
  * writes.
@@ -136,12 +139,15 @@ object MetamodelVersionRowMapper {
  *
  * A fourth property, `contextKey`, encodes the report's scope; see [GLOBAL_CONTEXT_KEY].
  *
- * The report's declared diff is stored as one JSON string in `declaredDiff`, holding `fromVersion`,
- * `toVersion` and `changes`. Both versions are written in full with the field encodings a
+ * The report's declared diff is stored as one JSON string in `declaredDiff`, holding `version`,
+ * `fromVersion`, `toVersion` and `changes`. `version` is the format version, currently 1, and a
+ * read refuses any other. Both versions are written in full with the field encodings a
  * `(:MetamodelVersion)` node uses, so the report reads back without a version store. Each change is
  * an object whose `kind` is the change's simple class name, with its fields written one by one and
  * its sets sorted. This is a persisted format: renaming a change kind or a field leaves stored
- * reports unreadable.
+ * reports unreadable. Adding a field keeps format 1, because a read ignores fields it does not know.
+ * A format change that an older build would misread by ignoring the new fields needs a new format
+ * version.
  *
  * Reads are strict: a property this mapper wrote must be present when it is read again. `contextId`
  * and `declaredDiff` are the two exceptions. An absent `contextId` is how a global report is
@@ -442,7 +448,8 @@ private inline fun <reified E : Enum<E>> enumConstant(stored: String, typeName: 
     }
 
 /**
- * Write a drift report's declared diff as the JSON string stored in `declaredDiff`.
+ * Write a drift report's declared diff as the JSON string stored in `declaredDiff`, format version
+ * first.
  *
  * @param diff The declared diff to store.
  * @return The JSON, the same bytes every time for the same diff.
@@ -450,6 +457,7 @@ private inline fun <reified E : Enum<E>> enumConstant(stored: String, typeName: 
 private fun serializeDeclaredDiff(diff: MetamodelDiff): String =
     objectMapper.writeValueAsString(
         linkedMapOf(
+            "version" to DECLARED_DIFF_FORMAT_VERSION,
             "fromVersion" to versionStructure(diff.fromVersion),
             "toVersion" to versionStructure(diff.toVersion),
             "changes" to diff.changes.map(::changeStructure),
@@ -545,11 +553,14 @@ private fun changeStructure(change: MetamodelChange): Map<String, Any> = when (c
 }
 
 /**
- * Read a stored `declaredDiff` back into a [MetamodelDiff], strict about every part of it.
+ * Read a stored `declaredDiff` back into a [MetamodelDiff].
  *
- * Bad JSON, an unknown change kind, a missing field and a value a constructor refuses all throw an
- * [IllegalArgumentException] whose message starts with `declaredDiff`, so the store's guard skips
- * the row and the warning says which property was unreadable.
+ * Every field the format defines must be present. Fields it does not define are ignored, at the top
+ * level, in a version, in a change and in a property signature, so a value written by a build that
+ * added a field still reads here. Bad JSON, a format version other than 1, an unknown change kind,
+ * a missing field and a value a constructor refuses all throw an [IllegalArgumentException] whose
+ * message starts with `declaredDiff`, so the store's guard skips the row and the warning says which
+ * property was unreadable.
  *
  * @param serialized The stored JSON string.
  * @return The declared diff.
@@ -557,6 +568,10 @@ private fun changeStructure(change: MetamodelChange): Map<String, Any> = when (c
 private fun deserializeDeclaredDiff(serialized: String): MetamodelDiff =
     try {
         val fields = objectMapper.readValue(serialized, Map::class.java)
+        val version = fields.jsonField("version")
+        require(version == DECLARED_DIFF_FORMAT_VERSION) {
+            "unsupported format version $version (this build reads version $DECLARED_DIFF_FORMAT_VERSION)"
+        }
         MetamodelDiff(
             fromVersion = versionFrom(fields.jsonObject("fromVersion")),
             toVersion = versionFrom(fields.jsonObject("toVersion")),
