@@ -209,6 +209,19 @@ class DrivinePropositionStoreIntegrationTest {
     }
 
     @Test
+    fun `a recorded content revision survives a save and a load`() {
+        val revised = repository.save(prop(text = "Rod lives in Sydney").withText("Rod lives in Melbourne"))
+        val unrevised = repository.save(prop(text = "Rod visited Perth"))
+
+        val loadedRevised = repository.findById(revised.id)!!
+        val loadedUnrevised = repository.findById(unrevised.id)!!
+
+        assertNotNull(loadedRevised.lastContentRevision)
+        assertEquals(loadedRevised.contentRevised, loadedRevised.lastContentRevision)
+        assertNull(loadedUnrevised.lastContentRevision)
+    }
+
+    @Test
     fun `save dedups identical text in the same context`() {
         repository.save(prop("Rod visited Sydney"))
         repository.save(prop("Rod visited Sydney"))

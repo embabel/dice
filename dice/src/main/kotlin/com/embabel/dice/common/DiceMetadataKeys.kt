@@ -40,4 +40,14 @@ object DiceMetadataKeys {
      * quarantined by a drift policy. Cleared when the proposition is released via `releaseFromQuarantine`.
      */
     const val QUARANTINE_REASON = "dice.metamodel.quarantine.reason"
+
+    /**
+     * Marks a proposition whose text, mentions or confidence changed after it was recorded. The
+     * value is `true`, and `contentRevised` holds the time of the last change.
+     *
+     * A merge, a reinforcement and a contradiction change confidence, so each counts as a revision.
+     * A proposition that was never revised has no entry, and neither does one stored without it or
+     * one whose metadata map was replaced. `Proposition.lastContentRevision` reads this entry.
+     */
+    const val CONTENT_REVISED = "dice.content.revised"
 }

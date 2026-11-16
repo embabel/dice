@@ -15,10 +15,12 @@
  */
 package com.embabel.dice.proposition
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.model.Retrievable
 import com.embabel.common.core.types.ZeroToOne
+import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import com.embabel.dice.temporal.TemporalMetadata
@@ -166,11 +168,32 @@ data class Proposition(
      */
     val lastTouched: Instant get() = maxOf(contentRevised, metadataRevised)
 
+    /**
+     * When the text, mentions or confidence last changed after this proposition was recorded.
+     * A merge, a reinforcement and a contradiction change confidence, so they count.
+     *
+     * Equals [contentRevised] when the metadata holds [DiceMetadataKeys.CONTENT_REVISED] with the
+     * value `true`. Null when no change is recorded: a proposition never revised, one stored
+     * without the entry, or one whose metadata map was replaced. Left out of JSON, since the
+     * metadata entry and [contentRevised] already carry it.
+     */
+    @get:JsonIgnore
+    val lastContentRevision: Instant?
+        get() = if (metadata[DiceMetadataKeys.CONTENT_REVISED] == true) contentRevised else null
+
     /** Create a copy with updated text. Resets the decay clock (content anchor). */
-    fun withText(newText: String): Proposition = copy(
-        text = newText,
-        contentRevised = Instant.now(),
-    )
+    fun withText(newText: String): Proposition = copy(text = newText).contentRevisedAt(Instant.now())
+
+    /**
+     * Stamps a content revision: sets [contentRevised] and records the revision in the metadata.
+     * Leaves [metadataRevised] alone, because the content changed and the administrative record did not.
+     *
+     * @param at when the content changed
+     * @return a copy with [contentRevised] set to [at] and [DiceMetadataKeys.CONTENT_REVISED] set to `true`
+     */
+    @JvmSynthetic
+    internal fun contentRevisedAt(at: Instant): Proposition =
+        copy(contentRevised = at, metadata = metadata + (DiceMetadataKeys.CONTENT_REVISED to true))
 
     companion object {
 
@@ -302,7 +325,7 @@ data class Proposition(
      * Create a copy with updated mentions.
      */
     fun withResolvedMentions(resolvedMentions: List<EntityMention>): Proposition =
-        copy(mentions = resolvedMentions, contentRevised = Instant.now())
+        copy(mentions = resolvedMentions).contentRevisedAt(Instant.now())
 
     /**
      * Create a copy with updated status. Administrative change: touches only
@@ -323,7 +346,7 @@ data class Proposition(
      */
     fun withConfidence(newConfidence: Double): Proposition {
         require(newConfidence in 0.0..1.0) { "Confidence must be between 0.0 and 1.0" }
-        return copy(confidence = newConfidence, contentRevised = Instant.now())
+        return copy(confidence = newConfidence).contentRevisedAt(Instant.now())
     }
 
     /**

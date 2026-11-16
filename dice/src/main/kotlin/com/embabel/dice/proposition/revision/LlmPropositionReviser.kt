@@ -687,9 +687,8 @@ data class LlmPropositionReviser(
             grounding = combinedGrounding,
             provenanceEntries = combinedProvenance,
             reinforceCount = existing.reinforceCount + 1,
-            contentRevised = Instant.now(),
             lastAccessed = Instant.now(),
-        )
+        ).contentRevisedAt(Instant.now())
     }
 
     /**

@@ -57,7 +57,6 @@ internal fun reinforce(existing: Proposition, evidence: Proposition, rule: Reinf
             existing.provenanceEntries
         },
         reinforceCount = if (rule.countReinforcement) existing.reinforceCount + 1 else existing.reinforceCount,
-        contentRevised = now,
         lastAccessed = if (rule.touchLastAccessed) now else existing.lastAccessed,
-    )
+    ).contentRevisedAt(now)
 }

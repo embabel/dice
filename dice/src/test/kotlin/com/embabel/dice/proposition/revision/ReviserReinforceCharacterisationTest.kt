@@ -16,6 +16,7 @@
 package com.embabel.dice.proposition.revision
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.provenance.ProvenanceEntry
@@ -144,9 +145,17 @@ class ReviserReinforceCharacterisationTest {
                 reinforceCount = 3,
                 contentRevised = revised.contentRevised,
                 lastAccessed = revised.lastAccessed,
+                metadata = existing.metadata + (DiceMetadataKeys.CONTENT_REVISED to true),
             ),
             revised,
         )
+    }
+
+    @Test
+    fun `the reinforced proposition records its content revision`() {
+        val revised = revisedFrom(existing(), incoming())
+        assertEquals(true, revised.metadata[DiceMetadataKeys.CONTENT_REVISED])
+        assertEquals(revised.contentRevised, revised.lastContentRevision)
     }
 
     @Test

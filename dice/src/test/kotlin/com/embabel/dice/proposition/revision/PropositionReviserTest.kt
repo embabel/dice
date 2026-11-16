@@ -17,6 +17,7 @@ package com.embabel.dice.proposition.revision
 
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.service.RetrievableIdentifier
+import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.proposition.EntityMention
@@ -1112,6 +1113,63 @@ class PropositionReviserTest {
             assertTrue(locA in locators, "keeps the existing source")
             assertTrue(locB in locators, "adds the reinforcing source")
             assertEquals(2, reinforced.provenanceEntries.size)
+        }
+    }
+
+    /**
+     * The real reviser records a content revision on every proposition whose confidence it changes.
+     * Classification results are passed in directly, so no model call is made.
+     */
+    @Nested
+    inner class ContentRevisionRecordTests {
+
+        private val reviser = LlmPropositionReviser(llmOptions = io.mockk.mockk(), ai = io.mockk.mockk())
+
+        @Test
+        fun `a merged proposition records its content revision`() {
+            val existing = createProposition("Alice is a software engineer", confidence = 0.7)
+            val incoming = createProposition("Alice is a software engineer", confidence = 0.8)
+
+            val result = reviser.classifiedToResult(
+                incoming,
+                listOf(ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.95, "Same meaning")),
+                TestPropositionRepository(),
+            )
+
+            val merged = (result as RevisionResult.Merged).revised
+            assertEquals(true, merged.metadata[DiceMetadataKeys.CONTENT_REVISED])
+            assertEquals(merged.contentRevised, merged.lastContentRevision)
+        }
+
+        @Test
+        fun `a contradicted original records its content revision`() {
+            val existing = createProposition("Alice prefers Java", confidence = 0.8)
+            val incoming = createProposition("Alice prefers Kotlin over Java", confidence = 0.9)
+
+            val result = reviser.classifiedToResult(
+                incoming,
+                listOf(ClassifiedProposition(existing, PropositionRelation.CONTRADICTORY, 0.1, "Opposite preference")),
+                TestPropositionRepository(),
+            )
+
+            val original = (result as RevisionResult.Contradicted).original
+            assertEquals(original.contentRevised, original.lastContentRevision)
+        }
+
+        @Test
+        fun `a pinned original of a contradiction records no content revision`() {
+            val existing = createProposition("Alice prefers Java", confidence = 0.8).withPinned(true)
+            val incoming = createProposition("Alice prefers Kotlin over Java", confidence = 0.9)
+
+            val result = reviser.classifiedToResult(
+                incoming,
+                listOf(ClassifiedProposition(existing, PropositionRelation.CONTRADICTORY, 0.1, "Opposite preference")),
+                TestPropositionRepository(),
+            )
+
+            val original = (result as RevisionResult.Contradicted).original
+            assertEquals(existing, original)
+            assertNull(original.lastContentRevision)
         }
     }
 
