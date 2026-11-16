@@ -15,39 +15,24 @@
  */
 package com.embabel.dice.conformance.example;
 
-import com.embabel.dice.common.DiceEvent;
 import com.embabel.dice.common.DiceEventListener;
 import com.embabel.dice.conformance.AbstractExtractionRunStoreContractTest;
+import com.embabel.dice.conformance.RedirectableEventListener;
 import com.embabel.dice.proposition.extraction.ExtractionRunStore;
 import com.embabel.dice.proposition.extraction.InMemoryExtractionRunStore;
 
 /**
- * A test for an {@code ExtractionRunStore} that is built once with its listener: the listener
- * forwards to whichever one a case supplies.
+ * A test for an {@code ExtractionRunStore} that is built once with a
+ * {@code RedirectableEventListener}. The factory points that listener at the one each case supplies.
  */
 class ExtractionRunStoreContractJavaInteropTest extends AbstractExtractionRunStoreContractTest {
 
-    private final RedirectableListener events = new RedirectableListener();
+    private final RedirectableEventListener events = new RedirectableEventListener();
     private final ExtractionRunStore runs = new InMemoryExtractionRunStore(events);
 
     @Override
     protected ExtractionRunStore store(DiceEventListener listener) {
         events.redirectTo(listener);
         return runs;
-    }
-
-    /** Forwards each event to the listener it was last pointed at. */
-    static final class RedirectableListener implements DiceEventListener {
-
-        private volatile DiceEventListener target = event -> { };
-
-        void redirectTo(DiceEventListener listener) {
-            target = listener;
-        }
-
-        @Override
-        public void onEvent(DiceEvent event) {
-            target.onEvent(event);
-        }
     }
 }
