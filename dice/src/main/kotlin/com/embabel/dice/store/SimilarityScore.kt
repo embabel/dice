@@ -33,6 +33,17 @@ import org.jetbrains.annotations.ApiStatus
  *
  * A store whose index uses another metric converts to cosine similarity first.
  *
+ * Each factory checks its range.
+ *
+ * | The value | Result |
+ * |---|---|
+ * | Inside the range, ends included | Converted |
+ * | Past an end by at most one millionth | Moved to that end, as rounding |
+ * | Further outside, `NaN` or an infinity | `IllegalArgumentException` |
+ *
+ * A store whose database can round further than one millionth holds the number to the range
+ * before it calls the factory.
+ *
  * ```java
  * SimilarityScore floor = SimilarityScore.ofCosine(0.7);
  * boolean close = match.getScore().compareTo(floor) >= 0;

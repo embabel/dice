@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Test
  * - E2 a value outside the range is rejected.
  * - E3 rounding within one millionth of an end is moved to that end.
  * - E4 scores compare by closeness and equal scores hash the same.
+ * - E5 each documented edge of each factory holds.
  */
 class SimilarityScoreTest {
 
@@ -74,5 +75,35 @@ class SimilarityScoreTest {
         assertEquals(SimilarityScore.ofCosine(0.0), SimilarityScore.ofCosine(-0.0))
         assertEquals(SimilarityScore.ofCosine(0.0).hashCode(), SimilarityScore.ofCosine(-0.0).hashCode())
         assertNotEquals(SimilarityScore.ofCosine(0.5), SimilarityScore.ofCosine(0.6))
+    }
+
+    @Test
+    fun `E5 each documented edge of each factory holds`() {
+        assertEquals(-1.0, SimilarityScore.ofCosine(-1.0).cosine)
+        assertEquals(1.0, SimilarityScore.ofCosine(1.0).cosine)
+        assertEquals(-1.0, SimilarityScore.ofCosineDistance(2.0).cosine)
+        assertEquals(1.0, SimilarityScore.ofCosineDistance(0.0).cosine)
+        assertEquals(-1.0, SimilarityScore.ofUnitInterval(0.0).cosine)
+        assertEquals(1.0, SimilarityScore.ofUnitInterval(1.0).cosine)
+
+        assertEquals(1.0, SimilarityScore.ofCosine(1.0000009).cosine)
+        assertEquals(-1.0, SimilarityScore.ofCosine(-1.0000009).cosine)
+        assertEquals(1.0, SimilarityScore.ofCosineDistance(-0.0000009).cosine)
+        assertEquals(-1.0, SimilarityScore.ofCosineDistance(2.0000009).cosine)
+        assertEquals(-1.0, SimilarityScore.ofUnitInterval(-0.0000009).cosine)
+        assertEquals(1.0, SimilarityScore.ofUnitInterval(1.0000009).cosine)
+
+        assertThrows(IllegalArgumentException::class.java) { SimilarityScore.ofCosine(1.0000011) }
+        assertThrows(IllegalArgumentException::class.java) { SimilarityScore.ofCosine(-1.0000011) }
+        assertThrows(IllegalArgumentException::class.java) { SimilarityScore.ofCosineDistance(-0.0000011) }
+        assertThrows(IllegalArgumentException::class.java) { SimilarityScore.ofCosineDistance(2.0000011) }
+        assertThrows(IllegalArgumentException::class.java) { SimilarityScore.ofUnitInterval(-0.0000011) }
+        assertThrows(IllegalArgumentException::class.java) { SimilarityScore.ofUnitInterval(1.0000011) }
+
+        listOf(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY).forEach { value ->
+            assertThrows(IllegalArgumentException::class.java) { SimilarityScore.ofCosine(value) }
+            assertThrows(IllegalArgumentException::class.java) { SimilarityScore.ofCosineDistance(value) }
+            assertThrows(IllegalArgumentException::class.java) { SimilarityScore.ofUnitInterval(value) }
+        }
     }
 }
