@@ -29,6 +29,9 @@ you need.
 - [grounding-and-conflicts.md](grounding-and-conflicts.md) — how propositions stay anchored to
   source material (grounding) and how the conflict/policy SPI resolves disagreements between
   propositions.
+- [source-revision-provenance.md](source-revision-provenance.md) — recording *which version* of a
+  source a fact came from: the opaque revision, why it lives on the graph edge rather than the
+  source node, and what an auditor can (and can't) ask as a result.
 
 ## Projections
 

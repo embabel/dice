@@ -34,6 +34,7 @@ import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.projection.graph.GraphProjectionService
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.SourceLocator
 import com.embabel.dice.provenance.SourceRevisionRef
 import org.slf4j.LoggerFactory
@@ -125,6 +126,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             chunkHistoryStore,
             MessageFormatter.INSTANCE,
             WindowConfig(properties.windowSize, properties.overlapSize, properties.triggerInterval),
+            ::recordSourceRevisionOnExistingEvidence,
         )
 
     private val windowConfig = WindowConfig(properties.windowSize, properties.overlapSize, properties.triggerInterval)
@@ -338,6 +340,41 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         if (pendingEvents.isNotEmpty()) {
             processPendingEvents()
         }
+    }
+
+    /**
+     * Record that this source revision also attests the propositions we already extracted from
+     * identical content.
+     *
+     * Runs when the content-hash gate skips a window — the text hasn't changed, so re-extracting
+     * would buy nothing. But if the caller named a revision, that revision genuinely does support
+     * those facts, and without this it would leave no trace: `findBySourceRevision` would come back
+     * empty for a revision we actually read, and an auditor reconstructing which published versions
+     * back a fact would see a hole wherever an edit touched metadata but not text.
+     *
+     * The entry is coarse on purpose. Chunk and offsets belong to the extraction we just skipped, so
+     * the honest claim is document-level: this revision of this source supports this proposition.
+     * Propositions that already carry the revision are left alone, which keeps repeated events for
+     * the same revision idempotent.
+     */
+    private fun recordSourceRevisionOnExistingEvidence(context: SourceAnalysisContext) {
+        val revision = context.sourceRevision ?: return
+        val locator = context.sourceLocator ?: return
+        val alreadyDerived = propositionRepository.findBySourceKey(context.contextId, revision.sourceKey)
+        val needingRevision = alreadyDerived.filterNot { proposition ->
+            proposition.provenanceEntries.any {
+                it.locator.key() == revision.sourceKey && it.sourceRevision == revision.sourceRevision
+            }
+        }
+        if (needingRevision.isEmpty()) return
+        val entry = ProvenanceEntry(locator = locator, sourceRevision = revision.sourceRevision)
+        needingRevision.forEach { proposition ->
+            propositionRepository.addProvenance(proposition.id, listOf(entry))
+        }
+        logger.info(
+            "Content unchanged for source {}; recorded revision {} on {} existing propositions",
+            revision.sourceKey, revision.sourceRevision, needingRevision.size,
+        )
     }
 
     private fun processEvent(event: SourceAnalysisRequestEvent) {

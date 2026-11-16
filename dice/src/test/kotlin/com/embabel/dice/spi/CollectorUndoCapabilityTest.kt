@@ -69,6 +69,56 @@ class CollectorUndoCapabilityTest {
         assertEquals(PropositionStatus.ACTIVE, result?.restored?.status)
     }
 
+    @Test
+    fun `undoing every contributor of shared evidence leaves none of it on the survivor`() {
+        val store = AppendPreservingStore()
+        val trace = InMemoryCollectorTraceStore()
+        val contextId = ContextId("ctx-sequential-undo")
+        val keep = ProvenanceEntry(UriLocator("https://example.com/keep"))
+        // Both losers folded this same entry in; the survivor never held it independently.
+        val shared = ProvenanceEntry(UriLocator("https://example.com/shared"))
+        val survivor = store.save(proposition("survivor", contextId, listOf(keep, shared)))
+        val firstLoser = store.save(
+            proposition("loser-a", contextId, listOf(shared), status = PropositionStatus.STALE),
+        )
+        val secondLoser = store.save(
+            proposition("loser-b", contextId, listOf(shared), status = PropositionStatus.STALE),
+        )
+        val runId = "run-sequential-undo"
+        trace.recordRunContext(runId, contextId)
+        trace.recordDecision(
+            runId,
+            CollectorDecision(
+                runId = runId,
+                componentId = "component-sequential-undo",
+                survivorId = survivor.id,
+                action = "duplicate-merge",
+                retired = listOf(
+                    RetiredProposition(
+                        propositionId = firstLoser.id,
+                        priorStatus = PropositionStatus.ACTIVE,
+                        foldedProvenanceRefs = listOf(shared.locator.key()),
+                    ),
+                    RetiredProposition(
+                        propositionId = secondLoser.id,
+                        priorStatus = PropositionStatus.ACTIVE,
+                        foldedProvenanceRefs = listOf(shared.locator.key()),
+                    ),
+                ),
+            ),
+        )
+
+        // Undoing only the first must keep the shared entry: the second contributor is still retired.
+        undoSingleCollapse(trace, store, survivor.id, firstLoser.id)
+        assertEquals(listOf(keep, shared), store.findById(survivor.id)?.provenanceEntries)
+
+        // Undoing the second releases it — every contributor has now been restored, so the survivor
+        // must be back to the evidence it held on its own.
+        undoSingleCollapse(trace, store, survivor.id, secondLoser.id)
+        assertEquals(listOf(keep), store.findById(survivor.id)?.provenanceEntries)
+        assertEquals(PropositionStatus.ACTIVE, store.findById(secondLoser.id)?.status)
+    }
+
     private fun proposition(
         id: String,
         contextId: ContextId,

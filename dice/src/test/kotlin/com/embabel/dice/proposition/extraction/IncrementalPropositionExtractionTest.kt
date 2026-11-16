@@ -42,7 +42,11 @@ import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.doNothing
+import com.embabel.agent.core.ContextId
+import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.provenance.ProvenanceEntry
 import org.mockito.kotlin.eq
+import org.mockito.kotlin.never
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.spy
 import org.mockito.kotlin.verify
@@ -426,6 +430,81 @@ class IncrementalPropositionExtractionTest {
         assertSame(revision, contextCaptor.firstValue.sourceRevision)
     }
 
+    @Test
+    fun `a new revision of unchanged content is recorded on the propositions already derived from it`() {
+        val pipeline = pipelineReturningNoResult()
+        // The content hash gate reports this window as already analysed, so extraction is skipped.
+        val historyStore = mock<ChunkHistoryStore>()
+        whenever(historyStore.getLastBookmark(any())).thenReturn(null)
+        whenever(historyStore.isProcessed(any())).thenReturn(true)
+        val locator = UriLocator("https://example.com/unchanged")
+        val revision = SourceRevisionRef(locator.key(), "r2")
+        val alreadyDerived = Proposition(
+            id = "p-from-r1",
+            contextId = ContextId("user-1"),
+            text = "already extracted from r1",
+            mentions = emptyList(),
+            confidence = 0.9,
+            provenanceEntries = listOf(ProvenanceEntry(locator, sourceRevision = "r1")),
+        )
+        val repository = mock<PropositionRepository>()
+        whenever(repository.findBySourceKey(any<ContextId>(), any())).thenReturn(listOf(alreadyDerived))
+        val extraction = extraction(pipeline, historyStore, repository)
+        val source = mock<IncrementalSource<Message>>()
+        whenever(source.id).thenReturn("unchanged-source")
+        whenever(source.size).thenReturn(1)
+        val event = object : SourceAnalysisRequestEvent(this, user()) {
+            override fun incrementalSource(): IncrementalSource<Message> = source
+            override fun sourceLocator(): SourceLocator = locator
+            override fun sourceRevision(): SourceRevisionRef = revision
+        }
+
+        extraction.extractPropositions(event)
+
+        // Nothing was re-extracted — the text is identical, so paying an LLM again would buy nothing.
+        verify(pipeline, never()).processChunk(any(), any())
+        // But r2 genuinely attests the fact, so it is recorded at document granularity.
+        val entriesCaptor = argumentCaptor<List<ProvenanceEntry>>()
+        verify(repository).addProvenance(eq("p-from-r1"), entriesCaptor.capture())
+        assertEquals(
+            listOf(ProvenanceEntry(locator, sourceRevision = "r2")),
+            entriesCaptor.firstValue,
+        )
+    }
+
+    @Test
+    fun `a revision already recorded is not written again`() {
+        val pipeline = pipelineReturningNoResult()
+        val historyStore = mock<ChunkHistoryStore>()
+        whenever(historyStore.getLastBookmark(any())).thenReturn(null)
+        whenever(historyStore.isProcessed(any())).thenReturn(true)
+        val locator = UriLocator("https://example.com/unchanged")
+        val revision = SourceRevisionRef(locator.key(), "r2")
+        val alreadyCarriesR2 = Proposition(
+            id = "p-from-r2",
+            contextId = ContextId("user-1"),
+            text = "already carries r2",
+            mentions = emptyList(),
+            confidence = 0.9,
+            provenanceEntries = listOf(ProvenanceEntry(locator, sourceRevision = "r2")),
+        )
+        val repository = mock<PropositionRepository>()
+        whenever(repository.findBySourceKey(any<ContextId>(), any())).thenReturn(listOf(alreadyCarriesR2))
+        val extraction = extraction(pipeline, historyStore, repository)
+        val source = mock<IncrementalSource<Message>>()
+        whenever(source.id).thenReturn("unchanged-source")
+        whenever(source.size).thenReturn(1)
+        val event = object : SourceAnalysisRequestEvent(this, user()) {
+            override fun incrementalSource(): IncrementalSource<Message> = source
+            override fun sourceLocator(): SourceLocator = locator
+            override fun sourceRevision(): SourceRevisionRef = revision
+        }
+
+        extraction.extractPropositions(event)
+
+        verify(repository, never()).addProvenance(any(), any())
+    }
+
     private fun pipelineReturningNoResult(): PropositionPipeline =
         mock<PropositionPipeline>().also { pipeline ->
             whenever(
@@ -443,17 +522,21 @@ class IncrementalPropositionExtractionTest {
             )
         }
 
-    private fun extraction(pipeline: PropositionPipeline): IncrementalPropositionExtraction {
+    private fun extraction(
+        pipeline: PropositionPipeline,
+        chunkHistoryStore: ChunkHistoryStore = mock<ChunkHistoryStore>(),
+        propositionRepository: PropositionRepository = mock<PropositionRepository>(),
+    ): IncrementalPropositionExtraction {
         val properties = mock<PropositionExtractionProperties>()
         whenever(properties.windowSize).thenReturn(1)
         whenever(properties.overlapSize).thenReturn(1)
         whenever(properties.triggerInterval).thenReturn(1)
         return IncrementalPropositionExtraction(
             propositionPipeline = pipeline,
-            chunkHistoryStore = mock<ChunkHistoryStore>(),
+            chunkHistoryStore = chunkHistoryStore,
             dataDictionary = mock<DataDictionary>(),
             relations = Relations.empty(),
-            propositionRepository = mock<PropositionRepository>(),
+            propositionRepository = propositionRepository,
             entityRepository = mock<NamedEntityDataRepository>(),
             entityResolver = mock<EntityResolver>(),
             graphProjectionService = mock<GraphProjectionService>(),

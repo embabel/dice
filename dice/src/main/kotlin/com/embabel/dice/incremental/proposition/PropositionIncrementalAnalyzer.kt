@@ -47,11 +47,17 @@ import org.slf4j.LoggerFactory
  * @param formatter Formats source items to text
  * @param config Window and trigger configuration
  */
-class PropositionIncrementalAnalyzer<T>(
+class PropositionIncrementalAnalyzer<T> @JvmOverloads constructor(
     private val pipeline: PropositionPipeline,
     historyStore: ChunkHistoryStore,
     formatter: IncrementalSourceFormatter<T>,
     config: WindowConfig = WindowConfig(),
+    /**
+     * Called when a window is skipped because its content was already analysed, so a caller with
+     * access to stored propositions can still record that this source revision attests them. Null
+     * (the default) keeps the old behaviour of skipping silently.
+     */
+    private val revisionObserver: ((SourceAnalysisContext) -> Unit)? = null,
 ) : AbstractIncrementalAnalyzer<T, ChunkPropositionResult>(historyStore, formatter, config) {
 
     private val logger = LoggerFactory.getLogger(PropositionIncrementalAnalyzer::class.java)
@@ -60,6 +66,13 @@ class PropositionIncrementalAnalyzer<T>(
         chunk: Chunk,
         context: SourceAnalysisContext,
     ): ChunkPropositionResult = pipeline.processChunk(chunk, context)
+
+    override fun onContentAlreadyProcessed(
+        source: IncrementalSource<T>,
+        context: SourceAnalysisContext,
+    ) {
+        revisionObserver?.invoke(context)
+    }
 
     override fun onProcessed(
         source: IncrementalSource<T>,

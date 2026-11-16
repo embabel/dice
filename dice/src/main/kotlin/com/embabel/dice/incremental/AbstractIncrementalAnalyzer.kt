@@ -72,6 +72,27 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         // Default: no-op
     }
 
+    /**
+     * Called when the content hash says this window has already been analysed, just before giving up
+     * on it.
+     *
+     * Skipping re-extraction is right — the text is identical, so there is nothing new to learn and
+     * no reason to pay an LLM for it again. But the *source* may still be new: re-reading a document
+     * at a fresh revision whose body didn't change lands here, and without this hook that revision
+     * would leave no trace at all, so nothing would record that it also attests the facts we already
+     * derived from this text.
+     *
+     * Subclasses with somewhere to put that fact override this and attach the context's revision to
+     * the propositions already derived from the source. Default does nothing, which is correct for
+     * analyzers that carry no revision.
+     */
+    protected open fun onContentAlreadyProcessed(
+        source: IncrementalSource<T>,
+        context: SourceAnalysisContext,
+    ) {
+        // Default: no-op
+    }
+
     override fun analyze(
         source: IncrementalSource<T>,
         context: SourceAnalysisContext,
@@ -128,6 +149,7 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         val contentHash = contentHasher.hash(text)
         if (historyStore.isProcessed(HashKey(context.contextId, contentHash))) {
             logger.debug("Content already processed (hash: {})", contentHash.take(8))
+            onContentAlreadyProcessed(source, context)
             return null
         }
 

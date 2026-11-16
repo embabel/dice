@@ -104,7 +104,10 @@ data class CollectorDecision(
  * @property foldedProvenanceRefs Stable locator keys retained for compatibility with trace
  *   consumers that display or compare source references.
  * @property foldedProvenanceEvidenceKeys Opaque full-evidence identities used for precise undo.
- *   Empty on traces written before revision-aware evidence identity was introduced.
+ *   Empty on traces written before revision-aware evidence identity was introduced. Marked
+ *   `@JsonIgnore` on purpose — these are storage identities and the serialized trace is meant to
+ *   stay human-readable — which makes persisting them a store's own responsibility. See
+ *   [CollectorTraceStore] for what a store has to do about it.
  */
 data class RetiredProposition @JvmOverloads constructor(
     val propositionId: String,
@@ -119,6 +122,15 @@ data class RetiredProposition @JvmOverloads constructor(
 /**
  * Persists the collector's inspectable decision trace under a run id. In-memory and graph-backed
  * implementations both satisfy this.
+ *
+ * **Implementations must persist [RetiredProposition.foldedProvenanceEvidenceKeys] themselves.**
+ * That field is `@JsonIgnore`, so a store that round-trips a [CollectorDecision] through Jackson
+ * loses it silently. Undo then falls back to bare locator refs, which match only *revisionless*
+ * evidence — so a fold of revisioned evidence becomes impossible to undo: the retired proposition
+ * comes back, its folded entries stay on the survivor, and nothing reports an error. The two stores
+ * that ship are fine (the graph-backed one writes the field as a node property; the in-memory one
+ * holds live objects), but any new store, export format, or backup path has to carry it out of band
+ * of Jackson.
  */
 interface CollectorTraceStore {
     /**
@@ -204,7 +216,23 @@ fun undoSingleCollapse(
 
     // Other members of this same collapse: whatever they also folded must stay on the survivor
     // even though we're subtracting retirement's copy of it.
-    val others = decision.retired.filter { it.propositionId != retiredId }
+    //
+    // Only members that are *still retired* have a claim. The decision is an immutable audit record,
+    // so it still names participants that earlier undos have already restored; counting those would
+    // make targeted undo stop being an inverse — undo A then B, and evidence both contributed would
+    // stay on the survivor forever, with nothing left to remove it. A participant that no longer
+    // exists has no claim either.
+    //
+    // "Still retired" is read from live state: undo restores a member to its recorded priorStatus,
+    // so a member currently sitting at that status has already been restored. A collapse that
+    // retired a member to the status it already had is indistinguishable here, and its evidence is
+    // released one undo early.
+    val others = decision.retired
+        .filter { it.propositionId != retiredId }
+        .filter { other ->
+            val current = propositions.findById(other.propositionId)
+            current != null && current.status != other.priorStatus
+        }
     val stillNeededGrounding = others.flatMap { it.foldedGrounding }.toSet()
     val stillNeededProvenanceRefs = others.flatMap { it.provenanceEvidenceKeysForUndo() }.toSet()
     val stillNeededSourceIds = others.flatMap { it.foldedSourceIds }.toSet()

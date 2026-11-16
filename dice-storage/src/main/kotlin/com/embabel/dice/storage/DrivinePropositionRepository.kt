@@ -207,7 +207,7 @@ class DrivinePropositionRepository(
                 "Dedup: proposition already present as {} in context {} — reusing: '{}'",
                 existingId, contextId, text,
             )
-            mergeDeduplicatedProvenance(existing, proposition.provenanceEntries)
+            mergeDeduplicatedEvidence(existing, proposition)
         } else {
             // An update lands on its own node even when a same-text sibling exists. If that sibling is
             // also ACTIVE, this mints a second live copy of the same fact (only reachable without the
@@ -233,22 +233,31 @@ class DrivinePropositionRepository(
     private fun recoverDuplicate(proposition: Proposition, contextId: String, text: String): Proposition? {
         val winnerId = findDuplicateId(contextId, text, proposition.id) ?: return null
         val winner = findById(winnerId) ?: return null
-        return mergeDeduplicatedProvenance(winner, proposition.provenanceEntries)
+        return mergeDeduplicatedEvidence(winner, proposition)
     }
 
     /**
-     * Union evidence from a deduplicated insert into its winner. A genuinely new entry is a
-     * metadata change and must advance `lastTouched`; an exact replay remains a no-op.
+     * Union the losing insert's evidence into its winner. A genuinely new entry is a metadata
+     * change and must advance `lastTouched`; an exact replay remains a no-op.
+     *
+     * All three evidence lists move together. Carrying provenance across while leaving grounding
+     * and source ids behind would leave the winner citing a chunk its own grounding list doesn't
+     * contain — and the collector ledger derives `foldedGrounding` and
+     * `foldedProvenanceEvidenceKeys` from those two lists, so they have to agree.
      */
-    private fun mergeDeduplicatedProvenance(
-        winner: Proposition,
-        incomingEntries: List<ProvenanceEntry>,
-    ): Proposition {
-        ensureCompatibleSources(winner.id, incomingEntries)
+    private fun mergeDeduplicatedEvidence(winner: Proposition, loser: Proposition): Proposition {
+        ensureCompatibleSources(winner.id, loser.provenanceEntries)
         val knownEntries = winner.provenanceEntries.toHashSet()
-        val novelEntries = incomingEntries.filterNot(knownEntries::contains)
-        if (novelEntries.isEmpty()) return winner
-        val revisedWinner = winner.withProvenanceEntries(novelEntries)
+        val novelEntries = loser.provenanceEntries.filterNot(knownEntries::contains)
+        val novelGrounding = loser.grounding - winner.grounding.toSet()
+        val novelSourceIds = loser.sourceIds - winner.sourceIds.toSet()
+        if (novelEntries.isEmpty() && novelGrounding.isEmpty() && novelSourceIds.isEmpty()) {
+            return winner
+        }
+        val revisedWinner = winner
+            .withProvenanceEntries(novelEntries)
+            .withGrounding(novelGrounding)
+            .copy(sourceIds = (winner.sourceIds + novelSourceIds).distinct())
         doPersist(revisedWinner)
         return findById(winner.id) ?: revisedWinner
     }
@@ -403,26 +412,38 @@ class DrivinePropositionRepository(
         return adopted > 0
     }
 
+    /**
+     * Delete the edges this proposition no longer claims, then prune only those `:Source` nodes the
+     * deletion could actually have orphaned.
+     *
+     * The sweep is deliberately scoped to the keys just detached. A `MATCH (s:Source)` over the whole
+     * label would rescan every source in the database on every call — including every collector undo —
+     * and would delete orphans belonging to unrelated propositions and tenants as a side effect of
+     * editing one proposition's evidence.
+     */
     private fun replaceProvenance(propositionId: String, entries: List<ProvenanceEntry>) {
         appendProvenance(propositionId, entries)
         val entryKeys = entries.map(::provenanceStorageEntryKey)
-        persistenceManager.execute(
+        val detachedSourceKeys = persistenceManager.query(
             QuerySpecification.withStatement(
                 """
-                MATCH (p:Proposition {id: ${'$'}propositionId})-[r:DERIVED_FROM]->()
+                MATCH (p:Proposition {id: ${'$'}propositionId})-[r:DERIVED_FROM]->(s:Source)
                 WHERE r.entryKey IS NULL OR NOT r.entryKey IN ${'$'}entryKeys
+                WITH r, s.key AS sourceKey
                 DELETE r
+                RETURN DISTINCT sourceKey
                 """.trimIndent()
             ).bind(mapOf("propositionId" to propositionId, "entryKeys" to entryKeys)),
-        )
+        ).mapNotNull { it as? String }
+        if (detachedSourceKeys.isEmpty()) return
         persistenceManager.execute(
             QuerySpecification.withStatement(
                 """
                 MATCH (s:Source)
-                WHERE NOT (s)<-[:DERIVED_FROM]-()
+                WHERE s.key IN ${'$'}sourceKeys AND NOT (s)<-[:DERIVED_FROM]-()
                 DELETE s
                 """.trimIndent()
-            ),
+            ).bind(mapOf("sourceKeys" to detachedSourceKeys)),
         )
     }
 
