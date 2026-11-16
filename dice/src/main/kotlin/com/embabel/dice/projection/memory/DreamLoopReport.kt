@@ -53,4 +53,43 @@ data class DreamLoopReport(
     /** [contextId] as a plain string, for Java callers. */
     @get:JsonIgnore
     val contextIdValue: String get() = contextId.value
+
+    companion object {
+
+        /**
+         * Builds a report from plain values. Java uses this, because it cannot call the constructor
+         * with a context id object.
+         *
+         * @param contextIdValue The context the cycle ran for.
+         * @param cycleStarted When the cycle began.
+         * @param cycleCompleted When the cycle finished.
+         * @param passResults Each pass's result, in execution order.
+         * @param totalExamined How many propositions were examined.
+         * @param totalTransitioned How many propositions changed.
+         * @param totalNewPropositions How many new propositions were produced.
+         * @param triggered Whether the cycle ran.
+         * @return The report.
+         * @throws IllegalArgumentException if [contextIdValue] is blank
+         */
+        @JvmStatic
+        fun of(
+            contextIdValue: String,
+            cycleStarted: Instant,
+            cycleCompleted: Instant,
+            passResults: List<ConsolidationPassResult>,
+            totalExamined: Int,
+            totalTransitioned: Int,
+            totalNewPropositions: Int,
+            triggered: Boolean,
+        ): DreamLoopReport = DreamLoopReport(
+            contextId = ContextId(contextIdValue),
+            cycleStarted = cycleStarted,
+            cycleCompleted = cycleCompleted,
+            passResults = passResults,
+            totalExamined = totalExamined,
+            totalTransitioned = totalTransitioned,
+            totalNewPropositions = totalNewPropositions,
+            triggered = triggered,
+        )
+    }
 }
