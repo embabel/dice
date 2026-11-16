@@ -121,6 +121,17 @@ class EvidenceKindsJavaInteropTest {
     }
 
     @Test
+    void conflictingRejectsALaterItemThatRepeatsAnEarlierClaim() {
+        EvidenceItem repeat = EvidenceItem.of("Ada worked with Babbage", Citation.of("p-1", "support-team"), 0.5);
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                () -> Evidence.conflicting(List.of(source1, source2, repeat), ConflictType.Contradiction.INSTANCE));
+
+        assertEquals("items[0] and items[2] cite the same claim 'p-1' in context 'support-team'",
+                thrown.getMessage());
+    }
+
+    @Test
     void supersededAcceptsTheSameIdInAnotherContext() {
         EvidenceItem elsewhere = EvidenceItem.of("Ada lives in Paris", Citation.of("p-3", "billing-team"), 0.4);
 

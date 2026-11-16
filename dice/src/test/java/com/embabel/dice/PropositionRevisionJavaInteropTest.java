@@ -48,12 +48,14 @@ class PropositionRevisionJavaInteropTest {
     }
 
     @Test
-    void withTextRecordsTheRevisionTimeAndTheMetadataEntry() {
-        Proposition revised = drafted().withText("Alice lives in Lyon");
+    void withTextRecordsTheRevisionAndWithStatusDoesNot() {
+        Proposition drafted = Proposition.draft("acme", "Alice lives in Paris", 0.9).toProposition();
+        Proposition revised = drafted.withText("Alice lives in Lyon");
 
         assertNotNull(revised.getLastContentRevision());
         assertEquals(revised.getContentRevised(), revised.getLastContentRevision());
         assertEquals(Boolean.TRUE, revised.getMetadata().get(DiceMetadataKeys.CONTENT_REVISED));
+        assertNull(drafted.withStatus(PropositionStatus.STALE).getLastContentRevision());
     }
 
     @Test

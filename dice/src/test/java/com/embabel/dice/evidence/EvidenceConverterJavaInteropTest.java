@@ -222,11 +222,21 @@ class EvidenceConverterJavaInteropTest {
 
     @Test
     void aLaterPageIsRankedFromItsOffsetOnAFixedClock() {
-        EvidenceConverter pinned = EvidenceConverter.create().withClock(Clock.fixed(RECORDED_AT, ZoneOffset.UTC));
+        Instant now = Instant.parse("2026-01-11T00:00:00Z");
+        Proposition london = Proposition.draft("support-team", "Ada lives in London", 0.8)
+                .withId("claim-11")
+                .withCreated(now)
+                .toProposition();
+        Proposition library = Proposition.draft("support-team", "Ada works at the library", 0.8)
+                .withId("claim-12")
+                .withCreated(now)
+                .toProposition();
         List<SimpleSimilaritySearchResult<Proposition>> page = List.of(
-                new SimpleSimilaritySearchResult<>(claim("p-11", "Ada lives in London", PropositionStatus.ACTIVE), 0.6),
-                new SimpleSimilaritySearchResult<>(claim("p-12", "Ada works at the library", PropositionStatus.ACTIVE), 0.5));
+                new SimpleSimilaritySearchResult<>(london, 0.6),
+                new SimpleSimilaritySearchResult<>(library, 0.5));
         int offset = 10;
+
+        EvidenceConverter pinned = EvidenceConverter.create().withClock(Clock.fixed(now, ZoneOffset.UTC));
 
         List<EvidenceItem> items = new ArrayList<>();
         for (int i = 0; i < page.size(); i++) {

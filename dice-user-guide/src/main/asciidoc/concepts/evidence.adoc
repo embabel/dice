@@ -298,8 +298,21 @@ Each conversion call reads the converter's clock once, so every item in one resu
 
 [source,java]
 ----
-EvidenceConverter pinned = EvidenceConverter.create().withClock(Clock.fixed(RECORDED_AT, ZoneOffset.UTC));
+Instant now = Instant.parse("2026-01-11T00:00:00Z");
+Proposition london = Proposition.draft("support-team", "Ada lives in London", 0.8)
+        .withId("claim-11")
+        .withCreated(now)
+        .toProposition();
+Proposition library = Proposition.draft("support-team", "Ada works at the library", 0.8)
+        .withId("claim-12")
+        .withCreated(now)
+        .toProposition();
+List<SimpleSimilaritySearchResult<Proposition>> page = List.of(
+        new SimpleSimilaritySearchResult<>(london, 0.6),
+        new SimpleSimilaritySearchResult<>(library, 0.5));
 int offset = 10;
+
+EvidenceConverter pinned = EvidenceConverter.create().withClock(Clock.fixed(now, ZoneOffset.UTC));
 
 List<EvidenceItem> items = new ArrayList<>();
 for (int i = 0; i < page.size(); i++) {
@@ -339,11 +352,12 @@ A proposition records a content revision in its metadata. When its text, mention
 
 [source,java]
 ----
-Proposition revised = drafted().withText("Alice lives in Lyon");
+Proposition drafted = Proposition.draft("acme", "Alice lives in Paris", 0.9).toProposition();
+Proposition revised = drafted.withText("Alice lives in Lyon");
 
-revised.getLastContentRevision();                                  // the same instant as getContentRevised()
-revised.getMetadata().get(DiceMetadataKeys.CONTENT_REVISED);       // Boolean.TRUE
-drafted().withStatus(PropositionStatus.STALE).getLastContentRevision();  // null
+revised.getLastContentRevision();                               // the same instant as getContentRevised()
+revised.getMetadata().get(DiceMetadataKeys.CONTENT_REVISED);    // Boolean.TRUE
+drafted.withStatus(PropositionStatus.STALE).getLastContentRevision();  // null
 ----
 
 ==== Returning evidence from a lookup
