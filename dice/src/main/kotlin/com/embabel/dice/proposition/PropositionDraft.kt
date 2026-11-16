@@ -19,6 +19,8 @@ import com.embabel.agent.core.ContextId
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.temporal.TemporalMetadata
+import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
 import java.time.Instant
 import java.util.Collections
 import java.util.UUID
@@ -110,6 +112,7 @@ class PropositionDraft private constructor(
         val provenanceEntries: List<ProvenanceEntry>,
     )
 
+    @get:JsonProperty("contextId")
     val contextId: ContextId get() = values.contextId
 
     val text: String get() = values.text
@@ -155,6 +158,7 @@ class PropositionDraft private constructor(
     val provenanceEntries: List<ProvenanceEntry> get() = values.provenanceEntries
 
     /** The context id as a plain string, for Java callers. */
+    @get:JsonIgnore
     val contextIdValue: String get() = contextId.value
 
     /**
