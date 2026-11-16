@@ -83,6 +83,30 @@ interface MemoryMaintenanceOrchestrator {
     ): MaintenanceResult
 
     /**
+     * Run all maintenance stages for a context given as a plain string, with no session propositions.
+     *
+     * Same rules as [maintain]. Handy for Java callers and anyone who already holds the id as text.
+     *
+     * @param contextIdValue The id of the context to maintain. Must not be blank.
+     * @return Result summarizing all changes made
+     * @throws IllegalArgumentException if contextIdValue is blank.
+     */
+    fun maintain(contextIdValue: String): MaintenanceResult = maintain(ContextId(contextIdValue))
+
+    /**
+     * Run all maintenance stages for a context given as a plain string, with session propositions.
+     *
+     * Same rules as [maintain]. Handy for Java callers and anyone who already holds the id as text.
+     *
+     * @param contextIdValue The id of the context to maintain. Must not be blank.
+     * @param sessionPropositions Propositions from the current session to consolidate
+     * @return Result summarizing all changes made
+     * @throws IllegalArgumentException if contextIdValue is blank.
+     */
+    fun maintain(contextIdValue: String, sessionPropositions: List<Proposition>): MaintenanceResult =
+        maintain(ContextId(contextIdValue), sessionPropositions)
+
+    /**
      * Intermediate builder step — call [withConsolidator] to get a usable orchestrator.
      */
     class NeedsConsolidator internal constructor(
