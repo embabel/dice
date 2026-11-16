@@ -22,7 +22,8 @@ and the consumer PRs that deliver it).
 - With `withUngroundedMentions(UngroundedMentionHandling.DROP)`, when a dropped mention carried a
   suggested id and no remaining mention with the same span and type has one, the resolver
   candidates for that span and type get that id. It is the id the extractor would have used had the
-  mention stayed. It is the model's id and is not checked against the known entities.
+  mention stayed. It is the model's id and is not checked against the known entities. The mention
+  filter judges the mentions with that id in place.
   **Compatibility: behavioral.**
 
 - The build now checks the committed public API listings of the published modules. `./mvnw verify` fails when

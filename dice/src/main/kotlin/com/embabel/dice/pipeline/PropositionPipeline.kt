@@ -41,6 +41,7 @@ import com.embabel.dice.incremental.BookmarkKey
 import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.HashKey
 import com.embabel.dice.incremental.ProcessedChunkRecord
+import com.embabel.dice.proposition.MentionKey
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionExtractor
 import com.embabel.dice.proposition.PropositionRepository
@@ -353,8 +354,10 @@ class PropositionPipeline private constructor(
      * Takes the resolved id off each mention that a check left unresolved.
      *
      * Resolution assigns ids by span and type, so a rejected mention would otherwise share the id
-     * of an accepted mention with the same span and type. Positions are matched only when the
-     * extractor returned one proposition per screened proposition with the same number of mentions.
+     * of an accepted mention with the same span and type. An extractor may return the resolved
+     * propositions and their mentions in any order, so each resolved proposition is paired with
+     * the screened proposition of the same text, and each mention with the occurrence of the same
+     * span and type at the same rank. A resolved proposition with no screened twin is left as it is.
      *
      * @param propositions the propositions the extractor resolved
      * @param screened the screened propositions they were resolved from
@@ -366,16 +369,40 @@ class PropositionPipeline private constructor(
         screened: SuggestedPropositions,
         unresolved: List<Set<Int>>,
     ): List<Proposition> {
-        if (unresolved.all { it.isEmpty() } || propositions.size != screened.propositions.size) return propositions
-        return propositions.mapIndexed { index, proposition ->
-            val positions = unresolved.getOrNull(index).orEmpty()
-            if (positions.isEmpty() ||
-                proposition.mentions.size != screened.propositions[index].mentions.size ||
-                positions.none { proposition.mentions[it].resolvedId != null }
-            ) proposition
+        if (unresolved.all { it.isEmpty() }) return propositions
+        // For each screened proposition with something to clear: its text and the (span, type, rank)
+        // of every mention to leave unresolved. Several propositions may share a text.
+        val pending = screened.propositions.withIndex()
+            .filter { (index, _) -> unresolved.getOrNull(index).orEmpty().isNotEmpty() }
+            .map { (index, proposition) -> proposition.text to occurrences(proposition.mentions.map { MentionKey.from(it) }, unresolved[index]) }
+            .toMutableList()
+        return propositions.map { proposition ->
+            val match = pending.indexOfFirst { it.first == proposition.text }
+            if (match < 0) return@map proposition
+            val clear = pending.removeAt(match).second
+            val keys = proposition.mentions.map { MentionKey(it.span.lowercase().trim(), it.type.lowercase().trim()) }
+            val ranked = occurrences(keys, keys.indices.toSet())
+            val positions = keys.indices.filter { ranked[it] in clear && proposition.mentions[it].resolvedId != null }.toSet()
+            if (positions.isEmpty()) proposition
             else proposition.copy(mentions = proposition.mentions.mapIndexed { position, mention ->
                 if (position in positions) mention.copy(resolvedId = null) else mention
             })
+        }
+    }
+
+    /**
+     * Names the mentions at the given positions by span and type and by how many earlier mentions
+     * share that span and type.
+     *
+     * @param keys the span and type of each mention, in order
+     * @param positions the positions to name
+     * @return one (key, rank) pair per named position, in position order
+     */
+    private fun occurrences(keys: List<MentionKey>, positions: Set<Int>): List<Pair<MentionKey, Int>> {
+        val seen = mutableMapOf<MentionKey, Int>()
+        return keys.mapIndexedNotNull { position, key ->
+            val rank = seen.merge(key, 1, Int::plus)!! - 1
+            if (position in positions) key to rank else null
         }
     }
 

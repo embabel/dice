@@ -206,6 +206,12 @@ When grounding drops a mention that carried a `suggestedId`, and no surviving me
 span and type has one, the resolver candidates for that span and type get that id. The proposition
 keeps its mentions as the model wrote them. The id is the one the model gave, and it is the id the
 extractor would have used had the mention stayed. It is not checked against the known entities.
+The id is passed on before the filter runs, so the filter judges each mention with the id it would
+be resolved with.
+
+A mention left unresolved keeps no id, even when another mention with the same span and type is
+resolved. Resolution assigns ids by span and type, so the pipeline takes the id off afterwards,
+pairing each resolved proposition with the screened one of the same text.
 
 Every rejection is on the chunk result as a `RejectedMention`: the chunk id, the position and text
 of the proposition, the mention, the reason, which check rejected it and what the pipeline did with

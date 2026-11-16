@@ -410,6 +410,54 @@ class PropositionPipelineScreeningTest {
         assertNotNull(second.mentions.single { it.span == "Carol" }.resolvedId)
     }
 
+    @Test
+    fun `E16 a mention left unresolved stays unresolved when the extractor reorders its output`() {
+        val inner = SuggestingPropositionExtractor.of(bothGrounded(), proposition("Carol met Bob", carol, bob))
+        val reversing = object : PropositionExtractor by inner {
+            override fun resolvePropositions(
+                suggestedPropositions: SuggestedPropositions,
+                resolutions: com.embabel.dice.common.Resolutions<SuggestedEntityResolution>,
+                context: SourceAnalysisContext,
+            ): List<Proposition> = inner.resolvePropositions(suggestedPropositions, resolutions, context)
+                .reversed()
+                .map { it.copy(mentions = it.mentions.reversed()) }
+        }
+        val carolOnlyWithBob = object : MentionFilter {
+            override fun isValid(mention: SuggestedMention, propositionText: String): Boolean =
+                !(mention.span == "Carol" && propositionText == aliceMetCarol)
+            override fun rejectionReason(mention: SuggestedMention): String? = "not here"
+        }
+
+        val result = pipeline(reversing)
+            .withMentionFilter(carolOnlyWithBob)
+            .processChunk(chunk(), context().withMintNewEntities(true))
+
+        val withAlice = result.propositions.single { it.text == aliceMetCarol }
+        val withBob = result.propositions.single { it.text == "Carol met Bob" }
+        assertNull(withAlice.mentions.single { it.span == "Carol" }.resolvedId)
+        assertNotNull(withAlice.mentions.single { it.span == "Alice" }.resolvedId)
+        assertNotNull(withBob.mentions.single { it.span == "Carol" }.resolvedId)
+        assertNotNull(withBob.mentions.single { it.span == "Bob" }.resolvedId)
+    }
+
+    @Test
+    fun `E17 the filter judges the id a dropped mention passes on`() {
+        val blocksId = object : MentionFilter {
+            override fun isValid(mention: SuggestedMention, propositionText: String): Boolean = mention.suggestedId != "blocked-id"
+            override fun rejectionReason(mention: SuggestedMention): String? = "blocked id"
+        }
+        val ungroundedAlice = alice.copy(suggestedId = "blocked-id")
+
+        val result = dropPipeline(SuggestingPropositionExtractor.of(proposition("Bob slept", ungroundedAlice), proposition(aliceMetBob, alice)))
+            .withMentionFilter(blocksId)
+            .processChunk(chunk(), context().withMintNewEntities(true))
+
+        assertTrue(resolver.entities.none { it.id == "blocked-id" }, "resolver saw: ${resolver.entities.map { it.id }}")
+        val filtered = result.rejectedMentions.single { it.check == RejectedMention.Check.FILTER }
+        assertEquals("blocked-id", filtered.mention.suggestedId)
+        assertNull(result.propositions.single { it.text == aliceMetBob }.mentions.single { it.span == "Alice" }.resolvedId)
+    }
+
     private fun inMemoryRepo(): PropositionRepository = object : PropositionRepository {
         private val store = mutableMapOf<String, Proposition>()
         override val luceneSyntaxNotes: String = "test"
