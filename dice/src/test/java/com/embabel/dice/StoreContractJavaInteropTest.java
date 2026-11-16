@@ -122,6 +122,24 @@ class StoreContractJavaInteropTest {
         }
     }
 
+    /** A store that lists a capability whose interface it does not implement. */
+    private static final class OverclaimingStore extends PlainStore implements CapabilityReporting {
+
+        @Override
+        public StoreCapabilities getCapabilities() {
+            return StoreCapabilities.of(StoreCapability.FILTERED_VECTOR_SEARCH);
+        }
+    }
+
+    /** A store whose declaration is null. */
+    private static final class NullDeclarationStore extends PlainStore implements CapabilityReporting {
+
+        @Override
+        public StoreCapabilities getCapabilities() {
+            return null;
+        }
+    }
+
     @Test
     void scoresAreBuiltComparedAndReadFromJava() {
         SimilarityScore close = SimilarityScore.ofCosine(0.9);
@@ -169,6 +187,30 @@ class StoreContractJavaInteropTest {
         public List<VectorMatch> findNearest(VectorSearchRequest request) {
             return delegate.findNearest(request);
         }
+    }
+
+    @Test
+    void aStoreThatListsWhatItDoesNotImplementFailsLoudly() {
+        PropositionStore overclaiming = new OverclaimingStore();
+        assertThrows(IllegalStateException.class, () -> StoreCapabilities.find(overclaiming, FilteredVectorSearch.class));
+        assertThrows(IllegalStateException.class, () -> StoreCapabilities.describe(overclaiming));
+
+        PropositionStore nothingDeclared = new NullDeclarationStore();
+        assertThrows(IllegalStateException.class, () -> StoreCapabilities.find(nothingDeclared, FilteredVectorSearch.class));
+        assertThrows(IllegalStateException.class, () -> StoreCapabilities.describe(nothingDeclared));
+    }
+
+    @Test
+    void aRequestThatMustRepeatPinsItsTime() {
+        Instant asOf = Instant.parse("2026-06-30T00:00:00Z");
+        PropositionQuery pinned = ALICE.withMinEffectiveConfidence(0.5).withEffectiveConfidenceAsOf(asOf);
+
+        VectorSearchRequest first = VectorSearchRequest.forText("What does Alice eat?", pinned);
+        VectorSearchRequest second = VectorSearchRequest.forText("What does Alice eat?", pinned);
+
+        assertEquals(first, second);
+        assertEquals(first.hashCode(), second.hashCode());
+        assertEquals(asOf, first.getFilter().getEffectiveConfidenceAsOf());
     }
 
     @Test
@@ -221,6 +263,14 @@ class StoreContractJavaInteropTest {
                 StoreCapabilities.NONE.with(StoreCapability.FILTERED_VECTOR_SEARCH).getVectorFiltering());
         assertThrows(IllegalArgumentException.class,
                 () -> StoreCapabilities.NONE.withVectorFiltering(VectorFiltering.BEFORE_TOP_K));
+
+        StoreCapability f = StoreCapability.FILTERED_VECTOR_SEARCH;
+        assertEquals(VectorFiltering.UNDECLARED, StoreCapabilities.of().getVectorFiltering());
+        assertEquals(StoreCapabilities.NONE.withVectorFiltering(VectorFiltering.AFTER_TOP_K),
+                StoreCapabilities.of().withVectorFiltering(VectorFiltering.AFTER_TOP_K));
+        assertEquals(StoreCapabilities.of(), StoreCapabilities.of(f).without(f));
+        assertEquals(1, StoreCapabilities.of(f, f).getSupported().size());
+        assertThrows(IllegalArgumentException.class, () -> StoreCapabilities.of(f, null));
     }
 
     @Test
@@ -235,6 +285,8 @@ class StoreContractJavaInteropTest {
         assertNull(VectorSearchRequest.forText("cats", ALICE).getMinScore());
         assertThrows(IllegalArgumentException.class, () -> request.withTopK(0));
         assertThrows(IllegalArgumentException.class, () -> VectorSearchRequest.forText("cats", ALICE.withLimit(3)));
+        assertFalse(VectorSearchRequest.forText("peanut allergy", ALICE).toString().contains("peanut"));
+        assertTrue(VectorSearchRequest.forText("peanut allergy", ALICE).toString().contains("text=<14 chars>"));
     }
 
     @Test
