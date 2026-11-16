@@ -83,7 +83,7 @@ data class LlmPropositionReviser(
     override val topK: Int = 5,
     override val similarityThreshold: Double = 0.5,
     private val minSimilarityForReinforce: Double = 0.7,
-    private val decayK: Double = 2.0,
+    private val decayK: Double = Proposition.DEFAULT_DECAY_K,
     private val autoMergeThreshold: Double = 0.95,
     private val classifyBatchSize: Int = 15,
     private val entityOverlapFilter: Boolean = true,
