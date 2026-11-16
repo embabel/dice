@@ -21,7 +21,8 @@ addition, and lists in the `StoreCapabilities` it publishes.
 |===
 
 `StoreCapabilities.find` returns the store as a capability's interface when the store lists that
-capability, and null when it does not.
+capability, and null when it does not. It throws `IllegalStateException` for a store that lists a
+capability and does not implement its interface.
 
 [source,java]
 ----
@@ -37,8 +38,23 @@ if (search != null) {
 val search = StoreCapabilities.find<FilteredVectorSearch>(store)
 ----
 
-`StoreCapabilities.describe(store)` returns the whole descriptor. A store that does not implement
-`CapabilityReporting` is described as `StoreCapabilities.UNDECLARED`, with no capability.
+`StoreCapabilities.describe(store)` returns the whole descriptor. Each store has one source for it.
+
+[cols="2,3", options="header"]
+|===
+| The store | `describe` returns
+
+| Implements `CapabilityReporting`
+| Its declaration, the same instance. `supportsVector` is not read.
+
+| Does not, and is `VectorSearchCapable` with `supportsVector` true
+| `StoreCapabilities.UNDECLARED`
+
+| Does not, in every other case
+| `StoreCapabilities.NONE`
+|===
+
+`describe` and `find` throw `IllegalStateException` for a declaration that is null.
 
 The descriptor also carries `vectorFiltering`, which states when the store's similarity search
 applies a filter.
@@ -49,7 +65,7 @@ applies a filter.
 
 | `BEFORE_TOP_K`
 | A filtered search returns the nearest K among the propositions that match the filter. The store
-  lists `FILTERED_VECTOR_SEARCH`.
+  lists `FILTERED_VECTOR_SEARCH`. A host calls `FilteredVectorSearch` for that search.
 
 | `AFTER_TOP_K`
 | The filtered search of `VectorSearchCapable` picks the nearest K of all propositions and then
@@ -57,10 +73,12 @@ applies a filter.
   matching propositions exist.
 
 | `NONE`
-| The store has no similarity search.
+| The store has no similarity search. A store states this, or it publishes no declaration and
+  reports no working search through `supportsVector`.
 
 | `UNDECLARED`
-| The store has not published its capabilities.
+| The store states no filtering mode. Its declaration sets none, or it publishes no declaration
+  and reports similarity search through `supportsVector`.
 |===
 
 [source,java]
@@ -70,11 +88,26 @@ VectorFiltering filtering = StoreCapabilities.describe(store).getVectorFiltering
 
 The descriptor states what one store instance can do with the collaborators it was built with. A
 store built with no embedder leaves `FILTERED_VECTOR_SEARCH` out. A store that wraps another
-store passes a capability through by implementing its interface and listing it.
+implements the interfaces it forwards and declares `describe(delegate).implementedBy(this)`, which
+keeps only the capabilities the wrapper implements.
+
+[source,java]
+----
+private final PropositionStore delegate;
+private final StoreCapabilities capabilities;
+
+public ForwardingStore(PropositionStore delegate) {
+    this.delegate = delegate;
+    this.capabilities = StoreCapabilities.describe(delegate).implementedBy(this);
+}
+----
 
 [[reference-store-contract-rules]]
 ==== Rules
 
+* A request names a context. `VectorSearchRequest.forText` throws `IllegalArgumentException` for
+  a filter that names none. `forTextAcrossContexts` builds the request that is held to no single
+  context, and a filtered search covers every context in the store for it.
 * The filter of a request is a `PropositionQuery` that selects candidates. A filter that carries
   an ordering or a limit throws `IllegalArgumentException`, because the request sets both.
 * Every field set on the filter is applied. A store that cannot apply a field throws
@@ -82,7 +115,22 @@ store passes a capability through by implementing its interface and listing it.
 * Filtering, ranking, ordering and limits run in the database. A store does not load rows and
   finish the work in the JVM.
 * Results that rank equally come back in the same order each time the same request runs on
-  unchanged data.
+  unchanged data. A request whose filter sets `minEffectiveConfidence` or
+  `belowEffectiveConfidence` and no `effectiveConfidenceAsOf` is evaluated at the time of each
+  call, so its matches can differ between calls. Set `effectiveConfidenceAsOf` for a request that
+  must repeat.
+
+[source,java]
+----
+VectorSearchRequest acrossContexts = VectorSearchRequest
+        .forTextAcrossContexts("peanut allergy", PropositionQuery.mentioningEntity("alice"))
+        .withTopK(5);
+
+VectorSearchRequest repeatable = VectorSearchRequest.forText("What does Alice eat?",
+        PropositionQuery.againstContext("alice-session")
+                .withMinEffectiveConfidence(0.5)
+                .withEffectiveConfidenceAsOf(Instant.parse("2026-06-30T00:00:00Z")));
+----
 
 `UnsupportedCapabilityException` carries the `StoreCapability`. A store throws it in place of an
 empty or partial result.
@@ -117,7 +165,24 @@ each store. A store converts the number its database returns with the matching f
 | `SimilarityScore.ofUnitInterval(value)`
 |===
 
-A value outside the range throws `IllegalArgumentException`.
+Each factory checks its range.
+
+[cols="2,3", options="header"]
+|===
+| The value | Result
+
+| Inside the range, ends included
+| Converted
+
+| Past an end by at most one millionth
+| Moved to that end, as rounding
+
+| Further outside, `NaN` or an infinity
+| `IllegalArgumentException`
+|===
+
+A store whose database can round further than one millionth holds the number to the range
+before it calls the factory.
 
 [source,java]
 ----
@@ -155,15 +220,25 @@ Matches are ordered closest first. A proposition with no embedding is not return
 [[reference-store-contract-publishing]]
 ==== Publishing capabilities
 
-A store implements `CapabilityReporting` and the interface of each capability it lists.
+A store implements `CapabilityReporting` and the interface of each capability it lists. It holds
+the descriptor in a field, because `find` reads it on every call. A store that does not implement
+`CapabilityReporting` declares nothing, and `describe` reads its `supportsVector`.
 
 [source,java]
 ----
 public final class MyStore implements PropositionStore, CapabilityReporting, FilteredVectorSearch {
 
+    private final StoreCapabilities capabilities;
+
+    public MyStore(EmbeddingService embedder) {
+        this.capabilities = embedder != null
+                ? StoreCapabilities.of(StoreCapability.FILTERED_VECTOR_SEARCH)
+                : StoreCapabilities.NONE;
+    }
+
     @Override
     public StoreCapabilities getCapabilities() {
-        return StoreCapabilities.of(StoreCapability.FILTERED_VECTOR_SEARCH);
+        return capabilities;
     }
 
     // ...
@@ -177,5 +252,11 @@ override val capabilities = StoreCapabilities {
 }
 ----
 
-A store whose similarity search filters after it picks the nearest K states that with
-`StoreCapabilities.NONE.withVectorFiltering(VectorFiltering.AFTER_TOP_K)`.
+A store whose similarity search filters after it picks the nearest K declares
+`StoreCapabilities.of().withVectorFiltering(VectorFiltering.AFTER_TOP_K)`, and a store built with
+no embedder declares `StoreCapabilities.NONE`.
+
+`VectorSearchCapable.supportsVector` speaks only for the methods of `VectorSearchCapable`.
+`describe` reads it for a store that does not implement `CapabilityReporting`. A store that
+declares `VectorFiltering.AFTER_TOP_K` reports `supportsVector` true, and a store that declares
+`VectorFiltering.NONE` reports it false.
