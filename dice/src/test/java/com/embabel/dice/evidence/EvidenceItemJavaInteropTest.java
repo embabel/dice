@@ -25,12 +25,18 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Shows how a Java caller sets and reads an item's reinforce count and temporal metadata.
+ * Shows how a Java caller sets and reads an item's reinforce count, temporal metadata and loaded source claims.
  */
 class EvidenceItemJavaInteropTest {
 
     private final EvidenceItem item =
             EvidenceItem.of("Ada wrote the first program", Citation.of("p-17", "support-team"), 0.9);
+
+    private final EvidenceItem source1 =
+            EvidenceItem.of("Ada worked with Babbage", Citation.of("p-1", "support-team"), 0.8);
+
+    private final EvidenceItem source2 =
+            EvidenceItem.of("Ada wrote notes on the engine", Citation.of("p-2", "support-team"), 0.8);
 
     @Test
     void itemReadsBackItsReinforceCountAndTemporalMetadata() {
@@ -69,5 +75,61 @@ class EvidenceItemJavaInteropTest {
     @Test
     void itemsThatDifferOnlyInReinforceCountAreNotEqual() {
         assertNotEquals(item.withReinforceCount(1), item.withReinforceCount(2));
+    }
+
+    @Test
+    void loadedClaimsSetTheIdsOfAnItemWithNone() {
+        EvidenceItem abstraction = item.withDerivedFrom(List.of(source1, source2));
+
+        assertEquals(List.of("p-1", "p-2"), abstraction.getDerivedFromIds());
+        assertEquals(List.of(source1, source2), abstraction.getDerivedFrom());
+        assertTrue(abstraction.isDerived());
+    }
+
+    @Test
+    void loadedClaimsMayBeASubsetOfTheIds() {
+        EvidenceItem abstraction = item.withDerivedFromIds(List.of("p-1", "p-2", "p-3")).withDerivedFrom(List.of(source2));
+
+        assertEquals(List.of("p-1", "p-2", "p-3"), abstraction.getDerivedFromIds());
+        assertEquals(List.of(source2), abstraction.getDerivedFrom());
+    }
+
+    @Test
+    void loadedClaimOutsideTheIdsIsRejected() {
+        EvidenceItem abstraction = item.withDerivedFromIds(List.of("p-2"));
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                () -> abstraction.withDerivedFrom(List.of(source1)));
+
+        assertTrue(thrown.getMessage().contains("derivedFrom[0]"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("p-1"), thrown.getMessage());
+    }
+
+    @Test
+    void oneIdLoadedTwiceInTwoContextsIsRejected() {
+        EvidenceItem elsewhere = EvidenceItem.of("Ada worked with Babbage", Citation.of("p-1", "archive"), 0.8);
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                () -> item.withDerivedFromIds(List.of("p-1")).withDerivedFrom(List.of(source1, elsewhere)));
+
+        assertTrue(thrown.getMessage().contains("derivedFrom[0] and derivedFrom[1]"), thrown.getMessage());
+    }
+
+    @Test
+    void idsThatLeaveALoadedClaimUnnamedAreRejected() {
+        EvidenceItem abstraction = item.withDerivedFrom(List.of(source1, source2));
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                () -> abstraction.withDerivedFromIds(List.of("p-1")));
+
+        assertTrue(thrown.getMessage().contains("derivedFrom[1]"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("p-2"), thrown.getMessage());
+    }
+
+    @Test
+    void itemsThatDifferOnlyInLoadedClaimsAreNotEqual() {
+        EvidenceItem abstraction = item.withDerivedFromIds(List.of("p-1", "p-2"));
+
+        assertNotEquals(abstraction.withDerivedFrom(List.of(source1)), abstraction.withDerivedFrom(List.of(source2)));
     }
 }

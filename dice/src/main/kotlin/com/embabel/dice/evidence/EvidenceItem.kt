@@ -64,6 +64,7 @@ class EvidenceItem private constructor(
     /** When the content of the claim last changed. Null when not known. */
     val revisedAt: Instant?,
     derivedFromIds: List<String>,
+    derivedFrom: List<EvidenceItem>,
     /** How many times the claim has been merged or reinforced. 0 when not known. */
     val reinforceCount: Int,
     temporal: TemporalMetadata?,
@@ -77,6 +78,12 @@ class EvidenceItem private constructor(
      * these are the ids in [Evidence.Derived.inputIds]: the claims it was abstracted from.
      */
     val derivedFromIds: List<String> = EvidenceChecks.copyOf("derivedFromIds", derivedFromIds)
+
+    /**
+     * The loaded claims this one was abstracted from. May be empty, or hold only some of [derivedFromIds].
+     * Each one cites an id in [derivedFromIds], and no two cite the same id.
+     */
+    val derivedFrom: List<EvidenceItem> = EvidenceChecks.copyOf("derivedFrom", derivedFrom)
 
     /** True when [derivedFromIds] is not empty. */
     val isDerived: Boolean = this.derivedFromIds.isNotEmpty()
@@ -102,6 +109,7 @@ class EvidenceItem private constructor(
         require(score == null || score.isFinite()) { "score must be finite, was $score" }
         require(reinforceCount >= 0) { "reinforceCount must not be negative, was $reinforceCount" }
         require(this.derivedFromIds.all { it.isNotBlank() }) { "derived ids must not be blank" }
+        EvidenceChecks.requireLoadedClaimsNamed("derivedFrom", this.derivedFrom, "derivedFromIds", this.derivedFromIds)
     }
 
     /**
@@ -142,14 +150,31 @@ class EvidenceItem private constructor(
         rebuild(revisedAt = revisedAt)
 
     /**
-     * Returns a copy with [derivedFromIds] replaced. The list is copied.
+     * Returns a copy with [derivedFromIds] replaced. The list is copied. It must still name every claim in
+     * [derivedFrom].
      *
      * @param derivedFromIds ids of the claims this one was abstracted from
      * @return the updated item
-     * @throws IllegalArgumentException if any id is null or blank
+     * @throws IllegalArgumentException if any id is null or blank, or a claim in [derivedFrom] cites an id
+     *   outside the new list
      */
     fun withDerivedFromIds(derivedFromIds: List<String>): EvidenceItem =
         rebuild(derivedFromIds = derivedFromIds)
+
+    /**
+     * Returns a copy with [derivedFrom] replaced. The list is copied. When this item has no [derivedFromIds],
+     * the copy takes its ids from the loaded claims, in order. Otherwise each loaded claim must cite one of the
+     * existing ids, and a subset of them is accepted.
+     *
+     * @param derivedFrom the loaded claims this one was abstracted from
+     * @return the updated item
+     * @throws IllegalArgumentException if [derivedFrom] holds a null, a loaded claim cites an id outside
+     *   [derivedFromIds], or two loaded claims cite the same id
+     */
+    fun withDerivedFrom(derivedFrom: List<EvidenceItem>): EvidenceItem {
+        val loaded = EvidenceChecks.copyOf("derivedFrom", derivedFrom)
+        return rebuild(derivedFromIds = EvidenceChecks.idsForLoaded(derivedFromIds, loaded), derivedFrom = loaded)
+    }
 
     /**
      * Returns a copy with [reinforceCount] set.
@@ -210,13 +235,13 @@ class EvidenceItem private constructor(
             Objects.equals(effectiveConfidence, other.effectiveConfidence) &&
             status == other.status && recordedAt == other.recordedAt &&
             revisedAt == other.revisedAt && derivedFromIds == other.derivedFromIds &&
-            reinforceCount == other.reinforceCount && temporal == other.temporal &&
-            Objects.equals(score, other.score) && retrievals == other.retrievals
+            derivedFrom == other.derivedFrom && reinforceCount == other.reinforceCount &&
+            temporal == other.temporal && Objects.equals(score, other.score) && retrievals == other.retrievals
 
     override fun hashCode(): Int =
         Objects.hash(
             text, citation, confidence, effectiveConfidence, status,
-            recordedAt, revisedAt, derivedFromIds, reinforceCount, temporal, score, retrievals,
+            recordedAt, revisedAt, derivedFromIds, derivedFrom, reinforceCount, temporal, score, retrievals,
         )
 
     /**
@@ -227,6 +252,7 @@ class EvidenceItem private constructor(
      * @param recordedAt when the claim was first recorded
      * @param revisedAt when the content of the claim last changed
      * @param derivedFromIds ids of the claims this one was abstracted from
+     * @param derivedFrom the loaded claims this one was abstracted from
      * @param reinforceCount how many times the claim has been merged or reinforced
      * @param temporal when the claim holds in the world and which claims it replaces or contradicts
      * @param score the final ranking score
@@ -240,6 +266,7 @@ class EvidenceItem private constructor(
         recordedAt: Instant? = this.recordedAt,
         revisedAt: Instant? = this.revisedAt,
         derivedFromIds: List<String> = this.derivedFromIds,
+        derivedFrom: List<EvidenceItem> = this.derivedFrom,
         reinforceCount: Int = this.reinforceCount,
         temporal: TemporalMetadata? = this.temporal,
         score: Double? = this.score,
@@ -247,7 +274,7 @@ class EvidenceItem private constructor(
     ): EvidenceItem =
         create(
             text, citation, confidence, effectiveConfidence, status, recordedAt, revisedAt,
-            derivedFromIds, reinforceCount, temporal, score, retrievals,
+            derivedFromIds, derivedFrom, reinforceCount, temporal, score, retrievals,
         )
 
     /** Returns the claim id, confidence, status and score. The text is left out. */
@@ -270,7 +297,7 @@ class EvidenceItem private constructor(
         fun of(text: String, citation: Citation, confidence: ZeroToOne): EvidenceItem =
             create(
                 text, citation, confidence, confidence, PropositionStatus.ACTIVE,
-                null, null, emptyList(), 0, null, null, emptyList(),
+                null, null, emptyList(), emptyList(), 0, null, null, emptyList(),
             )
 
         /**
@@ -284,6 +311,7 @@ class EvidenceItem private constructor(
          * @param recordedAt when the claim was first recorded, or null
          * @param revisedAt when the content of the claim last changed, or null
          * @param derivedFromIds ids of the claims this one was abstracted from
+         * @param derivedFrom the loaded claims this one was abstracted from, each citing an id in [derivedFromIds]
          * @param reinforceCount how many times the claim has been merged or reinforced
          * @param temporal when the claim holds in the world and which claims it replaces or contradicts, or null
          * @param score the final ranking score, or null
@@ -301,6 +329,7 @@ class EvidenceItem private constructor(
             recordedAt: Instant?,
             revisedAt: Instant?,
             derivedFromIds: List<String>,
+            derivedFrom: List<EvidenceItem>,
             reinforceCount: Int,
             temporal: TemporalMetadata?,
             score: Double?,
@@ -308,7 +337,7 @@ class EvidenceItem private constructor(
         ): EvidenceItem =
             EvidenceItem(
                 text, citation, confidence, effectiveConfidence, status, recordedAt, revisedAt,
-                derivedFromIds, reinforceCount, temporal, score, retrievals,
+                derivedFromIds, derivedFrom, reinforceCount, temporal, score, retrievals,
             )
 
         /**
@@ -364,8 +393,11 @@ class EvidenceItemBuilder internal constructor() {
     /** When the content of the claim last changed. */
     var revisedAt: Instant? = null
 
-    /** Ids of the claims this one was abstracted from. */
+    /** Ids of the claims this one was abstracted from. Left unset or empty, they come from [derivedFrom]. */
     var derivedFromIds: List<String>? = null
+
+    /** The loaded claims this one was abstracted from. Each must cite an id in [derivedFromIds]. */
+    var derivedFrom: List<EvidenceItem>? = null
 
     /** How many times the claim has been merged or reinforced. */
     var reinforceCount: Int? = null
@@ -396,10 +428,12 @@ class EvidenceItemBuilder internal constructor() {
      * @return the new item
      * @throws IllegalArgumentException if a value is rejected by the item's checks
      */
-    internal fun build(text: String, citation: Citation, confidence: ZeroToOne): EvidenceItem =
-        EvidenceItem.create(
+    internal fun build(text: String, citation: Citation, confidence: ZeroToOne): EvidenceItem {
+        val loaded = EvidenceChecks.copyOf("derivedFrom", derivedFrom ?: emptyList())
+        return EvidenceItem.create(
             text, citation, confidence, effectiveConfidence ?: confidence, status ?: PropositionStatus.ACTIVE,
-            recordedAt, revisedAt, derivedFromIds ?: emptyList(), reinforceCount ?: 0, temporal, score,
-            retrievals,
+            recordedAt, revisedAt, EvidenceChecks.idsForLoaded(derivedFromIds ?: emptyList(), loaded), loaded,
+            reinforceCount ?: 0, temporal, score, retrievals,
         )
+    }
 }

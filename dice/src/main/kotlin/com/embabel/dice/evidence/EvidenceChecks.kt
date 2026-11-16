@@ -41,6 +41,39 @@ internal object EvidenceChecks {
     }
 
     /**
+     * Checks loaded claims against the ids they were loaded for. Every loaded claim must cite an id in [ids],
+     * and no two loaded claims may cite the same id. A subset of [ids], or no loaded claim at all, is accepted.
+     * The ids carry no context, so the check compares claim ids alone.
+     *
+     * @param loadedName the name of the loaded list used in the error message, such as `derivedFrom`
+     * @param loaded the loaded claims
+     * @param idsName the name of the id list used in the error message, such as `derivedFromIds`
+     * @param ids the ids the claims were loaded for
+     * @throws IllegalArgumentException if a loaded claim cites an id outside [ids], or two loaded claims cite
+     *   the same id
+     */
+    fun requireLoadedClaimsNamed(loadedName: String, loaded: List<EvidenceItem>, idsName: String, ids: List<String>) {
+        val firstIndexById = HashMap<String, Int>()
+        loaded.forEachIndexed { index, claim ->
+            val id = claim.citation.propositionId
+            require(id in ids) { "$loadedName[$index] cites claim '$id', which is not in $idsName" }
+            val earlier = firstIndexById.putIfAbsent(id, index)
+            require(earlier == null) { "$loadedName[$earlier] and $loadedName[$index] cite the same claim id '$id'" }
+        }
+    }
+
+    /**
+     * Picks the ids for an item that holds [loaded] claims. Ids already set are kept. When there are none,
+     * the ids come from the loaded claims, in order.
+     *
+     * @param ids the ids already set, or an empty list
+     * @param loaded the loaded claims
+     * @return [ids] when it is not empty, otherwise the claim id of each loaded claim
+     */
+    fun idsForLoaded(ids: List<String>, loaded: List<EvidenceItem>): List<String> =
+        ids.ifEmpty { loaded.map { it.citation.propositionId } }
+
+    /**
      * Rejects two items that cite the same claim, by [Citation.sameClaimAs].
      *
      * @param items each item with the label used for it in the error message, such as `items[0]`

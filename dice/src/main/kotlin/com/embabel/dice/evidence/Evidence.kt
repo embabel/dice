@@ -206,7 +206,10 @@ sealed interface Evidence {
          */
         val inputIds: List<String> = EvidenceChecks.copyOf("inputIds", inputIds)
 
-        /** The loaded input claims, as the caller supplied them. May be empty. */
+        /**
+         * The loaded input claims, as the caller supplied them. May be empty. Each one cites an id in [inputIds],
+         * and no two cite the same id.
+         */
         val inputs: List<EvidenceItem> = EvidenceChecks.copyOf("inputs", inputs)
 
         init {
@@ -217,14 +220,17 @@ sealed interface Evidence {
             }
             require(this.inputIds.isNotEmpty()) { "inputIds must not be empty" }
             require(this.inputIds.all { it.isNotBlank() }) { "input ids must not be blank" }
+            EvidenceChecks.requireLoadedClaimsNamed("inputs", this.inputs, "inputIds", this.inputIds)
         }
 
         /**
          * Returns a copy with [inputs] replaced. The list is copied and stored as given. [inputIds] is left as it is.
+         * Each input must cite an id in [inputIds]. A subset of the ids is accepted.
          *
          * @param inputs the loaded claims the conclusion was worked out from
          * @return the updated value
-         * @throws IllegalArgumentException if [inputs] holds a null
+         * @throws IllegalArgumentException if [inputs] holds a null, an input cites an id outside [inputIds], or two
+         *   inputs cite the same id
          */
         fun withInputs(inputs: List<EvidenceItem>): Derived =
             Derived(conclusion, confidence, effectiveConfidence, rule, inputIds, inputs, citation, status)

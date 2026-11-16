@@ -98,7 +98,7 @@ class EvidenceTest {
     @Test
     fun `each with method changes only its own part of derived evidence`() {
         val citation = Citation.of("prop-50", "ctx-main")
-        val base = Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, listOf("prop-1"))
+        val base = Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, listOf("prop-1", "prop-2"))
             .withInputs(listOf(alice))
             .withCitation(citation)
             .withEffectiveConfidence(0.4)
