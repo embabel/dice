@@ -19,6 +19,7 @@ import com.embabel.dice.proposition.PropositionQuery
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -28,6 +29,8 @@ import org.junit.jupiter.api.Test
  * E1  forText gives the text and filter as given, the default size of 10, and no score floor.
  * E2  The Kotlin block, the Java chain and the no-block call build equal requests with equal hash codes.
  * E3  A blank text, a size below 1, and a filter with an ordering or a limit throw IllegalArgumentException.
+ * E4  A filter that names no context builds only through forTextAcrossContexts.
+ * E5  A request across contexts keeps every other request check.
  */
 class VectorSearchRequestTest {
 
@@ -69,5 +72,51 @@ class VectorSearchRequestTest {
         }
         assertThrows(IllegalArgumentException::class.java) { VectorSearchRequest("cats", filter.withLimit(5)) }
         assertEquals(1, VectorSearchRequest.forText("cats", filter).withTopK(1).topK)
+    }
+
+    @Test
+    fun `E4 a filter that names no context builds only through forTextAcrossContexts`() {
+        val noContext = PropositionQuery()
+        val error = assertThrows(IllegalArgumentException::class.java) { VectorSearchRequest.forText("cats", noContext) }
+        assertTrue(error.message!!.contains("forTextAcrossContexts"))
+        assertThrows(IllegalArgumentException::class.java) { VectorSearchRequest("cats", noContext) { } }
+        assertThrows(IllegalArgumentException::class.java) {
+            VectorSearchRequest.forText("cats", PropositionQuery.mentioningEntity("alice"))
+        }
+        val across = VectorSearchRequest.forTextAcrossContexts("cats", noContext)
+        assertNull(across.filter.contextId)
+        assertEquals(10, across.topK)
+        assertNull(across.minScore)
+        assertThrows(IllegalArgumentException::class.java) {
+            VectorSearchRequest.forTextAcrossContexts("cats", PropositionQuery.againstContext("a"))
+        }
+        val f = PropositionQuery.mentioningEntity("alice")
+        val fromBlock = VectorSearchRequest.forTextAcrossContexts("cats", f) { topK = 5 }
+        val fromChain = VectorSearchRequest.forTextAcrossContexts("cats", f).withTopK(5)
+        assertEquals(fromChain, fromBlock)
+        assertEquals(fromChain.hashCode(), fromBlock.hashCode())
+    }
+
+    @Test
+    fun `E5 a request across contexts keeps every other request check`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            VectorSearchRequest.forTextAcrossContexts(" ", PropositionQuery())
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VectorSearchRequest.forTextAcrossContexts("", PropositionQuery()) { }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VectorSearchRequest.forTextAcrossContexts("cats", PropositionQuery().orderedByCreated())
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VectorSearchRequest.forTextAcrossContexts("cats", PropositionQuery().withLimit(5))
+        }
+        val ids = mutableListOf("a")
+        val request = VectorSearchRequest.forTextAcrossContexts("cats", PropositionQuery(anyEntityIds = ids)).withTopK(3)
+        ids.add("b")
+        assertEquals(listOf("a"), request.filter.anyEntityIds)
+        assertThrows(UnsupportedOperationException::class.java) {
+            (request.filter.anyEntityIds as MutableList<String>).add("c")
+        }
     }
 }

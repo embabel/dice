@@ -229,6 +229,19 @@ class StoreContractJavaInteropTest {
                 }
             }
         }
-        assertEquals(2, hidden);
+        assertEquals(3, hidden);
+    }
+
+    @Test
+    void aRequestWithNoContextIsANamedChoice() {
+        assertThrows(IllegalArgumentException.class, () -> VectorSearchRequest.forText("cats", PropositionQuery.mentioningAnyEntity("alice")));
+
+        VectorSearchRequest request = VectorSearchRequest
+                .forTextAcrossContexts("peanut allergy", PropositionQuery.mentioningEntity("alice"))
+                .withTopK(5);
+
+        assertNull(request.getFilter().getContextIdValue());
+        assertEquals(5, request.getTopK());
+        assertThrows(IllegalArgumentException.class, () -> VectorSearchRequest.forTextAcrossContexts("cats", ALICE));
     }
 }

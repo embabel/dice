@@ -61,6 +61,9 @@ import java.util.Objects
  *    database. The store does not load rows into the JVM to do any of them.
  * 7. Each score is a [SimilarityScore] converted from the number the database returns.
  *
+ * A request built with [VectorSearchRequest.forTextAcrossContexts] searches every context in
+ * the store.
+ *
  * A store implements this interface only when it keeps rule 1, and then lists
  * [StoreCapability.FILTERED_VECTOR_SEARCH].
  *
@@ -134,21 +137,21 @@ class VectorSearchRequest private constructor(
 
         /**
          * @param text The text to find propositions close to.
-         * @param filter Which propositions are candidates. Start it from a context, as with any
-         *   `PropositionQuery`.
+         * @param filter Which propositions are candidates. It names a context. Start it with
+         *   [PropositionQuery.againstContext].
          * @return A request for [DEFAULT_TOP_K] matches with no score floor.
-         * @throws IllegalArgumentException when [text] is blank, or [filter] carries an ordering
-         *   or a limit.
+         * @throws IllegalArgumentException when [text] is blank, or [filter] names no context or
+         *   carries an ordering or a limit.
          */
         @JvmStatic
         fun forText(text: String, filter: PropositionQuery): VectorSearchRequest =
-            VectorSearchRequest(text, filter, DEFAULT_TOP_K, null)
+            VectorSearchRequest(text, requireContext(filter), DEFAULT_TOP_K, null)
 
         /**
          * Builds a request in a block. Java uses [forText] and the `with` chain.
          *
          * @param text The text to find propositions close to.
-         * @param filter Which propositions are candidates.
+         * @param filter Which propositions are candidates. It names a context.
          * @param block Sets the result size and the score floor.
          * @return The request.
          * @throws IllegalArgumentException for the inputs the chain rejects.
@@ -160,7 +163,60 @@ class VectorSearchRequest private constructor(
             block: VectorSearchRequestBuilder.() -> Unit = {},
         ): VectorSearchRequest {
             val builder = VectorSearchRequestBuilder().apply(block)
-            return VectorSearchRequest(text, filter, builder.topK, builder.minScore)
+            return VectorSearchRequest(text, requireContext(filter), builder.topK, builder.minScore)
+        }
+
+        /**
+         * A request that is held to no single context. [FilteredVectorSearch.findNearest] searches
+         * every context in the store for it.
+         *
+         * @param text The text to find propositions close to.
+         * @param filter Which propositions are candidates. It names no context.
+         * @return A request for [DEFAULT_TOP_K] matches with no score floor.
+         * @throws IllegalArgumentException when [text] is blank, or [filter] names a context or
+         *   carries an ordering or a limit.
+         */
+        @JvmStatic
+        fun forTextAcrossContexts(text: String, filter: PropositionQuery): VectorSearchRequest {
+            require(filter.contextId == null) {
+                "forTextAcrossContexts takes a filter that names no context. Build the request with forText."
+            }
+            return VectorSearchRequest(text, filter, DEFAULT_TOP_K, null)
+        }
+
+        /**
+         * Builds a request that is held to no single context in a block. Java uses
+         * [forTextAcrossContexts] and the `with` chain.
+         *
+         * @param text The text to find propositions close to.
+         * @param filter Which propositions are candidates. It names no context.
+         * @param block Sets the result size and the score floor.
+         * @return The request.
+         * @throws IllegalArgumentException for the inputs the chain rejects.
+         */
+        @JvmSynthetic
+        fun forTextAcrossContexts(
+            text: String,
+            filter: PropositionQuery,
+            block: VectorSearchRequestBuilder.() -> Unit,
+        ): VectorSearchRequest {
+            val builder = VectorSearchRequestBuilder().apply(block)
+            return forTextAcrossContexts(text, filter).withTopK(builder.topK).withMinScore(builder.minScore)
+        }
+
+        /**
+         * Checks that the filter of a request names one context.
+         *
+         * @param filter The filter of a request built with [forText] or the block entry.
+         * @return [filter], unchanged.
+         * @throws IllegalArgumentException when [filter] names no context.
+         */
+        private fun requireContext(filter: PropositionQuery): PropositionQuery {
+            requireNotNull(filter.getContextIdValue()) {
+                "A similarity search request names a context. Start the filter with " +
+                    "PropositionQuery.againstContext, or build the request with forTextAcrossContexts."
+            }
+            return filter
         }
     }
 }
