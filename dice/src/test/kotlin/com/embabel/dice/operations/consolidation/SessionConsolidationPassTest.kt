@@ -107,6 +107,42 @@ class SessionConsolidationPassTest {
     }
 
     @Test
+    fun `returns NoOp when every reinforced proposition equals its snapshot copy`() {
+        val stored = proposition("stored")
+        val consolidator = mockk<MemoryConsolidator>()
+        every { consolidator.consolidate(any(), any()) } returns ConsolidationResult(
+            promoted = emptyList(),
+            reinforced = listOf(stored),
+            discarded = emptyList(),
+            merged = emptyList(),
+        )
+
+        val result = SessionConsolidationPass(consolidator, listOf(proposition("s")))
+            .run(contextId, listOf(stored))
+
+        assertInstanceOf(ConsolidationPassResult.NoOp::class.java, result)
+    }
+
+    @Test
+    fun `saves a reinforced proposition that differs from its snapshot copy`() {
+        val stored = proposition("stored")
+        val reinforced = stored.copy(reinforceCount = 1)
+        val consolidator = mockk<MemoryConsolidator>()
+        every { consolidator.consolidate(any(), any()) } returns ConsolidationResult(
+            promoted = emptyList(),
+            reinforced = listOf(reinforced),
+            discarded = emptyList(),
+            merged = emptyList(),
+        )
+
+        val result = SessionConsolidationPass(consolidator, listOf(proposition("s")))
+            .run(contextId, listOf(stored))
+
+        val changed = assertInstanceOf(ConsolidationPassResult.Changed::class.java, result)
+        assertEquals(listOf(reinforced), changed.propositionsToSave)
+    }
+
+    @Test
     fun `wraps consolidator failure in a Failed result`() {
         val boom = RuntimeException("boom")
         val consolidator = mockk<MemoryConsolidator>()
