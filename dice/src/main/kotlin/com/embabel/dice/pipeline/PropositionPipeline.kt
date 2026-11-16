@@ -16,6 +16,7 @@
 package com.embabel.dice.pipeline
 
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.dice.common.attemptCatching
 import com.embabel.dice.common.ContentHasher
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.NewEntity
@@ -510,6 +511,9 @@ class PropositionPipeline private constructor(
      * an InMemoryEntityResolver via MultiEntityResolver. This ensures entities discovered
      * in earlier chunks can be recognized in later chunks without external persistence.
      *
+     * An Exception in one chunk gives a Failed result for that chunk. An Error is not caught and
+     * ends the run.
+     *
      * @param chunks The chunks to process
      * @param context Configuration including schema
      * @return Aggregated processing results
@@ -546,11 +550,11 @@ class PropositionPipeline private constructor(
         val failures = ConcurrentHashMap<String, Throwable>()
         val extractions: List<ExtractionStageResult?> =
             executionStrategy.execute(chunks) { chunk ->
-                runCatching { extractStage(chunk, crossChunkContext) }
+                attemptCatching { extractStage(chunk, crossChunkContext) }
                     .getOrElse { e ->
                         logger.warn("Extraction failed for chunk {}: {}", chunk.id, e.message, e)
                         failures[chunk.id] = e
-                        throw e // let the strategy's runCatching map this to a null slot
+                        throw e // rethrow so the strategy turns this chunk into a null slot
                     }
             }
 
@@ -560,9 +564,9 @@ class PropositionPipeline private constructor(
         val chunkResults: List<ChunkPropositionResult> = extractions.mapIndexed { i, extraction ->
             val chunkId = chunks[i].id
             if (extraction != null) {
-                // Isolate per-chunk: a throw in resolution, revision, or event emission surfaces
-                // as a Failed result for this chunk only, never aborting the whole run.
-                runCatching { resolveStage(extraction, crossChunkContext) }
+                // Isolate per-chunk: an Exception in resolution, revision or event emission gives a
+                // Failed result for this chunk only; an Error ends the run.
+                attemptCatching { resolveStage(extraction, crossChunkContext) }
                     .getOrElse { e ->
                         logger.warn("Resolution failed for chunk {}: {}", chunkId, e.message, e)
                         ChunkPropositionResult.failed(chunkId, e)
