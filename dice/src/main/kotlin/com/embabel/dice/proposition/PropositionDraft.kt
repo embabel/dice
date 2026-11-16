@@ -176,9 +176,16 @@ class PropositionDraft private constructor(
     /** Sets the reasoning. */
     fun withReasoning(reasoning: String?): PropositionDraft = PropositionDraft(origin, values.copy(reasoning = reasoning))
 
-    /** Appends [chunkIds] to the grounding and removes duplicates. */
+    /**
+     * Appends [chunkIds] to the grounding and removes duplicates.
+     * To replace or clear the grounding, use [withExactGrounding].
+     */
     fun withGrounding(chunkIds: List<String>): PropositionDraft =
         PropositionDraft(origin, values.copy(grounding = Collections.unmodifiableList((grounding + chunkIds).distinct())))
+
+    /** Sets the grounding to exactly [chunkIds], in the order given. An empty list clears it. */
+    fun withExactGrounding(chunkIds: List<String>): PropositionDraft =
+        PropositionDraft(origin, values.copy(grounding = Collections.unmodifiableList(ArrayList(chunkIds))))
 
     /** Sets the creation time. */
     fun withCreated(created: Instant): PropositionDraft = PropositionDraft(origin, values.copy(created = created))

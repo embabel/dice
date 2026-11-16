@@ -55,6 +55,8 @@ class PropositionDraftJavaInteropTest {
     //     proposition built from it.
     // 11. I4: a proposition keeps its source ids when code tries to clear them through the draft.
     // 12. I5: a draft made with toDraft() does not follow later changes to the proposition's list.
+    // 13. E7: withExactGrounding replaces the grounding in order, keeps repeated ids, and an
+    //     empty list clears it. The draft it was called on keeps its own grounding.
 
     private static final Instant CREATED = Instant.parse("2025-01-01T00:00:00Z");
     private static final Instant CONTENT_REVISED = Instant.parse("2025-02-01T00:00:00Z");
@@ -196,6 +198,29 @@ class PropositionDraftJavaInteropTest {
         assertEquals(List.of(PARIS), p.getMentions());
         assertEquals(List.of("s2"), p.getSourceIds());
         assertEquals(Map.of("second", 2), p.getMetadata());
+    }
+
+    @Test
+    void e7_withExactGroundingReplacesTheGroundingAndAnEmptyListClearsIt() {
+        PropositionDraft base = Proposition.draft("acme", "Alice lives in Paris", 0.9)
+                .withGrounding(List.of("a", "b"));
+
+        PropositionDraft replaced = base.withExactGrounding(List.of("c"));
+        assertEquals(List.of("c"), replaced.getGrounding());
+        assertEquals(List.of("c"), replaced.toProposition().getGrounding());
+        assertEquals(List.of("a", "b"), base.getGrounding());
+        assertThrows(UnsupportedOperationException.class, () -> replaced.getGrounding().add("d"));
+
+        PropositionDraft ordered = base.withExactGrounding(List.of("z", "a", "m"));
+        assertEquals(List.of("z", "a", "m"), ordered.getGrounding());
+
+        PropositionDraft repeated = base.withExactGrounding(List.of("a", "a"));
+        assertEquals(List.of("a", "a"), repeated.getGrounding());
+
+        PropositionDraft cleared = base.withExactGrounding(List.of());
+        assertTrue(cleared.getGrounding().isEmpty());
+        assertTrue(cleared.toProposition().getGrounding().isEmpty());
+        assertEquals(List.of("a", "b"), base.getGrounding());
     }
 
     @Test
