@@ -47,6 +47,7 @@ import org.mockito.Mockito
  * E8 Each capability names its interface.
  * E9 The refusal carries the capability, the reason and the cause.
  * E10 describe reads supportsVector only for a store with no declaration.
+ * E11 a wrapper declares what it implements of its delegate's capabilities.
  */
 class StoreCapabilitiesTest {
 
@@ -103,6 +104,22 @@ class StoreCapabilitiesTest {
     private class FilterFirstSearchableStore : SearchableStore(false), CapabilityReporting, FilteredVectorSearch {
         override val capabilities = StoreCapabilities.of(StoreCapability.FILTERED_VECTOR_SEARCH)
         override fun findNearest(request: VectorSearchRequest): List<VectorMatch> = emptyList()
+    }
+
+    /** Forwards the filtered similarity search of [delegate] and declares what it implements. */
+    private class ForwardingWrapper(delegate: VectorStore) :
+        PropositionStore by delegate, CapabilityReporting, FilteredVectorSearch by delegate {
+        override val capabilities = StoreCapabilities.describe(delegate).implementedBy(this)
+    }
+
+    /** Wraps [delegate] and declares nothing, because it does not implement the capability. */
+    private class PlainWrapper(delegate: VectorStore) : PropositionStore by delegate, CapabilityReporting {
+        override val capabilities = StoreCapabilities.describe(delegate).implementedBy(this)
+    }
+
+    /** Copies the declaration of [delegate], which lists a capability this wrapper does not implement. */
+    private class CopyingWrapper(delegate: VectorStore) : PropositionStore by delegate, CapabilityReporting {
+        override val capabilities = StoreCapabilities.describe(delegate)
     }
 
     @Test
@@ -250,5 +267,21 @@ class StoreCapabilitiesTest {
             StoreCapabilities.NONE,
             StoreCapabilities.describe(EventEmittingPropositionRepository(InMemoryPropositionRepository()))
         )
+    }
+
+    @Test
+    fun `E11 a wrapper declares what it implements of its delegate's capabilities`() {
+        val f = StoreCapability.FILTERED_VECTOR_SEARCH
+        val afterCut = StoreCapabilities.of().withVectorFiltering(VectorFiltering.AFTER_TOP_K)
+        assertEquals(StoreCapabilities.of(), StoreCapabilities.of(f).implementedBy(BaseOnlyStore()))
+        assertEquals(StoreCapabilities.of(f), StoreCapabilities.of(f).implementedBy(VectorStore()))
+        assertEquals(VectorFiltering.AFTER_TOP_K, afterCut.implementedBy(SearchableStore(true)).vectorFiltering)
+        assertEquals(VectorFiltering.UNDECLARED, afterCut.implementedBy(BaseOnlyStore()).vectorFiltering)
+        assertEquals(StoreCapabilities.NONE, StoreCapabilities.NONE.implementedBy(BaseOnlyStore()))
+        val forwarding = ForwardingWrapper(VectorStore())
+        assertSame(forwarding, StoreCapabilities.find<FilteredVectorSearch>(forwarding))
+        assertTrue(StoreCapabilities.describe(PlainWrapper(VectorStore())).supported.isEmpty())
+        assertNull(StoreCapabilities.find<FilteredVectorSearch>(PlainWrapper(VectorStore())))
+        assertThrows(IllegalStateException::class.java) { StoreCapabilities.describe(CopyingWrapper(VectorStore())) }
     }
 }

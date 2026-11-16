@@ -176,6 +176,37 @@ class StoreCapabilities private constructor(
     fun withVectorFiltering(vectorFiltering: VectorFiltering): StoreCapabilities =
         StoreCapabilities(supported, vectorFiltering)
 
+    /**
+     * Keeps the capabilities whose interface [store] implements. A store that wraps another
+     * declares `StoreCapabilities.describe(delegate).implementedBy(this)`.
+     *
+     * ```java
+     * private final PropositionStore delegate;
+     * private final StoreCapabilities capabilities;
+     *
+     * public ForwardingStore(PropositionStore delegate) {
+     *     this.delegate = delegate;
+     *     this.capabilities = StoreCapabilities.describe(delegate).implementedBy(this);
+     * }
+     * ```
+     *
+     * @param store The store that makes the declaration.
+     * @return A descriptor that lists only what [store] implements. [VectorFiltering.AFTER_TOP_K]
+     *   stays when [store] implements `VectorSearchCapable`. A mode the store does not keep becomes
+     *   [VectorFiltering.UNDECLARED].
+     */
+    fun implementedBy(store: PropositionStore): StoreCapabilities {
+        val kept = supported.filter { it.contract.isInstance(store) }.toSet()
+        val filtering = when (vectorFiltering) {
+            VectorFiltering.BEFORE_TOP_K ->
+                if (StoreCapability.FILTERED_VECTOR_SEARCH in kept) VectorFiltering.BEFORE_TOP_K else VectorFiltering.UNDECLARED
+            VectorFiltering.AFTER_TOP_K ->
+                if (store is VectorSearchCapable) VectorFiltering.AFTER_TOP_K else VectorFiltering.UNDECLARED
+            VectorFiltering.NONE, VectorFiltering.UNDECLARED -> vectorFiltering
+        }
+        return StoreCapabilities(kept, filtering)
+    }
+
     override fun equals(other: Any?): Boolean =
         other is StoreCapabilities && other.supported == supported && other.vectorFiltering == vectorFiltering
 
@@ -267,7 +298,7 @@ class StoreCapabilities private constructor(
          * Returns [store] as a capability interface when the store supports that capability.
          *
          * The check is on [store] itself. A store that wraps another store passes a capability
-         * through by implementing the interface and listing the capability.
+         * through by implementing the interface and listing the capability with [implementedBy].
          *
          * @param store The store to ask.
          * @param contract A capability interface, the `contract` of a [StoreCapability].

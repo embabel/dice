@@ -149,6 +149,36 @@ class StoreContractJavaInteropTest {
         assertEquals(match, VectorMatch.of(proposition, SimilarityScore.ofCosine(0.8)));
     }
 
+    /** A store that wraps another and forwards the one capability it implements. */
+    private static final class ForwardingStore extends PlainStore implements CapabilityReporting, FilteredVectorSearch {
+
+        private final CapableStore delegate;
+        private final StoreCapabilities capabilities;
+
+        ForwardingStore(CapableStore delegate) {
+            this.delegate = delegate;
+            this.capabilities = StoreCapabilities.describe(delegate).implementedBy(this);
+        }
+
+        @Override
+        public StoreCapabilities getCapabilities() {
+            return capabilities;
+        }
+
+        @Override
+        public List<VectorMatch> findNearest(VectorSearchRequest request) {
+            return delegate.findNearest(request);
+        }
+    }
+
+    @Test
+    void aWrapperPassesACapabilityThrough() {
+        ForwardingStore wrapper = new ForwardingStore(new CapableStore());
+
+        assertSame(wrapper, StoreCapabilities.find(wrapper, FilteredVectorSearch.class));
+        assertEquals(VectorFiltering.BEFORE_TOP_K, StoreCapabilities.describe(wrapper).getVectorFiltering());
+    }
+
     @Test
     void aCallerFindsACapabilityOnAStoreThatPublishesIt() {
         PropositionStore store = new CapableStore();
