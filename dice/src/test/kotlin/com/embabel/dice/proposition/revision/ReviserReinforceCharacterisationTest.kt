@@ -41,6 +41,7 @@ class ReviserReinforceCharacterisationTest {
         grounding: List<String> = emptyList(),
         provenance: List<ProvenanceEntry> = emptyList(),
         reinforceCount: Int = 0,
+        sourceIds: List<String> = emptyList(),
     ) = Proposition(
         contextId = ContextId("test-context"),
         text = text,
@@ -54,6 +55,7 @@ class ReviserReinforceCharacterisationTest {
         lastAccessed = old,
         reinforceCount = reinforceCount,
         provenanceEntries = provenance,
+        sourceIds = sourceIds,
     )
 
     private fun existing(confidence: Double = 0.6) = proposition(
@@ -98,9 +100,9 @@ class ReviserReinforceCharacterisationTest {
     }
 
     @Test
-    fun `R-E3 confidence above the cap is pulled down to 0_95`() {
+    fun `R-E3 confidence above the cap is left where it is`() {
         val revised = revisedFrom(existing(confidence = 0.98), incoming(confidence = 0.5))
-        assertEquals(0.95, revised.confidence, 1e-9)
+        assertEquals(0.98, revised.confidence, 1e-9)
     }
 
     @Test
@@ -129,6 +131,9 @@ class ReviserReinforceCharacterisationTest {
         val after = Instant.now()
         assertTrue(inWindow(revised.contentRevised, before, after), "contentRevised ${revised.contentRevised}")
         assertTrue(inWindow(revised.lastAccessed, before, after), "lastAccessed ${revised.lastAccessed}")
+        assertTrue(inWindow(revised.metadataRevised, before, after), "metadataRevised ${revised.metadataRevised}")
+        assertEquals(revised.contentRevised, revised.metadataRevised)
+        assertEquals(revised.contentRevised, revised.lastAccessed)
     }
 
     @Test
@@ -143,6 +148,7 @@ class ReviserReinforceCharacterisationTest {
                 provenanceEntries = revised.provenanceEntries,
                 reinforceCount = 3,
                 contentRevised = revised.contentRevised,
+                metadataRevised = revised.metadataRevised,
                 lastAccessed = revised.lastAccessed,
             ),
             revised,
@@ -155,5 +161,33 @@ class ReviserReinforceCharacterisationTest {
         val result = reinforce(existing, incoming())
         assertTrue(result is RevisionResult.Reinforced, "got $result")
         assertEquals(existing, (result as RevisionResult.Reinforced).original)
+    }
+
+    @Test
+    fun `source ids of the new proposition are added without duplicates`() {
+        val stored = existing().copy(sourceIds = listOf("s1"))
+        val revised = revisedFrom(stored, proposition("Alice codes", 0.8, sourceIds = listOf("s1", "s2")))
+        assertEquals(listOf("s1", "s2"), revised.sourceIds)
+    }
+
+    @Test
+    fun `a proposition whose grounding and provenance are already held changes nothing`() {
+        val existing = existing()
+        val incoming = proposition("Alice codes", 0.8, grounding = listOf("g1"), provenance = listOf(pA))
+        assertEquals(existing, revisedFrom(existing, incoming))
+    }
+
+    @Test
+    fun `a proposition with held grounding and no provenance changes nothing`() {
+        val existing = existing()
+        val incoming = proposition("Alice codes", 0.8, grounding = listOf("g1"))
+        assertEquals(existing, revisedFrom(existing, incoming))
+    }
+
+    @Test
+    fun `a proposition that names no source still reinforces`() {
+        val revised = revisedFrom(existing(), proposition("Alice codes", 0.8))
+        assertEquals(3, revised.reinforceCount)
+        assertEquals(0.68, revised.confidence, 1e-9)
     }
 }

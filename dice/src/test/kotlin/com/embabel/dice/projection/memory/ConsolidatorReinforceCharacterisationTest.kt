@@ -110,6 +110,7 @@ class ConsolidatorReinforceCharacterisationTest {
         val r = reinforcedFrom(existing())
         val after = Instant.now()
         assertTrue(!r.contentRevised.isBefore(before) && !r.contentRevised.isAfter(after), "contentRevised ${r.contentRevised}")
+        assertEquals(r.contentRevised, r.metadataRevised)
     }
 
     @Test
@@ -117,8 +118,19 @@ class ConsolidatorReinforceCharacterisationTest {
         val existing = existing()
         val r = reinforcedFrom(existing)
         assertEquals(
-            existing.copy(confidence = r.confidence, grounding = r.grounding, contentRevised = r.contentRevised),
+            existing.copy(
+                confidence = r.confidence,
+                grounding = r.grounding,
+                contentRevised = r.contentRevised,
+                metadataRevised = r.metadataRevised,
+            ),
             r,
         )
+    }
+
+    @Test
+    fun `a stored proposition matched against itself is returned unchanged`() {
+        val p = proposition(confidence = 0.6)
+        assertEquals(listOf(p), DefaultMemoryConsolidator().consolidate(listOf(p), listOf(p)).reinforced)
     }
 }
