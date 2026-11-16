@@ -33,6 +33,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * E4 a success resets the failure count
  * E5 an Error from the call propagates
  * E6 an interrupted call is a failure, sets the thread's interrupt flag again, and does not trip the breaker
+ * E7 Outcome.success gives a success outcome with its value
+ * E8 Outcome.failure gives a failure outcome with its exception
+ * E9 Outcome.skipped gives a skipped outcome with no value or exception
+ * R1 a skipped outcome with a value is rejected, and one without a value is accepted
+ * R2 an outcome with both a value and an exception is rejected, and one with only one of them is accepted
  */
 class ConsecutiveFailureBreakerJavaInteropTest {
 
@@ -124,5 +129,62 @@ class ConsecutiveFailureBreakerJavaInteropTest {
         // Reading the flag also clears it, so later tests start with a clean thread.
         assertTrue(Thread.interrupted());
         assertFalse(breaker.getTripped());
+    }
+
+    // E7
+    @Test
+    void successFactoryGivesSuccessOutcome() {
+        ConsecutiveFailureBreaker.Outcome<String> outcome = ConsecutiveFailureBreaker.Outcome.success("ok");
+
+        assertTrue(outcome.isSuccess());
+        assertFalse(outcome.isFailure());
+        assertFalse(outcome.isSkipped());
+        assertEquals("ok", outcome.getValue());
+        assertNull(outcome.getException());
+    }
+
+    // E8
+    @Test
+    void failureFactoryGivesFailureOutcome() {
+        IOException expected = new IOException("disk unavailable");
+
+        ConsecutiveFailureBreaker.Outcome<String> outcome = ConsecutiveFailureBreaker.Outcome.failure(expected);
+
+        assertTrue(outcome.isFailure());
+        assertFalse(outcome.isSuccess());
+        assertFalse(outcome.isSkipped());
+        assertSame(expected, outcome.getException());
+        assertNull(outcome.getValue());
+    }
+
+    // E9
+    @Test
+    void skippedFactoryGivesSkippedOutcome() {
+        ConsecutiveFailureBreaker.Outcome<String> outcome = ConsecutiveFailureBreaker.Outcome.skipped();
+
+        assertTrue(outcome.isSkipped());
+        assertFalse(outcome.isSuccess());
+        assertFalse(outcome.isFailure());
+        assertNull(outcome.getValue());
+        assertNull(outcome.getException());
+    }
+
+    // R1
+    @Test
+    void skippedOutcomeWithValueIsRejected() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new ConsecutiveFailureBreaker.Outcome<>(true, "x", null));
+        assertDoesNotThrow(() -> new ConsecutiveFailureBreaker.Outcome<String>(true, null, null));
+    }
+
+    // R2
+    @Test
+    void outcomeWithValueAndExceptionIsRejected() {
+        IOException expected = new IOException("disk unavailable");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new ConsecutiveFailureBreaker.Outcome<>(false, "x", expected));
+        assertDoesNotThrow(() -> new ConsecutiveFailureBreaker.Outcome<>(false, "x", null));
+        assertDoesNotThrow(() -> new ConsecutiveFailureBreaker.Outcome<String>(false, null, expected));
     }
 }

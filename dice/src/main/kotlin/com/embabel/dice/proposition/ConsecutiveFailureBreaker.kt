@@ -67,24 +67,36 @@ class ConsecutiveFailureBreaker @JvmOverloads constructor(
      * @return a success with the value, a failure with the exception, or a skip if the breaker has tripped
      */
     fun <T> attemptCall(call: Callable<T>): Outcome<T> {
-        val result = attempt { call.call() } ?: return Outcome(skipped = true, value = null, exception = null)
+        val result = attempt { call.call() } ?: return Outcome.skipped()
         return result.fold(
-            onSuccess = { Outcome(skipped = false, value = it, exception = null) },
-            onFailure = { Outcome(skipped = false, value = null, exception = it as Exception) },
+            onSuccess = { Outcome.success(it) },
+            onFailure = { Outcome.failure<T>(it as Exception) },
         )
     }
 
     /**
      * The result of one [attemptCall]: a value, a failure, or a skip.
      *
+     * Prefer success, failure and skipped. They say what happened, and this constructor only checks
+     * that the three fields don't contradict each other.
+     *
      * @property value the call's result on success, otherwise null
      * @property exception the exception the call threw on failure, otherwise null
      */
-    class Outcome<T> internal constructor(
+    class Outcome<T>(
         private val skipped: Boolean,
         val value: T?,
         val exception: Exception?,
     ) {
+
+        init {
+            require(!skipped || (value == null && exception == null)) {
+                "A skipped outcome has no value and no exception"
+            }
+            require(value == null || exception == null) {
+                "An outcome has a value or an exception, never both"
+            }
+        }
 
         /** True when the breaker had tripped, so the call was not run. */
         val isSkipped: Boolean get() = skipped
@@ -99,6 +111,30 @@ class ConsecutiveFailureBreaker @JvmOverloads constructor(
             skipped -> "Outcome(skipped)"
             exception != null -> "Outcome(failure=$exception)"
             else -> "Outcome(success=$value)"
+        }
+
+        companion object {
+
+            /**
+             * A successful outcome holding [value].
+             *
+             * @param value the result of the call
+             */
+            @JvmStatic
+            fun <T> success(value: T): Outcome<T> = Outcome(skipped = false, value = value, exception = null)
+
+            /**
+             * A failed outcome holding the [exception] the call threw.
+             *
+             * @param exception what the call threw
+             */
+            @JvmStatic
+            fun <T> failure(exception: Exception): Outcome<T> =
+                Outcome(skipped = false, value = null, exception = exception)
+
+            /** An outcome for a call that was never made because the breaker had tripped. */
+            @JvmStatic
+            fun <T> skipped(): Outcome<T> = Outcome(skipped = true, value = null, exception = null)
         }
     }
 
