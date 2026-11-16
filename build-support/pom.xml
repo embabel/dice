@@ -21,7 +21,7 @@
         <dependency>
             <groupId>org.jetbrains.kotlin</groupId>
             <artifactId>abi-tools</artifactId>
-            <version>${kotlin.version}</version>
+            <version>${abi-tools.version}</version>
         </dependency>
     </dependencies>
 

@@ -120,6 +120,12 @@
         <mockito-kotlin.version>5.4.0</mockito-kotlin.version>
         <!-- check compares each module's public API with its committed listing; update rewrites the listing -->
         <api.listing.mode>check</api.listing.mode>
+        <!--
+            Kotlin ABI tools version for the API listings. It is kept apart from kotlin.version so a
+            compiler upgrade cannot change the listing format in the same change. It reads the
+            compiler's metadata, so raise it when the build parent raises the Kotlin version.
+        -->
+        <abi-tools.version>2.2.21</abi-tools.version>
     </properties>
 
     <dependencyManagement>
@@ -226,7 +232,7 @@
                         <dependency>
                             <groupId>org.jetbrains.kotlin</groupId>
                             <artifactId>abi-tools</artifactId>
-                            <version>${kotlin.version}</version>
+                            <version>${abi-tools.version}</version>
                         </dependency>
                     </dependencies>
                     <executions>
