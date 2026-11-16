@@ -71,7 +71,7 @@ data class PropositionQuery(
     // Confidence filters (with decay)
     val minEffectiveConfidence: Double? = null,
     val effectiveConfidenceAsOf: Instant? = null,
-    val decayK: Double = 2.0,
+    val decayK: Double = Proposition.DEFAULT_DECAY_K,
 
     // Importance filter
     val minImportance: Double? = null,
