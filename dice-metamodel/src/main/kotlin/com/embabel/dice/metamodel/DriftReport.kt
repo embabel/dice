@@ -161,7 +161,74 @@ class DriftReport @JvmOverloads constructor(
             "driftedEntityTypes=$driftedEntityTypes, driftedRelationshipTypes=$driftedRelationshipTypes, " +
             "capturedAt=$capturedAt, contextId=${contextId?.value}, declaredDiff=$declaredDiff)"
 
-    private companion object {
+    companion object {
+
+        /**
+         * Builds a report scoped to one context, for Java callers who have the context id as a
+         * plain string and no baseline to compare against. The string is wrapped in a [ContextId]
+         * for you.
+         *
+         * @param schemaName The declared schema's name at check time.
+         * @param versionHash The content hash of the declared schema the check ran against.
+         * @param driftedEntityTypes Entity type names the graph held but the schema never declared.
+         * @param driftedRelationshipTypes Relationship type names observed with no declaration.
+         * @param capturedAt When the observation was taken.
+         * @param contextIdValue The context the check was scoped to. Must not be blank.
+         * @return The new report.
+         * @throws IllegalArgumentException if [contextIdValue] is blank.
+         */
+        @JvmStatic
+        fun of(
+            schemaName: String,
+            versionHash: String,
+            driftedEntityTypes: Set<String>,
+            driftedRelationshipTypes: Set<String>,
+            capturedAt: Instant,
+            contextIdValue: String,
+        ): DriftReport = DriftReport(
+            schemaName,
+            versionHash,
+            driftedEntityTypes,
+            driftedRelationshipTypes,
+            capturedAt,
+            ContextId(contextIdValue),
+        )
+
+        /**
+         * Builds a report for Java callers that may carry a declared diff and may cover the whole graph.
+         *
+         * Pass `null` for [contextIdValue] when the check covered the whole graph. Pass `null` for
+         * [declaredDiff] when no baseline existed to compare against.
+         *
+         * @param schemaName The declared schema's name at check time.
+         * @param versionHash The content hash of the declared schema the check ran against.
+         * @param driftedEntityTypes Entity type names the graph held but the schema never declared.
+         * @param driftedRelationshipTypes Relationship type names observed with no declaration.
+         * @param capturedAt When the observation was taken.
+         * @param contextIdValue The context the check was scoped to, or `null` for the whole graph.
+         *   Must not be blank when given.
+         * @param declaredDiff How the declaration moved since the last completed sweep, or `null`.
+         * @return The new report.
+         * @throws IllegalArgumentException if [contextIdValue] is blank.
+         */
+        @JvmStatic
+        fun of(
+            schemaName: String,
+            versionHash: String,
+            driftedEntityTypes: Set<String>,
+            driftedRelationshipTypes: Set<String>,
+            capturedAt: Instant,
+            contextIdValue: String?,
+            declaredDiff: MetamodelDiff?,
+        ): DriftReport = DriftReport(
+            schemaName,
+            versionHash,
+            driftedEntityTypes,
+            driftedRelationshipTypes,
+            capturedAt,
+            contextIdValue?.let { ContextId(it) },
+            declaredDiff,
+        )
 
         private fun <T> immutableCopy(values: Set<T>): Set<T> =
             java.util.Collections.unmodifiableSet(LinkedHashSet(values))
