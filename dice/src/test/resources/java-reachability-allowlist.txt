@@ -1,0 +1,36 @@
+# Mangled ContextId functions that Java cannot call yet, one Class#name per line.
+# Each line is a known gap. Remove a line once the function gets a String form;
+# JavaReachabilityListingTest fails if a line here is covered or no longer exists.
+CandidatePairSource#propose
+CollectorSignalScorer#score
+CollectorStrategy#mark
+CollectorTraceStore#deleteTracesForContext
+CollectorTraceStore#recordRunContext
+ConsecutiveFailureBreaker#attempt
+DecayCollectorStrategy#mark
+DecayManager#materialize
+DecayManager#sweep
+DecaySweeper#sweep
+DiscoveryTools#asTools
+DiscoveryTools$Companion#asTools
+DriftSweepCapable#quarantineCandidates
+DriftSweepCapable#sweep
+EntityOverlapSignalScorer#score
+EventEmittingPropositionRepository#findPinned
+GroundingOverlapSignalScorer#score
+InMemoryCollectorTraceStore#deleteTracesForContext
+InMemoryCollectorTraceStore#recordRunContext
+InMemoryDecayManager#materialize
+LexicalSignalScorer#score
+PolarityVetoSignalScorer#score
+Proposition$Companion#invoke
+PropositionQuery#forContextId
+PropositionQuery$Companion#forContextId
+PropositionStore#findPinned
+PropositionStoreDriftSweep#quarantineCandidates
+ProvenanceOverlapSignalScorer#score
+RagAdapterPropositionRepository#findPinned
+SuggestedProposition#toProposition
+SuggestionHandler#apply
+VectorCandidatePairSource#propose
+VectorSignalScorer#score
