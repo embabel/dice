@@ -2410,6 +2410,7 @@ public abstract interface class com/embabel/dice/pipeline/ChunkPropositionResult
 	public static final field Companion Lcom/embabel/dice/pipeline/ChunkPropositionResult$Companion;
 	public static fun failed (Ljava/lang/String;Ljava/lang/Throwable;)Lcom/embabel/dice/pipeline/ChunkPropositionResult$Failed;
 	public abstract fun getChunkId ()Ljava/lang/String;
+	public fun getRejectedMentions ()Ljava/util/List;
 	public static fun success (Ljava/lang/String;Lcom/embabel/dice/proposition/SuggestedPropositions;Lcom/embabel/dice/common/Resolutions;Ljava/util/List;Ljava/util/List;)Lcom/embabel/dice/pipeline/ChunkPropositionResult$Success;
 }
 
@@ -2442,8 +2443,10 @@ public final class com/embabel/dice/pipeline/ChunkPropositionResult$Failed : com
 }
 
 public final class com/embabel/dice/pipeline/ChunkPropositionResult$Success : com/embabel/dice/pipeline/ChunkPropositionResult {
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/SuggestedPropositions;Lcom/embabel/dice/common/Resolutions;Ljava/util/List;)V
 	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/SuggestedPropositions;Lcom/embabel/dice/common/Resolutions;Ljava/util/List;Ljava/util/List;)V
 	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/SuggestedPropositions;Lcom/embabel/dice/common/Resolutions;Ljava/util/List;Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/SuggestedPropositions;Lcom/embabel/dice/common/Resolutions;Ljava/util/List;Ljava/util/List;Ljava/util/List;)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component2 ()Lcom/embabel/dice/proposition/SuggestedPropositions;
 	public final fun component3 ()Lcom/embabel/dice/common/Resolutions;
@@ -2455,6 +2458,7 @@ public final class com/embabel/dice/pipeline/ChunkPropositionResult$Success : co
 	public fun getChunkId ()Ljava/lang/String;
 	public final fun getEntityResolutions ()Lcom/embabel/dice/common/Resolutions;
 	public fun getPropositions ()Ljava/util/List;
+	public fun getRejectedMentions ()Ljava/util/List;
 	public fun getRevisionResults ()Ljava/util/List;
 	public final fun getSuggestedPropositions ()Lcom/embabel/dice/proposition/SuggestedPropositions;
 	public fun hashCode ()I
@@ -2564,6 +2568,7 @@ public final class com/embabel/dice/pipeline/PropositionResults : com/embabel/di
 	public final fun getFullyResolvedCount ()I
 	public final fun getPartiallyResolvedCount ()I
 	public fun getPropositions ()Ljava/util/List;
+	public final fun getRejectedMentions ()Ljava/util/List;
 	public fun getRevisionResults ()Ljava/util/List;
 	public final fun getTotalPropositions ()I
 	public final fun getUnresolvedCount ()I
@@ -2572,6 +2577,46 @@ public final class com/embabel/dice/pipeline/PropositionResults : com/embabel/di
 	public fun referenceOnlyEntities ()Ljava/util/List;
 	public fun toString ()Ljava/lang/String;
 	public fun updatedEntities ()Ljava/util/List;
+}
+
+public final class com/embabel/dice/pipeline/RejectedMention {
+	public fun <init> (Ljava/lang/String;ILjava/lang/String;Lcom/embabel/dice/proposition/SuggestedMention;Ljava/lang/String;Lcom/embabel/dice/pipeline/RejectedMention$Check;Lcom/embabel/dice/pipeline/RejectedMentionHandling;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()I
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Lcom/embabel/dice/proposition/SuggestedMention;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()Lcom/embabel/dice/pipeline/RejectedMention$Check;
+	public final fun component7 ()Lcom/embabel/dice/pipeline/RejectedMentionHandling;
+	public final fun copy (Ljava/lang/String;ILjava/lang/String;Lcom/embabel/dice/proposition/SuggestedMention;Ljava/lang/String;Lcom/embabel/dice/pipeline/RejectedMention$Check;Lcom/embabel/dice/pipeline/RejectedMentionHandling;)Lcom/embabel/dice/pipeline/RejectedMention;
+	public static synthetic fun copy$default (Lcom/embabel/dice/pipeline/RejectedMention;Ljava/lang/String;ILjava/lang/String;Lcom/embabel/dice/proposition/SuggestedMention;Ljava/lang/String;Lcom/embabel/dice/pipeline/RejectedMention$Check;Lcom/embabel/dice/pipeline/RejectedMentionHandling;ILjava/lang/Object;)Lcom/embabel/dice/pipeline/RejectedMention;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCheck ()Lcom/embabel/dice/pipeline/RejectedMention$Check;
+	public final fun getChunkId ()Ljava/lang/String;
+	public final fun getHandling ()Lcom/embabel/dice/pipeline/RejectedMentionHandling;
+	public final fun getMention ()Lcom/embabel/dice/proposition/SuggestedMention;
+	public final fun getPropositionIndex ()I
+	public final fun getPropositionText ()Ljava/lang/String;
+	public final fun getReason ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/pipeline/RejectedMention$Check : java/lang/Enum {
+	public static final field FILTER Lcom/embabel/dice/pipeline/RejectedMention$Check;
+	public static final field GROUNDING Lcom/embabel/dice/pipeline/RejectedMention$Check;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/pipeline/RejectedMention$Check;
+	public static fun values ()[Lcom/embabel/dice/pipeline/RejectedMention$Check;
+}
+
+public final class com/embabel/dice/pipeline/RejectedMentionHandling : java/lang/Enum {
+	public static final field DROP Lcom/embabel/dice/pipeline/RejectedMentionHandling;
+	public static final field KEEP Lcom/embabel/dice/pipeline/RejectedMentionHandling;
+	public static final field LEAVE_UNRESOLVED Lcom/embabel/dice/pipeline/RejectedMentionHandling;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/pipeline/RejectedMentionHandling;
+	public static fun values ()[Lcom/embabel/dice/pipeline/RejectedMentionHandling;
 }
 
 public final class com/embabel/dice/pipeline/SerialExtractionStrategy : com/embabel/dice/pipeline/ExtractionExecutionStrategy {
