@@ -21,8 +21,10 @@ import com.embabel.common.ai.model.LlmOptions
 /**
  * Builder returned by [LlmPropositionExtractor.builder]. It holds the model options
  * until an [Ai] is supplied, then creates the extractor.
+ *
+ * @param llmOptions the model options the extractor sends with each call
  */
-class LlmPropositionExtractorBuilder internal constructor(
+class LlmPropositionExtractorBuilder(
     private val llmOptions: LlmOptions,
 ) {
 
