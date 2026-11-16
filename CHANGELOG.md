@@ -10,6 +10,13 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- The graph store reports each similarity score from `findSimilarWithScores` that is a number
+  inside -1 to 1. `DrivinePropositionRepository` holds a vector index score that rounding puts
+  below 0 or above 1 to that end before it converts it to cosine similarity, and it converts
+  through `SimilarityScore`. A score inside the range and a `NaN` score are returned as they
+  were. **Compatibility: behavioral.** A caller that saw a score a few millionths outside -1 to 1
+  sees -1 or 1.
+
 - The build now checks the committed public API listings of the published modules. `./mvnw verify` fails when
   a module's compiled public API differs from its `api/*.api` file. To update the listings after an API change,
   run `./mvnw -B -DskipTests -Dapi.listing.mode=update clean verify`. **Compatibility: additive.** A build
@@ -152,12 +159,18 @@ and the consumer PRs that deliver it).
 - Store contract, **EXPERIMENTAL** (may change before 1.0). The new package
   `com.embabel.dice.store` defines `FilteredVectorSearch`, similarity search that applies the
   filter before it picks the nearest K, as an interface that states the rules an implementation
-  keeps. A store lists it in a `StoreCapabilities` it publishes through `CapabilityReporting`.
-  `StoreCapabilities.find(store, FilteredVectorSearch.class)` returns the store as that interface,
-  or null. `StoreCapabilities.describe(store)` returns the descriptor, which also carries a
-  `VectorFiltering` mode: whether similarity search filters before or after it picks the nearest
-  K. A store that publishes nothing is described as `UNDECLARED`. `VectorSearchRequest` is
-  immutable and built with a chain in Java or a block in Kotlin. `SimilarityScore` is the one
+  keeps. A store declares it in a `StoreCapabilities` it returns through `CapabilityReporting`.
+  `StoreCapabilities.find(store, FilteredVectorSearch.class)` returns the store as that interface
+  when the declaration lists it, and null when it does not. `StoreCapabilities.describe(store)`
+  returns the store's declaration, which also carries a `VectorFiltering` mode: whether
+  similarity search filters before or after it picks the nearest K. A store with no declaration
+  is described from `VectorSearchCapable.supportsVector`, as `UNDECLARED` when it reports
+  similarity search and as `NONE` when it does not. Both throw `IllegalStateException` for a
+  store that lists a capability it does not implement. A store that wraps another declares
+  `StoreCapabilities.describe(delegate).implementedBy(this)`. `VectorSearchRequest` is immutable
+  and built with a chain in Java or a block in Kotlin. A request names a context, or is built
+  with `VectorSearchRequest.forTextAcrossContexts` to be held to no single context. Its
+  `toString` prints the length of the text and leaves the text out. `SimilarityScore` is the one
   similarity scale, cosine similarity from -1 to 1, with a factory for each native scale. A store
   that cannot do what it is asked throws `UnsupportedCapabilityException`. See "Store contract"
   in the user guide reference. **Compatibility: additive.**
