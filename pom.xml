@@ -272,17 +272,30 @@
                                 <goal>run</goal>
                             </goals>
                             <configuration>
-                                <target>
+                                <target xmlns:if="ant:if">
                                     <!--
                                         Compiled from build-support's sources on disk into this module's own
                                         target, so a module built alone with -pl needs nothing from the reactor.
-                                        javac skips the compile when the class is up to date.
+                                        javac skips the compile when the class is newer than its source. A stamp
+                                        file holds the classpath of the last compile, and a different classpath
+                                        (another abi-tools or ASM version) deletes the class to force a compile.
                                     -->
                                     <property name="api.listing.classes" location="${project.build.directory}/api-listing"/>
+                                    <property name="api.listing.stamp" location="${project.build.directory}/api-listing.classpath"/>
+                                    <pathconvert property="api.listing.classpath" refid="maven.plugin.classpath"/>
+                                    <loadfile property="api.listing.compiled.classpath" srcFile="${api.listing.stamp}"
+                                              failonerror="false" quiet="true"/>
+                                    <condition property="api.listing.recompile">
+                                        <not>
+                                            <equals arg1="${api.listing.classpath}" arg2="${api.listing.compiled.classpath}"/>
+                                        </not>
+                                    </condition>
+                                    <delete dir="${api.listing.classes}" if:set="api.listing.recompile"/>
                                     <mkdir dir="${api.listing.classes}"/>
                                     <javac srcdir="${maven.multiModuleProjectDirectory}/build-support/src/main/java"
                                            destdir="${api.listing.classes}" classpathref="maven.plugin.classpath"
                                            includeantruntime="false" release="${maven.compiler.target}" encoding="UTF-8"/>
+                                    <echo file="${api.listing.stamp}" message="${api.listing.classpath}"/>
                                     <!-- Forked, because the program ends with System.exit -->
                                     <java classname="com.embabel.dice.apilisting.ApiListing" fork="true" failonerror="false"
                                           resultproperty="api.listing.exit" errorproperty="api.listing.error">
