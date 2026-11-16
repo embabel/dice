@@ -244,16 +244,28 @@
                             </goals>
                             <configuration>
                                 <target>
-                                    <exec executable="${java.home}/bin/java" failonerror="false"
+                                    <!--
+                                        Compiled from build-support's sources on disk into this module's own
+                                        target, so a module built alone with -pl needs nothing from the reactor.
+                                        javac skips the compile when the class is up to date.
+                                    -->
+                                    <property name="api.listing.classes" location="${project.build.directory}/api-listing"/>
+                                    <mkdir dir="${api.listing.classes}"/>
+                                    <javac srcdir="${maven.multiModuleProjectDirectory}/build-support/src/main/java"
+                                           destdir="${api.listing.classes}" classpathref="maven.plugin.classpath"
+                                           includeantruntime="false" release="${maven.compiler.target}" encoding="UTF-8"/>
+                                    <!-- Forked, because the program ends with System.exit -->
+                                    <java classname="com.embabel.dice.apilisting.ApiListing" fork="true" failonerror="false"
                                           resultproperty="api.listing.exit" errorproperty="api.listing.error">
-                                        <arg value="-cp"/>
-                                        <arg pathref="maven.plugin.classpath"/>
-                                        <arg file="${maven.multiModuleProjectDirectory}/build-support/src/main/java/com/embabel/dice/apilisting/ApiListing.java"/>
+                                        <classpath>
+                                            <pathelement location="${api.listing.classes}"/>
+                                            <path refid="maven.plugin.classpath"/>
+                                        </classpath>
                                         <arg value="${api.listing.mode}"/>
                                         <arg file="${project.build.outputDirectory}"/>
                                         <arg file="${project.basedir}/api"/>
                                         <arg value="${project.artifactId}"/>
-                                    </exec>
+                                    </java>
                                     <!-- Put the program's own explanation in the build error, so it shows in quiet mode too -->
                                     <fail message="${api.listing.error}">
                                         <condition>
