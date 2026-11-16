@@ -1741,7 +1741,7 @@ class DrivinePropositionRepository(
         )
 
         /** Mirrors the [PropositionQuery.decayK] default; the materialised column is computed at this k. */
-        private const val DEFAULT_DECAY_K = 2.0
+        private const val DEFAULT_DECAY_K = Proposition.DEFAULT_DECAY_K
 
         /**
          * Cascade-aware bulk-clear Cypher, externalised to `queries/clear_propositions.cypher` so it runs
