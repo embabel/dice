@@ -40,8 +40,9 @@ Build one example and what it depends on:
 
 JDK 21 is the only prerequisite.
 
-CI builds the examples on every pull request and every push to main. A change to the library's
-public API that breaks an example fails there, so fix the example in the same change.
+The Build workflow builds the examples right after the library, on every pull request and every
+push. A change to the library's public API that breaks an example fails there, so fix the example
+in the same change.
 
 ## Offline model
 
@@ -57,10 +58,12 @@ call.
 
 | Dependency | Version |
 |---|---|
-| DICE | The version in the root `pom.xml`, repeated as `dice.version` in `examples/pom.xml`. The build stops when the two differ. |
-| Kotlin | `2.2.21`, the version DICE is built with |
-| Embabel Agent | `1.5.4` |
+| DICE | The version in the root `pom.xml`, repeated as `dice.version` |
+| Kotlin | `2.2.21`, the version DICE is built with, repeated as `kotlin.version` |
+| Embabel Agent | `1.5.4`, the version DICE compiles against, repeated as `embabel-agent.version` |
 | Spring Boot | `4.1.1` |
 | Spring Modulith | `2.1.0` |
 | jMolecules | `2025.0.2` |
 | Java | 21 |
+
+Every module's build compares those three with the library's and stops when one differs.

@@ -114,27 +114,71 @@
     <build>
         <plugins>
             <!--
-                Reads the version from the root pom.xml and stops the build when dice.version
-                differs from it. It runs for this POM only.
+                Stops the build when dice.version, embabel-agent.version or kotlin.version differs
+                from the library's. Every module inherits the check, so a module built on its own
+                runs it too. The library's versions come from the root pom.xml and from the build
+                parent it names, which sets the Kotlin version. Run it alone with
+                ./mvnw -B -N -f examples/pom.xml validate. In a full build of the examples, run
+                compile or a later phase, since examples-java needs examples-common compiled first.
             -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-antrun-plugin</artifactId>
-                <inherited>false</inherited>
                 <executions>
                     <execution>
-                        <id>check-dice-version</id>
+                        <id>check-library-versions</id>
                         <phase>validate</phase>
                         <goals>
                             <goal>run</goal>
                         </goals>
                         <configuration>
                             <target>
-                                <xmlproperty file="${project.basedir}/../pom.xml" prefix="library"/>
+                                <!-- The repository root is the directory that holds .mvn. -->
+                                <xmlproperty file="${maven.multiModuleProjectDirectory}/pom.xml" prefix="library"/>
+                                <fail message="No DICE library pom.xml at ${maven.multiModuleProjectDirectory}. Build the examples inside a checkout of the DICE repository.">
+                                    <condition>
+                                        <not>
+                                            <equals arg1="${library.project.artifactId}" arg2="dice-parent"/>
+                                        </not>
+                                    </condition>
+                                </fail>
+
+                                <!--
+                                    Building the library puts its build parent's POM in the local repository.
+                                    A split local repository keeps it in maven.repo.local.tail.
+                                -->
+                                <xmlproperty prefix="buildparent"
+                                             file="${settings.localRepository}/com/embabel/build/embabel-build-parent/${library.project.parent.version}/embabel-build-parent-${library.project.parent.version}.pom"/>
+                                <xmlproperty prefix="buildparent"
+                                             file="${maven.repo.local.tail}/com/embabel/build/embabel-build-parent/${library.project.parent.version}/embabel-build-parent-${library.project.parent.version}.pom"/>
+                                <!-- A kotlin.version set in the root pom.xml wins over the build parent's. -->
+                                <condition property="library.kotlin.version" value="${library.project.properties.kotlin.version}">
+                                    <isset property="library.project.properties.kotlin.version"/>
+                                </condition>
+                                <condition property="library.kotlin.version" value="${buildparent.project.properties.kotlin.version}">
+                                    <isset property="buildparent.project.properties.kotlin.version"/>
+                                </condition>
+                                <fail unless="library.kotlin.version"
+                                      message="Cannot read the library's Kotlin version from embabel-build-parent ${library.project.parent.version} in the local repository. Install the library first: ./mvnw -B install -DskipTests at the repository root."/>
+
                                 <fail message="examples/pom.xml builds against DICE ${dice.version}, but the root pom.xml is ${library.project.version}. Set dice.version to ${library.project.version}.">
                                     <condition>
                                         <not>
                                             <equals arg1="${library.project.version}" arg2="${dice.version}"/>
+                                        </not>
+                                    </condition>
+                                </fail>
+                                <fail message="examples/pom.xml uses Embabel Agent ${embabel-agent.version}, but DICE compiles against ${library.project.properties.embabel-agent.version}. Set embabel-agent.version to ${library.project.properties.embabel-agent.version}.">
+                                    <condition>
+                                        <not>
+                                            <equals arg1="${library.project.properties.embabel-agent.version}" arg2="${embabel-agent.version}"/>
+                                        </not>
+                                    </condition>
+                                </fail>
+                                <fail message="examples/pom.xml compiles with Kotlin ${kotlin.version}, but DICE is built with ${library.kotlin.version}. Set kotlin.version to ${library.kotlin.version}.">
+                                    <condition>
+                                        <not>
+                                            <equals arg1="${library.kotlin.version}" arg2="${kotlin.version}"/>
                                         </not>
                                     </condition>
                                 </fail>
