@@ -79,13 +79,17 @@ class DrivineChunkHistoryStore(
     }
 
     @Transactional
-    override fun clearByContext(contextId: ContextId) {
+    override fun clearByContextValue(contextIdValue: String) {
         persistenceManager.execute(
             QuerySpecification
                 .withStatement("MATCH (c:ProcessedChunk {contextId: \$contextId}) DETACH DELETE c")
-                .bind(mapOf("contextId" to contextId.value))
+                .bind(mapOf("contextId" to contextIdValue))
         )
     }
+
+    /** Deletes every processed chunk for the context. Hands over to [clearByContextValue]. */
+    @Transactional
+    override fun clearByContext(contextId: ContextId) = clearByContextValue(contextId.value)
 
     private fun storageId(key: HashKey): String = "${key.contextId.value}|${key.contentHash}"
 }
