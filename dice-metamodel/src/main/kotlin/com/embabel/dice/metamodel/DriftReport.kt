@@ -19,6 +19,7 @@ import org.jetbrains.annotations.ApiStatus
 
 import com.embabel.agent.core.ContextId
 import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
 import java.time.Instant
 import java.util.Objects
 
@@ -70,6 +71,7 @@ class DriftReport @JvmOverloads constructor(
     driftedEntityTypes: Set<String>,
     driftedRelationshipTypes: Set<String>,
     val capturedAt: Instant,
+    @get:JsonProperty("contextId")
     val contextId: ContextId? = null,
     val declaredDiff: MetamodelDiff? = null,
 ) {

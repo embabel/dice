@@ -70,6 +70,16 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!--
+            Kotlin support for Jackson, test only. The JSON tests write a drift report with a plain
+            mapper and with the Kotlin module, so both views of the contextId key are checked.
+        -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.module</groupId>
+            <artifactId>jackson-module-kotlin</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
