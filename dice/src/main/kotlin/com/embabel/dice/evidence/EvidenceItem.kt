@@ -20,6 +20,8 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.temporal.TemporalMetadata
 import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.Objects
 
 /**
@@ -117,6 +119,16 @@ class EvidenceItem private constructor(
         require(this.derivedFromIds.all { it.isNotBlank() }) { "derived ids must not be blank" }
         EvidenceChecks.requireLoadedClaimsNamed("derivedFrom", this.derivedFrom, "derivedFromIds", this.derivedFromIds)
     }
+
+    /**
+     * The hash, computed once. Each loaded claim hashes from its own stored value, so an item whose loaded claims
+     * share ancestors costs one hash per item object.
+     */
+    private val hash: Int = Objects.hash(
+        text, citation, confidence, effectiveConfidence, status,
+        recordedAt, revisedAt, this.derivedFromIds, this.derivedFrom, reinforceCount, this.temporal, score,
+        this.retrievals,
+    )
 
     /**
      * Returns a copy with [effectiveConfidence] set.
@@ -236,19 +248,45 @@ class EvidenceItem private constructor(
      * so `0.0` and `-0.0` differ.
      */
     override fun equals(other: Any?): Boolean =
-        other is EvidenceItem && text == other.text && citation == other.citation &&
+        this === other || (other is EvidenceItem && hash == other.hash && sameAs(other, IdentityHashMap()))
+
+    override fun hashCode(): Int = hash
+
+    /**
+     * Compares every property with [other], loaded claims last. Two items whose hashes differ are unequal at
+     * once. A pair of loaded claims found equal is recorded in [equalPairs] and not compared again, so two
+     * separately built graphs that share ancestors compare each pair of item objects once.
+     *
+     * @param other the item to compare with
+     * @param equalPairs for each item object, the item objects already found equal to it in this comparison
+     * @return true when every property is equal
+     */
+    private fun sameAs(
+        other: EvidenceItem,
+        equalPairs: IdentityHashMap<EvidenceItem, MutableSet<EvidenceItem>>,
+    ): Boolean {
+        if (hash != other.hash) return false
+        val fieldsEqual = text == other.text && citation == other.citation &&
             Objects.equals(confidence, other.confidence) &&
             Objects.equals(effectiveConfidence, other.effectiveConfidence) &&
             status == other.status && recordedAt == other.recordedAt &&
             revisedAt == other.revisedAt && derivedFromIds == other.derivedFromIds &&
-            derivedFrom == other.derivedFrom && reinforceCount == other.reinforceCount &&
-            temporal == other.temporal && Objects.equals(score, other.score) && retrievals == other.retrievals
-
-    override fun hashCode(): Int =
-        Objects.hash(
-            text, citation, confidence, effectiveConfidence, status,
-            recordedAt, revisedAt, derivedFromIds, derivedFrom, reinforceCount, temporal, score, retrievals,
-        )
+            reinforceCount == other.reinforceCount && temporal == other.temporal &&
+            Objects.equals(score, other.score) && retrievals == other.retrievals &&
+            derivedFrom.size == other.derivedFrom.size
+        if (!fieldsEqual) return false
+        derivedFrom.forEachIndexed { index, mine ->
+            val theirs = other.derivedFrom[index]
+            if (mine !== theirs) {
+                val known = equalPairs.getOrPut(mine) { Collections.newSetFromMap(IdentityHashMap()) }
+                if (theirs !in known) {
+                    if (!mine.sameAs(theirs, equalPairs)) return false
+                    known.add(theirs)
+                }
+            }
+        }
+        return true
+    }
 
     /**
      * Builds a copy of this item with the given parts replaced.

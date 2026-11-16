@@ -15,8 +15,6 @@
  */
 package com.embabel.dice.evidence
 
-import com.embabel.agent.core.ContextId
-
 /**
  * Argument checks shared by the evidence types.
  */
@@ -78,17 +76,19 @@ internal object EvidenceChecks {
 
     /**
      * Rejects two items that cite the same claim, by [Citation.sameClaimAs]. One pass remembers the first
-     * label seen for each claim id and context, and the first item that repeats one is reported.
+     * label seen for each claim id and context, and the first item that repeats one is reported. The lookup is
+     * keyed by strings, which a hash map can keep balanced when many ids share a hash code.
      *
      * @param items each item with the label used for it in the error message, such as `items[0]`
      * @throws IllegalArgumentException if two items cite the same claim, naming the earlier label, the later
      *   label, the claim id and the context
      */
     fun requireDistinctClaims(items: List<Pair<String, EvidenceItem>>) {
-        val firstLabelByClaim = HashMap<Pair<String, ContextId>, String>()
+        val firstLabelByContext = HashMap<String, HashMap<String, String>>()
         items.forEach { (label, item) ->
             val citation = item.citation
-            val earlier = firstLabelByClaim.putIfAbsent(citation.propositionId to citation.contextId, label)
+            val earlier = firstLabelByContext.getOrPut(citation.contextIdValue) { HashMap() }
+                .putIfAbsent(citation.propositionId, label)
             require(earlier == null) {
                 "$earlier and $label cite the same claim '${citation.propositionId}' " +
                     "in context '${citation.contextIdValue}'"

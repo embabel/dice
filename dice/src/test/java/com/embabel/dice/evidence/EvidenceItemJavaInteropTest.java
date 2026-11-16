@@ -18,6 +18,7 @@ package com.embabel.dice.evidence;
 import com.embabel.dice.temporal.TemporalMetadata;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -131,5 +132,45 @@ class EvidenceItemJavaInteropTest {
         EvidenceItem abstraction = item.withDerivedFromIds(List.of("p-1", "p-2"));
 
         assertNotEquals(abstraction.withDerivedFrom(List.of(source1)), abstraction.withDerivedFrom(List.of(source2)));
+    }
+
+    @Test
+    void itemsWhoseLoadedClaimsShareAncestorsHashAndCompareQuickly() {
+        EvidenceItem first = chainOfAbstractions(40, "Ada was born in 1815");
+        EvidenceItem second = chainOfAbstractions(40, "Ada was born in 1815");
+
+        int hash = assertTimeoutPreemptively(Duration.ofSeconds(2), () -> first.hashCode());
+        boolean equal = assertTimeoutPreemptively(Duration.ofSeconds(2), () -> first.equals(second));
+
+        assertTrue(equal);
+        assertEquals(hash, second.hashCode());
+    }
+
+    @Test
+    void itemsThatDifferOnlyInADeepAncestorAreNotEqual() {
+        EvidenceItem first = chainOfAbstractions(40, "Ada was born in 1815");
+        EvidenceItem second = chainOfAbstractions(40, "Ada was born in 1816");
+
+        assertNotEquals(first, second);
+    }
+
+    /**
+     * Builds a chain where p-0 and p-1 are observations and each later claim p-n is abstracted from the
+     * two before it, p-(n-1) and p-(n-2).
+     *
+     * @param last the number of the last claim in the chain
+     * @param firstText the text of p-0
+     * @return the claim p-last
+     */
+    private static EvidenceItem chainOfAbstractions(int last, String firstText) {
+        EvidenceItem older = EvidenceItem.of(firstText, Citation.of("p-0", "support-team"), 0.8);
+        EvidenceItem newer = EvidenceItem.of("Ada met Babbage", Citation.of("p-1", "support-team"), 0.8);
+        for (int n = 2; n <= last; n++) {
+            EvidenceItem next = EvidenceItem.of("Ada claim " + n, Citation.of("p-" + n, "support-team"), 0.7)
+                    .withDerivedFrom(List.of(newer, older));
+            older = newer;
+            newer = next;
+        }
+        return newer;
     }
 }

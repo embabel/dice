@@ -19,6 +19,7 @@ import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.spi.ConflictType;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -128,6 +129,21 @@ class EvidenceKindsJavaInteropTest {
                 () -> Evidence.conflicting(List.of(source1, source2, repeat), ConflictType.Contradiction.INSTANCE));
 
         assertEquals("items[0] and items[2] cite the same claim 'p-1' in context 'support-team'",
+                thrown.getMessage());
+    }
+
+    @Test
+    void conflictingNamesTheRepeatAmongManyDistinctClaims() {
+        List<EvidenceItem> items = new ArrayList<>();
+        for (int i = 0; i < 2000; i++) {
+            items.add(EvidenceItem.of("Ada claim " + i, Citation.of("q-" + i, "support-team"), 0.5));
+        }
+        items.add(EvidenceItem.of("Ada claim 7 again", Citation.of("q-7", "support-team"), 0.5));
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                () -> Evidence.conflicting(items, ConflictType.Contradiction.INSTANCE));
+
+        assertEquals("items[7] and items[2000] cite the same claim 'q-7' in context 'support-team'",
                 thrown.getMessage());
     }
 
