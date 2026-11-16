@@ -428,14 +428,18 @@ class PropositionPipeline private constructor(
      * Process a text once, with hash-based deduplication.
      * Ideal for one-shot ingestion of documents, notes, or other static text.
      *
+     * With a history store, it records the text as processed in that store once extraction succeeds.
+     * It saves no propositions and no entities.
+     *
      * @param text The text to process
      * @param sourceId Identifier for the source (used for chunk metadata and bookmark tracking)
      * @param context Analysis context with schema, entity resolver, etc.
      * @param historyStore Tracks what's been processed; null to skip dedup
      * @param contentHasher Strategy for computing content hashes
+     * @param additionalGrounding Extra ids to add to the grounding of each proposition
      * @return Result with propositions and entities, or null if already processed
      *
-     * Note: This method does NOT persist anything — it returns UNSAVED results. The caller
+     * Note: This method does NOT persist anything. It returns UNSAVED results. The caller
      * must persist the returned entities and propositions via
      * [PersistablePropositions.persist][PersistablePropositions.persist] within its own
      * transaction scope; nothing is written to any repository otherwise.
@@ -449,48 +453,33 @@ class PropositionPipeline private constructor(
         contentHasher: ContentHasher = Sha256ContentHasher,
         additionalGrounding: List<String> = emptyList(),
     ): ChunkPropositionResult? {
-        if (historyStore != null) {
-            val hash = contentHasher.hash(text)
-            if (historyStore.isProcessed(HashKey(context.contextId, hash))) {
-                logger.debug("Content already processed (hash: {})", hash.take(8))
-                return null
-            }
-            // Use sourceId AS the chunk id, not just parentId. This
-            // makes proposition.grounding carry the caller's stable
-            // sourceId (e.g. `email:<threadId>`, `file:<name>`,
-            // `url:<href>`) instead of an opaque UUID. Downstream
-            // wiring (GroundingWiringService) can then resolve that id
-            // directly to a stored entity for one-hop provenance.
-            // Backward-compatible: callers that pass UUID-shaped
-            // sourceIds get UUID chunk ids exactly as before.
-            val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
-            val result = processChunk(chunk, context)
-            historyStore.recordProcessed(
-                ProcessedChunkRecord(
-                    bookmarkKey = BookmarkKey(context.contextId, sourceId),
-                    hashKey = HashKey(context.contextId, hash),
-                    startIndex = 0,
-                    endIndex = 1,
-                    processedAt = Instant.now(),
-                )
-            )
-            return result.withAdditionalGrounding(additionalGrounding)
+        if (historyStore == null) return processText(text, sourceId, context, additionalGrounding)
+        val hash = contentHasher.hash(text)
+        if (historyStore.isProcessed(HashKey(context.contextId, hash))) {
+            logger.debug("Content already processed (hash: {})", hash.take(8))
+            return null
         }
-        // Same id-as-sourceId convention as the history-store branch:
-        // proposition.grounding carries the caller's stable sourceId so
-        // GroundingWiringService can resolve it to a source entity.
-        val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
-        return processChunk(chunk, context).withAdditionalGrounding(additionalGrounding)
+        val result = processText(text, sourceId, context, additionalGrounding)
+        historyStore.recordProcessed(
+            ProcessedChunkRecord(
+                bookmarkKey = BookmarkKey(context.contextId, sourceId),
+                hashKey = HashKey(context.contextId, hash),
+                startIndex = 0,
+                endIndex = 1,
+                processedAt = Instant.now(),
+            )
+        )
+        return result
     }
 
     /**
-     * Processes a text as a single chunk, without any deduplication. Use this when no history
-     * store is involved, since the result is never null.
-     *
-     * Like [processOnce], this records nothing and returns an UNSAVED result. The caller must
-     * persist it via [PersistablePropositions.persist][PersistablePropositions.persist].
+     * Processes a text as a single chunk. It checks no history and records none. Like processOnce,
+     * it saves no propositions: the result is unsaved.
      *
      * The source id becomes the chunk id, so the grounding of each proposition carries it.
+     *
+     * Note: This method does NOT persist anything. The caller must persist the result via
+     * [PersistablePropositions.persist][PersistablePropositions.persist].
      *
      * @param text The text to process
      * @param sourceId Identifier for the source, used as both the chunk id and the parent id
@@ -505,6 +494,11 @@ class PropositionPipeline private constructor(
         context: SourceAnalysisContext,
         additionalGrounding: List<String> = emptyList(),
     ): ChunkPropositionResult {
+        // Use sourceId AS the chunk id, not just parentId. This makes proposition.grounding
+        // carry the caller's stable sourceId (e.g. `email:<threadId>`, `file:<name>`,
+        // `url:<href>`) instead of an opaque UUID, so GroundingWiringService can resolve that
+        // id straight to a stored entity for one-hop provenance. Callers that pass UUID-shaped
+        // sourceIds get UUID chunk ids exactly as before.
         val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
         return processChunk(chunk, context).withAdditionalGrounding(additionalGrounding)
     }
