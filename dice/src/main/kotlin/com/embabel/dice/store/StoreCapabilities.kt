@@ -145,11 +145,11 @@ class StoreCapabilities private constructor(
      * @param capability The capability to remove.
      * @return A descriptor that does not support [capability]. Removing
      *   [StoreCapability.FILTERED_VECTOR_SEARCH] from a descriptor that supports it sets
-     *   [VectorFiltering.NONE].
+     *   [VectorFiltering.UNDECLARED]. Removing any other capability keeps the mode.
      */
     fun without(capability: StoreCapability): StoreCapabilities =
         if (capability == StoreCapability.FILTERED_VECTOR_SEARCH && supports(capability)) {
-            StoreCapabilities(supported - capability, VectorFiltering.NONE)
+            StoreCapabilities(supported - capability, VectorFiltering.UNDECLARED)
         } else {
             StoreCapabilities(supported - capability, vectorFiltering)
         }
@@ -179,7 +179,7 @@ class StoreCapabilities private constructor(
         @JvmField
         val NONE: StoreCapabilities = StoreCapabilities(emptySet(), VectorFiltering.NONE)
 
-        /** A store that has not published its capabilities. */
+        /** No optional capability and no stated filtering mode. Equal to `of()`. */
         @JvmField
         val UNDECLARED: StoreCapabilities = StoreCapabilities(emptySet(), VectorFiltering.UNDECLARED)
 
@@ -209,13 +209,18 @@ class StoreCapabilities private constructor(
          * @param capabilities The capabilities the store has.
          * @return A descriptor that supports them. Its filtering mode is
          *   [VectorFiltering.BEFORE_TOP_K] when they include
-         *   [StoreCapability.FILTERED_VECTOR_SEARCH], and [VectorFiltering.NONE] otherwise.
+         *   [StoreCapability.FILTERED_VECTOR_SEARCH], and [VectorFiltering.UNDECLARED] otherwise.
+         *   `of()` equals [UNDECLARED].
+         * @throws IllegalArgumentException when an element of [capabilities] is null.
+         * @throws NullPointerException when [capabilities] itself is null.
          */
         @JvmStatic
         fun of(vararg capabilities: StoreCapability): StoreCapabilities {
+            val given: Array<out StoreCapability?> = capabilities
+            require(given.none { it == null }) { "A capability must not be null" }
             val supported = capabilities.toSet()
             val filtering =
-                if (StoreCapability.FILTERED_VECTOR_SEARCH in supported) VectorFiltering.BEFORE_TOP_K else VectorFiltering.NONE
+                if (StoreCapability.FILTERED_VECTOR_SEARCH in supported) VectorFiltering.BEFORE_TOP_K else VectorFiltering.UNDECLARED
             return StoreCapabilities(supported, filtering)
         }
 

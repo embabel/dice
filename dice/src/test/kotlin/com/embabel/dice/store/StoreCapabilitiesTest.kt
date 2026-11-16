@@ -83,7 +83,12 @@ class StoreCapabilitiesTest {
             VectorFiltering.BEFORE_TOP_K,
             StoreCapabilities.of(StoreCapability.FILTERED_VECTOR_SEARCH).vectorFiltering
         )
-        assertEquals(VectorFiltering.NONE, StoreCapabilities.of().vectorFiltering)
+        assertEquals(VectorFiltering.UNDECLARED, StoreCapabilities.of().vectorFiltering)
+        assertEquals(StoreCapabilities.UNDECLARED, StoreCapabilities.of())
+        assertThrows(IllegalArgumentException::class.java) {
+            @Suppress("UNCHECKED_CAST")
+            StoreCapabilities.of(*(arrayOfNulls<StoreCapability>(1) as Array<StoreCapability>))
+        }
         assertTrue(StoreCapabilities.NONE.supported.isEmpty())
         assertEquals(VectorFiltering.UNDECLARED, StoreCapabilities.UNDECLARED.vectorFiltering)
         assertTrue(StoreCapabilities.UNDECLARED.supported.isEmpty())
@@ -95,7 +100,14 @@ class StoreCapabilitiesTest {
         val b = a.with(StoreCapability.FILTERED_VECTOR_SEARCH)
         assertEquals(VectorFiltering.BEFORE_TOP_K, b.vectorFiltering)
         assertFalse(a.supports(StoreCapability.FILTERED_VECTOR_SEARCH))
-        assertEquals(StoreCapabilities.NONE, b.without(StoreCapability.FILTERED_VECTOR_SEARCH))
+        val f = StoreCapability.FILTERED_VECTOR_SEARCH
+        assertEquals(VectorFiltering.UNDECLARED, b.without(f).vectorFiltering)
+        assertEquals(StoreCapabilities.of(), StoreCapabilities.of(f).without(f))
+        assertEquals(
+            VectorFiltering.AFTER_TOP_K,
+            StoreCapabilities.NONE.withVectorFiltering(VectorFiltering.AFTER_TOP_K).without(f).vectorFiltering
+        )
+        assertEquals(StoreCapabilities.of(), StoreCapabilities.of().without(f))
     }
 
     @Test
