@@ -165,10 +165,10 @@ class EvidenceTest {
             Evidence.conflicting(listOf(alice, sameClaim), ConflictType.Contradiction)
         }
 
-        val conflicting = Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.WorldProgression)
+        val conflicting = Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Contradiction)
 
         assertEquals(listOf(alice, aliceElsewhere), conflicting.items)
-        assertEquals(ConflictType.WorldProgression, conflicting.conflictType)
+        assertEquals(ConflictType.Contradiction, conflicting.conflictType)
     }
 
     @Test
@@ -183,15 +183,16 @@ class EvidenceTest {
     }
 
     @Test
-    fun `a when over the four kinds needs no else branch`() {
+    fun `a when over the five kinds needs no else branch`() {
         val labels = listOf(
             Evidence.recorded(listOf(alice)),
-            Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, listOf("prop-1")),
+            Evidence.derived("Alice is a resident.", 0.7, DerivationRule.of("prolog"), listOf("prop-1")),
             Evidence.missing(searched),
             Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Contradiction),
+            Evidence.superseded(aliceElsewhere, listOf(alice), ConflictType.WorldProgression),
         ).map(::label)
 
-        assertEquals(4, labels.toSet().size)
+        assertEquals(5, labels.toSet().size)
     }
 
     @Test
@@ -202,8 +203,10 @@ class EvidenceTest {
             Evidence.derived("Alice is a resident.", 0.7, rule, listOf("prop-1")).withInputs(listOf(alice)) to
                 Evidence.derived("Alice is a resident.", 0.7, rule, listOf("prop-1")).withInputs(listOf(alice)),
             Evidence.missing(searched) to Evidence.missing(Searched.of("ctx-main").withQuery("where does Alice live")),
-            Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Revision) to
-                Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Revision),
+            Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Contradiction) to
+                Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Contradiction),
+            Evidence.superseded(aliceElsewhere, listOf(alice), ConflictType.Revision) to
+                Evidence.superseded(aliceElsewhere, listOf(alice), ConflictType.Revision),
         )
         pairs.forEach { (first, second) ->
             assertEquals(first, second)
@@ -330,12 +333,13 @@ class EvidenceTest {
      * Names the kind of an evidence value with a `when` that has no `else` branch.
      *
      * @param evidence the value to name
-     * @return a different label for each of the four kinds
+     * @return a different label for each of the five kinds
      */
     private fun label(evidence: Evidence): String = when (evidence) {
         is Evidence.Recorded -> "recorded"
         is Evidence.Derived -> "derived"
         is Evidence.Missing -> "missing"
         is Evidence.Conflicting -> "conflicting"
+        is Evidence.Superseded -> "superseded"
     }
 }

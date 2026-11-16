@@ -123,14 +123,17 @@ class EvidenceJavaInteropTest {
         EvidenceItem other = EvidenceItem.of("Ada wrote a note", Citation.of("p-18", "support-team"), 0.6);
 
         Evidence recorded = Evidence.recorded(List.of(item));
-        Evidence derived = Evidence.derived("Ada is a mathematician", 0.8, DerivationRule.ABSTRACTION, List.of("p-17"));
+        Evidence derived =
+                Evidence.derived("Ada is a mathematician", 0.8, DerivationRule.of("prolog"), List.of("p-17"));
         Evidence missing = Evidence.missing(Searched.of("support-team").withQuery("who is Ada"));
         Evidence conflicting = Evidence.conflicting(List.of(item, other), ConflictType.Contradiction.INSTANCE);
+        Evidence superseded = Evidence.superseded(other, List.of(item), ConflictType.Revision.INSTANCE);
 
         assertEquals("recorded 1", describe(recorded));
         assertEquals("derived Ada is a mathematician", describe(derived));
         assertEquals("missing who is Ada", describe(missing));
         assertEquals("conflicting 2", describe(conflicting));
+        assertEquals("superseded p-17", describe(superseded));
     }
 
     @Test
@@ -267,9 +270,9 @@ class EvidenceJavaInteropTest {
 
         RevisionResult.Contradicted contradicted =
                 new RevisionResult.Contradicted(claim, secondClaim(), ConflictType.Contradiction.INSTANCE);
-        Evidence.Conflicting conflicting =
+        Evidence.Disagreement disagreement =
                 converter.withClock(Clock.fixed(recordedAt, ZoneOffset.UTC)).fromContradiction(contradicted);
-        assertEquals(2, conflicting.getItems().size());
+        assertEquals(2, assertInstanceOf(Evidence.Conflicting.class, disagreement).getItems().size());
     }
 
     /**
@@ -284,6 +287,8 @@ class EvidenceJavaInteropTest {
             case Evidence.Derived derived -> "derived " + derived.getConclusion();
             case Evidence.Missing missing -> "missing " + missing.getSearched().getQuery();
             case Evidence.Conflicting conflicting -> "conflicting " + conflicting.getItems().size();
+            case Evidence.Superseded superseded ->
+                    "superseded " + superseded.getPrevious().get(0).getCitation().getPropositionId();
         };
     }
 

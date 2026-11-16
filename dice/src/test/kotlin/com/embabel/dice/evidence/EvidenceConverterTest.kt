@@ -338,13 +338,14 @@ class EvidenceConverterTest {
         val original = claim("p-1", status = PropositionStatus.CONTRADICTED)
         val new = claim("p-2", text = "Alice lives in Paris.")
 
-        val evidence = converter.fromContradiction(
-            RevisionResult.Contradicted(original, new, ConflictType.WorldProgression),
+        val evidence = assertInstanceOf(
+            Evidence.Conflicting::class.java,
+            converter.fromContradiction(RevisionResult.Contradicted(original, new, ConflictType.Contradiction)),
         )
 
         assertEquals(original.id, evidence.items[0].citation.propositionId)
         assertEquals(new.id, evidence.items[1].citation.propositionId)
-        assertEquals(ConflictType.WorldProgression, evidence.conflictType)
+        assertEquals(ConflictType.Contradiction, evidence.conflictType)
         assertEquals(original.status, evidence.items[0].status)
     }
 

@@ -17,9 +17,11 @@ package com.embabel.dice.evidence
 
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.revision.RevisionResult
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.query.graph.PropositionLineage
+import com.embabel.dice.spi.ConflictType
 import java.time.Clock
 
 /**
@@ -185,18 +187,30 @@ class EvidenceConverter private constructor(
     }
 
     /**
-     * Converts a contradiction into [Evidence.Conflicting] with the original claim first, the new
-     * claim second, and the contradiction's conflict type.
+     * Converts a contradiction by its conflict type, which the result keeps.
+     *
+     * | Conflict type | Result |
+     * |---|---|
+     * | `Contradiction`, `Custom` | [Evidence.Conflicting], the original first and the new claim second |
+     * | `Revision`, `WorldProgression` | [Evidence.Superseded], the new claim current and the original previous |
+     *
+     * Each item keeps its stored status, so a pinned original reads [PropositionStatus.ACTIVE].
      *
      * @param contradicted the contradiction to convert
-     * @return the conflicting evidence
-     * @throws IllegalArgumentException if either claim text or claim id is blank, or both claims have the same id
+     * @return the conflicting or superseded evidence
+     * @throws IllegalArgumentException if either claim text or claim id is blank, or both claims are the same
+     *   claim id in the same context
      */
-    fun fromContradiction(contradicted: RevisionResult.Contradicted): Evidence.Conflicting =
-        Evidence.conflicting(
-            listOf(item(contradicted.original), item(contradicted.new)),
-            contradicted.conflictType,
-        )
+    fun fromContradiction(contradicted: RevisionResult.Contradicted): Evidence.Disagreement {
+        val original = item(contradicted.original)
+        val new = item(contradicted.new)
+        return when (val conflictType = contradicted.conflictType) {
+            ConflictType.Contradiction, is ConflictType.Custom ->
+                Evidence.conflicting(listOf(original, new), conflictType)
+            ConflictType.Revision, ConflictType.WorldProgression ->
+                Evidence.superseded(new, listOf(original), conflictType)
+        }
+    }
 
     /**
      * Builds the citation for a claim from the given chunk ids and provenance.

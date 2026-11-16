@@ -120,8 +120,10 @@ class DerivationRule private constructor(
  * | [Derived] | a conclusion worked out from recorded claims |
  * | [Missing] | nothing to return |
  * | [Conflicting] | claims that disagree with each other |
+ * | [Superseded] | a claim that replaced earlier claims |
  *
- * The interface is sealed, so a Java `switch` and a Kotlin `when` over the four kinds need no fallback branch.
+ * [Conflicting] and [Superseded] are both a [Disagreement], which carries the conflict type. The interface is
+ * sealed, so a Java `switch` and a Kotlin `when` over the five kinds need no fallback branch.
  *
  * ```java
  * String text = switch (evidence) {
@@ -129,6 +131,7 @@ class DerivationRule private constructor(
  *     case Evidence.Derived derived -> derived.getConclusion();
  *     case Evidence.Missing missing -> "nothing to return";
  *     case Evidence.Conflicting conflicting -> "claims disagree";
+ *     case Evidence.Superseded superseded -> "a claim was replaced";
  * };
  * ```
  *
@@ -138,6 +141,7 @@ class DerivationRule private constructor(
  *     is Evidence.Derived -> evidence.conclusion
  *     is Evidence.Missing -> "nothing to return"
  *     is Evidence.Conflicting -> "claims disagree"
+ *     is Evidence.Superseded -> "a claim was replaced"
  * }
  * ```
  */
@@ -333,22 +337,45 @@ sealed interface Evidence {
     }
 
     /**
+     * Stored claims that do not agree: either they conflict, or one replaced the others.
+     *
+     * A Java `switch` and a Kotlin `when` over the two kinds need no fallback branch.
+     *
+     * ```java
+     * String text = switch (disagreement) {
+     *     case Evidence.Conflicting conflicting -> conflicting.getItems().size() + " claims disagree";
+     *     case Evidence.Superseded superseded -> superseded.getPrevious().size() + " claims replaced";
+     * };
+     * ```
+     */
+    sealed interface Disagreement : Evidence {
+
+        /** How the claims disagree. */
+        val conflictType: ConflictType
+    }
+
+    /**
      * Claims that disagree with each other.
      *
      * A caller gets this kind when the lookup finds stored claims that cannot all hold, and reports how they
-     * conflict in [conflictType].
+     * conflict in [conflictType]. The conflict type is [ConflictType.Contradiction] or [ConflictType.Custom].
      */
     class Conflicting private constructor(
         items: List<EvidenceItem>,
-        /** How the claims conflict. */
-        val conflictType: ConflictType,
-    ) : Evidence {
+        /** How the claims conflict: [ConflictType.Contradiction] or [ConflictType.Custom]. */
+        override val conflictType: ConflictType,
+    ) : Disagreement {
 
         /** The claims that disagree. At least two, and no two cite the same claim id in the same context. */
         val items: List<EvidenceItem> = EvidenceChecks.copyOf("items", items)
 
         init {
             require(this.items.size >= 2) { "a conflict needs at least two items, was ${this.items.size}" }
+            val conflict = when (conflictType) {
+                ConflictType.Contradiction, is ConflictType.Custom -> true
+                ConflictType.Revision, ConflictType.WorldProgression -> false
+            }
+            require(conflict) { "conflictType $conflictType is a replacement, use Evidence.superseded" }
             EvidenceChecks.requireDistinctClaims(
                 this.items.mapIndexed { index, item -> "items[$index]" to item },
             )
@@ -373,6 +400,71 @@ sealed interface Evidence {
             @JvmSynthetic
             internal fun create(items: List<EvidenceItem>, conflictType: ConflictType): Conflicting =
                 Conflicting(items, conflictType)
+        }
+    }
+
+    /**
+     * A claim that replaced earlier claims.
+     *
+     * A caller gets this kind when a stored claim holds in place of claims it corrected or that the world moved
+     * past. Each item keeps its stored status, so a pinned earlier claim still reads
+     * [PropositionStatus.ACTIVE].
+     */
+    class Superseded private constructor(
+        /** The claim that holds. */
+        val current: EvidenceItem,
+        previous: List<EvidenceItem>,
+        /**
+         * How [current] replaced the first claim in [previous]: [ConflictType.Revision],
+         * [ConflictType.WorldProgression] or [ConflictType.Custom].
+         */
+        override val conflictType: ConflictType,
+    ) : Disagreement {
+
+        /**
+         * The claims [current] replaced, newest first, so the first one is the claim [current] replaced. Never
+         * empty, and no two of these and [current] cite the same claim id in the same context.
+         */
+        val previous: List<EvidenceItem> = EvidenceChecks.copyOf("previous", previous)
+
+        init {
+            require(this.previous.isNotEmpty()) { "previous must not be empty" }
+            val replacement = when (conflictType) {
+                ConflictType.Revision, ConflictType.WorldProgression, is ConflictType.Custom -> true
+                ConflictType.Contradiction -> false
+            }
+            require(replacement) { "conflictType $conflictType is a conflict, use Evidence.conflicting" }
+            EvidenceChecks.requireDistinctClaims(
+                listOf("current" to current) +
+                    this.previous.mapIndexed { index, item -> "previous[$index]" to item },
+            )
+        }
+
+        override fun equals(other: Any?): Boolean =
+            other is Superseded && current == other.current && previous == other.previous &&
+                conflictType == other.conflictType
+
+        override fun hashCode(): Int = Objects.hash(current, previous, conflictType)
+
+        override fun toString(): String =
+            "Superseded(current=$current, previous=$previous, conflictType=$conflictType)"
+
+        internal companion object {
+
+            /**
+             * Calls the private constructor for the [Evidence.superseded] factory.
+             *
+             * @param current the claim that holds
+             * @param previous the claims it replaced, newest first
+             * @param conflictType how the current claim replaced the first previous claim
+             * @return the new value
+             */
+            @JvmSynthetic
+            internal fun create(
+                current: EvidenceItem,
+                previous: List<EvidenceItem>,
+                conflictType: ConflictType,
+            ): Superseded = Superseded(current, previous, conflictType)
         }
     }
 
@@ -420,11 +512,27 @@ sealed interface Evidence {
          * @param conflictType how the claims conflict
          * @return the new value
          * @throws IllegalArgumentException if [items] holds a null, has fewer than two items, or has two items
-         *   that cite the same claim id in the same context
+         *   that cite the same claim id in the same context, or if [conflictType] is [ConflictType.Revision] or
+         *   [ConflictType.WorldProgression], which [superseded] takes
          */
         @JvmStatic
         fun conflicting(items: List<EvidenceItem>, conflictType: ConflictType): Conflicting =
             Conflicting.create(items, conflictType)
+
+        /**
+         * Creates a [Superseded] value. The list is copied.
+         *
+         * @param current the claim that holds
+         * @param previous the claims [current] replaced, newest first
+         * @param conflictType how [current] replaced the first claim in [previous]
+         * @return the new value
+         * @throws IllegalArgumentException if [previous] is empty or holds a null, if two of [current] and
+         *   [previous] cite the same claim id in the same context, or if [conflictType] is
+         *   [ConflictType.Contradiction], which [conflicting] takes
+         */
+        @JvmStatic
+        fun superseded(current: EvidenceItem, previous: List<EvidenceItem>, conflictType: ConflictType): Superseded =
+            Superseded.create(current, previous, conflictType)
 
         /**
          * Returns [Recorded] when [items] is not empty, otherwise [Missing] for [searched].
