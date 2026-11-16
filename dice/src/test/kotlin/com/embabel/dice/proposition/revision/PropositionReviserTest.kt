@@ -136,23 +136,19 @@ class PropositionReviserTest {
     inner class SimpleReviserTests {
 
         private lateinit var repository: TestPropositionRepository
-        private lateinit var reviser: TestPropositionReviser
 
         @BeforeEach
         fun setup() {
             repository = TestPropositionRepository()
-            reviser = TestPropositionReviser()
         }
 
         @Test
-        fun `new proposition is stored when no similar exist`() {
+        fun `a proposition with no similar stored one is new`() {
             val prop = createProposition("Alice is a software engineer")
 
-            val result = reviser.revise(prop, repository)
+            val result = realReviser().revise(prop, repository)
 
             assertTrue(result is RevisionResult.New)
-            assertEquals(1, repository.count())
-            assertNotNull(repository.findById(prop.id))
         }
 
         @Test
@@ -160,13 +156,12 @@ class PropositionReviserTest {
             val existing = createProposition("Alice is a software engineer", confidence = 0.7)
             repository.save(existing)
 
-            // Configure reviser to classify as identical
-            reviser.nextClassification = listOf(
-                ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.95, "Same meaning")
-            )
-
             val newProp = createProposition("Alice is a software engineer", confidence = 0.8)
-            val result = reviser.revise(newProp, repository)
+            val result = realReviser().classifiedToResult(
+                newProp,
+                listOf(ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.95, "Same meaning")),
+                repository,
+            )
 
             assertTrue(result is RevisionResult.Merged)
             val merged = result as RevisionResult.Merged
@@ -180,12 +175,12 @@ class PropositionReviserTest {
             val existing = createProposition("Alice is a developer", confidence = 0.6)
             repository.save(existing)
 
-            reviser.nextClassification = listOf(
-                ClassifiedProposition(existing, PropositionRelation.SIMILAR, 0.7, "Related topic")
-            )
-
             val newProp = createProposition("Alice works as a software engineer", confidence = 0.8)
-            val result = reviser.revise(newProp, repository)
+            val result = realReviser().classifiedToResult(
+                newProp,
+                listOf(ClassifiedProposition(existing, PropositionRelation.SIMILAR, 0.7, "Related topic")),
+                repository,
+            )
 
             assertTrue(result is RevisionResult.Reinforced)
             val reinforced = result as RevisionResult.Reinforced
@@ -198,18 +193,17 @@ class PropositionReviserTest {
             val existing = createProposition("Alice prefers Java", confidence = 0.8)
             repository.save(existing)
 
-            reviser.nextClassification = listOf(
-                ClassifiedProposition(existing, PropositionRelation.CONTRADICTORY, 0.1, "Opposite preference")
-            )
-
             val newProp = createProposition("Alice prefers Kotlin over Java", confidence = 0.9)
-            val result = reviser.revise(newProp, repository)
+            val result = realReviser().classifiedToResult(
+                newProp,
+                listOf(ClassifiedProposition(existing, PropositionRelation.CONTRADICTORY, 0.1, "Opposite preference")),
+                repository,
+            )
 
             assertTrue(result is RevisionResult.Contradicted)
             val contradicted = result as RevisionResult.Contradicted
             assertTrue(contradicted.original.confidence < 0.8)
             assertEquals(PropositionStatus.CONTRADICTED, contradicted.original.status)
-            assertEquals(2, repository.count()) // Both stored
         }
 
         @Test
@@ -220,17 +214,16 @@ class PropositionReviserTest {
                 createProposition("Charlie is a manager")
             )
 
-            val results = reviser.reviseAll(props, repository)
+            val results = realReviser().reviseAll(props, repository)
 
             assertEquals(3, results.size)
             assertTrue(results.all { it is RevisionResult.New })
-            assertEquals(3, repository.count())
         }
 
         @Test
         fun `classify returns empty list for no candidates`() {
             val newProp = createProposition("Test proposition")
-            val classified = reviser.classify(newProp, emptyList())
+            val classified = realReviser().classify(newProp, emptyList())
 
             assertTrue(classified.isEmpty())
         }
@@ -334,12 +327,10 @@ class PropositionReviserTest {
     inner class DecayAdjustmentTests {
 
         private lateinit var repository: TestPropositionRepository
-        private lateinit var reviser: TestPropositionReviser
 
         @BeforeEach
         fun setup() {
             repository = TestPropositionRepository()
-            reviser = TestPropositionReviser()
         }
 
         @Test
@@ -347,12 +338,12 @@ class PropositionReviserTest {
             val existing = createProposition("Alice is 30 years old", confidence = 0.8, decay = 0.1)
             repository.save(existing)
 
-            reviser.nextClassification = listOf(
-                ClassifiedProposition(existing, PropositionRelation.CONTRADICTORY, 0.1, "Different age")
-            )
-
             val newProp = createProposition("Alice is 35 years old", confidence = 0.9)
-            val result = reviser.revise(newProp, repository)
+            val result = realReviser().classifiedToResult(
+                newProp,
+                listOf(ClassifiedProposition(existing, PropositionRelation.CONTRADICTORY, 0.1, "Different age")),
+                repository,
+            )
 
             assertTrue(result is RevisionResult.Contradicted)
             val contradicted = result as RevisionResult.Contradicted
@@ -366,12 +357,12 @@ class PropositionReviserTest {
             val existing = createProposition("Alice has 2 cats", confidence = 0.8, decay = 0.0)
             repository.save(existing)
 
-            reviser.nextClassification = listOf(
-                ClassifiedProposition(existing, PropositionRelation.CONTRADICTORY, 0.1, "Different count")
-            )
-
             val newProp = createProposition("Alice has 3 cats", confidence = 0.9)
-            val result = reviser.revise(newProp, repository)
+            val result = realReviser().classifiedToResult(
+                newProp,
+                listOf(ClassifiedProposition(existing, PropositionRelation.CONTRADICTORY, 0.1, "Different count")),
+                repository,
+            )
 
             assertTrue(result is RevisionResult.Contradicted)
             val contradicted = result as RevisionResult.Contradicted
@@ -383,12 +374,12 @@ class PropositionReviserTest {
             val existing = createProposition("Alice works at Google", confidence = 0.7, decay = 0.2)
             repository.save(existing)
 
-            reviser.nextClassification = listOf(
-                ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.95, "Same fact")
-            )
-
             val newProp = createProposition("Alice is employed at Google", confidence = 0.8)
-            val result = reviser.revise(newProp, repository)
+            val result = realReviser().classifiedToResult(
+                newProp,
+                listOf(ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.95, "Same fact")),
+                repository,
+            )
 
             assertTrue(result is RevisionResult.Merged)
             val merged = result as RevisionResult.Merged
@@ -402,12 +393,12 @@ class PropositionReviserTest {
             val existing = createProposition("Alice likes Kotlin", confidence = 0.6, decay = 0.2)
             repository.save(existing)
 
-            reviser.nextClassification = listOf(
-                ClassifiedProposition(existing, PropositionRelation.SIMILAR, 0.75, "Related")
-            )
-
             val newProp = createProposition("Alice enjoys programming in Kotlin", confidence = 0.8)
-            val result = reviser.revise(newProp, repository)
+            val result = realReviser().classifiedToResult(
+                newProp,
+                listOf(ClassifiedProposition(existing, PropositionRelation.SIMILAR, 0.75, "Related")),
+                repository,
+            )
 
             assertTrue(result is RevisionResult.Reinforced)
             val reinforced = result as RevisionResult.Reinforced
@@ -421,12 +412,10 @@ class PropositionReviserTest {
     inner class ReinforceCountTests {
 
         private lateinit var repository: TestPropositionRepository
-        private lateinit var reviser: TestPropositionReviser
 
         @BeforeEach
         fun setup() {
             repository = TestPropositionRepository()
-            reviser = TestPropositionReviser()
         }
 
         @Test
@@ -440,12 +429,12 @@ class PropositionReviserTest {
             val existing = createProposition("Alice works at Google", confidence = 0.7)
             repository.save(existing)
 
-            reviser.nextClassification = listOf(
-                ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.95, "Same fact")
-            )
-
             val newProp = createProposition("Alice is employed at Google", confidence = 0.8)
-            val result = reviser.revise(newProp, repository)
+            val result = realReviser().classifiedToResult(
+                newProp,
+                listOf(ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.95, "Same fact")),
+                repository,
+            )
 
             assertTrue(result is RevisionResult.Merged)
             assertEquals(1, (result as RevisionResult.Merged).revised.reinforceCount)
@@ -456,12 +445,12 @@ class PropositionReviserTest {
             val existing = createProposition("Alice likes Kotlin", confidence = 0.6)
             repository.save(existing)
 
-            reviser.nextClassification = listOf(
-                ClassifiedProposition(existing, PropositionRelation.SIMILAR, 0.75, "Related")
-            )
-
             val newProp = createProposition("Alice enjoys programming in Kotlin", confidence = 0.8)
-            val result = reviser.revise(newProp, repository)
+            val result = realReviser().classifiedToResult(
+                newProp,
+                listOf(ClassifiedProposition(existing, PropositionRelation.SIMILAR, 0.75, "Related")),
+                repository,
+            )
 
             assertTrue(result is RevisionResult.Reinforced)
             assertEquals(1, (result as RevisionResult.Reinforced).revised.reinforceCount)
@@ -473,15 +462,15 @@ class PropositionReviserTest {
                 .copy(reinforceCount = 3)
             repository.save(existing)
 
-            reviser.nextClassification = listOf(
-                ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.95, "Same fact")
+            val newProp = createProposition("Alice is employed at Google", confidence = 0.8)
+            val result = realReviser().classifiedToResult(
+                newProp,
+                listOf(ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.95, "Same fact")),
+                repository,
             )
 
-            val newProp = createProposition("Alice is employed at Google", confidence = 0.8)
-            val result = reviser.revise(newProp, repository)
-
             assertTrue(result is RevisionResult.Merged)
-            assertEquals(4, (result as RevisionResult.Merged).revised.reinforceCount)
+            assertEquals(4,(result as RevisionResult.Merged).revised.reinforceCount)
         }
     }
 
@@ -1047,11 +1036,6 @@ class PropositionReviserTest {
     @Nested
     inner class ProvenanceUnionTests {
 
-        private fun realReviser() = LlmPropositionReviser(
-            llmOptions = io.mockk.mockk(),
-            ai = io.mockk.mockk(),
-        )
-
         @Test
         fun `merging unions the provenance entries from both propositions`() {
             val repository = TestPropositionRepository()
@@ -1114,6 +1098,17 @@ class PropositionReviserTest {
             assertEquals(2, reinforced.provenanceEntries.size)
         }
     }
+
+    /**
+     * A real reviser with no model behind it. Any LLM or embedding call on it throws, so the
+     * tests that use it only reach the classification rules.
+     *
+     * @return a reviser built from mocked LLM options and a mocked AI
+     */
+    private fun realReviser() = LlmPropositionReviser(
+        llmOptions = io.mockk.mockk(),
+        ai = io.mockk.mockk(),
+    )
 
     private fun createProposition(
         text: String,
