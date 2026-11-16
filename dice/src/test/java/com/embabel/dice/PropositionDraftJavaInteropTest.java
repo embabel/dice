@@ -457,4 +457,46 @@ class PropositionDraftJavaInteropTest {
         assertThrows(UnsupportedOperationException.class, () -> d.getMetadata().put("extra", 1));
         assertThrows(UnsupportedOperationException.class, () -> d.getProvenanceEntries().clear());
     }
+
+    @Test
+    void withProvenanceKeepsARepeatedEntryAsGiven() {
+        Proposition p = Proposition.draft("acme", "Alice lives in Paris", 0.9)
+                .withProvenance(List.of(FIRST_SOURCE, FIRST_SOURCE))
+                .toProposition();
+
+        assertEquals(2, p.getProvenanceEntries().size());
+        assertEquals(List.of(FIRST_SOURCE, FIRST_SOURCE), p.getProvenanceEntries());
+    }
+
+    @Test
+    void toDraftRoundTripKeepsARepeatedProvenanceEntry() {
+        Proposition p = Proposition.create(
+                "p-dup",
+                "acme",
+                "Alice lives in Paris",
+                List.of(ALICE),
+                0.9,
+                0.0,
+                0.5,
+                null,
+                List.of(),
+                CREATED,
+                CREATED,
+                CREATED,
+                PropositionStatus.ACTIVE,
+                0,
+                List.of(),
+                0,
+                Map.of(),
+                null,
+                null,
+                new ArrayList<>(List.of(FIRST_SOURCE, FIRST_SOURCE)));
+
+        Proposition rebuilt = p.toDraft()
+                .withProvenance(p.getProvenanceEntries())
+                .toProposition();
+
+        assertEquals(2, rebuilt.getProvenanceEntries().size());
+        assertEquals(p, rebuilt);
+    }
 }

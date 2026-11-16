@@ -225,9 +225,9 @@ class PropositionDraft private constructor(
     /** Sets the temporal details. */
     fun withTemporal(temporal: TemporalMetadata?): PropositionDraft = PropositionDraft(origin, values.copy(temporal = temporal))
 
-    /** Replaces the provenance entries with [entries], keeping each distinct entry once. */
+    /** Replaces the provenance entries with a read-only copy of [entries], as given. */
     fun withProvenance(entries: List<ProvenanceEntry>): PropositionDraft =
-        PropositionDraft(origin, values.copy(provenanceEntries = Collections.unmodifiableList(entries.distinct())))
+        PropositionDraft(origin, values.copy(provenanceEntries = Collections.unmodifiableList(ArrayList(entries))))
 
     /**
      * Builds the proposition through its primary constructor.
