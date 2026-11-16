@@ -145,25 +145,73 @@ sequenceDiagram
 A model sometimes attaches a mention to a proposition that does not name that entity, usually
 because it saw the entity elsewhere in the chunk. Resolving that mention can link the proposition to
 the wrong thing, or mint an entity nothing in the claim supports. So before any mention becomes a
-resolver candidate, the pipeline checks it against the text of its own proposition. A mention is
-ungrounded when its span is blank or does not appear in that text.
+resolver candidate, the pipeline screens the mentions of each proposition.
 
-The comparison is literal containment after both sides are normalised: Unicode compatibility
-composition (NFKC), typographic quotes, apostrophes and hyphens folded to their plain forms,
-invisible characters removed, runs of whitespace collapsed, and letter case ignored. Accents are
-significant, and a span inside a longer word counts as present. The check sits in the pipeline
-rather than in an extractor, so it applies to every `PropositionExtractor`, and it runs before the
-optional `MentionFilter`.
+Screening has one extension point, `MentionFilter`. The pipeline calls
+`validateMentions(proposition, context)` once per proposition and gets one `ValidationResult` per
+mention, in order. It applies two checks itself, for every `PropositionExtractor`, and passes `null`
+as the filter argument of `toSuggestedEntities`.
 
-Each chunk with an ungrounded mention emits one `UngroundedMentionsFound` event carrying the
-mentions, the text they were attached to and the reason (`BLANK_SPAN` or
-`SPAN_NOT_IN_PROPOSITION`). What happens to the mentions is the caller's choice. The default,
-`UngroundedMentionHandling.KEEP`, leaves them in place, because some prompts deliberately ask for a
-canonical name the proposition text does not spell out. `withUngroundedMentions(UngroundedMentionHandling.DROP)`
-removes them before resolution, so they are never resolved, never minted and not left on the
-proposition; the proposition itself is always kept, and the suggestions carried in the chunk result
-are then the grounded ones. A proposition that loses every mention is revised and retrieved like any
-other proposition without mentions.
+| Check | Set by | Default | A rejected mention |
+|---|---|---|---|
+| Grounding | `withMentionGrounding(check)` | `GroundedMentionFilter` | `withUngroundedMentions`: `KEEP` (default) or `DROP` |
+| Filter | `withMentionFilter(filter)`, `withMentionFilter(filter, handling)` | none | `LEAVE_UNRESOLVED` (default), `KEEP` or `DROP` |
+
+| `RejectedMentionHandling` | Resolver candidate | Stays on the proposition |
+|---|---|---|
+| `KEEP` | yes | yes |
+| `LEAVE_UNRESOLVED` | no | yes |
+| `DROP` | no | no |
+
+Grounding runs first, and the filter sees each proposition as grounding left it. The proposition
+itself is always kept. A proposition that loses every mention is revised and retrieved like any
+other proposition without mentions. Screening runs in the extraction stage, so a filter can be
+called from several threads at once.
+
+The grounding check answers one question, whether the text of a proposition supports a mention. A
+rule about anything else goes in the filter. `GroundedMentionFilter` accepts a mention when its span
+is in that text. It also accepts a mention that names a known entity of the analysis, by
+`suggestedId` or by a span equal to the entity's name or an alias, when the text contains that
+entity's name or an alias. Names are compared the way `KnownEntityResolver` compares them, so a
+title or a suffix makes no difference. A known entity the text does not name is treated like any
+other mention. A blank span is never grounded.
+
+Grounding defaults to `KEEP` because the stock prompt asks for mentions the text only implies, such
+as a `Cycling` mention on the proposition "Alice cycles". Such a mention is ungrounded, with or
+without the entity's id.
+
+Both sides are normalised before they are compared.
+
+| Step | Effect |
+|---|---|
+| Ignored characters removed | Format characters (zero-width joiners and spaces, direction marks, soft hyphens), variation selectors, filler characters and the Arabic tatweel. |
+| Dashes folded | Every dash-punctuation character and the minus sign match a hyphen. |
+| Quotes folded | Curly, low and reversed quotes, primes, modifier apostrophes, the acute accent and the backtick match `'` or `"`. |
+| Compatibility composition (NFKC) | Composed and decomposed accents match, and so do width forms. |
+| Whitespace collapsed | Any run of whitespace matches one space. |
+| Full case folding | Letter case is ignored, and "Strasse" matches the same word spelled with a sharp s. |
+
+Accents are significant. In Latin, Cyrillic, Greek, Armenian and Georgian text, and between digits,
+the span must sit at word edges: "US" is not in "focus" and "Ann" is not in "Annabel", while "Brien"
+is in "O'Brien". An inflected or plural form is a different word, so "Apple" is not in "Apples",
+and a name run together with a number is too, so "iPhone" is not in "iPhone15".
+Every other script is matched by containment, because many of them write words without spaces or
+attach particles to a name. A symbol that composition spells out as letters or digits, such as a
+trade mark sign or a footnote digit, does not join the word beside it. The text of a proposition is
+normalised once, however many mentions it has.
+
+When grounding drops a mention that carried a `suggestedId`, and no surviving mention with the same
+span and type has one, the resolver candidates for that span and type get that id. The proposition
+keeps its mentions as the model wrote them. The id is the one the model gave, and it is the id the
+extractor would have used had the mention stayed. It is not checked against the known entities.
+
+Every rejection is on the chunk result as a `RejectedMention`: the chunk id, the position and text
+of the proposition, the mention, the reason, which check rejected it and what the pipeline did with
+it. `PropositionResults.rejectedMentions` lists them for a whole run. Each chunk with a grounding
+rejection also emits one `UngroundedMentionsFound` event, with the reason as `BLANK_SPAN` or
+`SPAN_NOT_IN_PROPOSITION`. The pipeline logs one line of counts per chunk, at warning level when a
+mention was dropped or left unresolved and at debug level otherwise. Spans and reasons are logged at
+debug level only.
 
 ## Execution strategies
 
