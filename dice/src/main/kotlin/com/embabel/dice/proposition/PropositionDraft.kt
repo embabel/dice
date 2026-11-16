@@ -46,15 +46,10 @@ import java.util.UUID
  *         .toProposition();
  * ```
  *
- * A time that is not set is filled in when [toProposition] runs. `created` and `contentRevised`
- * stand in for each other: with one of them set the other takes its value, and with neither set
- * both are the moment [toProposition] runs. `metadataRevised` and `lastAccessed` take the value
- * `contentRevised` ends up with.
- *
- * Each [toProposition] call on a draft without an id generates a new id, so two calls give two
- * different propositions. [withId] fixes the id. For two calls to build equal propositions, also
- * set a time with [withCreated] or [withContentRevised], because a draft with neither takes the
- * build moment.
+ * A time that is not set takes the constructor's default when [toProposition] runs: the build
+ * moment for created, contentRevised and metadataRevised, and the value of contentRevised for
+ * lastAccessed. Decay is measured from contentRevised, so set it when you import an older fact.
+ * For two calls to build equal propositions, set the id and those three times.
  *
  * @property contextId The context the proposition belongs to.
  * @property text The statement in natural language.
@@ -65,10 +60,9 @@ import java.util.UUID
  * @property importance How much the statement matters, from 0.0 to 1.0.
  * @property reasoning Why the statement was extracted, or null.
  * @property grounding The ids of the chunks that support the statement.
- * @property created When the proposition was first created, or null to follow [contentRevised],
- *   or the build moment when both are null.
- * @property contentRevised When the content last changed, or null to follow [created].
- * @property metadataRevised When the metadata last changed, or null to follow [contentRevised].
+ * @property created When the proposition was first created, or null for the build moment.
+ * @property contentRevised When the content last changed, or null for the build moment.
+ * @property metadataRevised When the metadata last changed, or null for the build moment.
  * @property lastAccessed When the proposition was last used, or null to follow [contentRevised].
  * @property pinned Whether decay-driven sweeps leave the proposition alone.
  * @property status The lifecycle status.
@@ -235,8 +229,8 @@ class PropositionDraft private constructor(
      * @throws IllegalArgumentException when a value is out of range, with the constructor's message
      */
     fun toProposition(): Proposition {
-        val created = created ?: contentRevised ?: Instant.now()
-        val contentRevised = contentRevised ?: created
+        val now = Instant.now()
+        val contentRevised = values.contentRevised ?: now
         return (origin ?: TEMPLATE).copy(
             id = id ?: UUID.randomUUID().toString(),
             contextId = contextId,
@@ -247,11 +241,11 @@ class PropositionDraft private constructor(
             importance = importance,
             reasoning = reasoning,
             grounding = grounding,
-            created = created,
+            created = values.created ?: now,
             contentRevised = contentRevised,
-            metadataRevised = metadataRevised ?: contentRevised,
+            metadataRevised = values.metadataRevised ?: now,
             pinned = pinned,
-            lastAccessed = lastAccessed ?: contentRevised,
+            lastAccessed = values.lastAccessed ?: contentRevised,
             status = status,
             level = level,
             sourceIds = sourceIds,

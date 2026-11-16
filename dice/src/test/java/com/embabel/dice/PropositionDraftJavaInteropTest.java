@@ -43,7 +43,7 @@ class PropositionDraftJavaInteropTest {
     //    a non-blank id, and four equal times.
     // 2. E2: with all twenty-one steps set, the built proposition equals the one from the
     //    longest Proposition.create overload.
-    // 3. E3: an unset time follows the one before it.
+    // 3. E3: an unset time takes the constructor's default when the proposition is built.
     // 4. E4: withGrounding appends and removes duplicates; the other collection steps replace.
     // 5. I1: a step never changes the draft it is called on, nor follows later changes to the
     //    caller's list.
@@ -156,26 +156,24 @@ class PropositionDraftJavaInteropTest {
     }
 
     @Test
-    void e3_anUnsetTimeFollowsTheOneBeforeIt() {
+    void e3_anUnsetTimeTakesTheConstructorDefault() {
         PropositionDraft draft = Proposition.draft("acme", "Alice lives in Paris", 0.9);
+        Instant before = Instant.now();
 
         Proposition createdOnly = draft.withCreated(CREATED).toProposition();
         assertEquals(CREATED, createdOnly.getCreated());
-        assertEquals(CREATED, createdOnly.getContentRevised());
-        assertEquals(CREATED, createdOnly.getMetadataRevised());
-        assertEquals(CREATED, createdOnly.getLastAccessed());
+        assertFalse(createdOnly.getContentRevised().isBefore(before));
+        assertEquals(createdOnly.getContentRevised(), createdOnly.getMetadataRevised());
+        assertEquals(createdOnly.getContentRevised(), createdOnly.getLastAccessed());
 
         Proposition revisedOnly = draft.withContentRevised(CONTENT_REVISED).toProposition();
-        assertEquals(CONTENT_REVISED, revisedOnly.getCreated());
         assertEquals(CONTENT_REVISED, revisedOnly.getContentRevised());
-        assertEquals(CONTENT_REVISED, revisedOnly.getMetadataRevised());
         assertEquals(CONTENT_REVISED, revisedOnly.getLastAccessed());
+        assertFalse(revisedOnly.getCreated().isBefore(before));
+        assertFalse(revisedOnly.getMetadataRevised().isBefore(before));
 
         Proposition both = draft.withCreated(CREATED).withContentRevised(CONTENT_REVISED).toProposition();
-        assertEquals(CREATED, both.getCreated());
-        assertEquals(CONTENT_REVISED, both.getContentRevised());
-        assertEquals(CONTENT_REVISED, both.getMetadataRevised());
-        assertEquals(CONTENT_REVISED, both.getLastAccessed());
+        assertFalse(both.getMetadataRevised().isBefore(before));
     }
 
     @Test
