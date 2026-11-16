@@ -21,8 +21,11 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Direct tests for the [ExtractionExecutionStrategy] SPI implementations.
@@ -175,5 +178,69 @@ class ExtractionExecutionStrategyTest {
 
         assertEquals(cs.map { it.id }, parallel.execute(cs) { it.id })
         assertEquals(cs.map { it.id }, batched.execute(cs) { it.id })
+    }
+
+    /**
+     * Runs two chunks through [strategy]: chunk A throws an AssertionError straight away, and
+     * chunk B waits on a latch that another thread opens a little later, then notes that it
+     * finished. The call must throw the AssertionError, but only after B is done.
+     */
+    private fun assertErrorWaitsForTheOtherChunk(strategy: ExtractionExecutionStrategy) {
+        val latch = CountDownLatch(1)
+        val bFinished = AtomicBoolean(false)
+        val releaser = Thread {
+            Thread.sleep(300)
+            latch.countDown()
+        }
+        releaser.start()
+
+        assertThrows<AssertionError> {
+            strategy.execute(listOf(chunk("a"), chunk("b"))) { c ->
+                if (c.id == "a") throw AssertionError("a failed")
+                latch.await(5, TimeUnit.SECONDS)
+                bFinished.set(true)
+                c.id
+            }
+        }
+        val finishedWhenCallReturned = bFinished.get()
+        releaser.join()
+
+        assertTrue(finishedWhenCallReturned, "chunk b should have finished before the Error reached the caller")
+    }
+
+    @Test
+    fun `parallel waits for every chunk before rethrowing an Error`() {
+        assertErrorWaitsForTheOtherChunk(ParallelExtractionStrategy(executor))
+    }
+
+    @Test
+    fun `batched waits for every chunk in the window before rethrowing an Error`() {
+        assertErrorWaitsForTheOtherChunk(BatchedExtractionStrategy(batchSize = 2, executor = executor))
+    }
+
+    /** Two chunks both throw an Error; the caller gets the first one with the second attached as suppressed. */
+    private fun assertLaterErrorsAreSuppressed(strategy: ExtractionExecutionStrategy) {
+        val thrown = assertThrows<AssertionError> {
+            strategy.execute(listOf(chunk("a"), chunk("b"), chunk("c"))) { c ->
+                when (c.id) {
+                    "a" -> throw AssertionError("a failed")
+                    "c" -> throw StackOverflowError("c failed")
+                    else -> c.id
+                }
+            }
+        }
+        assertEquals("a failed", thrown.message)
+        assertEquals(listOf("c failed"), thrown.suppressed.map { it.message })
+        assertTrue(thrown.suppressed.single() is StackOverflowError)
+    }
+
+    @Test
+    fun `parallel rethrows the first Error and suppresses the rest`() {
+        assertLaterErrorsAreSuppressed(ParallelExtractionStrategy(executor))
+    }
+
+    @Test
+    fun `batched rethrows the first Error and suppresses the rest`() {
+        assertLaterErrorsAreSuppressed(BatchedExtractionStrategy(batchSize = 3, executor = executor))
     }
 }

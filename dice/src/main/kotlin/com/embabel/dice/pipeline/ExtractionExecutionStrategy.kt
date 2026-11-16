@@ -24,15 +24,33 @@ import java.util.concurrent.Executors
 import java.util.function.Function
 
 /**
- * Waits for [future] and hands back its value. An Error thrown during extraction arrives wrapped
- * in a [CompletionException], so this unwraps it and rethrows the Error as it was.
+ * Waits for every one of [futures] to finish and hands back their values in order. Nothing is
+ * rethrown until the last future is done, so no extraction is still running when the caller
+ * sees a failure.
+ *
+ * An Error thrown during extraction arrives wrapped in a [CompletionException]; this unwraps it
+ * so the caller sees the Error as it was. If several futures fail, the first Error in input order
+ * is thrown (or the first failure of any kind when none is an Error), with the others attached
+ * as suppressed.
  */
-private fun <T> joinRethrowingErrors(future: CompletableFuture<T>): T =
-    try {
-        future.join()
-    } catch (e: CompletionException) {
-        throw (e.cause as? Error) ?: e
+private fun <T> joinAllRethrowingErrors(futures: List<CompletableFuture<T>>): List<T> {
+    val failures = mutableListOf<Throwable>()
+    val results = futures.map { future ->
+        try {
+            future.join()
+        } catch (e: Throwable) {
+            failures += (e as? CompletionException)?.cause as? Error ?: e
+            null
+        }
     }
+    if (failures.isNotEmpty()) {
+        val primary = failures.firstOrNull { it is Error } ?: failures.first()
+        failures.filter { it !== primary }.forEach { primary.addSuppressed(it) }
+        throw primary
+    }
+    @Suppress("UNCHECKED_CAST")
+    return results as List<T>
+}
 
 /**
  * Controls how the [PropositionPipeline] dispatches the stateless per-chunk extraction stage.
@@ -43,7 +61,8 @@ private fun <T> joinRethrowingErrors(future: CompletableFuture<T>): T =
  * - **Input order is preserved**: the returned list has exactly `chunks.size` elements and
  *   `result[i]` corresponds to `chunks[i]` (or `null` if extraction of `chunks[i]` failed).
  * - **Failure is a `null` slot**: when `extract(chunk)` throws an Exception, that slot is `null`.
- *   An Error is not caught and reaches the caller of [execute]. An interrupt gives a `null` slot
+ *   An Error is not caught and reaches the caller of [execute], though a concurrent strategy
+ *   first waits for the other chunks it already started to finish. An interrupt gives a `null` slot
  *   and sets the thread's interrupt flag again. The pipeline maps a `null` slot to a
  *   [ChunkPropositionResult.Failed]. No element is ever dropped or reordered.
  *
@@ -148,11 +167,13 @@ class ParallelExtractionStrategy private constructor(
     )
 
     override fun <T> execute(chunks: List<Chunk>, extract: (Chunk) -> T): List<T?> =
-        chunks.map { chunk ->
-            CompletableFuture.supplyAsync({
-                attemptCatching { extract(chunk) }.getOrNull()
-            }, executor)
-        }.map { joinRethrowingErrors(it) }
+        joinAllRethrowingErrors(
+            chunks.map { chunk ->
+                CompletableFuture.supplyAsync({
+                    attemptCatching { extract(chunk) }.getOrNull()
+                }, executor)
+            },
+        )
 
     /** Shuts down an internally-created pool; a no-op when the executor was caller-supplied. */
     override fun close() {
@@ -192,11 +213,13 @@ class BatchedExtractionStrategy private constructor(
 
     override fun <T> execute(chunks: List<Chunk>, extract: (Chunk) -> T): List<T?> =
         chunks.chunked(batchSize).flatMap { window ->
-            window.map { chunk ->
-                CompletableFuture.supplyAsync({
-                    attemptCatching { extract(chunk) }.getOrNull()
-                }, executor)
-            }.map { joinRethrowingErrors(it) }
+            joinAllRethrowingErrors(
+                window.map { chunk ->
+                    CompletableFuture.supplyAsync({
+                        attemptCatching { extract(chunk) }.getOrNull()
+                    }, executor)
+                },
+            )
         }
 
     /** Shuts down an internally-created pool; a no-op when the executor was caller-supplied. */
