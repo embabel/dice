@@ -151,7 +151,7 @@ sealed interface Evidence {
     class Recorded private constructor(items: List<EvidenceItem>) : Evidence {
 
         /** The claims found, in the order the lookup returned them. */
-        val items: List<EvidenceItem> = java.util.List.copyOf(items)
+        val items: List<EvidenceItem> = EvidenceChecks.copyOf("items", items)
 
         init {
             require(this.items.isNotEmpty()) { "items must not be empty" }
@@ -204,10 +204,10 @@ sealed interface Evidence {
          * Ids of the claims the conclusion was worked out from. Never empty. For a stored abstraction these are
          * the ids in [EvidenceItem.derivedFromIds]: the claims it was abstracted from.
          */
-        val inputIds: List<String> = java.util.List.copyOf(inputIds)
+        val inputIds: List<String> = EvidenceChecks.copyOf("inputIds", inputIds)
 
         /** The loaded input claims, as the caller supplied them. May be empty. */
-        val inputs: List<EvidenceItem> = java.util.List.copyOf(inputs)
+        val inputs: List<EvidenceItem> = EvidenceChecks.copyOf("inputs", inputs)
 
         init {
             require(conclusion.isNotBlank()) { "conclusion must not be blank" }
@@ -224,6 +224,7 @@ sealed interface Evidence {
          *
          * @param inputs the loaded claims the conclusion was worked out from
          * @return the updated value
+         * @throws IllegalArgumentException if [inputs] holds a null
          */
         fun withInputs(inputs: List<EvidenceItem>): Derived =
             Derived(conclusion, confidence, effectiveConfidence, rule, inputIds, inputs, citation, status)
@@ -337,14 +338,14 @@ sealed interface Evidence {
         val conflictType: ConflictType,
     ) : Evidence {
 
-        /** The claims that disagree. At least two, each with a different claim id. */
-        val items: List<EvidenceItem> = java.util.List.copyOf(items)
+        /** The claims that disagree. At least two, and no two cite the same claim id in the same context. */
+        val items: List<EvidenceItem> = EvidenceChecks.copyOf("items", items)
 
         init {
             require(this.items.size >= 2) { "a conflict needs at least two items, was ${this.items.size}" }
-            require(this.items.map { it.citation.propositionId }.toSet().size == this.items.size) {
-                "conflicting items must have different claim ids"
-            }
+            EvidenceChecks.requireDistinctClaims(
+                this.items.mapIndexed { index, item -> "items[$index]" to item },
+            )
         }
 
         override fun equals(other: Any?): Boolean =
@@ -376,7 +377,7 @@ sealed interface Evidence {
          *
          * @param items the claims found
          * @return the new value
-         * @throws IllegalArgumentException if [items] is empty
+         * @throws IllegalArgumentException if [items] is empty or holds a null
          */
         @JvmStatic
         fun recorded(items: List<EvidenceItem>): Recorded = Recorded.create(items)
@@ -391,7 +392,7 @@ sealed interface Evidence {
          * @param inputIds ids of the claims the conclusion was worked out from
          * @return the new value
          * @throws IllegalArgumentException if [conclusion] is blank, [confidence] is NaN or outside 0.0 to 1.0,
-         *   or [inputIds] is empty or holds a blank id
+         *   or [inputIds] is empty or holds a null or blank id
          */
         @JvmStatic
         fun derived(conclusion: String, confidence: ZeroToOne, rule: DerivationRule, inputIds: List<String>): Derived =
@@ -412,7 +413,8 @@ sealed interface Evidence {
          * @param items the claims that disagree
          * @param conflictType how the claims conflict
          * @return the new value
-         * @throws IllegalArgumentException if [items] has fewer than two items or two items with the same claim id
+         * @throws IllegalArgumentException if [items] holds a null, has fewer than two items, or has two items
+         *   that cite the same claim id in the same context
          */
         @JvmStatic
         fun conflicting(items: List<EvidenceItem>, conflictType: ConflictType): Conflicting =
@@ -424,6 +426,7 @@ sealed interface Evidence {
          * @param items the claims found. May be empty.
          * @param searched what the lookup searched for
          * @return a [Recorded] holding [items], or a [Missing] holding [searched] when [items] is empty
+         * @throws IllegalArgumentException if [items] holds a null
          */
         @JvmStatic
         fun of(items: List<EvidenceItem>, searched: Searched): Evidence =

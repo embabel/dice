@@ -72,13 +72,13 @@ class EvidenceItem private constructor(
      * Ids of the claims this one was abstracted from. Empty for an observation. For a stored abstraction
      * these are the ids in [Evidence.Derived.inputIds]: the claims it was abstracted from.
      */
-    val derivedFromIds: List<String> = java.util.List.copyOf(derivedFromIds)
+    val derivedFromIds: List<String> = EvidenceChecks.copyOf("derivedFromIds", derivedFromIds)
 
     /** True when [derivedFromIds] is not empty. */
     val isDerived: Boolean = this.derivedFromIds.isNotEmpty()
 
     /** Each retriever that found the claim, in the order they were added. */
-    val retrievals: List<Retrieval> = java.util.List.copyOf(retrievals)
+    val retrievals: List<Retrieval> = EvidenceChecks.copyOf("retrievals", retrievals)
 
     init {
         require(text.isNotBlank()) { "text must not be blank" }
@@ -142,7 +142,7 @@ class EvidenceItem private constructor(
      *
      * @param derivedFromIds ids of the claims this one was abstracted from
      * @return the updated item
-     * @throws IllegalArgumentException if any id is blank
+     * @throws IllegalArgumentException if any id is null or blank
      */
     fun withDerivedFromIds(derivedFromIds: List<String>): EvidenceItem =
         EvidenceItem(
@@ -180,6 +180,7 @@ class EvidenceItem private constructor(
      *
      * @param retrievals the hits from each retriever, in the order to keep
      * @return the updated item
+     * @throws IllegalArgumentException if [retrievals] holds a null
      */
     fun withRetrievals(retrievals: List<Retrieval>): EvidenceItem =
         EvidenceItem(

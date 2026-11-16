@@ -156,8 +156,8 @@ class EvidenceTest {
     }
 
     @Test
-    fun `conflicting evidence needs at least two items with different claim ids`() {
-        val sameClaim = EvidenceItem.of("Alice lives in Rome.", Citation.of("prop-1", "ctx-other"), 0.4)
+    fun `conflicting evidence needs at least two different claims`() {
+        val sameClaim = EvidenceItem.of("Alice lives in Rome.", Citation.of("prop-1", "ctx-main"), 0.4)
         assertThrows(IllegalArgumentException::class.java) {
             Evidence.conflicting(listOf(alice), ConflictType.Contradiction)
         }

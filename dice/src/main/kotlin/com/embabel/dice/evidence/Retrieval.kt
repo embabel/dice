@@ -105,7 +105,7 @@ class Retrieval private constructor(
 ) {
 
     /** Entity ids walked from the starting entity to the last one. Empty when the path is not known. */
-    val entityPath: List<String> = java.util.List.copyOf(entityPath)
+    val entityPath: List<String> = EvidenceChecks.copyOf("entityPath", entityPath)
 
     init {
         require(rank == null || rank >= 1) { "rank starts at 1, was $rank" }
@@ -152,11 +152,12 @@ class Retrieval private constructor(
      *
      * @param entityPath the entity ids from the starting entity to the last one
      * @return the updated retrieval
-     * @throws IllegalArgumentException if [entityPath] is empty or contains a blank id
+     * @throws IllegalArgumentException if [entityPath] is empty or contains a null or blank id
      */
     fun withEntityPath(entityPath: List<String>): Retrieval {
-        require(entityPath.isNotEmpty()) { "entityPath must not be empty" }
-        return Retrieval(retriever, rank, score, entityPath.size - 1, entityPath)
+        val path = EvidenceChecks.copyOf("entityPath", entityPath)
+        require(path.isNotEmpty()) { "entityPath must not be empty" }
+        return Retrieval(retriever, rank, score, path.size - 1, path)
     }
 
     /**
