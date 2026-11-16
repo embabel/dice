@@ -86,7 +86,7 @@ class DrivineCollectorTraceStoreIntegrationTest {
 
     @AfterEach
     fun cleanUp() {
-        (CollectorTraceSchema.LABELS + listOf("CollectorRecord", "CollectorRun")).forEach { label ->
+        (CollectorTraceSchema.LABELS + listOf("CollectorRecord", "CollectorRun", "CollectorRunCounter")).forEach { label ->
             persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:$label) DETACH DELETE n"))
         }
         propositionRepository.clearAll()

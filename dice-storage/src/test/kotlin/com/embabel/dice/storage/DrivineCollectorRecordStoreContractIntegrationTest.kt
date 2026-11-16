@@ -21,8 +21,6 @@ import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.Disabled
-import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
@@ -53,11 +51,9 @@ class DrivineCollectorRecordStoreContractIntegrationTest : AbstractCollectorReco
     @AfterEach
     fun clearCollectorNodes() {
         persistenceManager.execute(
-            QuerySpecification.withStatement("MATCH (n) WHERE n:CollectorRecord OR n:CollectorRun DETACH DELETE n"),
+            QuerySpecification.withStatement(
+                "MATCH (n) WHERE n:CollectorRecord OR n:CollectorRun OR n:CollectorRunCounter DETACH DELETE n",
+            ),
         )
     }
-
-    @Test
-    @Disabled("DrivineCollectorRecordStore reads run headers with no ordering, so insertion order is not guaranteed. See embabel/dice#201.")
-    override fun runsComeBackInTheOrderTheyWereRecorded() = super.runsComeBackInTheOrderTheyWereRecorded()
 }
