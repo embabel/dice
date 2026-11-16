@@ -83,6 +83,21 @@ class ApiListingTest {
     }
 
     @Test
+    fun `nested, companion and facade classes of a generated file are left out`() {
+        val types = listOf("/GeneratedModel {", "/GeneratedModel\$Nested {", "/GeneratedModel\$Companion {", "/GeneratedModelKt {")
+        listing("update")
+        val everything = api.resolve("m.api").readText()
+        types.forEach { assertTrue(everything.contains(it), it) }
+
+        val generated = dir.resolve("generated")
+        generated.resolve(FIXTURE_PACKAGE).createDirectories().resolve("GeneratedModel.kt").writeText("")
+        assertEquals(0, listing("update", "--generated=$generated"), err.toString())
+        val listed = api.resolve("m.api").readText()
+        types.forEach { assertFalse(listed.contains(it), it) }
+        assertTrue(listed.contains("/Stable {"))
+    }
+
+    @Test
     fun `a source file name under both the generated and a hand-written root stops the program`() {
         val generated = dir.resolve("generated")
         generated.resolve(FIXTURE_PACKAGE).createDirectories().resolve("Stable.kt").writeText("")
@@ -101,7 +116,7 @@ class ApiListingTest {
 
     @Test
     fun `a real API change does not blame an earlier build`() {
-        val sources = sourceRoot("Stable.kt", "ExperimentalFunctions.kt", "MixedFunctions.kt")
+        val sources = sourceRoot("Stable.kt", "ExperimentalFunctions.kt", "MixedFunctions.kt", "GeneratedModel.kt")
         listing("update", sources)
         val stable = api.resolve("m.api")
         stable.writeText(stable.readText().replace("longestFirst", "shortestFirst"))
