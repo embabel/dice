@@ -518,8 +518,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * queued after the first failure waits for the next call. The first failure is then rethrown,
      * so it reaches whoever called [extractPropositions]. A host that runs extraction inside its
      * own transaction has to see that failure to roll the transaction back, and a STRICT lineage
-     * failure has to reach the caller that asked for it. Each later failure is logged at `warn`,
-     * and added to the first one as a suppressed exception when it is a different instance.
+     * failure has to reach the caller that asked for it. Each later failure is logged at `warn`.
+     * The first failure is rethrown unchanged, since it may belong to the store and outlive the drain.
      * Without a failure, the drain keeps polling until the queue is empty, then drains again if
      * another thread queued an event after it let go of the lock.
      *
@@ -571,8 +571,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     }
 
     /**
-     * Returns the failure to rethrow at the end of a drain. The first failure wins. A later one is
-     * logged, and added to the first as a suppressed exception unless it is the same instance.
+     * Returns the failure to rethrow at the end of a drain. The first failure wins and is not
+     * changed, because a store can throw the same exception object on every call. A later one is
+     * logged at `warn`.
      *
      * @param first The failure kept so far, or null.
      * @param later The failure just caught.
@@ -581,7 +582,6 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     private fun keepFirst(first: Exception?, later: Exception): Exception {
         if (first == null) return later
         logger.warn("Extraction failed again after an earlier failure in the same drain", later)
-        if (later !== first) first.addSuppressed(later)
         return first
     }
 

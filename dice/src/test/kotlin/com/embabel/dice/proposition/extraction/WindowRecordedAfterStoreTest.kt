@@ -538,7 +538,7 @@ class WindowRecordedAfterStoreTest {
     }
 
     @Test
-    fun `a later failure in the same drain is added to the first as suppressed`() {
+    fun `a later failure in the same drain is logged and leaves the first unchanged`() {
         val harness = harness(
             repository = FlakyRepository(
                 failingSaves = setOf(1, 2),
@@ -546,10 +546,12 @@ class WindowRecordedAfterStoreTest {
             ),
         )
 
-        val run = harness.drainWithQueued("source-b")
+        lateinit var run: DrainRun
+        val warned = warnings { run = harness.drainWithQueued("source-b") }
 
         assertThat(run.surfaced).hasMessage("save 1 failed")
-        assertThat(run.surfaced!!.suppressed.map { it.message }).containsExactly("save 2 failed")
+        assertThat(run.surfaced!!.suppressed).isEmpty()
+        assertThat(warned.filter { it.throwableProxy?.message == "save 2 failed" }).hasSize(1)
         verify(exactly = 2) { harness.pipeline.processChunk(any(), any()) }
     }
 
