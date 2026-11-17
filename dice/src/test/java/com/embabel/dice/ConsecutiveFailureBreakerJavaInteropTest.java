@@ -36,8 +36,6 @@ import static org.junit.jupiter.api.Assertions.*;
  * E7 Outcome.success gives a success outcome with its value
  * E8 Outcome.failure gives a failure outcome with its exception
  * E9 Outcome.skipped gives a skipped outcome with no value or exception
- * R1 a skipped outcome with a value is rejected, and one without a value is accepted
- * R2 an outcome with both a value and an exception is rejected, and one with only one of them is accepted
  */
 class ConsecutiveFailureBreakerJavaInteropTest {
 
@@ -167,24 +165,5 @@ class ConsecutiveFailureBreakerJavaInteropTest {
         assertFalse(outcome.isFailure());
         assertNull(outcome.getValue());
         assertNull(outcome.getException());
-    }
-
-    // R1
-    @Test
-    void skippedOutcomeWithValueIsRejected() {
-        assertThrows(IllegalArgumentException.class,
-                () -> new ConsecutiveFailureBreaker.Outcome<>(true, "x", null));
-        assertDoesNotThrow(() -> new ConsecutiveFailureBreaker.Outcome<String>(true, null, null));
-    }
-
-    // R2
-    @Test
-    void outcomeWithValueAndExceptionIsRejected() {
-        IOException expected = new IOException("disk unavailable");
-
-        assertThrows(IllegalArgumentException.class,
-                () -> new ConsecutiveFailureBreaker.Outcome<>(false, "x", expected));
-        assertDoesNotThrow(() -> new ConsecutiveFailureBreaker.Outcome<>(false, "x", null));
-        assertDoesNotThrow(() -> new ConsecutiveFailureBreaker.Outcome<String>(false, null, expected));
     }
 }

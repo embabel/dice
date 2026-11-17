@@ -130,10 +130,8 @@ data class PropositionContradicted @JvmOverloads constructor(
          * @throws IllegalArgumentException if contextIdValue is blank
          */
         @JvmStatic
-        fun of(contextIdValue: String, original: Proposition, new: Proposition): PropositionContradicted {
-            require(contextIdValue.isNotBlank()) { "contextIdValue must not be blank" }
-            return PropositionContradicted(ContextId(contextIdValue), original, new)
-        }
+        fun of(contextIdValue: String, original: Proposition, new: Proposition): PropositionContradicted =
+            PropositionContradicted(ContextId(contextIdValue), original, new)
 
         /**
          * Builds a contradiction event for Java callers with the timestamp you choose.
@@ -151,10 +149,8 @@ data class PropositionContradicted @JvmOverloads constructor(
             original: Proposition,
             new: Proposition,
             timestamp: Instant,
-        ): PropositionContradicted {
-            require(contextIdValue.isNotBlank()) { "contextIdValue must not be blank" }
-            return PropositionContradicted(ContextId(contextIdValue), original, new, timestamp)
-        }
+        ): PropositionContradicted =
+            PropositionContradicted(ContextId(contextIdValue), original, new, timestamp)
     }
 }
 
@@ -258,10 +254,8 @@ data class UngroundedMentionsFound @JvmOverloads constructor(
             chunkId: String,
             mentions: List<UngroundedMention>,
             handling: UngroundedMentionHandling,
-        ): UngroundedMentionsFound {
-            require(contextIdValue.isNotBlank()) { "contextIdValue must not be blank" }
-            return UngroundedMentionsFound(ContextId(contextIdValue), chunkId, mentions, handling)
-        }
+        ): UngroundedMentionsFound =
+            UngroundedMentionsFound(ContextId(contextIdValue), chunkId, mentions, handling)
 
         /**
          * Builds an event about unlinked mentions for Java callers with the timestamp you choose.
@@ -281,10 +275,8 @@ data class UngroundedMentionsFound @JvmOverloads constructor(
             mentions: List<UngroundedMention>,
             handling: UngroundedMentionHandling,
             timestamp: Instant,
-        ): UngroundedMentionsFound {
-            require(contextIdValue.isNotBlank()) { "contextIdValue must not be blank" }
-            return UngroundedMentionsFound(ContextId(contextIdValue), chunkId, mentions, handling, timestamp)
-        }
+        ): UngroundedMentionsFound =
+            UngroundedMentionsFound(ContextId(contextIdValue), chunkId, mentions, handling, timestamp)
     }
 }
 
