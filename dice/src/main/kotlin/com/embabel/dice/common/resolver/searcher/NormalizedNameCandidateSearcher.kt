@@ -74,6 +74,8 @@ class NormalizedNameCandidateSearcher private constructor(
         schema: DataDictionary,
     ): SearchResult {
         val normalizedSuggested = nameNormalizer.normalize(suggested.name, suggested.labels)
+        // A name with nothing left after normalization has nothing to compare
+        if (normalizedSuggested.isBlank()) return SearchResult.candidates(emptyList())
         val candidates = mutableListOf<NamedEntityData>()
 
         try {
@@ -102,8 +104,8 @@ class NormalizedNameCandidateSearcher private constructor(
                 return SearchResult(confident = match, candidates = candidates)
             }
         } catch (e: Exception) {
-            logger.warn("Normalized name search failed for '{}', so it found no candidates: {}", suggested.name, e.toString())
-            logger.debug("Normalized name search failure", e)
+            logger.warn("Normalized name search failed, so it found no candidates: {}", e.javaClass.name)
+            logger.debug("Normalized name search failed for '{}'", suggested.name, e)
         }
 
         return SearchResult.candidates(candidates)

@@ -179,6 +179,17 @@ class NameNormalizerTest {
     }
 
     @Test
+    fun `names with nothing left after normalization match nothing`() {
+        val digitsOnly = NameNormalizer { name, _ -> name.filter { it.isLetter() } }
+        val known = KnownEntityResolver(listOf(entity("a", "10001", "Account")), veto).withNameNormalizer(digitsOnly)
+        assertInstanceOf(VetoedEntity::class.java, known.resolve(suggested("20002", "Account"), schema).resolutions.single())
+
+        val inMemory = InMemoryEntityResolver().withNameNormalizer(digitsOnly)
+        inMemory.resolve(suggested("10001", "Account"), schema)
+        assertInstanceOf(NewEntity::class.java, inMemory.resolve(suggested("98765", "Account"), schema).resolutions.single())
+    }
+
+    @Test
     fun `the in-memory resolver follows its normalizer`() {
         val standard = InMemoryEntityResolver()
         standard.resolve(suggested("Paris, France", "Place"), schema)

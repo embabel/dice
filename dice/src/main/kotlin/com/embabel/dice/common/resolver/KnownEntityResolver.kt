@@ -129,6 +129,8 @@ class KnownEntityResolver private constructor(
 
     private fun findKnownMatch(suggested: SuggestedEntity): NamedEntity? {
         val normalizedSuggested = nameNormalizer.normalize(suggested.name, suggested.labels)
+        // A name with nothing left after normalization has nothing to compare
+        if (normalizedSuggested.isBlank()) return null
         val suggestedLabels = suggested.labels.map { it.lowercase() }.toSet()
 
         // Collect all known entities with a name match. Real-world

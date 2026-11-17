@@ -136,6 +136,10 @@ class InMemoryEntityResolver private constructor(
         // Normalized name match
         val normalizedSuggested = nameNormalizer.normalize(suggested.name, suggested.labels)
         val normalizedExisting = nameNormalizer.normalize(existing.name, existing.labels())
+        // A name with nothing left after normalization has nothing to compare
+        if (normalizedSuggested.isBlank() || normalizedExisting.isBlank()) {
+            return false
+        }
         if (normalizedSuggested.equals(normalizedExisting, ignoreCase = true)) {
             return true
         }

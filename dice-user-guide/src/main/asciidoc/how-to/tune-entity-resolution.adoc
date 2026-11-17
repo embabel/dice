@@ -230,8 +230,9 @@ resolved the way it did.
 
 | `com.embabel.dice.common.resolver.searcher`
 | `WARN`
-| A search the store failed to run. The searcher found no candidates, so the mention can end up
-  as a new entity. The stack trace follows at `DEBUG`.
+| A search the store failed to run, with the exception class. The searcher found no candidates, so
+  the mention can end up as a new entity. The name searched for and the stack trace follow at
+  `DEBUG`.
 
 | `com.embabel.dice.common.resolver.KnownEntityResolver`
 | `INFO`

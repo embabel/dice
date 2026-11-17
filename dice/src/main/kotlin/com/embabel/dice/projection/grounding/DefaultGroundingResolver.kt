@@ -50,8 +50,8 @@ class DefaultGroundingResolver(
         return try {
             repository.find(entityLabel, PropertyFilter.endsWith("id", suffix))
         } catch (e: Exception) {
-            logger.warn("[grounding-resolver] suffix lookup for '{}' (suffix '{}') failed, so it resolved nothing: {}", groundingId, suffix, e.toString())
-            logger.debug("[grounding-resolver] suffix lookup failure", e)
+            logger.warn("[grounding-resolver] suffix lookup failed, so it resolved nothing: {}", e.javaClass.name)
+            logger.debug("[grounding-resolver] suffix lookup for '{}' (suffix '{}') failed", groundingId, suffix, e)
             emptyList()
         }
     }
@@ -66,8 +66,8 @@ class DefaultGroundingResolver(
         try {
             repository.findById(groundingId)
         } catch (e: Exception) {
-            logger.warn("[grounding-resolver] findById('{}') failed, so it resolved nothing: {}", groundingId, e.toString())
-            logger.debug("[grounding-resolver] findById failure", e)
+            logger.warn("[grounding-resolver] findById failed, so it resolved nothing: {}", e.javaClass.name)
+            logger.debug("[grounding-resolver] findById('{}') failed", groundingId, e)
             null
         }
 

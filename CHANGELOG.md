@@ -27,11 +27,11 @@ and the consumer PRs that deliver it).
   to `PropositionPipeline.withNameNormalizer`, to
   `IncrementalPropositionExtraction.withNameNormalizer` and to
   `DefaultCandidateSearchers.create(repository, normalizer)`. A schema whose people carry another label names it with
-  `PersonNameNormalizer.english().withPersonLabels("Contact")`. Stored entities are not changed.
+  `PersonNameNormalizer.english().withPersonLabels("Contact")`. A name with nothing left after normalization matches nothing. Stored entities are not changed.
   **Compatibility: behavioral.**
 
-- A candidate searcher whose store call fails now logs a warning, with the stack trace at debug
-  level. `DefaultGroundingResolver` does the same for a failed lookup. Before, these were logged at
+- A candidate searcher whose store call fails now logs a warning that names the search and the
+  exception class. The name or id searched for and the stack trace are logged at debug level. `DefaultGroundingResolver` does the same for a failed lookup. Before, these were logged at
   debug level only, so a store outage showed up as mentions resolving to new entities with nothing
   in the log. The searcher still returns no candidates and resolution carries on.
   **Compatibility: behavioral.**

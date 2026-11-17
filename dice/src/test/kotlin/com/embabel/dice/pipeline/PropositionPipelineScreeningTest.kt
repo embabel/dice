@@ -18,6 +18,9 @@ package com.embabel.dice.pipeline
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.dice.common.NameNormalizer
+import com.embabel.dice.common.filter.GroundedMentionFilter
+import com.embabel.dice.common.filter.MentionFixtures
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.RecordingDiceEventListener
 import com.embabel.dice.common.Resolutions
@@ -27,7 +30,6 @@ import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.common.UngroundedMentionsFound
 import com.embabel.dice.common.filter.MentionFilter
-import com.embabel.dice.common.filter.MentionFixtures
 import com.embabel.dice.common.filter.ObservableMentionFilter
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.common.validation.ValidationResult
@@ -247,6 +249,25 @@ class PropositionPipelineScreeningTest {
             .processChunk(chunk(), context())
 
         assertTrue(events.eventsOfType<UngroundedMentionsFound>().isEmpty(), "events: ${events.events}")
+    }
+
+    @Test
+    fun `the built-in grounding check follows the pipeline's name rules and a supplied one keeps its own`() {
+        val watson = MentionFixtures.knownPerson("w", "Watson")
+        val known = context().copy(knownEntities = listOf(watson))
+        val doctor = proposition("Watson examined the room", SuggestedMention(span = "Dr. Watson", type = "Person", role = "SUBJECT"))
+        fun rejected(pipeline: PropositionPipeline) =
+            pipeline.processChunk(chunk(), known).success().rejectedMentions.map { it.mention.span }
+        val base = dropPipeline(SuggestingPropositionExtractor.of(doctor))
+        val plain = NameNormalizer.whitespaceOnly()
+
+        assertEquals(emptyList<String>(), rejected(base))
+        assertEquals(listOf("Dr. Watson"), rejected(base.withNameNormalizer(plain)))
+        // A supplied check is not changed by the pipeline's rules, whichever is set first
+        val strict = GroundedMentionFilter().withNameNormalizer(plain)
+        assertEquals(listOf("Dr. Watson"), rejected(base.withMentionGrounding(strict).withNameNormalizer(NameNormalizer.standard())))
+        assertEquals(listOf("Dr. Watson"), rejected(base.withNameNormalizer(NameNormalizer.standard()).withMentionGrounding(strict)))
+        assertEquals(emptyList<String>(), rejected(base.withNameNormalizer(plain).withMentionGrounding(GroundedMentionFilter())))
     }
 
     @Test
