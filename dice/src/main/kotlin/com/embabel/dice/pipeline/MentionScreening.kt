@@ -18,10 +18,12 @@ package com.embabel.dice.pipeline
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.filter.MentionFilter
 import com.embabel.dice.common.filter.checkedVerdicts
+import com.embabel.dice.common.resolver.searcher.NormalizedNameCandidateSearcher
 import com.embabel.dice.common.validation.ValidationResult
 import com.embabel.dice.proposition.MentionKey
 import com.embabel.dice.proposition.SuggestedProposition
 import com.embabel.dice.proposition.SuggestedPropositions
+import org.slf4j.LoggerFactory
 
 /**
  * The result of screening one chunk's mentions with a grounding check and an optional filter.
@@ -68,11 +70,12 @@ internal data class ScreeningOutcome(
  */
 internal object MentionScreening {
 
+    private val logger = LoggerFactory.getLogger(MentionScreening::class.java)
+
     /**
      * The verdicts on one proposition's mentions, and what they mean for each mention.
      *
      * @property proposition the proposition as extracted
-     * @property surviving the positions grounding left in place, which are the mentions the filter saw
      * @property grounding the reasons the grounding check gave, keyed by position in the extracted mentions
      * @property filter the reasons the filter gave, keyed by position in the extracted mentions
      * @property kept the positions that stay on the proposition
@@ -81,7 +84,6 @@ internal object MentionScreening {
      */
     private class Verdicts(
         val proposition: SuggestedProposition,
-        val surviving: List<Int>,
         val grounding: Map<Int, String>,
         val filter: Map<Int, String>,
         groundingHandling: RejectedMentionHandling,
@@ -149,7 +151,7 @@ internal object MentionScreening {
             val groundingRejected = rejections(grounding, proposition, all, context)
             val surviving = if (dropUngrounded) all.filterNot { it in groundingRejected } else all
             val filterRejected = filter?.let { rejections(it, keep(proposition, surviving), surviving, context) }.orEmpty()
-            Verdicts(proposition, surviving, groundingRejected, filterRejected, groundingHandling, filterHandling)
+            Verdicts(proposition, groundingRejected, filterRejected, groundingHandling, filterHandling)
         }
         val rejected = verdicts.flatMapIndexed { index, verdict ->
             rejectedMentions(chunkId, index, verdict.proposition, verdict.grounding, RejectedMention.Check.GROUNDING, groundingHandling)
@@ -157,7 +159,7 @@ internal object MentionScreening {
             rejectedMentions(chunkId, index, verdict.proposition, verdict.filter, RejectedMention.Check.FILTER, filterHandling)
         }
         val resultPropositions = verdicts.map { keep(it.proposition, it.kept) }
-        val hints = if (dropUngrounded) hints(verdicts, context, filter, filterHandling) else emptyMap()
+        val hints = if (dropUngrounded) hints(chunkId, verdicts, context) else emptyMap()
         val candidatePropositions = verdicts.zip(resultPropositions) { verdict, kept ->
             val resolvable = if (verdict.resolvable.size == verdict.kept.size) kept else keep(verdict.proposition, verdict.resolvable)
             withHints(resolvable, hints)
@@ -247,88 +249,65 @@ internal object MentionScreening {
      *
      * Resolution gives every mention of one span and type the same id, so the decision is made per
      * span and type, never per proposition. A span and type gets an id only when:
-     * - every dropped mention of it that carries an id carries the same one, and that id belongs
-     *   to a known entity of the context;
-     * - no candidate of it holds an id of its own;
-     * - the filter, unless it only reports, accepts the id in every proposition that would receive
-     *   it. It is asked about each such proposition with all the passed-on ids in place; an id it
-     *   turns down anywhere is withdrawn from the whole chunk, and the propositions are asked again
-     *   with the ids that remain until the filter accepts them all.
+     * - every dropped mention of it that carries an id carries the same one;
+     * - that id belongs to a known entity of the context whose name or an alias is the span,
+     *   compared the way [com.embabel.dice.common.filter.GroundedMentionFilter] compares names;
+     * - no other span and type would take the same id;
+     * - no candidate of it holds an id of its own.
      *
+     * So the id can only choose among the known entities that the span itself names, which entity
+     * resolution would match by name anyway. It never points a mention at something its own text
+     * does not name, and the filter, which has judged every mention as written, is not asked again.
+     *
+     * @param chunkId the id of the chunk, for the debug line
      * @param verdicts the verdicts on each proposition
      * @param context the analysis context, whose known entities decide which ids may pass on
-     * @param filter the mention filter, or null for none
-     * @param filterHandling what happens to a mention the filter rejects
      * @return the id to pass on for each span and type
      */
-    private fun hints(
-        verdicts: List<Verdicts>,
-        context: SourceAnalysisContext,
-        filter: MentionFilter?,
-        filterHandling: RejectedMentionHandling,
-    ): Map<MentionKey, String> {
-        val knownIds = context.knownEntities.mapNotNull { known -> (known.id as String?)?.takeIf { it.isNotBlank() } }.toSet()
-        if (knownIds.isEmpty()) return emptyMap()
+    private fun hints(chunkId: String, verdicts: List<Verdicts>, context: SourceAnalysisContext): Map<MentionKey, String> {
+        val namesById = context.knownEntities
+            .mapNotNull { known ->
+                val id = (known.id as String?)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val names = (listOf<String?>(known.name) + known.aliases).filterNotNull().filter { it.isNotBlank() }
+                    .map { NormalizedNameCandidateSearcher.normalizeName(it) }
+                id to names
+            }
+            .groupBy({ it.first }, { it.second })
+            .mapValues { (_, names) -> names.flatten() }
+        if (namesById.isEmpty()) return emptyMap()
         val held = verdicts.flatMap { verdict -> verdict.resolvable.map { verdict.proposition.mentions[it] } }
             .filterNot { it.suggestedId.isNullOrBlank() }
             .map { MentionKey.from(it) }
             .toSet()
-        val offered = verdicts.flatMap { verdict -> verdict.grounding.keys.sorted().map { verdict.proposition.mentions[it] } }
+        val carried = verdicts.flatMap { verdict -> verdict.grounding.keys.sorted().map { verdict.proposition.mentions[it] } }
             .mapNotNull { mention -> mention.suggestedId?.takeIf { it.isNotBlank() }?.let { MentionKey.from(mention) to it } }
             .groupBy({ it.first }, { it.second })
-            .filterKeys { it !in held }
-            .mapNotNull { (key, ids) -> ids.distinct().singleOrNull()?.takeIf { it in knownIds }?.let { key to it } }
-            .toMap()
-        if (offered.isEmpty() || filter == null || filterHandling == RejectedMentionHandling.KEEP) return offered
-        val accepted = offered.toMutableMap()
-        while (accepted.isNotEmpty()) {
-            val refused = verdicts.flatMap { refusedIn(it, accepted, filter, context) }.toSet()
-            if (refused.isEmpty()) break
-            accepted.keys.removeAll(refused)
+        val offered = carried
+            .mapNotNull { (key, ids) -> ids.distinct().singleOrNull()?.let { key to it } }
+            .filter { (key, id) -> namesSpan(namesById[id], key.span) }
+        val shared = offered.groupBy({ it.second }, { it.first }).filterValues { it.size > 1 }.keys
+        val passed = offered.filter { (key, id) -> id !in shared && key !in held }.toMap()
+        if (carried.isNotEmpty()) {
+            logger.debug(
+                "Chunk {}: dropped mentions carried ids for {} span(s) and type(s), {} passed on, {} withheld",
+                chunkId, carried.size, passed.size, carried.size - passed.size,
+            )
         }
-        return accepted
+        return passed
     }
 
     /**
-     * Asks the filter about one proposition with the passed-on ids in place and finds the spans
-     * and types whose id it turns down.
+     * Tells whether one of a known entity's names is the span, after name normalization and
+     * ignoring case.
      *
-     * The filter sees the same mentions it judged before, with every id that would reach this
-     * proposition added. A span and type is turned down when the filter rejects a mention that
-     * took its id. When the filter rejects a mention it had accepted without the ids, every span
-     * and type that gave this proposition an id is turned down.
-     *
-     * @param verdict the verdicts on the proposition
-     * @param ids the ids that would be passed on, by span and type
-     * @param filter the mention filter
-     * @param context the analysis context
-     * @return the spans and types whose id is turned down, empty when the proposition takes no id
+     * @param names the known entity's normalized names, or null when the id is not a known entity's
+     * @param span the span of the mentions that would take the id
+     * @return true when a name matches
      */
-    private fun refusedIn(
-        verdict: Verdicts,
-        ids: Map<MentionKey, String>,
-        filter: MentionFilter,
-        context: SourceAnalysisContext,
-    ): Set<MentionKey> {
-        val taking = verdict.resolvable
-            .filter { MentionKey.from(verdict.proposition.mentions[it]) in ids }
-            .associateWith { MentionKey.from(verdict.proposition.mentions[it]) }
-        if (taking.isEmpty()) return emptySet()
-        val asked = verdict.proposition.copy(mentions = verdict.surviving.map { position ->
-            val mention = verdict.proposition.mentions[position]
-            taking[position]?.let { mention.copy(suggestedId = ids.getValue(it)) } ?: mention
-        })
-        val answers = filter.checkedVerdicts(asked, context)
-        val refused = mutableSetOf<MentionKey>()
-        verdict.surviving.forEachIndexed { index, position ->
-            if (answers[index].isValid) return@forEachIndexed
-            val key = taking[position]
-            when {
-                key != null -> refused += key
-                position !in verdict.filter -> refused += taking.values
-            }
-        }
-        return refused
+    private fun namesSpan(names: List<String>?, span: String): Boolean {
+        if (names.isNullOrEmpty()) return false
+        val normalized = NormalizedNameCandidateSearcher.normalizeName(span)
+        return normalized.isNotBlank() && names.any { it.equals(normalized, ignoreCase = true) }
     }
 
     /**

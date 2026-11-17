@@ -236,7 +236,7 @@ class MentionScreeningTest {
             proposition("Bob likes tea", mention("Alice", "p1")),
             proposition("Alice likes jazz", mention("Alice")),
         )
-        val outcome = screen(extracted, analysisContext = context(knownPerson("p1", "Alice Smith")))
+        val outcome = screen(extracted, analysisContext = context(knownPerson("p1", "Alice Smith", "Alice")))
         assertEquals("p1", outcome.candidates.propositions[1].mentions[0].suggestedId)
         assertNull(outcome.result.propositions[1].mentions[0].suggestedId)
     }
@@ -307,7 +307,7 @@ class MentionScreeningTest {
         assertNull(blankDropped.candidates.propositions[1].mentions[0].suggestedId)
         val blankCandidate = screen(
             chunk(proposition("Bob likes tea", mention("Alice", "p1")), proposition("Alice likes jazz", mention("Alice", ""))),
-            analysisContext = context(knownPerson("p1", "Alice Smith")),
+            analysisContext = context(knownPerson("p1", "Alice Smith", "Alice")),
         )
         assertEquals("p1", blankCandidate.candidates.propositions[1].mentions[0].suggestedId)
     }
@@ -466,7 +466,7 @@ class MentionScreeningTest {
         assertNull(madeUp.candidates.propositions[1].mentions[0].suggestedId)
         val known = screen(
             chunk(proposition("Bob likes tea", mention("Alice", "p-alice")), proposition("Alice likes jazz", mention("Alice"))),
-            analysisContext = context(knownPerson("p-alice", "Alice Smith")),
+            analysisContext = context(knownPerson("p-alice", "Alice Smith", "Alice")),
         )
         assertEquals("p-alice", known.candidates.propositions[1].mentions[0].suggestedId)
     }
@@ -481,7 +481,7 @@ class MentionScreeningTest {
             ),
             filter = PickingFilter { it.suggestedId == "p-x" },
             filterHandling = LEAVE_UNRESOLVED,
-            analysisContext = context(knownPerson("p-alice", "Alice Smith")),
+            analysisContext = context(knownPerson("p-alice", "Alice Smith", "Alice")),
         )
         assertEquals("p-alice", outcome.candidates.propositions.last().mentions.single().suggestedId)
     }
@@ -532,7 +532,7 @@ class MentionScreeningTest {
             ),
             filter = PickingFilter { it.span == "Bob" },
             filterHandling = KEEP,
-            analysisContext = context(knownPerson("k", "Alice Smith")),
+            analysisContext = context(knownPerson("k", "Alice Smith", "Alice")),
         )
         assertEquals(listOf("k", null), outcome.candidates.propositions[1].mentions.map { it.suggestedId })
     }
@@ -555,7 +555,7 @@ class MentionScreeningTest {
     }
 
     @Test
-    fun `R3 the filter is asked once more about each proposition that receives an id, and no more`() {
+    fun `R3 the filter is asked once per proposition, also when an id is passed on`() {
         val recording = RecordingFilter()
         screen(
             chunk(
@@ -565,10 +565,10 @@ class MentionScreeningTest {
                 proposition("Alice likes rum", mention("Alice")),
             ),
             filter = recording,
-            analysisContext = context(knownPerson("k", "Alice Smith")),
+            analysisContext = context(knownPerson("k", "Alice Smith", "Alice")),
         )
-        assertEquals(6, recording.seen.size, "asked about: ${recording.seen.map { it.text }}")
-        assertEquals(3, recording.seen.count { proposition -> proposition.mentions.any { it.suggestedId == "k" } })
+        assertEquals(3, recording.seen.size, "asked about: ${recording.seen.map { it.text }}")
+        assertTrue(recording.seen.none { proposition -> proposition.mentions.any { it.suggestedId == "k" } })
     }
 
     @Test
@@ -585,7 +585,7 @@ class MentionScreeningTest {
     }
 
     @Test
-    fun `R5 the filter is asked about an id with the same mentions it judged before`() {
+    fun `R5 the filter is not asked again when an id is passed on`() {
         val recording = RecordingFilter(PickingFilter { it.span == "Carol" })
         screen(
             chunk(
@@ -594,17 +594,15 @@ class MentionScreeningTest {
             ),
             filter = recording,
             filterHandling = LEAVE_UNRESOLVED,
-            analysisContext = context(knownPerson("k", "Alice Smith")),
+            analysisContext = context(knownPerson("k", "Alice Smith", "Alice")),
         )
         val asked = recording.seen.filter { it.text == "Alice met Carol" }
-        assertEquals(2, asked.size, "asked about: ${recording.seen}")
-        assertEquals(asked[0].mentions.map { it.span }, asked[1].mentions.map { it.span })
+        assertEquals(1, asked.size, "asked about: ${recording.seen}")
         assertEquals(listOf(null, null), asked[0].mentions.map { it.suggestedId })
-        assertEquals(listOf("k", null), asked[1].mentions.map { it.suggestedId })
     }
 
     @Test
-    fun `R6 the filter sees the ids already passed on when it judges the next one`() {
+    fun `R6 an id whose known entity names neither span reaches no mention`() {
         val noSharedIds = object : MentionFilter {
             override fun isValid(mention: SuggestedMention, propositionText: String): Boolean = true
             override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> {
@@ -623,12 +621,11 @@ class MentionScreeningTest {
             filter = noSharedIds,
             analysisContext = context(knownPerson("k", "Kim Smith")),
         )
-        val ids = outcome.candidates.propositions[1].mentions.map { it.suggestedId }
-        assertTrue(ids.count { it == "k" } <= 1, "ids: $ids")
+        assertEquals(listOf(null, null), outcome.candidates.propositions[1].mentions.map { it.suggestedId })
     }
 
     @Test
-    fun `R7 an id is refused when the filter rejects it in any proposition that would receive it`() {
+    fun `R7 an id that two spans carry reaches none of their mentions in any proposition`() {
         val noSharedIds = object : MentionFilter {
             override fun isValid(mention: SuggestedMention, propositionText: String): Boolean = true
             override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> {
@@ -647,9 +644,38 @@ class MentionScreeningTest {
                 proposition("Alice met Bob", mention("Alice"), mention("Bob")),
             ),
             filter = noSharedIds,
+            analysisContext = context(knownPerson("k", "Alice", "Bob")),
+        )
+        assertTrue(outcome.candidates.propositions.flatMap { it.mentions }.none { it.suggestedId == "k" }, "candidates: ${outcome.candidates}")
+    }
+
+    @Test
+    fun `N1 a dropped mention passes on no id whose known entity has another name`() {
+        val outcome = screen(
+            chunk(proposition("Bob slept", mention("Alice", "k")), proposition("Alice likes jazz", mention("Alice"))),
             analysisContext = context(knownPerson("k", "Kim Smith")),
         )
-        val ids = outcome.candidates.propositions[3].mentions.map { it.suggestedId }
-        assertTrue(ids.count { it == "k" } <= 1, "ids: $ids")
+        assertNull(outcome.candidates.propositions[1].mentions.single().suggestedId)
+    }
+
+    @Test
+    fun `N1 one id passed on by two spans reaches neither`() {
+        val outcome = screen(
+            chunk(
+                proposition("Bob slept", mention("Alice", "k"), mention("Ali", "k")),
+                proposition("Alice met Ali", mention("Alice"), mention("Ali")),
+            ),
+            analysisContext = context(knownPerson("k", "Alice", "Ali")),
+        )
+        assertEquals(listOf(null, null), outcome.candidates.propositions[1].mentions.map { it.suggestedId })
+    }
+
+    @Test
+    fun `N1 the id picks among known entities that share the span's name`() {
+        val outcome = screen(
+            chunk(proposition("Bob slept", mention("Alice", "k2")), proposition("Alice likes jazz", mention("Alice"))),
+            analysisContext = context(knownPerson("k1", "Alice Smith", "Alice"), knownPerson("k2", "Alice Jones", "Alice")),
+        )
+        assertEquals("k2", outcome.candidates.propositions[1].mentions.single().suggestedId)
     }
 }

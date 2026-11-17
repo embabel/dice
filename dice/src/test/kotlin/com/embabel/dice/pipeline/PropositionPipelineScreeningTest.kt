@@ -228,16 +228,28 @@ class PropositionPipelineScreeningTest {
 
     @Test
     fun `E6 a dropped mention passes its suggested id to the candidate with the same span and type`() {
-        val extractor = SuggestingPropositionExtractor.of(
+        val inner = SuggestingPropositionExtractor.of(
             MentionFixtures.proposition("Bob likes tea", MentionFixtures.mention("Alice", "p1")),
             MentionFixtures.proposition("Alice likes jazz", MentionFixtures.mention("Alice")),
         )
+        val offered = CopyOnWriteArrayList<SuggestedMention>()
+        val recording = object : PropositionExtractor by inner {
+            override fun toSuggestedEntities(
+                suggestedPropositions: SuggestedPropositions,
+                context: SourceAnalysisContext,
+                sourceText: String?,
+                mentionFilter: MentionFilter?,
+            ): SuggestedEntities {
+                offered.addAll(suggestedPropositions.propositions.flatMap { it.mentions })
+                return inner.toSuggestedEntities(suggestedPropositions, context, sourceText, mentionFilter)
+            }
+        }
 
-        dropPipeline(extractor).processChunk(chunk(), context().withKnownEntities(MentionFixtures.knownPerson("p1", "Alice Smith")))
+        val result = dropPipeline(recording)
+            .processChunk(chunk(), context().withKnownEntities(MentionFixtures.knownPerson("p1", "Alice Smith", "Alice")))
 
-        val reached = resolver.entities.filter { it.name == "Alice" }
-        assertEquals(1, reached.size, "entities: ${resolver.entities}")
-        assertEquals("p1", reached.single().id)
+        assertEquals(listOf("p1"), offered.filter { it.span == "Alice" }.map { it.suggestedId })
+        assertEquals("p1", result.propositions.single { it.text == "Alice likes jazz" }.mentions.single().resolvedId)
     }
 
     @Test

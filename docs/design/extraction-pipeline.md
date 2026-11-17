@@ -207,14 +207,12 @@ Under DROP, the mentions grounding drops can pass a `suggestedId` on to the reso
 with the same span and type. Resolution gives every mention of one span and type the same id, so
 this is decided once per span and type for the whole chunk, never per proposition. A span and type
 gets an id only when every dropped mention of it that carries an id carries the same one, that id
-belongs to a known entity of the analysis, and no candidate of it holds an id of its own. A
-made-up id never steers resolution. Unless the filter only reports (`KEEP`), it is then asked once
-more about each proposition that would receive an id, with the same mentions it judged before and
-all the passed-on ids in place. When it rejects a mention that took an id, that id is withdrawn
-from the whole chunk; when it rejects a mention it had accepted without the ids, every id that
-proposition took is withdrawn. The propositions are asked again with the ids that remain until the
-filter accepts them all. The propositions keep their mentions as the model
-wrote them, and a rejection always reports the mention as the model wrote it.
+belongs to a known entity of the analysis whose name or an alias is the span (compared the way
+`GroundedMentionFilter` compares names), no other span and type would take the same id, and no
+candidate of it holds an id of its own. So the id can only choose among the known entities the span
+itself names, and never points a mention at something its own text does not name. The filter has
+judged every mention as written and is not asked again. The propositions keep their mentions as the
+model wrote them, and a rejection always reports the mention as the model wrote it.
 
 A mention left unresolved keeps no id, even when another mention with the same span and type is
 resolved. Resolution assigns ids by span and type, so the pipeline takes the id off afterwards by

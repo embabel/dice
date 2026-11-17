@@ -21,9 +21,10 @@ and the consumer PRs that deliver it).
 
 - With `withUngroundedMentions(UngroundedMentionHandling.DROP)`, the mentions grounding drops pass
   a suggested id on to the resolver candidates with the same span and type when they all agree on
-  one id, it is the id of a known entity of the analysis, no candidate of that span and type holds
-  an id of its own, and the mention filter, unless it only reports, accepts the id. The decision is
-  made once per span and type for the chunk. Any other suggested id is dropped with its mention.
+  one id, it is the id of a known entity of the analysis whose name or an alias is the span, no
+  other span and type would take it, and no candidate of that span and type holds an id of its own.
+  The decision is made once per span and type for the chunk. Any other suggested id is dropped with
+  its mention.
   **Compatibility: behavioral.**
 
 - The build now checks the committed public API listings of the published modules. `./mvnw verify` fails when
