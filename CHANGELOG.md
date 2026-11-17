@@ -37,11 +37,12 @@ and the consumer PRs that deliver it).
   internal helper. A merge of identical propositions, a reinforcement by a similar one and a
   consolidator reinforcement each keep their own confidence step and cap, and the reviser's two
   rules keep their decay factors. The helper folds the new proposition's grounding, provenance
-  entries and source ids into the stored one with `Proposition.absorbEvidence`, adds one to
-  `reinforceCount`, and stamps `contentRevised` and `metadataRevised` with one instant. The reviser
-  stamps `lastAccessed` with it too. A configured `TrustScorer` writes its score afterwards, which
-  moves `metadataRevised` again. **Compatibility: behavioral.** A reinforced proposition carries
-  the new proposition's source ids, and its `metadataRevised` moves with `contentRevised`.
+  entries and source ids into the stored one with `Proposition.absorbEvidence`, leaving out the
+  stored proposition's own id, adds one to `reinforceCount`, and stamps `contentRevised` and
+  `metadataRevised` with one instant. The reviser stamps `lastAccessed` with it too. A configured
+  `TrustScorer` writes its score afterwards, which moves `metadataRevised` again. **Compatibility:
+  behavioral.** A reinforced proposition carries the new proposition's source ids, and its
+  `metadataRevised` moves with `contentRevised`.
 
 - Drivine 0.6.2. Since 0.5.0 the index and constraint spec classes in `org.drivine.schema`
   (`VectorIndexSpec`, `UniquenessConstraintSpec`, `RangeIndexSpec` and the others) ship in

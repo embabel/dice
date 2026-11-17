@@ -37,9 +37,9 @@ internal class ReinforcementRule(
  * Strengthens a stored proposition with new evidence.
  *
  * The evidence's grounding, provenance entries and source ids are folded in with
- * [Proposition.absorbEvidence]. The reinforce count goes up by one for new evidence. Confidence
- * never goes below the stored value. One instant is stamped on both the content and metadata
- * revision times.
+ * [Proposition.absorbEvidence]. The stored proposition's own id is never folded into its source
+ * ids. The reinforce count goes up by one for new evidence. Confidence never goes below the
+ * stored value. One instant is stamped on both the content and metadata revision times.
  *
  * The stored proposition comes back as it is in two cases. The evidence has the same id, or the
  * evidence names a source and the stored proposition already holds all of it. A source is a
@@ -54,10 +54,11 @@ internal class ReinforcementRule(
  */
 internal fun reinforce(existing: Proposition, evidence: Proposition, rule: ReinforcementRule): Proposition {
     if (existing.id == evidence.id) return existing
-    val folded = existing.absorbEvidence(evidence)
-    val namesNoSource = evidence.grounding.isEmpty() &&
-        evidence.provenanceEntries.isEmpty() &&
-        evidence.sourceIds.isEmpty()
+    val sources = evidence.copy(sourceIds = evidence.sourceIds.filter { it != existing.id })
+    val folded = existing.absorbEvidence(sources)
+    val namesNoSource = sources.grounding.isEmpty() &&
+        sources.provenanceEntries.isEmpty() &&
+        sources.sourceIds.isEmpty()
     if (!namesNoSource && folded.reinforceCount == existing.reinforceCount) return existing
     val now = Instant.now()
     return folded.copy(
