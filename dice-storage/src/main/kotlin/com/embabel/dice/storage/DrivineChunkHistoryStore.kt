@@ -87,5 +87,14 @@ class DrivineChunkHistoryStore(
         )
     }
 
+    /**
+     * Deletes every processed chunk for the context, for Java callers. It is declared here, rather
+     * than inherited from the interface, so Spring runs it in a transaction like [clearByContext].
+     *
+     * @throws IllegalArgumentException if contextIdValue is blank
+     */
+    @Transactional
+    override fun clearByContextValue(contextIdValue: String) = clearByContext(ContextId(contextIdValue))
+
     private fun storageId(key: HashKey): String = "${key.contextId.value}|${key.contentHash}"
 }
