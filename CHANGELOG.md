@@ -139,7 +139,9 @@ and the consumer PRs that deliver it).
 
 - The concurrent extraction strategies carry an interrupt back to the caller. When an extraction is
   interrupted on a pool thread, its slot is null as before, the pool thread's flag is cleared, and the
-  flag of the thread that called `execute` is set once every chunk is done. **Compatibility:
+  flag of the thread that called `execute` is set when `execute` returns or throws. A batched
+  strategy holds it until its last window, so a later chunk run on the calling thread is not failed
+  by an earlier interrupt. **Compatibility:
   behavioral.** Upgrade: code that checks `Thread.interrupted()` after `execute` now sees the
   interrupt and should handle it as it would any other.
 
@@ -969,7 +971,9 @@ and the consumer PRs that deliver it).
   build one directly. **Compatibility: additive.**
 
 - `ConsecutiveFailureBreaker.Outcome` has static `success`, `failure` and `skipped` factories. Its
-  constructor stays internal. **Compatibility: additive.**
+  constructor stays internal, and now throws `IllegalArgumentException` for values that contradict
+  each other, such as a skipped outcome that carries a value. **Compatibility: additive.** Upgrade:
+  Java code that called the constructor directly uses the factories instead.
 
 ### Fixed
 

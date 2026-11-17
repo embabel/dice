@@ -23,12 +23,15 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Checks that a breaker outcome is built only through its factories.
  *
  * R1: every constructor of ConsecutiveFailureBreaker.Outcome is internal, so the public way to
  *     build one is Outcome.success, Outcome.failure or Outcome.skipped.
+ * R2: Java can still reach that constructor in bytecode, so it refuses a skipped outcome with a
+ *     value or an exception, and an outcome with both a value and an exception.
  */
 class BreakerOutcomeConstructorJavaTest {
 
@@ -40,5 +43,17 @@ class BreakerOutcomeConstructorJavaTest {
         for (KFunction<?> constructor : constructors) {
             assertEquals(KVisibility.INTERNAL, constructor.getVisibility());
         }
+    }
+
+    @Test
+    void r2_theConstructorRefusesContradictoryValues() {
+        IllegalStateException failure = new IllegalStateException("x");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new ConsecutiveFailureBreaker.Outcome<>(true, "value", null));
+        assertThrows(IllegalArgumentException.class,
+                () -> new ConsecutiveFailureBreaker.Outcome<String>(true, null, failure));
+        assertThrows(IllegalArgumentException.class,
+                () -> new ConsecutiveFailureBreaker.Outcome<>(false, "value", failure));
     }
 }

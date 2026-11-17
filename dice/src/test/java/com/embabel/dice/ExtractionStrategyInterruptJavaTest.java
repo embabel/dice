@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -49,6 +50,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * E3: when the executor rejects a chunk, the strategy waits for the chunks it already handed over
  *     and then throws the RejectedExecutionException.
  * E4: an executor that is already shut down makes the strategy throw RejectedExecutionException.
+ * E5: with an executor that runs refused work on the calling thread, an interrupt in an early
+ *     window does not fail the chunks of later windows, and the caller still sees it at the end.
  */
 class ExtractionStrategyInterruptJavaTest {
 
@@ -112,6 +115,64 @@ class ExtractionStrategyInterruptJavaTest {
 
         assertThrows(RejectedExecutionException.class,
                 () -> new BatchedExtractionStrategy(2, executor).executeAll(chunks, Chunk::getText));
+    }
+
+    @Test
+    void e5_anInterruptInAnEarlyWindowDoesNotFailLaterWindows() {
+        executor = new CallingThreadExecutor();
+        Function<Chunk, String> interruptibleWork = chunk -> {
+            if (chunk.getText().equals("one")) {
+                Thread.currentThread().interrupt();
+            }
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                throw sneaky(e);
+            }
+            return chunk.getText();
+        };
+
+        List<String> results = new BatchedExtractionStrategy(1, executor).executeAll(chunks, interruptibleWork);
+
+        assertTrue(Thread.interrupted(), "the calling thread should see the interrupt at the end");
+        assertArrayEquals(new Object[]{null, "two"}, results.toArray());
+    }
+
+    /** Runs every task on the thread that submits it, as CallerRunsPolicy does once a pool is full. */
+    static final class CallingThreadExecutor extends AbstractExecutorService {
+
+        private volatile boolean shutdown;
+
+        @Override
+        public void execute(Runnable command) {
+            command.run();
+        }
+
+        @Override
+        public void shutdown() {
+            shutdown = true;
+        }
+
+        @Override
+        public List<Runnable> shutdownNow() {
+            shutdown = true;
+            return List.of();
+        }
+
+        @Override
+        public boolean isShutdown() {
+            return shutdown;
+        }
+
+        @Override
+        public boolean isTerminated() {
+            return shutdown;
+        }
+
+        @Override
+        public boolean awaitTermination(long timeout, TimeUnit unit) {
+            return true;
+        }
     }
 
     /** An extraction that is interrupted on the chunk with [text] and returns the text otherwise. */

@@ -27,6 +27,26 @@ import java.util.function.Function
 /** One chunk's result, and whether the extraction left the worker thread interrupted. */
 private class Slot<T>(val value: T?, val interrupted: Boolean)
 
+/** Remembers that an extraction was interrupted, until the strategy hands the interrupt back. */
+private class PendingInterrupt {
+    var seen = false
+}
+
+/**
+ * Runs [body] and then sets the calling thread's interrupt flag if any extraction during it was
+ * interrupted, whether [body] returned or threw. Holding the interrupt until the end keeps an
+ * extraction that runs on the calling thread, as it does under CallerRunsPolicy, from failing
+ * because of an interrupt an earlier chunk raised.
+ */
+private inline fun <R> handingBackInterrupts(body: (PendingInterrupt) -> R): R {
+    val pending = PendingInterrupt()
+    try {
+        return body(pending)
+    } finally {
+        if (pending.seen) Thread.currentThread().interrupt()
+    }
+}
+
 /**
  * Runs [extract] on every chunk on [executor] and hands back the results in input order. This is
  * the shared body of the two concurrent strategies.
@@ -39,10 +59,16 @@ private class Slot<T>(val value: T?, val interrupted: Boolean)
  * others attached as suppressed. An Error arrives wrapped in a [CompletionException]; this unwraps
  * it so the caller sees the Error as it was.
  *
- * An interrupt raised during an extraction is cleared from the worker thread, so the pool is not
- * left with an interrupted thread, and set again on the calling thread once every chunk is done.
+ * An interrupt raised during an extraction is cleared from the thread it ran on, so neither the
+ * pool nor the caller is left interrupted while other chunks run, and recorded in [pending] for
+ * [handingBackInterrupts] to set on the calling thread at the end.
  */
-private fun <T> runAll(executor: ExecutorService, chunks: List<Chunk>, extract: (Chunk) -> T): List<T?> {
+private fun <T> runAll(
+    executor: ExecutorService,
+    chunks: List<Chunk>,
+    pending: PendingInterrupt,
+    extract: (Chunk) -> T,
+): List<T?> {
     val futures = ArrayList<CompletableFuture<Slot<T>>>(chunks.size)
     var rejection: RejectedExecutionException? = null
     for (chunk in chunks) {
@@ -57,18 +83,16 @@ private fun <T> runAll(executor: ExecutorService, chunks: List<Chunk>, extract: 
         }
     }
     val failures = mutableListOf<Throwable>()
-    var interrupted = false
     val results = futures.map { future ->
         try {
             val slot = future.join()
-            interrupted = interrupted || slot.interrupted
+            if (slot.interrupted) pending.seen = true
             slot.value
         } catch (e: Throwable) {
             failures += (e as? CompletionException)?.cause as? Error ?: e
             null
         }
     }
-    if (interrupted) Thread.currentThread().interrupt()
     rejection?.let { failures += it }
     if (failures.isNotEmpty()) {
         val primary = failures.firstOrNull { it is Error } ?: failures.first()
@@ -195,7 +219,7 @@ class ParallelExtractionStrategy private constructor(
     )
 
     override fun <T> execute(chunks: List<Chunk>, extract: (Chunk) -> T): List<T?> =
-        runAll(executor, chunks, extract)
+        handingBackInterrupts { pending -> runAll(executor, chunks, pending, extract) }
 
     /** Shuts down an internally-created pool; a no-op when the executor was caller-supplied. */
     override fun close() {
@@ -234,7 +258,9 @@ class BatchedExtractionStrategy private constructor(
     constructor(batchSize: Int = 5) : this(batchSize, Executors.newFixedThreadPool(batchSize), ownsExecutor = true)
 
     override fun <T> execute(chunks: List<Chunk>, extract: (Chunk) -> T): List<T?> =
-        chunks.chunked(batchSize).flatMap { window -> runAll(executor, window, extract) }
+        handingBackInterrupts { pending ->
+            chunks.chunked(batchSize).flatMap { window -> runAll(executor, window, pending, extract) }
+        }
 
     /** Shuts down an internally-created pool; a no-op when the executor was caller-supplied. */
     override fun close() {

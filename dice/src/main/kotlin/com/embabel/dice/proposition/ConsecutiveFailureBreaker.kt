@@ -77,7 +77,8 @@ class ConsecutiveFailureBreaker @JvmOverloads constructor(
     /**
      * The result of one [attemptCall]: a value, a failure, or a skip.
      *
-     * Build one with [success], [failure] or [skipped].
+     * Build one with [success], [failure] or [skipped]. The constructor is internal, but Java can
+     * still reach it, so it refuses values that contradict each other.
      *
      * @property value the call's result on success, otherwise null
      * @property exception the exception the call threw on failure, otherwise null
@@ -87,6 +88,15 @@ class ConsecutiveFailureBreaker @JvmOverloads constructor(
         val value: T?,
         val exception: Exception?,
     ) {
+
+        init {
+            require(!skipped || (value == null && exception == null)) {
+                "A skipped outcome has no value and no exception"
+            }
+            require(value == null || exception == null) {
+                "An outcome has a value or an exception, never both"
+            }
+        }
 
         /** True when the breaker had tripped, so the call was not run. */
         val isSkipped: Boolean get() = skipped
