@@ -267,6 +267,48 @@ class InMemoryPersistUnitWriterTest {
     }
 
     @Test
+    fun `E19 a failed unit removes a new entity whose id it also carries as a different updated instance`() {
+        val stores = Stores(FaultyEntityRepository(schema, failingSave = 2))
+        val unit = PersistUnit.of(
+            listOf(
+                proposition("Alice likes tea", "p-1"),
+                proposition("Bob owns a cat", "p-2", entityId = "entity-bob"),
+            ),
+            listOf(entity("entity-alice", "new"), entity("entity-bob")),
+            listOf(entity("entity-alice", "updated")),
+        ).withRun(run("run-1"))
+        val before = stores.picture(unit)
+
+        val failed = failed(stores.writer.write(unit))
+
+        assertThat(failed.step).isEqualTo(PersistStep.ENTITIES)
+        assertThat(failed.leftInStore).isEmpty()
+        assertThat(stores.entities.findById("entity-alice")).isNull()
+        assertUnchanged(before, stores.picture(unit))
+    }
+
+    @Test
+    fun `E20 a failed unit removes a new entity whose id appears twice among its new entities`() {
+        val stores = Stores(FaultyEntityRepository(schema, failingSave = 2))
+        val unit = PersistUnit.of(
+            listOf(
+                proposition("Alice likes tea", "p-1"),
+                proposition("Bob owns a cat", "p-2", entityId = "entity-bob"),
+            ),
+            listOf(entity("entity-alice", "first"), entity("entity-bob"), entity("entity-alice", "second")),
+            emptyList(),
+        ).withRun(run("run-1"))
+        val before = stores.picture(unit)
+
+        val failed = failed(stores.writer.write(unit))
+
+        assertThat(failed.step).isEqualTo(PersistStep.ENTITIES)
+        assertThat(failed.leftInStore).isEmpty()
+        assertThat(stores.entities.findById("entity-alice")).isNull()
+        assertUnchanged(before, stores.picture(unit))
+    }
+
+    @Test
     fun `E3 a failing embedding on the second proposition leaves the stores unchanged including the first`() {
         val embedder = mockk<EmbeddingService>()
         every { embedder.embed("boom") } throws IllegalStateException("embedder down")

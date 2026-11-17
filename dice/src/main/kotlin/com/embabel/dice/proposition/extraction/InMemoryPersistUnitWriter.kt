@@ -108,29 +108,31 @@ internal class InMemoryPersistUnitWriter(
             null
         }
         val claimFailure = attempt(PersistStep.PROPOSITIONS) { propositionRepository.restore(before.claims) }
-        val written = (unit.newEntities + unit.updatedEntities).associateBy { it.id }
+        val written = (unit.newEntities + unit.updatedEntities).groupBy { it.id }
         val entityFailures = before.entities.mapNotNull { (id, entity) ->
-            attempt(PersistStep.ENTITIES) { restoreEntity(id, entity, written[id]) }
+            attempt(PersistStep.ENTITIES) { restoreEntity(id, entity, written[id].orEmpty()) }
         }
         return listOfNotNull(linkFailure, claimFailure) + entityFailures
     }
 
     /**
-     * Puts one entity back when the store still holds what the unit wrote.
+     * Puts one entity back when the store still holds an instance the unit wrote.
      *
      * An entity the store holds as the same instance as before was not written by the unit. It is
      * left alone, so the undo makes no embedder call for it. An entity that is neither the
-     * before-image nor the unit's instance was saved by another writer and is left as it is.
+     * before-image nor one of the unit's instances was saved by another writer and is left as it
+     * is. A unit can carry several instances for one id, in both entity lists or twice in one, and
+     * the write can stop after any of them, so each one counts.
      *
      * @param id The entity id.
      * @param before The entity the id held before the unit, or null when it was absent.
-     * @param written The instance the unit wrote for the id.
+     * @param written Every instance the unit carries for the id.
      */
-    private fun restoreEntity(id: String, before: NamedEntityData?, written: NamedEntityData?) {
+    private fun restoreEntity(id: String, before: NamedEntityData?, written: List<NamedEntityData>) {
         val now = entityRepository.findById(id)
         when {
             now === before -> Unit
-            now !== written -> Unit
+            written.none { it === now } -> Unit
             before == null -> entityRepository.delete(id)
             else -> entityRepository.save(before)
         }
