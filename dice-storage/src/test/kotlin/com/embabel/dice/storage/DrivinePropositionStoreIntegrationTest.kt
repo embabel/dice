@@ -217,7 +217,7 @@ class DrivinePropositionStoreIntegrationTest {
         val loadedUnrevised = repository.findById(unrevised.id)!!
 
         assertNotNull(loadedRevised.lastContentRevision)
-        assertEquals(loadedRevised.contentRevised, loadedRevised.lastContentRevision)
+        assertEquals(revised.lastContentRevision, loadedRevised.lastContentRevision)
         assertNull(loadedUnrevised.lastContentRevision)
     }
 
