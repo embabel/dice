@@ -208,7 +208,9 @@ the resolver candidates with the same span and type get that id, as long as none
 id of its own after the filter has run. An id that matches no known entity is dropped with its
 mention, so a made-up id never steers resolution. The proposition keeps its mentions as the model
 wrote them. The filter judges every mention as the model wrote it, and is then asked again about
-each candidate with the passed-on id in place; a candidate it turns down keeps no id. A rejection
+each candidate proposition with the passed-on ids in place, so a filter that compares mentions sees
+them together. A hinted mention it turns down keeps no id, and if the ids make it turn down any
+other mention, none of that proposition's mentions gets one. A rejection
 always reports the mention as the model wrote it.
 
 A mention left unresolved keeps no id, even when another mention with the same span and type is

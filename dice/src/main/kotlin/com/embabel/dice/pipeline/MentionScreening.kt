@@ -275,6 +275,10 @@ internal object MentionScreening {
      * Gives one candidate proposition's mentions the ids passed on for their span and type, and
      * lets the filter turn down any of them.
      *
+     * The filter is asked about the whole proposition with the ids in place. A hinted mention it
+     * rejects keeps no id, and when it rejects any other mention, which it had accepted before,
+     * none of the proposition's mentions gets an id.
+     *
      * @param proposition the candidate proposition
      * @param hints the id to pass on for each span and type
      * @param filter the mention filter, or null for none
@@ -289,11 +293,18 @@ internal object MentionScreening {
     ): SuggestedProposition {
         val positions = proposition.mentions.indices.filter { MentionKey.from(proposition.mentions[it]) in hints }
         if (positions.isEmpty()) return proposition
-        val offered = positions.map { proposition.mentions[it].copy(suggestedId = hints.getValue(MentionKey.from(proposition.mentions[it]))) }
-        val accepted = if (filter == null) offered.map { true }
-        else filter.checkedVerdicts(proposition.copy(mentions = offered), context).map { it.isValid }
-        if (accepted.none { it }) return proposition
-        val byPosition = positions.zip(offered).filterIndexed { index, _ -> accepted[index] }.toMap()
-        return proposition.copy(mentions = proposition.mentions.mapIndexed { index, mention -> byPosition[index] ?: mention })
+        val hinted = proposition.copy(mentions = proposition.mentions.mapIndexed { index, mention ->
+            if (index in positions) mention.copy(suggestedId = hints.getValue(MentionKey.from(mention))) else mention
+        })
+        if (filter == null) return hinted
+        // Ask about the whole proposition, so a filter that compares mentions sees the ids together.
+        // When an id makes the filter turn down a mention it had accepted, no id is passed on here.
+        val verdicts = filter.checkedVerdicts(hinted, context)
+        if (verdicts.indices.any { it !in positions && !verdicts[it].isValid }) return proposition
+        val accepted = positions.filter { verdicts[it].isValid }.toSet()
+        if (accepted.isEmpty()) return proposition
+        return proposition.copy(mentions = proposition.mentions.mapIndexed { index, mention ->
+            if (index in accepted) hinted.mentions[index] else mention
+        })
     }
 }

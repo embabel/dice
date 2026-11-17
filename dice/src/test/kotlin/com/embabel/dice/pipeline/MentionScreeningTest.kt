@@ -499,4 +499,27 @@ class MentionScreeningTest {
         assertNull(outcome.candidates.propositions[1].mentions.single().suggestedId)
         assertSame(plain, outcome.result.propositions[1].mentions.single())
     }
+
+    @Test
+    fun `L11 the filter judges a passed-on id with the whole proposition in view`() {
+        val noSharedIds = object : MentionFilter {
+            override fun isValid(mention: SuggestedMention, propositionText: String): Boolean = true
+            override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> {
+                val ids = proposition.mentions.mapNotNull { it.suggestedId }
+                return proposition.mentions.map {
+                    if (it.suggestedId != null && ids.count { id -> id == it.suggestedId } > 1) ValidationResult.Invalid("shared id")
+                    else ValidationResult.Valid
+                }
+            }
+        }
+        val outcome = screen(
+            chunk(
+                proposition("Bob slept", mention("Alice", "k")),
+                proposition("Alice met Bob", mention("Alice"), mention("Bob", "k")),
+            ),
+            filter = noSharedIds,
+            analysisContext = context(knownPerson("k", "Alice Smith")),
+        )
+        assertEquals(listOf(null, "k"), outcome.candidates.propositions[1].mentions.map { it.suggestedId })
+    }
 }
