@@ -10,6 +10,53 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- Entity names are compared through a `NameNormalizer`, and the standard one applies its person
+  rules only to entities labelled `Person`. Before, every name lost a leading English title, a
+  trailing generational suffix and a single-letter middle initial, and "Last, First" was turned
+  around, whatever kind of entity it named. "Series A Round" and "Series B Round" both compared as
+  "Series Round" and could resolve to one entity, and "Paris, France" compared as "France Paris".
+  Now a name that is not a person's only has its whitespace collapsed. Each name is normalized
+  with the labels of its own entity: a mention's type for a mention, the stored labels for a known
+  or stored entity. For a person's name the rules now recognize letters and whitespace in any
+  script, so "José M García" compares as "José García" and a non-breaking space separates name
+  parts like any other space. This applies to `NormalizedNameCandidateSearcher`,
+  `PartialNameCandidateSearcher`, `KnownEntityResolver`, `InMemoryEntityResolver` and
+  `GroundedMentionFilter`. `NormalizedNameCandidateSearcher.normalizeName` and
+  `DefaultCanonicalNameSelector` still apply the person rules to every name. Migration:
+  `PersonNameNormalizer.english().forEveryName()` compares every name as a person's again. Pass it
+  to `PropositionPipeline.withNameNormalizer`, to
+  `IncrementalPropositionExtraction.withNameNormalizer` and to
+  `DefaultCandidateSearchers.create(repository, normalizer)`. A schema whose people carry another label names it with
+  `PersonNameNormalizer.english().withPersonLabels("Contact")`. A name with nothing left after normalization matches nothing. Stored entities are not changed.
+  **Compatibility: behavioral.**
+
+- A candidate searcher whose store call fails now logs a warning that names the search and the
+  exception class. The name or id searched for and the stack trace are logged at debug level. `DefaultGroundingResolver` does the same for a failed lookup. Before, these were logged at
+  debug level only, so a store outage showed up as mentions resolving to new entities with nothing
+  in the log. The searcher still returns no candidates and resolution carries on.
+  **Compatibility: behavioral.**
+
+- A mention the mention filter leaves unresolved now stays unresolved. Before, entity resolution
+  assigned ids by span and type, so such a mention got the id of an accepted mention with the same
+  span and type elsewhere in the chunk. `PropositionExtractor.resolvePropositions` is now
+  documented to return the propositions and their mentions in the order it was given them, and the
+  pipeline applies the filter's verdicts by position. When an extractor's output does not line up
+  with what it was given, by count or by each mention's span and type, and the chunk had a mention
+  dropped or left unresolved, the pipeline clears every id in the propositions that do not line up
+  and logs one warning saying how many it cleared. Migration: `withMentionFilter(filter,
+  RejectedMentionHandling.KEEP)` keeps the earlier resolution of rejected mentions, and an extractor
+  whose `resolvePropositions` keeps the order and the mentions it was given, as
+  `LlmPropositionExtractor` does, is not affected by the clearing. **Compatibility: behavioral.**
+
+- `PropositionPipeline` applies the mention filter itself, for every `PropositionExtractor`, and
+  passes `null` as the `mentionFilter` argument of `toSuggestedEntities`. An extractor that ignores
+  that argument has its mentions filtered all the same. `LlmPropositionExtractor.toSuggestedEntities`
+  called directly with a filter asks it through `validateMentions`, which gives the same result for
+  a filter that only implements `isValid`. For rejected mentions the pipeline logs one line of
+  counts per chunk, at warning level when a mention was dropped or left unresolved and at debug
+  level otherwise. Spans are logged at debug level only, by the pipeline and by
+  `LlmPropositionExtractor`. **Compatibility: behavioral.**
+
 - The build now checks the committed public API listings of the published modules. `./mvnw verify` fails when
   a module's compiled public API differs from its `api/*.api` file. To update the listings after an API change,
   run `./mvnw -B -DskipTests -Dapi.listing.mode=update clean verify`. **Compatibility: additive.** A build
@@ -123,6 +170,20 @@ and the consumer PRs that deliver it).
   attempts.
 
 ### Added
+
+- `NameNormalizer` chooses how entity names are compared, and `PersonNameNormalizer` is the
+  built-in implementation with its rules open to change: the labels that mark a person, the titles
+  and suffixes removed, and whether middle initials and "Last, First" order are handled. Java
+  builds one with a chain, `PersonNameNormalizer.english().withTitles("Herr", "Frau")`, and Kotlin
+  with a block, `PersonNameNormalizer { titles("Herr", "Frau") }`. `NameNormalizer.whitespaceOnly()`
+  has no language-specific rules, and a lambda `(name, labels) -> ...` is a normalizer.
+  `PropositionPipeline.withNameNormalizer` and `EntityPipeline.withNameNormalizer` set it for a
+  run. `DefaultCandidateSearchers.create` and `withoutVector` take one as a second argument, and
+  the name searchers, `KnownEntityResolver`, `InMemoryEntityResolver`, `GroundedMentionFilter` and
+  `IncrementalPropositionExtraction` each have `withNameNormalizer`.
+  `NormalizedNameCandidateSearcher` and `PartialNameCandidateSearcher` gain Java constructors for
+  their shorter argument lists.
+  **Compatibility: additive.**
 
 - Scoped reads, **EXPERIMENTAL** (may change before 1.0). These are interfaces and value types. See
   "Scoped reads" in the user guide.
@@ -248,11 +309,37 @@ and the consumer PRs that deliver it).
 - `PropositionPipeline` checks each mention an extractor returns against the text of its own
   proposition before entity resolution, and emits one `UngroundedMentionsFound` event per chunk
   listing every mention whose span is blank or does not appear in that text, with the reason. The
-  comparison ignores letter case, runs of whitespace, Unicode composition and width forms, and
-  typographic quotes and hyphens, and is otherwise literal. By default the mentions are kept.
-  `withUngroundedMentions(UngroundedMentionHandling.DROP)` removes them before resolution, so they
-  are never resolved, never minted as an entity and not left on the proposition; the proposition
-  itself is always kept. **Compatibility: additive.**
+  comparison uses full case folding and ignores runs of whitespace, Unicode composition and width
+  forms, invisible characters, and the typographic variants of quotes and dashes. In scripts that
+  put spaces between words, such as Latin, Cyrillic and Greek, the span must sit at word edges, so
+  an inflected or plural form, or a name run together with a number, is a different word. A mention
+  that names a known entity of the context, by name or alias compared the way entity resolution
+  compares them, is grounded when the text names that entity, and when several known entities share
+  that name the text must name all of them. A suggested id alone grounds nothing. A mention of
+  something the text only implies is ungrounded, with or without an id. By default the mentions are
+  kept. `withUngroundedMentions(UngroundedMentionHandling.DROP)` removes them before resolution, so
+  they are never resolved, never minted as an entity and not left on the proposition; the
+  proposition itself is always kept. **Compatibility: additive.**
+
+- `MentionFilter.validateMentions(proposition, context)` judges all mentions of one proposition in
+  one call and returns a `ValidationResult` per mention. The default calls `isValid` and
+  `rejectionReason`, so existing filters work unchanged. A mocked `MentionFilter` must stub
+  `validateMentions` too, because a mock returns an empty list for it and the pipeline fails the
+  chunk when the number of results does not match the number of mentions. `CompositeMentionFilter`
+  and `ObservableMentionFilter` pass it on to the filters they wrap. `GroundedMentionFilter` is the
+  pipeline's grounding check as a `MentionFilter`, and `PropositionPipeline.withMentionGrounding`
+  replaces it. `withMentionFilter(filter, RejectedMentionHandling)` chooses what happens to a
+  mention the filter rejects. `KEEP` only reports it, `LEAVE_UNRESOLVED`, which is what
+  `withMentionFilter(filter)` does, keeps it on the proposition unresolved, and `DROP` removes it.
+  **Compatibility: additive.**
+
+- `ChunkPropositionResult.rejectedMentions` and `PropositionResults.rejectedMentions` list every
+  mention a check rejected as a `RejectedMention`, with the chunk id, the position and text of the
+  proposition, the reason, the check and what the pipeline did. `ChunkPropositionResult.Success`
+  has a six-argument constructor that takes the list, and a four-argument constructor for Java.
+  Its five-argument constructor, `copy` and `componentN` are unchanged. `Success` is a regular
+  class with those members written out, so `Success::class.isData` is false, and its `equals`
+  includes `rejectedMentions`. **Compatibility: additive.**
 
 - A Kotlin DSL for stamping in `dice-metamodel`. **EXPERIMENTAL** (shape may change
   before 1.0): `MetamodelVersion(dictionary) { }` and `DeclaredSchema(dictionary) { }`

@@ -852,7 +852,7 @@ Built-in searchers (ordered cheapest-first):
 |----------|---------|
 | `ByIdCandidateSearcher` | ID lookup (instant) |
 | `ByExactNameCandidateSearcher` | Exact name match |
-| `NormalizedNameCandidateSearcher` | Normalized names (removes "Dr.", "Jr.", etc.) |
+| `NormalizedNameCandidateSearcher` | Normalized names (for people, removes "Dr.", "Jr.", etc.) |
 | `PartialNameCandidateSearcher` | Partial matching ("Brahms" → "Johannes Brahms") |
 | `FuzzyNameCandidateSearcher` | Levenshtein distance matching |
 | `VectorCandidateSearcher` | Embedding/vector similarity |

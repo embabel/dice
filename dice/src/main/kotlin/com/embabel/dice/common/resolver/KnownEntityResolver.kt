@@ -22,12 +22,12 @@ import com.embabel.agent.rag.model.SimpleNamedEntityData
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.ExistingEntity
 import com.embabel.dice.common.KnownEntity
+import com.embabel.dice.common.NameNormalizer
 import com.embabel.dice.common.ReferenceOnlyEntity
 import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution
-import com.embabel.dice.common.resolver.searcher.NormalizedNameCandidateSearcher
 import org.slf4j.LoggerFactory
 
 /**
@@ -36,13 +36,30 @@ import org.slf4j.LoggerFactory
  * Useful for ensuring that specific entities (like the current user) are always matched
  * correctly without requiring a search.
  *
+ * A suggested entity matches a known one when their names are equal after normalization,
+ * ignoring case. Each name is normalized with the labels of its own entity. Use
+ * [withNameNormalizer] to change the rules.
+ *
  * @param knownEntities Entities to check before searching
  * @param delegate The resolver to delegate to if no known entity matches
  */
-class KnownEntityResolver(
+class KnownEntityResolver private constructor(
     private val knownEntities: List<NamedEntity>,
     private val delegate: EntityResolver,
+    private val nameNormalizer: NameNormalizer,
 ) : EntityResolver {
+
+    constructor(knownEntities: List<NamedEntity>, delegate: EntityResolver) :
+        this(knownEntities, delegate, NameNormalizer.standard())
+
+    /**
+     * Returns a resolver that compares names with the given normalizer.
+     *
+     * @param nameNormalizer the rules that decide when two names are the same
+     * @return a new resolver; this one is unchanged
+     */
+    fun withNameNormalizer(nameNormalizer: NameNormalizer): KnownEntityResolver =
+        KnownEntityResolver(knownEntities, delegate, nameNormalizer)
 
     private val logger = LoggerFactory.getLogger(KnownEntityResolver::class.java)
 
@@ -111,7 +128,9 @@ class KnownEntityResolver(
     }
 
     private fun findKnownMatch(suggested: SuggestedEntity): NamedEntity? {
-        val normalizedSuggested = NormalizedNameCandidateSearcher.normalizeName(suggested.name)
+        val normalizedSuggested = nameNormalizer.normalize(suggested.name, suggested.labels)
+        // A name with nothing left after normalization has nothing to compare
+        if (normalizedSuggested.isBlank()) return null
         val suggestedLabels = suggested.labels.map { it.lowercase() }.toSet()
 
         // Collect all known entities with a name match. Real-world
@@ -129,11 +148,9 @@ class KnownEntityResolver(
         // "Thomas") resolves to the user rather than forking an external
         // Person.
         val nameMatches = knownEntities.filter { known ->
+            val knownLabels = known.labels()
             nameFormsOf(known).any { form ->
-                normalizedSuggested.equals(
-                    NormalizedNameCandidateSearcher.normalizeName(form),
-                    ignoreCase = true,
-                )
+                normalizedSuggested.equals(nameNormalizer.normalize(form, knownLabels), ignoreCase = true)
             }
         }
         if (nameMatches.isEmpty()) return null
@@ -188,6 +205,27 @@ class KnownEntityResolver(
                 delegate
             } else {
                 KnownEntityResolver(knownEntities, delegate)
+            }
+        }
+
+        /**
+         * Create a known entity resolver wrapping an existing resolver, with your own name rules.
+         *
+         * @param knownEntities Entities to check first
+         * @param delegate The resolver to delegate to if no match found
+         * @param nameNormalizer The rules that decide when two names are the same
+         * @return A new KnownEntityResolver, or the delegate when there are no known entities
+         */
+        @JvmStatic
+        fun withKnownEntities(
+            knownEntities: List<NamedEntity>,
+            delegate: EntityResolver,
+            nameNormalizer: NameNormalizer,
+        ): EntityResolver {
+            return if (knownEntities.isEmpty()) {
+                delegate
+            } else {
+                KnownEntityResolver(knownEntities, delegate).withNameNormalizer(nameNormalizer)
             }
         }
     }

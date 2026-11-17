@@ -54,7 +54,8 @@ interface PropositionExtractor {
      * @param suggestedPropositions Propositions from extract()
      * @param context The source analysis context
      * @param sourceText Optional source text for context during entity resolution
-     * @param mentionFilter Optional filter to validate mentions before creating entities
+     * @param mentionFilter Optional filter applied to the mentions before entities are created, asked
+     *   through [MentionFilter.validateMentions]. The pipeline screens mentions itself and passes null.
      * @return SuggestedEntities suitable for EntityResolver.resolve()
      */
     fun toSuggestedEntities(
@@ -66,6 +67,10 @@ interface PropositionExtractor {
 
     /**
      * Apply entity resolution results to create final Propositions.
+     *
+     * Return one proposition per suggested proposition, in the same order, each with its mentions
+     * in the same order as the suggested mentions. The pipeline
+     * relies on that order to keep a mention it left unresolved without an id.
      *
      * @param suggestedPropositions The original suggested propositions
      * @param resolutions Entity resolution results from EntityResolver
@@ -88,7 +93,24 @@ data class MentionKey(
     val type: String,
 ) {
     companion object {
-        fun from(mention: SuggestedMention): MentionKey =
-            MentionKey(span = mention.span.lowercase().trim(), type = mention.type.lowercase().trim())
+        fun from(mention: SuggestedMention): MentionKey = of(mention.span, mention.type)
+
+        /**
+         * Builds the key of a resolved mention, the same way as for a suggested one.
+         *
+         * @param mention the resolved mention
+         * @return its key
+         */
+        internal fun from(mention: EntityMention): MentionKey = of(mention.span, mention.type)
+
+        /**
+         * Builds a key from a span and a type, lower case and trimmed, which is how every key is compared.
+         *
+         * @param span the span as written
+         * @param type the type as written
+         * @return the key
+         */
+        internal fun of(span: String, type: String): MentionKey =
+            MentionKey(span = span.lowercase().trim(), type = type.lowercase().trim())
     }
 }
