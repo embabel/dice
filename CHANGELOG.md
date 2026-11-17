@@ -10,6 +10,13 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- A `VectorSearchRequest` must name a context. `forText` and the Kotlin block throw
+  `IllegalArgumentException` when the filter has none, where before such a request searched every
+  context in the store. To search several contexts, use `ScopedVectorSearch` with a
+  `ContextReadScope` and a `ReadVectorSearchRequest`. `toString` on `VectorSearchRequest`,
+  `ReadVectorSearchRequest` and `ReadKeywordQuery` shows the length of the query text or the number
+  of tokens in place of the text or the tokens. **Compatibility: behavioral.**
+
 - Entity names are compared through a `NameNormalizer`, and the standard one applies its person
   rules only to entities labelled `Person`. Before, every name lost a leading English title, a
   trailing generational suffix and a single-letter middle initial, and "Last, First" was turned
