@@ -955,6 +955,14 @@ and the consumer PRs that deliver it).
   only the last one's. `PropositionReviser.reviseAll` does the same for the propositions it is
   given, in both its default and in `LlmPropositionReviser`. **Compatibility: behavioral.**
 
+- A contradiction is the copy saved for the stored proposition it contradicts, even when a merge or
+  reinforcement of that proposition in the same chunk or run applied first. `LlmPropositionReviser`
+  applies fast-path merges before the propositions it sends to the model but returns results in
+  input order, so a contradiction classified by the model could come back before a merge it built
+  on, and `propositionsToPersist()` listed the merged `ACTIVE` copy as final. Saving it undid the
+  contradiction. **Compatibility: behavioral.** The saved proposition is `CONTRADICTED` and keeps the
+  merge's evidence.
+
 - `PropositionPipeline.processOnce` and `processText` leave a proposition untouched when it already
   holds every `additionalGrounding` id. They stamped `metadataRevised` on it. They add
   `additionalGrounding` ids before revision, so an id the stored proposition does not hold

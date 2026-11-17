@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.pipeline
 
+import com.embabel.agent.api.common.Ai
+import com.embabel.agent.api.common.PromptRunner
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.Chunk
@@ -35,6 +37,12 @@ import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.SuggestedProposition
 import com.embabel.dice.proposition.SuggestedPropositions
+import com.embabel.common.ai.model.LlmOptions
+import com.embabel.common.core.types.SimilarityResult
+import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.proposition.PropositionQuery
+import com.embabel.dice.proposition.revision.ClassificationItem
+import com.embabel.dice.proposition.revision.ClassificationResponse
 import com.embabel.dice.proposition.revision.ClassifiedProposition
 import com.embabel.dice.proposition.revision.InRunPropositions
 import com.embabel.dice.proposition.revision.LlmPropositionReviser
@@ -45,6 +53,8 @@ import com.embabel.dice.text2graph.builder.Person
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import io.mockk.every
+import io.mockk.mockk
 
 /**
  * What one pipeline run does when several results touch the same stored proposition, and what a
@@ -282,5 +292,40 @@ class InRunRevisionTest {
         val saved = results.revisedPropositionsToPersist.single()
         assertEquals(stored.reinforceCount + 3, saved.reinforceCount)
         assertEquals(setOf("first", "second", "third"), saved.sourceIds.toSet())
+    }
+
+    @Test
+    fun `a contradiction classified after a fast path merge of the same stored proposition is what gets saved`() {
+        val repository = InMemoryPropositionRepository()
+        val stored = stored(repository)
+        // Every active proposition in the context comes back as a mid-range vector match, so the
+        // contradicting text goes to the model while the restated text merges on the canonical fast path.
+        val searchable = object : PropositionRepository by repository {
+            override fun findSimilarWithScores(
+                textSimilaritySearchRequest: TextSimilaritySearchRequest,
+                query: PropositionQuery,
+            ): List<SimilarityResult<Proposition>> = repository.query(query).map { SimilarityResult(match = it, score = 0.7) }
+        }
+        val ai = mockk<Ai>()
+        val runner = mockk<PromptRunner>()
+        val creating = mockk<PromptRunner.Creating<ClassificationResponse>>()
+        every { ai.withLlm(any<LlmOptions>()) } returns runner
+        every { runner.withId(any()) } returns runner
+        every { runner.creating(ClassificationResponse::class.java) } returns creating
+        every { creating.fromTemplate(any(), any()) } returns
+            ClassificationResponse(listOf(ClassificationItem("0", "CONTRADICTORY", 0.9, "opposite")))
+        val pipeline = PropositionPipeline
+            .withExtractor(OnePropositionPerChunk)
+            .withRevision(LlmPropositionReviser(llmOptions = LlmOptions(), ai = ai), searchable)
+
+        val result = pipeline.processChunk(
+            Chunk.create(text = "Alice has never met Bob|Alice knows Bob", parentId = "doc", id = "chunk-1"),
+            context(),
+        )
+        result.persist(repository, InMemoryNamedEntityDataRepository(schema))
+
+        val saved = repository.findById(stored.id)!!
+        assertEquals(PropositionStatus.CONTRADICTED, saved.status)
+        assertTrue("chunk-1" in saved.grounding, "grounding: ${saved.grounding}")
     }
 }

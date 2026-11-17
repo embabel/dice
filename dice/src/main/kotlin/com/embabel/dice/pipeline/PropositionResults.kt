@@ -19,6 +19,7 @@ import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.common.core.types.HasInfoString
 import com.embabel.dice.common.*
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.SuggestedPropositions
 import com.embabel.dice.proposition.revision.RevisionResult
 import com.embabel.dice.proposition.revision.isReplay
@@ -96,10 +97,16 @@ interface PropositionExtractionResult {
             // A result can come back before the one it built on, so the final copy of a stored
             // proposition is the one no other result started from, not simply the last in the list.
             val startedFrom = revisionResults.mapNotNull { it.changedOriginal() }.toSet()
+            // A contradicted copy has no link back to the copy it was built from. Nothing in a run
+            // builds on it, because revision no longer finds it among active propositions, so it is
+            // always the final copy.
+            val contradicted = revisionResults.mapNotNull { it.contradictedCopy() }.toSet()
             val finalById = LinkedHashMap<String, Proposition>()
             for (proposition in toPersist) {
                 val held = finalById[proposition.id]
-                if (held == null || proposition !in startedFrom || held in startedFrom) finalById[proposition.id] = proposition
+                val replace = held == null ||
+                    held !in contradicted && (proposition in contradicted || proposition !in startedFrom || held in startedFrom)
+                if (replace) finalById[proposition.id] = proposition
             }
             val lastIndexById = toPersist.withIndex().associate { (index, proposition) -> proposition.id to index }
             return toPersist.withIndex()
@@ -310,6 +317,15 @@ private fun RevisionResult.changedOriginal(): Proposition? = when (this) {
     is RevisionResult.Reinforced -> original.takeUnless { isReplay() }
     else -> null
 }
+
+/**
+ * Returns the copy a contradiction moved to [PropositionStatus.CONTRADICTED], or null for other
+ * results and for a pinned original the contradiction left as it was.
+ *
+ * @return the contradicted copy, or null
+ */
+private fun RevisionResult.contradictedCopy(): Proposition? =
+    (this as? RevisionResult.Contradicted)?.original?.takeIf { it.status == PropositionStatus.CONTRADICTED }
 
 /**
  * Returns the id of the stored proposition this result changed, or null when it changed none.
