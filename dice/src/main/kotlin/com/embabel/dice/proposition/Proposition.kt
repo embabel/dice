@@ -15,7 +15,9 @@
  */
 package com.embabel.dice.proposition
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.model.Retrievable
 import com.embabel.common.core.types.ZeroToOne
@@ -112,6 +114,7 @@ enum class PropositionStatus {
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class Proposition(
     override val id: String = UUID.randomUUID().toString(),
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
     val text: String,
     override val mentions: List<EntityMention>,
@@ -140,9 +143,11 @@ data class Proposition(
 ) : Derivation, ReferencesEntities, Retrievable {
 
     /**
-     * Java-friendly accessor for contextId value.
+     * Java-friendly accessor for the context id as a plain string. It is a convenience
+     * only, so it stays out of the JSON. The context is written once, under `contextId`.
      */
     @get:JvmName("getContextIdValue")
+    @get:JsonIgnore
     val contextIdValue: String get() = contextId.value
 
     /**
@@ -181,7 +186,7 @@ data class Proposition(
 
         /**
          * The decay-rate multiplier `k` that [effectiveConfidence], [effectiveConfidenceAt] and
-         * [withDecayApplied] use when the caller passes none.
+         * [withDecayApplied] use when the caller passes none. It is 2.0, the value from the GUM paper.
          */
         const val DEFAULT_DECAY_K: Double = 2.0
 
@@ -270,6 +275,7 @@ data class Proposition(
          * @param text the statement in natural language
          * @param confidence how certain the statement is, from 0.0 to 1.0
          * @return a draft with every other value at its default
+         * @throws IllegalArgumentException if contextIdValue is blank
          */
         @JvmStatic
         fun draft(contextIdValue: String, text: String, confidence: Double): PropositionDraft =
@@ -418,7 +424,7 @@ data class Proposition(
      * Calculate the effective confidence after applying time-based decay.
      * Uses exponential decay formula from GUM paper: γ = exp(-decay * k * age_days)
      *
-     * @param k Decay rate multiplier (default 2.0 from GUM paper)
+     * @param k Decay rate multiplier (defaults to [DEFAULT_DECAY_K])
      * @return Effective confidence after decay
      */
     @JvmOverloads
@@ -431,7 +437,7 @@ data class Proposition(
      * confidence was at a past date, not relative to now.
      *
      * @param asOf The point in time to calculate confidence for
-     * @param k Decay rate multiplier (default 2.0 from GUM paper)
+     * @param k Decay rate multiplier (defaults to [DEFAULT_DECAY_K])
      * @return Effective confidence after decay as of the given time
      */
     @JvmOverloads
@@ -467,7 +473,7 @@ data class Proposition(
      * Create a copy with decay applied to confidence.
      * Useful for retrieval ranking where older propositions should be weighted less.
      *
-     * @param k Decay rate multiplier (default 2.0 from GUM paper)
+     * @param k Decay rate multiplier (defaults to [DEFAULT_DECAY_K])
      * @return Proposition with decayed confidence
      */
     @JvmOverloads
@@ -479,6 +485,9 @@ data class Proposition(
     /**
      * Makes a draft that holds every value of this proposition, so Java code can change a few
      * of them and build a new proposition.
+     *
+     * A draft step sets one value and leaves the revision times as they are. To record a change
+     * now, use the with methods on the proposition.
      *
      * @return a draft that builds a proposition equal to this one until a step changes it
      */

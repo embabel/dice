@@ -87,6 +87,16 @@ class DrivineChunkHistoryStore(
         )
     }
 
+    /**
+     * Deletes every processed chunk for the context, for Java callers. Spring applies this class's
+     * `@Transactional` only to the methods the class declares, so the method is declared here and
+     * runs in a transaction like [clearByContext]. The inherited default would run outside one.
+     *
+     * @throws IllegalArgumentException if contextIdValue is blank
+     */
+    @Transactional
+    override fun clearByContextValue(contextIdValue: String) = clearByContext(ContextId(contextIdValue))
+
     @Transactional
     override fun clearAll() {
         persistenceManager.execute(

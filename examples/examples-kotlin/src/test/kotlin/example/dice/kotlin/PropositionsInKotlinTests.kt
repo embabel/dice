@@ -93,6 +93,7 @@ class PropositionsInKotlinTests {
     ) = Proposition(contextId, text, confidence) {
         decay(decay)
         created(recorded)
+        contentRevised(recorded)
         status(status)
     }
 }

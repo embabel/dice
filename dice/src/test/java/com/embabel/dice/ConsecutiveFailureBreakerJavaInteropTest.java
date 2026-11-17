@@ -32,6 +32,10 @@ import static org.junit.jupiter.api.Assertions.*;
  * E3 after the limit is reached the breaker is tripped and the next call is skipped
  * E4 a success resets the failure count
  * E5 an Error from the call propagates
+ * E6 an interrupted call is a failure, sets the thread's interrupt flag again, and does not trip the breaker
+ * E7 Outcome.success gives a success outcome with its value
+ * E8 Outcome.failure gives a failure outcome with its exception
+ * E9 Outcome.skipped gives a skipped outcome with no value or exception
  */
 class ConsecutiveFailureBreakerJavaInteropTest {
 
@@ -107,5 +111,59 @@ class ConsecutiveFailureBreakerJavaInteropTest {
         assertThrows(AssertionError.class, () -> breaker.attemptCall(() -> {
             throw new AssertionError("boom");
         }));
+    }
+
+    // E6
+    @Test
+    void interruptedCallIsFailureAndRestoresInterruptFlag() {
+        ConsecutiveFailureBreaker breaker = new ConsecutiveFailureBreaker(5);
+
+        ConsecutiveFailureBreaker.Outcome<String> outcome = breaker.attemptCall(() -> {
+            throw new InterruptedException("stop");
+        });
+
+        assertTrue(outcome.isFailure());
+        assertInstanceOf(InterruptedException.class, outcome.getException());
+        // Reading the flag also clears it, so later tests start with a clean thread.
+        assertTrue(Thread.interrupted());
+        assertFalse(breaker.getTripped());
+    }
+
+    // E7
+    @Test
+    void successFactoryGivesSuccessOutcome() {
+        ConsecutiveFailureBreaker.Outcome<String> outcome = ConsecutiveFailureBreaker.Outcome.success("ok");
+
+        assertTrue(outcome.isSuccess());
+        assertFalse(outcome.isFailure());
+        assertFalse(outcome.isSkipped());
+        assertEquals("ok", outcome.getValue());
+        assertNull(outcome.getException());
+    }
+
+    // E8
+    @Test
+    void failureFactoryGivesFailureOutcome() {
+        IOException expected = new IOException("disk unavailable");
+
+        ConsecutiveFailureBreaker.Outcome<String> outcome = ConsecutiveFailureBreaker.Outcome.failure(expected);
+
+        assertTrue(outcome.isFailure());
+        assertFalse(outcome.isSuccess());
+        assertFalse(outcome.isSkipped());
+        assertSame(expected, outcome.getException());
+        assertNull(outcome.getValue());
+    }
+
+    // E9
+    @Test
+    void skippedFactoryGivesSkippedOutcome() {
+        ConsecutiveFailureBreaker.Outcome<String> outcome = ConsecutiveFailureBreaker.Outcome.skipped();
+
+        assertTrue(outcome.isSkipped());
+        assertFalse(outcome.isSuccess());
+        assertFalse(outcome.isFailure());
+        assertNull(outcome.getValue());
+        assertNull(outcome.getException());
     }
 }

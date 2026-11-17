@@ -77,6 +77,39 @@ List<String> texts = SerialExtractionStrategy.INSTANCE.executeAll(chunks, Chunk:
 val texts = SerialExtractionStrategy.execute(chunks) { it.text }
 ----
 
+==== When a chunk fails
+
+The strategies and `process` treat each chunk on its own. An exception fails only that chunk: `execute`
+leaves a null slot for it, `attemptAll` gives it a failed outcome, and `process` gives it a failed result
+while the rest of the batch carries on. An `Error` is not caught; it goes up to your code. An interrupt
+counts as a failure for that chunk, and the interrupt flag of the thread that called the strategy is set
+again so the next blocking call sees it, even when the chunk ran on a pool thread. If the executor refuses
+a chunk, the strategy waits for the chunks it already started, then throws the
+`RejectedExecutionException`.
+
+To find out which chunks failed and why, use `attemptAll`. It returns one `ChunkOutcome` per chunk, in input
+order. A success can still hold a null value, when the function itself returned null.
+
+[source,java]
+----
+List<ChunkOutcome<String>> outcomes = SerialExtractionStrategy.INSTANCE.attemptAll(chunks, Chunk::getText);
+
+for (ChunkOutcome<String> outcome : outcomes) {
+    if (outcome.isFailure()) {
+        log.warn("Chunk {} failed", outcome.getChunk().getId(), outcome.getException());
+    } else {
+        store(outcome.getValue());
+    }
+}
+----
+
+[source,kotlin]
+----
+val outcomes = SerialExtractionStrategy.attemptAll(chunks) { it.text }
+outcomes.filter { it.isFailure }.forEach { log.warn("Chunk {} failed", it.chunk.id, it.exception) }
+val texts = outcomes.filter { it.isSuccess }.mapNotNull { it.value }
+----
+
 ==== Example
 
 [source,java]

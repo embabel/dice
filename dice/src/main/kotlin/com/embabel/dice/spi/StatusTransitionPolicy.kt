@@ -98,7 +98,7 @@ fun interface StatusTransitionPolicy {
 class DecayStatusPolicy(
     val stalenessThreshold: Double = 0.1,
     val recoveryThreshold: Double = 0.2,
-    val kMultiplier: Double = 2.0,
+    val kMultiplier: Double = Proposition.DEFAULT_DECAY_K,
     val importanceWeight: Double = 0.0,
     val reinforceWeight: Double = 0.0,
 ) : StatusTransitionPolicy {

@@ -1,0 +1,59 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.dice;
+
+import com.embabel.dice.proposition.ConsecutiveFailureBreaker;
+import kotlin.jvm.JvmClassMappingKt;
+import kotlin.reflect.KFunction;
+import kotlin.reflect.KVisibility;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+/**
+ * Checks that a breaker outcome is built only through its factories.
+ *
+ * R1: every constructor of ConsecutiveFailureBreaker.Outcome is internal, so the public way to
+ *     build one is Outcome.success, Outcome.failure or Outcome.skipped.
+ * R2: Java can still reach that constructor in bytecode, so it refuses a skipped outcome with a
+ *     value or an exception, and an outcome with both a value and an exception.
+ */
+class BreakerOutcomeConstructorJavaTest {
+
+    @Test
+    void r1_theOutcomeConstructorIsInternal() {
+        var constructors = JvmClassMappingKt.getKotlinClass(ConsecutiveFailureBreaker.Outcome.class).getConstructors();
+
+        assertFalse(constructors.isEmpty());
+        for (KFunction<?> constructor : constructors) {
+            assertEquals(KVisibility.INTERNAL, constructor.getVisibility());
+        }
+    }
+
+    @Test
+    void r2_theConstructorRefusesContradictoryValues() {
+        IllegalStateException failure = new IllegalStateException("x");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new ConsecutiveFailureBreaker.Outcome<>(true, "value", null));
+        assertThrows(IllegalArgumentException.class,
+                () -> new ConsecutiveFailureBreaker.Outcome<String>(true, null, failure));
+        assertThrows(IllegalArgumentException.class,
+                () -> new ConsecutiveFailureBreaker.Outcome<>(false, "value", failure));
+    }
+}

@@ -176,10 +176,7 @@ data class LlmPropositionExtractor(
         ) {
 
             fun withAi(ai: Ai): LlmPropositionExtractor =
-                LlmPropositionExtractor(
-                    ai = ai,
-                    llmOptions = llmOptions,
-                )
+                LlmPropositionExtractorBuilder(llmOptions).withAi(ai)
         }
     }
 

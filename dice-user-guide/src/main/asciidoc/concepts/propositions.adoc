@@ -173,13 +173,24 @@ hints map inside an `EntityMention` and the values in the metadata map are kept 
 `Proposition` keeps them. A value out of range is rejected by `toProposition()` with the same
 `IllegalArgumentException` the constructor throws.
 
-A time that is not set is filled in by `toProposition()`. `created` and `contentRevised` stand in
-for each other: with one of them set the other takes its value, and with neither set both are the
-moment `toProposition()` runs. `metadataRevised` and `lastAccessed` take the value `contentRevised`
-ends up with.
+`withGrounding` adds to the grounding and drops repeats. To replace the grounding, or clear it with an
+empty list, use `withExactGrounding`, which keeps the ids in the order you give them. In a Kotlin
+block the grounding starts empty, and each `grounding(...)` call adds to it.
+
+`withProvenance` drops repeated entries too, as `Proposition.withProvenance` does, so an entry that
+is given twice is kept once.
+
+A time that is not set is filled in when `toProposition()` runs. `contentRevised` takes that moment,
+as the constructor does. `created` takes the earliest time you did set, and is never after
+`contentRevised`. `metadataRevised` and `lastAccessed` take the value `contentRevised` ends up with.
+Decay is measured from `contentRevised`, so when you import an older fact, set `contentRevised`; the
+other three times then follow it. A fact that sets only `created` decays from the build moment.
+
+Draft steps do not move revision times. A step such as `withLastAccessed` changes only the field it
+names, so `contentRevised` and `metadataRevised` stay as you set them, or unset.
 
 A draft without an id gets a new id on every `toProposition()` call. `withId` fixes the id. For two
-calls to build equal propositions, also set a time with `withCreated` or `withContentRevised`.
+calls to build equal propositions, also set `withContentRevised`.
 
 `toDraft()` starts a draft from an existing proposition. It copies a proposition with some fields
 changed and leaves its revision times alone, which the `with*` methods on `Proposition` do not.
@@ -195,7 +206,7 @@ Proposition touched = fact.toDraft()
 [source,java]
 ----
 var p = propositionRepository.query(
-        PropositionQuery.againstContext(new ContextId("quickstart"))).get(0);
+        PropositionQuery.againstContext("quickstart")).get(0);
 
 System.out.printf("raw=%.2f effective=%.2f decay=%.2f reinforced=%d status=%s%n",
         p.getConfidence(), p.effectiveConfidence(), p.getDecay(),

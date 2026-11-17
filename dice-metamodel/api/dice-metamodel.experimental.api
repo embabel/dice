@@ -64,6 +64,7 @@ public final class com/embabel/dice/metamodel/DriftCheckResult {
 }
 
 public final class com/embabel/dice/metamodel/DriftReport {
+	public static final field Companion Lcom/embabel/dice/metamodel/DriftReport$Companion;
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;)V
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;Ljava/lang/String;Lcom/embabel/dice/metamodel/MetamodelDiff;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;Ljava/lang/String;Lcom/embabel/dice/metamodel/MetamodelDiff;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -80,8 +81,15 @@ public final class com/embabel/dice/metamodel/DriftReport {
 	public final fun getSchemaName ()Ljava/lang/String;
 	public final fun getVersionHash ()Ljava/lang/String;
 	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;Ljava/lang/String;)Lcom/embabel/dice/metamodel/DriftReport;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;Ljava/lang/String;Lcom/embabel/dice/metamodel/MetamodelDiff;)Lcom/embabel/dice/metamodel/DriftReport;
 	public final fun quarantineDiff (Lcom/embabel/dice/metamodel/MetamodelVersion;)Lcom/embabel/dice/metamodel/MetamodelDiff;
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/metamodel/DriftReport$Companion {
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;Ljava/lang/String;)Lcom/embabel/dice/metamodel/DriftReport;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/time/Instant;Ljava/lang/String;Lcom/embabel/dice/metamodel/MetamodelDiff;)Lcom/embabel/dice/metamodel/DriftReport;
 }
 
 public abstract interface class com/embabel/dice/metamodel/GovernedTypeSelector {
