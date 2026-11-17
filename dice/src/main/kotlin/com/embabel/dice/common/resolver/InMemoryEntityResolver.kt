@@ -19,13 +19,13 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.ExistingEntity
+import com.embabel.dice.common.NameNormalizer
 import com.embabel.dice.common.NewEntity
 import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.common.resolver.searcher.FuzzyNameCandidateSearcher
-import com.embabel.dice.common.resolver.searcher.NormalizedNameCandidateSearcher
 import kotlin.math.min
 
 /**
@@ -45,11 +45,29 @@ import kotlin.math.min
  * a fresh resolver per run and only calls it from the serial resolution stage, so the memory stays
  * scoped to one run and never sees concurrent access.
  *
+ * Names are normalized before the normalized, partial and fuzzy comparisons, each with the
+ * labels of its own entity. Use [withNameNormalizer] to change the rules.
+ *
  * @param config Configuration for matching thresholds
  */
-class InMemoryEntityResolver(
-    private val config: Config = Config(),
+class InMemoryEntityResolver private constructor(
+    private val config: Config,
+    private val nameNormalizer: NameNormalizer,
 ) : EntityResolver {
+
+    @JvmOverloads
+    constructor(config: Config = Config()) : this(config, NameNormalizer.standard())
+
+    /**
+     * Returns a resolver that compares names with the given normalizer.
+     *
+     * The new resolver starts with nothing remembered.
+     *
+     * @param nameNormalizer the rules that decide when two names are the same
+     * @return a new, empty resolver; this one is unchanged
+     */
+    fun withNameNormalizer(nameNormalizer: NameNormalizer): InMemoryEntityResolver =
+        InMemoryEntityResolver(config, nameNormalizer)
 
     data class Config(
         /**
@@ -116,8 +134,8 @@ class InMemoryEntityResolver(
         }
 
         // Normalized name match
-        val normalizedSuggested = NormalizedNameCandidateSearcher.normalizeName(suggested.name)
-        val normalizedExisting = NormalizedNameCandidateSearcher.normalizeName(existing.name)
+        val normalizedSuggested = nameNormalizer.normalize(suggested.name, suggested.labels)
+        val normalizedExisting = nameNormalizer.normalize(existing.name, existing.labels())
         if (normalizedSuggested.equals(normalizedExisting, ignoreCase = true)) {
             return true
         }

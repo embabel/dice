@@ -31,6 +31,7 @@ import com.embabel.dice.common.SafeDiceEventListener
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.UngroundedMentionsFound
+import com.embabel.dice.common.NameNormalizer
 import com.embabel.dice.common.filter.GroundedMentionFilter
 import com.embabel.dice.common.filter.MentionFilter
 import com.embabel.dice.common.resolver.ChainedEntityResolver
@@ -106,6 +107,8 @@ class PropositionPipeline private constructor(
     private val ungroundedMentions: UngroundedMentionHandling = UngroundedMentionHandling.KEEP,
     private val groundingCheck: MentionFilter = GroundedMentionFilter(),
     private val mentionFilterHandling: RejectedMentionHandling = RejectedMentionHandling.LEAVE_UNRESOLVED,
+    /** The rules this pipeline uses to decide when two entity names are the same. */
+    val nameNormalizer: NameNormalizer = NameNormalizer.standard(),
 ) {
 
     /** The original listener as supplied — propagated verbatim through `with*` copies to avoid wrapping it multiple times. */
@@ -152,7 +155,7 @@ class PropositionPipeline private constructor(
      * @return A new pipeline instance with revision enabled
      */
     fun withRevision(reviser: PropositionReviser, propositionRepository: PropositionRepository): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy, ungroundedMentions, groundingCheck, mentionFilterHandling)
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy, ungroundedMentions, groundingCheck, mentionFilterHandling, nameNormalizer)
 
     /**
      * Add a mention filter to validate entity mentions before creating entities.
@@ -182,7 +185,7 @@ class PropositionPipeline private constructor(
      * @return A new pipeline instance with that filter and handling
      */
     fun withMentionFilter(filter: MentionFilter, handling: RejectedMentionHandling): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, filter, rawEventListener, executionStrategy, ungroundedMentions, groundingCheck, handling)
+        PropositionPipeline(extractor, reviser, propositionRepository, filter, rawEventListener, executionStrategy, ungroundedMentions, groundingCheck, handling, nameNormalizer)
 
     /**
      * Replace the check that decides whether a mention is grounded. The default is
@@ -200,7 +203,7 @@ class PropositionPipeline private constructor(
      * @return A new pipeline instance with that grounding check
      */
     fun withMentionGrounding(check: MentionFilter): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy, ungroundedMentions, check, mentionFilterHandling)
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy, ungroundedMentions, check, mentionFilterHandling, nameNormalizer)
 
     /**
      * Register a listener for pipeline events.
@@ -221,7 +224,7 @@ class PropositionPipeline private constructor(
      * @return A new pipeline instance with the listener registered
      */
     fun withEventListener(listener: DiceEventListener): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, listener, executionStrategy, ungroundedMentions, groundingCheck, mentionFilterHandling)
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, listener, executionStrategy, ungroundedMentions, groundingCheck, mentionFilterHandling, nameNormalizer)
 
     /**
      * Set the [ExtractionExecutionStrategy] used to dispatch the stateless per-chunk
@@ -239,7 +242,7 @@ class PropositionPipeline private constructor(
      * @return A new pipeline instance with the strategy registered
      */
     fun withExecutionStrategy(strategy: ExtractionExecutionStrategy): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, strategy, ungroundedMentions, groundingCheck, mentionFilterHandling)
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, strategy, ungroundedMentions, groundingCheck, mentionFilterHandling, nameNormalizer)
 
     /**
      * Choose what happens to a mention the grounding check rejects. With the default check,
@@ -263,7 +266,35 @@ class PropositionPipeline private constructor(
      * @return A new pipeline instance with that handling
      */
     fun withUngroundedMentions(handling: UngroundedMentionHandling): PropositionPipeline =
-        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy, handling, groundingCheck, mentionFilterHandling)
+        PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy, handling, groundingCheck, mentionFilterHandling, nameNormalizer)
+
+    /**
+     * Choose the rules that decide when two entity names are the same.
+     *
+     * The pipeline uses one normalizer for everything it compares by name: the built-in grounding
+     * check, the match against the known entities of the analysis, and the entities it remembers
+     * between the chunks of one run. The default is [NameNormalizer.standard], which applies
+     * English person-name rules to entities labelled `Person` and only collapses whitespace for
+     * everything else.
+     *
+     * Give the same normalizer to the entity resolver in your analysis context, and to
+     * `IncrementalPropositionExtraction.withNameNormalizer` when you use it, so a name the
+     * pipeline treats as known is resolved the same way there. A grounding check you supplied
+     * through [withMentionGrounding] is left as it is.
+     *
+     * Java:
+     * ```java
+     * PropositionPipeline pipeline = PropositionPipeline.withExtractor(extractor)
+     *     .withNameNormalizer(PersonNameNormalizer.english().withPersonLabels("Person", "Contact"));
+     * ```
+     *
+     * @param nameNormalizer the rules to use
+     * @return A new pipeline instance with those rules
+     */
+    fun withNameNormalizer(nameNormalizer: NameNormalizer): PropositionPipeline {
+        val check = (groundingCheck as? GroundedMentionFilter)?.withNameNormalizer(nameNormalizer) ?: groundingCheck
+        return PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, executionStrategy, ungroundedMentions, check, mentionFilterHandling, nameNormalizer)
+    }
 
     /**
      * Carries the resolver-free output of the extraction stage for a single chunk so it can be produced
@@ -422,7 +453,7 @@ class PropositionPipeline private constructor(
         }
 
         // Step 3: Resolve entities using existing resolver (wrapped with known entities)
-        val resolver = KnownEntityResolver.withKnownEntities(context.knownEntities, context.entityResolver)
+        val resolver = KnownEntityResolver.withKnownEntities(context.knownEntities, context.entityResolver, nameNormalizer)
         val rawResolutions = resolver.resolve(suggestedEntities, context.schema)
         // Minting gate: unless this analysis opted in (SourceAnalysisContext.mintNewEntities),
         // a mention the resolver could not match is VETOED, not minted — the mention stays
@@ -694,7 +725,7 @@ class PropositionPipeline private constructor(
         // mention resolve to ExistingEntity pointing at an id that was never created and will never
         // be found - the entity equivalent of a dangling pointer.
         val crossChunkResolver = if (context.mintNewEntities) {
-            ChainedEntityResolver(listOf(context.entityResolver, InMemoryEntityResolver()))
+            ChainedEntityResolver(listOf(context.entityResolver, InMemoryEntityResolver().withNameNormalizer(nameNormalizer)))
         } else {
             context.entityResolver
         }

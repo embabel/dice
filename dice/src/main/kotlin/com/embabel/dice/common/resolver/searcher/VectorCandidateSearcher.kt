@@ -81,7 +81,8 @@ class VectorCandidateSearcher(
                 return SearchResult(confident = match.match, candidates = candidates)
             }
         } catch (e: Exception) {
-            logger.debug("Vector search failed for '{}': {}", suggested.name, e.message)
+            logger.warn("Vector search failed for '{}', so it found no candidates: {}", suggested.name, e.toString())
+            logger.debug("Vector search failure", e)
         }
 
         return SearchResult.candidates(candidates)

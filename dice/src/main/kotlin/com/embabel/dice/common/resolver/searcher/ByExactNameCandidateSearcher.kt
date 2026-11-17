@@ -80,7 +80,8 @@ class ByExactNameCandidateSearcher(
                 }
             }
         } catch (e: Exception) {
-            logger.debug("Exact name search failed for '{}': {}", suggested.name, e.message)
+            logger.warn("Exact name search failed for '{}', so it found no candidates: {}", suggested.name, e.toString())
+            logger.debug("Exact name search failure", e)
             SearchResult.empty()
         }
     }

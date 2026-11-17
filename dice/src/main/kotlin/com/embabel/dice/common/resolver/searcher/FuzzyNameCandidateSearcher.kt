@@ -79,7 +79,8 @@ class FuzzyNameCandidateSearcher(
                 return SearchResult(confident = match, candidates = candidates)
             }
         } catch (e: Exception) {
-            logger.debug("Fuzzy name search failed for '{}': {}", suggested.name, e.message)
+            logger.warn("Fuzzy name search failed for '{}', so it found no candidates: {}", suggested.name, e.toString())
+            logger.debug("Fuzzy name search failure", e)
         }
 
         return SearchResult.candidates(candidates)

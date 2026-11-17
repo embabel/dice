@@ -16,6 +16,7 @@
 package com.embabel.dice.entity
 
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.dice.common.NameNormalizer
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.resolver.ChainedEntityResolver
 import com.embabel.dice.common.resolver.InMemoryEntityResolver
@@ -45,7 +46,23 @@ import org.slf4j.LoggerFactory
  */
 class EntityPipeline private constructor(
     private val extractor: EntityExtractor,
+    private val nameNormalizer: NameNormalizer,
 ) {
+
+    private constructor(extractor: EntityExtractor) : this(extractor, NameNormalizer.standard())
+
+    /**
+     * Choose the rules that decide when two entity names are the same.
+     *
+     * The pipeline uses them for the match against the known entities of the analysis and for the
+     * entities it remembers between the chunks of one run. The default is
+     * [NameNormalizer.standard].
+     *
+     * @param nameNormalizer the rules to use
+     * @return A new pipeline instance with those rules
+     */
+    fun withNameNormalizer(nameNormalizer: NameNormalizer): EntityPipeline =
+        EntityPipeline(extractor, nameNormalizer)
 
     companion object {
 
@@ -84,7 +101,7 @@ class EntityPipeline private constructor(
         logger.debug("Extracted {} suggested entities", suggestedEntities.suggestedEntities.size)
 
         // Step 2: Resolve entities using existing resolver (wrapped with known entities)
-        val resolver = KnownEntityResolver.withKnownEntities(context.knownEntities, context.entityResolver)
+        val resolver = KnownEntityResolver.withKnownEntities(context.knownEntities, context.entityResolver, nameNormalizer)
         val resolutions = resolver.resolve(suggestedEntities, context.schema)
         logger.debug("Resolved {} entities", resolutions.resolutions.size)
 
@@ -115,7 +132,7 @@ class EntityPipeline private constructor(
         // Wrap the resolver with InMemoryEntityResolver for cross-chunk entity resolution.
         // Order: user's resolver first (for pre-existing entities), then in-memory (for this run's entities)
         val crossChunkResolver = ChainedEntityResolver(
-            listOf(context.entityResolver, InMemoryEntityResolver())
+            listOf(context.entityResolver, InMemoryEntityResolver().withNameNormalizer(nameNormalizer))
         )
         val crossChunkContext = context.copy(entityResolver = crossChunkResolver)
 

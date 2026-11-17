@@ -16,8 +16,8 @@
 package com.embabel.dice.common.filter
 
 import com.embabel.dice.common.KnownEntity
+import com.embabel.dice.common.NameNormalizer
 import com.embabel.dice.common.SourceAnalysisContext
-import com.embabel.dice.common.resolver.searcher.NormalizedNameCandidateSearcher
 import com.embabel.dice.common.validation.ValidationResult
 import com.embabel.dice.pipeline.MentionGrounding
 import com.embabel.dice.pipeline.PreparedText
@@ -36,7 +36,9 @@ import java.util.IdentityHashMap
  * names that same entity. The text names a known entity when the entity's name or one of its
  * aliases appears in the text at word edges. The mention names the entity when its span and one of
  * the entity's names are equal after name normalization, ignoring case, which is how entity
- * resolution matches a known entity. With Thomas known under the alias Tom, the mention "Thomas" on
+ * resolution matches a known entity. Each name is normalized with the labels of its own entity:
+ * the mention's type for the span, the known entity's labels for its names. [withNameNormalizer]
+ * changes the rules, and must be given the normalizer entity resolution uses. With Thomas known under the alias Tom, the mention "Thomas" on
  * the text "Tom moved to Paris" is grounded. A suggested id alone grounds nothing, because entity
  * resolution matches known entities by name and does not follow the id.
  *
@@ -53,7 +55,20 @@ import java.util.IdentityHashMap
  * `SPAN_NOT_IN_PROPOSITION`. [rejectionReason] gets no proposition text, so it reports only a
  * blank span and returns null for every other mention.
  */
-class GroundedMentionFilter : MentionFilter {
+class GroundedMentionFilter private constructor(
+    private val nameNormalizer: NameNormalizer,
+) : MentionFilter {
+
+    constructor() : this(NameNormalizer.standard())
+
+    /**
+     * Returns a filter that compares a mention with the known entities using the given normalizer.
+     *
+     * @param nameNormalizer the rules that decide when two names are the same
+     * @return a new filter; this one is unchanged
+     */
+    fun withNameNormalizer(nameNormalizer: NameNormalizer): GroundedMentionFilter =
+        GroundedMentionFilter(nameNormalizer)
 
     override fun isValid(mention: SuggestedMention, propositionText: String): Boolean =
         MentionGrounding.reasonUngrounded(mention.span, propositionText) == null
@@ -62,15 +77,23 @@ class GroundedMentionFilter : MentionFilter {
         if (MentionGrounding.isBlank(mention.span)) UngroundedMention.Reason.BLANK_SPAN.name else null
 
     /**
-     * The names and aliases of the known entities last seen, copied as strings, and their prepared
-     * names. They are reused while the names stay the same, so a list, an entity or an alias list
-     * changed in place is prepared again.
+     * The names, aliases and labels of the known entities last seen, copied, and their prepared
+     * names. They are reused while all three stay the same, so a list, an entity, an alias list
+     * or a label set changed in place is prepared again.
      */
     @Volatile
-    private var lastKnown: Pair<List<List<String?>>, KnownEntityGrounding.KnownIndex>? = null
+    private var lastKnown: Pair<List<SeenEntity>, KnownEntityGrounding.KnownIndex>? = null
+
+    /**
+     * What one known entity looked like when its names were prepared.
+     *
+     * @property names the entity's name, then its aliases
+     * @property labels the entity's labels
+     */
+    private class SeenEntity(val names: List<String?>, val labels: Set<String>)
 
     override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> =
-        KnownEntityGrounding.reasons(proposition, lazy { knownNames(context.knownEntities) })
+        KnownEntityGrounding.reasons(proposition, lazy { knownNames(context.knownEntities) }, nameNormalizer = nameNormalizer)
             .map { reason -> if (reason == null) ValidationResult.Valid else ValidationResult.Invalid(reason.name) }
 
     /**
@@ -82,24 +105,26 @@ class GroundedMentionFilter : MentionFilter {
      */
     private fun knownNames(knownEntities: List<KnownEntity>): KnownEntityGrounding.KnownIndex {
         lastKnown?.let { (seen, names) -> if (sameNames(seen, knownEntities)) return names }
-        val snapshot = knownEntities.map { listOf<String?>(it.name) + it.aliases }
-        return KnownEntityGrounding.knownNames(knownEntities).also { lastKnown = snapshot to it }
+        val snapshot = knownEntities.map { SeenEntity(listOf<String?>(it.name) + it.aliases, it.labels().toSet()) }
+        return KnownEntityGrounding.knownNames(knownEntities, nameNormalizer = nameNormalizer).also { lastKnown = snapshot to it }
     }
 
     /**
-     * Tells whether the known entities still have the names and aliases copied earlier, without
-     * copying them again. The same list object is not enough, because a caller may change it in
+     * Tells whether the known entities still have the names, aliases and labels copied earlier,
+     * without copying the names again. The same list object is not enough, because a caller may change it in
      * place.
      *
-     * @param seen the names and aliases copied earlier, one list per entity, name first
+     * @param seen what was copied earlier, one entry per entity
      * @param knownEntities the known entities now
-     * @return true when every name and alias is the same, in the same order
+     * @return true when every name and alias is the same, in the same order, and every entity has
+     *   the same labels
      */
-    private fun sameNames(seen: List<List<String?>>, knownEntities: List<KnownEntity>): Boolean {
+    private fun sameNames(seen: List<SeenEntity>, knownEntities: List<KnownEntity>): Boolean {
         if (seen.size != knownEntities.size) return false
         for (index in seen.indices) {
-            val names = seen[index]
+            val names = seen[index].names
             val known = knownEntities[index]
+            if (seen[index].labels != known.labels()) return false
             val aliases = known.aliases
             if (names.size != aliases.size + 1 || names[0] != known.name) return false
             for (alias in aliases.indices) if (names[alias + 1] != aliases[alias]) return false
@@ -123,12 +148,14 @@ internal object KnownEntityGrounding {
      * @param proposition the proposition whose mentions are judged
      * @param knownNames the prepared names of the known entities, read only when a mention misses
      * @param prepare folds a text so spans can be looked up in it
+     * @param nameNormalizer the rules that decide when a span and a known name are the same
      * @return one reason per mention in order, null for a grounded mention
      */
     fun reasons(
         proposition: SuggestedProposition,
         knownNames: Lazy<List<KnownNames>>,
         prepare: (String) -> PreparedText = MentionGrounding::prepare,
+        nameNormalizer: NameNormalizer = NameNormalizer.standard(),
     ): List<UngroundedMention.Reason?> {
         if (proposition.mentions.isEmpty()) return emptyList()
         val text = prepare(proposition.text)
@@ -138,7 +165,7 @@ internal object KnownEntityGrounding {
         }
         return proposition.mentions.map { mention ->
             val reason = MentionGrounding.reasonUngrounded(prepare(mention.span), text)
-            if (reason == UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION && namesOneOf(mention, KnownIndex.of(knownNames.value), inText)) null else reason
+            if (reason == UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION && namesOneOf(mention, KnownIndex.of(knownNames.value), nameNormalizer, inText)) null else reason
         }
     }
 
@@ -204,18 +231,23 @@ internal object KnownEntityGrounding {
      *
      * @param knownEntities the known entities of the analysis
      * @param prepare folds a text so spans can be looked up in it
+     * @param nameNormalizer the rules that decide when a span and a known name are the same
      * @return the prepared names, one entry per known entity with a name, indexed by name
      */
     fun knownNames(
         knownEntities: List<KnownEntity>,
         prepare: (String) -> PreparedText = MentionGrounding::prepare,
+        nameNormalizer: NameNormalizer = NameNormalizer.standard(),
     ): KnownIndex = KnownIndex(knownEntities.mapNotNull { known ->
         val forms = (listOf<String?>(known.name) + known.aliases).filterNotNull().filter { it.isNotBlank() }
         if (forms.isEmpty()) null
-        else KnownNames(
-            names = forms.map { NormalizedNameCandidateSearcher.normalizeName(it) }.filter { it.isNotBlank() },
-            forms = forms.map(prepare),
-        )
+        else {
+            val labels = known.labels()
+            KnownNames(
+                names = forms.map { nameNormalizer.normalize(it, labels) }.filter { it.isNotBlank() },
+                forms = forms.map(prepare),
+            )
+        }
     })
 
     /**
@@ -228,11 +260,17 @@ internal object KnownEntityGrounding {
      *
      * @param mention the mention
      * @param known the prepared names of the known entities, indexed by name
+     * @param nameNormalizer the rules that decide when a span and a known name are the same
      * @param inText tells whether the text names a known entity
      * @return true when the mention can only resolve to a known entity the text names
      */
-    private fun namesOneOf(mention: SuggestedMention, known: KnownIndex, inText: (KnownNames) -> Boolean): Boolean {
-        val name = NormalizedNameCandidateSearcher.normalizeName(mention.span)
+    private fun namesOneOf(
+        mention: SuggestedMention,
+        known: KnownIndex,
+        nameNormalizer: NameNormalizer,
+        inText: (KnownNames) -> Boolean,
+    ): Boolean {
+        val name = nameNormalizer.normalize(mention.span, listOf(mention.type))
         if (name.isBlank()) return false
         val sameName = known.named(name)
         return sameName.isNotEmpty() && sameName.all(inText)

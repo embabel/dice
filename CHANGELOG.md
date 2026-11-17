@@ -10,6 +10,32 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- Entity names are compared through a `NameNormalizer`, and the standard one applies its person
+  rules only to entities labelled `Person`. Before, every name lost a leading English title, a
+  trailing generational suffix and a single-letter middle initial, and "Last, First" was turned
+  around, whatever kind of entity it named. "Series A Round" and "Series B Round" both compared as
+  "Series Round" and could resolve to one entity, and "Paris, France" compared as "France Paris".
+  Now a name that is not a person's only has its whitespace collapsed. Each name is normalized
+  with the labels of its own entity: a mention's type for a mention, the stored labels for a known
+  or stored entity. For a person's name the rules now recognize letters and whitespace in any
+  script, so "José M García" compares as "José García" and a non-breaking space separates name
+  parts like any other space. This applies to `NormalizedNameCandidateSearcher`,
+  `PartialNameCandidateSearcher`, `KnownEntityResolver`, `InMemoryEntityResolver` and
+  `GroundedMentionFilter`. `NormalizedNameCandidateSearcher.normalizeName` and
+  `DefaultCanonicalNameSelector` still apply the person rules to every name. Migration:
+  `PersonNameNormalizer.english().forEveryName()`, passed to `PropositionPipeline.withNameNormalizer`,
+  to `IncrementalPropositionExtraction.withNameNormalizer` and to
+  `DefaultCandidateSearchers.create(repository, normalizer)`, compares every name as a person's
+  again. A schema whose people carry another label names it with
+  `PersonNameNormalizer.english().withPersonLabels("Contact")`. Stored entities are not changed.
+  **Compatibility: behavioral.**
+
+- A candidate searcher whose store call fails now logs a warning, with the stack trace at debug
+  level. `DefaultGroundingResolver` does the same for a failed lookup. Before, these were logged at
+  debug level only, so a store outage showed up as mentions resolving to new entities with nothing
+  in the log. The searcher still returns no candidates and resolution carries on.
+  **Compatibility: behavioral.**
+
 - A mention the mention filter leaves unresolved now stays unresolved. Before, entity resolution
   assigned ids by span and type, so such a mention got the id of an accepted mention with the same
   span and type elsewhere in the chunk. `PropositionExtractor.resolvePropositions` is now
@@ -144,6 +170,19 @@ and the consumer PRs that deliver it).
   attempts.
 
 ### Added
+
+- `NameNormalizer` chooses how entity names are compared, and `PersonNameNormalizer` is the
+  built-in implementation with its rules open to change: the labels that mark a person, the titles
+  and suffixes removed, and whether middle initials and "Last, First" order are handled. Java
+  builds one with a chain, `PersonNameNormalizer.english().withTitles("Herr", "Frau")`, and Kotlin
+  with a block, `PersonNameNormalizer { titles("Herr", "Frau") }`. `NameNormalizer.whitespaceOnly()`
+  has no language-specific rules, and a lambda `(name, labels) -> ...` is a normalizer.
+  `PropositionPipeline.withNameNormalizer` and `EntityPipeline.withNameNormalizer` set it for a
+  run. `DefaultCandidateSearchers.create` and `withoutVector` take one as a second argument, and
+  the name searchers, `KnownEntityResolver`, `InMemoryEntityResolver`, `GroundedMentionFilter` and
+  `IncrementalPropositionExtraction` each have `withNameNormalizer`. `NormalizedNameCandidateSearcher` and
+  `PartialNameCandidateSearcher` gain Java constructors for their shorter argument lists.
+  **Compatibility: additive.**
 
 - Evidence types for a caller that assembles model context, in the new package
   `com.embabel.dice.evidence`. `EvidenceItem` is one claim with its `Citation`, its stored and

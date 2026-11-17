@@ -51,7 +51,8 @@ class ByIdCandidateSearcher(
                 SearchResult.confident(existing)
             } ?: SearchResult.empty()
         } catch (e: Exception) {
-            logger.debug("ID lookup failed for '{}': {}", id, e.message)
+            logger.warn("ID lookup failed for '{}', so it found no candidate: {}", id, e.toString())
+            logger.debug("ID lookup failure", e)
             SearchResult.empty()
         }
     }

@@ -51,7 +51,108 @@ The cheap searchers decide what the expensive ones ever see.
 
 `DefaultCandidateSearchers.create(repository)` assembles the standard chain;
 `DefaultCandidateSearchers.withoutVector(repository)` drops the vector searcher for stores with no
-index.
+index. Each searcher takes its own limits (`topK`, `similarityThreshold`, `minPartLength`) in its
+constructor. To change one, build the list yourself from the searcher classes.
+
+==== Choose how names are compared
+
+Resolution and the grounding check compare names after a `NameNormalizer` has reduced them. Two
+names that normalize to the same text, ignoring case, are the same name.
+
+The standard normalizer, `PersonNameNormalizer.english()`, changes a name only when its entity is
+labelled `Person`:
+
+[cols="2,2,3", options="header"]
+|===
+| Written | Compared as | Rule
+
+| `Dr. Watson`
+| `Watson`
+| Leading title: Mr, Mrs, Ms, Dr, Prof
+
+| `John Smith Jr.`
+| `John Smith`
+| Trailing suffix: Jr, Sr, II, III, IV
+
+| `Lynda M. Coker`
+| `Lynda Coker`
+| One capital letter between two longer name parts
+
+| `Coker, Lynda`
+| `Lynda Coker`
+| "Last, First" turned around
+|===
+
+Every other name only has its whitespace collapsed, so `Series A Round` and `Series B Round` stay
+two entities.
+
+These rules fit English-language directories and mail systems. Adjust them for your data, or
+replace them:
+
+[source,java]
+----
+// Other person labels, other titles
+NameNormalizer normalizer = PersonNameNormalizer.english()
+        .withPersonLabels("Person", "Contact", "Employee")
+        .withTitles("Herr", "Frau", "Dr", "Prof")
+        .withSuffixes("sen", "jun")
+        .withMiddleInitialsKept()      // "Lynda M Coker" is not "Lynda Coker"
+        .withNameOrderKept();          // a comma does not mean "Last, First"
+
+// No language-specific rules at all
+NameNormalizer plain = NameNormalizer.whitespaceOnly();
+
+// Your own rule
+NameNormalizer custom = (name, labels) -> myTransliterator.fold(name);
+----
+
+In Kotlin the same settings go in a block:
+
+[source,kotlin]
+----
+val normalizer = PersonNameNormalizer {
+    personLabels("Person", "Contact", "Employee")
+    titles("Herr", "Frau", "Dr", "Prof")
+    stripMiddleInitials = false
+}
+----
+
+Set it once on the pipeline. The pipeline then uses it for the grounding check, for the match
+against the known entities of the analysis, and for the entities it remembers between chunks:
+
+[source,java]
+----
+pipeline = pipeline.withNameNormalizer(normalizer);
+----
+
+Give the same normalizer to the resolver you build for the analysis context, so both agree on
+which names are the same:
+
+[source,java]
+----
+var searchers = DefaultCandidateSearchers.create(entityRepository, normalizer);
+----
+
+[cols="2,3", options="header"]
+|===
+| Takes a normalizer | Through
+
+| `PropositionPipeline`, `EntityPipeline`
+| `withNameNormalizer(normalizer)`
+
+| `DefaultCandidateSearchers`
+| `create(repository, normalizer)`, `withoutVector(repository, normalizer)`
+
+| `NormalizedNameCandidateSearcher`, `PartialNameCandidateSearcher`
+| `withNameNormalizer(normalizer)`
+
+| `KnownEntityResolver`, `InMemoryEntityResolver`, `GroundedMentionFilter`,
+  `IncrementalPropositionExtraction`
+| `withNameNormalizer(normalizer)`
+|===
+
+`PersonNameNormalizer.english().forEveryName()` applies the person rules to every name whatever
+its label. Use it when every entity in your data is a person.
 
 ==== Decide what happens when nothing matches
 
@@ -113,6 +214,37 @@ second argument to take it off the proposition as well.
 
 Tightening `SchemaAdherence` to `STRICT` has the same effect earlier still, at the extractor. See
 <<concepts-context-and-schema>>.
+
+==== Read the logs
+
+Resolution logs under the class that made the decision. Turn a logger up to see why a name
+resolved the way it did.
+
+[cols="3,1,3", options="header"]
+|===
+| Logger | Level | What it reports
+
+| `com.embabel.dice.common.resolver.searcher`
+| `DEBUG`
+| Each confident match, with the searcher that made it
+
+| `com.embabel.dice.common.resolver.searcher`
+| `WARN`
+| A search the store failed to run. The searcher found no candidates, so the mention can end up
+  as a new entity. The stack trace follows at `DEBUG`.
+
+| `com.embabel.dice.common.resolver.KnownEntityResolver`
+| `INFO`
+| Each mention matched to a known entity
+
+| `com.embabel.dice.pipeline.PropositionPipeline`
+| `WARN`
+| Per chunk, how many mentions were dropped or left unresolved
+
+| `com.embabel.dice.pipeline.PropositionPipeline`
+| `DEBUG`
+| The span and reason of each rejected mention
+|===
 
 ==== Clean up what got through
 

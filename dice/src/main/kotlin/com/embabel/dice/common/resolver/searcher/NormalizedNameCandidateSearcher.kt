@@ -20,30 +20,52 @@ import com.embabel.agent.rag.filter.EntityFilter
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.common.NameNormalizer
+import com.embabel.dice.common.PersonNameNormalizer
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.resolver.CandidateSearcher
 import com.embabel.dice.common.resolver.SearchResult
 import org.slf4j.LoggerFactory
 
 /**
- * Searches for matches using normalized names (removing titles, suffixes, extra whitespace).
+ * Finds a stored entity whose name equals the suggested name once both are normalized.
  *
- * Returns a confident match only if exactly 1 candidate matches after normalization.
+ * Returns a confident match only when exactly one candidate matches after normalization.
  *
- * Examples:
+ * With the default [NameNormalizer], for entities labelled `Person`:
  * - "Dr. Watson" matches "Watson"
  * - "John Smith Jr." matches "John Smith"
  * - "Prof. Einstein" matches "Einstein"
+ *
+ * Names of other entities only have their whitespace collapsed. Use [withNameNormalizer] to
+ * change the rules.
  *
  * @param repository The repository for text search
  * @param topK Maximum candidates to retrieve
  * @param similarityThreshold Minimum similarity score for text search
  */
-class NormalizedNameCandidateSearcher(
+class NormalizedNameCandidateSearcher private constructor(
     private val repository: NamedEntityDataRepository,
-    private val topK: Int = 10,
-    private val similarityThreshold: Double = 0.5,
+    private val topK: Int,
+    private val similarityThreshold: Double,
+    private val nameNormalizer: NameNormalizer,
 ) : CandidateSearcher {
+
+    @JvmOverloads
+    constructor(
+        repository: NamedEntityDataRepository,
+        topK: Int = 10,
+        similarityThreshold: Double = 0.5,
+    ) : this(repository, topK, similarityThreshold, NameNormalizer.standard())
+
+    /**
+     * Returns a searcher that compares names with the given normalizer.
+     *
+     * @param nameNormalizer the rules that decide when two names are the same
+     * @return a new searcher; this one is unchanged
+     */
+    fun withNameNormalizer(nameNormalizer: NameNormalizer): NormalizedNameCandidateSearcher =
+        NormalizedNameCandidateSearcher(repository, topK, similarityThreshold, nameNormalizer)
 
     private val logger = LoggerFactory.getLogger(NormalizedNameCandidateSearcher::class.java)
 
@@ -51,7 +73,7 @@ class NormalizedNameCandidateSearcher(
         suggested: SuggestedEntity,
         schema: DataDictionary,
     ): SearchResult {
-        val normalizedSuggested = normalizeName(suggested.name)
+        val normalizedSuggested = nameNormalizer.normalize(suggested.name, suggested.labels)
         val candidates = mutableListOf<NamedEntityData>()
 
         try {
@@ -67,7 +89,7 @@ class NormalizedNameCandidateSearcher(
 
             // Find candidates whose normalized name matches
             val matches = results.filter { result ->
-                val normalizedCandidate = normalizeName(result.match.name)
+                val normalizedCandidate = nameNormalizer.normalize(result.match.name, result.match.labels())
                 normalizedCandidate.equals(normalizedSuggested, ignoreCase = true)
             }
 
@@ -80,27 +102,22 @@ class NormalizedNameCandidateSearcher(
                 return SearchResult(confident = match, candidates = candidates)
             }
         } catch (e: Exception) {
-            logger.debug("Normalized name search failed for '{}': {}", suggested.name, e.message)
+            logger.warn("Normalized name search failed for '{}', so it found no candidates: {}", suggested.name, e.toString())
+            logger.debug("Normalized name search failure", e)
         }
 
         return SearchResult.candidates(candidates)
     }
 
     companion object {
-        private val REVERSED = Regex("^([^,]+),\\s*(.+)$")
-        private val TITLE = Regex("^(Mr\\.?|Mrs\\.?|Ms\\.?|Dr\\.?|Prof\\.?)\\s+", RegexOption.IGNORE_CASE)
-        private val SUFFIX = Regex("\\s+(Jr\\.?|Sr\\.?|II|III|IV)$", RegexOption.IGNORE_CASE)
-        private val MIDDLE_INITIAL = Regex("(?<=\\b\\w{2,})\\s+[A-Z]\\.?\\s+(?=\\w{2,}\\b)")
-        private val WHITESPACE = Regex("\\s+")
+        private val EVERY_NAME = PersonNameNormalizer.english().forEveryName()
 
         /**
-         * Strip surface variations a single human's name accumulates
-         * across email/calendar systems, so two displays of the same
-         * person collapse to the same canonical key.
+         * Normalizes a name with the person rules, whatever kind of entity it belongs to.
          *
-         * Order matters — handle the "Lastname, Firstname" reversal
-         * FIRST so the rest of the rules see a normal "Firstname
-         * Lastname" string.
+         * This is `PersonNameNormalizer.english().forEveryName()` for one name. Resolution itself
+         * uses the [NameNormalizer] it was given, which by default applies these rules only to
+         * entities labelled `Person`.
          *
          * Examples:
          *  - "Dr. Watson"        → "Watson"           (title)
@@ -109,30 +126,11 @@ class NormalizedNameCandidateSearcher(
          *  - "Lynda M. Coker"    → "Lynda Coker"      (middle initial + dot)
          *  - "Coker, Lynda"      → "Lynda Coker"      (reversed)
          *  - "Coker, Lynda M."   → "Lynda Coker"      (reversed + initial)
+         *
+         * @param name the name as written
+         * @return the normalized name
          */
-        fun normalizeName(name: String): String {
-            var s = name.trim()
-            // Handle "Last, First [Middle]" reversal — single comma,
-            // common shape in directory exports. Take everything after
-            // the comma + everything before, with a space.
-            val commaMatch = REVERSED.matchEntire(s)
-            if (commaMatch != null) {
-                s = "${commaMatch.groupValues[2]} ${commaMatch.groupValues[1]}".trim()
-            }
-            return s
-                // Remove common titles
-                .replace(TITLE, "")
-                // Remove common suffixes
-                .replace(SUFFIX, "")
-                // Strip middle initials: " M " or " M. " between
-                // two longer name tokens. Single capital letter (with
-                // optional trailing dot) surrounded by whitespace and
-                // flanked by tokens of length ≥ 2 on both sides.
-                .replace(MIDDLE_INITIAL, " ")
-                // Normalize whitespace
-                .replace(WHITESPACE, " ")
-                .trim()
-        }
+        fun normalizeName(name: String): String = EVERY_NAME.normalize(name, emptyList())
 
         @JvmStatic
         fun create(repository: NamedEntityDataRepository): NormalizedNameCandidateSearcher =
