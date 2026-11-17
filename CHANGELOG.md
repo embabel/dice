@@ -133,20 +133,23 @@ and the consumer PRs that deliver it).
   has five kinds: `Recorded` claims, a `Derived` conclusion worked out at lookup time with its rule
   and inputs, `Missing` with what was searched, `Conflicting` claims, and `Superseded` for a claim that
   replaced earlier ones. `Conflicting` and `Superseded` are both an `Evidence.Disagreement` with a
-  conflict type. `Citation.sameClaimAs` tells claims apart by id and context. `EvidenceConverter`
+  conflict type: `Contradiction` and `Custom` conflicts are `Conflicting`, and `Revision` and
+  `WorldProgression` are `Superseded`, whose earlier claims read `SUPERSEDED` when the reviser marked
+  them `CONTRADICTED`. `Citation.sameClaimAs` tells claims apart by id and context. `EvidenceConverter`
   builds items and evidence from lists of claims, scored hits, a lineage or a revision contradiction.
   A stored claim, including an abstraction, always converts to an item, a rank is the entry's position
   in the list passed in, and each call reads the clock once. `EvidenceProvider` is the interface a
   lookup implements to return `Evidence`. A null list element throws `IllegalArgumentException` with
   the list name and index. **Compatibility: additive.**
 
-- `Proposition.getLastContentRevision()` returns when a proposition's text, mentions or confidence was
-  last revised, or null when no revision is recorded. A proposition whose text, mentions or confidence
-  is revised (through `withText`, `withResolvedMentions`, `withConfidence`, a reinforcement or a
-  reviser merge) carries one more metadata entry, `dice.content.revised` set to `true`, under the new key
-  `DiceMetadataKeys.CONTENT_REVISED`. A caller that compares a revised proposition's whole metadata map
-  sees this extra entry. A consolidator merge creates a new claim without the entry.
-  **Compatibility: behavioral.**
+- `Proposition.getLastContentRevision()` returns when a stored proposition's text, mentions or
+  confidence last changed, or null when no change is recorded. When one of them actually changes
+  (through `withText`, `withResolvedMentions`, `withConfidence`, a reinforcement or a reviser merge),
+  the proposition carries one more metadata entry under the new key `DiceMetadataKeys.CONTENT_REVISED`
+  (`dice.content.revised`), holding the time of the change as ISO-8601 text. Setting the same value
+  again records nothing. A new claim starts without the entry: a draft, a `toDraft()` copy given a new
+  id, and a consolidator merge. A caller that compares a revised proposition's whole metadata map sees
+  this extra entry. **Compatibility: behavioral.**
 
 - **EXPERIMENTAL** (shape may change before 1.0): a chunk's extraction output can be stored as one
   unit. `PersistUnit` holds the claims, the entities they refer to and an optional extraction run.
