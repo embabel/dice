@@ -228,7 +228,9 @@ class EvidenceConverter private constructor(
      * | `Contradiction`, `Custom` | [Evidence.Conflicting], the original first and the new claim second |
      * | `Revision`, `WorldProgression` | [Evidence.Superseded], the new claim current and the original previous |
      *
-     * Each item keeps its stored status, so a pinned original reads [PropositionStatus.ACTIVE].
+     * In a superseded result, an original the reviser marked [PropositionStatus.CONTRADICTED] reads
+     * [PropositionStatus.SUPERSEDED]. Its confidence is the stored one, which the reviser already lowered.
+     * A pinned original keeps its stored status. Every other item keeps its stored status.
      *
      * @param contradicted the contradiction to convert
      * @return the conflicting or superseded evidence
@@ -237,13 +239,16 @@ class EvidenceConverter private constructor(
      */
     fun fromContradiction(contradicted: RevisionResult.Contradicted): Evidence.Disagreement {
         val now = clock.instant()
-        val original = convert(contradicted.original, now)
-        val new = convert(contradicted.new, now)
+        val original = contradicted.original
         return when (val conflictType = contradicted.conflictType) {
             ConflictType.Contradiction, is ConflictType.Custom ->
-                Evidence.conflicting(listOf(original, new), conflictType)
-            ConflictType.Revision, ConflictType.WorldProgression ->
-                Evidence.superseded(new, listOf(original), conflictType)
+                Evidence.conflicting(listOf(convert(original, now), convert(contradicted.new, now)), conflictType)
+            ConflictType.Revision, ConflictType.WorldProgression -> {
+                val status = original.status.takeUnless { it == PropositionStatus.CONTRADICTED }
+                    ?: PropositionStatus.SUPERSEDED
+                val previous = convert(original, now, status = status)
+                Evidence.superseded(convert(contradicted.new, now), listOf(previous), conflictType)
+            }
         }
     }
 

@@ -82,7 +82,8 @@ class EvidenceConverterJavaInteropTest {
         assertEquals("p-2", superseded.getCurrent().getCitation().getPropositionId());
         assertEquals(1, superseded.getPrevious().size());
         assertEquals("p-1", superseded.getPrevious().get(0).getCitation().getPropositionId());
-        assertEquals(PropositionStatus.CONTRADICTED, superseded.getPrevious().get(0).getStatus());
+        assertEquals(PropositionStatus.SUPERSEDED, superseded.getPrevious().get(0).getStatus());
+        assertEquals(original.getConfidence(), superseded.getPrevious().get(0).getConfidence());
         assertEquals(ConflictType.Revision.INSTANCE, superseded.getConflictType());
     }
 
@@ -94,7 +95,17 @@ class EvidenceConverterJavaInteropTest {
         Evidence.Superseded superseded = assertInstanceOf(Evidence.Superseded.class, disagreement);
         assertEquals("p-2", superseded.getCurrent().getCitation().getPropositionId());
         assertEquals("p-1", superseded.getPrevious().get(0).getCitation().getPropositionId());
+        assertEquals(PropositionStatus.SUPERSEDED, superseded.getPrevious().get(0).getStatus());
         assertEquals(ConflictType.WorldProgression.INSTANCE, superseded.getConflictType());
+    }
+
+    @Test
+    void conflictingEvidenceKeepsTheStoredContradictedStatus() {
+        Evidence.Disagreement disagreement = converter.fromContradiction(
+                new RevisionResult.Contradicted(original, replacement, ConflictType.Contradiction.INSTANCE));
+
+        Evidence.Conflicting conflicting = assertInstanceOf(Evidence.Conflicting.class, disagreement);
+        assertEquals(PropositionStatus.CONTRADICTED, conflicting.getItems().get(0).getStatus());
     }
 
     @Test

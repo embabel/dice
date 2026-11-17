@@ -284,6 +284,8 @@ String text = switch (disagreement) {
 | `Superseded` with the new claim as `current` and the original as `previous`.
 |===
 
+`previous` presents the original as replaced. The reviser marks a replaced original `CONTRADICTED` and lowers its confidence, so in a `Superseded` result that original reads `SUPERSEDED`. Its confidence is the stored one, already lowered. A pinned original keeps its stored status, such as `ACTIVE`. `Conflicting` items keep their stored statuses.
+
 [source,java]
 ----
 Evidence.Disagreement disagreement = converter.fromContradiction(
