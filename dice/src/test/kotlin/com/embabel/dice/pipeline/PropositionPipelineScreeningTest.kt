@@ -458,6 +458,24 @@ class PropositionPipelineScreeningTest {
         assertNull(result.propositions.single { it.text == aliceMetBob }.mentions.single { it.span == "Alice" }.resolvedId)
     }
 
+    @Test
+    fun `E18 propositions with the same text keep their own verdicts`() {
+        val objectAlice = alice.copy(role = "OBJECT")
+        val rejectsObjectAlice = object : MentionFilter {
+            override fun isValid(mention: SuggestedMention, propositionText: String): Boolean =
+                !(mention.span == "Alice" && mention.role == "OBJECT")
+            override fun rejectionReason(mention: SuggestedMention): String? = "object"
+        }
+
+        val result = pipeline(SuggestingPropositionExtractor.of(proposition(aliceMetBob, alice), proposition(aliceMetBob, objectAlice)))
+            .withMentionFilter(rejectsObjectAlice)
+            .processChunk(chunk(), context().withMintNewEntities(true))
+
+        val (first, second) = result.propositions
+        assertNotNull(first.mentions.single().resolvedId)
+        assertNull(second.mentions.single().resolvedId)
+    }
+
     private fun inMemoryRepo(): PropositionRepository = object : PropositionRepository {
         private val store = mutableMapOf<String, Proposition>()
         override val luceneSyntaxNotes: String = "test"

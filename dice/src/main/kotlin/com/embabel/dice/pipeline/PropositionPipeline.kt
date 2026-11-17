@@ -370,16 +370,17 @@ class PropositionPipeline private constructor(
         unresolved: List<Set<Int>>,
     ): List<Proposition> {
         if (unresolved.all { it.isEmpty() }) return propositions
-        // For each screened proposition with something to clear: its text and the (span, type, rank)
-        // of every mention to leave unresolved. Several propositions may share a text.
-        val pending = screened.propositions.withIndex()
-            .filter { (index, _) -> unresolved.getOrNull(index).orEmpty().isNotEmpty() }
-            .map { (index, proposition) -> proposition.text to occurrences(proposition.mentions.map { MentionKey.from(it) }, unresolved[index]) }
-            .toMutableList()
+        // Every screened proposition, in order, with its text and the (span, type, rank) of each
+        // mention to leave unresolved. Each resolved proposition takes the first unpaired one with
+        // its text, so propositions that share a text pair up in the order they were screened.
+        val pending = screened.propositions.mapIndexed { index, proposition ->
+            proposition.text to occurrences(proposition.mentions.map { MentionKey.from(it) }, unresolved.getOrNull(index).orEmpty())
+        }.toMutableList()
         return propositions.map { proposition ->
             val match = pending.indexOfFirst { it.first == proposition.text }
             if (match < 0) return@map proposition
             val clear = pending.removeAt(match).second
+            if (clear.isEmpty()) return@map proposition
             val keys = proposition.mentions.map { MentionKey(it.span.lowercase().trim(), it.type.lowercase().trim()) }
             val ranked = occurrences(keys, keys.indices.toSet())
             val positions = keys.indices.filter { ranked[it] in clear && proposition.mentions[it].resolvedId != null }.toSet()
