@@ -113,7 +113,9 @@ services only count, such as a failed relationship write or a failed grounding e
 `analyze` records the window before it returns. When the chunk history store commits on its own, a
 failed `result.persist(...)` in the example above leaves the window recorded and it is not analysed
 again. The example is `@Transactional`, so with a transactional chunk history store the record and
-the write share one transaction, and a failed write rolls the record back too. If you store the
+the write share one transaction, and a failed write that rolls the transaction back rolls the
+record back too. Spring rolls back on an unchecked exception by default, not on a checked one. If
+you store the
 result yourself and need the window to stay unrecorded when the write fails, use
 `IncrementalPropositionExtraction`, or keep the chunk history store in the same transaction as the
 write.
