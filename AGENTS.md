@@ -67,7 +67,8 @@ must be regenerated:
 ```
 
 Update mode deletes each module's `target/classes` first, so a class left by an earlier build cannot reach a
-listing. Check mode leaves the directory alone, and `./mvnw clean` removes such a class.
+listing. It also builds only the published modules, since the others have no listings. Check mode leaves the
+directory alone, and `./mvnw clean` removes such a class.
 
 Never edit a `.api` file by hand. A pull request that changes one changes the public API, so its listing
 diff belongs in the review.

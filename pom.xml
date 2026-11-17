@@ -131,6 +131,8 @@
         <asm.version>9.8</asm.version>
         <!-- A module with generated sources sets this to their root, and the listing leaves them out -->
         <api.listing.generated.sources></api.listing.generated.sources>
+        <!-- The api-listing-update profile sets this, so update mode knows the class directory was emptied -->
+        <api.listing.fresh-classes>false</api.listing.fresh-classes>
     </properties>
 
     <dependencyManagement>
@@ -247,35 +249,6 @@
                     </dependencies>
                     <executions>
                         <execution>
-                            <!--
-                                Update mode starts from an empty class directory, so a class left from an
-                                earlier build cannot reach a listing. The Kotlin compiler rebuilds every
-                                class on each run anyway, and check mode keeps the directory as it is.
-                            -->
-                            <id>public-api-listing-fresh-classes</id>
-                            <phase>initialize</phase>
-                            <goals>
-                                <goal>run</goal>
-                            </goals>
-                            <configuration>
-                                <target xmlns:if="ant:if">
-                                    <condition property="api.listing.updating">
-                                        <equals arg1="${api.listing.mode}" arg2="update"/>
-                                    </condition>
-                                    <!-- Incremental Kotlin compiles only changed files, so the listing would be partial -->
-                                    <fail message="Regenerate the API listings without -Dkotlin.compiler.incremental=true, so every class is compiled.">
-                                        <condition>
-                                            <and>
-                                                <isset property="api.listing.updating"/>
-                                                <equals arg1="${kotlin.compiler.incremental}" arg2="true"/>
-                                            </and>
-                                        </condition>
-                                    </fail>
-                                    <delete dir="${project.build.outputDirectory}" if:set="api.listing.updating"/>
-                                </target>
-                            </configuration>
-                        </execution>
-                        <execution>
                             <id>public-api-listing</id>
                             <phase>process-classes</phase>
                             <goals>
@@ -283,29 +256,44 @@
                             </goals>
                             <configuration>
                                 <target xmlns:if="ant:if">
+                                    <!-- Update mode relies on the api-listing-update profile having emptied the class directory -->
+                                    <fail message="Pass -Dapi.listing.mode=update on the command line, so the api-listing-update profile empties the class directory before compile.">
+                                        <condition>
+                                            <and>
+                                                <equals arg1="${api.listing.mode}" arg2="update"/>
+                                                <not>
+                                                    <equals arg1="${api.listing.fresh-classes}" arg2="true"/>
+                                                </not>
+                                            </and>
+                                        </condition>
+                                    </fail>
                                     <!--
                                         Compiled from build-support's sources on disk into this module's own
                                         target, so a module built alone with -pl needs nothing from the reactor.
                                         javac skips the compile when the class is newer than its source. A stamp
-                                        file holds the classpath of the last compile, and a different classpath
-                                        (another abi-tools or ASM version) deletes the class to force a compile.
+                                        file holds the classpath and compiler settings of the last compile, and a
+                                        change to either (another abi-tools or ASM version, say) deletes the class
+                                        to force a compile. Line numbers stay in, so a stack trace names its lines.
                                     -->
                                     <property name="api.listing.classes" location="${project.build.directory}/api-listing"/>
                                     <property name="api.listing.stamp" location="${project.build.directory}/api-listing.classpath"/>
                                     <pathconvert property="api.listing.classpath" refid="maven.plugin.classpath"/>
-                                    <loadfile property="api.listing.compiled.classpath" srcFile="${api.listing.stamp}"
+                                    <property name="api.listing.compile"
+                                              value="release=${maven.compiler.target} debug=true ${api.listing.classpath}"/>
+                                    <loadfile property="api.listing.compiled" srcFile="${api.listing.stamp}"
                                               failonerror="false" quiet="true"/>
                                     <condition property="api.listing.recompile">
                                         <not>
-                                            <equals arg1="${api.listing.classpath}" arg2="${api.listing.compiled.classpath}"/>
+                                            <equals arg1="${api.listing.compile}" arg2="${api.listing.compiled}"/>
                                         </not>
                                     </condition>
                                     <delete dir="${api.listing.classes}" if:set="api.listing.recompile"/>
                                     <mkdir dir="${api.listing.classes}"/>
                                     <javac srcdir="${maven.multiModuleProjectDirectory}/build-support/src/main/java"
                                            destdir="${api.listing.classes}" classpathref="maven.plugin.classpath"
-                                           includeantruntime="false" release="${maven.compiler.target}" encoding="UTF-8"/>
-                                    <echo file="${api.listing.stamp}" message="${api.listing.classpath}"/>
+                                           includeantruntime="false" release="${maven.compiler.target}" encoding="UTF-8"
+                                           debug="true"/>
+                                    <echo file="${api.listing.stamp}" message="${api.listing.compile}"/>
                                     <!-- Forked, because the program ends with System.exit -->
                                     <java classname="com.embabel.dice.apilisting.ApiListing" fork="true" failonerror="false"
                                           resultproperty="api.listing.exit" errorproperty="api.listing.error">
@@ -427,6 +415,54 @@
         -->
         <profile>
             <id>sonatype</id>
+        </profile>
+        <!--
+            Regenerating the API listings with -Dapi.listing.mode=update starts from an empty class
+            directory, so a class left from an earlier build cannot reach a listing. The Kotlin compiler
+            rebuilds every class on each run anyway, and a check build never runs this. Activating this
+            profile also switches off unpublished-modules, which have no listings.
+        -->
+        <profile>
+            <id>api-listing-update</id>
+            <activation>
+                <property>
+                    <name>api.listing.mode</name>
+                    <value>update</value>
+                </property>
+            </activation>
+            <properties>
+                <api.listing.fresh-classes>true</api.listing.fresh-classes>
+            </properties>
+            <build>
+                <pluginManagement>
+                    <plugins>
+                        <plugin>
+                            <groupId>org.apache.maven.plugins</groupId>
+                            <artifactId>maven-antrun-plugin</artifactId>
+                            <executions>
+                                <execution>
+                                    <id>public-api-listing-fresh-classes</id>
+                                    <phase>initialize</phase>
+                                    <goals>
+                                        <goal>run</goal>
+                                    </goals>
+                                    <configuration>
+                                        <target>
+                                            <!-- Incremental Kotlin compiles only changed files, so the listing would be partial -->
+                                            <fail message="Regenerate the API listings without -Dkotlin.compiler.incremental=true, so every class is compiled.">
+                                                <condition>
+                                                    <equals arg1="${kotlin.compiler.incremental}" arg2="true"/>
+                                                </condition>
+                                            </fail>
+                                            <delete dir="${project.build.outputDirectory}"/>
+                                        </target>
+                                    </configuration>
+                                </execution>
+                            </executions>
+                        </plugin>
+                    </plugins>
+                </pluginManagement>
+            </build>
         </profile>
     </profiles>
 
