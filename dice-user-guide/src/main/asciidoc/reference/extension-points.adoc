@@ -98,6 +98,9 @@ only what your domain actually needs.
 | How an artifact becomes chunks. `TextIngestionHandler` ships.
 |===
 
+`dice-store-conformance` has an abstract JUnit suite for each store interface. A backend's tests
+extend them. See <<how-to-verify-a-backend>>.
+
 ==== Projection and output
 
 [cols="1,3", options="header"]

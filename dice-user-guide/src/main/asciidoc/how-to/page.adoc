@@ -22,4 +22,6 @@ include::oracle.adoc[]
 
 include::choose-a-backend.adoc[]
 
+include::verify-a-backend.adoc[]
+
 include::observe-and-react.adoc[]

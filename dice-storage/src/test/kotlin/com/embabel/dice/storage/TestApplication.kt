@@ -17,8 +17,7 @@ package com.embabel.dice.storage
 
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.ai.model.PricingModel
-import com.embabel.dice.common.DiceEvent
-import com.embabel.dice.common.DiceEventListener
+import com.embabel.dice.conformance.RedirectableEventListener
 import org.drivine.autoconfigure.EnableDrivine
 import org.drivine.autoconfigure.EnableDrivineTestConfig
 import org.drivine.manager.StatelessGraphObjectManager
@@ -82,29 +81,6 @@ class PinnableClock : Clock() {
 
     /** There is only one of these, and its zone never matters: it only produces instants. */
     override fun withZone(zone: ZoneId): Clock = this
-}
-
-/**
- * A listener the extraction-run store is built with once, pointing wherever a test aims it.
- *
- * The store is a Spring bean built when the context starts and shared by every case, and it is
- * transaction-proxied, so a case cannot build its own to get a listener attached. The contract suite
- * asks for a store announcing to a listener it just made, so this sits in between: the store is
- * constructed with one of these, and a case redirects it at the listener it wants to watch.
- */
-class RedirectableEventListener : DiceEventListener {
-
-    @Volatile
-    private var target: DiceEventListener = DiceEventListener.DEV_NULL
-
-    /** Sends everything from here on to [listener]. */
-    fun redirectTo(listener: DiceEventListener) {
-        target = listener
-    }
-
-    override fun onEvent(event: DiceEvent) {
-        target.onEvent(event)
-    }
 }
 
 /**

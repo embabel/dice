@@ -159,6 +159,28 @@ and the consumer PRs that deliver it).
   `Missing`. `EvidenceProvider`, **EXPERIMENTAL** (shape may change before 1.0), is the interface a
   lookup implements to return `Evidence`. **Compatibility: additive.**
 
+- **EXPERIMENTAL** (shape may change before 1.0): `InMemoryDriftReportStore` in `dice-metamodel` is a
+  `DriftReportStore` for tests and demos that keeps reports in memory. It replaces a report saved
+  again under the same schema, version, capture instant and context, applies each read's scope
+  before its limit and returns the newest first. **Compatibility: additive.**
+
+- **EXPERIMENTAL** (shape may change before 1.0): `dice-store-conformance` is a published module of
+  abstract JUnit suites, one for each DICE store interface, in `com.embabel.dice.conformance`. A
+  backend adds it at test scope, extends a suite and returns its store from one method. A failing
+  test names a documented behaviour the store does not keep. Nine suites cover `PropositionStore`,
+  `ExtractionRunStore`, `PropositionRunLinkStore`, `SweptBaselineStore`, `DriftReportStore`,
+  `ChunkHistoryStore`, `CollectorRecordStore`, `CollectorTraceStore` and `ProjectionRecordStore`.
+  `AbstractFilteredVectorSearchContractTest` reads the `StoreCapabilities` a store publishes. It
+  checks filter-before-K search for a store that lists `FILTERED_VECTOR_SEARCH`, checks only the
+  `AFTER_TOP_K` promise for a store that declares that mode, and is reported as skipped for a store
+  that declares neither. `ConformanceEmbeddings` and `ConformanceEmbeddingService` give the store
+  under test vectors at known angles. `RedirectableEventListener` is the listener a store that is
+  built once, such as a Spring bean, is built with. The test points it at the listener each case
+  supplies. A subclass written in Java or Kotlin can override any case, for example to turn it off
+  with `@Disabled`. JUnit Jupiter is a compile dependency of the module. The user guide page "Verify
+  a storage backend" has Java and Kotlin examples.
+  **Compatibility: additive.**
+
 - **EXPERIMENTAL** (shape may change before 1.0): a chunk's extraction output can be stored as one
   unit. `PersistUnit` holds the claims, the entities they refer to and an optional extraction run.
   `PersistUnitWriter.write` stores it and returns a `PersistOutcome`: `Stored`, or `Failed` with the
@@ -940,6 +962,27 @@ and the consumer PRs that deliver it).
   Nothing a real connector emits comes close to any of the four.
 
 ### Fixed
+
+- Four `dice-storage` stores keep behaviour their interfaces document.
+  `DrivineChunkHistoryStore.clearAll` removes every processed chunk in every context. It inherited
+  the interface default, which removes nothing. `DrivineCollectorRecordStore.runs` returns run
+  headers in the order they were first recorded. Its query had no ordering. Each header takes the
+  next number from a `(:CollectorRunCounter)` node when it is first recorded.
+  `DrivineCollectorTraceStore.findDecisionRetiring` picks the newest decision by the instant in
+  `createdAt`. It ordered the stored text, and text order differs from time order for two instants
+  in the same second. `DrivineDriftReportStore` stores a report's `declaredDiff` as JSON and reads
+  it back. It dropped the diff on save, so a stored report read back with no declared diff. The JSON
+  carries a format version, currently 1, and a read refuses any other version.
+  **Compatibility: behavioral, `dice-storage` only.** A host that calls `ChunkHistoryStore.clearAll`
+  on the graph store loses its chunk history, as the interface documents. Stored data needs no
+  migration. A run header written by an earlier build has no number. Those headers come first,
+  ordered by finish instant, or start instant for a header with no finish, then by run id. A
+  decision written by an earlier build is ordered by the `createdAt` it already holds. A drift
+  report written by an earlier build reads back with no declared diff. `LineageSchema` declares a
+  uniqueness constraint on `CollectorRunCounter.name`. A host that declares the lineage constraints
+  by hand adds it. A host that rolls back to an earlier build keeps the counter node. That build
+  lists `CollectorRunCounter` as an unknown entity type in a whole-graph drift check, and deleting
+  the node would restart numbering at 1 on the next upgrade.
 
 - `MetamodelAutoConfiguration` and the metamodel wiring tests referenced the drift quarantine types
   at their former home in `com.embabel.dice.metamodel(.support)`. They moved to

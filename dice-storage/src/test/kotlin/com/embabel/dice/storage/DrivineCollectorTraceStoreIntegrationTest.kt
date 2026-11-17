@@ -86,7 +86,7 @@ class DrivineCollectorTraceStoreIntegrationTest {
 
     @AfterEach
     fun cleanUp() {
-        (CollectorTraceSchema.LABELS + listOf("CollectorRecord", "CollectorRun")).forEach { label ->
+        (CollectorTraceSchema.LABELS + listOf("CollectorRecord", "CollectorRun", "CollectorRunCounter")).forEach { label ->
             persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:$label) DETACH DELETE n"))
         }
         propositionRepository.clearAll()
@@ -234,6 +234,20 @@ class DrivineCollectorTraceStoreIntegrationTest {
         ),
     )
 
+    /**
+     * Sets the stored write instant of one decision, or removes it.
+     *
+     * @param runId The run the decision was recorded in.
+     * @param componentId The decision's component.
+     * @param createdAt The text to store, or null to remove the property.
+     */
+    private fun stampCreatedAt(runId: String, componentId: String, createdAt: String?) {
+        persistenceManager.execute(
+            QuerySpecification.withStatement("MATCH (d:CollectorDecision {id: \$id}) SET d.createdAt = \$createdAt")
+                .bind(mapOf("id" to "$runId|$componentId", "createdAt" to createdAt)),
+        )
+    }
+
     @Test
     fun `a full run's edges, components and decision persist and read back by runId`() {
         val runId = "run-1"
@@ -292,15 +306,72 @@ class DrivineCollectorTraceStoreIntegrationTest {
         traceStore.recordRunContext("run-first-retiring", contextId)
         traceStore.recordDecision("run-first-retiring", decisionFor("comp-first-retiring", survivorId = "B", retiredId = "S"))
 
-        // The two retirements of "S" need distinguishable createdAt timestamps to order by.
-        Thread.sleep(5)
-
         traceStore.recordRunContext("run-second-retiring", contextId)
         traceStore.recordDecision("run-second-retiring", decisionFor("comp-second-retiring", survivorId = "C", retiredId = "S"))
+
+        stampCreatedAt("run-first-retiring", "comp-first-retiring", "2026-01-01T00:00:01Z")
+        stampCreatedAt("run-second-retiring", "comp-second-retiring", "2026-01-01T00:00:02Z")
 
         val retiring = traceStore.findDecisionRetiring("S")
         assertEquals("comp-second-retiring", retiring?.componentId)
         assertEquals("C", retiring?.survivorId)
+    }
+
+    @Test
+    fun `the newest retirement wins whatever fraction its write instant was printed with`() {
+        val pairs = listOf(
+            "2026-01-01T00:00:05Z" to "2026-01-01T00:00:05.123Z",
+            "2026-01-01T00:00:05.123Z" to "2026-01-01T00:00:05.123456Z",
+            "2026-01-01T00:00:05.123456Z" to "2026-01-01T00:00:05.123456789Z",
+            "2026-01-01T00:00:05.999999999Z" to "2026-01-01T00:00:06Z",
+        )
+        val contextId = ContextId("ctx-fraction")
+        pairs.forEachIndexed { index, (earlier, later) ->
+            val retiredId = "R-fraction-$index"
+            val firstRun = "run-fraction-$index-first"
+            val secondRun = "run-fraction-$index-second"
+            traceStore.recordRunContext(firstRun, contextId)
+            traceStore.recordDecision(firstRun, decisionFor("comp-first", survivorId = "S-first-$index", retiredId = retiredId))
+            traceStore.recordRunContext(secondRun, contextId)
+            traceStore.recordDecision(secondRun, decisionFor("comp-second", survivorId = "S-second-$index", retiredId = retiredId))
+
+            stampCreatedAt(firstRun, "comp-first", earlier)
+            stampCreatedAt(secondRun, "comp-second", later)
+            assertEquals(
+                "S-second-$index",
+                traceStore.findDecisionRetiring(retiredId)?.survivorId,
+                "$later should be newer than $earlier",
+            )
+
+            stampCreatedAt(firstRun, "comp-first", later)
+            stampCreatedAt(secondRun, "comp-second", earlier)
+            assertEquals(
+                "S-first-$index",
+                traceStore.findDecisionRetiring(retiredId)?.survivorId,
+                "$later should be newer than $earlier after the stamps swap",
+            )
+        }
+    }
+
+    @Test
+    fun `a decision with no readable write instant counts as the oldest`() {
+        val contextId = ContextId("ctx-unreadable")
+        traceStore.recordRunContext("run-readable", contextId)
+        traceStore.recordDecision("run-readable", decisionFor("comp-readable", survivorId = "S-readable", retiredId = "R"))
+        traceStore.recordRunContext("run-unreadable", contextId)
+        traceStore.recordDecision("run-unreadable", decisionFor("comp-unreadable", survivorId = "S-unreadable", retiredId = "R"))
+        stampCreatedAt("run-readable", "comp-readable", "2026-01-01T00:00:05Z")
+
+        stampCreatedAt("run-unreadable", "comp-unreadable", null)
+        assertEquals("S-readable", traceStore.findDecisionRetiring("R")?.survivorId, "absent createdAt")
+
+        stampCreatedAt("run-unreadable", "comp-unreadable", "never")
+        assertEquals("S-readable", traceStore.findDecisionRetiring("R")?.survivorId, "createdAt 'never'")
+
+        traceStore.recordRunContext("run-only", contextId)
+        traceStore.recordDecision("run-only", decisionFor("comp-only", survivorId = "S-only", retiredId = "R-only"))
+        stampCreatedAt("run-only", "comp-only", null)
+        assertEquals("S-only", traceStore.findDecisionRetiring("R-only")?.survivorId, "the only retirement")
     }
 
     @Test
