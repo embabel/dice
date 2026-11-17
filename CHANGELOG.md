@@ -326,8 +326,11 @@ and the consumer PRs that deliver it).
   `VectorFiltering` mode: whether similarity search filters before or after it picks the nearest
   K. A store that publishes nothing is described as `UNDECLARED`. `VectorSearchRequest` is
   immutable and built with a chain in Java or a block in Kotlin. `forText` and the Kotlin block
-  throw `IllegalArgumentException` when the filter names no context. `SimilarityScore` is the one
-  similarity scale, cosine similarity from -1 to 1, with a factory for each native scale. A store
+  throw `IllegalArgumentException` when the filter names no context. Its `toString`, like those of
+  `ReadVectorSearchRequest` and `ReadKeywordQuery`, shows the length of the query text and the
+  number of tokens, never the text, so a log line does not carry what a user typed.
+  `SimilarityScore` is the one similarity scale, cosine similarity from -1 to 1, with a factory for
+  each native scale. A store
   that cannot do what it is asked throws `UnsupportedCapabilityException`. See "Store contract"
   in the user guide reference. **Compatibility: additive.**
 
