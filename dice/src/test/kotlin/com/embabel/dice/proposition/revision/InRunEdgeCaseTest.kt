@@ -17,7 +17,10 @@ package com.embabel.dice.proposition.revision
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.Proposition
+import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStatus
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -70,5 +73,30 @@ class InRunEdgeCaseTest {
         )
 
         assertTrue(result is RevisionResult.New, "result: $result")
+    }
+
+    @Test
+    fun `a contradicted nearest match does not hide the next active one`() {
+        val repository = TestPropositionRepository()
+        val nearest = Proposition(contextId = contextId, text = "Alice works at Acme", mentions = emptyList(), confidence = 0.9)
+        val next = Proposition(contextId = contextId, text = "Alice is employed at Acme", mentions = emptyList(), confidence = 0.9)
+        repository.save(nearest)
+        repository.save(next)
+        repository.scoreOverrides[nearest.text] = 0.99
+        repository.scoreOverrides[next.text] = 0.98
+        val view = InRunPropositions.over(repository)
+        view.record(
+            RevisionResult.Contradicted(
+                nearest.copy(status = PropositionStatus.CONTRADICTED),
+                Proposition(contextId = contextId, text = "Alice left Acme", mentions = emptyList(), confidence = 0.9),
+            ),
+        )
+
+        val found = view.findSimilarWithScores(
+            TextSimilaritySearchRequest(query = "Alice works for Acme", similarityThreshold = 0.5, topK = 1),
+            PropositionQuery(contextId = contextId, statuses = setOf(PropositionStatus.ACTIVE)),
+        )
+
+        assertEquals(listOf(next.id), found.map { it.match.id })
     }
 }

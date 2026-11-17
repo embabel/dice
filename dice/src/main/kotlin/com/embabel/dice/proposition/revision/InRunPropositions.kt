@@ -79,8 +79,20 @@ internal class InRunPropositions private constructor(
     override fun findSimilarWithScores(
         textSimilaritySearchRequest: TextSimilaritySearchRequest,
         query: PropositionQuery,
-    ): List<SimilarityResult<Proposition>> =
-        delegate.findSimilarWithScores(textSimilaritySearchRequest, query).mapNotNull { current(it, query) }
+    ): List<SimilarityResult<Proposition>> {
+        // The repository applies topK before this view drops a match the run moved out of the
+        // query's statuses, so ask for that many more and trim back to topK afterwards.
+        val statuses = query.statuses
+        val hidden = if (statuses == null) 0 else latest.values.count { it.status !in statuses }
+        val request = if (hidden == 0) textSimilaritySearchRequest else TextSimilaritySearchRequest(
+            query = textSimilaritySearchRequest.query,
+            similarityThreshold = textSimilaritySearchRequest.similarityThreshold,
+            topK = textSimilaritySearchRequest.topK + hidden,
+        )
+        return delegate.findSimilarWithScores(request, query)
+            .mapNotNull { current(it, query) }
+            .take(textSimilaritySearchRequest.topK)
+    }
 
     override fun findSimilar(textSimilaritySearchRequest: TextSimilaritySearchRequest): List<Proposition> =
         findSimilarWithScores(textSimilaritySearchRequest).map { it.match }
