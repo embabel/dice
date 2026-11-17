@@ -24,6 +24,9 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 
@@ -35,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class PropositionRevisionJavaInteropTest {
 
     private static final Instant CREATED = Instant.parse("2025-01-01T00:00:00Z");
+    private static final Instant REVISED_AT = Instant.parse("2025-02-01T00:00:00Z");
 
     private static Proposition drafted() {
         return Proposition.draft("acme", "Alice lives in Paris", 0.9)
@@ -54,7 +58,7 @@ class PropositionRevisionJavaInteropTest {
 
         assertNotNull(revised.getLastContentRevision());
         assertEquals(revised.getContentRevised(), revised.getLastContentRevision());
-        assertEquals(Boolean.TRUE, revised.getMetadata().get(DiceMetadataKeys.CONTENT_REVISED));
+        assertEquals(revised.getContentRevised().toString(), revised.getMetadata().get(DiceMetadataKeys.CONTENT_REVISED));
         assertNull(drafted.withStatus(PropositionStatus.STALE).getLastContentRevision());
     }
 
@@ -79,11 +83,50 @@ class PropositionRevisionJavaInteropTest {
     }
 
     @Test
-    void aDraftCopyKeepsTheRevisionUnlessItsMetadataIsReplaced() {
+    void aDraftCopyKeepsTheRevisionEvenWhenItsMetadataIsReplaced() {
         Proposition revised = drafted().withText("Alice lives in Lyon");
 
         assertEquals(revised.getContentRevised(), revised.toDraft().toProposition().getLastContentRevision());
-        assertNull(revised.toDraft().withMetadata(Map.of()).toProposition().getLastContentRevision());
+        assertEquals(revised.getContentRevised(),
+                revised.toDraft().withMetadata(Map.of()).toProposition().getLastContentRevision());
+    }
+
+    @Test
+    void theSameValueRecordsNoRevision() {
+        Proposition p = drafted();
+        Proposition revised = p.withMetadataValue(DiceMetadataKeys.CONTENT_REVISED, REVISED_AT.toString());
+
+        assertNull(p.withText(p.getText()).getLastContentRevision());
+        assertNull(p.withConfidence(p.getConfidence()).getLastContentRevision());
+        assertNull(p.withResolvedMentions(p.getMentions()).getLastContentRevision());
+        assertEquals(REVISED_AT, revised.withText(p.getText()).getLastContentRevision());
+        assertEquals(REVISED_AT, revised.withConfidence(p.getConfidence()).getLastContentRevision());
+        assertEquals(REVISED_AT, revised.withResolvedMentions(p.getMentions()).getLastContentRevision());
+    }
+
+    @Test
+    void theRecordReadsAnInstantOrIsoText() {
+        Proposition p = drafted();
+
+        assertEquals(REVISED_AT, recordOf(p, REVISED_AT.toString()));
+        assertEquals(REVISED_AT, recordOf(p, "  " + REVISED_AT + " "));
+        assertEquals(REVISED_AT, recordOf(p, REVISED_AT));
+        assertEquals(REVISED_AT, recordOf(p, OffsetDateTime.ofInstant(REVISED_AT, ZoneOffset.ofHours(10))));
+    }
+
+    @Test
+    void aRecordThatIsNotATimeReadsAsNotRevised() {
+        Proposition p = drafted();
+
+        assertNull(recordOf(p, Boolean.TRUE));
+        assertNull(recordOf(p, "true"));
+        assertNull(recordOf(p, "yesterday"));
+        assertNull(recordOf(p, 42));
+        assertNull(recordOf(p, LocalDateTime.of(2025, 2, 1, 0, 0)));
+    }
+
+    private static Instant recordOf(Proposition p, Object value) {
+        return p.withMetadataValue(DiceMetadataKeys.CONTENT_REVISED, value).getLastContentRevision();
     }
 
     @Test

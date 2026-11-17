@@ -1137,8 +1137,26 @@ class PropositionReviserTest {
             )
 
             val merged = (result as RevisionResult.Merged).revised
-            assertEquals(true, merged.metadata[DiceMetadataKeys.CONTENT_REVISED])
+            assertEquals(merged.contentRevised.toString(), merged.metadata[DiceMetadataKeys.CONTENT_REVISED])
             assertEquals(merged.contentRevised, merged.lastContentRevision)
+        }
+
+        @Test
+        fun `a merge that leaves the confidence at its cap records no new revision`() {
+            val revisedAt = java.time.Instant.parse("2020-06-01T00:00:00Z")
+            val existing = createProposition("Alice is a software engineer", confidence = 0.99)
+                .withMetadataValue(DiceMetadataKeys.CONTENT_REVISED, revisedAt.toString())
+            val incoming = createProposition("Alice is a software engineer", confidence = 0.8)
+
+            val result = reviser.classifiedToResult(
+                incoming,
+                listOf(ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 0.95, "Same meaning")),
+                TestPropositionRepository(),
+            )
+
+            val merged = (result as RevisionResult.Merged).revised
+            assertEquals(0.99, merged.confidence, 1e-9)
+            assertEquals(revisedAt, merged.lastContentRevision)
         }
 
         @Test

@@ -56,6 +56,16 @@ import java.util.UUID
  * set a time with [withCreated] or [withContentRevised], because a draft with neither takes the
  * build moment.
  *
+ * [toProposition] sets the content-revision record (`DiceMetadataKeys.CONTENT_REVISED`) itself and
+ * ignores any value for it in [metadata]:
+ *
+ * | Draft | Record on the built proposition |
+ * |---|---|
+ * | From `toDraft()`, same id, text, mentions and confidence unchanged | The original's record, or none when it had none |
+ * | From `toDraft()`, same id, text, mentions or confidence changed | A new record at [contentRevised] when set to a time other than the original's, otherwise at the build moment, which also becomes `contentRevised` |
+ * | From `toDraft()` with another id, or `withId(null)` | None, since it is a new claim |
+ * | From `Proposition.draft(...)` | None, since it is a new claim |
+ *
  * @property contextId The context the proposition belongs to.
  * @property text The statement in natural language.
  * @property confidence How certain the statement is, from 0.0 to 1.0.
@@ -103,6 +113,7 @@ class PropositionDraft internal constructor(
     val uri: String?,
     val temporal: TemporalMetadata?,
     val provenanceEntries: List<ProvenanceEntry>,
+    private val origin: Proposition?,
 ) {
 
     /** The context id as a plain string, for Java callers. */
@@ -185,7 +196,7 @@ class PropositionDraft internal constructor(
     fun toProposition(): Proposition {
         val created = created ?: contentRevised ?: Instant.now()
         val contentRevised = contentRevised ?: created
-        return Proposition(
+        val built = Proposition(
             id = id ?: UUID.randomUUID().toString(),
             contextId = contextId,
             text = text,
@@ -204,11 +215,31 @@ class PropositionDraft internal constructor(
             level = level,
             sourceIds = sourceIds,
             reinforceCount = reinforceCount,
-            metadata = metadata,
+            metadata = ContentRevisions.withoutRecord(metadata),
             uri = uri,
             temporal = temporal,
             provenanceEntries = provenanceEntries,
         )
+        return withRevisionRecord(built)
+    }
+
+    /**
+     * Sets the content-revision record on a proposition this draft built, following the rules in
+     * the class description.
+     *
+     * @param built the proposition, built without a record
+     * @return [built] with the original's record, a new record, or none
+     */
+    private fun withRevisionRecord(built: Proposition): Proposition {
+        val origin = origin?.takeIf { it.id == built.id } ?: return built
+        val changed = built.text != origin.text ||
+            built.mentions != origin.mentions ||
+            built.confidence != origin.confidence
+        if (changed) {
+            val at = this.contentRevised?.takeIf { it != origin.contentRevised } ?: Instant.now()
+            return ContentRevisions.record(built, at)
+        }
+        return ContentRevisions.carryRecord(origin, built)
     }
 
     override fun toString(): String = "PropositionDraft(contextId=${contextId.value}, text=$text)"
@@ -286,6 +317,7 @@ class PropositionDraft internal constructor(
         uri = uri,
         temporal = temporal,
         provenanceEntries = provenanceEntries,
+        origin = origin,
     )
 
     internal companion object {
@@ -322,6 +354,7 @@ class PropositionDraft internal constructor(
                 uri = null,
                 temporal = null,
                 provenanceEntries = emptyList(),
+                origin = null,
             )
 
         /**
@@ -331,13 +364,15 @@ class PropositionDraft internal constructor(
          * @return a draft that builds a proposition equal to [proposition] and holds its own read-only
          *   copies of the lists and the map
          */
-        internal fun from(proposition: Proposition): PropositionDraft =
-            PropositionDraft(
+        internal fun from(proposition: Proposition): PropositionDraft {
+            val mentions = Collections.unmodifiableList(ArrayList(proposition.mentions))
+            val metadata = Collections.unmodifiableMap(LinkedHashMap(proposition.metadata))
+            return PropositionDraft(
                 contextId = proposition.contextId,
                 text = proposition.text,
                 confidence = proposition.confidence,
                 id = proposition.id,
-                mentions = Collections.unmodifiableList(ArrayList(proposition.mentions)),
+                mentions = mentions,
                 decay = proposition.decay,
                 importance = proposition.importance,
                 reasoning = proposition.reasoning,
@@ -351,10 +386,14 @@ class PropositionDraft internal constructor(
                 level = proposition.level,
                 sourceIds = Collections.unmodifiableList(ArrayList(proposition.sourceIds)),
                 reinforceCount = proposition.reinforceCount,
-                metadata = Collections.unmodifiableMap(LinkedHashMap(proposition.metadata)),
+                metadata = metadata,
                 uri = proposition.uri,
                 temporal = proposition.temporal,
                 provenanceEntries = Collections.unmodifiableList(ArrayList(proposition.provenanceEntries)),
+                // Holds the copies, so a caller changing the proposition's own lists cannot
+                // make the built proposition look revised.
+                origin = proposition.copy(mentions = mentions, metadata = metadata),
             )
+        }
     }
 }

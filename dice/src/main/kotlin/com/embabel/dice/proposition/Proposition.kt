@@ -169,31 +169,39 @@ data class Proposition(
     val lastTouched: Instant get() = maxOf(contentRevised, metadataRevised)
 
     /**
-     * When the text, mentions or confidence last changed after this proposition was recorded.
-     * A merge, a reinforcement and a contradiction change confidence, so they count.
+     * When the text, mentions or confidence of this claim last changed. A merge, a reinforcement
+     * and a contradiction count when they change the confidence.
      *
-     * Equals [contentRevised] when the metadata holds [DiceMetadataKeys.CONTENT_REVISED] with the
-     * value `true`. Null when no change is recorded: a proposition never revised, one stored
-     * without the entry, or one whose metadata map was replaced. Left out of JSON, since the
-     * metadata entry and [contentRevised] already carry it.
+     * The time is the one stored in the [DiceMetadataKeys.CONTENT_REVISED] entry. Null when no
+     * revision is recorded or the entry does not hold a time. It is independent of
+     * [contentRevised], which also moves when a reinforcement leaves the content as it was, since
+     * that time is the decay anchor. Left out of JSON, since the metadata entry already carries it.
+     *
+     * A Kotlin `copy(id = ...)` keeps the entry. When copying into a new claim, remove
+     * [DiceMetadataKeys.CONTENT_REVISED] from the metadata, or use `toDraft().withId(...)`.
      */
     @get:JsonIgnore
     val lastContentRevision: Instant?
-        get() = if (metadata[DiceMetadataKeys.CONTENT_REVISED] == true) contentRevised else null
-
-    /** Create a copy with updated text. Resets the decay clock (content anchor). */
-    fun withText(newText: String): Proposition = copy(text = newText).contentRevisedAt(Instant.now())
+        get() = ContentRevisions.recordedAt(metadata)
 
     /**
-     * Stamps a content revision: sets [contentRevised] and records the revision in the metadata.
-     * Leaves [metadataRevised] alone, because the content changed and the administrative record did not.
-     *
-     * @param at when the content changed
-     * @return a copy with [contentRevised] set to [at] and [DiceMetadataKeys.CONTENT_REVISED] set to `true`
+     * Create a copy with updated text. Resets the decay clock (content anchor), and records a
+     * content revision when the text differs.
      */
-    @JvmSynthetic
-    internal fun contentRevisedAt(at: Instant): Proposition =
-        copy(contentRevised = at, metadata = metadata + (DiceMetadataKeys.CONTENT_REVISED to true))
+    fun withText(newText: String): Proposition = revisedAt(Instant.now(), newText != text) { copy(text = newText) }
+
+    /**
+     * Stamps [contentRevised] on a changed copy and records a revision when something changed.
+     *
+     * @param now the time to stamp
+     * @param changed whether the text, mentions or confidence differ from this proposition's
+     * @param change makes the changed copy
+     * @return the copy, stamped, with a revision recorded at [now] when [changed]
+     */
+    private inline fun revisedAt(now: Instant, changed: Boolean, change: () -> Proposition): Proposition {
+        val stamped = change().copy(contentRevised = now)
+        return if (changed) ContentRevisions.record(stamped, now) else stamped
+    }
 
     companion object {
 
@@ -325,7 +333,7 @@ data class Proposition(
      * Create a copy with updated mentions.
      */
     fun withResolvedMentions(resolvedMentions: List<EntityMention>): Proposition =
-        copy(mentions = resolvedMentions).contentRevisedAt(Instant.now())
+        revisedAt(Instant.now(), resolvedMentions != mentions) { copy(mentions = resolvedMentions) }
 
     /**
      * Create a copy with updated status. Administrative change: touches only
@@ -346,7 +354,7 @@ data class Proposition(
      */
     fun withConfidence(newConfidence: Double): Proposition {
         require(newConfidence in 0.0..1.0) { "Confidence must be between 0.0 and 1.0" }
-        return copy(confidence = newConfidence).contentRevisedAt(Instant.now())
+        return revisedAt(Instant.now(), newConfidence != confidence) { copy(confidence = newConfidence) }
     }
 
     /**

@@ -25,6 +25,7 @@ import com.embabel.dice.spi.AuthorityResolver
 import com.embabel.dice.spi.ConflictDetector
 import com.embabel.dice.spi.ConflictType
 import com.embabel.dice.spi.TrustScorer
+import com.embabel.dice.proposition.ContentRevisions
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
@@ -681,14 +682,17 @@ data class LlmPropositionReviser(
         val combinedGrounding = (existing.grounding + new.grounding).distinct()
         val combinedProvenance = (existing.provenanceEntries + new.provenanceEntries).distinct()
 
-        return existing.copy(
+        val now = Instant.now()
+        val merged = existing.copy(
             confidence = boostedConfidence,
             decay = slowedDecay,
             grounding = combinedGrounding,
             provenanceEntries = combinedProvenance,
             reinforceCount = existing.reinforceCount + 1,
-            lastAccessed = Instant.now(),
-        ).contentRevisedAt(Instant.now())
+            contentRevised = now,
+            lastAccessed = now,
+        )
+        return if (boostedConfidence != existing.confidence) ContentRevisions.record(merged, now) else merged
     }
 
     /**

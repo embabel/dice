@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.proposition.revision
 
+import com.embabel.dice.proposition.ContentRevisions
 import com.embabel.dice.proposition.Proposition
 import java.time.Instant
 
@@ -38,7 +39,8 @@ internal class ReinforcementRule(
 
 /**
  * Strengthens a proposition with new evidence. Grounding from both is always combined, without
- * duplicates, and the content-revised time is always stamped.
+ * duplicates, and the content-revised time is always stamped. A content revision is recorded only
+ * when the confidence changes.
  *
  * @param existing the stored proposition
  * @param evidence the proposition that backs it up
@@ -47,8 +49,9 @@ internal class ReinforcementRule(
  */
 internal fun reinforce(existing: Proposition, evidence: Proposition, rule: ReinforcementRule): Proposition {
     val now = Instant.now()
-    return existing.copy(
-        confidence = rule.confidence(existing, evidence),
+    val confidence = rule.confidence(existing, evidence)
+    val reinforced = existing.copy(
+        confidence = confidence,
         decay = rule.decayFactor?.let { (existing.decay * it).coerceAtLeast(0.0) } ?: existing.decay,
         grounding = (existing.grounding + evidence.grounding).distinct(),
         provenanceEntries = if (rule.mergeProvenance) {
@@ -57,6 +60,8 @@ internal fun reinforce(existing: Proposition, evidence: Proposition, rule: Reinf
             existing.provenanceEntries
         },
         reinforceCount = if (rule.countReinforcement) existing.reinforceCount + 1 else existing.reinforceCount,
+        contentRevised = now,
         lastAccessed = if (rule.touchLastAccessed) now else existing.lastAccessed,
-    ).contentRevisedAt(now)
+    )
+    return if (confidence != existing.confidence) ContentRevisions.record(reinforced, now) else reinforced
 }

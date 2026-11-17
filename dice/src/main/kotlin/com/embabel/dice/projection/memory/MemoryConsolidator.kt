@@ -15,7 +15,7 @@
  */
 package com.embabel.dice.projection.memory
 
-import com.embabel.dice.common.DiceMetadataKeys
+import com.embabel.dice.proposition.ContentRevisions
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.revision.ReinforcementRule
@@ -206,7 +206,7 @@ class DefaultMemoryConsolidator(
             grounding = allGrounding,
             created = Instant.now(),
             contentRevised = Instant.now(),
-            metadata = bestProp.metadata - DiceMetadataKeys.CONTENT_REVISED,
+            metadata = ContentRevisions.withoutRecord(bestProp.metadata),
         )
     }
 }

@@ -122,7 +122,7 @@ class ConsolidatorReinforceCharacterisationTest {
                 confidence = r.confidence,
                 grounding = r.grounding,
                 contentRevised = r.contentRevised,
-                metadata = existing.metadata + (DiceMetadataKeys.CONTENT_REVISED to true),
+                metadata = existing.metadata + (DiceMetadataKeys.CONTENT_REVISED to r.contentRevised.toString()),
             ),
             r,
         )
@@ -131,7 +131,7 @@ class ConsolidatorReinforceCharacterisationTest {
     @Test
     fun `the reinforced proposition records its content revision`() {
         val r = reinforcedFrom(existing())
-        assertEquals(true, r.metadata[DiceMetadataKeys.CONTENT_REVISED])
+        assertEquals(r.contentRevised.toString(), r.metadata[DiceMetadataKeys.CONTENT_REVISED])
         assertEquals(r.contentRevised, r.lastContentRevision)
     }
 
@@ -144,7 +144,7 @@ class ConsolidatorReinforceCharacterisationTest {
         val result = DefaultMemoryConsolidator().consolidate(listOf(session), listOf(revisedExisting))
 
         val merged = result.merged.single().result
-        assertEquals(true, revisedExisting.metadata[DiceMetadataKeys.CONTENT_REVISED])
+        assertNotNull(revisedExisting.lastContentRevision)
         assertNotEquals(revisedExisting.id, merged.id)
         assertFalse(merged.metadata.containsKey(DiceMetadataKeys.CONTENT_REVISED))
         assertNull(merged.lastContentRevision)
