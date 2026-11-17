@@ -41,7 +41,9 @@
         <kotlin.version>2.2.21</kotlin.version>
         <!--
             The DICE version the examples build against. It is the version in the root pom.xml,
-            and the build stops when the two differ.
+            and the build stops when the two differ. A release moves the root version, so set
+            this one to match afterwards. The Build workflow passes the root version in, so a
+            release commit builds before this line is changed.
         -->
         <dice.version>0.5.0-SNAPSHOT</dice.version>
         <!-- DICE compiles against this Embabel Agent version, so the examples run on the same one. -->
@@ -117,21 +119,55 @@
                 Stops the build when dice.version, embabel-agent.version or kotlin.version differs
                 from the library's. Every module inherits the check, so a module built on its own
                 runs it too. The library's versions come from the root pom.xml and from the build
-                parent it names, which sets the Kotlin version. Run it alone with
-                ./mvnw -B -N -f examples/pom.xml validate. In a full build of the examples, run
-                compile or a later phase, since examples-java needs examples-common compiled first.
+                parent it names, which sets the Kotlin version. Maven fetches that parent's POM
+                the way it fetches any artifact, so the check works with any local repository
+                layout. Run it alone with ./mvnw -B -N -f examples/pom.xml initialize. In a full
+                build of the examples, run compile or a later phase, since examples-java needs
+                examples-common compiled first.
+
+                Three steps, in phase order: read the root pom.xml, fetch the build parent's POM,
+                then compare.
             -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>fetch-library-build-parent</id>
+                        <phase>initialize</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>com.embabel.build</groupId>
+                                    <artifactId>embabel-build-parent</artifactId>
+                                    <!-- Read from the root pom.xml in the validate phase. -->
+                                    <version>${library.project.parent.version}</version>
+                                    <type>pom</type>
+                                    <!-- Named by version, so a stale copy of another version is never read. -->
+                                    <destFileName>embabel-build-parent-${library.project.parent.version}.pom</destFileName>
+                                </artifactItem>
+                            </artifactItems>
+                            <outputDirectory>${project.build.directory}/library</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-antrun-plugin</artifactId>
                 <executions>
                     <execution>
-                        <id>check-library-versions</id>
+                        <id>read-library-versions</id>
                         <phase>validate</phase>
                         <goals>
                             <goal>run</goal>
                         </goals>
                         <configuration>
+                            <!-- The next two steps read the root pom.xml's values as library.project.* -->
+                            <exportAntProperties>true</exportAntProperties>
                             <target>
                                 <!-- The repository root is the directory that holds .mvn. -->
                                 <xmlproperty file="${maven.multiModuleProjectDirectory}/pom.xml" prefix="library"/>
@@ -142,15 +178,18 @@
                                         </not>
                                     </condition>
                                 </fail>
-
-                                <!--
-                                    Building the library puts its build parent's POM in the local repository.
-                                    A split local repository keeps it in maven.repo.local.tail.
-                                -->
-                                <xmlproperty prefix="buildparent"
-                                             file="${settings.localRepository}/com/embabel/build/embabel-build-parent/${library.project.parent.version}/embabel-build-parent-${library.project.parent.version}.pom"/>
-                                <xmlproperty prefix="buildparent"
-                                             file="${maven.repo.local.tail}/com/embabel/build/embabel-build-parent/${library.project.parent.version}/embabel-build-parent-${library.project.parent.version}.pom"/>
+                            </target>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>check-library-versions</id>
+                        <phase>initialize</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <xmlproperty file="${project.build.directory}/library/embabel-build-parent-${library.project.parent.version}.pom" prefix="buildparent"/>
                                 <!-- A kotlin.version set in the root pom.xml wins over the build parent's. -->
                                 <condition property="library.kotlin.version" value="${library.project.properties.kotlin.version}">
                                     <isset property="library.project.properties.kotlin.version"/>
@@ -159,7 +198,7 @@
                                     <isset property="buildparent.project.properties.kotlin.version"/>
                                 </condition>
                                 <fail unless="library.kotlin.version"
-                                      message="Cannot read the library's Kotlin version from embabel-build-parent ${library.project.parent.version} in the local repository. Install the library first: ./mvnw -B install -DskipTests at the repository root."/>
+                                      message="Cannot read the library's Kotlin version from embabel-build-parent ${library.project.parent.version}."/>
 
                                 <fail message="examples/pom.xml builds against DICE ${dice.version}, but the root pom.xml is ${library.project.version}. Set dice.version to ${library.project.version}.">
                                     <condition>

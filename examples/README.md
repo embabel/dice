@@ -66,4 +66,6 @@ call.
 | jMolecules | `2025.0.2` |
 | Java | 21 |
 
-Every module's build compares those three with the library's and stops when one differs.
+Every module's build compares those three with the library's and stops when one differs. A
+release moves the root version, so set `dice.version` to match afterwards. The Build workflow
+passes the root version in, so the release commits build before that change.

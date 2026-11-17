@@ -52,9 +52,12 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         # install is verify plus a copy of the library in the local repository, where the examples take it from.
         run: mvn -U -B test install
-      # The examples sit outside the library reactor. They build against the library this job installed.
+      # The examples sit outside the library reactor. They build against the library this job installed,
+      # whose version a release changes, so the root version is passed in.
       - name: Build the examples
-        run: mvn -B -f examples/pom.xml verify
+        run: |
+          DICE_VERSION=$(mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout)
+          mvn -B -f examples/pom.xml verify -Ddice.version="$DICE_VERSION"
 
   # Trigger the Publish Docs workflow if .adoc files changed (only on main branch push)
   trigger-docs:
