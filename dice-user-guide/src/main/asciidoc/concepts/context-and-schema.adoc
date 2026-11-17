@@ -23,10 +23,10 @@ plain string, as above. Java reads an id back with `getContextIdValue()`, which 
 with a `contextId` property has.
 
 A public declaration that takes a `ContextId` also has a Java form that takes the id as a plain
-string. On a function, that form is an overload of the same name with a parameter named
-`contextIdValue`; where the overload would clash with another method, the name gets a `Value`
-suffix, as `findByContextIdValue` does. A constructor gets a static `of(...)`, and a read gets
-`getContextIdValue()`.
+string. That form is named after the `ContextId` form with `Value` on the end. So `runValue`,
+`consolidateNowValue` and `clearByContextValue` take a string, and `findByContextIdValue` follows
+the same rule. The suffix means no Kotlin call that passes a `ContextId` becomes ambiguous. A
+constructor gets a static `of(...)`, and a read gets `getContextIdValue()`.
 
 [cols="2,3",options="header"]
 |===
@@ -114,7 +114,7 @@ first:
 
 [source,java]
 ----
-DreamLoopReport report = orchestrator.consolidateNow("acme");
+DreamLoopReport report = orchestrator.consolidateNowValue("acme");
 CollectorRunResult result = runner.runValue("acme", true);
 ConsolidationPass pass = ConsolidationPass.of("session", (contextIdValue, propositions) ->
         new ConsolidationPassResult.NoOp("session", "nothing to merge"));

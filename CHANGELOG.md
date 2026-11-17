@@ -137,18 +137,6 @@ and the consumer PRs that deliver it).
   `Thread.interrupted()` after a breaker call now sees the interrupt, and should handle it as it
   would any other interrupt.
 
-- Draft times follow the constructor. A `PropositionDraft` used to give every unset time the value
-  of `created`. Now an unset `contentRevised`, `metadataRevised` or `lastAccessed` takes the
-  constructor's default: the build moment, or for `lastAccessed` the value of `contentRevised`.
-  Decay runs from `contentRevised`, so set `contentRevised` as well as `created` when you import an
-  older fact. **Compatibility: behavioral.** Upgrade: a draft that sets only `created` to import an
-  older fact now decays from the build moment until it also sets `contentRevised`.
-
-- `PropositionDraft.withProvenance` keeps the list as given, duplicates included.
-  `Proposition.withProvenance` still removes duplicates, so the two can differ on the same list.
-  **Compatibility: behavioral.** Upgrade: a draft that passes a list with repeated entries now keeps
-  the repeats.
-
 - `ChunkHistoryStore.clearByContext(ContextId)` now forwards to `clearByContextValue(String)`, which
   holds the work. **Compatibility: behavioral.** Upgrade: a Kotlin `ChunkHistoryStore` that
   overrides only `clearByContext(ContextId)` should move its work into `clearByContextValue`. Until
@@ -949,22 +937,17 @@ and the consumer PRs that deliver it).
   longer than its limit now gets a rejection where it previously got an oversized index entry.
   Nothing a real connector emits comes close to any of the four.
 
-- Java can pass a context id as a `String` to more of the API. `ConsolidationPass.run`,
-  `DreamLoopOrchestrator.consolidate` and `consolidateNow`, `MemoryMaintenanceOrchestrator.maintain`,
-  `CollectorRunner.runValue` and `collectValue`, and `ChunkHistoryStore.clearByContextValue` each
-  have a `String` form beside the `ContextId` one, and `ConsolidationPass.of(name, body)` builds a
-  pass from a `String` function. The new forms are default methods, so existing implementations get
+- Java can pass a context id as a `String` to more of the API. `ConsolidationPass.runValue`,
+  `DreamLoopOrchestrator.consolidateValue` and `consolidateNowValue`,
+  `MemoryMaintenanceOrchestrator.maintainValue`, `CollectorRunner.runValue` and `collectValue`, and
+  `ChunkHistoryStore.clearByContextValue` each have a `String` form beside the `ContextId` one, and
+  `ConsolidationPass.of(name, body)` builds a pass from a `String` function. The new forms are default methods, so existing implementations get
   them, and the `ContextId` forms keep their names. A Kotlin class that already declares a member
   with the same signature as one of these needs `override` on it. **Compatibility: additive.**
 
 - `PropositionContradicted`, `UngroundedMentionsFound`, `DreamLoopReport`,
   `CollapseUndoContextMismatchException` and `DriftReport` gain `of(...)` factories that take the
   context id as a `String`. **Compatibility: additive.**
-
-- `TemporalQueryCapable` gains Java-callable default methods: `findAllOrderedByEffectiveConfidence()`,
-  `findByEffectiveConfidenceAbove(double)`, and two `findByCreatedBetweenOrderedByEffectiveConfidence`
-  overloads, one of them with an `asOf` instant. Each uses the one decay constant,
-  `Proposition.DEFAULT_DECAY_K`. **Compatibility: additive.**
 
 - `ExtractionExecutionStrategy.attemptAll(chunks, extract)` runs an extraction over a list of chunks
   and returns one `ChunkOutcome` per chunk, in the same order. A `ChunkOutcome` has `getChunk()`,
@@ -982,6 +965,11 @@ and the consumer PRs that deliver it).
   **Compatibility: additive.**
 
 ### Fixed
+
+- A `PropositionDraft` that sets only `created` no longer copies it into `contentRevised`,
+  `metadataRevised` and `lastAccessed`. Those now take the build moment, as the `Proposition`
+  constructor does, so an imported fact stops decaying by its whole age the moment it is built. To
+  keep the old anchor, set `contentRevised` as well as `created`.
 
 - `MetamodelAutoConfiguration` and the metamodel wiring tests referenced the drift quarantine types
   at their former home in `com.embabel.dice.metamodel(.support)`. They moved to

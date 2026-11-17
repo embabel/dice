@@ -177,10 +177,14 @@ hints map inside an `EntityMention` and the values in the metadata map are kept 
 empty list, use `withExactGrounding`, which keeps the ids in the order you give them. In a Kotlin
 block the grounding starts empty, and each `grounding(...)` call adds to it.
 
+`withProvenance` drops repeated entries too, as `Proposition.withProvenance` does, so an entry that
+is given twice is kept once.
+
 A time that is not set takes the constructor's default when `toProposition()` runs. `created`,
 `contentRevised` and `metadataRevised` take the moment `toProposition()` runs, and `lastAccessed`
-takes the value `contentRevised` ends up with. Decay is measured from `contentRevised`, so set it
-when you import an older fact.
+takes the value `contentRevised` ends up with. Decay is measured from `contentRevised`, so when you
+import an older fact, set `contentRevised` as well as `created`. A fact that sets only `created`
+decays from the build moment.
 
 Draft steps do not move revision times. A step such as `withLastAccessed` changes only the field it
 names, so `contentRevised` and `metadataRevised` stay as you set them, or unset.
