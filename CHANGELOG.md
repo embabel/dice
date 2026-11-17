@@ -327,8 +327,8 @@ and the consumer PRs that deliver it).
   K. A store that publishes nothing is described as `UNDECLARED`. `VectorSearchRequest` is
   immutable and built with a chain in Java or a block in Kotlin. `forText` and the Kotlin block
   throw `IllegalArgumentException` when the filter names no context. Its `toString`, like those of
-  `ReadVectorSearchRequest` and `ReadKeywordQuery`, shows the length of the query text and the
-  number of tokens, never the text, so a log line does not carry what a user typed.
+  `ReadVectorSearchRequest` and `ReadKeywordQuery`, shows the length of the query text or the
+  number of tokens in place of the text or the tokens. Filters and criteria still print as they are.
   `SimilarityScore` is the one similarity scale, cosine similarity from -1 to 1, with a factory for
   each native scale. A store
   that cannot do what it is asked throws `UnsupportedCapabilityException`. See "Store contract"
