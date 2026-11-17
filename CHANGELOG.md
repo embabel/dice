@@ -2477,3 +2477,17 @@ and the consumer PRs that deliver it).
   host constructing `InMemoryExtractionRunStore` for itself is untouched by the flag either way. No
   released DICE ever wrote this relationship type. Every new type carries `@ApiStatus.Experimental`
   and the shapes may still move while the remaining #67 slices land.
+
+- `IncrementalPropositionExtraction` records an event's window only after its claims are stored.
+  Before, the window was recorded ahead of the write, so a failed or rolled-back write lost it for
+  good. Now a failed store leaves the window unrecorded, and the next event for that source analyses
+  it again. Projection and grounding run after the window is recorded. From the store step onwards,
+  a failure reaches the caller of `extractPropositions`, as a STRICT lineage failure already did. The
+  call drains the rest of the queue first and then throws the first failure. A failure while building
+  the context or analysing the window is still logged, and the window is retried. If the thread is
+  interrupted, the drain stops and the remaining events stay queued. With the default writer, a STRICT
+  lineage failure still leaves the claims stored. The window is recorded so the claims are not stored
+  again, and the exception is thrown. A host doing one-time processing keeps its chunk history in the
+  same transactional store as the claims (the Drivine stores do this) and calls `extractPropositions`
+  inside a transaction. Without a transaction, a write that fails part way is retried, and the retry
+  can add the window's claims again. **Compatibility: behavioral.**

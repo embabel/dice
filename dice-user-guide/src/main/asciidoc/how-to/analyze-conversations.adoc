@@ -100,6 +100,22 @@ int sameNumber = result.getReplayedCount();
  When two chunks in one run restate the same
 stored claim, the second builds on the first, so the saved claim keeps both sources.
 
+==== When a write fails
+
+A window is recorded as processed only after its claims are stored. If the store fails, the window
+stays unrecorded, and the next event for the same source analyses it again. Projection and grounding
+run after the window is recorded, and a failure in either one reaches the caller too.
+
+`extractPropositions` drains the events that are queued, then throws the first failure it saw. A
+failure while building the context or analysing a window is logged, and that window is retried on the
+next event. If the thread is interrupted, the drain stops and the events still queued wait for the
+next call.
+
+A failure that reaches the caller lets a host transaction roll back. For one-time processing, keep the
+chunk history in the same transactional store as the claims. The Drivine stores do this. Call
+`extractPropositions` inside a transaction. Without a transaction, a write that fails part way is
+retried, and the retry can add the window's claims again.
+
 ==== Scope per user
 
 Give each user their own `ContextId`. It is the boundary that keeps one user's beliefs out of
