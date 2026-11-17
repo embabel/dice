@@ -201,6 +201,26 @@ class AnalyzeThenRecordTest {
         assertEquals(0, storeCalls)
     }
 
+    // R2, E5: the bookmark says the window is new, but its hash was already processed, so
+    // nothing runs. The bookmark is hidden here so only the hash check can stop the call.
+    @Test
+    fun `R2 E5 a window whose hash is already processed returns null even without a bookmark`() {
+        val inner = InMemoryChunkHistoryStore()
+        val store = object : ChunkHistoryStore by inner {
+            override fun getLastBookmark(key: BookmarkKey): AnalysisBookmark? = null
+        }
+        val analyzer = RecordingAnalyzer(store)
+        val source = ListSource("src", fourItems.toMutableList())
+        analyzer.run(source, context) { }
+        var storeCalls = 0
+
+        val second = analyzer.run(source, context) { storeCalls++ }
+
+        assertNull(second)
+        assertEquals(1, analyzer.chunks.size)
+        assertEquals(0, storeCalls)
+    }
+
     // I1: analyze keeps its trigger rule and still records before it returns.
     @Test
     fun `I1 analyze returns null below triggerInterval and records nothing`() {
