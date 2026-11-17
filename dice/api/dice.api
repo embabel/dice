@@ -1923,6 +1923,8 @@ public abstract class com/embabel/dice/incremental/AbstractIncrementalAnalyzer :
 	public synthetic fun <init> (Lcom/embabel/dice/incremental/ChunkHistoryStore;Lcom/embabel/dice/incremental/IncrementalSourceFormatter;Lcom/embabel/dice/incremental/WindowConfig;Lcom/embabel/dice/common/ContentHasher;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun analyze (Lcom/embabel/dice/incremental/IncrementalSource;Lcom/embabel/dice/common/SourceAnalysisContext;)Ljava/lang/Object;
 	public fun analyzeNow (Lcom/embabel/dice/incremental/IncrementalSource;Lcom/embabel/dice/common/SourceAnalysisContext;)Ljava/lang/Object;
+	public final fun analyzeWindow (Lcom/embabel/dice/incremental/IncrementalSource;Lcom/embabel/dice/common/SourceAnalysisContext;)Lcom/embabel/dice/incremental/AnalyzedWindow;
+	public final fun analyzeWindowNow (Lcom/embabel/dice/incremental/IncrementalSource;Lcom/embabel/dice/common/SourceAnalysisContext;)Lcom/embabel/dice/incremental/AnalyzedWindow;
 	protected final fun getConfig ()Lcom/embabel/dice/incremental/WindowConfig;
 	protected final fun getContentHasher ()Lcom/embabel/dice/common/ContentHasher;
 	protected final fun getFormatter ()Lcom/embabel/dice/incremental/IncrementalSourceFormatter;
