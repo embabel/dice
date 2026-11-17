@@ -110,8 +110,9 @@ data class DefaultDreamLoopOrchestrator(
     override fun consolidateNow(contextId: ContextId): DreamLoopReport = synchronized(lockFor(contextId)) {
         val cycleStarted = Instant.now()
 
-        // (1) Fetch the ACTIVE snapshot once.
-        val snapshot = activeSnapshot(contextId)
+        // (1) Fetch the ACTIVE snapshot once. Passes compare evidence, and a graph store's plain
+        // query leaves provenance out, so a replay would look like new evidence without it.
+        val snapshot = activeSnapshot(contextId, withProvenance = true)
         logger.debug("Running {} pass(es) over {} active proposition(s) for {}", passes.size, snapshot.size, contextId)
 
         // (2) Run each pass in registration order, isolating failures into Failed results.
@@ -229,9 +230,17 @@ data class DefaultDreamLoopOrchestrator(
         PropositionStatus.ACTIVE -> 0
     }
 
-    private fun activeSnapshot(contextId: ContextId): List<Proposition> =
+    /**
+     * Reads the context's active propositions.
+     *
+     * @param contextId the context to read
+     * @param withProvenance whether every proposition must carry its provenance entries
+     * @return the active propositions
+     */
+    private fun activeSnapshot(contextId: ContextId, withProvenance: Boolean = false): List<Proposition> =
         repository.query(
-            PropositionQuery.forContextId(contextId).withStatus(PropositionStatus.ACTIVE)
+            PropositionQuery.forContextId(contextId).withStatus(PropositionStatus.ACTIVE),
+            withProvenance,
         )
 
     companion object {

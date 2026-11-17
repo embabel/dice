@@ -88,13 +88,13 @@ private class TckPropositionRepositoryBridge(
  * correctly delegates all proposition operations to its supplementary store and that the TCK's
  * vector, graph-query, collector, and report stages all work correctly through the extra delegation layer.
  */
-class Neo4jAdapterCanonicalFlowTest : AbstractCanonicalFlowTest() {
+class RagAdapterCanonicalFlowTest : AbstractCanonicalFlowTest() {
 
     override fun newStore(): PropositionRepository {
         val embeddingService = newEmbeddingService()
         val crud = InMemoryPropositionRepository(embeddingService = embeddingService)
         val entityRepository = InMemoryNamedEntityDataRepository(
-            dataDictionary = DataDictionary.fromClasses("neo4j-adapter-tck"),
+            dataDictionary = DataDictionary.fromClasses("rag-adapter-tck"),
         )
         val adapter = RagAdapterPropositionRepository(crud = crud, entityRepository = entityRepository)
         return TckPropositionRepositoryBridge(adapter)

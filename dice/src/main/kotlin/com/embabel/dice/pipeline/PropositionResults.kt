@@ -19,11 +19,13 @@ import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.common.core.types.HasInfoString
 import com.embabel.dice.common.*
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.SuggestedPropositions
 import com.embabel.dice.proposition.revision.RevisionResult
 
 /**
- * Statistics about proposition revision outcomes.
+ * Statistics about proposition revision outcomes. A replay, a merge or reinforcement that left the
+ * stored proposition as it was, is not counted.
  */
 data class PropositionExtractionStats(
     /** Number of propositions that were new (not similar to existing) */
@@ -43,8 +45,8 @@ data class PropositionExtractionStats(
     companion object {
         fun from(revisionResults: List<RevisionResult>): PropositionExtractionStats = PropositionExtractionStats(
             newCount = revisionResults.count { it is RevisionResult.New },
-            mergedCount = revisionResults.count { it is RevisionResult.Merged },
-            reinforcedCount = revisionResults.count { it is RevisionResult.Reinforced },
+            mergedCount = revisionResults.count { it is RevisionResult.Merged && !it.isReplay },
+            reinforcedCount = revisionResults.count { it is RevisionResult.Reinforced && !it.isReplay },
             contradictedCount = revisionResults.count { it is RevisionResult.Contradicted },
             generalizedCount = revisionResults.count { it is RevisionResult.Generalized },
         )
@@ -61,6 +63,13 @@ interface PropositionExtractionResult {
     /** Statistics about revision outcomes */
     val propositionExtractionStats: PropositionExtractionStats get() = PropositionExtractionStats.from(revisionResults)
 
+    /**
+     * Number of revision results that were replays: merges or reinforcements that left the stored
+     * proposition as it was, as when the same chunk is processed again. [propositionExtractionStats]
+     * leaves them out of its counts, so a retried run shows its replays here.
+     */
+    val replayedCount: Int get() = revisionResults.count { it.isReplay }
+
     /** Whether revision was enabled */
     val hasRevision: Boolean get() = revisionResults.isNotEmpty()
 
@@ -72,16 +81,43 @@ interface PropositionExtractionResult {
      * - Reinforced: the revised (reinforced) proposition
      * - Contradicted: both the original (with reduced confidence) and the new
      * - Generalized: the new generalizing proposition
+     *
+     * Each stored proposition appears once, as the last copy the results produced for it. A replay
+     * is left out when another result changed or contradicted that same stored proposition, so
+     * saving the list cannot undo that change.
      */
     val revisedPropositionsToPersist: List<Proposition>
-        get() = revisionResults.flatMap { result ->
-            when (result) {
-                is RevisionResult.New -> listOf(result.proposition)
-                is RevisionResult.Merged -> listOf(result.revised)
-                is RevisionResult.Reinforced -> listOf(result.revised)
-                is RevisionResult.Contradicted -> listOf(result.original, result.new)
-                is RevisionResult.Generalized -> listOf(result.proposition)
+        get() {
+            val changedIds = revisionResults.mapNotNull { it.changedStoredId() }.toSet()
+            val toPersist = revisionResults
+                .filterNot { it.isReplay && it.storedId() in changedIds }
+                .flatMap { result ->
+                    when (result) {
+                        is RevisionResult.New -> listOf(result.proposition)
+                        is RevisionResult.Merged -> listOf(result.revised)
+                        is RevisionResult.Reinforced -> listOf(result.revised)
+                        is RevisionResult.Contradicted -> listOf(result.original, result.new)
+                        is RevisionResult.Generalized -> listOf(result.proposition)
+                    }
+                }
+            // A result can come back before the one it built on, so the final copy of a stored
+            // proposition is the one no other result started from, not simply the last in the list.
+            val startedFrom = revisionResults.mapNotNull { it.changedOriginal() }.toSet()
+            // A contradicted copy has no link back to the copy it was built from. Nothing in a run
+            // builds on it, because revision no longer finds it among active propositions, so it is
+            // always the final copy.
+            val contradicted = revisionResults.mapNotNull { it.contradictedCopy() }.toSet()
+            val finalById = LinkedHashMap<String, Proposition>()
+            for (proposition in toPersist) {
+                val held = finalById[proposition.id]
+                val replace = held == null ||
+                    held !in contradicted && (proposition in contradicted || proposition !in startedFrom || held in startedFrom)
+                if (replace) finalById[proposition.id] = proposition
             }
+            val lastIndexById = toPersist.withIndex().associate { (index, proposition) -> proposition.id to index }
+            return toPersist.withIndex()
+                .filter { (index, proposition) -> lastIndexById[proposition.id] == index }
+                .map { (_, proposition) -> finalById.getValue(proposition.id) }
         }
 }
 
@@ -212,6 +248,7 @@ sealed interface ChunkPropositionResult : PersistablePropositions, HasInfoString
                     append("${stats.reinforcedCount} reinforced, ")
                     append("${stats.contradictedCount} contradicted, ")
                     append("${stats.generalizedCount} generalized")
+                    if (replayedCount > 0) append(", $replayedCount replayed")
                 }
                 append(")")
 
@@ -330,4 +367,42 @@ data class PropositionResults(
 
     override fun referenceOnlyEntities(): List<NamedEntityData> =
         chunkResults.flatMap { it.referenceOnlyEntities() }.distinctBy { it.id }
+}
+
+/**
+ * Returns the id of the stored proposition a merge or reinforcement started from, or null for
+ * other results.
+ */
+private fun RevisionResult.storedId(): String? = when (this) {
+    is RevisionResult.Merged -> original.id
+    is RevisionResult.Reinforced -> original.id
+    else -> null
+}
+
+/**
+ * Returns the copy a merge or reinforcement that changed something started from, or null.
+ */
+private fun RevisionResult.changedOriginal(): Proposition? = when (this) {
+    is RevisionResult.Merged -> original.takeUnless { isReplay }
+    is RevisionResult.Reinforced -> original.takeUnless { isReplay }
+    else -> null
+}
+
+/**
+ * Returns the copy a contradiction moved to [PropositionStatus.CONTRADICTED], or null for other
+ * results and for a pinned original the contradiction left as it was.
+ *
+ * @return the contradicted copy, or null
+ */
+private fun RevisionResult.contradictedCopy(): Proposition? =
+    (this as? RevisionResult.Contradicted)?.original?.takeIf { it.status == PropositionStatus.CONTRADICTED }
+
+/**
+ * Returns the id of the stored proposition this result changed, or null when it changed none.
+ * A contradiction counts as a change to the proposition it contradicts.
+ */
+private fun RevisionResult.changedStoredId(): String? = when (this) {
+    is RevisionResult.Merged, is RevisionResult.Reinforced -> if (isReplay) null else storedId()
+    is RevisionResult.Contradicted -> original.id
+    else -> null
 }

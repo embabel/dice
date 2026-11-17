@@ -15,6 +15,7 @@ DICE (Domain-Integrated Context Engineering) is a proposition-first knowledge su
 | `dice-store-conformance` | Abstract JUnit suites, one per store interface, that a backend's tests extend to check its store against the documented behaviour. JUnit is a compile dependency |
 | `dice-integration-tests` | Test-only: the cross-feature end-to-end canonical-flow harness |
 | `dice-mcp-autoconfigure` | Spring Boot auto-configuration that exports `DiceMcpTools` over MCP via embabel-agent when `embabel.dice.mcp.enabled=true` |
+| `build-support` | Not published: the program that writes and checks the public API listings, and its tests |
 | `examples` | Focused examples of the API. A separate build outside the reactor, never published: install the library, then `./mvnw -B -f examples/pom.xml verify` |
 
 ## Build & test
@@ -40,7 +41,7 @@ mvn verify -pl dice-storage   # integration tests need Docker
 ./mvnw -B install -DskipTests
 ./mvnw -B -f examples/pom.xml verify
 ```
-CI builds them when a file under `examples/` changes and once a night, so a library change that breaks an example is otherwise found the next morning. Fix the example in the same change.
+The Build workflow builds them right after the library, on every pull request and every push. Fix the example in the same change.
 
 **Kotlin version:** every module compiles with Kotlin 2.2.21, which `embabel-build-parent` manages. No module overrides it. `dice-storage` and `dice-storage-autoconfigure` need a 2.2 compiler for Drivine's KSP-generated `where { }` DSL, which uses Kotlin context parameters (`-Xcontext-parameters`).
 
@@ -58,19 +59,32 @@ Each published module keeps its public API as committed text under `api/`: `api/
 stable types, and `api/<module>.experimental.api` for types marked `@ApiStatus.Experimental` (only when there
 are any). A nested type is listed under its owner.
 
-`./mvnw verify` compares the compiled classes with those files and fails on any difference, even with
-`-DskipTests`. When verify fails on a listing, the public API changed and the listing must be regenerated:
+Right after compile (`process-classes`), the build compares the compiled classes with those files and fails
+on any difference, before any test runs. When it fails on a listing, the public API changed and the listing
+must be regenerated:
 
 ```
-./mvnw -B -DskipTests -Dapi.listing.mode=update clean verify
+./mvnw -B -Dapi.listing.mode=update process-classes
 ```
+
+Update mode deletes each module's `target/classes` first, so a class left by an earlier build cannot reach a
+listing. It also builds only the published modules, since the others have no listings. Check mode leaves the
+directory alone. When a check fails, the message names any class that looks left by an earlier build, and
+`./mvnw clean` removes such a class.
 
 Never edit a `.api` file by hand. A pull request that changes one changes the public API, so its listing
 diff belongs in the review.
 
 The listings come from JetBrains' Kotlin ABI tools (`org.jetbrains.kotlin:abi-tools`, the library behind the
-Kotlin Gradle plugin's ABI validation), run from `build-support/ApiListing.java`. They read Kotlin metadata,
-so `internal` declarations stay out. Their version follows the build's Kotlin compiler version.
+Kotlin Gradle plugin's ABI validation), run from `build-support/src/main/java/com/embabel/dice/apilisting/ApiListing.java`.
+They read Kotlin metadata, so `internal` declarations stay out. The `abi-tools.version` property in the root
+pom sets their version, apart from the Kotlin compiler version. The build stops at `validate` when Kotlin's
+major and minor version is ahead of it, so raise it when the Kotlin version moves.
+
+Generated code is left out. A module names its generated source root in `api.listing.generated.sources`, as
+`dice-storage` does for Drivine's query DSL, whose output `./mvnw clean` also deletes. The check stops when a
+generated file has the same name and package as a hand-written one, because it cannot tell their classes apart.
+A file facade (`FooKt`) whose top-level functions are all experimental goes to the experimental listing.
 
 A marker on an enum entry, or on a member of a stable type, moves nothing and does not show in the count.
 Count the types (stable, then experimental):

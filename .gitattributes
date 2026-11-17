@@ -1,2 +1,2 @@
-# Generated public API listings are compared byte for byte, so keep one line-ending style everywhere
+# Generated public API listings are written with LF line endings, so check them out the same way everywhere
 *.api text eol=lf

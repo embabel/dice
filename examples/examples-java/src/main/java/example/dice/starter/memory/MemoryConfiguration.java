@@ -17,15 +17,10 @@ package example.dice.starter.memory;
 
 import com.embabel.agent.api.common.Ai;
 import com.embabel.agent.core.DataDictionary;
-import com.embabel.agent.rag.service.NamedEntityDataRepository;
-import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository;
 import com.embabel.common.ai.model.LlmOptions;
 import com.embabel.dice.common.DiceEventListener;
-import com.embabel.dice.common.EntityResolver;
-import com.embabel.dice.common.resolver.EscalatingEntityResolver;
 import com.embabel.dice.pipeline.PropositionPipeline;
 import com.embabel.dice.pipeline.UngroundedMentionHandling;
-import com.embabel.dice.proposition.PropositionRepository;
 import com.embabel.dice.proposition.extraction.LlmPropositionExtractor;
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository;
 import example.dice.starter.customers.Contact;
@@ -55,38 +50,14 @@ class MemoryConfiguration {
     /**
      * The fact store. With no embedding service it has no similarity search.
      *
+     * <p>The bean has the in-memory type because {@code PersistUnitWriter.inMemory}, which puts
+     * the stores back after a failed write, takes that type.
+     *
      * @return an empty in-memory store
      */
     @Bean
-    PropositionRepository propositionRepository() {
+    InMemoryPropositionRepository propositionRepository() {
         return new InMemoryPropositionRepository();
-    }
-
-    /**
-     * The store for the entities that facts mention.
-     *
-     * @param supportSchema the schema the store reads entity types from
-     * @return an empty in-memory store
-     */
-    @Bean
-    NamedEntityDataRepository entityRepository(DataDictionary supportSchema) {
-        return new InMemoryNamedEntityDataRepository(supportSchema);
-    }
-
-    /**
-     * Decides whether a mention is an entity the store already has. It searches the entity
-     * store by name, so "Acme" in a second ticket resolves to the entity the first ticket
-     * created.
-     *
-     * <p>The search covers the whole entity store. An entity created from one account's ticket
-     * also matches the same name in another account's ticket.
-     *
-     * @param entityRepository the store to search
-     * @return the resolver
-     */
-    @Bean
-    EntityResolver entityResolver(NamedEntityDataRepository entityRepository) {
-        return EscalatingEntityResolver.withoutVector(entityRepository);
     }
 
     /**

@@ -6,12 +6,12 @@
     <parent>
         <groupId>com.embabel.dice.examples</groupId>
         <artifactId>dice-examples</artifactId>
-        <version>0.5.0-SNAPSHOT</version>
+        <version>1.0.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>examples-java</artifactId>
     <name>DICE Examples - Java</name>
-    <description>DICE in a Spring Boot application: a schema, extraction on an event, storage, and scoped queries</description>
+    <description>DICE wired with Spring Boot: a schema, extraction on an event, storage, and scoped queries</description>
 
     <dependencies>
         <!-- Brings up the Embabel Agent platform, which is where DICE gets its model from. -->

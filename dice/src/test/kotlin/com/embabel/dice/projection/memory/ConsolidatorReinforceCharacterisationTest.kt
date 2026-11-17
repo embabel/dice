@@ -111,6 +111,7 @@ class ConsolidatorReinforceCharacterisationTest {
         val r = reinforcedFrom(existing())
         val after = Instant.now()
         assertTrue(!r.contentRevised.isBefore(before) && !r.contentRevised.isAfter(after), "contentRevised ${r.contentRevised}")
+        assertEquals(r.contentRevised, r.metadataRevised)
     }
 
     @Test
@@ -121,7 +122,10 @@ class ConsolidatorReinforceCharacterisationTest {
             existing.copy(
                 confidence = r.confidence,
                 grounding = r.grounding,
+                provenanceEntries = listOf(pA, pB),
+                reinforceCount = 3,
                 contentRevised = r.contentRevised,
+                metadataRevised = r.metadataRevised,
                 metadata = existing.metadata + (DiceMetadataKeys.CONTENT_REVISED to r.contentRevised.toString()),
             ),
             r,
@@ -148,5 +152,32 @@ class ConsolidatorReinforceCharacterisationTest {
         assertNotEquals(revisedExisting.id, merged.id)
         assertFalse(merged.metadata.containsKey(DiceMetadataKeys.CONTENT_REVISED))
         assertNull(merged.lastContentRevision)
+    }
+
+    @Test
+    fun `the session proposition's provenance is added without duplicates`() {
+        assertEquals(listOf(pA, pB), reinforcedFrom(existing()).provenanceEntries)
+    }
+
+    @Test
+    fun `reinforce count goes up by one`() {
+        assertEquals(3, reinforcedFrom(existing()).reinforceCount)
+    }
+
+    @Test
+    fun `a session proposition whose evidence is already held leaves nothing to save`() {
+        val existing = existing()
+        val held = proposition(confidence = 0.3, grounding = listOf("g1"), provenance = listOf(pA))
+        val result = DefaultMemoryConsolidator().consolidate(listOf(held), listOf(existing))
+        assertTrue(result.reinforced.isEmpty(), "reinforced ${result.reinforced}")
+        assertTrue(result.promoted.isEmpty(), "promoted ${result.promoted}")
+        assertTrue(result.discarded.isEmpty(), "discarded ${result.discarded}")
+        assertTrue(result.merged.isEmpty(), "merged ${result.merged}")
+    }
+
+    @Test
+    fun `a stored proposition matched against itself is not reported as reinforced`() {
+        val p = proposition(confidence = 0.6)
+        assertTrue(DefaultMemoryConsolidator().consolidate(listOf(p), listOf(p)).reinforced.isEmpty())
     }
 }

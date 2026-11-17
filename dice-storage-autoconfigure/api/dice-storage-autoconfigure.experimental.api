@@ -49,4 +49,3 @@ public final class com/embabel/dice/storage/autoconfigure/MetamodelProperties$Dr
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
-

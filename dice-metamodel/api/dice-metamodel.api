@@ -190,4 +190,3 @@ public final class com/embabel/dice/metamodel/support/StructuralMetamodelDiffer 
 	public fun diff (Lcom/embabel/dice/metamodel/MetamodelVersion;Lcom/embabel/dice/metamodel/MetamodelVersion;)Lcom/embabel/dice/metamodel/MetamodelDiff;
 	public fun diffAgainstObserved (Lcom/embabel/dice/metamodel/DeclaredSchema;Lcom/embabel/dice/metamodel/ObservedSchema;)Lcom/embabel/dice/metamodel/DeclaredObservedDiff;
 }
-

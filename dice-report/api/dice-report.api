@@ -175,4 +175,3 @@ public final class com/embabel/dice/report/TwoHopSemanticLinkDiscoverer : com/em
 	public fun <init> ()V
 	public fun discover (Ljava/util/List;)Ljava/util/List;
 }
-

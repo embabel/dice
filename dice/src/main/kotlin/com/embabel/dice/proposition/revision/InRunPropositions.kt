@@ -1,0 +1,143 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.dice.proposition.revision
+
+import com.embabel.common.core.types.SimilarityResult
+import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
+import com.embabel.dice.proposition.PropositionRepository
+
+/**
+ * A read view of a repository that shows the latest copy of each stored proposition a revision
+ * run has changed but not saved yet.
+ *
+ * Without it, two results in one run that back up the same stored proposition both start from
+ * the stored copy, and saving them keeps only the last one's evidence. Revising against this view
+ * makes the second result start from the first one's copy instead. Writes go straight to the
+ * repository underneath.
+ *
+ * @param delegate the repository the run revises against
+ */
+internal class InRunPropositions private constructor(
+    private val delegate: PropositionRepository,
+) : PropositionRepository by delegate {
+
+    private val latest = LinkedHashMap<String, Proposition>()
+
+    /**
+     * Remembers the stored propositions [result] changed, so later revisions start from them.
+     *
+     * @param result a revision result from this run
+     */
+    fun record(result: RevisionResult) {
+        when (result) {
+            is RevisionResult.Merged -> if (result.revised != result.original) latest[result.original.id] = result.revised
+            is RevisionResult.Reinforced -> if (result.revised != result.original) latest[result.original.id] = result.revised
+            is RevisionResult.Contradicted -> latest[result.original.id] = result.original
+            is RevisionResult.New, is RevisionResult.Generalized -> Unit
+        }
+    }
+
+    /**
+     * Hands this view's latest copies to [run], once a chunk revised through this view succeeded.
+     * Results a reviser did not record here are recorded first, in order, without replacing a
+     * copy the reviser did record, since that copy is the one it built on last.
+     *
+     * @param results the chunk's revision results
+     * @param run the run's view underneath this one
+     */
+    fun publishTo(results: List<RevisionResult>, run: InRunPropositions) {
+        val recorded = latest.keys.toSet()
+        results.filter { it.changedId() !in recorded }.forEach(::record)
+        run.latest.putAll(latest)
+    }
+
+    override fun findById(id: String): Proposition? = latest[id] ?: delegate.findById(id)
+
+    override fun query(query: PropositionQuery): List<Proposition> =
+        delegate.query(query).mapNotNull { current(it, query) }
+
+    override fun findSimilarWithScores(
+        textSimilaritySearchRequest: TextSimilaritySearchRequest,
+    ): List<SimilarityResult<Proposition>> =
+        delegate.findSimilarWithScores(textSimilaritySearchRequest).mapNotNull { current(it, null) }
+
+    override fun findSimilarWithScores(
+        textSimilaritySearchRequest: TextSimilaritySearchRequest,
+        query: PropositionQuery,
+    ): List<SimilarityResult<Proposition>> {
+        // The repository applies topK before this view drops a match the run moved out of the
+        // query's statuses, so ask for that many more and trim back to topK afterwards.
+        val statuses = query.statuses
+        val hidden = if (statuses == null) 0 else latest.values.count { it.status !in statuses }
+        val request = if (hidden == 0) textSimilaritySearchRequest else TextSimilaritySearchRequest(
+            query = textSimilaritySearchRequest.query,
+            similarityThreshold = textSimilaritySearchRequest.similarityThreshold,
+            topK = textSimilaritySearchRequest.topK + hidden,
+        )
+        return delegate.findSimilarWithScores(request, query)
+            .mapNotNull { current(it, query) }
+            .take(textSimilaritySearchRequest.topK)
+    }
+
+    override fun findSimilar(textSimilaritySearchRequest: TextSimilaritySearchRequest): List<Proposition> =
+        findSimilarWithScores(textSimilaritySearchRequest).map { it.match }
+
+    private fun RevisionResult.changedId(): String? = when (this) {
+        is RevisionResult.Merged -> original.id
+        is RevisionResult.Reinforced -> original.id
+        is RevisionResult.Contradicted -> original.id
+        is RevisionResult.New, is RevisionResult.Generalized -> null
+    }
+
+    /**
+     * Swaps in this run's copy of [stored], or drops it when that copy no longer has a status the
+     * query asks for, as when the run contradicted it.
+     */
+    private fun current(stored: Proposition, query: PropositionQuery?): Proposition? {
+        val copy = latest[stored.id] ?: return stored
+        val statuses = query?.statuses
+        return if (statuses == null || copy.status in statuses) copy else null
+    }
+
+    private fun current(result: SimilarityResult<Proposition>, query: PropositionQuery?): SimilarityResult<Proposition>? {
+        val copy = current(result.match, query) ?: return null
+        return if (copy === result.match) result else SimilarityResult(match = copy, score = result.score)
+    }
+
+    companion object {
+
+        /**
+         * Wraps [repository], or returns it when it already is a view for some run.
+         *
+         * @param repository the repository to revise against
+         * @return a view that tracks the latest copy of what the run changes
+         */
+        fun over(repository: PropositionRepository): InRunPropositions =
+            repository as? InRunPropositions ?: InRunPropositions(repository)
+
+        /**
+         * A new view on top of [repository], even when it is already a view. What this view
+         * records stays out of the one underneath until the caller records it there too, so a
+         * chunk that fails part way leaves the run as it was.
+         *
+         * @param repository the repository, or the run's view, to read through
+         * @return a fresh view
+         */
+        fun layeredOver(repository: PropositionRepository): InRunPropositions = InRunPropositions(repository)
+    }
+}

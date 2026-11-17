@@ -1,0 +1,15 @@
+{
+  "propositions": [
+    {
+      "text": "Ada Okafor is the billing contact at Globex",
+      "mentions": [
+        { "span": "Ada Okafor", "type": "Contact", "role": "SUBJECT" },
+        { "span": "Globex", "type": "Customer", "role": "OBJECT" }
+      ],
+      "confidence": 0.9,
+      "decay": 0.0,
+      "importance": 0.6,
+      "reasoning": "Stated directly in the ticket"
+    }
+  ]
+}

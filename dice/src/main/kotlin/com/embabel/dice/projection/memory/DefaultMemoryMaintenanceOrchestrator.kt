@@ -119,9 +119,12 @@ data class DefaultMemoryMaintenanceOrchestrator(
     ): ConsolidationResult? {
         if (sessionPropositions.isEmpty()) return null
 
+        // The consolidator compares provenance, and a graph store's plain query leaves it out, so
+        // a replay would look like new evidence without it.
         val existing = repository.query(
             PropositionQuery.Companion.forContextId(contextId)
-                .withStatus(PropositionStatus.ACTIVE)
+                .withStatus(PropositionStatus.ACTIVE),
+            withProvenance = true,
         )
 
         // SessionConsolidationPass is the single source of truth for *how* a session is folded into

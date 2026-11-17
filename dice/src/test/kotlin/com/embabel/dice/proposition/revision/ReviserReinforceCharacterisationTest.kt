@@ -26,8 +26,8 @@ import org.junit.jupiter.api.Test
 import java.time.Instant
 
 /**
- * Pins what the reviser's reinforce path returns. Drives the SIMILAR branch of classifiedToResult
- * directly, so no model call is made.
+ * Pins what the reviser's reinforce and merge paths return. Drives the SIMILAR and IDENTICAL
+ * branches of classifiedToResult directly, so no model call is made.
  */
 class ReviserReinforceCharacterisationTest {
 
@@ -42,6 +42,7 @@ class ReviserReinforceCharacterisationTest {
         grounding: List<String> = emptyList(),
         provenance: List<ProvenanceEntry> = emptyList(),
         reinforceCount: Int = 0,
+        sourceIds: List<String> = emptyList(),
     ) = Proposition(
         contextId = ContextId("test-context"),
         text = text,
@@ -55,6 +56,7 @@ class ReviserReinforceCharacterisationTest {
         lastAccessed = old,
         reinforceCount = reinforceCount,
         provenanceEntries = provenance,
+        sourceIds = sourceIds,
     )
 
     private fun existing(confidence: Double = 0.6) = proposition(
@@ -83,6 +85,42 @@ class ReviserReinforceCharacterisationTest {
     private fun revisedFrom(existing: Proposition, incoming: Proposition): Proposition =
         (reinforce(existing, incoming) as RevisionResult.Reinforced).revised
 
+    private fun mergedFrom(existing: Proposition, incoming: Proposition): Proposition =
+        (LlmPropositionReviser(llmOptions = io.mockk.mockk(), ai = io.mockk.mockk()).classifiedToResult(
+            incoming,
+            listOf(ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 1.0, "Same")),
+            InMemoryPropositionRepository(),
+        ) as RevisionResult.Merged).revised
+
+    /**
+     * Builds a reviser whose trust scorer gives every proposition 0.42.
+     *
+     * @return the scoring reviser
+     */
+    private fun scoringReviser(): LlmPropositionReviser =
+        LlmPropositionReviser(llmOptions = io.mockk.mockk(), ai = io.mockk.mockk()).withTrustScorer { _, _, _ -> 0.42 }
+
+    /**
+     * Classifies the incoming proposition against the stored one with a scoring reviser.
+     *
+     * @param existing the stored proposition
+     * @param incoming the new proposition
+     * @param relation how the incoming proposition relates to the stored one
+     * @param similarity the similarity the classifier reports
+     * @return the revision result
+     */
+    private fun scoredResult(
+        existing: Proposition,
+        incoming: Proposition,
+        relation: PropositionRelation,
+        similarity: Double,
+    ): RevisionResult =
+        scoringReviser().classifiedToResult(
+            incoming,
+            listOf(ClassifiedProposition(existing, relation, similarity, "Related")),
+            InMemoryPropositionRepository(),
+        )
+
     private fun inWindow(stamp: Instant, before: Instant, after: Instant) =
         !stamp.isBefore(before) && !stamp.isAfter(after)
 
@@ -99,9 +137,9 @@ class ReviserReinforceCharacterisationTest {
     }
 
     @Test
-    fun `R-E3 confidence above the cap is pulled down to 0_95`() {
+    fun `R-E3 confidence above the cap is left where it is`() {
         val revised = revisedFrom(existing(confidence = 0.98), incoming(confidence = 0.5))
-        assertEquals(0.95, revised.confidence, 1e-9)
+        assertEquals(0.98, revised.confidence, 1e-9)
     }
 
     @Test
@@ -130,6 +168,9 @@ class ReviserReinforceCharacterisationTest {
         val after = Instant.now()
         assertTrue(inWindow(revised.contentRevised, before, after), "contentRevised ${revised.contentRevised}")
         assertTrue(inWindow(revised.lastAccessed, before, after), "lastAccessed ${revised.lastAccessed}")
+        assertTrue(inWindow(revised.metadataRevised, before, after), "metadataRevised ${revised.metadataRevised}")
+        assertEquals(revised.contentRevised, revised.metadataRevised)
+        assertEquals(revised.contentRevised, revised.lastAccessed)
     }
 
     @Test
@@ -144,6 +185,7 @@ class ReviserReinforceCharacterisationTest {
                 provenanceEntries = revised.provenanceEntries,
                 reinforceCount = 3,
                 contentRevised = revised.contentRevised,
+                metadataRevised = revised.metadataRevised,
                 lastAccessed = revised.lastAccessed,
                 metadata = existing.metadata + (DiceMetadataKeys.CONTENT_REVISED to revised.contentRevised.toString()),
             ),
@@ -164,5 +206,126 @@ class ReviserReinforceCharacterisationTest {
         val result = reinforce(existing, incoming())
         assertTrue(result is RevisionResult.Reinforced, "got $result")
         assertEquals(existing, (result as RevisionResult.Reinforced).original)
+    }
+
+    @Test
+    fun `source ids of the new proposition are added without duplicates`() {
+        val stored = existing().copy(sourceIds = listOf("s1"))
+        val revised = revisedFrom(stored, proposition("Alice codes", 0.8, sourceIds = listOf("s1", "s2")))
+        assertEquals(listOf("s1", "s2"), revised.sourceIds)
+    }
+
+    @Test
+    fun `evidence naming only the stored proposition as its source changes nothing`() {
+        val stored = proposition("Alice is a developer", 0.6, grounding = listOf("g1"))
+        val evidence = proposition("Alice codes", 0.8, grounding = listOf("g1"), sourceIds = listOf(stored.id))
+        for (revised in listOf(revisedFrom(stored, evidence), mergedFrom(stored, evidence))) {
+            assertEquals(emptyList<String>(), revised.sourceIds)
+            assertSame(stored, revised)
+        }
+    }
+
+    @Test
+    fun `evidence whose only source is the stored proposition changes nothing without grounding or provenance`() {
+        val stored = proposition("Alice is a developer", 0.6, grounding = listOf("g1"))
+        val evidence = proposition("Alice codes", 0.8, sourceIds = listOf(stored.id))
+        for (revised in listOf(revisedFrom(stored, evidence), mergedFrom(stored, evidence))) {
+            assertSame(stored, revised)
+            assertEquals(stored.reinforceCount, revised.reinforceCount)
+        }
+    }
+
+    @Test
+    fun `the stored proposition's own id is left out of its source ids`() {
+        val stored = proposition("Alice is a developer", 0.6, grounding = listOf("g1"))
+        val evidence = proposition("Alice codes", 0.8, grounding = listOf("g2"), sourceIds = listOf(stored.id, "q"))
+        for (revised in listOf(revisedFrom(stored, evidence), mergedFrom(stored, evidence))) {
+            assertEquals(listOf("q"), revised.sourceIds)
+            assertEquals(listOf("g1", "g2"), revised.grounding)
+            assertEquals(stored.reinforceCount + 1, revised.reinforceCount)
+        }
+    }
+
+    @Test
+    fun `a proposition whose grounding and provenance are already held changes nothing`() {
+        val existing = existing()
+        val incoming = proposition("Alice codes", 0.8, grounding = listOf("g1"), provenance = listOf(pA))
+        assertEquals(existing, revisedFrom(existing, incoming))
+    }
+
+    @Test
+    fun `a proposition with held grounding and no provenance changes nothing`() {
+        val existing = existing()
+        val incoming = proposition("Alice codes", 0.8, grounding = listOf("g1"))
+        assertEquals(existing, revisedFrom(existing, incoming))
+    }
+
+    @Test
+    fun `a proposition that names no source still reinforces`() {
+        val revised = revisedFrom(existing(), proposition("Alice codes", 0.8))
+        assertEquals(3, revised.reinforceCount)
+        assertEquals(0.68, revised.confidence, 1e-9)
+    }
+
+    @Test
+    fun `an identical proposition adds three tenths of its confidence`() {
+        val revised = mergedFrom(existing(), incoming())
+        assertEquals(0.84, revised.confidence, 1e-9)
+    }
+
+    @Test
+    fun `an identical proposition leaves a confidence above the cap where it is`() {
+        assertEquals(1.0, mergedFrom(existing(confidence = 1.0), incoming()).confidence, 1e-9)
+        assertEquals(0.995, mergedFrom(existing(confidence = 0.995), incoming()).confidence, 1e-9)
+    }
+
+    @Test
+    fun `an identical proposition slows decay to 70 percent`() {
+        val revised = mergedFrom(existing(), incoming())
+        assertEquals(0.14, revised.decay, 1e-9)
+    }
+
+    @Test
+    fun `an identical proposition stamps one instant`() {
+        val revised = mergedFrom(existing(), incoming())
+        assertEquals(revised.contentRevised, revised.metadataRevised)
+        assertEquals(revised.contentRevised, revised.lastAccessed)
+        assertTrue(revised.contentRevised.isAfter(old), "contentRevised ${revised.contentRevised}")
+    }
+
+    @Test
+    fun `an identical proposition adds its source ids`() {
+        val stored = existing().copy(sourceIds = listOf("s1"))
+        val revised = mergedFrom(stored, proposition("Alice codes", 0.8, sourceIds = listOf("s1", "s2")))
+        assertEquals(listOf("s1", "s2"), revised.sourceIds)
+    }
+
+    @Test
+    fun `an identical proposition whose evidence is already held changes nothing`() {
+        val existing = existing()
+        val incoming = proposition("Alice codes", 0.8, grounding = listOf("g1"), provenance = listOf(pA))
+        assertEquals(existing, mergedFrom(existing, incoming))
+    }
+
+    @Test
+    fun `a replay with a trust scorer returns the stored proposition for a similar match`() {
+        val incoming = proposition("Alice codes", 0.8, grounding = listOf("g1"), provenance = listOf(pA))
+        val result = scoredResult(existing(), incoming, PropositionRelation.SIMILAR, 0.9) as RevisionResult.Reinforced
+        assertEquals(result.original, result.revised)
+        assertSame(result.original, result.revised)
+    }
+
+    @Test
+    fun `a replay with a trust scorer returns the stored proposition for an identical match`() {
+        val incoming = proposition("Alice codes", 0.8, grounding = listOf("g1"), provenance = listOf(pA))
+        val result = scoredResult(existing(), incoming, PropositionRelation.IDENTICAL, 0.9) as RevisionResult.Merged
+        assertEquals(result.original, result.revised)
+        assertSame(result.original, result.revised)
+    }
+
+    @Test
+    fun `a reinforcement with new evidence is still scored`() {
+        val result = scoredResult(existing(), incoming(), PropositionRelation.SIMILAR, 0.9) as RevisionResult.Reinforced
+        assertEquals(0.42, result.revised.metadata[DiceMetadataKeys.TRUST_SCORE])
     }
 }

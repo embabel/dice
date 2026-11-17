@@ -22,4 +22,3 @@ public final class com/embabel/dice/mcp/autoconfigure/DiceMcpProperties {
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
-

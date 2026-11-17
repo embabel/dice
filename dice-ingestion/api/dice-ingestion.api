@@ -147,4 +147,3 @@ public final class com/embabel/dice/ingestion/support/TextIngestionHandler : com
 	public synthetic fun <init> (Lcom/embabel/dice/pipeline/PropositionPipeline;Lcom/embabel/dice/ingestion/IngestionLedger;Lcom/embabel/dice/common/ContentHasher;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun ingest (Lcom/embabel/dice/ingestion/IngestionBatch;Lcom/embabel/dice/common/SourceAnalysisContext;)Lcom/embabel/dice/ingestion/IngestionResult;
 }
-

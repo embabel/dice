@@ -22,11 +22,20 @@ import org.jmolecules.event.types.DomainEvent;
 /**
  * A support ticket: who it is from and what it says.
  *
- * @param id      the ticket's own id
- * @param account the customer account the ticket belongs to
- * @param text    what was written
+ * @param id       the ticket's own id
+ * @param account  the customer account the ticket belongs to
+ * @param revision 1 when the ticket is first filed, and one more each time it is edited. It
+ *                 tells an edit apart from a late copy of an earlier version.
+ * @param text     what was written
+ * @throws IllegalArgumentException when the revision is less than 1
  */
-public record Ticket(TicketId id, AccountId account, String text) {
+public record Ticket(TicketId id, AccountId account, int revision, String text) {
+
+    public Ticket {
+        if (revision < 1) {
+            throw new IllegalArgumentException("A ticket's revision starts at 1, but was " + revision);
+        }
+    }
 
     /**
      * Identifies one ticket.

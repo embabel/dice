@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TicketsTests {
 
@@ -32,10 +33,18 @@ class TicketsTests {
 
         List<Object> published = new ArrayList<>();
         var tickets = new Tickets(published::add);
-        var ticket = new Ticket(new TicketId("ticket-1"), new AccountId("acme"), "Acme is on the Team plan.");
+        var ticket = new Ticket(new TicketId("ticket-1"), new AccountId("acme"), 1, "Acme is on the Team plan.");
 
         tickets.file(ticket);
 
         assertThat(published).containsExactly(new TicketFiled(ticket));
+    }
+
+    @Test
+    void aTicketStartsAtRevisionOne() {
+
+        assertThatThrownBy(() -> new Ticket(new TicketId("ticket-1"), new AccountId("acme"), 0, "Acme is on the Team plan."))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("revision");
     }
 }
