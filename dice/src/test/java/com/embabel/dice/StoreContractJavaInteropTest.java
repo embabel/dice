@@ -198,6 +198,14 @@ class StoreContractJavaInteropTest {
     }
 
     @Test
+    void aRequestWithNoContextIsRejectedFromJava() {
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> VectorSearchRequest.forText("q", PropositionQuery.mentioningEntity("alice")));
+
+        assertTrue(refused.getMessage().contains("ScopedVectorSearch"));
+    }
+
+    @Test
     void aRefusalIsCaughtByTypeAndNamesItsCapability() {
         FilteredVectorSearch refusing = request -> {
             throw new UnsupportedCapabilityException(StoreCapability.FILTERED_VECTOR_SEARCH, "no vector index");

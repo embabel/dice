@@ -19,6 +19,7 @@ import com.embabel.dice.proposition.PropositionQuery
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -28,6 +29,8 @@ import org.junit.jupiter.api.Test
  * E1  forText gives the text and filter as given, the default size of 10, and no score floor.
  * E2  The Kotlin block, the Java chain and the no-block call build equal requests with equal hash codes.
  * E3  A blank text, a size below 1, and a filter with an ordering or a limit throw IllegalArgumentException.
+ * R1  A filter with no context is rejected by forText, the block and the chain, and the message names
+ *     ScopedVectorSearch. A filter with a context builds.
  */
 class VectorSearchRequestTest {
 
@@ -69,5 +72,33 @@ class VectorSearchRequestTest {
         }
         assertThrows(IllegalArgumentException::class.java) { VectorSearchRequest("cats", filter.withLimit(5)) }
         assertEquals(1, VectorSearchRequest.forText("cats", filter).withTopK(1).topK)
+    }
+
+    @Test
+    fun `R1 a filter with no context is rejected by forText and names ScopedVectorSearch`() {
+        val contextless = PropositionQuery.mentioningEntity("alice")
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            VectorSearchRequest.forText("cats", contextless)
+        }
+        assertTrue(error.message!!.contains("ScopedVectorSearch"), error.message)
+    }
+
+    @Test
+    fun `R1 a filter with no context is rejected by the block and the chain`() {
+        val contextless = PropositionQuery.mentioningEntity("alice")
+        val blockError = assertThrows(IllegalArgumentException::class.java) {
+            VectorSearchRequest("cats", contextless) { topK = 3 }
+        }
+        assertTrue(blockError.message!!.contains("ScopedVectorSearch"), blockError.message)
+        assertThrows(IllegalArgumentException::class.java) {
+            VectorSearchRequest.forText("cats", PropositionQuery.mentioningAllEntities("alice", "bob"))
+        }
+    }
+
+    @Test
+    fun `R1 a filter with a context still builds`() {
+        val scoped = PropositionQuery.againstContext("c").withAnyEntityIds(listOf("alice"))
+        assertEquals("c", VectorSearchRequest.forText("cats", scoped).filter.contextId?.value)
+        assertEquals("c", VectorSearchRequest("cats", scoped) { topK = 2 }.filter.contextId?.value)
     }
 }
