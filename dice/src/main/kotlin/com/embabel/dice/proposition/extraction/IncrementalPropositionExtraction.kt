@@ -597,8 +597,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * (storing, recording the window, projection and grounding) a failure is thrown to
      * [processPendingEvents], which passes it on to whoever called [extractPropositions]. A host that
      * runs extraction inside its own transaction has to see that failure to roll the transaction
-     * back. A [LineageNotRecordedException] is always thrown, also when it comes before the store
-     * step, and is logged at `error` with the run id.
+     * back. A [LineageNotRecordedException] that escapes context building or analysis is thrown too,
+     * and is logged at `error` with the run id. One that a provider throws inside context building
+     * is caught there and logged like any other provider failure.
      *
      * Catching an [InterruptedException] clears the thread's interrupt flag, so whenever this method
      * catches one, or a write step failed with one, it sets the flag again and the drain stops.
