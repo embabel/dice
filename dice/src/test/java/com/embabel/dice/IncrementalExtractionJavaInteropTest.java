@@ -19,9 +19,13 @@ import com.embabel.agent.core.DataDictionary;
 import com.embabel.agent.rag.model.NamedEntity;
 import com.embabel.agent.rag.model.SimpleNamedEntityData;
 import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository;
+import com.embabel.chat.Message;
+import com.embabel.chat.UserMessage;
 import com.embabel.dice.common.Relations;
+import com.embabel.dice.common.SourceAnalysisRequestEvent;
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver;
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore;
+import com.embabel.dice.incremental.IncrementalSource;
 import com.embabel.dice.pipeline.PropositionPipeline;
 import com.embabel.dice.pipeline.RecordingPropositionExtractor;
 import com.embabel.dice.projection.graph.GraphProjectionService;
@@ -29,15 +33,21 @@ import com.embabel.dice.projection.graph.NamedEntityDataRepositoryGraphRelations
 import com.embabel.dice.projection.graph.RelationBasedGraphProjector;
 import com.embabel.dice.proposition.PropositionRepository;
 import com.embabel.dice.proposition.extraction.IncrementalPropositionExtraction;
+import com.embabel.dice.proposition.extraction.PersistOutcome;
 import com.embabel.dice.proposition.extraction.PersistStep;
 import com.embabel.dice.proposition.extraction.PersistUnitFailedException;
+import com.embabel.dice.proposition.extraction.PersistUnitWriter;
 import com.embabel.dice.proposition.extraction.PropositionExtractionProperties;
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import java.io.IOException;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -89,6 +99,58 @@ class IncrementalExtractionJavaInteropTest {
         } catch (PersistUnitFailedException e) {
             assertEquals(PersistStep.PROPOSITIONS, e.getStep());
             assertSame(cause, e.getCause());
+        }
+    }
+
+    @Test
+    void aChunkWhoseWriteStoredNothingIsAnalysedAgain() {
+        InMemoryPropositionRepository claims = new InMemoryPropositionRepository(null);
+        PersistUnitWriter inMemory = PersistUnitWriter.inMemory(claims, entities);
+        AtomicInteger writes = new AtomicInteger();
+        IncrementalPropositionExtraction extraction = extraction(claims).withPersistUnitWriter(unit ->
+                writes.incrementAndGet() == 1
+                        ? PersistOutcome.failed(
+                                PersistStep.PROPOSITIONS, new IllegalStateException("claims store down"), Set.of())
+                        : inMemory.write(unit));
+        SourceAnalysisRequestEvent event = new SixMessages(this, user);
+
+        extraction.extractPropositions(event);
+        assertTrue(claims.findAll().isEmpty());
+
+        extraction.extractPropositions(event);
+        assertEquals(1, claims.findAll().size());
+
+        extraction.extractPropositions(event);
+        assertEquals(2, writes.get());
+    }
+
+    /** An event over a source that holds the same six messages every time. */
+    private static final class SixMessages extends SourceAnalysisRequestEvent {
+
+        private final List<Message> messages = Collections.nCopies(6, new UserMessage("Alice lives in Paris"));
+
+        SixMessages(Object source, NamedEntity user) {
+            super(source, user);
+        }
+
+        @Override
+        public IncrementalSource<Message> incrementalSource() {
+            return new IncrementalSource<>() {
+                @Override
+                public String getId() {
+                    return "java-conversation";
+                }
+
+                @Override
+                public int getSize() {
+                    return messages.size();
+                }
+
+                @Override
+                public List<Message> getItems(int start, int end) {
+                    return messages.subList(start, end);
+                }
+            };
         }
     }
 }

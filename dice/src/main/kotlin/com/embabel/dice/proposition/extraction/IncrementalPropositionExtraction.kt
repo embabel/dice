@@ -25,6 +25,7 @@ import com.embabel.dice.common.Relations
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.SourceAnalysisRequestEvent
 import com.embabel.dice.common.resolver.KnownEntityResolver
+import com.embabel.dice.incremental.AnalyzedWindow
 import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.IncrementalAnalyzer
 import com.embabel.dice.incremental.MessageFormatter
@@ -33,6 +34,7 @@ import com.embabel.dice.incremental.proposition.PropositionIncrementalAnalyzer
 import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.projection.graph.GraphProjectionService
+import com.embabel.dice.proposition.PropositionPersistenceResult
 import com.embabel.dice.proposition.PropositionRepository
 import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
@@ -303,7 +305,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         this
     }
 
-    private val analyzer: IncrementalAnalyzer<Message, ChunkPropositionResult> =
+    private val analyzer: PropositionIncrementalAnalyzer<Message> =
         PropositionIncrementalAnalyzer(
             propositionPipeline,
             chunkHistoryStore,
@@ -339,6 +341,25 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     open val isIdle: Boolean
         get() = inFlightCount.get() <= 0 && pendingEvents.isEmpty() && !extractionLock.isLocked
 
+    /**
+     * Analyses the next window of the event's source and stores what it finds.
+     *
+     * A window is marked as processed when its claims are stored, or when the analysis succeeded
+     * and found none. A failed analysis or a failed write leaves it unmarked, and the next event for
+     * the source analyses it again. A failure that repeats is analysed again on every event.
+     *
+     * The mark is written when the write returns. Inside a transaction, a window is marked exactly
+     * once only when the chunk history store takes part in that transaction. A store outside it
+     * keeps the mark when the transaction rolls back, and that window's claims are lost.
+     *
+     * A failed write is logged and not rethrown, so a transaction around this call commits what the
+     * failed write left. A [LineageNotRecordedException] under [LineageFailurePolicy.STRICT] is the
+     * exception: it is thrown.
+     *
+     * @param event The source to analyse and the user it belongs to.
+     * @throws LineageNotRecordedException when a run link cannot be recorded under
+     * [LineageFailurePolicy.STRICT].
+     */
     open fun extractPropositions(event: SourceAnalysisRequestEvent) {
         pendingEvents.add(event)
         processPendingEvents()
@@ -559,6 +580,17 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * fail exactly as loud as a direct call with the same inputs would. So
      * [LineageNotRecordedException] is caught ahead of the general catch, logged at `error` with the
      * run key, and rethrown to [processPendingEvents], which is what makes it reach the publisher.
+     *
+     * A window is marked as processed when its unit is stored, or when the analysis succeeded and
+     * produced no claims. A failed write and a failed analysis leave the window unmarked, whatever
+     * the write left in the store, so the next event for the source analyses it again. A failure
+     * that repeats is analysed again on every event, and the source does not advance past that
+     * window. Claims a failed write left in the store are saved again by that analysis, unless the
+     * pipeline's reviser matches them.
+     *
+     * The mark is written when the write returns, before a transaction a host holds around this
+     * call commits. A failed write other than a STRICT lineage failure is logged and not rethrown,
+     * so that transaction commits what the failed write left.
      */
     private fun processEvent(event: SourceAnalysisRequestEvent) {
         try {
@@ -588,18 +620,40 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 context.relations.size(), relations.size(),
             )
 
-            val result = analyzer.analyze(source, context) ?: run {
+            val window = analyzer.analyzeWindow(source, context) ?: run {
                 logger.info("Analysis skipped (not ready or already processed)")
                 return
             }
+            val result = window.result
 
+            if (result is ChunkPropositionResult.Failed) {
+                logger.info(
+                    "Analysis of source {} failed: {}. Its window is left unmarked and the next event for the source analyses it again",
+                    source.id, result.error,
+                )
+                return
+            }
             if (result.propositions.isEmpty()) {
+                markProcessed(window, source.id)
                 logger.info("Analysis completed but no propositions extracted")
                 return
             }
 
             logger.info(result.infoString(true, 1))
-            persistAndProject(result, context)
+            // Only a stored unit marks the window. A failed one is analysed again by the next event.
+            when (val outcome = storeUnit(result, context)) {
+                is PersistOutcome.Stored -> {
+                    markProcessed(window, source.id)
+                    projectStored(outcome.persisted)
+                }
+                is PersistOutcome.Failed -> {
+                    logger.warn(
+                        "Storing the claims of source {} failed at {}. Its window is left unmarked and the next event for the source analyses it again",
+                        source.id, outcome.step,
+                    )
+                    outcome.persistedOrThrow()
+                }
+            }
             logAllPropositions(contextIdProvider.apply(event.user))
         } catch (e: LineageNotRecordedException) {
             logger.error(
@@ -612,6 +666,26 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             logger.warn("Failed to extract propositions", e)
         } finally {
             inFlightCount.decrementAndGet()
+        }
+    }
+
+    /**
+     * Marks a window as processed, and logs when the history store cannot record it.
+     *
+     * The window's unit is stored by the time this runs, so a failure is logged and the caller
+     * carries on. The next event for the source analyses the window again.
+     *
+     * @param window The analysed window.
+     * @param sourceId The id of the source the window came from.
+     */
+    private fun markProcessed(window: AnalyzedWindow<*>, sourceId: String) {
+        try {
+            window.markProcessed()
+        } catch (e: Exception) {
+            logger.warn(
+                "Source {} is stored but its window could not be marked as processed. The next event for the source analyses it again",
+                sourceId, e,
+            )
         }
     }
 
@@ -724,7 +798,17 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * @param result What the analysis produced.
      * @param context The analysis the result belongs to. Its run, if any, is attributed.
      */
-    private fun persistAndProject(result: ChunkPropositionResult, context: SourceAnalysisContext) {
+    private fun persistAndProject(result: ChunkPropositionResult, context: SourceAnalysisContext) =
+        projectStored(storeUnit(result, context).persistedOrThrow())
+
+    /**
+     * Stores what an analysis produced as one unit and logs how the run link went.
+     *
+     * @param result What the analysis produced.
+     * @param context The analysis the result belongs to. Its run, if any, is attributed.
+     * @return What the writer returned.
+     */
+    private fun storeUnit(result: ChunkPropositionResult, context: SourceAnalysisContext): PersistOutcome {
         val bound = binding
         val currentRun = context.currentRun
         val unit = PersistUnit.of(result).let { if (currentRun != null) recordRunLineage(it, context, currentRun, bound.policy) else it }
@@ -743,21 +827,29 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
 
         val outcome = bound.unitWriter.write(unit)
         if (currentRun != null) logRunLineage(currentRun.runId, outcome)
-        val persisted = outcome.persistedOrThrow()
+        if (outcome is PersistOutcome.Stored) {
+            if (newProps > 0 || updatedProps > 0 || newEntitiesToSave > 0) {
+                logger.info(
+                    "Persisted: {} new propositions, {} updated propositions, {} new entities",
+                    newProps, updatedProps, newEntitiesToSave,
+                )
+            } else {
+                logger.info("No new data to persist (all propositions were duplicates)")
+            }
+        }
+        return outcome
+    }
 
+    /**
+     * Projects and grounds the propositions a unit stored.
+     *
+     * @param persisted What the store returned for the unit's propositions.
+     */
+    private fun projectStored(persisted: PropositionPersistenceResult) {
         // The distinct view, not the positional one. Inputs that deduplicated together are one
         // stored proposition, and projecting or grounding it once per input inflates the records
         // written about that work even though the edges themselves are idempotent.
         val toWire = persisted.distinctCanonicalPropositions
-
-        if (newProps > 0 || updatedProps > 0 || newEntitiesToSave > 0) {
-            logger.info(
-                "Persisted: {} new propositions, {} updated propositions, {} new entities",
-                newProps, updatedProps, newEntitiesToSave,
-            )
-        } else {
-            logger.info("No new data to persist (all propositions were duplicates)")
-        }
 
         val projectionResult = graphProjectionService.projectAndPersist(toWire)
         val persistenceResult = projectionResult.second
