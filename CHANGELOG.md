@@ -982,6 +982,14 @@ and the consumer PRs that deliver it).
   proposition it was merged from, and its four timestamps are one instant.
   **Compatibility: behavioral.** `reinforced` and `storedCount` can be smaller.
 
+- `DefaultMemoryMaintenanceOrchestrator` and `DefaultDreamLoopOrchestrator` read the stored
+  propositions they consolidate against with `query(query, withProvenance = true)`. A graph store's
+  plain query leaves provenance entries out, so a session proposition whose provenance the stored
+  one already held still raised its confidence and `reinforceCount`. **Compatibility: behavioral.**
+  A cycle reads provenance for every active proposition in the context, which costs extra reads on
+  a graph store. The dream loop's change-volume check still uses the plain query. A test double
+  that stubs only `query(query)` must also answer `query(query, withProvenance)`.
+
 - `DefaultMemoryConsolidator` checks its settings in its constructor and throws
   `IllegalArgumentException`. `promotionThreshold` and `similarityThreshold` must be 0.0 or greater
   and not NaN. A value above 1.0 is accepted and means never promote, or never match.

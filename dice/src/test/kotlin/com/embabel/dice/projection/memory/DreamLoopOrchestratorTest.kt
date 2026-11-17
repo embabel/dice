@@ -19,6 +19,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.operations.consolidation.ConsolidationPass
 import com.embabel.dice.operations.consolidation.ConsolidationPassResult
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import io.mockk.every
@@ -58,6 +59,8 @@ class DreamLoopOrchestratorTest {
     fun setup() {
         repository = mockk(relaxed = true)
         every { repository.query(any()) } returns emptyList()
+        // The provenance-loading read answers like the plain one each test stubs.
+        every { repository.query(any(), any()) } answers { repository.query(firstArg<PropositionQuery>()) }
     }
 
     @Test

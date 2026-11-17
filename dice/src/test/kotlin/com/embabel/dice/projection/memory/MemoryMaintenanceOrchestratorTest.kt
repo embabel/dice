@@ -67,6 +67,8 @@ class MemoryMaintenanceOrchestratorTest {
         abstractor = mockk(relaxed = true)
 
         every { repository.query(any()) } returns emptyList()
+        // The provenance-loading read answers like the plain one each test stubs.
+        every { repository.query(any(), any()) } answers { repository.query(firstArg<PropositionQuery>()) }
     }
 
     /**
