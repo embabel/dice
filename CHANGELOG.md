@@ -943,7 +943,9 @@ and the consumer PRs that deliver it).
   to raise `reinforceCount` or confidence sees no change from that pass.
 
 - `PropositionPipeline.processOnce` and `processText` leave a proposition untouched when it already
-  holds every `additionalGrounding` id. They stamped `metadataRevised` on it.
+  holds every `additionalGrounding` id. They stamped `metadataRevised` on it. They add
+  `additionalGrounding` ids before revision, so an id the stored proposition does not hold
+  reinforces it once, even when the text and source id are unchanged.
   **Compatibility: behavioral.**
 
 - `DefaultMemoryConsolidator` carries the session proposition's provenance entries and source ids

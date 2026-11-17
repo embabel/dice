@@ -250,10 +250,17 @@ class PropositionPipeline private constructor(
      * Resolution stage — resolve entities through the shared cross-chunk resolver, apply resolutions,
      * and optionally revise against existing propositions. Must stay serial so all chunks share
      * the same entity identity within a single [process] run.
+     *
+     * @param extraction the extracted propositions and suggested entities for one chunk
+     * @param context the analysis context
+     * @param extraGrounding ids added to each proposition's grounding before revision, so an id
+     * the stored proposition does not hold counts as new evidence
+     * @return the resolved, and possibly revised, propositions for the chunk
      */
     private fun resolveStage(
         extraction: ExtractionStageResult,
         context: SourceAnalysisContext,
+        extraGrounding: List<String> = emptyList(),
     ): ChunkPropositionResult.Success {
         val (chunk, suggestedPropositions, suggestedEntities) = extraction
 
@@ -305,11 +312,13 @@ class PropositionPipeline private constructor(
         // Step 4: Apply resolutions to create final propositions, each stamped with provenance
         // back to its source chunk. Done before revision so merges union the entries and a brand
         // new proposition keeps its grounding.
-        val propositions = stampProvenance(
+        val stamped = stampProvenance(
             extractor.resolvePropositions(suggestedPropositions, resolutions, context),
             chunk,
             context,
         )
+        val propositions = if (extraGrounding.isEmpty()) stamped
+        else stamped.map { it.withGroundingNotHeld(extraGrounding) }
         logger.debug("Created {} propositions", propositions.size)
 
         // Step 5: Optionally revise propositions against existing ones
@@ -425,6 +434,21 @@ class PropositionPipeline private constructor(
         resolveStage(extractStage(chunk, context), context)
 
     /**
+     * Processes one chunk with extra grounding ids that join each proposition before revision.
+     *
+     * @param chunk the chunk to process
+     * @param context the analysis context
+     * @param extraGrounding ids to add to each proposition's grounding
+     * @return the processing result
+     */
+    private fun processChunk(
+        chunk: Chunk,
+        context: SourceAnalysisContext,
+        extraGrounding: List<String>,
+    ): ChunkPropositionResult =
+        resolveStage(extractStage(chunk, context), context, extraGrounding)
+
+    /**
      * Process a text once, with hash-based deduplication.
      * Ideal for one-shot ingestion of documents, notes, or other static text.
      *
@@ -433,6 +457,8 @@ class PropositionPipeline private constructor(
      * @param context Analysis context with schema, entity resolver, etc.
      * @param historyStore Tracks what's been processed; null to skip dedup
      * @param contentHasher Strategy for computing content hashes
+     * @param additionalGrounding Extra ids that join the grounding of each proposition before
+     * revision, so an id the stored proposition does not hold counts as new evidence
      * @return Result with propositions and entities, or null if already processed
      *
      * Note: This method does NOT persist anything — it returns UNSAVED results. The caller
@@ -464,7 +490,7 @@ class PropositionPipeline private constructor(
             // Backward-compatible: callers that pass UUID-shaped
             // sourceIds get UUID chunk ids exactly as before.
             val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
-            val result = processChunk(chunk, context)
+            val result = processChunk(chunk, context, additionalGrounding)
             historyStore.recordProcessed(
                 ProcessedChunkRecord(
                     bookmarkKey = BookmarkKey(context.contextId, sourceId),
@@ -480,7 +506,7 @@ class PropositionPipeline private constructor(
         // proposition.grounding carries the caller's stable sourceId so
         // GroundingWiringService can resolve it to a source entity.
         val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
-        return processChunk(chunk, context).withAdditionalGrounding(additionalGrounding)
+        return processChunk(chunk, context, additionalGrounding).withAdditionalGrounding(additionalGrounding)
     }
 
     /**
@@ -495,7 +521,8 @@ class PropositionPipeline private constructor(
      * @param text The text to process
      * @param sourceId Identifier for the source, used as both the chunk id and the parent id
      * @param context Analysis context with schema, entity resolver, etc.
-     * @param additionalGrounding Extra ids to add to the grounding of each proposition
+     * @param additionalGrounding Extra ids that join the grounding of each proposition before
+     * revision, so an id the stored proposition does not hold counts as new evidence
      * @return Result with propositions and entities
      */
     @JvmOverloads
@@ -506,7 +533,7 @@ class PropositionPipeline private constructor(
         additionalGrounding: List<String> = emptyList(),
     ): ChunkPropositionResult {
         val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
-        return processChunk(chunk, context).withAdditionalGrounding(additionalGrounding)
+        return processChunk(chunk, context, additionalGrounding).withAdditionalGrounding(additionalGrounding)
     }
 
     /**

@@ -373,6 +373,42 @@ class PropositionPipelineTest {
             val replayed = third.revisionResults.single() as RevisionResult.Merged
             assertEquals(restored, replayed.revised)
         }
+
+        @Test
+        fun `a new additional grounding id reinforces the stored proposition`() {
+            val repository = InMemoryPropositionRepository()
+            val reviser = LlmPropositionReviser(llmOptions = io.mockk.mockk(), ai = io.mockk.mockk())
+            val pipeline = PropositionPipeline
+                .withExtractor(MockPropositionExtractor())
+                .withRevision(reviser, repository)
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+                mintNewEntities = true,
+                sourceLocator = UriLocator("https://example.com/doc-1"),
+            )
+
+            val first = pipeline.processOnce("mentions:Alice,Bob", "doc-1", context, additionalGrounding = listOf("msg-1"))
+                as ChunkPropositionResult.Success
+            val created = first.revisionResults.single() as RevisionResult.New
+            repository.save(created.proposition)
+            val stored = repository.findById(created.proposition.id)!!
+
+            val second = pipeline.processOnce("mentions:Alice,Bob", "doc-1", context, additionalGrounding = listOf("msg-2"))
+                as ChunkPropositionResult.Success
+            val merged = second.revisionResults.single() as RevisionResult.Merged
+            val revised = merged.revised
+            assertEquals(stored.reinforceCount + 1, revised.reinforceCount)
+            assertTrue(revised.grounding.containsAll(listOf("doc-1", "msg-1", "msg-2")), "grounding: ${revised.grounding}")
+            repository.save(revised)
+            val restored = repository.findById(stored.id)!!
+
+            val third = pipeline.processOnce("mentions:Alice,Bob", "doc-1", context, additionalGrounding = listOf("msg-2"))
+                as ChunkPropositionResult.Success
+            val replayed = third.revisionResults.single() as RevisionResult.Merged
+            assertEquals(restored, replayed.revised)
+        }
     }
 
     @Nested
