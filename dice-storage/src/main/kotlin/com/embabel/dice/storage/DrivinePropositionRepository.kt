@@ -918,7 +918,8 @@ class DrivinePropositionRepository(
         if (!withProvenance) findAll() else withRawProvenance(findAll())
 
     /**
-     * The materialised `effectiveConfidence` (default k = 2.0, as of the last sweep) only matches a
+     * The materialised `effectiveConfidence` (computed with the default `k`,
+     * `Proposition.DEFAULT_DECAY_K`, as of the last sweep) only matches a
      * query that uses those defaults. When [PropositionQuery.decayK] or
      * [PropositionQuery.effectiveConfidenceAsOf] is non-default AND effective confidence actually drives
      * the query, fall back to live computation — see [queryWithLiveDecay].
