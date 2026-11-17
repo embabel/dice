@@ -15,12 +15,17 @@ ends and the next begins, so a claim spanning three turns is not cut in half.
 [source,java]
 ----
 var source = new ConversationSource(conversation);
-var result = analyzer.analyze(source, context);
-result.persist(propositionRepository, entityRepository);
+var window = analyzer.analyzeWindow(source, context);
+if (window != null) {
+    window.getResult().persist(propositionRepository, entityRepository);
+    window.markProcessed();
+}
 ----
 
 Re-analysing the same conversation is cheap: `ChunkHistoryStore` reports what has already been
-processed and the analyser skips it.
+processed and the analyser skips it. A window is recorded when `markProcessed()` is called, so a
+failed `persist` leaves it for the next call. `analyzeWindow` is on `AbstractIncrementalAnalyzer`,
+so declare the analyser as that class or a subclass such as `PropositionIncrementalAnalyzer`.
 
 ==== Tell the context who is talking
 
@@ -42,12 +47,13 @@ for the speaker, so first-person claims attach to them.
 ==== Drive it from events
 
 Conversation analysis costs an LLM call, so it should not sit in the request path.
-`ConversationAnalysisRequestEvent` exists for exactly this:
+`ConversationAnalysisRequestEvent` exists for exactly this. The listener has no transaction of its
+own. It stores the result through a `@Transactional` method on another bean and marks the window
+when that method has returned, which is after the commit.
 
 [source,java]
 ----
 @Async
-@Transactional
 @EventListener
 public void onConversationExchange(ConversationAnalysisRequestEvent event) {
     var context = SourceAnalysisContext
@@ -58,11 +64,28 @@ public void onConversationExchange(ConversationAnalysisRequestEvent event) {
             .withKnownEntities(KnownEntity.asCurrentUser(event.user));
 
     var source = new ConversationSource(event.conversation);
-    var result = analyzer.analyze(source, context);
-
-    result.persist(propositionRepository, entityRepository);
+    var window = analyzer.analyzeWindow(source, context);
+    if (window != null) {
+        claimStore.store(window.getResult());
+        window.markProcessed();
+    }
 }
 ----
+
+[source,java]
+----
+@Service
+public class ClaimStore {
+
+    @Transactional
+    public void store(ChunkPropositionResult result) {
+        result.persist(propositionRepository, entityRepository);
+    }
+}
+----
+
+A store that fails or rolls back throws, and the window is left for the next event. Marking inside
+the transaction is correct only when the `ChunkHistoryStore` takes part in that transaction.
 
 `SourceAnalysisRequestEvent` is the general form for non-conversation sources.
 

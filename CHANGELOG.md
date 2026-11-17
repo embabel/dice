@@ -10,6 +10,27 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- `IncrementalPropositionExtraction` now throws a failed write the same way with or without a bound
+  `PersistUnitWriter`: through `PersistOutcome.persistedOrThrow()`. A `RuntimeException` cause is
+  thrown as it is. A checked cause is now wrapped in the unchecked `PersistUnitFailedException`, so
+  it cannot escape `rememberText` undeclared and a Spring `@Transactional` method rolls back on it.
+  `persistedOrThrow()` sets the thread's interrupt flag again when the cause is an
+  `InterruptedException`. **Compatibility: behavioral.** A caller that caught a checked exception
+  type from `rememberText` catches `PersistUnitFailedException` and reads its cause.
+
+- A unit that carries an extraction run under `LineageFailurePolicy.STRICT` now fails before
+  anything is written when the writer has no run link store. The sequential writer reports it at
+  `PersistStep.PREPARE` with an empty `leftInStore`. Before this change it saved the entities and
+  claims and then failed at `RUN_LINKS`, which left unattributed claims on every call. The failure
+  message of a writer from `PersistUnitWriter.sequential` or `inMemory` names the factory.
+  **Compatibility: behavioral.** A host that relied on the claims being saved before the failure
+  binds a run link store or `LineageFailurePolicy.LENIENT`.
+
+- The `PersistUnitWriter.inMemory` overloads that take any `NamedEntityDataRepository` are deprecated
+  and now throw `IllegalArgumentException` for a repository that is not the in-memory one, because
+  the undo is only correct there. **Compatibility: behavioral.** A call that passed another
+  repository fails when the writer is built. `PersistUnitWriter.sequential` takes any repository.
+
 - The build now checks the committed public API listings of the published modules. `./mvnw verify` fails when
   a module's compiled public API differs from its `api/*.api` file. To update the listings after an API change,
   run `./mvnw -B -DskipTests -Dapi.listing.mode=update clean verify`. **Compatibility: additive.** A build
@@ -124,6 +145,12 @@ and the consumer PRs that deliver it).
 
 ### Added
 
+- **EXPERIMENTAL** (shape may change before 1.0): `AbstractIncrementalAnalyzer.analyzeWindow` and
+  `analyzeWindowNow` return an `AnalyzedWindow`. It holds the result and is recorded as processed
+  when `markProcessed()` is called, so a host can store the result first. `analyze` and `analyzeNow`
+  are unchanged. `PersistUnitWriter.inMemory` has overloads that take
+  `InMemoryNamedEntityDataRepository`. **Compatibility: additive.**
+
 - Evidence types for a caller that assembles model context, in the new package
   `com.embabel.dice.evidence`. `EvidenceItem` is one claim with its `Citation`, its stored and
   decayed confidence, its status, when it was recorded and revised, and a `Retrieval` for each
@@ -146,7 +173,7 @@ and the consumer PRs that deliver it).
   transaction that rolls back on failure. `PersistUnitWriter.inMemory` restores the in-memory
   stores when a unit fails, except relationships already written to the entity repository.
   `IncrementalPropositionExtraction` stores each chunk through a writer, the sequential one unless
-  `withPersistUnitWriter` binds another. Its writes, their order and its exceptions are unchanged.
+  `withPersistUnitWriter` binds another. Its writes and their order are unchanged.
   **Compatibility: additive.**
 
 - Store contract, **EXPERIMENTAL** (may change before 1.0). The new package
@@ -916,6 +943,26 @@ and the consumer PRs that deliver it).
   Nothing a real connector emits comes close to any of the four.
 
 ### Fixed
+
+- `IncrementalPropositionExtraction` marked a window of an incremental source as processed before it
+  stored the window's claims, so a failed store lost the window. It now marks the window when the
+  unit is stored. A failed analysis or a failed write leaves the window unmarked, whatever it left
+  in the store, and the next event for the source analyses it again. **Compatibility: behavioral.**
+  A chunk whose store failed is extracted again, which costs another model call. A failure that
+  repeats is extracted again on every event, and the source does not advance past that window. With
+  the sequential writer outside a transaction, the replay saves again the claims the failed attempt
+  left, as duplicates unless the pipeline has a reviser. The window is marked before a surrounding
+  transaction commits, so marking it exactly once across a host transaction needs a
+  `ChunkHistoryStore` that takes part in that transaction.
+
+- `withRunLineage` and `withPersistUnitWriter` are safe to call from more than one thread, so a run
+  link store and a writer cannot both bind, and a chunk is stored under the bindings it started
+  with. `PersistUnitWriter.inMemory` undoes an entity only while the store holds the instance the
+  failed unit wrote, so an embedder outage does not fail the undo for entities the unit never wrote,
+  and an entity another writer saved is left alone. Run lineage is logged once per chunk, after the
+  write, and a lineage failure followed by a failed step is logged with that step.
+  **Compatibility: behavioral.** The lineage log lines have new text, and no attribution line is
+  logged for a negative link count.
 
 - `MetamodelAutoConfiguration` and the metamodel wiring tests referenced the drift quarantine types
   at their former home in `com.embabel.dice.metamodel(.support)`. They moved to

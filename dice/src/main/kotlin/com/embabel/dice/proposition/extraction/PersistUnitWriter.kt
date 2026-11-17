@@ -30,6 +30,9 @@ import org.jetbrains.annotations.ApiStatus
  * The sequential writer from [sequential] has no transaction of its own. A failure can leave the
  * earlier steps written. To store a unit all or nothing, call it inside a transaction and roll that
  * transaction back when the outcome is [PersistOutcome.Failed].
+ * A run link failure that the database raised can have ended that transaction. Under
+ * [LineageFailurePolicy.LENIENT] the outcome is still [PersistOutcome.Stored], and the commit can
+ * fail.
  *
  * From Java:
  *
