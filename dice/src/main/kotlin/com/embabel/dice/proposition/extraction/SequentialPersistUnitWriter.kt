@@ -45,7 +45,8 @@ internal class SequentialPersistUnitWriter(
     override fun write(unit: PersistUnit): PersistOutcome {
         val run = unit.run
         if (run != null && runLinkStore == null && unit.lineagePolicy == LineageFailurePolicy.STRICT) {
-            // The same on every call, so it is reported before a write that would be left unattributed.
+            // A missing store fails every unit that carries a run, so fail before writing claims
+            // that would stay unattributed.
             val lineageFailure = missingStore(run)
             return PersistOutcome.failed(PersistStep.PREPARE, lineageFailure, emptySet(), null, lineageFailure)
         }
@@ -161,12 +162,18 @@ internal class SequentialPersistUnitWriter(
 
     companion object {
 
-        /** The fix a writer from a [PersistUnitWriter] factory names when it has no run link store. */
+        /**
+         * Failure-message advice for a writer built by a [PersistUnitWriter] factory with no run
+         * link store.
+         */
         const val FACTORY_FIX =
             "pass one to PersistUnitWriter.sequential or PersistUnitWriter.inMemory, or use " +
                 "LineageFailurePolicy.LENIENT to accept the gap"
 
-        /** The fix the writer an extractor builds for itself names when it has no run link store. */
+        /**
+         * Failure-message advice for the writer an extractor builds for itself with no run link
+         * store.
+         */
         const val EXTRACTOR_FIX =
             "bind one with withRunLineage, or bind LineageFailurePolicy.LENIENT to accept the gap"
     }

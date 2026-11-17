@@ -330,7 +330,7 @@ class PersistUnitRoutingTest {
     }
 
     @Test
-    fun `E9 a lineage failure followed by a failed step is logged with the step and never as continuing`() {
+    fun `E9 a lineage failure followed by a failed step is logged with the step`() {
         val key = ExtractionRunKey(tenant, runRef)
         val stepFailure = IllegalStateException("relationships down")
         val extraction = extraction(answeringRepository())

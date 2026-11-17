@@ -152,8 +152,8 @@ Every exception `persistedOrThrow()` throws is unchecked, so a `@Transactional` 
 wrapped in `PersistUnitFailedException`, which carries the step that failed and has the original
 exception as its cause.
 
-A run link failure that the database raised can have ended the transaction. Under
-`LineageFailurePolicy.LENIENT` the outcome is still `Stored`, and the commit can fail.
+A database error in the run link step can abort the transaction. Under
+`LineageFailurePolicy.LENIENT` the outcome is still `Stored`, and the commit then fails.
 
 [source,java]
 ----
@@ -215,17 +215,18 @@ analyzer.analyzeWindow(source, context)?.let { window ->
 ----
 
 `IncrementalPropositionExtraction` marks a window when its unit is stored. A failed analysis or a
-failed write leaves the window for the next event, which extracts the chunk again. A failure that
-repeats is extracted again on every event, and the source does not advance past that window.
+failed write leaves the window for the next event, which extracts the chunk again. A chunk whose
+write keeps failing is extracted again on every event, and the source does not advance past that
+window.
 
 The replay runs over whatever the failed write left in the store. With no reviser on the pipeline,
-claims the failed write left are saved again as duplicates. With a reviser they are reinforced. To
-leave nothing behind, bind a writer that undoes a failed unit, or call `rememberText` inside a
-transaction, which rolls back on the exception.
+claims the failed write left are saved again as duplicates. With a reviser, they are matched to the
+claims already stored. To leave nothing behind, bind a writer that undoes a failed unit.
 
 The window is marked when the write returns, before a surrounding transaction commits. A window is
 marked exactly once across that transaction only when the `ChunkHistoryStore` takes part in it.
-`DrivineChunkHistoryStore` writes through the host's transaction manager.
+`DrivineChunkHistoryStore` is `@Transactional` and joins a surrounding transaction on the same
+transaction manager.
 `InMemoryChunkHistoryStore` does not take part, so a rollback after the mark loses the window.
 
 On the event path a failed write is logged and not rethrown, so a transaction around the listener

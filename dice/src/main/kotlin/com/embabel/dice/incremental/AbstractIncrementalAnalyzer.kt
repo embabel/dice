@@ -62,8 +62,8 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
 
     /**
      * Called once, after a window is recorded as processed, so a subclass can log or post-process.
-     * It is not called for a window that recorded nothing. When it throws, the window stays
-     * recorded. The default does nothing.
+     * It is not called when the mark wrote nothing because a later window had moved the bookmark.
+     * When it throws, the window stays recorded. The default does nothing.
      */
     protected open fun onProcessed(
         source: IncrementalSource<T>,
@@ -88,7 +88,7 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
      * Analyzes the source if enough new content has accumulated, and records nothing yet.
      *
      * Store the window's result, then call [AnalyzedWindow.markProcessed]. A window that is not
-     * marked is analysed again by the next call, so a failed store loses nothing. [analyze] marks
+     * marked is analyzed again by the next call, so a failed store loses nothing. [analyze] marks
      * the window before it returns.
      *
      * Inside a transaction, the record commits or rolls back with the stored result only when the
@@ -96,7 +96,8 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
      *
      * @param source The incremental source to analyze.
      * @param context Analysis context including schema and entity resolver.
-     * @return The analysed window, or null when there is too little new content or the content was already processed.
+     * @return The analyzed window, or null when there is too little new content or the content
+     * was already processed.
      */
     @ApiStatus.Experimental
     fun analyzeWindow(
@@ -127,7 +128,8 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
      *
      * @param source The incremental source to analyze.
      * @param context Analysis context including schema and entity resolver.
-     * @return The analysed window, or null when the source is empty or the content was already processed.
+     * @return The analyzed window, or null when the source is empty or the content was already
+     * processed.
      */
     @ApiStatus.Experimental
     fun analyzeWindowNow(

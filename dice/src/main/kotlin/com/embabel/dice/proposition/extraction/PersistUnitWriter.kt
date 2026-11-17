@@ -30,9 +30,9 @@ import org.jetbrains.annotations.ApiStatus
  * The sequential writer from [sequential] has no transaction of its own. A failure can leave the
  * earlier steps written. To store a unit all or nothing, call it inside a transaction and roll that
  * transaction back when the outcome is [PersistOutcome.Failed].
- * A run link failure that the database raised can have ended that transaction. Under
- * [LineageFailurePolicy.LENIENT] the outcome is still [PersistOutcome.Stored], and the commit can
- * fail.
+ * A database error in the run link step can abort that transaction. Under
+ * [LineageFailurePolicy.LENIENT] the outcome is still [PersistOutcome.Stored], and the commit then
+ * fails.
  *
  * From Java:
  *
@@ -108,13 +108,12 @@ fun interface PersistUnitWriter {
          * A failed unit restores claims, their embeddings and entities to what they held before the call.
          * Units through one writer run one at a time, so use one writer per set of stores.
          * Another thread can read a unit part way through.
-         * The undo assumes no other writer touches the unit's ids during the unit.
-         * A claim another caller saved under one of those ids is overwritten by the undo.
-         * An entity another caller saved, and a run link another caller added, are left as they are.
-         * An entity is undone only while the store holds the instance the unit wrote.
-         * Putting back a replaced entity goes through `save`, so an entity repository with an embedder embeds it again.
-         * When that embedder call fails, [PersistOutcome.Failed.leftInStore] holds [PersistStep.ENTITIES], also when only the embedding is affected.
-         * A subclass of the in-memory entity repository that stores elsewhere is not undone.
+         * The undo expects no other writer to touch the unit's ids during the unit. If one does, a
+         * claim it saved under one of those ids is overwritten, and an entity it saved or a run
+         * link it added is kept.
+         * An entity is put back only while the store holds an instance the unit wrote. Putting it
+         * back goes through `save`, so a repository with an embedder embeds it again. When that
+         * call fails, [PersistOutcome.Failed.leftInStore] holds [PersistStep.ENTITIES].
          * Relationships written before the failure stay, because the entity repository cannot remove them.
          * [PersistOutcome.Failed.leftInStore] then holds [PersistStep.STRUCTURAL_RELATIONSHIPS].
          *
@@ -135,13 +134,12 @@ fun interface PersistUnitWriter {
          * before the call.
          * Units through one writer run one at a time, so use one writer per set of stores.
          * Another thread can read a unit part way through.
-         * The undo assumes no other writer touches the unit's ids during the unit.
-         * A claim another caller saved under one of those ids is overwritten by the undo.
-         * An entity another caller saved, and a run link another caller added, are left as they are.
-         * An entity is undone only while the store holds the instance the unit wrote.
-         * Putting back a replaced entity goes through `save`, so an entity repository with an embedder embeds it again.
-         * When that embedder call fails, [PersistOutcome.Failed.leftInStore] holds [PersistStep.ENTITIES], also when only the embedding is affected.
-         * A subclass of the in-memory entity repository that stores elsewhere is not undone.
+         * The undo expects no other writer to touch the unit's ids during the unit. If one does, a
+         * claim it saved under one of those ids is overwritten, and an entity it saved or a run
+         * link it added is kept.
+         * An entity is put back only while the store holds an instance the unit wrote. Putting it
+         * back goes through `save`, so a repository with an embedder embeds it again. When that
+         * call fails, [PersistOutcome.Failed.leftInStore] holds [PersistStep.ENTITIES].
          * Relationships written before the failure stay, because the entity repository cannot remove them.
          * [PersistOutcome.Failed.leftInStore] then holds [PersistStep.STRUCTURAL_RELATIONSHIPS].
          * Run links the link store evicted for old finished runs during the unit are not brought back.

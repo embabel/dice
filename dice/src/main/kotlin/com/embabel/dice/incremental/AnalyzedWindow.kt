@@ -23,9 +23,9 @@ import org.jetbrains.annotations.ApiStatus
  * [AbstractIncrementalAnalyzer.analyzeWindow] returns it. Store [result], then call [markProcessed].
  * A window that is never marked is analysed again by the next call for the same source.
  *
- * Keep one window per source outstanding. The analyzer does not serialise callers. A window marked
- * after a later window for the same source moved the bookmark records nothing, because the later
- * window covered it.
+ * Keep one window per source outstanding. The analyzer does not serialise callers. When a later
+ * window for the same source has already moved the bookmark, marking this one records nothing,
+ * because the later window covers it.
  *
  * Inside a transaction, the record commits or rolls back with the stored result only when the
  * [ChunkHistoryStore] takes part in that transaction. With one that does not, such as
@@ -54,7 +54,8 @@ import org.jetbrains.annotations.ApiStatus
  *
  * @param R The type of result the analysis produced
  * @property result What the analysis produced for the window
- * @param record Writes the window to the history store. Returns false when it wrote nothing because the bookmark moved.
+ * @param record Writes the window to the history store. Returns false when it wrote nothing
+ * because the bookmark moved.
  * @param afterRecord Runs once after a record that wrote.
  */
 @ApiStatus.Experimental
@@ -66,11 +67,15 @@ class AnalyzedWindow<out R> internal constructor(
 
     private val lock = Any()
 
-    // Set once, under the lock and after the record, so a record that throws leaves the window unmarked.
+    // Set once, under the lock and after the record, so a record that throws leaves the window
+    // unmarked.
     @Volatile
     private var marked = false
 
-    /** True once [markProcessed] has run its record. */
+    /**
+     * True once [markProcessed] has completed, even when it wrote nothing because the bookmark had
+     * moved.
+     */
     val isMarkedProcessed: Boolean
         get() = marked
 
@@ -80,7 +85,7 @@ class AnalyzedWindow<out R> internal constructor(
      * The first call writes to the history store, unless the source's bookmark moved since the
      * analysis. Later calls do nothing. When the history store throws, the exception propagates,
      * the window stays unmarked and the call can be repeated. The window counts as marked once the
-     * history store holds it, also when the analyzer's `onProcessed` hook then throws.
+     * history store call returns, even when the analyzer's `onProcessed` hook then throws.
      */
     fun markProcessed() {
         synchronized(lock) {

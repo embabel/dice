@@ -48,8 +48,9 @@ for the speaker, so first-person claims attach to them.
 
 Conversation analysis costs an LLM call, so it should not sit in the request path.
 `ConversationAnalysisRequestEvent` exists for exactly this. The listener has no transaction of its
-own. It stores the result through a `@Transactional` method on another bean and marks the window
-when that method has returned, which is after the commit.
+own. It stores the result through a `@Transactional` method on another bean, so the call goes
+through Spring's proxy, and marks the window when that method has returned, which is after the
+commit.
 
 [source,java]
 ----

@@ -346,19 +346,21 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      *
      * A window is marked as processed when its claims are stored, or when the analysis succeeded
      * and found none. A failed analysis or a failed write leaves it unmarked, and the next event for
-     * the source analyses it again. A failure that repeats is analysed again on every event.
+     * the source analyses it again. A window whose write keeps failing is analysed again on every
+     * event.
      *
      * The mark is written when the write returns. Inside a transaction, a window is marked exactly
      * once only when the chunk history store takes part in that transaction. A store outside it
      * keeps the mark when the transaction rolls back, and that window's claims are lost.
      *
      * A failed write is logged and not rethrown, so a transaction around this call commits what the
-     * failed write left. A [LineageNotRecordedException] under [LineageFailurePolicy.STRICT] is the
-     * exception: it is thrown.
+     * failed write left. A [LineageNotRecordedException] under [LineageFailurePolicy.STRICT] is
+     * rethrown.
      *
      * @param event The source to analyse and the user it belongs to.
      * @throws LineageNotRecordedException when a run link cannot be recorded under
-     * [LineageFailurePolicy.STRICT].
+     * [LineageFailurePolicy.STRICT] for an event this call processes. An event queued while another
+     * call holds the extraction lock is processed, and its failure thrown, by that call.
      */
     open fun extractPropositions(event: SourceAnalysisRequestEvent) {
         pendingEvents.add(event)
@@ -583,9 +585,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      *
      * A window is marked as processed when its unit is stored, or when the analysis succeeded and
      * produced no claims. A failed write and a failed analysis leave the window unmarked, whatever
-     * the write left in the store, so the next event for the source analyses it again. A failure
-     * that repeats is analysed again on every event, and the source does not advance past that
-     * window. Claims a failed write left in the store are saved again by that analysis, unless the
+     * the write left in the store, so the next event for the source analyses it again. A window
+     * whose write keeps failing is analysed again on every event, and the source does not advance
+     * past it. Claims a failed write left in the store are saved again by that analysis, unless the
      * pipeline's reviser matches them.
      *
      * The mark is written when the write returns, before a transaction a host holds around this
@@ -672,8 +674,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     /**
      * Marks a window as processed, and logs when the history store cannot record it.
      *
-     * The window's unit is stored by the time this runs, so a failure is logged and the caller
-     * carries on. The next event for the source analyses the window again.
+     * By the time this runs the window's claims are stored, or it had none, so a failure is logged
+     * and the caller carries on. The next event for the source analyses the window again.
      *
      * @param window The analysed window.
      * @param sourceId The id of the source the window came from.
@@ -683,7 +685,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             window.markProcessed()
         } catch (e: Exception) {
             logger.warn(
-                "Source {} is stored but its window could not be marked as processed. The next event for the source analyses it again",
+                "The window of source {} could not be marked as processed. The next event for the source analyses it again",
                 sourceId, e,
             )
         }
@@ -787,9 +789,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * relationships, projection and grounding do not run, and the [LineageNotRecordedException] is
      * thrown. Inside a caller's transaction, what was written commits or rolls back with it.
      * Under [LineageFailurePolicy.LENIENT] the failure is logged as a warning and the rest runs.
-     * A lineage failure the database raised can have ended a caller's transaction, under either
-     * policy. Under LENIENT the write still reports the unit as stored, and the caller's commit
-     * can fail.
+     * A database error in the run link step can abort a caller's transaction under either policy.
+     * Under LENIENT the write still reports the unit as stored, and the caller's commit then fails.
      * A bound writer decides what a failed write leaves in the store.
      *
      * A failed write throws what [PersistOutcome.persistedOrThrow] throws, with or without a bound

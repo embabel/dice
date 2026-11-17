@@ -76,7 +76,7 @@ internal class InMemoryPersistUnitWriter(
      * @return The claims, entities and run links as they are now.
      */
     private fun record(unit: PersistUnit): BeforeImage {
-        // The unit's ids suffice for the claims: InMemoryPropositionRepository.save stores and returns the id it was given.
+        // The unit's ids suffice because InMemoryPropositionRepository.save stores and returns the id it was given.
         val claims = propositionRepository.snapshot(unit.propositions.map { it.id })
         val entities = (unit.newEntities + unit.updatedEntities)
             .map { it.id }

@@ -20,9 +20,9 @@ and the consumer PRs that deliver it).
 
 - A unit that carries an extraction run under `LineageFailurePolicy.STRICT` now fails before
   anything is written when the writer has no run link store. The sequential writer reports it at
-  `PersistStep.PREPARE` with an empty `leftInStore`. Before this change it saved the entities and
-  claims and then failed at `RUN_LINKS`, which left unattributed claims on every call. The failure
-  message of a writer from `PersistUnitWriter.sequential` or `inMemory` names the factory.
+  `PersistStep.PREPARE` with an empty `leftInStore`. The writer had saved the entities and claims
+  and then failed at `RUN_LINKS`, which left unattributed claims on every call. The failure message
+  of a writer from `PersistUnitWriter.sequential` or `inMemory` names the factory.
   **Compatibility: behavioral.** A host that relied on the claims being saved before the failure
   binds a run link store or `LineageFailurePolicy.LENIENT`.
 
@@ -945,19 +945,16 @@ and the consumer PRs that deliver it).
 ### Fixed
 
 - `IncrementalPropositionExtraction` marked a window of an incremental source as processed before it
-  stored the window's claims, so a failed store lost the window. It now marks the window when the
-  unit is stored. A failed analysis or a failed write leaves the window unmarked, whatever it left
-  in the store, and the next event for the source analyses it again. **Compatibility: behavioral.**
-  A chunk whose store failed is extracted again, which costs another model call. A failure that
-  repeats is extracted again on every event, and the source does not advance past that window. With
-  the sequential writer outside a transaction, the replay saves again the claims the failed attempt
-  left, as duplicates unless the pipeline has a reviser. The window is marked before a surrounding
-  transaction commits, so marking it exactly once across a host transaction needs a
-  `ChunkHistoryStore` that takes part in that transaction.
+  stored the window's claims, so a failed store lost the window. It now marks the window once the
+  unit is stored. A failed analysis or write leaves the window unmarked, and the next event for the
+  source analyses it again. **Compatibility: behavioral.** A chunk whose store keeps failing is
+  extracted again, with a model call, on every event, and the source does not advance past it. With
+  the sequential writer outside a transaction, the retry saves the claims the failed attempt left a
+  second time unless the pipeline has a reviser.
 
 - `withRunLineage` and `withPersistUnitWriter` are safe to call from more than one thread, so a run
   link store and a writer cannot both bind, and a chunk is stored under the bindings it started
-  with. `PersistUnitWriter.inMemory` undoes an entity only while the store holds the instance the
+  with. `PersistUnitWriter.inMemory` undoes an entity only while the store holds an instance the
   failed unit wrote, so an embedder outage does not fail the undo for entities the unit never wrote,
   and an entity another writer saved is left alone. Run lineage is logged once per chunk, after the
   write, and a lineage failure followed by a failed step is logged with that step.
