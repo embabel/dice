@@ -17,6 +17,7 @@ package com.embabel.dice.store
 
 import com.embabel.dice.proposition.PropositionQuery
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -31,6 +32,7 @@ import org.junit.jupiter.api.Test
  * E3  A blank text, a size below 1, and a filter with an ordering or a limit throw IllegalArgumentException.
  * R1  A filter with no context is rejected by forText, the block and the chain, and the message names
  *     ScopedVectorSearch. A filter with a context builds.
+ * E4  toString shows the size of the text, never the text itself, and keeps the filter and the other fields.
  */
 class VectorSearchRequestTest {
 
@@ -100,5 +102,16 @@ class VectorSearchRequestTest {
         val scoped = PropositionQuery.againstContext("c").withAnyEntityIds(listOf("alice"))
         assertEquals("c", VectorSearchRequest.forText("cats", scoped).filter.contextId?.value)
         assertEquals("c", VectorSearchRequest("cats", scoped) { topK = 2 }.filter.contextId?.value)
+    }
+
+    @Test
+    fun `E4 toString shows the size of the text and not the text itself`() {
+        val secret = "peanut-allergy-secret"
+        val filter = PropositionQuery.againstContext("c")
+        val rendered = VectorSearchRequest.forText(secret, filter).withTopK(4).toString()
+        assertFalse(rendered.contains(secret), rendered)
+        assertTrue(rendered.contains("text=<21 chars>"), rendered)
+        assertTrue(rendered.contains("topK=4"), rendered)
+        assertTrue(rendered.contains("filter="), rendered)
     }
 }
