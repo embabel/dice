@@ -347,6 +347,28 @@ class EvidenceConverterTest {
     }
 
     @Test
+    fun `a pinned original is never reported as replaced`() {
+        val pinned = claim("p-1").withPinned(true)
+        val new = claim("p-2", text = "Alice lives in Paris.")
+
+        for (type in listOf(ConflictType.Revision, ConflictType.WorldProgression)) {
+            val evidence = assertInstanceOf(
+                Evidence.Conflicting::class.java,
+                converter.fromContradiction(RevisionResult.Contradicted(pinned, new, type)),
+            )
+            assertEquals(ConflictType.Contradiction, evidence.conflictType)
+            assertEquals(listOf(pinned.id, new.id), evidence.items.map { it.citation.propositionId })
+            assertEquals(listOf(PropositionStatus.ACTIVE, PropositionStatus.ACTIVE), evidence.items.map { it.status })
+        }
+        // The same conflict types replace an original that is not pinned
+        val replaced = claim("p-1", status = PropositionStatus.CONTRADICTED)
+        assertInstanceOf(
+            Evidence.Superseded::class.java,
+            converter.fromContradiction(RevisionResult.Contradicted(replaced, new, ConflictType.WorldProgression)),
+        )
+    }
+
+    @Test
     fun `a negative or NaN decay rate multiplier is rejected`() {
         assertThrows(IllegalArgumentException::class.java) { converter.withDecayK(-1.0) }
         assertThrows(IllegalArgumentException::class.java) { converter.withDecayK(Double.NaN) }

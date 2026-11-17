@@ -282,9 +282,12 @@ String text = switch (disagreement) {
 
 | `WorldProgression`
 | `Superseded` with the new claim as `current` and the original as `previous`.
+
+| `Revision` or `WorldProgression`, pinned original
+| `Conflicting` with conflict type `Contradiction`, the original first and the new claim second.
 |===
 
-`previous` presents the original as replaced. The reviser marks a replaced original `CONTRADICTED` and lowers its confidence, so in a `Superseded` result that original reads `SUPERSEDED`. Its confidence is the stored one, already lowered. A pinned original keeps its stored status, such as `ACTIVE`. `Conflicting` items keep their stored statuses.
+`previous` presents the original as replaced. The reviser marks a replaced original `CONTRADICTED` and lowers its confidence, so in a `Superseded` result that original reads `SUPERSEDED`. Its confidence is the stored one, already lowered. The reviser never replaces a pinned original: it keeps the claim as it is and stores the new claim beside it for someone to resolve. `fromContradiction` reports those two as `Conflicting`, so neither is presented as the claim that holds. `Conflicting` items keep their stored statuses.
 
 [source,java]
 ----

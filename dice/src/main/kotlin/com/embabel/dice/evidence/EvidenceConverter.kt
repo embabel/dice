@@ -227,10 +227,15 @@ class EvidenceConverter private constructor(
      * |---|---|
      * | `Contradiction`, `Custom` | [Evidence.Conflicting], the original first and the new claim second |
      * | `Revision`, `WorldProgression` | [Evidence.Superseded], the new claim current and the original previous |
+     * | `Revision`, `WorldProgression` with a pinned original | [Evidence.Conflicting] with [ConflictType.Contradiction] |
+     *
+     * The reviser never replaces a pinned original. It keeps the claim as it is and stores the new claim
+     * beside it for someone to resolve, so the two are reported as a conflict and neither as the one that
+     * holds.
      *
      * In a superseded result, an original the reviser marked [PropositionStatus.CONTRADICTED] reads
      * [PropositionStatus.SUPERSEDED]. Its confidence is the stored one, which the reviser already lowered.
-     * A pinned original, and every item of a conflicting result, keeps its stored status.
+     * Every item of a conflicting result keeps its stored status.
      *
      * @param contradicted the contradiction to convert
      * @return the conflicting or superseded evidence
@@ -240,15 +245,20 @@ class EvidenceConverter private constructor(
     fun fromContradiction(contradicted: RevisionResult.Contradicted): Evidence.Disagreement {
         val now = clock.instant()
         val original = contradicted.original
+        val unresolved = { type: ConflictType ->
+            Evidence.conflicting(listOf(convert(original, now), convert(contradicted.new, now)), type)
+        }
         return when (val conflictType = contradicted.conflictType) {
-            ConflictType.Contradiction, is ConflictType.Custom ->
-                Evidence.conflicting(listOf(convert(original, now), convert(contradicted.new, now)), conflictType)
-            ConflictType.Revision, ConflictType.WorldProgression -> {
-                val status = original.status.takeUnless { it == PropositionStatus.CONTRADICTED }
-                    ?: PropositionStatus.SUPERSEDED
-                val previous = convert(original, now, status = status)
-                Evidence.superseded(convert(contradicted.new, now), listOf(previous), conflictType)
-            }
+            ConflictType.Contradiction, is ConflictType.Custom -> unresolved(conflictType)
+            ConflictType.Revision, ConflictType.WorldProgression ->
+                if (original.pinned) {
+                    unresolved(ConflictType.Contradiction)
+                } else {
+                    val status = original.status.takeUnless { it == PropositionStatus.CONTRADICTED }
+                        ?: PropositionStatus.SUPERSEDED
+                    val previous = convert(original, now, status = status)
+                    Evidence.superseded(convert(contradicted.new, now), listOf(previous), conflictType)
+                }
         }
     }
 

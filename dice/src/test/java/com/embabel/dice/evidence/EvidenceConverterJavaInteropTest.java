@@ -110,15 +110,17 @@ class EvidenceConverterJavaInteropTest {
     }
 
     @Test
-    void pinnedOriginalUnderAWorldChangeKeepsItsActiveStatus() {
+    void pinnedOriginalUnderAWorldChangeIsAConflictNotAReplacement() {
         Proposition pinned = claim("p-1", "Ada lives in Marylebone", PropositionStatus.ACTIVE).withPinned(true);
 
         Evidence.Disagreement disagreement = converter.fromContradiction(
                 new RevisionResult.Contradicted(pinned, replacement, ConflictType.WorldProgression.INSTANCE));
 
-        Evidence.Superseded superseded = assertInstanceOf(Evidence.Superseded.class, disagreement);
-        assertEquals(PropositionStatus.ACTIVE, superseded.getPrevious().get(0).getStatus());
-        assertEquals(PropositionStatus.ACTIVE, superseded.getCurrent().getStatus());
+        Evidence.Conflicting conflicting = assertInstanceOf(Evidence.Conflicting.class, disagreement);
+        assertEquals(ConflictType.Contradiction.INSTANCE, conflicting.getConflictType());
+        assertEquals("p-1", conflicting.getItems().get(0).getCitation().getPropositionId());
+        assertEquals(PropositionStatus.ACTIVE, conflicting.getItems().get(0).getStatus());
+        assertEquals(PropositionStatus.ACTIVE, conflicting.getItems().get(1).getStatus());
     }
 
     @Test

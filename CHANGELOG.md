@@ -135,7 +135,8 @@ and the consumer PRs that deliver it).
   replaced earlier ones. `Conflicting` and `Superseded` are both an `Evidence.Disagreement` with a
   conflict type: `Contradiction` and `Custom` conflicts are `Conflicting`, and `Revision` and
   `WorldProgression` are `Superseded`, whose earlier claims read `SUPERSEDED` when the reviser marked
-  them `CONTRADICTED`. `Citation.sameClaimAs` tells claims apart by id and context. `EvidenceConverter`
+  them `CONTRADICTED`. A pinned original is never replaced, so a `Revision` or `WorldProgression`
+  against one converts to `Conflicting`. `Citation.sameClaimAs` tells claims apart by id and context. `EvidenceConverter`
   builds items and evidence from lists of claims, scored hits, a lineage or a revision contradiction.
   A stored claim, including an abstraction, always converts to an item, a rank is the entry's position
   in the list passed in, and each call reads the clock once. `EvidenceProvider` is the interface a
