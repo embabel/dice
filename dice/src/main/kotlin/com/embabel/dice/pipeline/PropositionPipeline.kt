@@ -549,6 +549,7 @@ class PropositionPipeline private constructor(
         // ConcurrentHashMap so a concurrent execution strategy can record failures safely without an
         // external lock; the resolution stage reads it only after every extraction has been joined.
         val failures = ConcurrentHashMap<String, Throwable>()
+        val interruptedBefore = Thread.currentThread().isInterrupted
         val extractions: List<ExtractionStageResult?> =
             executionStrategy.execute(chunks) { chunk ->
                 attemptCatching { extractStage(chunk, crossChunkContext) }
@@ -559,6 +560,24 @@ class PropositionPipeline private constructor(
                     }
             }
 
+        // An interrupt raised during extraction is held until this run is over, so it fails only the
+        // chunk it came from and not the resolution of the others. An interrupt the caller already
+        // had is left in place.
+        val extractionInterrupted = !interruptedBefore && Thread.interrupted()
+        try {
+            return resolveAndReport(chunks, extractions, failures, crossChunkContext)
+        } finally {
+            if (extractionInterrupted) Thread.currentThread().interrupt()
+        }
+    }
+
+    /** The serial second half of [process]: resolves each extraction and reports the run. */
+    private fun resolveAndReport(
+        chunks: List<Chunk>,
+        extractions: List<ExtractionStageResult?>,
+        failures: Map<String, Throwable>,
+        crossChunkContext: SourceAnalysisContext,
+    ): PropositionResults {
         // Resolution stage — always serial, so all chunks share the same entity identity.
         // Resolve each non-null extraction through the shared crossChunkResolver; map null
         // slots to typed ChunkPropositionResult.Failed.

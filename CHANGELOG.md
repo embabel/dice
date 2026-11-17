@@ -141,7 +141,8 @@ and the consumer PRs that deliver it).
   interrupted on a pool thread, its slot is null as before, the pool thread's flag is cleared, and the
   flag of the thread that called `execute` is set when `execute` returns or throws. A batched
   strategy holds it until its last window, so a later chunk run on the calling thread is not failed
-  by an earlier interrupt. **Compatibility:
+  by an earlier interrupt, and `PropositionPipeline.process` holds it until its resolution stage is
+  done, so it fails only the chunk it came from. **Compatibility:
   behavioral.** Upgrade: code that checks `Thread.interrupted()` after `execute` now sees the
   interrupt and should handle it as it would any other.
 
