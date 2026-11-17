@@ -150,19 +150,22 @@ public final class ApiListing {
         Path apiDir = Path.of(args[2]);
         String module = args[3];
 
+        // Only reading a type name can fail with a message the user can act on. Anything the ABI
+        // tools throw keeps its stack trace.
+        List<String> full = blocks(dumper.apply(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of())));
+        List<String> withoutExperimental = blocks(
+                dumper.apply(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of(EXPERIMENTAL))));
         List<String> stableBlocks = new ArrayList<>();
         List<String> experimentalBlocks = new ArrayList<>();
         try {
             // A type is experimental when the marker sits on the type itself: leaving marked declarations
             // out drops the whole type. A marker on an enum entry or a member only drops that member, so
             // its owner stays stable. A nested type or companion follows its experimental owner.
-            Set<String> all = new HashSet<>();
-            List<String> full = blocks(dumper.apply(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of())));
+            Set<String> experimentalTypes = new HashSet<>();
             for (String block : full) {
-                all.add(typeName(block));
+                experimentalTypes.add(typeName(block));
             }
-            Set<String> experimentalTypes = new HashSet<>(all);
-            for (String block : blocks(dumper.apply(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of(EXPERIMENTAL))))) {
+            for (String block : withoutExperimental) {
                 experimentalTypes.remove(typeName(block));
             }
             for (String block : full) {

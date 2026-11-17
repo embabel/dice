@@ -18,6 +18,7 @@ package com.embabel.dice.apilisting
 import com.embabel.dice.apilisting.fixture.Stable
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -134,6 +135,17 @@ class ApiListingTest {
         assertEquals(1, listing("check", sourceRoot("Stable.kt", "ExperimentalFunctions.kt")))
         val hint = err.toString().lines().filter { it.contains("earlier build") }
         assertTrue(hint.any { it.contains("$FIXTURE_PACKAGE/MixedFunctionsKt") }, err.toString())
+    }
+
+    @Test
+    fun `a failure inside the ABI tools keeps its stack trace`() {
+        val args = arrayOf("check", fixtureClasses().toString(), api.toString(), "m")
+        val failure = IllegalStateException("cannot read metadata")
+
+        val thrown = assertThrows(IllegalStateException::class.java) {
+            ApiListing.run(args, PrintStream(out), PrintStream(err)) { _, _ -> throw failure }
+        }
+        assertSame(failure, thrown)
     }
 
     @Test
