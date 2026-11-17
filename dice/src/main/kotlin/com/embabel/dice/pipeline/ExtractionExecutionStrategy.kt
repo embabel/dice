@@ -21,35 +21,61 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.function.Function
 
+/** One chunk's result, and whether the extraction left the worker thread interrupted. */
+private class Slot<T>(val value: T?, val interrupted: Boolean)
+
 /**
- * Waits for every one of [futures] to finish and hands back their values in order. Nothing is
- * rethrown until the last future is done, so no extraction is still running when the caller
- * sees a failure.
+ * Runs [extract] on every chunk on [executor] and hands back the results in input order. This is
+ * the shared body of the two concurrent strategies.
  *
- * An Error thrown during extraction arrives wrapped in a [CompletionException]; this unwraps it
- * so the caller sees the Error as it was. If several futures fail, the first Error in input order
- * is thrown (or the first failure of any kind when none is an Error), with the others attached
- * as suppressed.
+ * Nothing is rethrown until every extraction that was started has finished, so no extraction is
+ * still running when the caller sees a failure. That covers an [Error] thrown by an extraction and
+ * a [RejectedExecutionException] from an executor that will not take more work: the chunks already
+ * handed over are waited for, then the failure is thrown. If several things fail, the first Error
+ * in input order is thrown (or the first failure of any kind when none is an Error), with the
+ * others attached as suppressed. An Error arrives wrapped in a [CompletionException]; this unwraps
+ * it so the caller sees the Error as it was.
+ *
+ * An interrupt raised during an extraction is cleared from the worker thread, so the pool is not
+ * left with an interrupted thread, and set again on the calling thread once every chunk is done.
  */
-private fun <T> joinAllRethrowingErrors(futures: List<CompletableFuture<T>>): List<T> {
+private fun <T> runAll(executor: ExecutorService, chunks: List<Chunk>, extract: (Chunk) -> T): List<T?> {
+    val futures = ArrayList<CompletableFuture<Slot<T>>>(chunks.size)
+    var rejection: RejectedExecutionException? = null
+    for (chunk in chunks) {
+        try {
+            futures += CompletableFuture.supplyAsync({
+                val value = attemptCatching { extract(chunk) }.getOrNull()
+                Slot(value, Thread.interrupted())
+            }, executor)
+        } catch (e: RejectedExecutionException) {
+            rejection = e
+            break
+        }
+    }
     val failures = mutableListOf<Throwable>()
+    var interrupted = false
     val results = futures.map { future ->
         try {
-            future.join()
+            val slot = future.join()
+            interrupted = interrupted || slot.interrupted
+            slot.value
         } catch (e: Throwable) {
             failures += (e as? CompletionException)?.cause as? Error ?: e
             null
         }
     }
+    if (interrupted) Thread.currentThread().interrupt()
+    rejection?.let { failures += it }
     if (failures.isNotEmpty()) {
         val primary = failures.firstOrNull { it is Error } ?: failures.first()
         failures.filter { it !== primary }.forEach { primary.addSuppressed(it) }
         throw primary
     }
-    @Suppress("UNCHECKED_CAST")
-    return results as List<T>
+    return results
 }
 
 /**
@@ -63,7 +89,9 @@ private fun <T> joinAllRethrowingErrors(futures: List<CompletableFuture<T>>): Li
  * - **Failure is a `null` slot**: when `extract(chunk)` throws an Exception, that slot is `null`.
  *   An Error is not caught and reaches the caller of [execute], though a concurrent strategy
  *   first waits for the other chunks it already started to finish. An interrupt gives a `null` slot
- *   and sets the thread's interrupt flag again. The pipeline maps a `null` slot to a
+ *   and sets the interrupt flag of the thread that called [execute], even when the chunk ran on a
+ *   pool thread. If the executor rejects a chunk, the strategy waits for the chunks it already
+ *   handed over and then throws the rejection. The pipeline maps a `null` slot to a
  *   [ChunkPropositionResult.Failed]. No element is ever dropped or reordered.
  *
  * ## Executor ownership
@@ -167,13 +195,7 @@ class ParallelExtractionStrategy private constructor(
     )
 
     override fun <T> execute(chunks: List<Chunk>, extract: (Chunk) -> T): List<T?> =
-        joinAllRethrowingErrors(
-            chunks.map { chunk ->
-                CompletableFuture.supplyAsync({
-                    attemptCatching { extract(chunk) }.getOrNull()
-                }, executor)
-            },
-        )
+        runAll(executor, chunks, extract)
 
     /** Shuts down an internally-created pool; a no-op when the executor was caller-supplied. */
     override fun close() {
@@ -212,15 +234,7 @@ class BatchedExtractionStrategy private constructor(
     constructor(batchSize: Int = 5) : this(batchSize, Executors.newFixedThreadPool(batchSize), ownsExecutor = true)
 
     override fun <T> execute(chunks: List<Chunk>, extract: (Chunk) -> T): List<T?> =
-        chunks.chunked(batchSize).flatMap { window ->
-            joinAllRethrowingErrors(
-                window.map { chunk ->
-                    CompletableFuture.supplyAsync({
-                        attemptCatching { extract(chunk) }.getOrNull()
-                    }, executor)
-                },
-            )
-        }
+        chunks.chunked(batchSize).flatMap { window -> runAll(executor, window, extract) }
 
     /** Shuts down an internally-created pool; a no-op when the executor was caller-supplied. */
     override fun close() {
