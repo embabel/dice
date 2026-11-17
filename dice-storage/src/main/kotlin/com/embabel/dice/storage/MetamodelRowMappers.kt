@@ -18,6 +18,8 @@ package com.embabel.dice.storage
 import com.embabel.agent.core.Cardinality
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.metamodel.DriftReport
+import com.embabel.dice.metamodel.MetamodelChange
+import com.embabel.dice.metamodel.MetamodelDiff
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.PropertySignature
 import com.fasterxml.jackson.core.type.TypeReference
@@ -25,6 +27,9 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import java.time.Instant
 
 private val objectMapper = ObjectMapper()
+
+/** The format version written into every stored declared diff, and the only one a read accepts. */
+private const val DECLARED_DIFF_FORMAT_VERSION = 1
 
 /**
  * Translate metamodel versions to and from the property maps the Neo4j graph store reads and
@@ -134,10 +139,22 @@ object MetamodelVersionRowMapper {
  *
  * A fourth property, `contextKey`, encodes the report's scope; see [GLOBAL_CONTEXT_KEY].
  *
+ * The report's declared diff is stored as one JSON string in `declaredDiff`, holding `version`,
+ * `fromVersion`, `toVersion` and `changes`. `version` is the format version, currently 1, and a
+ * read refuses any other. Both versions are written in full with the field encodings a
+ * `(:MetamodelVersion)` node uses, so the report reads back without a version store. Each change is
+ * an object whose `kind` is the change's simple class name, with its fields written one by one and
+ * its sets sorted. This is a persisted format: renaming a change kind or a field leaves stored
+ * reports unreadable. Adding a field keeps format 1, because a read ignores fields it does not know.
+ * A format change that an older build would misread by ignoring the new fields needs a new format
+ * version.
+ *
  * Reads are strict: a property this mapper wrote must be present when it is read again. `contextId`
- * is the one exception, because its absence is how a global report is encoded. A node missing
- * anything else is corrupt, so the accessor throws and the store's surrounding guard skips the row
- * with a warning.
+ * and `declaredDiff` are the two exceptions. An absent `contextId` is how a global report is
+ * encoded, and an absent `declaredDiff` is how a report with no declared diff is encoded, which
+ * covers every report node an older build wrote. A node missing anything else is corrupt,
+ * so the accessor throws and the store's surrounding guard skips the row with a warning. A
+ * `declaredDiff` that is present and cannot be read throws the same way.
  */
 object DriftReportRowMapper {
 
@@ -184,6 +201,8 @@ object DriftReportRowMapper {
         // Null for a global report, which leaves the node with no `contextId` property at all. The
         // store's global read matches on that absence.
         "contextId" to report.contextId?.value,
+        // Null when the report has no declared diff, which leaves the node with no property.
+        "declaredDiff" to report.declaredDiff?.let(::serializeDeclaredDiff),
     )
 
     /**
@@ -210,6 +229,7 @@ object DriftReportRowMapper {
             driftedRelationshipTypes = deserializeSet(row.str("driftedRelationshipTypes")),
             capturedAt = Instant.parse(row.str("capturedAt")),
             contextId = contextId,
+            declaredDiff = row.strOrNull("declaredDiff")?.let(::deserializeDeclaredDiff),
         )
     }
 }
@@ -241,7 +261,16 @@ private fun deserializeSet(serialized: String): Set<String> =
  * MERGE a no-op and makes a stored node diffable by hand.
  */
 private fun serializeMapOfLabelSets(map: Map<String, Set<String>>): String =
-    objectMapper.writeValueAsString(map.toSortedMap().mapValues { (_, labels) -> labels.sorted() })
+    objectMapper.writeValueAsString(labelSetsStructure(map))
+
+/**
+ * Build the JSON structure [serializeMapOfLabelSets] writes: keys sorted, each set as a sorted list.
+ *
+ * @param map The name sets to encode, keyed by entity type.
+ * @return A map in key order whose values are sorted lists.
+ */
+private fun labelSetsStructure(map: Map<String, Set<String>>): Map<String, List<String>> =
+    map.toSortedMap().mapValues { (_, labels) -> labels.sorted() }
 
 /**
  * Serialize the former names each entity type goes by, in the same shape as the label sets, and
@@ -269,6 +298,18 @@ private fun deserializeMapOfLabelSets(serialized: String): Map<String, Set<Strin
 }
 
 /**
+ * Read a nested label or alias map back from parsed JSON, checking each value is a list of names.
+ *
+ * @param field The name of the field the map came from, for the error message.
+ * @param encoded The parsed JSON object.
+ * @return The name sets, keyed by entity type.
+ */
+private fun labelSetsFrom(field: String, encoded: Map<*, *>): Map<String, Set<String>> =
+    encoded.entries.associate { (typeName, names) ->
+        typeName.toString() to stringsIn("$field for '$typeName'", names).toSet()
+    }
+
+/**
  * Serialize the per-type property signatures as a JSON object of arrays of four-field objects:
  *
  * ```json
@@ -289,22 +330,35 @@ private fun deserializeMapOfLabelSets(serialized: String): Map<String, Set<Strin
  * inserts a value into [Cardinality] or [PropertySignature.Kind].
  */
 private fun serializeMapOfSignatureSets(map: Map<String, Set<PropertySignature>>): String =
-    objectMapper.writeValueAsString(
-        map.toSortedMap().mapValues { (_, signatures) ->
-            signatures.sorted().map { signature ->
-                // A LinkedHashMap, so the keys land in the JSON in this order and the encoding is
-                // fully determined by the content.
-                linkedMapOf<String, Any>(
-                    "name" to signature.name,
-                    "kind" to signature.kind.name,
-                    "type" to signature.type,
-                    "cardinality" to signature.cardinality.name,
-                ).apply {
-                    if (signature.aliases.isNotEmpty()) put("aliases", signature.aliases.sorted())
-                }
-            }
-        }
-    )
+    objectMapper.writeValueAsString(signatureSetsStructure(map))
+
+/**
+ * Build the JSON structure [serializeMapOfSignatureSets] writes: types sorted, each type's
+ * signatures sorted and encoded by [signatureStructure].
+ *
+ * @param map The property signatures to encode, keyed by entity type.
+ * @return A map in key order whose values are lists of signature objects.
+ */
+private fun signatureSetsStructure(map: Map<String, Set<PropertySignature>>): Map<String, List<Map<String, Any>>> =
+    map.toSortedMap().mapValues { (_, signatures) -> signatures.sorted().map(::signatureStructure) }
+
+/**
+ * Build one stored property signature: its four named fields, plus `aliases` when it declares any.
+ *
+ * @param signature The signature to encode.
+ * @return The signature's fields in a fixed key order.
+ */
+private fun signatureStructure(signature: PropertySignature): Map<String, Any> =
+    // A LinkedHashMap, so the keys land in the JSON in this order and the encoding is
+    // fully determined by the content.
+    linkedMapOf<String, Any>(
+        "name" to signature.name,
+        "kind" to signature.kind.name,
+        "type" to signature.type,
+        "cardinality" to signature.cardinality.name,
+    ).apply {
+        if (signature.aliases.isNotEmpty()) put("aliases", signature.aliases.sorted())
+    }
 
 /**
  * Inverse of [serializeMapOfSignatureSets], and strict about it: a signature object missing a
@@ -318,21 +372,46 @@ private fun deserializeMapOfSignatureSets(serialized: String): Map<String, Set<P
         object : TypeReference<Map<String, List<Any?>>>() {},
     )
     return mapOfLists.mapValues { (typeName, encoded) ->
-        encoded.map { element ->
-            val fields = element as? Map<*, *>
-            require(fields != null) {
-                "entityTypeProperties for '$typeName' holds ${element?.javaClass?.simpleName ?: "null"} " +
-                    "where a property signature object was expected"
-            }
-            PropertySignature(
-                name = fields.signatureField(typeName, "name"),
-                kind = enumConstant(fields.signatureField(typeName, "kind"), typeName, "kind"),
-                type = fields.signatureField(typeName, "type"),
-                cardinality = enumConstant(fields.signatureField(typeName, "cardinality"), typeName, "cardinality"),
-                aliases = fields.signatureAliases(typeName),
-            )
-        }.toSet()
+        encoded.map { element -> signatureFrom(typeName, element) }.toSet()
     }
+}
+
+/**
+ * Read a nested map of property signature sets back from parsed JSON.
+ *
+ * @param encoded The parsed JSON object, keyed by entity type.
+ * @return The property signatures, keyed by entity type.
+ */
+private fun signatureSetsFrom(encoded: Map<*, *>): Map<String, Set<PropertySignature>> =
+    encoded.entries.associate { (typeName, signatures) ->
+        val elements = signatures as? List<*>
+        require(elements != null) {
+            "entityTypeProperties for '$typeName' holds ${signatures?.javaClass?.simpleName ?: "null"} " +
+                "where a list of property signatures was expected"
+        }
+        typeName.toString() to elements.map { signatureFrom(typeName.toString(), it) }.toSet()
+    }
+
+/**
+ * Read one stored property signature object, strict about every field.
+ *
+ * @param typeName The entity type the signature belongs to, for the error message.
+ * @param element The parsed JSON value that should be a signature object.
+ * @return The signature.
+ */
+private fun signatureFrom(typeName: String, element: Any?): PropertySignature {
+    val fields = element as? Map<*, *>
+    require(fields != null) {
+        "entityTypeProperties for '$typeName' holds ${element?.javaClass?.simpleName ?: "null"} " +
+            "where a property signature object was expected"
+    }
+    return PropertySignature(
+        name = fields.signatureField(typeName, "name"),
+        kind = enumConstant(fields.signatureField(typeName, "kind"), typeName, "kind"),
+        type = fields.signatureField(typeName, "type"),
+        cardinality = enumConstant(fields.signatureField(typeName, "cardinality"), typeName, "cardinality"),
+        aliases = fields.signatureAliases(typeName),
+    )
 }
 
 /** Read one field of a stored property signature, blowing up by name if it isn't there. */
@@ -369,6 +448,286 @@ private inline fun <reified E : Enum<E>> enumConstant(stored: String, typeName: 
     }
 
 /**
+ * Write a drift report's declared diff as the JSON string stored in `declaredDiff`, format version
+ * first.
+ *
+ * @param diff The declared diff to store.
+ * @return The JSON, the same bytes every time for the same diff.
+ */
+private fun serializeDeclaredDiff(diff: MetamodelDiff): String =
+    objectMapper.writeValueAsString(
+        linkedMapOf(
+            "version" to DECLARED_DIFF_FORMAT_VERSION,
+            "fromVersion" to versionStructure(diff.fromVersion),
+            "toVersion" to versionStructure(diff.toVersion),
+            "changes" to diff.changes.map(::changeStructure),
+        ),
+    )
+
+/**
+ * Build a version as nested JSON with the field encodings a `(:MetamodelVersion)` node uses. No
+ * content hash is written, because the version computes its own when it is read back.
+ *
+ * @param version The version to encode.
+ * @return The version's fields in a fixed key order, with `entityTypeAliases` only when it declares some.
+ */
+private fun versionStructure(version: MetamodelVersion): Map<String, Any> =
+    linkedMapOf<String, Any>(
+        "schemaName" to version.schemaName,
+        "entityTypeNames" to version.entityTypeNames,
+        "entityTypeLabels" to labelSetsStructure(version.entityTypeLabels),
+        "entityTypeProperties" to signatureSetsStructure(version.entityTypeProperties),
+        "relationshipNames" to version.relationshipNames,
+    ).apply {
+        if (version.entityTypeAliases.isNotEmpty()) put("entityTypeAliases", labelSetsStructure(version.entityTypeAliases))
+    }
+
+/**
+ * Build one change as a JSON object: `kind` first, then the change's fields one by one, sets sorted.
+ *
+ * The `when` has no `else`, so a new change kind fails compilation here until it has an encoding.
+ *
+ * @param change The change to encode.
+ * @return The change's fields in a fixed key order.
+ */
+private fun changeStructure(change: MetamodelChange): Map<String, Any> = when (change) {
+    is MetamodelChange.EntityTypeAdded -> linkedMapOf(
+        "kind" to "EntityTypeAdded",
+        "typeName" to change.typeName,
+    )
+    is MetamodelChange.EntityTypeRemoved -> linkedMapOf(
+        "kind" to "EntityTypeRemoved",
+        "typeName" to change.typeName,
+    )
+    is MetamodelChange.EntityTypeRenamed -> linkedMapOf(
+        "kind" to "EntityTypeRenamed",
+        "before" to change.before,
+        "after" to change.after,
+    )
+    is MetamodelChange.AmbiguousEntityTypeRename -> linkedMapOf(
+        "kind" to "AmbiguousEntityTypeRename",
+        "formerNames" to change.formerNames.sorted(),
+        "candidates" to change.candidates.sorted(),
+    )
+    is MetamodelChange.EntityTypeAliasesChanged -> linkedMapOf(
+        "kind" to "EntityTypeAliasesChanged",
+        "typeName" to change.typeName,
+        "before" to change.before.sorted(),
+        "after" to change.after.sorted(),
+    )
+    is MetamodelChange.EntityTypeModified -> linkedMapOf(
+        "kind" to "EntityTypeModified",
+        "typeName" to change.typeName,
+        "addedLabels" to change.addedLabels.sorted(),
+        "removedLabels" to change.removedLabels.sorted(),
+        "addedProperties" to change.addedProperties.sorted().map(::signatureStructure),
+        "removedProperties" to change.removedProperties.sorted().map(::signatureStructure),
+    )
+    is MetamodelChange.PropertyRenamed -> linkedMapOf(
+        "kind" to "PropertyRenamed",
+        "typeName" to change.typeName,
+        "before" to signatureStructure(change.before),
+        "after" to signatureStructure(change.after),
+    )
+    is MetamodelChange.AmbiguousPropertyRename -> linkedMapOf(
+        "kind" to "AmbiguousPropertyRename",
+        "typeName" to change.typeName,
+        "formerNames" to change.formerNames.sorted(),
+        "candidates" to change.candidates.sorted(),
+    )
+    is MetamodelChange.PropertySignatureChanged -> linkedMapOf(
+        "kind" to "PropertySignatureChanged",
+        "typeName" to change.typeName,
+        "propertyName" to change.propertyName,
+        "before" to signatureStructure(change.before),
+        "after" to signatureStructure(change.after),
+    )
+    is MetamodelChange.RelationshipAdded -> linkedMapOf(
+        "kind" to "RelationshipAdded",
+        "descriptor" to change.descriptor,
+    )
+    is MetamodelChange.RelationshipRemoved -> linkedMapOf(
+        "kind" to "RelationshipRemoved",
+        "descriptor" to change.descriptor,
+    )
+}
+
+/**
+ * Read a stored `declaredDiff` back into a [MetamodelDiff].
+ *
+ * Every field the format defines must be present. Fields it does not define are ignored, at the top
+ * level, in a version, in a change and in a property signature, so a value written by a build that
+ * added a field still reads here. Bad JSON, a format version other than 1, an unknown change kind,
+ * a missing field and a value a constructor refuses all throw an [IllegalArgumentException] whose
+ * message starts with `declaredDiff`, so the store's guard skips the row and the warning says which
+ * property was unreadable.
+ *
+ * @param serialized The stored JSON string.
+ * @return The declared diff.
+ */
+private fun deserializeDeclaredDiff(serialized: String): MetamodelDiff =
+    try {
+        val fields = objectMapper.readValue(serialized, Map::class.java)
+        val version = fields.jsonField("version")
+        require(version == DECLARED_DIFF_FORMAT_VERSION) {
+            "unsupported format version $version (this build reads version $DECLARED_DIFF_FORMAT_VERSION)"
+        }
+        MetamodelDiff(
+            fromVersion = versionFrom(fields.jsonObject("fromVersion")),
+            toVersion = versionFrom(fields.jsonObject("toVersion")),
+            changes = fields.jsonList("changes").map { element ->
+                val change = element as? Map<*, *>
+                require(change != null) {
+                    "'changes' holds ${element?.javaClass?.simpleName ?: "null"} where a change object was expected"
+                }
+                changeFrom(change)
+            },
+        )
+    } catch (e: Exception) {
+        throw IllegalArgumentException("declaredDiff could not be read: ${e.message}", e)
+    }
+
+/**
+ * Rebuild a version from the nested JSON [versionStructure] writes.
+ *
+ * @param fields The parsed version object.
+ * @return The version, which computes its own content hash.
+ */
+private fun versionFrom(fields: Map<*, *>): MetamodelVersion = MetamodelVersion(
+    schemaName = fields.jsonString("schemaName"),
+    entityTypeNames = fields.jsonStrings("entityTypeNames"),
+    entityTypeLabels = labelSetsFrom("entityTypeLabels", fields.jsonObject("entityTypeLabels")),
+    entityTypeProperties = signatureSetsFrom(fields.jsonObject("entityTypeProperties")),
+    relationshipNames = fields.jsonStrings("relationshipNames"),
+    entityTypeAliases = if (fields["entityTypeAliases"] == null) emptyMap()
+    else labelSetsFrom("entityTypeAliases", fields.jsonObject("entityTypeAliases")),
+)
+
+/**
+ * Rebuild one change from the JSON object [changeStructure] writes.
+ *
+ * @param fields The parsed change object.
+ * @return The change, built through its own constructor and so through its own checks.
+ */
+private fun changeFrom(fields: Map<*, *>): MetamodelChange = when (val kind = fields.jsonString("kind")) {
+    "EntityTypeAdded" -> MetamodelChange.EntityTypeAdded(fields.jsonString("typeName"))
+    "EntityTypeRemoved" -> MetamodelChange.EntityTypeRemoved(fields.jsonString("typeName"))
+    "EntityTypeRenamed" -> MetamodelChange.EntityTypeRenamed(fields.jsonString("before"), fields.jsonString("after"))
+    "AmbiguousEntityTypeRename" -> MetamodelChange.AmbiguousEntityTypeRename(
+        formerNames = fields.jsonStrings("formerNames").toSet(),
+        candidates = fields.jsonStrings("candidates").toSet(),
+    )
+    "EntityTypeAliasesChanged" -> MetamodelChange.EntityTypeAliasesChanged(
+        typeName = fields.jsonString("typeName"),
+        before = fields.jsonStrings("before").toSet(),
+        after = fields.jsonStrings("after").toSet(),
+    )
+    "EntityTypeModified" -> {
+        val typeName = fields.jsonString("typeName")
+        MetamodelChange.EntityTypeModified(
+            typeName = typeName,
+            addedLabels = fields.jsonStrings("addedLabels").toSet(),
+            removedLabels = fields.jsonStrings("removedLabels").toSet(),
+            addedProperties = fields.jsonList("addedProperties").map { signatureFrom(typeName, it) }.toSet(),
+            removedProperties = fields.jsonList("removedProperties").map { signatureFrom(typeName, it) }.toSet(),
+        )
+    }
+    "PropertyRenamed" -> {
+        val typeName = fields.jsonString("typeName")
+        MetamodelChange.PropertyRenamed(
+            typeName = typeName,
+            before = signatureFrom(typeName, fields.jsonObject("before")),
+            after = signatureFrom(typeName, fields.jsonObject("after")),
+        )
+    }
+    "AmbiguousPropertyRename" -> MetamodelChange.AmbiguousPropertyRename(
+        typeName = fields.jsonString("typeName"),
+        formerNames = fields.jsonStrings("formerNames").toSet(),
+        candidates = fields.jsonStrings("candidates").toSet(),
+    )
+    "PropertySignatureChanged" -> {
+        val typeName = fields.jsonString("typeName")
+        MetamodelChange.PropertySignatureChanged(
+            typeName = typeName,
+            propertyName = fields.jsonString("propertyName"),
+            before = signatureFrom(typeName, fields.jsonObject("before")),
+            after = signatureFrom(typeName, fields.jsonObject("after")),
+        )
+    }
+    "RelationshipAdded" -> MetamodelChange.RelationshipAdded(fields.jsonString("descriptor"))
+    "RelationshipRemoved" -> MetamodelChange.RelationshipRemoved(fields.jsonString("descriptor"))
+    else -> throw IllegalArgumentException("change kind '$kind' is not one this build knows")
+}
+
+/**
+ * Read a field of a parsed JSON object that must be present.
+ *
+ * @param field The field name.
+ * @return The field's value.
+ */
+private fun Map<*, *>.jsonField(field: String): Any =
+    requireNotNull(this[field]) { "field '$field' is missing" }
+
+/**
+ * Read a field of a parsed JSON object that must be a string.
+ *
+ * @param field The field name.
+ * @return The string.
+ */
+private fun Map<*, *>.jsonString(field: String): String {
+    val value = jsonField(field)
+    require(value is String) { "field '$field' holds ${value.javaClass.simpleName} where a string was expected" }
+    return value
+}
+
+/**
+ * Read a field of a parsed JSON object that must be an object.
+ *
+ * @param field The field name.
+ * @return The object as a map.
+ */
+private fun Map<*, *>.jsonObject(field: String): Map<*, *> {
+    val value = jsonField(field)
+    require(value is Map<*, *>) { "field '$field' holds ${value.javaClass.simpleName} where an object was expected" }
+    return value
+}
+
+/**
+ * Read a field of a parsed JSON object that must be an array.
+ *
+ * @param field The field name.
+ * @return The array's elements.
+ */
+private fun Map<*, *>.jsonList(field: String): List<*> {
+    val value = jsonField(field)
+    require(value is List<*>) { "field '$field' holds ${value.javaClass.simpleName} where an array was expected" }
+    return value
+}
+
+/**
+ * Read a field of a parsed JSON object that must be an array of strings.
+ *
+ * @param field The field name.
+ * @return The strings, in stored order.
+ */
+private fun Map<*, *>.jsonStrings(field: String): List<String> = stringsIn("field '$field'", jsonField(field))
+
+/**
+ * Check that a parsed JSON value is an array of strings.
+ *
+ * @param what What the value is, for the error message.
+ * @param value The parsed JSON value.
+ * @return The strings, in stored order.
+ */
+private fun stringsIn(what: String, value: Any?): List<String> {
+    require(value is List<*>) { "$what holds ${value?.javaClass?.simpleName ?: "null"} where an array of names was expected" }
+    return value.map { name ->
+        require(name is String) { "$what holds ${name?.javaClass?.simpleName ?: "null"} where a name was expected" }
+        name
+    }
+}
+
+/**
  * Read a property that must be there, and blow up if it isn't.
  *
  * Returning `""` for an absent property would let a node missing `schemaName` come back as a
@@ -380,8 +739,8 @@ private fun Map<*, *>.str(key: String): String =
     requireNotNull(this[key]) { "required property '$key' is missing from the stored node" }.toString()
 
 /**
- * Read a property whose absence carries meaning: a stamp that declared no aliases, or a drift
- * report whose check covered the whole graph and so wrote no `contextId`. Every other property
- * goes through [str].
+ * Read a property whose absence carries meaning: a stamp that declared no aliases, a drift report
+ * whose check covered the whole graph and so wrote no `contextId`, or a drift report with no
+ * `declaredDiff`. Every other property goes through [str].
  */
 private fun Map<*, *>.strOrNull(key: String): String? = this[key]?.toString()

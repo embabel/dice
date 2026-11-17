@@ -270,15 +270,22 @@ class DrivineCollectorTraceStore(
         }.onFailure { logger.warn("Skipping unreadable CollectorDecision row: {}", it.message) }.getOrNull()
     }
 
-    /** The newest decision that retired [propositionId]. Never one where it only survived. */
+    /**
+     * The newest decision that retired [propositionId]. Never one where it only survived.
+     *
+     * Newest means the latest instant held in `createdAt`, compared as an instant. A decision whose
+     * `createdAt` is absent or unreadable counts as the oldest. Ties go to the larger decision id.
+     */
     @Transactional(readOnly = true)
     override fun findDecisionRetiring(propositionId: String): CollectorDecision? {
         val node = queryRows(
             """
             MATCH (:CollectorRetired {propositionId: ${'$'}propositionId})-[:RETIRED_IN]->(d:CollectorDecision)
-            RETURN d ORDER BY d.createdAt DESC LIMIT 1
+            RETURN d
+            ORDER BY ${InstantText.sortKey("d.createdAt")} DESC, d.id DESC
+            LIMIT 1
             """.trimIndent(),
-            mapOf("propositionId" to propositionId),
+            mapOf("propositionId" to propositionId, InstantText.PATTERN_PARAMETER to InstantText.PATTERN),
         ).firstOrNull() ?: return null
         return runCatching {
             val decisionId = node["id"]?.toString().orEmpty()
