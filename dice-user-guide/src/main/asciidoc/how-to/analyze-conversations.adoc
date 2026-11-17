@@ -87,7 +87,8 @@ A restatement that names a source reinforces a stored claim only when the stored
 already hold that source. A source is a grounding id, a provenance entry or a source id.
 A restatement that names no source still reinforces. Processing the same chunk again, with the
 same chunk id and text, leaves the stored claim unchanged: the result is still merged or
-reinforced, and its `revised` equals its `original`.
+reinforced, and its `revised` equals its `original`. When two chunks in one run restate the same
+stored claim, the second builds on the first, so the saved claim keeps both sources.
 
 ==== Scope per user
 

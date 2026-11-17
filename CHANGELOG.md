@@ -934,16 +934,26 @@ and the consumer PRs that deliver it).
   and `DefaultMemoryConsolidator` leave the stored proposition unchanged: the same confidence,
   decay, `reinforceCount` and timestamps, so the decay clock is not refreshed. The reviser's result
   is still `RevisionResult.Merged` or `RevisionResult.Reinforced`, with `revised` equal to
-  `original`, so the pipeline still emits `PropositionMerged` or `PropositionReinforced` and
-  `MergeCandidateGate` still routes it to review. A configured `TrustScorer` is not called for it.
+  `original`. The pipeline emits no `PropositionMerged` or `PropositionReinforced` event for such a
+  replay, and `PropositionExtractionStats` does not count it. A configured `TrustScorer` is not
+  called for it.
   A proposition that names no source counts as new evidence, unless it has the stored proposition's
   own id, which is the stored proposition meeting itself and changes nothing. When propositions
   carry no provenance entries, their grounding ids alone identify the source, so a host that grounds
-  every observation in one id reinforces once. `propositionsToPersist()` leaves out a replayed
-  proposition when another result in the same chunk or batch changed the same stored copy, so
+  every observation in one id reinforces once. `propositionsToPersist()` lists each stored
+  proposition once, as the last copy the results produced for it, and leaves out a replay of a
+  stored proposition that another result in the same chunk or batch changed or contradicted, so
   saving the list keeps that change. **Compatibility: behavioral.** Processing the same chunk
   twice, with the same chunk id and text, counts once. A host that relied on a second pass over
   the same chunk to raise `reinforceCount` or confidence sees no change from that pass.
+
+- Within one `PropositionPipeline` run, a proposition is revised against the latest copy of a
+  stored proposition that earlier results in the run produced, not the stored copy. When two
+  propositions in one chunk, or in two chunks of one `process` call, back up the same stored
+  proposition, the second result's `original` is the first result's `revised`, and the saved
+  proposition keeps both propositions' evidence and counts both reinforcements. It used to keep
+  only the last one's. `PropositionReviser.reviseAll` does the same for the propositions it is
+  given, in both its default and in `LlmPropositionReviser`. **Compatibility: behavioral.**
 
 - `PropositionPipeline.processOnce` and `processText` leave a proposition untouched when it already
   holds every `additionalGrounding` id. They stamped `metadataRevised` on it. They add
@@ -956,12 +966,12 @@ and the consumer PRs that deliver it).
   grounding. Session propositions that match the same stored proposition fold into it in order, and
   `ConsolidationResult.reinforced` holds one entry for that stored proposition. It held one entry
   per session proposition, each built from the stored copy, so saving them kept one and lost the
-  rest. A proposition it merges carries the grounding, provenance entries and source ids of every
+  rest. A stored proposition that already held all of that evidence is left out of `reinforced`.
+  Session propositions that merge with the same stored proposition make one `PropositionMerge`,
+  whose sources are that stored proposition and each of them in order. Each one made its own merge
+  before. A proposition it merges carries the grounding, provenance entries and source ids of every
   proposition it was merged from, and its four timestamps are one instant.
   **Compatibility: behavioral.** `reinforced` and `storedCount` can be smaller.
-
-- `SessionConsolidationPass` does not save a reinforced proposition that equals its snapshot copy,
-  and reports `NoOp` when a session brought nothing else. **Compatibility: behavioral.**
 
 - `DefaultMemoryConsolidator` checks its settings in its constructor and throws
   `IllegalArgumentException`. `promotionThreshold` and `similarityThreshold` must be 0.0 or greater
