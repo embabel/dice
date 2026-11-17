@@ -19,6 +19,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.model.SimpleNamedEntityData
+import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.agent.rag.service.RelationshipData
 import com.embabel.agent.rag.service.RetrievableIdentifier
 import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository
@@ -111,6 +112,8 @@ class InMemoryPersistUnitWriterTest {
      * @param findFault Thrown by every `findById`, when set.
      * @param deleteFault Thrown by every `delete`, when set.
      * @param relationshipFault Thrown by every `createRelationship`, when set.
+     * @param embeddingService The embedder every `save` calls, or null for none.
+     * @param beforeRelationship Runs at the start of every `createRelationship`, when set.
      */
     private class FaultyEntityRepository(
         schema: DataDictionary,
@@ -118,7 +121,9 @@ class InMemoryPersistUnitWriterTest {
         private val findFault: Exception? = null,
         private val deleteFault: Exception? = null,
         private val relationshipFault: Throwable? = null,
-    ) : InMemoryNamedEntityDataRepository(schema) {
+        embeddingService: EmbeddingService? = null,
+        private val beforeRelationship: ((FaultyEntityRepository) -> Unit)? = null,
+    ) : InMemoryNamedEntityDataRepository(schema, embeddingService) {
 
         /** Every write call, in order. */
         val writes = mutableListOf<String>()
@@ -147,6 +152,7 @@ class InMemoryPersistUnitWriterTest {
             b: RetrievableIdentifier,
             relationship: RelationshipData,
         ) {
+            beforeRelationship?.invoke(this)
             writes += "relationship ${relationship.name}"
             relationshipFault?.let { throw it }
             super.createRelationship(a, b, relationship)
@@ -423,5 +429,110 @@ class InMemoryPersistUnitWriterTest {
         assertThat(stores.claims.findById("p-1")).isSameAs(oldTea)
         assertThat(stores.claims.findById("p-2")).isSameAs(oldCat)
         assertThat(stores.links.linkedTo(key)).containsExactly("p-2")
+    }
+
+    @Test
+    fun `E13 an embedder outage on a new entity makes no embedder call for an untouched entity and leaves nothing`() {
+        val embedder = mockk<EmbeddingService>()
+        every { embedder.embed(any<String>()) } returns floatArrayOf(1f, 0f) andThenThrows IllegalStateException("embedder down")
+        val stores = Stores(FaultyEntityRepository(schema, embeddingService = embedder))
+        val oldAlice = entity("entity-alice", description = "before")
+        stores.entities.save(oldAlice)
+        val unit = PersistUnit.of(
+            listOf(proposition("Alice likes tea", "p-1"), proposition("Bob owns a cat", "p-2", entityId = "entity-bob")),
+            listOf(entity("entity-bob")),
+            listOf(oldAlice),
+        )
+
+        val failed = failed(stores.writer.write(unit))
+
+        assertThat(failed.step).isEqualTo(PersistStep.ENTITIES)
+        assertThat(failed.leftInStore).isEmpty()
+        assertThat(failed.cause.suppressed).isEmpty()
+        assertThat(stores.entities.writes.count { it == "save entity-alice" }).isEqualTo(1)
+        assertThat(stores.entities.findById("entity-alice")).isSameAs(oldAlice)
+        assertThat(stores.entities.findById("entity-bob")).isNull()
+    }
+
+    @Test
+    fun `E14 a replaced entity is put back and a restore the embedder fails is reported`() {
+        val embedder = mockk<EmbeddingService>()
+        every { embedder.embed(any<String>()) } returnsMany listOf(floatArrayOf(1f, 0f), floatArrayOf(0f, 1f)) andThenThrows
+            IllegalStateException("embedder down")
+        val stores = Stores(FaultyEntityRepository(schema, embeddingService = embedder))
+        val oldAlice = entity("entity-alice", description = "before")
+        stores.entities.save(oldAlice)
+        val unit = PersistUnit.of(
+            listOf(proposition("Alice likes tea", "p-1")),
+            emptyList(),
+            listOf(entity("entity-alice", description = "after")),
+        ).withRun(missingRun)
+
+        val failed = failed(stores.writer.write(unit))
+
+        assertThat(failed.step).isEqualTo(PersistStep.RUN_LINKS)
+        assertThat(failed.leftInStore).containsExactly(PersistStep.ENTITIES)
+        assertThat(failed.cause.suppressed).hasSize(1)
+        assertThat(stores.entities.findById("entity-alice")).isSameAs(oldAlice)
+    }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun `E15 the loose overload rejects an entity repository that is not the in-memory one`() {
+        val other = mockk<NamedEntityDataRepository>()
+
+        assertThatThrownBy { PersistUnitWriter.inMemory(InMemoryPropositionRepository(), other) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("needs an InMemoryNamedEntityDataRepository")
+            .hasMessageContaining("use PersistUnitWriter.sequential inside a transaction")
+        assertThatThrownBy { PersistUnitWriter.inMemory(InMemoryPropositionRepository(), other, null) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+    }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun `E16 the loose overload takes the in-memory repository typed as the interface`() {
+        val claims = InMemoryPropositionRepository()
+        val entities: NamedEntityDataRepository = InMemoryNamedEntityDataRepository(schema)
+
+        val outcome = PersistUnitWriter.inMemory(claims, entities).write(aliceUnit())
+
+        assertThat(outcome).isInstanceOf(PersistOutcome.Stored::class.java)
+        assertThat(claims.findById("p-1")).isNotNull()
+    }
+
+    @Test
+    fun `E17 the in-memory claim store returns the ids it was given`() {
+        val claims = InMemoryPropositionRepository()
+
+        val persisted = claims.saveAllReturningCanonical(
+            listOf(proposition("Alice likes tea", "p-1"), proposition("Alice likes coffee", "p-2")),
+        )
+
+        assertThat(persisted.canonicalIds).containsExactly("p-1", "p-2")
+    }
+
+    @Test
+    fun `E18 an entity another writer saved during the unit is left as that writer wrote it`() {
+        val other = entity("entity-alice", description = "someone else")
+        val stores = Stores(
+            FaultyEntityRepository(
+                schema,
+                relationshipFault = IllegalStateException("graph down"),
+                beforeRelationship = { it.save(other) },
+            ),
+        )
+        stores.entities.save(entity("entity-alice", description = "before"))
+        val unit = PersistUnit.of(
+            listOf(proposition("Alice likes tea", "p-1")),
+            emptyList(),
+            listOf(entity("entity-alice", description = "after")),
+        )
+
+        val failed = failed(stores.writer.write(unit))
+
+        assertThat(failed.step).isEqualTo(PersistStep.STRUCTURAL_RELATIONSHIPS)
+        assertThat(stores.entities.findById("entity-alice")).isSameAs(other)
+        assertThat(stores.claims.findById("p-1")).isNull()
     }
 }

@@ -16,6 +16,7 @@
 package com.embabel.dice.proposition.extraction
 
 import com.embabel.agent.rag.service.NamedEntityDataRepository
+import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import org.jetbrains.annotations.ApiStatus
@@ -104,8 +105,13 @@ fun interface PersistUnitWriter {
          * A failed unit restores claims, their embeddings and entities to what they held before the call.
          * Units through one writer run one at a time, so use one writer per set of stores.
          * Another thread can read a unit part way through.
-         * A write another caller makes to the same ids during a unit is overwritten when the unit is undone.
-         * Restoring an entity goes through `save`, so an entity repository with an embedder embeds it again.
+         * The undo assumes no other writer touches the unit's ids during the unit.
+         * A claim another caller saved under one of those ids is overwritten by the undo.
+         * An entity another caller saved, and a run link another caller added, are left as they are.
+         * An entity is undone only while the store holds the instance the unit wrote.
+         * Putting back a replaced entity goes through `save`, so an entity repository with an embedder embeds it again.
+         * When that embedder call fails, [PersistOutcome.Failed.leftInStore] holds [PersistStep.ENTITIES], also when only the embedding is affected.
+         * A subclass of the in-memory entity repository that stores elsewhere is not undone.
          * Relationships written before the failure stay, because the entity repository cannot remove them.
          * [PersistOutcome.Failed.leftInStore] then holds [PersistStep.STRUCTURAL_RELATIONSHIPS].
          *
@@ -116,7 +122,7 @@ fun interface PersistUnitWriter {
         @JvmStatic
         fun inMemory(
             propositionRepository: InMemoryPropositionRepository,
-            entityRepository: NamedEntityDataRepository,
+            entityRepository: InMemoryNamedEntityDataRepository,
         ): PersistUnitWriter = inMemory(propositionRepository, entityRepository, null)
 
         /**
@@ -126,8 +132,13 @@ fun interface PersistUnitWriter {
          * before the call.
          * Units through one writer run one at a time, so use one writer per set of stores.
          * Another thread can read a unit part way through.
-         * A write another caller makes to the same ids during a unit is overwritten when the unit is undone.
-         * Restoring an entity goes through `save`, so an entity repository with an embedder embeds it again.
+         * The undo assumes no other writer touches the unit's ids during the unit.
+         * A claim another caller saved under one of those ids is overwritten by the undo.
+         * An entity another caller saved, and a run link another caller added, are left as they are.
+         * An entity is undone only while the store holds the instance the unit wrote.
+         * Putting back a replaced entity goes through `save`, so an entity repository with an embedder embeds it again.
+         * When that embedder call fails, [PersistOutcome.Failed.leftInStore] holds [PersistStep.ENTITIES], also when only the embedding is affected.
+         * A subclass of the in-memory entity repository that stores elsewhere is not undone.
          * Relationships written before the failure stay, because the entity repository cannot remove them.
          * [PersistOutcome.Failed.leftInStore] then holds [PersistStep.STRUCTURAL_RELATIONSHIPS].
          * Run links the link store evicted for old finished runs during the unit are not brought back.
@@ -141,8 +152,70 @@ fun interface PersistUnitWriter {
         @JvmStatic
         fun inMemory(
             propositionRepository: InMemoryPropositionRepository,
-            entityRepository: NamedEntityDataRepository,
+            entityRepository: InMemoryNamedEntityDataRepository,
             runLinkStore: InMemoryPropositionRunLinkStore?,
         ): PersistUnitWriter = InMemoryPersistUnitWriter(propositionRepository, entityRepository, runLinkStore)
+
+        /**
+         * A writer over the in-memory stores, with no run link store.
+         *
+         * @param propositionRepository Where propositions go.
+         * @param entityRepository Where entities and the structural relationships go. It must be an
+         * `InMemoryNamedEntityDataRepository`.
+         * @return A writer that undoes a failed unit.
+         * @throws IllegalArgumentException if [entityRepository] is any other repository.
+         */
+        @Deprecated(
+            "Pass an InMemoryNamedEntityDataRepository. The undo is only correct on that repository.",
+            ReplaceWith(
+                "inMemory(propositionRepository, entityRepository as InMemoryNamedEntityDataRepository)",
+                "com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository",
+            ),
+        )
+        @JvmStatic
+        fun inMemory(
+            propositionRepository: InMemoryPropositionRepository,
+            entityRepository: NamedEntityDataRepository,
+        ): PersistUnitWriter = inMemory(propositionRepository, requireInMemory(entityRepository), null)
+
+        /**
+         * A writer over the in-memory stores.
+         *
+         * @param propositionRepository Where propositions go.
+         * @param entityRepository Where entities and the structural relationships go. It must be an
+         * `InMemoryNamedEntityDataRepository`.
+         * @param runLinkStore Where a unit's propositions are linked to its run, or null for none.
+         * @return A writer that undoes a failed unit.
+         * @throws IllegalArgumentException if [entityRepository] is any other repository.
+         */
+        @Deprecated(
+            "Pass an InMemoryNamedEntityDataRepository. The undo is only correct on that repository.",
+            ReplaceWith(
+                "inMemory(propositionRepository, entityRepository as InMemoryNamedEntityDataRepository, runLinkStore)",
+                "com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository",
+            ),
+        )
+        @JvmStatic
+        fun inMemory(
+            propositionRepository: InMemoryPropositionRepository,
+            entityRepository: NamedEntityDataRepository,
+            runLinkStore: InMemoryPropositionRunLinkStore?,
+        ): PersistUnitWriter = inMemory(propositionRepository, requireInMemory(entityRepository), runLinkStore)
+
+        /**
+         * Checks that an entity repository is the in-memory one.
+         *
+         * @param entityRepository The repository a caller passed.
+         * @return The repository as the in-memory type.
+         * @throws IllegalArgumentException if it is any other repository.
+         */
+        private fun requireInMemory(entityRepository: NamedEntityDataRepository): InMemoryNamedEntityDataRepository {
+            require(entityRepository is InMemoryNamedEntityDataRepository) {
+                "PersistUnitWriter.inMemory needs an InMemoryNamedEntityDataRepository, because its undo is only " +
+                    "correct on that repository. Got ${entityRepository.javaClass.name}. For any other " +
+                    "repository use PersistUnitWriter.sequential inside a transaction"
+            }
+            return entityRepository
+        }
     }
 }

@@ -16,6 +16,7 @@
 package com.embabel.dice;
 
 import com.embabel.agent.core.DataDictionary;
+import com.embabel.agent.rag.service.NamedEntityDataRepository;
 import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionPersistenceResult;
@@ -30,6 +31,7 @@ import com.embabel.dice.proposition.extraction.PersistUnitFailedException;
 import com.embabel.dice.proposition.extraction.PersistUnitWriter;
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.io.IOException;
 import java.time.Instant;
@@ -130,5 +132,17 @@ class PersistUnitJavaInteropTest {
         PersistUnitWriter writer = u -> PersistOutcome.stored(PropositionPersistenceResult.EMPTY);
 
         assertTrue(writer.write(unit()).isStored());
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void theLooseOverloadRejectsARepositoryThatIsNotInMemory() {
+        NamedEntityDataRepository other = Mockito.mock(NamedEntityDataRepository.class);
+
+        IllegalArgumentException thrown =
+                assertThrows(IllegalArgumentException.class, () -> PersistUnitWriter.inMemory(claims, other));
+
+        assertTrue(thrown.getMessage().contains("needs an InMemoryNamedEntityDataRepository"));
+        assertThrows(IllegalArgumentException.class, () -> PersistUnitWriter.inMemory(claims, other, null));
     }
 }

@@ -16,7 +16,7 @@
 package com.embabel.dice.proposition.extraction
 
 import com.embabel.agent.rag.model.NamedEntityData
-import com.embabel.agent.rag.service.NamedEntityDataRepository
+import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 
 /**
@@ -32,7 +32,7 @@ import com.embabel.dice.proposition.store.InMemoryPropositionRepository
  */
 internal class InMemoryPersistUnitWriter(
     private val propositionRepository: InMemoryPropositionRepository,
-    private val entityRepository: NamedEntityDataRepository,
+    private val entityRepository: InMemoryNamedEntityDataRepository,
     private val runLinkStore: InMemoryPropositionRunLinkStore?,
 ) : PersistUnitWriter {
 
@@ -76,7 +76,7 @@ internal class InMemoryPersistUnitWriter(
      * @return The claims, entities and run links as they are now.
      */
     private fun record(unit: PersistUnit): BeforeImage {
-        // The unit's ids suffice because InMemoryPropositionRepository.save stores and returns the id it was given.
+        // The unit's ids suffice for the claims: InMemoryPropositionRepository.save stores and returns the id it was given.
         val claims = propositionRepository.snapshot(unit.propositions.map { it.id })
         val entities = (unit.newEntities + unit.updatedEntities)
             .map { it.id }
@@ -95,22 +95,45 @@ internal class InMemoryPersistUnitWriter(
      * @return The step and exception of each undo that threw, in the order they ran.
      */
     private fun undo(unit: PersistUnit, before: BeforeImage): List<Pair<PersistStep, Exception>> {
+        val unitIds = unit.propositions.map { it.id }.toSet()
         val run = unit.run
         val linkStore = runLinkStore
         val linkFailure = if (run != null && linkStore != null && before.runLinks != null) {
+            // Links the run gained since the before-image, limited to the unit's own ids, so a link
+            // another caller added to the run is kept.
             attempt(PersistStep.RUN_LINKS) {
-                linkStore.unlink(run, unit.propositions.map { it.id } - before.runLinks)
+                linkStore.unlink(run, (linkStore.linkedTo(run) - before.runLinks).intersect(unitIds))
             }
         } else {
             null
         }
         val claimFailure = attempt(PersistStep.PROPOSITIONS) { propositionRepository.restore(before.claims) }
+        val written = (unit.newEntities + unit.updatedEntities).associateBy { it.id }
         val entityFailures = before.entities.mapNotNull { (id, entity) ->
-            attempt(PersistStep.ENTITIES) {
-                if (entity == null) entityRepository.delete(id) else entityRepository.save(entity)
-            }
+            attempt(PersistStep.ENTITIES) { restoreEntity(id, entity, written[id]) }
         }
         return listOfNotNull(linkFailure, claimFailure) + entityFailures
+    }
+
+    /**
+     * Puts one entity back when the store still holds what the unit wrote.
+     *
+     * An entity the store holds as the same instance as before was not written by the unit. It is
+     * left alone, so the undo makes no embedder call for it. An entity that is neither the
+     * before-image nor the unit's instance was saved by another writer and is left as it is.
+     *
+     * @param id The entity id.
+     * @param before The entity the id held before the unit, or null when it was absent.
+     * @param written The instance the unit wrote for the id.
+     */
+    private fun restoreEntity(id: String, before: NamedEntityData?, written: NamedEntityData?) {
+        val now = entityRepository.findById(id)
+        when {
+            now === before -> Unit
+            now !== written -> Unit
+            before == null -> entityRepository.delete(id)
+            else -> entityRepository.save(before)
+        }
     }
 
     /**
