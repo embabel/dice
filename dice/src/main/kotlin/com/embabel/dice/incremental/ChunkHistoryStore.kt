@@ -49,21 +49,25 @@ interface ChunkHistoryStore {
     fun recordProcessed(record: ProcessedChunkRecord)
 
     /**
-     * Removes all history for one context. The default hands over to [clearByContextValue].
-     * New stores implement [clearByContextValue] and leave this one alone.
+     * Removes all history for one context. A store written in Kotlin overrides this one.
+     * Default no-op for backward compatibility.
      */
-    fun clearByContext(contextId: ContextId) {
-        clearByContextValue(contextId.value)
-    }
+    fun clearByContext(contextId: ContextId) {}
 
     /**
-     * Removes all history for one context, named by its id as a string. This is the one a store
-     * implements, in Java or Kotlin. The default does nothing. An implementation must never call
-     * [clearByContext], because that method calls this one.
+     * Removes all history for one context, named by its id as a string. The default calls
+     * [clearByContext], so a store that overrides only that method is reached from Java too.
+     *
+     * Java cannot override [clearByContext], because it takes a ContextId, so a store written in
+     * Java overrides this method instead. Such a store is reached through this method only, so code
+     * that may be handed a Java store should call this one.
      *
      * @param contextIdValue The context to clear, as a plain string.
+     * @throws IllegalArgumentException if contextIdValue is blank
      */
-    fun clearByContextValue(contextIdValue: String) {}
+    fun clearByContextValue(contextIdValue: String) {
+        clearByContext(ContextId(contextIdValue))
+    }
 
     /**
      * Remove all history across every context. Default no-op for backward compatibility.
@@ -93,12 +97,10 @@ class InMemoryChunkHistoryStore : ChunkHistoryStore {
         )
     }
 
-    override fun clearByContextValue(contextIdValue: String) {
-        bookmarks.keys.removeIf { it.contextId.value == contextIdValue }
-        processedHashes.removeIf { it.contextId.value == contextIdValue }
+    override fun clearByContext(contextId: ContextId) {
+        bookmarks.keys.removeIf { it.contextId == contextId }
+        processedHashes.removeIf { it.contextId == contextId }
     }
-
-    override fun clearByContext(contextId: ContextId) = clearByContextValue(contextId.value)
 
     override fun clearAll() {
         bookmarks.clear()

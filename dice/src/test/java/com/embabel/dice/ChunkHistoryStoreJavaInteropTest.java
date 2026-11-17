@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Checks that a Java developer can write a chunk history store by overriding the plain
- * String form, and that the built-in in-memory store clears a context without recursing.
+ * String form, and that the built-in in-memory store clears a context through either form.
  */
 class ChunkHistoryStoreJavaInteropTest {
 
@@ -63,12 +63,21 @@ class ChunkHistoryStoreJavaInteropTest {
     }
 
     @Test
-    void javaOverrideReceivesTheContextValueOnceThroughTheKotlinCaller() {
+    void javaOverrideReceivesTheContextValueOnceThroughTheStringForm() {
         RecordingStore store = new RecordingStore();
 
-        ContextIdFixtures.clearByContext(store, "acme");
+        store.clearByContextValue("acme");
 
         assertEquals(List.of("acme"), store.clearedContextValues);
+    }
+
+    @Test
+    void theKotlinFormOnAJavaStoreKeepsItsNoOpDefault() {
+        RecordingStore store = new RecordingStore();
+
+        assertDoesNotThrow(() -> ContextIdFixtures.clearByContext(store, "acme"));
+
+        assertTrue(store.clearedContextValues.isEmpty());
     }
 
     @Test
