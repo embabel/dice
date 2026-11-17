@@ -169,7 +169,9 @@ boolean close = match.getScore().compareTo(floor) >= 0;
 
 `FilteredVectorSearch.findNearest` returns the propositions closest to a piece of text among the
 propositions that match a filter. The filter is applied before the nearest K are picked. An exact
-scan does this. An approximate index does it when it applies the filter while it searches.
+scan does this. An approximate index does it when it applies the filter while it searches. The filter
+must name a context, so a request that spans several contexts goes through scoped reads, see
+<<features-scoped-reads>>.
 
 [source,java]
 ----

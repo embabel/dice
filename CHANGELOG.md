@@ -233,7 +233,8 @@ and the consumer PRs that deliver it).
   - `ReadCriteria` says which propositions a read keeps. It has no context field, so only a scoped
     read accepts it. `ReadQuery` adds an order and a limit. `ReadKeywordQuery` is the tokens, the
     criteria and the limit of a keyword match. `ReadVectorSearchRequest` is the text, the criteria,
-    the result size and the score floor of a similarity search.
+    the result size and the score floor of a similarity search. Pair it with `ScopedVectorSearch` and
+    a `ContextReadScope` to search several contexts.
   - `ReadBudget` caps the rows a read returns or counts and the vector candidates a similarity
     search has.
   - `ScopedReads` (query, count, keyword match) and `ScopedVectorSearch` (similarity search) are the
@@ -324,7 +325,8 @@ and the consumer PRs that deliver it).
   or null. `StoreCapabilities.describe(store)` returns the descriptor, which also carries a
   `VectorFiltering` mode: whether similarity search filters before or after it picks the nearest
   K. A store that publishes nothing is described as `UNDECLARED`. `VectorSearchRequest` is
-  immutable and built with a chain in Java or a block in Kotlin. `SimilarityScore` is the one
+  immutable and built with a chain in Java or a block in Kotlin. `forText` and the Kotlin block
+  throw `IllegalArgumentException` when the filter names no context. `SimilarityScore` is the one
   similarity scale, cosine similarity from -1 to 1, with a factory for each native scale. A store
   that cannot do what it is asked throws `UnsupportedCapabilityException`. See "Store contract"
   in the user guide reference. **Compatibility: additive.**
