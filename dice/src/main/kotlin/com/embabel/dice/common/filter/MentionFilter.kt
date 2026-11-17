@@ -93,3 +93,22 @@ interface MentionFilter {
             else ValidationResult.Invalid(rejectionReason(mention) ?: "rejected by a mention filter")
         }
 }
+
+/**
+ * Asks a filter about a proposition's mentions and makes sure it answered once per mention.
+ *
+ * Every caller that lines results up with mentions goes through here, so a filter that answers
+ * for too few or too many mentions fails loudly instead of being cut short or padded.
+ *
+ * @param proposition the proposition whose mentions are judged
+ * @param context the analysis context of the run
+ * @return one result per mention, in mention order
+ * @throws IllegalStateException when the filter returns a different number of results than mentions
+ */
+internal fun MentionFilter.checkedVerdicts(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> {
+    val results = validateMentions(proposition, context)
+    check(results.size == proposition.mentions.size) {
+        "${this::class.java.name} returned ${results.size} results for ${proposition.mentions.size} mentions"
+    }
+    return results
+}

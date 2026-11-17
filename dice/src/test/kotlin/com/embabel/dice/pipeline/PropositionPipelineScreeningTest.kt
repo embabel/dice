@@ -233,7 +233,7 @@ class PropositionPipelineScreeningTest {
             MentionFixtures.proposition("Alice likes jazz", MentionFixtures.mention("Alice")),
         )
 
-        dropPipeline(extractor).processChunk(chunk(), context())
+        dropPipeline(extractor).processChunk(chunk(), context().withKnownEntities(MentionFixtures.knownPerson("p1", "Alice Smith")))
 
         val reached = resolver.entities.filter { it.name == "Alice" }
         assertEquals(1, reached.size, "entities: ${resolver.entities}")
@@ -411,33 +411,26 @@ class PropositionPipelineScreeningTest {
     }
 
     @Test
-    fun `E16 a mention left unresolved stays unresolved when the extractor reorders its output`() {
+    fun `E16 an extractor that reorders its output never leaves a rejected mention with an id`() {
         val inner = SuggestingPropositionExtractor.of(bothGrounded(), proposition("Carol met Bob", carol, bob))
-        val reversing = object : PropositionExtractor by inner {
-            override fun resolvePropositions(
-                suggestedPropositions: SuggestedPropositions,
-                resolutions: com.embabel.dice.common.Resolutions<SuggestedEntityResolution>,
-                context: SourceAnalysisContext,
-            ): List<Proposition> = inner.resolvePropositions(suggestedPropositions, resolutions, context)
-                .reversed()
-                .map { it.copy(mentions = it.mentions.reversed()) }
-        }
+        val reversing = reshaping(inner) { resolved -> resolved.reversed().map { it.copy(mentions = it.mentions.reversed()) } }
         val carolOnlyWithBob = object : MentionFilter {
             override fun isValid(mention: SuggestedMention, propositionText: String): Boolean =
                 !(mention.span == "Carol" && propositionText == aliceMetCarol)
             override fun rejectionReason(mention: SuggestedMention): String? = "not here"
         }
 
-        val result = pipeline(reversing)
-            .withMentionFilter(carolOnlyWithBob)
-            .processChunk(chunk(), context().withMintNewEntities(true))
+        val logged = warnings {
+            val result = pipeline(reversing)
+                .withMentionFilter(carolOnlyWithBob)
+                .processChunk(chunk(), context().withMintNewEntities(true))
 
-        val withAlice = result.propositions.single { it.text == aliceMetCarol }
-        val withBob = result.propositions.single { it.text == "Carol met Bob" }
-        assertNull(withAlice.mentions.single { it.span == "Carol" }.resolvedId)
-        assertNotNull(withAlice.mentions.single { it.span == "Alice" }.resolvedId)
-        assertNotNull(withBob.mentions.single { it.span == "Carol" }.resolvedId)
-        assertNotNull(withBob.mentions.single { it.span == "Bob" }.resolvedId)
+            val withAlice = result.propositions.single { it.text == aliceMetCarol }
+            assertNull(withAlice.mentions.single { it.span == "Carol" }.resolvedId)
+            assertNotNull(withAlice.mentions.single { it.span == "Alice" }.resolvedId)
+            assertNotNull(result.propositions.single { it.text == "Carol met Bob" }.mentions.single { it.span == "Bob" }.resolvedId)
+        }
+        assertEquals(1, logged.count { it.formattedMessage.contains("out of line") }, "logged: ${logged.map { it.formattedMessage }}")
     }
 
     @Test
@@ -447,15 +440,14 @@ class PropositionPipelineScreeningTest {
             override fun rejectionReason(mention: SuggestedMention): String? = "blocked id"
         }
         val ungroundedAlice = alice.copy(suggestedId = "blocked-id")
+        val known = context().withKnownEntities(MentionFixtures.knownPerson("blocked-id", "Alice Smith"))
 
         val result = dropPipeline(SuggestingPropositionExtractor.of(proposition("Bob slept", ungroundedAlice), proposition(aliceMetBob, alice)))
             .withMentionFilter(blocksId)
-            .processChunk(chunk(), context().withMintNewEntities(true))
+            .processChunk(chunk(), known)
 
         assertTrue(resolver.entities.none { it.id == "blocked-id" }, "resolver saw: ${resolver.entities.map { it.id }}")
-        val filtered = result.rejectedMentions.single { it.check == RejectedMention.Check.FILTER }
-        assertEquals("blocked-id", filtered.mention.suggestedId)
-        assertNull(result.propositions.single { it.text == aliceMetBob }.mentions.single { it.span == "Alice" }.resolvedId)
+        assertTrue(result.rejectedMentions.none { it.check == RejectedMention.Check.FILTER }, "rejected: ${result.rejectedMentions}")
     }
 
     @Test
@@ -477,16 +469,10 @@ class PropositionPipelineScreeningTest {
     }
 
     @Test
-    fun `E19 propositions with the same text keep their own verdicts when the extractor reverses them`() {
+    fun `E19 an extractor that reverses propositions with the same text never leaves a rejected mention with an id`() {
         val objectAlice = alice.copy(role = "OBJECT")
-        val inner = SuggestingPropositionExtractor.of(proposition(aliceMetBob, alice), proposition(aliceMetBob, objectAlice))
-        val reversing = object : PropositionExtractor by inner {
-            override fun resolvePropositions(
-                suggestedPropositions: SuggestedPropositions,
-                resolutions: com.embabel.dice.common.Resolutions<SuggestedEntityResolution>,
-                context: SourceAnalysisContext,
-            ): List<Proposition> = inner.resolvePropositions(suggestedPropositions, resolutions, context).reversed()
-        }
+        val inner = SuggestingPropositionExtractor.of(proposition(aliceMetBob, alice, bob), proposition(aliceMetBob, bob, objectAlice))
+        val reversing = reshaping(inner) { resolved -> resolved.reversed() }
         val rejectsObjectAlice = object : MentionFilter {
             override fun isValid(mention: SuggestedMention, propositionText: String): Boolean =
                 !(mention.span == "Alice" && mention.role == "OBJECT")
@@ -497,10 +483,9 @@ class PropositionPipelineScreeningTest {
             .withMentionFilter(rejectsObjectAlice)
             .processChunk(chunk(), context().withMintNewEntities(true))
 
-        val subject = result.propositions.single { it.mentions.single().role.name == "SUBJECT" }
-        val objectOne = result.propositions.single { it.mentions.single().role.name == "OBJECT" }
-        assertNotNull(subject.mentions.single().resolvedId)
-        assertNull(objectOne.mentions.single().resolvedId)
+        val objectAlices = result.propositions.flatMap { it.mentions }.filter { it.span == "Alice" && it.role.name == "OBJECT" }
+        assertEquals(1, objectAlices.size)
+        assertNull(objectAlices.single().resolvedId)
     }
 
     @Test
@@ -563,5 +548,92 @@ class PropositionPipelineScreeningTest {
         override fun findAll(): List<Proposition> = store.values.toList()
         override fun delete(id: String): Boolean = store.remove(id) != null
         override fun count(): Int = store.size
+    }
+
+    /** Rejects the second mention of every proposition. */
+    private val secondRejected = object : MentionFilter {
+        override fun isValid(mention: SuggestedMention, propositionText: String): Boolean = true
+        override fun rejectionReason(mention: SuggestedMention): String? = null
+        override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext) =
+            proposition.mentions.mapIndexed { index, _ ->
+                if (index == 1) ValidationResult.Invalid("second") else ValidationResult.Valid
+            }
+    }
+
+    /**
+     * Wraps an extractor so that its resolved propositions pass through a change.
+     *
+     * @param inner the extractor to wrap
+     * @param change what to do to the resolved propositions
+     * @return the wrapped extractor
+     */
+    private fun reshaping(inner: PropositionExtractor, change: (List<Proposition>) -> List<Proposition>) =
+        object : PropositionExtractor by inner {
+            override fun resolvePropositions(
+                suggestedPropositions: SuggestedPropositions,
+                resolutions: com.embabel.dice.common.Resolutions<SuggestedEntityResolution>,
+                context: SourceAnalysisContext,
+            ): List<Proposition> = change(inner.resolvePropositions(suggestedPropositions, resolutions, context))
+        }
+
+    /**
+     * Runs a block and collects what the pipeline logged at warning level or above.
+     *
+     * @param block the code to run
+     * @return the logged events
+     */
+    private fun warnings(block: () -> Unit): List<ch.qos.logback.classic.spi.ILoggingEvent> {
+        val logger = org.slf4j.LoggerFactory.getLogger(PropositionPipeline::class.java) as ch.qos.logback.classic.Logger
+        val appender = ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>().also {
+            it.start()
+            logger.addAppender(it)
+        }
+        try {
+            block()
+        } finally {
+            logger.detachAppender(appender)
+        }
+        return appender.list.filter { it.level.isGreaterOrEqual(ch.qos.logback.classic.Level.WARN) }
+    }
+
+    @Test
+    fun `L1 a mention left unresolved stays unresolved when the extractor rewrites the text`() {
+        val extractor = reshaping(SuggestingPropositionExtractor.of(proposition(aliceMetBob, alice, alice))) { resolved ->
+            resolved.map { it.copy(text = it.text.uppercase()) }
+        }
+
+        val result = pipeline(extractor).withMentionFilter(secondRejected).processChunk(chunk(), context().withMintNewEntities(true))
+
+        val mentions = result.propositions.single().mentions
+        assertNotNull(mentions[0].resolvedId)
+        assertNull(mentions[1].resolvedId)
+    }
+
+    @Test
+    fun `L1 a mention left unresolved stays unresolved and a warning is logged when the extractor merges propositions`() {
+        val extractor = reshaping(
+            SuggestingPropositionExtractor.of(proposition(aliceMetCarol, alice, carol), proposition("Carol met Bob", carol, bob)),
+        ) { resolved -> listOf(resolved[0].copy(mentions = resolved[0].mentions + resolved[1].mentions)) }
+
+        val logged = warnings {
+            val result = pipeline(extractor).withMentionFilter(secondRejected).processChunk(chunk("c-merge"), context().withMintNewEntities(true))
+            val carols = result.propositions.single().mentions.filter { it.span == "Carol" }
+            assertTrue(carols.all { it.resolvedId == null }, "carols: $carols")
+        }
+        assertTrue(
+            logged.any { it.formattedMessage.contains("c-merge") && it.formattedMessage.contains("out of line") },
+            "logged: ${logged.map { it.formattedMessage }}",
+        )
+        assertTrue(logged.none { it.formattedMessage.contains("Carol") }, "logged: ${logged.map { it.formattedMessage }}")
+    }
+
+    @Test
+    fun `L2 under DROP a dropped mention's id reaches resolution only when it is a known entity's id`() {
+        val madeUp = alice.copy(suggestedId = "made-up")
+
+        dropPipeline(SuggestingPropositionExtractor.of(proposition("Bob slept", madeUp), proposition(aliceMetBob, alice)))
+            .processChunk(chunk(), context())
+
+        assertTrue(resolver.entities.none { it.id == "made-up" }, "resolver saw: ${resolver.entities.map { it.id }}")
     }
 }

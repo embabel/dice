@@ -42,7 +42,6 @@ import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.HashKey
 import com.embabel.dice.incremental.ProcessedChunkRecord
 import com.embabel.dice.proposition.MentionKey
-import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionExtractor
 import com.embabel.dice.proposition.PropositionRepository
@@ -265,13 +264,11 @@ class PropositionPipeline private constructor(
      * Carries the resolver-free output of the extraction stage for a single chunk so it can be produced
      * concurrently. The resolution stage picks this up serially to do entity resolution. See [process].
      */
-    private data class ExtractionStageResult(
+    private class ExtractionStageResult(
         val chunk: Chunk,
-        val suggestedPropositions: SuggestedPropositions,
+        val screening: ScreeningOutcome,
         val suggestedEntities: SuggestedEntities,
-        val ungrounded: List<UngroundedMention>,
         val rejected: List<RejectedMention>,
-        val unresolved: List<Set<Int>>,
     )
 
     /**
@@ -288,8 +285,9 @@ class PropositionPipeline private constructor(
         // Check every mention against its own proposition before any of them can become a
         // resolver candidate. In DROP mode the ungrounded mentions leave both the propositions
         // and the candidates for entity creation. In KEEP mode nothing changes but the report.
-        // The caller's filter runs here too, so the extractor is handed no filter and each
-        // mention is judged by the filter once.
+        // The caller's filter runs here too, so the extractor is handed no filter. Each mention is
+        // judged by the filter once as written, and once more only if it is offered a known
+        // entity's id that grounding dropped.
         val screening = MentionScreening.screen(
             extracted = extracted,
             context = context,
@@ -309,7 +307,7 @@ class PropositionPipeline private constructor(
         logger.debug("Created {} suggested entities", suggestedEntities.suggestedEntities.size)
 
         val rejected = screening.rejected.map { if (it.chunkId == chunk.id) it else it.copy(chunkId = chunk.id) }
-        return ExtractionStageResult(chunk, screening.result, suggestedEntities, screening.ungrounded, rejected, screening.unresolved)
+        return ExtractionStageResult(chunk, screening, suggestedEntities, rejected)
     }
 
     /**
@@ -347,125 +345,80 @@ class PropositionPipeline private constructor(
     }
 
     /**
-     * Resolution stage — resolve entities through the shared cross-chunk resolver, apply resolutions,
-     * and optionally revise against existing propositions. Must stay serial so all chunks share
-     * the same entity identity within a single [process] run.
-     */
-    /**
      * Takes the resolved id off each mention that a check left unresolved.
      *
-     * Resolution assigns ids by span and type, so a rejected mention would otherwise share the id
-     * of an accepted mention with the same span and type. An extractor returns the resolved
-     * propositions and their mentions in the screened order, and when the output agrees with that
-     * order, by text and by each mention's span, type and role, they are paired by position. For an
-     * extractor that reorders its output they are paired by content instead: a proposition by its
-     * text and its mentions' span, type and role, and a mention by those fields and its rank among
-     * mentions that share them. A resolved proposition with no screened twin is left as it is.
+     * Resolution assigns ids by span and type, so a mention left unresolved would otherwise get the
+     * id of an accepted mention with the same span and type. The extractor returns one proposition
+     * per screened proposition, in order, with the mentions in order, so the verdicts are applied
+     * by position. A resolved proposition whose mentions do not line up with its screened one by
+     * span and type, or every proposition when the counts differ, is handled safely instead: each of
+     * its mentions whose span and type was left unresolved anywhere in the chunk loses its id, and
+     * one warning with counts is logged.
      *
+     * @param chunkId the id of the chunk, for the warning
      * @param propositions the propositions the extractor resolved
      * @param screened the screened propositions they were resolved from
      * @param unresolved for each screened proposition, the positions of mentions to leave unresolved
      * @return [propositions] when nothing changes, otherwise a copy without those ids
      */
     private fun leaveUnresolved(
+        chunkId: String,
         propositions: List<Proposition>,
         screened: SuggestedPropositions,
         unresolved: List<Set<Int>>,
     ): List<Proposition> {
         if (unresolved.all { it.isEmpty() }) return propositions
-        if (inScreenedOrder(propositions, screened)) {
-            return propositions.mapIndexed { index, proposition ->
-                val positions = unresolved.getOrNull(index).orEmpty()
-                if (positions.none { proposition.mentions[it].resolvedId != null }) proposition
-                else proposition.copy(mentions = proposition.mentions.mapIndexed { position, mention ->
-                    if (position in positions) mention.copy(resolvedId = null) else mention
-                })
-            }
+        val sameCount = propositions.size == screened.propositions.size
+        val unresolvedKeys by lazy {
+            screened.propositions.flatMapIndexed { index, proposition ->
+                unresolved.getOrNull(index).orEmpty().map { MentionKey.from(proposition.mentions[it]) }
+            }.toSet()
         }
-        val pending = screened.propositions.mapIndexed { index, proposition ->
-            val marks = proposition.mentions.map { markOf(it.span, it.type, it.toEntityMention().role) }
-            Triple(proposition.text, marks.sortedBy { it.toString() }, ranked(marks, unresolved.getOrNull(index).orEmpty()))
-        }.toMutableList()
-        return propositions.map { proposition ->
-            val marks = proposition.mentions.map { markOf(it.span, it.type, it.role) }
-            val signature = marks.sortedBy { it.toString() }
-            val match = pending.indexOfFirst { it.first == proposition.text && it.second == signature }
-            if (match < 0) return@map proposition
-            val clear = pending.removeAt(match).third
-            if (clear.isEmpty()) return@map proposition
-            val all = ranked(marks, marks.indices.toSet())
-            val positions = marks.indices.filter { all[it] in clear && proposition.mentions[it].resolvedId != null }.toSet()
-            if (positions.isEmpty()) proposition
+        var misaligned = 0
+        val cleared = propositions.mapIndexed { index, proposition ->
+            val twin = if (sameCount) screened.propositions[index] else null
+            val keys = proposition.mentions.map { MentionKey(it.span.lowercase().trim(), it.type.lowercase().trim()) }
+            val clear = if (twin != null && keys == twin.mentions.map { MentionKey.from(it) }) {
+                unresolved.getOrNull(index).orEmpty()
+            } else {
+                misaligned++
+                keys.indices.filter { keys[it] in unresolvedKeys }.toSet()
+            }
+            if (clear.none { proposition.mentions[it].resolvedId != null }) proposition
             else proposition.copy(mentions = proposition.mentions.mapIndexed { position, mention ->
-                if (position in positions) mention.copy(resolvedId = null) else mention
+                if (position in clear) mention.copy(resolvedId = null) else mention
             })
         }
-    }
-
-    /**
-     * Tells whether resolved propositions line up with the screened ones by position.
-     *
-     * @param propositions the propositions the extractor resolved
-     * @param screened the screened propositions
-     * @return true when each resolved proposition has the text of the screened one at its position
-     * and the same mentions, by span, type and role, in the same order
-     */
-    private fun inScreenedOrder(propositions: List<Proposition>, screened: SuggestedPropositions): Boolean =
-        propositions.size == screened.propositions.size &&
-            propositions.zip(screened.propositions).all { (resolved, suggested) ->
-                resolved.text == suggested.text &&
-                    resolved.mentions.map { markOf(it.span, it.type, it.role) } ==
-                    suggested.mentions.map { markOf(it.span, it.type, it.toEntityMention().role) }
-            }
-
-    /**
-     * A mention's span, type and role, compared the way resolution compares span and type.
-     *
-     * @property span the span, lower case and trimmed
-     * @property type the type, lower case and trimmed
-     * @property role the role
-     */
-    private data class MentionMark(val span: String, val type: String, val role: MentionRole)
-
-    /**
-     * Builds a mention's mark from its span, type and resolved role.
-     *
-     * @param span the span as written
-     * @param type the type as written
-     * @param role the role as resolution sets it
-     * @return the normalized mark
-     */
-    private fun markOf(span: String, type: String, role: MentionRole): MentionMark =
-        MentionMark(span.lowercase().trim(), type.lowercase().trim(), role)
-
-    /**
-     * Names the mentions at the given positions by their mark and by how many earlier mentions
-     * share that mark.
-     *
-     * @param marks the mark of each mention, in order
-     * @param positions the positions to name
-     * @return one (mark, rank) pair per named position, in position order
-     */
-    private fun ranked(marks: List<MentionMark>, positions: Set<Int>): List<Pair<MentionMark, Int>> {
-        val seen = mutableMapOf<MentionMark, Int>()
-        return marks.mapIndexedNotNull { position, mark ->
-            val rank = seen.merge(mark, 1, Int::plus)!! - 1
-            if (position in positions) mark to rank else null
+        if (misaligned > 0) {
+            logger.warn(
+                "{} returned {} propositions for {} screened in chunk {}, {} out of line; " +
+                    "left every mention with a rejected span and type unresolved in those",
+                extractor::class.java.name, propositions.size, screened.propositions.size, chunkId, misaligned,
+            )
         }
+        return cleared
     }
 
+    /**
+     * Resolution stage: resolves entities through the shared cross-chunk resolver, applies the
+     * resolutions and optionally revises against existing propositions. It must stay serial so all
+     * chunks share the same entity identity within a single [process] run.
+     */
     private fun resolveStage(
         extraction: ExtractionStageResult,
         context: SourceAnalysisContext,
     ): ChunkPropositionResult.Success {
-        val (chunk, suggestedPropositions, suggestedEntities) = extraction
+        val chunk = extraction.chunk
+        val suggestedPropositions = extraction.screening.result
+        val suggestedEntities = extraction.suggestedEntities
+        val ungrounded = extraction.screening.ungrounded
 
         // Reported here rather than in the extraction stage because this stage is always serial,
         // so listeners are never called from several threads at once.
         logRejections(chunk.id, extraction.rejected)
-        if (extraction.ungrounded.isNotEmpty()) {
+        if (ungrounded.isNotEmpty()) {
             eventListener.onEvent(
-                UngroundedMentionsFound(context.contextId, chunk.id, extraction.ungrounded, ungroundedMentions)
+                UngroundedMentionsFound(context.contextId, chunk.id, ungrounded, ungroundedMentions)
             )
         }
 
@@ -504,9 +457,10 @@ class PropositionPipeline private constructor(
         // new proposition keeps its grounding.
         val propositions = stampProvenance(
             leaveUnresolved(
+                chunk.id,
                 extractor.resolvePropositions(suggestedPropositions, resolutions, context),
                 suggestedPropositions,
-                extraction.unresolved,
+                extraction.screening.unresolved,
             ),
             chunk,
             context,

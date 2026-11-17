@@ -19,12 +19,11 @@ and the consumer PRs that deliver it).
   level otherwise. Spans are logged at debug level only, by the pipeline and by
   `LlmPropositionExtractor`. **Compatibility: behavioral.**
 
-- With `withUngroundedMentions(UngroundedMentionHandling.DROP)`, when a dropped mention carried a
-  suggested id and no remaining mention with the same span and type has one, the resolver
-  candidates for that span and type get that id. It is the id the extractor would have used had the
-  mention stayed. It is the model's id and is not checked against the known entities. The mention
-  filter judges the mentions with that id in place.
-  **Compatibility: behavioral.**
+- With `withUngroundedMentions(UngroundedMentionHandling.DROP)`, when a dropped mention's suggested
+  id is the id of a known entity of the analysis and no candidate with the same span and type holds
+  an id of its own, the resolver candidates for that span and type get that id, unless the mention
+  filter turns it down. Any other suggested id is dropped with its mention. **Compatibility:
+  behavioral.**
 
 - The build now checks the committed public API listings of the published modules. `./mvnw verify` fails when
   a module's compiled public API differs from its `api/*.api` file. To update the listings after an API change,
@@ -242,7 +241,9 @@ and the consumer PRs that deliver it).
   `withMentionFilter(filter)` does, keeps it on the proposition unresolved, even when a mention with
   the same span and type is resolved elsewhere in the chunk, and `DROP` removes it.
   `PropositionExtractor.resolvePropositions` is now documented to return the propositions and their
-  mentions in the order it was given them. **Compatibility: additive.**
+  mentions in the order it was given them; when an extractor's output does not line up, every
+  mention with a rejected span and type in the propositions that do not line up is left unresolved
+  and a warning is logged. **Compatibility: additive.**
 
 - `ChunkPropositionResult.rejectedMentions` and `PropositionResults.rejectedMentions` list every
   mention a check rejected as a `RejectedMention`, with the chunk id, the position and text of the

@@ -60,9 +60,25 @@ class GroundedMentionFilter : MentionFilter {
     override fun rejectionReason(mention: SuggestedMention): String? =
         if (MentionGrounding.isBlank(mention.span)) UngroundedMention.Reason.BLANK_SPAN.name else null
 
+    /** The known entities last seen and their prepared names, reused while a run keeps the same list. */
+    @Volatile
+    private var lastKnown: Pair<List<KnownEntity>, List<KnownEntityGrounding.KnownNames>>? = null
+
     override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> =
-        KnownEntityGrounding.reasons(proposition, context.knownEntities)
+        KnownEntityGrounding.reasons(proposition, lazy { knownNames(context.knownEntities) })
             .map { reason -> if (reason == null) ValidationResult.Valid else ValidationResult.Invalid(reason.name) }
+
+    /**
+     * Prepares the names of the known entities once for each list of known entities, so a chunk's
+     * propositions, which share one analysis context, do not prepare them again.
+     *
+     * @param knownEntities the known entities of the analysis
+     * @return their prepared names
+     */
+    private fun knownNames(knownEntities: List<KnownEntity>): List<KnownEntityGrounding.KnownNames> {
+        lastKnown?.let { (entities, names) -> if (entities === knownEntities) return names }
+        return KnownEntityGrounding.knownNames(knownEntities).also { lastKnown = knownEntities to it }
+    }
 }
 
 /**
@@ -87,8 +103,26 @@ internal object KnownEntityGrounding {
         prepare: (String) -> PreparedText = MentionGrounding::prepare,
     ): List<UngroundedMention.Reason?> {
         if (proposition.mentions.isEmpty()) return emptyList()
+        return reasons(proposition, lazy { knownNames(knownEntities, prepare) }, prepare)
+    }
+
+    /**
+     * Finds why each mention of a proposition is ungrounded, with the known entities' names
+     * prepared ahead.
+     *
+     * @param proposition the proposition whose mentions are judged
+     * @param knownNames the prepared names of the known entities, read only when a mention misses
+     * @param prepare folds a text so spans can be looked up in it
+     * @return one reason per mention in order, null for a grounded mention
+     */
+    fun reasons(
+        proposition: SuggestedProposition,
+        knownNames: Lazy<List<KnownNames>>,
+        prepare: (String) -> PreparedText = MentionGrounding::prepare,
+    ): List<UngroundedMention.Reason?> {
+        if (proposition.mentions.isEmpty()) return emptyList()
         val text = prepare(proposition.text)
-        val known by lazy { knownEntities.mapNotNull { knownForms(it, text, prepare) } }
+        val known by lazy { knownNames.value.map { KnownForms(it.names, it.forms.any { form -> MentionGrounding.reasonUngrounded(form, text) == null }) } }
         return proposition.mentions.map { mention ->
             val reason = MentionGrounding.reasonUngrounded(prepare(mention.span), text)
             if (reason == UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION && namesOneOf(mention, known)) null else reason
@@ -104,19 +138,29 @@ internal object KnownEntityGrounding {
     private class KnownForms(val names: List<String>, val inText: Boolean)
 
     /**
-     * Collects a known entity's names, and checks whether the text names the entity.
+     * A known entity's names, normalized for comparing with a span and prepared for finding in a text.
      *
-     * @param known the known entity
-     * @param text the prepared proposition text
-     * @param prepare folds a text so spans can be looked up in it
-     * @return the entity's names and whether the text names it, or null when it has no non-blank name
+     * @property names the entity's name forms after name normalization
+     * @property forms the entity's name forms prepared for lookup in a text
      */
-    private fun knownForms(known: KnownEntity, text: PreparedText, prepare: (String) -> PreparedText): KnownForms? {
+    class KnownNames(val names: List<String>, val forms: List<PreparedText>)
+
+    /**
+     * Prepares the names of the known entities that have at least one non-blank name.
+     *
+     * @param knownEntities the known entities of the analysis
+     * @param prepare folds a text so spans can be looked up in it
+     * @return the prepared names, one entry per known entity with a name
+     */
+    fun knownNames(
+        knownEntities: List<KnownEntity>,
+        prepare: (String) -> PreparedText = MentionGrounding::prepare,
+    ): List<KnownNames> = knownEntities.mapNotNull { known ->
         val forms = (listOf<String?>(known.name) + known.aliases).filterNotNull().filter { it.isNotBlank() }
-        if (forms.isEmpty()) return null
-        return KnownForms(
+        if (forms.isEmpty()) null
+        else KnownNames(
             names = forms.map { NormalizedNameCandidateSearcher.normalizeName(it) }.filter { it.isNotBlank() },
-            inText = forms.any { MentionGrounding.reasonUngrounded(prepare(it), text) == null },
+            forms = forms.map(prepare),
         )
     }
 

@@ -96,10 +96,7 @@ class CompositeMentionFilter(
             val open = verdicts.indices.filter { verdicts[it].isValid }
             if (open.isEmpty()) return@fold verdicts
             val asked = if (open.size == verdicts.size) proposition else proposition.copy(mentions = open.map { proposition.mentions[it] })
-            val results = filter.validateMentions(asked, context)
-            check(results.size == open.size) {
-                "${filter::class.java.name} returned ${results.size} results for ${open.size} mentions"
-            }
+            val results = filter.checkedVerdicts(asked, context)
             val byIndex = open.zip(results).toMap()
             verdicts.mapIndexed { index, verdict -> byIndex[index] ?: verdict }
         }

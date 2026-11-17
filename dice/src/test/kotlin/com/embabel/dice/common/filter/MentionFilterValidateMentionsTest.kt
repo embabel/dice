@@ -172,4 +172,18 @@ class MentionFilterValidateMentionsTest {
             registry.counter("dice.mentions.validated", "entity.type", "Person", "valid", "false").count()
         assertEquals(2.0, total)
     }
+
+    @Test
+    fun `L8 an observable filter refuses a delegate that answers for too few mentions`() {
+        val short = object : MentionFilter {
+            override fun isValid(mention: SuggestedMention, propositionText: String): Boolean = true
+            override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> =
+                proposition.mentions.drop(1).map { ValidationResult.Valid }
+        }
+        val observable = ObservableMentionFilter(short, SimpleMeterRegistry())
+        val thrown = assertThrows(IllegalStateException::class.java) {
+            observable.validateMentions(proposition("Alice met Bob", mention("Alice"), mention("Bob")), context())
+        }
+        assertTrue(thrown.message!!.contains("returned 1 results for 2 mentions"), thrown.message)
+    }
 }

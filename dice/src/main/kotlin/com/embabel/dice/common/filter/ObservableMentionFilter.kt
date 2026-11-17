@@ -72,7 +72,7 @@ class ObservableMentionFilter(
      * @return The delegate's results
      */
     override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> {
-        val results = delegate.validateMentions(proposition, context)
+        val results = delegate.checkedVerdicts(proposition, context)
         proposition.mentions.zip(results).forEach { (mention, result) ->
             val tags = listOf(
                 Tag.of("entity.type", mention.type),

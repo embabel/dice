@@ -17,6 +17,7 @@ package com.embabel.dice.pipeline
 
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.filter.MentionFilter
+import com.embabel.dice.common.filter.checkedVerdicts
 import com.embabel.dice.common.validation.ValidationResult
 import com.embabel.dice.proposition.MentionKey
 import com.embabel.dice.proposition.SuggestedProposition
@@ -68,28 +69,49 @@ internal data class ScreeningOutcome(
 internal object MentionScreening {
 
     /**
-     * The verdicts on one proposition's mentions.
+     * The verdicts on one proposition's mentions, and what they mean for each mention.
      *
      * @property proposition the proposition as extracted
-     * @property judged the proposition as the filter judged it, with any recovered ids in place
      * @property grounding the reasons the grounding check gave, keyed by position in the extracted mentions
      * @property filter the reasons the filter gave, keyed by position in the extracted mentions
+     * @property dropped the positions either check removes from the proposition
+     * @property unresolved the positions that stay on the proposition but are not resolved
      */
     private class Verdicts(
         val proposition: SuggestedProposition,
-        val judged: SuggestedProposition,
         val grounding: Map<Int, String>,
         val filter: Map<Int, String>,
-    )
+        groundingHandling: RejectedMentionHandling,
+        filterHandling: RejectedMentionHandling,
+    ) {
+        val dropped: Set<Int> = positions(RejectedMentionHandling.DROP, groundingHandling, filterHandling)
+        val unresolved: Set<Int> = positions(RejectedMentionHandling.LEAVE_UNRESOLVED, groundingHandling, filterHandling) - dropped
+
+        /**
+         * Collects the positions that either check rejected under one handling.
+         *
+         * @param handling the handling to collect
+         * @param groundingHandling the grounding check's handling
+         * @param filterHandling the filter's handling
+         * @return the positions in the extracted mentions
+         */
+        private fun positions(
+            handling: RejectedMentionHandling,
+            groundingHandling: RejectedMentionHandling,
+            filterHandling: RejectedMentionHandling,
+        ): Set<Int> =
+            (if (groundingHandling == handling) grounding.keys else emptySet()) +
+                (if (filterHandling == handling) filter.keys else emptySet())
+    }
 
     /**
      * Screens the mentions of one chunk's propositions.
      *
      * The filter judges each proposition with the mentions the grounding check dropped already
-     * taken off. A mention that grounding dropped under DROP passes its suggested id to the
-     * remaining mentions that share its span and type when none of them has an id. That happens
-     * before the filter runs, so the filter judges the mentions with the ids they will be
-     * resolved with.
+     * taken off, as the model wrote them. Under DROP, a mention that grounding dropped passes its
+     * suggested id on when that id belongs to a known entity of the context: the candidates that
+     * share its span and type get it when none of them holds an id of its own. The filter is asked
+     * again about each candidate given an id that way, and a candidate it rejects keeps no id.
      *
      * @param extracted the propositions the extractor returned for the chunk
      * @param context the analysis context handed to both checks
@@ -109,43 +131,33 @@ internal object MentionScreening {
         filterHandling: RejectedMentionHandling,
     ): ScreeningOutcome {
         val dropUngrounded = groundingHandling == RejectedMentionHandling.DROP
-        val groundingVerdicts = extracted.propositions.map { proposition ->
-            rejections(grounding, proposition, proposition.mentions.indices.toList(), context)
-        }
-        val surviving = extracted.propositions.mapIndexed { index, proposition ->
+        val verdicts = extracted.propositions.map { proposition ->
             val all = proposition.mentions.indices.toList()
-            if (dropUngrounded) all.filterNot { it in groundingVerdicts[index] } else all
-        }
-        val hints = if (dropUngrounded) idHints(extracted.propositions, groundingVerdicts, surviving) else emptyMap()
-        val verdicts = extracted.propositions.mapIndexed { index, proposition ->
-            val judged = withHints(proposition, hints, surviving[index])
-            val filterRejected = filter?.let { rejections(it, keep(judged, surviving[index]), surviving[index], context) }.orEmpty()
-            Verdicts(proposition, judged, groundingVerdicts[index], filterRejected)
+            val groundingRejected = rejections(grounding, proposition, all, context)
+            val surviving = if (dropUngrounded) all.filterNot { it in groundingRejected } else all
+            val filterRejected = filter?.let { rejections(it, keep(proposition, surviving), surviving, context) }.orEmpty()
+            Verdicts(proposition, groundingRejected, filterRejected, groundingHandling, filterHandling)
         }
         val rejected = verdicts.flatMapIndexed { index, verdict ->
             rejectedMentions(extracted.chunkId, index, verdict.proposition, verdict.grounding, RejectedMention.Check.GROUNDING, groundingHandling)
         } + verdicts.flatMapIndexed { index, verdict ->
-            rejectedMentions(extracted.chunkId, index, verdict.judged, verdict.filter, RejectedMention.Check.FILTER, filterHandling)
+            rejectedMentions(extracted.chunkId, index, verdict.proposition, verdict.filter, RejectedMention.Check.FILTER, filterHandling)
         }
         val resultPropositions = verdicts.map { verdict ->
-            val dropped = removed(verdict, RejectedMentionHandling.DROP, groundingHandling, filterHandling)
-            keep(verdict.proposition, verdict.proposition.mentions.indices.filterNot { it in dropped })
+            keep(verdict.proposition, verdict.proposition.mentions.indices.filterNot { it in verdict.dropped })
         }
         val candidatePropositions = verdicts.zip(resultPropositions) { verdict, kept ->
-            val dropped = removed(verdict, RejectedMentionHandling.DROP, groundingHandling, filterHandling)
-            val unresolved = removed(verdict, RejectedMentionHandling.LEAVE_UNRESOLVED, groundingHandling, filterHandling)
-            if ((unresolved - dropped).isEmpty() && verdict.judged === verdict.proposition) kept
-            else keep(verdict.judged, verdict.judged.mentions.indices.filterNot { it in dropped || it in unresolved })
+            if (verdict.unresolved.isEmpty()) kept
+            else keep(verdict.proposition, verdict.proposition.mentions.indices.filterNot { it in verdict.dropped || it in verdict.unresolved })
         }
+        val hinted = if (dropUngrounded) withIdHints(candidatePropositions, verdicts, context, filter) else candidatePropositions
         val unresolved = verdicts.map { verdict ->
-            val dropped = removed(verdict, RejectedMentionHandling.DROP, groundingHandling, filterHandling)
-            val left = removed(verdict, RejectedMentionHandling.LEAVE_UNRESOLVED, groundingHandling, filterHandling) - dropped
-            if (left.isEmpty()) emptySet()
-            else verdict.proposition.mentions.indices.filterNot { it in dropped }
-                .withIndex().filter { it.value in left }.map { it.index }.toSet()
+            if (verdict.unresolved.isEmpty()) emptySet()
+            else verdict.proposition.mentions.indices.filterNot { it in verdict.dropped }
+                .withIndex().filter { it.value in verdict.unresolved }.map { it.index }.toSet()
         }
         val result = rebuild(extracted, resultPropositions)
-        val candidates = rebuild(result, candidatePropositions)
+        val candidates = rebuild(result, hinted)
         return ScreeningOutcome(result, candidates, rejected, unresolved)
     }
 
@@ -166,11 +178,7 @@ internal object MentionScreening {
         context: SourceAnalysisContext,
     ): Map<Int, String> {
         if (given.mentions.isEmpty()) return emptyMap()
-        val results = judge.validateMentions(given, context)
-        check(results.size == given.mentions.size) {
-            "${judge::class.java.name} returned ${results.size} results for ${given.mentions.size} mentions"
-        }
-        return results.withIndex()
+        return judge.checkedVerdicts(given, context).withIndex()
             .mapNotNull { (index, result) -> (result as? ValidationResult.Invalid)?.let { positions[index] to it.reason } }
             .toMap()
     }
@@ -206,24 +214,6 @@ internal object MentionScreening {
     }
 
     /**
-     * Collects the positions that either check rejected under one handling.
-     *
-     * @param verdict the verdicts on a proposition
-     * @param handling the handling to collect
-     * @param groundingHandling the grounding check's handling
-     * @param filterHandling the filter's handling
-     * @return the positions in the extracted mentions
-     */
-    private fun removed(
-        verdict: Verdicts,
-        handling: RejectedMentionHandling,
-        groundingHandling: RejectedMentionHandling,
-        filterHandling: RejectedMentionHandling,
-    ): Set<Int> =
-        (if (groundingHandling == handling) verdict.grounding.keys else emptySet()) +
-            (if (filterHandling == handling) verdict.filter.keys else emptySet())
-
-    /**
      * Keeps the mentions at the given positions of a proposition.
      *
      * @param proposition the proposition
@@ -246,52 +236,64 @@ internal object MentionScreening {
         else base.copy(propositions = propositions)
 
     /**
-     * Finds the suggested ids that mentions grounding dropped can pass on.
+     * Gives candidates the suggested id that a mention dropped by grounding carried, when that id
+     * belongs to a known entity.
      *
-     * The first dropped mention of a span and type supplies the id. A span and type that some
-     * remaining mention already holds with a non-blank id gets no hint. The id is carried as the
-     * model gave it.
+     * The first dropped mention of a span and type with such an id supplies it. A span and type
+     * that some candidate already holds with a non-blank id of its own gets no hint. When there is
+     * a filter, it is asked about each hinted candidate with the id in place, and a candidate it
+     * rejects keeps no id.
      *
-     * @param propositions the propositions as extracted
-     * @param grounding the grounding check's reasons for each proposition, keyed by mention position
-     * @param surviving for each proposition, the positions of the mentions grounding left in place
-     * @return the id to pass on for each span and type
+     * @param candidates the candidates for resolution, one per proposition
+     * @param verdicts the verdicts on each proposition
+     * @param context the analysis context, whose known entities decide which ids may pass on
+     * @param filter the mention filter, or null for none
+     * @return [candidates] when no hint applies, otherwise a copy with the hinted ids
      */
-    private fun idHints(
-        propositions: List<SuggestedProposition>,
-        grounding: List<Map<Int, String>>,
-        surviving: List<List<Int>>,
-    ): Map<MentionKey, String> {
-        val held = propositions.flatMapIndexed { index, proposition -> surviving[index].map { proposition.mentions[it] } }
+    private fun withIdHints(
+        candidates: List<SuggestedProposition>,
+        verdicts: List<Verdicts>,
+        context: SourceAnalysisContext,
+        filter: MentionFilter?,
+    ): List<SuggestedProposition> {
+        val knownIds = context.knownEntities.mapNotNull { known -> (known.id as String?)?.takeIf { it.isNotBlank() } }.toSet()
+        if (knownIds.isEmpty()) return candidates
+        val held = candidates.flatMap { it.mentions }
             .filterNot { it.suggestedId.isNullOrBlank() }
             .map { MentionKey.from(it) }
             .toSet()
-        return propositions.flatMapIndexed { index, proposition ->
-            grounding[index].keys.sorted().map { proposition.mentions[it] }
-        }
-            .mapNotNull { mention -> mention.suggestedId?.takeIf { it.isNotBlank() }?.let { MentionKey.from(mention) to it } }
+        val hints = verdicts.flatMap { verdict -> verdict.grounding.keys.sorted().map { verdict.proposition.mentions[it] } }
+            .mapNotNull { mention -> mention.suggestedId?.takeIf { it in knownIds }?.let { MentionKey.from(mention) to it } }
             .filterNot { (key, _) -> key in held }
             .distinctBy { (key, _) -> key }
             .toMap()
+        if (hints.isEmpty()) return candidates
+        return candidates.map { proposition -> withHints(proposition, hints, filter, context) }
     }
 
     /**
-     * Gives the mentions at the given positions the ids passed on for their span and type.
+     * Gives one candidate proposition's mentions the ids passed on for their span and type, and
+     * lets the filter turn down any of them.
      *
-     * @param proposition the proposition
+     * @param proposition the candidate proposition
      * @param hints the id to pass on for each span and type
-     * @param positions the positions of the mentions that may take a hint
+     * @param filter the mention filter, or null for none
+     * @param context the analysis context
      * @return the same proposition when no hint applies, otherwise a copy with the hinted ids
      */
     private fun withHints(
         proposition: SuggestedProposition,
         hints: Map<MentionKey, String>,
-        positions: List<Int>,
+        filter: MentionFilter?,
+        context: SourceAnalysisContext,
     ): SuggestedProposition {
-        if (hints.isEmpty() || positions.none { MentionKey.from(proposition.mentions[it]) in hints }) return proposition
-        val open = positions.toSet()
-        return proposition.copy(mentions = proposition.mentions.mapIndexed { index, mention ->
-            if (index !in open) mention else hints[MentionKey.from(mention)]?.let { mention.copy(suggestedId = it) } ?: mention
-        })
+        val positions = proposition.mentions.indices.filter { MentionKey.from(proposition.mentions[it]) in hints }
+        if (positions.isEmpty()) return proposition
+        val offered = positions.map { proposition.mentions[it].copy(suggestedId = hints.getValue(MentionKey.from(proposition.mentions[it]))) }
+        val accepted = if (filter == null) offered.map { true }
+        else filter.checkedVerdicts(proposition.copy(mentions = offered), context).map { it.isValid }
+        if (accepted.none { it }) return proposition
+        val byPosition = positions.zip(offered).filterIndexed { index, _ -> accepted[index] }.toMap()
+        return proposition.copy(mentions = proposition.mentions.mapIndexed { index, mention -> byPosition[index] ?: mention })
     }
 }

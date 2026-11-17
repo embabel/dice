@@ -26,6 +26,7 @@ import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.common.filter.MentionFilter
+import com.embabel.dice.common.filter.checkedVerdicts
 import com.embabel.dice.common.validation.ValidationResult
 import com.embabel.dice.proposition.MentionKey
 import com.embabel.dice.proposition.Proposition
@@ -315,11 +316,7 @@ data class LlmPropositionExtractor(
             val verdicts = if (mentionFilter == null || proposition.mentions.isEmpty()) {
                 null
             } else {
-                mentionFilter.validateMentions(proposition, context).also {
-                    check(it.size == proposition.mentions.size) {
-                        "${mentionFilter::class.java.name} returned ${it.size} results for ${proposition.mentions.size} mentions"
-                    }
-                }
+                mentionFilter.checkedVerdicts(proposition, context)
             }
 
             for ((index, mention) in proposition.mentions.withIndex()) {

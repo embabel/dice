@@ -194,4 +194,28 @@ class GroundedMentionFilterTest {
         assertEquals(listOf(notInText), judge(known, "Heinz moved to Paris", mention("STRASSE")))
         assertEquals(listOf(Valid), judge(known, "Heinz moved to Paris", mention("STRA\u00DFE")))
     }
+
+    @Test
+    fun `L6 known entity names are prepared once for all the propositions that share them`() {
+        val prepared = mutableListOf<String>()
+        val recording: (String) -> PreparedText = { prepared.add(it); MentionGrounding.prepare(it) }
+        val names = lazy { KnownEntityGrounding.knownNames(listOf(thomas), recording) }
+
+        repeat(3) { KnownEntityGrounding.reasons(proposition("Tom moved to Paris", mention("Zed")), names, recording) }
+
+        assertEquals(1, prepared.count { it == "Thomas" })
+        assertEquals(1, prepared.count { it == "Tom" })
+    }
+
+    @Test
+    fun `L6 the filter gives the same verdicts when it reuses prepared names`() {
+        val filter = GroundedMentionFilter()
+        val known = context(thomas)
+        val first = filter.validateMentions(proposition("Tom moved to Paris", mention("Thomas")), known)
+        val second = filter.validateMentions(proposition("Tom moved to Paris", mention("Thomas")), known)
+        val other = filter.validateMentions(proposition("Tom moved to Paris", mention("Thomas")), context())
+        assertEquals(listOf(Valid), first)
+        assertEquals(first, second)
+        assertEquals(listOf(notInText), other)
+    }
 }

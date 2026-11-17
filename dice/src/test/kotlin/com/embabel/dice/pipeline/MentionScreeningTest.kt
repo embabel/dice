@@ -236,7 +236,7 @@ class MentionScreeningTest {
             proposition("Bob likes tea", mention("Alice", "p1")),
             proposition("Alice likes jazz", mention("Alice")),
         )
-        val outcome = screen(extracted, analysisContext = context())
+        val outcome = screen(extracted, analysisContext = context(knownPerson("p1", "Alice Smith")))
         assertEquals("p1", outcome.candidates.propositions[1].mentions[0].suggestedId)
         assertNull(outcome.result.propositions[1].mentions[0].suggestedId)
     }
@@ -307,6 +307,7 @@ class MentionScreeningTest {
         assertNull(blankDropped.candidates.propositions[1].mentions[0].suggestedId)
         val blankCandidate = screen(
             chunk(proposition("Bob likes tea", mention("Alice", "p1")), proposition("Alice likes jazz", mention("Alice", ""))),
+            analysisContext = context(knownPerson("p1", "Alice Smith")),
         )
         assertEquals("p1", blankCandidate.candidates.propositions[1].mentions[0].suggestedId)
     }
@@ -455,5 +456,47 @@ class MentionScreeningTest {
         val outcome = screenDropping(suggested)
         assertSame(suggested, outcome.result)
         assertTrue(outcome.ungrounded.isEmpty())
+    }
+
+    @Test
+    fun `L2 a dropped mention passes on only the id of a known entity`() {
+        val madeUp = screen(
+            chunk(proposition("Bob likes tea", mention("Alice", "made-up")), proposition("Alice likes jazz", mention("Alice"))),
+        )
+        assertNull(madeUp.candidates.propositions[1].mentions[0].suggestedId)
+        val known = screen(
+            chunk(proposition("Bob likes tea", mention("Alice", "p-alice")), proposition("Alice likes jazz", mention("Alice"))),
+            analysisContext = context(knownPerson("p-alice", "Alice Smith")),
+        )
+        assertEquals("p-alice", known.candidates.propositions[1].mentions[0].suggestedId)
+    }
+
+    @Test
+    fun `L3 a mention the filter takes away from resolution does not block a hint`() {
+        val outcome = screen(
+            chunk(
+                proposition("Alice likes tea", mention("Alice", "p-x")),
+                proposition("Bob likes tea", mention("Alice", "p-alice")),
+                proposition("Alice likes jazz", mention("Alice")),
+            ),
+            filter = PickingFilter { it.suggestedId == "p-x" },
+            filterHandling = LEAVE_UNRESOLVED,
+            analysisContext = context(knownPerson("p-alice", "Alice Smith")),
+        )
+        assertEquals("p-alice", outcome.candidates.propositions.last().mentions.single().suggestedId)
+    }
+
+    @Test
+    fun `L4 a filter rejection reports the mention as the model wrote it`() {
+        val plain = mention("Alice")
+        val outcome = screen(
+            chunk(proposition("Bob likes tea", mention("Alice", "p-alice")), proposition("Alice likes jazz", plain)),
+            filter = PickingFilter { it.suggestedId == "p-alice" },
+            filterHandling = LEAVE_UNRESOLVED,
+            analysisContext = context(knownPerson("p-alice", "Alice Smith")),
+        )
+        assertTrue(outcome.rejected.none { it.check == Check.FILTER }, "rejected: ${outcome.rejected}")
+        assertNull(outcome.candidates.propositions[1].mentions.single().suggestedId)
+        assertSame(plain, outcome.result.propositions[1].mentions.single())
     }
 }

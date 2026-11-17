@@ -203,18 +203,21 @@ attach particles to a name. A symbol that composition spells out as letters or d
 trade mark sign or a footnote digit, does not join the word beside it. The text of a proposition is
 normalised once, however many mentions it has.
 
-When grounding drops a mention that carried a `suggestedId`, and no surviving mention with the same
-span and type has one, the resolver candidates for that span and type get that id. The proposition
-keeps its mentions as the model wrote them. The id is the one the model gave, and it is the id the
-extractor would have used had the mention stayed. It is not checked against the known entities.
-The id is passed on before the filter runs, so the filter judges each mention with the id it would
-be resolved with.
+When grounding drops a mention whose `suggestedId` is the id of a known entity of the analysis,
+the resolver candidates with the same span and type get that id, as long as none of them holds an
+id of its own after the filter has run. An id that matches no known entity is dropped with its
+mention, so a made-up id never steers resolution. The proposition keeps its mentions as the model
+wrote them. The filter judges every mention as the model wrote it, and is then asked again about
+each candidate with the passed-on id in place; a candidate it turns down keeps no id. A rejection
+always reports the mention as the model wrote it.
 
 A mention left unresolved keeps no id, even when another mention with the same span and type is
-resolved. Resolution assigns ids by span and type, so the pipeline takes the id off afterwards, by
-position. `PropositionExtractor.resolvePropositions` returns one proposition per suggested
-proposition, in order, with the mentions in order. For an extractor that reorders its output, the
-pipeline pairs propositions and mentions by text, span, type and role instead.
+resolved. Resolution assigns ids by span and type, so the pipeline takes the id off afterwards by
+position: `PropositionExtractor.resolvePropositions` returns one proposition per suggested
+proposition, in order, with the mentions in order. When an extractor's output does not line up
+with what it was given, by span and type or by count, the pipeline takes the id off every mention
+in the propositions that do not line up whose span and type was left unresolved anywhere in the
+chunk, and logs one warning with counts. A rejected mention never keeps an id.
 
 Every rejection is on the chunk result as a `RejectedMention`: the chunk id, the position and text
 of the proposition, the mention, the reason, which check rejected it and what the pipeline did with
