@@ -67,6 +67,8 @@ sealed interface PersistOutcome {
      * The persistence result of a stored unit.
      *
      * Every exception this throws is unchecked.
+     * When the [Failed.cause] is an [InterruptedException], the calling thread's interrupt flag is
+     * set again before the throw.
      *
      * @return [Stored.persisted].
      * @throws RuntimeException the [Failed.cause] itself, when it is a `RuntimeException`.
@@ -130,9 +132,15 @@ sealed interface PersistOutcome {
         override val isStored: Boolean
             get() = false
 
-        /** Throws [cause] when it is a `RuntimeException`, and a [PersistUnitFailedException] around it otherwise. */
-        override fun persistedOrThrow(): PropositionPersistenceResult =
+        /**
+         * Throws [cause] when it is a `RuntimeException`, and a [PersistUnitFailedException] around
+         * it otherwise.
+         */
+        override fun persistedOrThrow(): PropositionPersistenceResult {
+            // The wrapper hides the interrupt from the caller, so the flag is set again.
+            if (cause is InterruptedException) Thread.currentThread().interrupt()
             throw (cause as? RuntimeException ?: PersistUnitFailedException(step, cause))
+        }
 
         override fun toString(): String =
             "Failed(step=$step, cause=${describe(cause)}, leftInStore=$leftInStore, " +

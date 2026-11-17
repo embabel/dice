@@ -34,18 +34,12 @@ import com.embabel.dice.proposition.PropositionRepository
  * @param runLinkStore Where propositions are linked to their run, or null when none is bound.
  * @param missingStoreFix What the failure message tells the caller to do when a unit carries a run
  * and this writer has no run link store.
- * @param afterRunLink Called once for a unit that carries a run, after the run link step and before
- * the structural relationships, with the run, what the link store returned and the lineage failure
- * if there was one. The count is passed as the store returned it, negative or not. It is not called
- * when the link call throws something other than a `RuntimeException`. It must not throw.
  */
 internal class SequentialPersistUnitWriter(
     private val propositionRepository: PropositionRepository,
     private val entityRepository: NamedEntityDataRepository,
     private val runLinkStore: PropositionRunLinkStore?,
     private val missingStoreFix: String = FACTORY_FIX,
-    private val afterRunLink: (key: ExtractionRunKey, runLinks: Int?, lineageFailure: LineageNotRecordedException?) -> Unit =
-        { _, _, _ -> },
 ) : PersistUnitWriter {
 
     override fun write(unit: PersistUnit): PersistOutcome {
@@ -79,7 +73,6 @@ internal class SequentialPersistUnitWriter(
         }
         val afterRunLinks = if (link.linkCalled) afterPropositions + PersistStep.RUN_LINKS else afterPropositions
         val lineageFailure = link.lineageFailure
-        if (run != null) afterRunLink(run, link.runLinks, lineageFailure)
         // An outcome rejects a negative count, so a store that returns one is reported with no count.
         val runLinks = link.runLinks?.takeIf { it >= 0 }
         if (lineageFailure != null && unit.lineagePolicy == LineageFailurePolicy.STRICT) {

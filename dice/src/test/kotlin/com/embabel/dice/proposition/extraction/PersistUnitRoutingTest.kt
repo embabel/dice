@@ -314,30 +314,44 @@ class PersistUnitRoutingTest {
     }
 
     @Test
-    fun `E8 with no writer bound a checked exception from the claim save is thrown unchanged`() {
+    fun `E8 with no writer bound a checked exception from the claim save is thrown wrapped in PersistUnitFailedException`() {
         val cause = IOException("claims store unreachable")
         val propositions = mockk<PropositionRepository>(relaxed = true)
         every { propositions.saveAllReturningCanonical(any()) } throws cause
         val projection = projection()
         val extraction = extraction(propositions, projection = projection)
 
-        assertThatThrownBy { extraction.remember(null) }.isSameAs(cause)
+        assertThatThrownBy { extraction.remember(null) }
+            .isInstanceOfSatisfying(PersistUnitFailedException::class.java) {
+                assertThat(it.step).isEqualTo(PersistStep.PROPOSITIONS)
+                assertThat(it.cause).isSameAs(cause)
+            }
         verify(exactly = 0) { projection.projectAndPersist(any()) }
     }
 
     @Test
-    fun `E9 under lenient the lineage warning is logged when the relationships throw an Error`() {
-        val relationshipError = Error("relationships died")
-        val entities = mockk<NamedEntityDataRepository>(relaxed = true)
-        every { entities.mergeRelationship(any(), any(), any()) } throws relationshipError
-        val links = mockk<PropositionRunLinkStore>()
-        every { links.link(any(), any<Collection<String>>()) } throws IllegalStateException("link store down")
-        val extraction = extraction(answeringRepository(), entities).withRunLineage(links, LineageFailurePolicy.LENIENT)
+    fun `E9 a lineage failure followed by a failed step is logged with the step and never as continuing`() {
+        val key = ExtractionRunKey(tenant, runRef)
+        val stepFailure = IllegalStateException("relationships down")
+        val extraction = extraction(answeringRepository())
+            .withRunLineage(null, LineageFailurePolicy.LENIENT)
+            .withPersistUnitWriter {
+                PersistOutcome.failed(
+                    PersistStep.STRUCTURAL_RELATIONSHIPS,
+                    stepFailure,
+                    setOf(PersistStep.PROPOSITIONS),
+                    null,
+                    LineageNotRecordedException(key, "link store down"),
+                )
+            }
 
-        val events = logged { assertThatThrownBy { extraction.remember() }.isSameAs(relationshipError) }
+        val events = logged { assertThatThrownBy { extraction.remember() }.isSameAs(stepFailure) }
 
-        assertThat(events)
-            .anyMatch { it.level == Level.WARN && it.formattedMessage.startsWith("Lineage not recorded for extraction run") }
+        assertThat(events).anyMatch {
+            it.level == Level.WARN && it.formattedMessage ==
+                "Lineage not recorded for extraction run routing-run. The write then failed at STRUCTURAL_RELATIONSHIPS"
+        }
+        assertThat(events).noneMatch { it.formattedMessage.contains("continuing") }
     }
 
     @Test
@@ -360,7 +374,7 @@ class PersistUnitRoutingTest {
     }
 
     @Test
-    fun `E11 with no writer bound a negative link count is logged and the chunk is stored`() {
+    fun `E11 with no writer bound a negative link count logs no attribution and the chunk is stored`() {
         val links = mockk<PropositionRunLinkStore>()
         every { links.link(any(), any<Collection<String>>()) } returns -1
         val projection = projection()
@@ -368,9 +382,7 @@ class PersistUnitRoutingTest {
 
         val events = logged { extraction.remember() }
 
-        assertThat(events).anyMatch {
-            it.level == Level.INFO && it.formattedMessage == "Attributed -1 propositions to extraction run routing-run"
-        }
+        assertThat(events).noneMatch { it.formattedMessage.startsWith("Attributed") }
         verify(exactly = 1) { projection.projectAndPersist(any()) }
     }
 

@@ -141,6 +141,17 @@ class PersistUnitJavaInteropTest {
     }
 
     @Test
+    void anInterruptedStoreLeavesTheInterruptFlagSet() {
+        InterruptedException cause = new InterruptedException("interrupted in the store");
+        PersistOutcome outcome = PersistOutcome.failed(PersistStep.PROPOSITIONS, cause, Set.of());
+
+        PersistUnitFailedException thrown = assertThrows(PersistUnitFailedException.class, outcome::persistedOrThrow);
+
+        assertSame(cause, thrown.getCause());
+        assertTrue(Thread.interrupted());
+    }
+
+    @Test
     void aWriterCanBeALambda() {
         PersistUnitWriter writer = u -> PersistOutcome.stored(PropositionPersistenceResult.EMPTY);
 

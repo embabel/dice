@@ -162,6 +162,20 @@ class PersistUnitTest {
     }
 
     @Test
+    fun `E6 persistedOrThrow sets the interrupt flag again when the cause is an InterruptedException`() {
+        val cause = InterruptedException("interrupted in the store")
+        val failed = PersistOutcome.failed(PersistStep.PROPOSITIONS, cause, emptySet())
+
+        try {
+            assertThatThrownBy { failed.persistedOrThrow() }
+                .isInstanceOfSatisfying(PersistUnitFailedException::class.java) { assertThat(it.cause).isSameAs(cause) }
+            assertThat(Thread.currentThread().isInterrupted).isTrue()
+        } finally {
+            Thread.interrupted()
+        }
+    }
+
+    @Test
     fun `R1 stored and failed reject a negative runLinks`() {
         val cause = IllegalStateException("boom")
 

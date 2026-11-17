@@ -128,6 +128,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * @property policy What happens when lineage cannot be written
      * @property runLinkStore The store bound with [withRunLineage], or null
      * @property writer The writer bound with [withPersistUnitWriter], or null to use the sequential one
+     * @property unitWriter The writer every chunk is stored through. It is [writer] when one is
+     * bound, and a sequential writer over the constructor's repositories and [runLinkStore] otherwise
      * @property lineageBound Whether [withRunLineage] has been called
      * @property writerBound Whether [withPersistUnitWriter] has been called
      */
@@ -137,6 +139,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         val writer: PersistUnitWriter? = null,
         val lineageBound: Boolean = false,
         val writerBound: Boolean = false,
+        val unitWriter: PersistUnitWriter,
     )
 
     /**
@@ -144,7 +147,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * inside a binding call.
      */
     @Volatile
-    private var binding = Binding()
+    private var binding = Binding(unitWriter = sequentialWriter(null))
 
     /** Guards both binding calls, so the checks and the replacement of [binding] are one step. */
     private val bindingLock = Any()
@@ -232,7 +235,12 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 "redirected or erased"
         }
         afterBindingCheck()
-        binding = Binding(policy, propositionRunLinkStore, current.writer, lineageBound = true, writerBound = current.writerBound)
+        binding = Binding(
+            policy, propositionRunLinkStore, current.writer,
+            lineageBound = true,
+            writerBound = current.writerBound,
+            unitWriter = current.writer ?: sequentialWriter(propositionRunLinkStore),
+        )
         this
     }
 
@@ -253,11 +261,11 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * same time, one call binds and the other throws. A chunk that is being stored when a binding is
      * made is stored under the bindings it started with.
      *
-     * When the bound writer reports a failed write, storing the chunk throws what
-     * [PersistOutcome.persistedOrThrow] throws. A cause that is a `RuntimeException` is thrown as it
-     * is. A checked cause is wrapped in [PersistUnitFailedException], which carries the step that
-     * failed and has the original as its cause. Every exception thrown for a bound writer's failed
-     * write is unchecked.
+     * When a write fails, storing the chunk throws what [PersistOutcome.persistedOrThrow] throws,
+     * with or without a bound writer. A cause that is a `RuntimeException` is thrown as it is. A
+     * checked cause is wrapped in [PersistUnitFailedException], which carries the step that failed
+     * and has the original as its cause. Every exception thrown for a failed write the writer
+     * reports is unchecked. An exception a writer throws from `write` propagates as it is.
      *
      * From Java:
      *
@@ -291,7 +299,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 "extractor starts handling events"
         }
         afterBindingCheck()
-        binding = Binding(current.policy, current.runLinkStore, writer, current.lineageBound, writerBound = true)
+        binding = Binding(current.policy, current.runLinkStore, writer, current.lineageBound, writerBound = true, unitWriter = writer)
         this
     }
 
@@ -464,6 +472,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * identifier. DICE cannot read source identity or revision coverage out of an untyped
      * [sourceId] or out of [additionalGrounding], which is why the [request] carries them
      * explicitly.
+     *
+     * @throws PersistUnitFailedException when storing the claims fails with a checked exception. A
+     * `RuntimeException` from a failed store is thrown as it is.
      */
     open fun rememberText(
         text: String,
@@ -702,11 +713,13 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * relationships, projection and grounding do not run, and the [LineageNotRecordedException] is
      * thrown. Inside a caller's transaction, what was written commits or rolls back with it.
      * Under [LineageFailurePolicy.LENIENT] the failure is logged as a warning and the rest runs.
+     * A lineage failure the database raised can have ended a caller's transaction, under either
+     * policy. Under LENIENT the write still reports the unit as stored, and the caller's commit
+     * can fail.
      * A bound writer decides what a failed write leaves in the store.
      *
-     * A failed write throws, and projection and grounding do not run. With no writer bound, the
-     * exception is the one the failed step threw, whatever its type. With a writer bound, it is what
-     * [PersistOutcome.persistedOrThrow] throws.
+     * A failed write throws what [PersistOutcome.persistedOrThrow] throws, with or without a bound
+     * writer, and projection and grounding do not run.
      *
      * @param result What the analysis produced.
      * @param context The analysis the result belongs to. Its run, if any, is attributed.
@@ -728,25 +741,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             logger.info("Updated entity: name='{}', labels={}", entity.name, entity.labels())
         }
 
-        val boundWriter = bound.writer
-        val outcome = if (boundWriter == null) {
-            // Built per call, because withRunLineage can bind the run link store after construction.
-            // The lineage lines are logged between the run link and the structural relationships, so
-            // an Error from the relationships cannot lose them.
-            SequentialPersistUnitWriter(propositionRepository, entityRepository, bound.runLinkStore, SequentialPersistUnitWriter.EXTRACTOR_FIX) { key, runLinks, lineageFailure ->
-                logRunLineage(key.runRef.runId, runLinks, lineageFailure, bound.policy)
-            }.write(unit)
-        } else {
-            val written = boundWriter.write(unit)
-            if (currentRun != null) logRunLineage(currentRun.runId, written.runLinks, written.lineageFailure, bound.policy)
-            written
-        }
-        // A bound writer's checked cause is wrapped in PersistUnitFailedException, so a Java caller
-        // can catch it. With no writer bound the cause is thrown as it is, whatever its type.
-        val persisted = when (outcome) {
-            is PersistOutcome.Stored -> outcome.persisted
-            is PersistOutcome.Failed -> if (boundWriter == null) throw outcome.cause else outcome.persistedOrThrow()
-        }
+        val outcome = bound.unitWriter.write(unit)
+        if (currentRun != null) logRunLineage(currentRun.runId, outcome)
+        val persisted = outcome.persistedOrThrow()
 
         // The distinct view, not the positional one. Inputs that deduplicated together are one
         // stored proposition, and projecting or grounding it once per input inflates the records
@@ -796,32 +793,50 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         unit.withRun(ExtractionRunKey(context.contextId, currentRun), policy)
 
     /**
-     * Logs how linking a unit's claims to its run went.
+     * Logs how linking a unit's claims to its run went, once the write has returned.
      *
-     * A recorded link is logged with its count. A lineage failure is logged as a warning under
-     * [LineageFailurePolicy.LENIENT] and not logged under [LineageFailurePolicy.STRICT], where it is
-     * thrown.
+     * A recorded link is logged with its count, unless the write failed and left no link in the
+     * store. A lineage failure on a stored unit is logged as a warning. A lineage failure followed
+     * by a failed step is logged as a warning that names the step. A lineage failure that is the
+     * cause of the failed write is thrown and not logged here.
      *
      * @param runId The id of the run the claims came from.
-     * @param runLinks What the run link store returned, or null when no link call was made.
-     * @param lineageFailure Set when a link was asked for and not recorded.
-     * @param policy The lineage policy the chunk is stored under.
+     * @param outcome What the writer returned.
      */
-    private fun logRunLineage(
-        runId: String,
-        runLinks: Int?,
-        lineageFailure: LineageNotRecordedException?,
-        policy: LineageFailurePolicy,
-    ) {
-        if (lineageFailure == null) {
-            runLinks?.let { logger.info("Attributed {} propositions to extraction run {}", it, runId) }
-        } else if (policy == LineageFailurePolicy.LENIENT) {
-            logger.warn(
-                "Lineage not recorded for extraction run {}; continuing under LENIENT policy",
-                runId, lineageFailure,
-            )
+    private fun logRunLineage(runId: String, outcome: PersistOutcome) {
+        val lineageFailure = outcome.lineageFailure
+        when (outcome) {
+            is PersistOutcome.Stored ->
+                if (lineageFailure == null) {
+                    outcome.runLinks?.let { logger.info("Attributed {} propositions to extraction run {}", it, runId) }
+                } else {
+                    logger.warn(
+                        "Lineage not recorded for extraction run {}. Its claims are stored without a run link",
+                        runId, lineageFailure,
+                    )
+                }
+            is PersistOutcome.Failed ->
+                if (lineageFailure == null) {
+                    if (PersistStep.RUN_LINKS in outcome.leftInStore) {
+                        outcome.runLinks?.let { logger.info("Attributed {} propositions to extraction run {}", it, runId) }
+                    }
+                } else if (outcome.cause !== lineageFailure) {
+                    logger.warn(
+                        "Lineage not recorded for extraction run {}. The write then failed at {}",
+                        runId, outcome.step, lineageFailure,
+                    )
+                }
         }
     }
+
+    /**
+     * The writer this extractor stores through when none is bound.
+     *
+     * @param runLinkStore The run link store bound with [withRunLineage], or null for none.
+     * @return A sequential writer over the constructor's repositories.
+     */
+    private fun sequentialWriter(runLinkStore: PropositionRunLinkStore?): PersistUnitWriter =
+        SequentialPersistUnitWriter(propositionRepository, entityRepository, runLinkStore, SequentialPersistUnitWriter.EXTRACTOR_FIX)
 
     private fun logAllPropositions(contextId: String) {
         val all = propositionRepository.findByContextIdValue(contextId)
