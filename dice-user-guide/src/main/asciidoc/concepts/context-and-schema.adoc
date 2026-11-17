@@ -22,8 +22,10 @@ indefinitely that is a production incident waiting to happen.
 plain string, as above. Java reads an id back with `getContextIdValue()`, which every public type
 with a `contextId` property has.
 
-A public declaration that takes a `ContextId` also has a Java form that takes the id as a plain
-string. That form is named after the `ContextId` form with `Value` on the end. So `runValue`,
+Most public declarations that take a `ContextId` also have a Java form that takes the id as a
+plain string. The rest, mostly methods a store or strategy implements rather than calls, do not
+have one yet; the build keeps a list of them and fails if a new one appears without a Java form.
+A Java form is named after the `ContextId` form with `Value` on the end. So `runValue`,
 `consolidateNowValue` and `clearByContextValue` take a string, and `findByContextIdValue` follows
 the same rule. The suffix means no Kotlin call that passes a `ContextId` becomes ambiguous. A
 constructor gets a static `of(...)`, and a read gets `getContextIdValue()`.
