@@ -192,8 +192,9 @@ class PropositionPipeline private constructor(
      * The check answers one question: is the mention supported by the text of its proposition.
      * Its rejections are reported as ungrounded mentions, with reason
      * [UngroundedMention.Reason.BLANK_SPAN] for a blank span and
-     * [UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION] for any other. A rule about anything
-     * else goes in [withMentionFilter].
+     * [UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION] for any other. The check's own reason is
+     * kept on [RejectedMention.reason] in [ChunkPropositionResult.rejectedMentions]. A rule about
+     * anything else goes in [withMentionFilter].
      *
      * @param check The grounding check to use
      * @return A new pipeline instance with that grounding check
@@ -208,7 +209,9 @@ class PropositionPipeline private constructor(
      * reviser is also configured — [processChunk] emits one per-proposition "candidate" event per
      * [RevisionResult] (revision-only). These candidate events are **pre-persistence** signals:
      * the canonical durable signal is `PropositionPersisted`, emitted by the repository decorator.
-     * Each chunk in which a mention's span is not in its own proposition's text also emits one [UngroundedMentionsFound].
+     * Each chunk in which the grounding check rejects a mention also emits one
+     * [UngroundedMentionsFound]. With the default check, that is a mention whose span is not in its
+     * proposition's text as whole words and that does not name a known entity the text names.
      * Every rejected mention, from the grounding check or the mention filter, is also listed on the
      * chunk result in [ChunkPropositionResult.rejectedMentions].
      *

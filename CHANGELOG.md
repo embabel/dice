@@ -10,6 +10,18 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- A mention the mention filter leaves unresolved now stays unresolved. Before, entity resolution
+  assigned ids by span and type, so such a mention got the id of an accepted mention with the same
+  span and type elsewhere in the chunk. `PropositionExtractor.resolvePropositions` is now
+  documented to return the propositions and their mentions in the order it was given them, and the
+  pipeline applies the filter's verdicts by position. When an extractor's output does not line up
+  with what it was given, by count or by each mention's span and type, and the chunk had a mention
+  dropped or left unresolved, the pipeline clears every id in the propositions that do not line up
+  and logs one warning saying how many it cleared. Migration: `withMentionFilter(filter,
+  RejectedMentionHandling.KEEP)` keeps the earlier resolution of rejected mentions, and an extractor
+  whose `resolvePropositions` keeps the order and the mentions it was given, as
+  `LlmPropositionExtractor` does, is not affected by the clearing. **Compatibility: behavioral.**
+
 - `PropositionPipeline` applies the mention filter itself, for every `PropositionExtractor`, and
   passes `null` as the `mentionFilter` argument of `toSuggestedEntities`. An extractor that ignores
   that argument has its mentions filtered all the same. `LlmPropositionExtractor.toSuggestedEntities`
@@ -232,12 +244,8 @@ and the consumer PRs that deliver it).
   pipeline's grounding check as a `MentionFilter`, and `PropositionPipeline.withMentionGrounding`
   replaces it. `withMentionFilter(filter, RejectedMentionHandling)` chooses what happens to a
   mention the filter rejects. `KEEP` only reports it, `LEAVE_UNRESOLVED`, which is what
-  `withMentionFilter(filter)` does, keeps it on the proposition unresolved, even when a mention with
-  the same span and type is resolved elsewhere in the chunk, and `DROP` removes it.
-  `PropositionExtractor.resolvePropositions` is now documented to return the propositions and their
-  mentions in the order it was given them; when an extractor's output does not line up and the
-  chunk had a mention dropped or left unresolved, every mention in the propositions that do not
-  line up is left unresolved and a warning is logged. **Compatibility: additive.**
+  `withMentionFilter(filter)` does, keeps it on the proposition unresolved, and `DROP` removes it.
+  **Compatibility: additive.**
 
 - `ChunkPropositionResult.rejectedMentions` and `PropositionResults.rejectedMentions` list every
   mention a check rejected as a `RejectedMention`, with the chunk id, the position and text of the

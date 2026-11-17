@@ -197,8 +197,8 @@ class KnownEntitiesOnly implements MentionFilter {
 }
 ----
 
-The pipeline can call `validateMentions` from several threads at once, so a filter keeps no state
-between calls. A filter that wraps another filter forwards `validateMentions` to it.
+The pipeline can call `validateMentions` from several threads at once, so a filter keeps no
+per-call mutable state, and any cache it keeps must be thread-safe. A filter that wraps another filter forwards `validateMentions` to it.
 
 Every rejected mention, from grounding or from a filter, is on the result the pipeline returns. See
 <<how-to-observe-and-react>>.

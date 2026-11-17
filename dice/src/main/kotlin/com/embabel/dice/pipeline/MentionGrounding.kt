@@ -21,7 +21,11 @@ import java.util.BitSet
 import java.util.EnumSet
 import java.util.Locale
 
-/** What the pipeline does with a mention whose span is not in its own proposition's text. */
+/**
+ * What the pipeline does with a mention the grounding check rejects. With the default check, that
+ * is a mention whose span is not in its proposition's text as whole words and that does not name a
+ * known entity the text names.
+ */
 enum class UngroundedMentionHandling { KEEP, DROP }
 
 /**
@@ -41,7 +45,12 @@ data class UngroundedMention(
         /** The span has nothing left in it once whitespace and invisible characters are gone. */
         BLANK_SPAN,
 
-        /** The span is not anywhere in the proposition's text. */
+        /**
+         * The grounding check rejected a span that is not blank. With the default check, the span
+         * is not in the proposition's text as whole words, which includes a span found only inside
+         * a longer word, and it does not name a known entity the text names. A replacement check's
+         * rejections get this reason too; its own reason is on the chunk result's rejected mentions.
+         */
         SPAN_NOT_IN_PROPOSITION,
     }
 }
