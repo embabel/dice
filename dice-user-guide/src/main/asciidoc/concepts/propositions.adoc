@@ -180,17 +180,17 @@ block the grounding starts empty, and each `grounding(...)` call adds to it.
 `withProvenance` drops repeated entries too, as `Proposition.withProvenance` does, so an entry that
 is given twice is kept once.
 
-A time that is not set takes the constructor's default when `toProposition()` runs. `created`,
-`contentRevised` and `metadataRevised` take the moment `toProposition()` runs, and `lastAccessed`
-takes the value `contentRevised` ends up with. Decay is measured from `contentRevised`, so when you
-import an older fact, set `contentRevised` as well as `created`. A fact that sets only `created`
-decays from the build moment.
+A time that is not set is filled in when `toProposition()` runs. `contentRevised` takes that moment,
+as the constructor does. `created` takes the earliest time you did set, and is never after
+`contentRevised`. `metadataRevised` and `lastAccessed` take the value `contentRevised` ends up with.
+Decay is measured from `contentRevised`, so when you import an older fact, set `contentRevised`; the
+other three times then follow it. A fact that sets only `created` decays from the build moment.
 
 Draft steps do not move revision times. A step such as `withLastAccessed` changes only the field it
 names, so `contentRevised` and `metadataRevised` stay as you set them, or unset.
 
 A draft without an id gets a new id on every `toProposition()` call. `withId` fixes the id. For two
-calls to build equal propositions, also set a time with `withCreated` or `withContentRevised`.
+calls to build equal propositions, also set `withContentRevised`.
 
 `toDraft()` starts a draft from an existing proposition. It copies a proposition with some fields
 changed and leaves its revision times alone, which the `with*` methods on `Proposition` do not.

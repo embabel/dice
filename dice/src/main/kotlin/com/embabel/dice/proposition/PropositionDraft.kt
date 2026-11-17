@@ -52,10 +52,17 @@ import java.util.UUID
  *         .toProposition();
  * ```
  *
- * A time that is not set takes the constructor's default when [toProposition] runs: the build
- * moment for created, contentRevised and metadataRevised, and the value of contentRevised for
- * lastAccessed. Decay is measured from contentRevised, so set it when you import an older fact.
- * For two calls to build equal propositions, set the id and those three times.
+ * A time that is not set is filled in when [toProposition] runs:
+ *
+ * - contentRevised takes the build moment, as the Proposition constructor does.
+ * - created takes the earliest time that is set, or contentRevised if that is earlier, so a
+ *   proposition is never created after its content last changed.
+ * - metadataRevised takes contentRevised, so the metadata never looks older than the content.
+ * - lastAccessed takes contentRevised, as the Proposition constructor does.
+ *
+ * Decay is measured from contentRevised, so set it when you import an older fact; the other times
+ * then follow it. When no time is set, all four are the build moment. For two calls to build equal
+ * propositions, set the id and contentRevised.
  *
  * @property contextId The context the proposition belongs to.
  * @property text The statement in natural language.
@@ -66,9 +73,9 @@ import java.util.UUID
  * @property importance How much the statement matters, from 0.0 to 1.0.
  * @property reasoning Why the statement was extracted, or null.
  * @property grounding The ids of the chunks that support the statement.
- * @property created When the proposition was first created, or null for the build moment.
+ * @property created When the proposition was first created, or null for the earliest time set.
  * @property contentRevised When the content last changed, or null for the build moment.
- * @property metadataRevised When the metadata last changed, or null for the build moment.
+ * @property metadataRevised When the metadata last changed, or null to follow [contentRevised].
  * @property lastAccessed When the proposition was last used, or null to follow [contentRevised].
  * @property pinned Whether decay-driven sweeps leave the proposition alone.
  * @property status The lifecycle status.
@@ -81,13 +88,14 @@ import java.util.UUID
  * @property provenanceEntries The source material entries that support the statement.
  */
 class PropositionDraft private constructor(
-    // The proposition a draft was copied from, or null when it started from scratch.
-    // toProposition() copies from it, so a field added to Proposition later keeps its value.
-    private val origin: Proposition?,
     private val values: Values,
 ) {
 
-    /** Every value a draft holds, kept together so a step can copy them all in one go. */
+    /**
+     * Every value a draft holds, kept together so a step can copy them all in one go. It has one
+     * field per Proposition constructor parameter, which PropositionDraftParityTest checks, so a
+     * draft rebuilt from JSON builds the same proposition as the draft that wrote it.
+     */
     private data class Values(
         val contextId: ContextId,
         val text: String,
@@ -166,29 +174,29 @@ class PropositionDraft private constructor(
      * Sets the text.
      * Unlike Proposition.withText, this leaves contentRevised as it is.
      */
-    fun withText(text: String): PropositionDraft = PropositionDraft(origin, values.copy(text = text))
+    fun withText(text: String): PropositionDraft = PropositionDraft(values.copy(text = text))
 
     /**
      * Sets the confidence.
      * Unlike Proposition.withConfidence, this leaves contentRevised as it is.
      */
-    fun withConfidence(confidence: Double): PropositionDraft = PropositionDraft(origin, values.copy(confidence = confidence))
+    fun withConfidence(confidence: Double): PropositionDraft = PropositionDraft(values.copy(confidence = confidence))
 
     /** Sets the id; null makes [toProposition] generate one. */
-    fun withId(id: String?): PropositionDraft = PropositionDraft(origin, values.copy(id = id))
+    fun withId(id: String?): PropositionDraft = PropositionDraft(values.copy(id = id))
 
     /** Replaces the mentions with a read-only copy of [mentions]. */
     fun withMentions(mentions: List<EntityMention>): PropositionDraft =
-        PropositionDraft(origin, values.copy(mentions = Collections.unmodifiableList(ArrayList(mentions))))
+        PropositionDraft(values.copy(mentions = Collections.unmodifiableList(ArrayList(mentions))))
 
     /** Sets the decay. */
-    fun withDecay(decay: Double): PropositionDraft = PropositionDraft(origin, values.copy(decay = decay))
+    fun withDecay(decay: Double): PropositionDraft = PropositionDraft(values.copy(decay = decay))
 
     /** Sets the importance. */
-    fun withImportance(importance: Double): PropositionDraft = PropositionDraft(origin, values.copy(importance = importance))
+    fun withImportance(importance: Double): PropositionDraft = PropositionDraft(values.copy(importance = importance))
 
     /** Sets the reasoning. */
-    fun withReasoning(reasoning: String?): PropositionDraft = PropositionDraft(origin, values.copy(reasoning = reasoning))
+    fun withReasoning(reasoning: String?): PropositionDraft = PropositionDraft(values.copy(reasoning = reasoning))
 
     /**
      * Appends [chunkIds] to the grounding and removes duplicates.
@@ -196,58 +204,58 @@ class PropositionDraft private constructor(
      * Unlike Proposition.withGrounding, this leaves metadataRevised as it is.
      */
     fun withGrounding(chunkIds: List<String>): PropositionDraft =
-        PropositionDraft(origin, values.copy(grounding = Collections.unmodifiableList((grounding + chunkIds).distinct())))
+        PropositionDraft(values.copy(grounding = Collections.unmodifiableList((grounding + chunkIds).distinct())))
 
     /** Sets the grounding to exactly [chunkIds], in the order given. An empty list clears it. */
     fun withExactGrounding(chunkIds: List<String>): PropositionDraft =
-        PropositionDraft(origin, values.copy(grounding = Collections.unmodifiableList(ArrayList(chunkIds))))
+        PropositionDraft(values.copy(grounding = Collections.unmodifiableList(ArrayList(chunkIds))))
 
     /** Sets the creation time. */
-    fun withCreated(created: Instant): PropositionDraft = PropositionDraft(origin, values.copy(created = created))
+    fun withCreated(created: Instant): PropositionDraft = PropositionDraft(values.copy(created = created))
 
     /** Sets the time the content last changed. */
-    fun withContentRevised(contentRevised: Instant): PropositionDraft = PropositionDraft(origin, values.copy(contentRevised = contentRevised))
+    fun withContentRevised(contentRevised: Instant): PropositionDraft = PropositionDraft(values.copy(contentRevised = contentRevised))
 
     /** Sets the time the metadata last changed. */
-    fun withMetadataRevised(metadataRevised: Instant): PropositionDraft = PropositionDraft(origin, values.copy(metadataRevised = metadataRevised))
+    fun withMetadataRevised(metadataRevised: Instant): PropositionDraft = PropositionDraft(values.copy(metadataRevised = metadataRevised))
 
     /** Sets the time the proposition was last used. */
-    fun withLastAccessed(lastAccessed: Instant): PropositionDraft = PropositionDraft(origin, values.copy(lastAccessed = lastAccessed))
+    fun withLastAccessed(lastAccessed: Instant): PropositionDraft = PropositionDraft(values.copy(lastAccessed = lastAccessed))
 
     /**
      * Sets whether the proposition is pinned.
      * Unlike Proposition.withPinned, this leaves metadataRevised as it is.
      */
-    fun withPinned(pinned: Boolean): PropositionDraft = PropositionDraft(origin, values.copy(pinned = pinned))
+    fun withPinned(pinned: Boolean): PropositionDraft = PropositionDraft(values.copy(pinned = pinned))
 
     /**
      * Sets the lifecycle status.
      * Unlike Proposition.withStatus, this leaves metadataRevised as it is.
      */
-    fun withStatus(status: PropositionStatus): PropositionDraft = PropositionDraft(origin, values.copy(status = status))
+    fun withStatus(status: PropositionStatus): PropositionDraft = PropositionDraft(values.copy(status = status))
 
     /** Sets the abstraction level. */
-    fun withLevel(level: Int): PropositionDraft = PropositionDraft(origin, values.copy(level = level))
+    fun withLevel(level: Int): PropositionDraft = PropositionDraft(values.copy(level = level))
 
     /** Replaces the source ids with a read-only copy of [sourceIds]. */
     fun withSourceIds(sourceIds: List<String>): PropositionDraft =
-        PropositionDraft(origin, values.copy(sourceIds = Collections.unmodifiableList(ArrayList(sourceIds))))
+        PropositionDraft(values.copy(sourceIds = Collections.unmodifiableList(ArrayList(sourceIds))))
 
     /** Sets the reinforce count. */
-    fun withReinforceCount(reinforceCount: Int): PropositionDraft = PropositionDraft(origin, values.copy(reinforceCount = reinforceCount))
+    fun withReinforceCount(reinforceCount: Int): PropositionDraft = PropositionDraft(values.copy(reinforceCount = reinforceCount))
 
     /** Replaces the metadata with a read-only copy of [metadata]. */
     fun withMetadata(metadata: Map<String, Any>): PropositionDraft =
-        PropositionDraft(origin, values.copy(metadata = Collections.unmodifiableMap(LinkedHashMap(metadata))))
+        PropositionDraft(values.copy(metadata = Collections.unmodifiableMap(LinkedHashMap(metadata))))
 
     /** Sets the URI. */
-    fun withUri(uri: String?): PropositionDraft = PropositionDraft(origin, values.copy(uri = uri))
+    fun withUri(uri: String?): PropositionDraft = PropositionDraft(values.copy(uri = uri))
 
     /**
      * Sets the temporal details.
      * Unlike Proposition.withTemporal, this leaves metadataRevised as it is.
      */
-    fun withTemporal(temporal: TemporalMetadata?): PropositionDraft = PropositionDraft(origin, values.copy(temporal = temporal))
+    fun withTemporal(temporal: TemporalMetadata?): PropositionDraft = PropositionDraft(values.copy(temporal = temporal))
 
     /**
      * Replaces the provenance entries with a read-only copy of [entries] that drops duplicates,
@@ -255,7 +263,7 @@ class PropositionDraft private constructor(
      * Unlike Proposition.withProvenance, this leaves metadataRevised as it is.
      */
     fun withProvenance(entries: List<ProvenanceEntry>): PropositionDraft =
-        PropositionDraft(origin, values.copy(provenanceEntries = Collections.unmodifiableList(entries.distinct())))
+        PropositionDraft(values.copy(provenanceEntries = Collections.unmodifiableList(entries.distinct())))
 
     /**
      * Builds the proposition through its primary constructor.
@@ -266,7 +274,8 @@ class PropositionDraft private constructor(
     fun toProposition(): Proposition {
         val now = Instant.now()
         val contentRevised = values.contentRevised ?: now
-        return (origin ?: TEMPLATE).copy(
+        val explicitTimes = listOfNotNull(values.created, values.contentRevised, values.metadataRevised, values.lastAccessed)
+        return TEMPLATE.copy(
             id = id ?: UUID.randomUUID().toString(),
             contextId = contextId,
             text = text,
@@ -276,9 +285,9 @@ class PropositionDraft private constructor(
             importance = importance,
             reasoning = reasoning,
             grounding = grounding,
-            created = values.created ?: now,
+            created = values.created ?: (explicitTimes + contentRevised).min(),
             contentRevised = contentRevised,
-            metadataRevised = values.metadataRevised ?: now,
+            metadataRevised = values.metadataRevised ?: contentRevised,
             pinned = pinned,
             lastAccessed = values.lastAccessed ?: contentRevised,
             status = status,
@@ -301,66 +310,72 @@ class PropositionDraft private constructor(
         private val TEMPLATE = Proposition(contextId = ContextId("template"), text = "", mentions = emptyList(), confidence = 0.0)
 
         /**
-         * Reads a draft from the flat JSON the first draft format wrote, one key per value.
-         * The draft starts with no origin. A key that is missing fails the read unless its
-         * value may be null, in which case it reads as null.
+         * Reads a draft from its flat JSON form, one key per value, which is also the form the
+         * first draft release wrote. contextId, text and confidence must be present and not null;
+         * a missing one fails the read with a message that names it. Any other key that is missing
+         * or null takes the value [Proposition.draft] starts with, so importance reads as 0.5, a
+         * list as empty and status as ACTIVE, with or without Jackson's Kotlin module.
          *
          * @param contextId the context id as a plain string
          * @return a draft holding the values from the JSON
+         * @throws IllegalArgumentException when contextId, text or confidence is missing
          */
         @JvmStatic
         @JsonCreator
         private fun fromJson(
-            @JsonProperty("contextId") contextId: String,
-            @JsonProperty("text") text: String,
-            @JsonProperty("confidence") confidence: ZeroToOne,
+            @JsonProperty("contextId") contextId: String?,
+            @JsonProperty("text") text: String?,
+            @JsonProperty("confidence") confidence: Double?,
             @JsonProperty("id") id: String?,
-            @JsonProperty("mentions") mentions: List<EntityMention>,
-            @JsonProperty("decay") decay: ZeroToOne,
-            @JsonProperty("importance") importance: ZeroToOne,
+            @JsonProperty("mentions") mentions: List<EntityMention>?,
+            @JsonProperty("decay") decay: Double?,
+            @JsonProperty("importance") importance: Double?,
             @JsonProperty("reasoning") reasoning: String?,
-            @JsonProperty("grounding") grounding: List<String>,
+            @JsonProperty("grounding") grounding: List<String>?,
             @JsonProperty("created") created: Instant?,
             @JsonProperty("contentRevised") contentRevised: Instant?,
             @JsonProperty("metadataRevised") metadataRevised: Instant?,
             @JsonProperty("lastAccessed") lastAccessed: Instant?,
-            @JsonProperty("pinned") pinned: Boolean,
-            @JsonProperty("status") status: PropositionStatus,
-            @JsonProperty("level") level: Int,
-            @JsonProperty("sourceIds") sourceIds: List<String>,
-            @JsonProperty("reinforceCount") reinforceCount: Int,
-            @JsonProperty("metadata") metadata: Map<String, Any>,
+            @JsonProperty("pinned") pinned: Boolean?,
+            @JsonProperty("status") status: PropositionStatus?,
+            @JsonProperty("level") level: Int?,
+            @JsonProperty("sourceIds") sourceIds: List<String>?,
+            @JsonProperty("reinforceCount") reinforceCount: Int?,
+            @JsonProperty("metadata") metadata: Map<String, Any>?,
             @JsonProperty("uri") uri: String?,
             @JsonProperty("temporal") temporal: TemporalMetadata?,
-            @JsonProperty("provenanceEntries") provenanceEntries: List<ProvenanceEntry>,
-        ): PropositionDraft =
-            PropositionDraft(
-                origin = null,
+            @JsonProperty("provenanceEntries") provenanceEntries: List<ProvenanceEntry>?,
+        ): PropositionDraft {
+            requireNotNull(contextId) { "PropositionDraft JSON needs a contextId" }
+            requireNotNull(text) { "PropositionDraft JSON needs a text" }
+            requireNotNull(confidence) { "PropositionDraft JSON needs a confidence" }
+            return PropositionDraft(
                 values = Values(
                     contextId = ContextId(contextId),
                     text = text,
                     confidence = confidence,
                     id = id,
-                    mentions = Collections.unmodifiableList(ArrayList(mentions)),
-                    decay = decay,
-                    importance = importance,
+                    mentions = Collections.unmodifiableList(ArrayList(mentions.orEmpty())),
+                    decay = decay ?: TEMPLATE.decay,
+                    importance = importance ?: TEMPLATE.importance,
                     reasoning = reasoning,
-                    grounding = Collections.unmodifiableList(ArrayList(grounding)),
+                    grounding = Collections.unmodifiableList(ArrayList(grounding.orEmpty())),
                     created = created,
                     contentRevised = contentRevised,
                     metadataRevised = metadataRevised,
                     lastAccessed = lastAccessed,
-                    pinned = pinned,
-                    status = status,
-                    level = level,
-                    sourceIds = Collections.unmodifiableList(ArrayList(sourceIds)),
-                    reinforceCount = reinforceCount,
-                    metadata = Collections.unmodifiableMap(LinkedHashMap(metadata)),
+                    pinned = pinned ?: TEMPLATE.pinned,
+                    status = status ?: TEMPLATE.status,
+                    level = level ?: TEMPLATE.level,
+                    sourceIds = Collections.unmodifiableList(ArrayList(sourceIds.orEmpty())),
+                    reinforceCount = reinforceCount ?: TEMPLATE.reinforceCount,
+                    metadata = Collections.unmodifiableMap(LinkedHashMap(metadata.orEmpty())),
                     uri = uri,
                     temporal = temporal,
-                    provenanceEntries = Collections.unmodifiableList(ArrayList(provenanceEntries)),
+                    provenanceEntries = Collections.unmodifiableList(ArrayList(provenanceEntries.orEmpty())),
                 ),
             )
+        }
 
         /**
          * Starts a draft with the three values every proposition needs and defaults for the rest.
@@ -372,7 +387,6 @@ class PropositionDraft private constructor(
          */
         internal fun of(contextId: ContextId, text: String, confidence: ZeroToOne): PropositionDraft =
             PropositionDraft(
-                origin = null,
                 values = Values(
                     contextId = contextId,
                     text = text,
@@ -408,7 +422,6 @@ class PropositionDraft private constructor(
          */
         internal fun from(proposition: Proposition): PropositionDraft =
             PropositionDraft(
-                origin = proposition,
                 values = Values(
                     contextId = proposition.contextId,
                     text = proposition.text,
