@@ -93,7 +93,7 @@ class EvidenceConverter private constructor(
      *   or [rank] is below 1
      */
     fun item(hit: SimilarityResult<out Proposition>, retriever: RetrieverId, rank: Int): EvidenceItem =
-        scoredItem("hit", hit, retriever, rank, clock.instant())
+        scoredItem(hit, matchOf("hit", hit), retriever, rank, clock.instant())
 
     /**
      * Converts a list of claims into evidence. Claims with blank text are skipped. An empty list,
@@ -174,8 +174,8 @@ class EvidenceConverter private constructor(
         val now = clock.instant()
         return Evidence.of(
             results.mapIndexedNotNull { index, hit ->
-                val label = "hits[$index]"
-                if (matchOf(label, hit).text.isBlank()) null else scoredItem(label, hit, retriever, index + 1, now)
+                val proposition = matchOf("hits[$index]", hit)
+                if (proposition.text.isBlank()) null else scoredItem(hit, proposition, retriever, index + 1, now)
             },
             searched,
         )
@@ -304,23 +304,21 @@ class EvidenceConverter private constructor(
     /**
      * Builds the item for a scored claim, with its score and one retrieval at [rank].
      *
-     * @param label the name of the hit used in the error message, such as `hits[2]`
      * @param hit the scored claim
+     * @param proposition the hit's claim, read once by the caller
      * @param retriever the retriever that found the claim
      * @param rank the position of the hit in its result list, starting at 1
      * @param now the time the decayed confidence is worked out at
      * @return the item
-     * @throws IllegalArgumentException if the hit has no claim, the claim text or the claim id is blank,
-     *   or [rank] is below 1
+     * @throws IllegalArgumentException if the claim text or the claim id is blank, or [rank] is below 1
      */
     private fun scoredItem(
-        label: String,
         hit: SimilarityResult<out Proposition>,
+        proposition: Proposition,
         retriever: RetrieverId,
         rank: Int,
         now: Instant,
     ): EvidenceItem {
-        val proposition = matchOf(label, hit)
         val score = hit.score.takeIf { it.isFinite() }
         return convert(proposition, now, score = score, retrieval = retrieval(retriever, rank, score))
     }

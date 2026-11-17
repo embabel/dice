@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.evidence;
 
+import com.embabel.common.core.types.SimilarityResult;
 import com.embabel.common.core.types.SimpleSimilaritySearchResult;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionStatus;
@@ -171,6 +172,17 @@ class EvidenceConverterJavaInteropTest {
                 () -> converter.fromSimilarityResults(hits, Searched.of("support-team")));
 
         assertEquals("hits[1].match must not be null", thrown.getMessage());
+    }
+
+    @Test
+    void eachHitsClaimIsReadOnce() {
+        CountingHit kept = new CountingHit(claim("p-1", "Ada lives in London", PropositionStatus.ACTIVE), 0.9);
+        CountingHit blank = new CountingHit(claim("p-2", " ", PropositionStatus.ACTIVE), 0.8);
+
+        converter.fromSimilarityResults(List.of(kept, blank), Searched.of("support-team"));
+
+        assertEquals(1, kept.reads);
+        assertEquals(1, blank.reads);
     }
 
     @Test
@@ -506,6 +518,40 @@ class EvidenceConverterJavaInteropTest {
         return Proposition.create(
                 id, "support-team", "Ada lives in London", List.of(), 0.8, 0.1, null, List.of(),
                 RECORDED_AT, RECORDED_AT, PropositionStatus.ACTIVE);
+    }
+
+    /**
+     * A scored claim that counts how often its claim is read.
+     */
+    private static final class CountingHit implements SimilarityResult<Proposition> {
+
+        private final Proposition match;
+
+        private final double score;
+
+        private int reads;
+
+        /**
+         * Creates a hit for a claim with a score.
+         *
+         * @param match the claim
+         * @param score the score
+         */
+        CountingHit(Proposition match, double score) {
+            this.match = match;
+            this.score = score;
+        }
+
+        @Override
+        public Proposition getMatch() {
+            reads++;
+            return match;
+        }
+
+        @Override
+        public double getScore() {
+            return score;
+        }
     }
 
     /**
