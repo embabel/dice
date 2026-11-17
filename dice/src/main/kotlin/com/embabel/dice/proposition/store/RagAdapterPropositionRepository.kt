@@ -24,6 +24,7 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.proposition.VectorSearchCapable
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 
 /**
@@ -67,12 +68,13 @@ import org.slf4j.LoggerFactory
  * results from the graph/temporal paths, never an exception. Full multi-hop / path-between
  * traversal is deferred to a future native graph-query adapter.
  *
- * The class is open so the deprecated [Neo4jRagPropositionRepository] can extend it.
+ * The class is open only so the deprecated [Neo4jRagPropositionRepository] can extend it. Hosts should not subclass it.
  *
  * @param crud the supplementary durable proposition store backing all CRUD and query operations
  * @param entityRepository the entity/relationship/vector backend supplied by the consumer; held
  *   for the entity-axis projection path and never surfaced in this store's public signatures
  */
+@ApiStatus.NonExtendable
 open class RagAdapterPropositionRepository(
     private val crud: PropositionStore,
     val entityRepository: NamedEntityDataRepository,

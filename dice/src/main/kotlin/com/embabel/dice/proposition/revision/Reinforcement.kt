@@ -20,44 +20,64 @@ import java.time.Instant
 
 /**
  * What changes on a proposition when new evidence backs it up. Each caller states its own rule
- * and [reinforce] applies it.
+ * and [reinforce] applies it. Confidence never drops below the stored value, whatever
+ * [confidence] returns.
  *
  * @property confidence works out the new confidence from the existing proposition and the evidence
  * @property decayFactor multiplies the existing decay, or leaves decay alone when null
- * @property mergeProvenance when true, adds the evidence's provenance entries to the existing ones
- * @property countReinforcement when true, adds one to the reinforce count
- * @property touchLastAccessed when true, stamps the last-accessed time as well as the content time
+ * @property touchLastAccessed when true, stamps the last-accessed time with the revision time
  */
 internal class ReinforcementRule(
     val confidence: (existing: Proposition, evidence: Proposition) -> Double,
     val decayFactor: Double? = null,
-    val mergeProvenance: Boolean = false,
-    val countReinforcement: Boolean = false,
     val touchLastAccessed: Boolean = false,
 )
 
 /**
- * Strengthens a proposition with new evidence. Grounding from both is always combined, without
- * duplicates, and the content-revised time is always stamped.
+ * Strengthens a stored proposition with new evidence.
+ *
+ * The evidence's grounding, provenance entries and source ids are folded in with
+ * [Proposition.absorbEvidence]. The stored proposition's own id is never folded into its source
+ * ids. The reinforce count goes up by one for new evidence. Confidence never goes below the
+ * stored value. One instant is stamped on both the content and metadata revision times.
+ *
+ * The stored proposition comes back as it is in two cases. The evidence has the same id, or the
+ * evidence names a source and the stored proposition already holds all of it. A source is a
+ * grounding id, a provenance entry or a source id. Without provenance entries the grounding ids
+ * are the source identity. Evidence that names no source counts as new and still reinforces,
+ * although [Proposition.absorbEvidence] alone treats it as already held. Evidence whose only
+ * source is the stored proposition leaves it unchanged.
  *
  * @param existing the stored proposition
  * @param evidence the proposition that backs it up
  * @param rule what else changes
- * @return a copy of [existing] with the rule applied
+ * @return [existing] itself when nothing new arrives, otherwise a reinforced copy of it
  */
 internal fun reinforce(existing: Proposition, evidence: Proposition, rule: ReinforcementRule): Proposition {
+    if (existing.id == evidence.id) return existing
+    // An abstraction must keep a source id, so a level-0 copy carries the filtered evidence. Only its
+    // grounding, provenance entries and source ids are read.
+    val sources = evidence.copy(sourceIds = evidence.sourceIds.filter { it != existing.id }, level = 0)
+    val namesNoSource = evidence.grounding.isEmpty() &&
+        evidence.provenanceEntries.isEmpty() &&
+        evidence.sourceIds.isEmpty()
+    if (!namesNoSource && existing.holdsAllSourcesOf(sources)) return existing
     val now = Instant.now()
-    return existing.copy(
-        confidence = rule.confidence(existing, evidence),
-        decay = rule.decayFactor?.let { (existing.decay * it).coerceAtLeast(0.0) } ?: existing.decay,
-        grounding = (existing.grounding + evidence.grounding).distinct(),
-        provenanceEntries = if (rule.mergeProvenance) {
-            (existing.provenanceEntries + evidence.provenanceEntries).distinct()
-        } else {
-            existing.provenanceEntries
-        },
-        reinforceCount = if (rule.countReinforcement) existing.reinforceCount + 1 else existing.reinforceCount,
+    return existing.absorbEvidence(sources).copy(
+        confidence = rule.confidence(existing, evidence).coerceIn(existing.confidence, 1.0),
+        decay = rule.decayFactor?.let { (existing.decay * it).coerceIn(0.0, 1.0) } ?: existing.decay,
+        reinforceCount = existing.reinforceCount + 1,
         contentRevised = now,
+        metadataRevised = now,
         lastAccessed = if (rule.touchLastAccessed) now else existing.lastAccessed,
     )
 }
+
+/**
+ * Whether this proposition already holds every grounding id, provenance entry and source id that
+ * [evidence] names.
+ */
+private fun Proposition.holdsAllSourcesOf(evidence: Proposition): Boolean =
+    grounding.containsAll(evidence.grounding) &&
+        provenanceEntries.containsAll(evidence.provenanceEntries) &&
+        sourceIds.containsAll(evidence.sourceIds)

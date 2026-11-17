@@ -40,7 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
  * deprecated Neo4jRagPropositionRepository.
  */
 @SuppressWarnings("deprecation")
-class Neo4jRagPropositionRepositoryJavaInteropTest {
+class RagAdapterPropositionRepositoryJavaInteropTest {
 
     @Test
     void newNameBuildsAWorkingStoreFromJava() {

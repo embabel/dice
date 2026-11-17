@@ -19,6 +19,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.revision.RevisionResult
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -72,5 +73,29 @@ class AdditionalGroundingTest {
         val r = RevisionResult.New(prop("x", grounding = listOf("email:t1")))
             .withAdditionalGrounding(listOf("email:t1")) as RevisionResult.New
         assertEquals(listOf("email:t1"), r.proposition.grounding)
+    }
+
+    @Test
+    fun `a proposition that already holds every extra id is left untouched`() {
+        val p = prop("x", grounding = listOf("email:t1", "email:m1"))
+        val ids = listOf("email:m1")
+
+        val newResult = RevisionResult.New(p).withAdditionalGrounding(ids) as RevisionResult.New
+        assertSame(p, newResult.proposition)
+
+        val merged = RevisionResult.Merged(original = prop("o"), revised = p)
+            .withAdditionalGrounding(ids) as RevisionResult.Merged
+        assertSame(p, merged.revised)
+
+        val reinforced = RevisionResult.Reinforced(original = prop("o"), revised = p)
+            .withAdditionalGrounding(ids) as RevisionResult.Reinforced
+        assertSame(p, reinforced.revised)
+    }
+
+    @Test
+    fun `a proposition missing one extra id gains it`() {
+        val p = prop("x", grounding = listOf("email:t1", "email:m1"))
+        val r = RevisionResult.New(p).withAdditionalGrounding(listOf("email:m1", "email:m2")) as RevisionResult.New
+        assertEquals("email:m2", r.proposition.grounding.last())
     }
 }

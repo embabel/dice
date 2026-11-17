@@ -56,6 +56,13 @@ internal data class PendingClassification(
  *     .withClassifyLlm(cheaperLlmOptions)  // optional: cheaper model for classification
  * ```
  *
+ * A new proposition reinforces a stored one only when it brings evidence the stored one does not
+ * hold. When the stored proposition already holds all of its grounding, provenance entries and
+ * source ids, the result is still [RevisionResult.Merged] or [RevisionResult.Reinforced]. Its
+ * `revised` is the stored proposition unchanged, and no trust score is computed. A proposition
+ * that names no source counts as new evidence, unless it has the stored proposition's own id.
+ * Without provenance entries, the grounding ids alone identify the source.
+ *
  * @param llmOptions LLM configuration
  * @param ai AI service for LLM calls
  * @param topK Number of similar propositions to retrieve for classification
@@ -111,11 +118,16 @@ data class LlmPropositionReviser(
     private val logger = LoggerFactory.getLogger(LlmPropositionReviser::class.java)
 
     /** A similar proposition gives a small confidence lift, capped at 0.95, and slower decay. */
-    private val reinforcementRule = ReinforcementRule(
+    private val similarRule = ReinforcementRule(
         confidence = { existing, new -> (existing.confidence + new.confidence * 0.1).coerceAtMost(0.95) },
         decayFactor = 0.85,
-        mergeProvenance = true,
-        countReinforcement = true,
+        touchLastAccessed = true,
+    )
+
+    /** An identical proposition gives a larger confidence lift, capped at 0.99, and slower decay still. */
+    private val identicalRule = ReinforcementRule(
+        confidence = { existing, new -> (existing.confidence + new.confidence * 0.3).coerceAtMost(0.99) },
+        decayFactor = 0.7,
         touchLastAccessed = true,
     )
 
@@ -242,6 +254,17 @@ data class LlmPropositionReviser(
     }
 
     /**
+     * Scores a reinforced or merged proposition, or returns it as it is when reinforcement left
+     * the stored proposition unchanged.
+     *
+     * @param original the stored proposition
+     * @param revised what reinforcement returned for it
+     * @return [revised] itself when it is [original], otherwise [revised] with its trust score cached
+     */
+    private fun scoreUnlessUnchanged(original: Proposition, revised: Proposition): Proposition =
+        if (revised === original) revised else scoreAndCache(revised)
+
+    /**
      * Deduplicate a batch of propositions by canonical text, then use fast-path
      * (canonical match + auto-merge) where possible and batch the rest into
      * as few LLM calls as possible.
@@ -258,13 +281,16 @@ data class LlmPropositionReviser(
             logger.info("Batch dedup: dropped {} of {} propositions with identical canonical text", dropped, propositions.size)
         }
 
-        // 2. For each proposition: embedding search + fast paths
+        // 2. For each proposition: embedding search + fast paths. Each result is revised against
+        // the copies earlier results in this call produced, so two propositions that back up the
+        // same stored one both keep their evidence.
+        val inRun = InRunPropositions.over(repository)
         val results = mutableListOf<Pair<Int, RevisionResult>>()
         val pending = mutableListOf<Pair<Int, PendingClassification>>()
 
         for ((index, prop) in deduped.withIndex()) {
-            when (val outcome = retrieveAndFastPath(prop, repository)) {
-                is RevisionResult -> results.add(index to outcome)
+            when (val outcome = retrieveAndFastPath(prop, inRun)) {
+                is RevisionResult -> results.add(index to outcome.also(inRun::record))
                 is PendingClassification -> pending.add(index to outcome)
             }
         }
@@ -276,7 +302,7 @@ data class LlmPropositionReviser(
                 pending.size, deduped.size, classifyBatchSize
             )
             val pendingItems = pending.map { it.second }
-            val batchResults = classifyBatch(pendingItems, repository)
+            val batchResults = classifyBatch(pendingItems, inRun)
             for ((i, result) in batchResults.withIndex()) {
                 results.add(pending[i].first to result)
             }
@@ -309,7 +335,7 @@ data class LlmPropositionReviser(
             val original = repository.findById(canonicalMatch.id) ?: canonicalMatch
             val merged = mergePropositions(original, newProposition)
             logger.debug("Canonical text match: {}", newProposition.text.take(60))
-            return RevisionResult.Merged(original, scoreAndCache(merged))
+            return RevisionResult.Merged(original, scoreUnlessUnchanged(original, merged))
         }
 
         // Fast path 2: vector similarity search
@@ -344,7 +370,7 @@ data class LlmPropositionReviser(
                 "Auto-merge (embedding score {} >= {}): {}",
                 topCandidate.score, autoMergeThreshold, newProposition.text.take(60)
             )
-            return RevisionResult.Merged(original, scoreAndCache(merged))
+            return RevisionResult.Merged(original, scoreUnlessUnchanged(original, merged))
         }
 
         // Apply decay for ranking
@@ -388,7 +414,7 @@ data class LlmPropositionReviser(
         if (items.size == 1) {
             val item = items.first()
             val classified = classify(item.newProposition, item.candidates)
-            return listOf(classifiedToResult(item.newProposition, classified, repository))
+            return listOf(classifiedToResult(item.newProposition, classified, repository).also { recordInRun(repository, it) })
         }
 
         val allResults = mutableListOf<RevisionResult>()
@@ -457,11 +483,19 @@ data class LlmPropositionReviser(
                     )
                 }
 
-                allResults.add(classifiedToResult(item.newProposition, classified, repository))
+                allResults.add(classifiedToResult(item.newProposition, classified, repository).also { recordInRun(repository, it) })
             }
         }
 
         return allResults
+    }
+
+    /**
+     * Records [result] on [repository] when it is a run view, so the next result in the batch
+     * starts from the copy this one produced.
+     */
+    private fun recordInRun(repository: PropositionRepository, result: RevisionResult) {
+        (repository as? InRunPropositions)?.record(result)
     }
 
     /**
@@ -487,9 +521,16 @@ data class LlmPropositionReviser(
      */
     internal fun classifiedToResult(
         newProposition: Proposition,
-        classified: List<ClassifiedProposition>,
+        candidateClassifications: List<ClassifiedProposition>,
         repository: PropositionRepository,
     ): RevisionResult {
+        // A candidate was active when it was retrieved. An earlier result in the same run may have
+        // contradicted it since, and then it is no longer a candidate.
+        val classified = if (repository is InRunPropositions) {
+            candidateClassifications.filter { repository.findById(it.proposition.id)?.status != PropositionStatus.CONTRADICTED }
+        } else {
+            candidateClassifications
+        }
         val identical = classified.find { it.relation == PropositionRelation.IDENTICAL }
         val contradictory = classified.find { it.relation == PropositionRelation.CONTRADICTORY }
         val generalizes = classified.filter { it.relation == PropositionRelation.GENERALIZES }
@@ -516,7 +557,7 @@ data class LlmPropositionReviser(
                     ?: identical.proposition
                 val merged = mergePropositions(original, newProposition)
                 logger.debug("Merged: {} + {} -> {}", original.text, newProposition.text, merged.text)
-                RevisionResult.Merged(original, scoreAndCache(merged))
+                RevisionResult.Merged(original, scoreUnlessUnchanged(original, merged))
             }
 
             contradictory != null -> {
@@ -574,7 +615,7 @@ data class LlmPropositionReviser(
                     ?: mostSimilar.proposition
                 val revised = reinforceProposition(original, newProposition)
                 logger.debug("Reinforced: {} -> {}", original.text, revised.text)
-                RevisionResult.Reinforced(original, scoreAndCache(revised))
+                RevisionResult.Reinforced(original, scoreUnlessUnchanged(original, revised))
             }
 
             else -> {
@@ -669,33 +710,30 @@ data class LlmPropositionReviser(
         }
 
     /**
-     * Merge two propositions that express identical information.
-     * Combines grounding, boosts confidence, uses most recent text.
+     * Reinforces the stored proposition with one that states the same thing. Confidence rises by
+     * three tenths of the new proposition's confidence up to 0.99 and never falls. Decay is
+     * multiplied by 0.7. The new proposition's grounding, provenance entries and source ids are
+     * folded in and the reinforce count goes up by one. The stored text is kept. When the stored
+     * proposition already holds all of the new one's evidence it is returned unchanged.
+     *
+     * @param existing the stored proposition
+     * @param new the proposition that states the same thing
+     * @return the reinforced copy of [existing], or [existing] itself when nothing new arrives
      */
-    private fun mergePropositions(existing: Proposition, new: Proposition): Proposition {
-        // Boost confidence when we see the same information again
-        val boostedConfidence = (existing.confidence + new.confidence * 0.3).coerceAtMost(0.99)
-        // Slow decay — repeated confirmation means the fact is durable
-        val slowedDecay = (existing.decay * 0.7).coerceAtLeast(0.0)
-        // Combine grounding and the richer provenance entries (both deduplicated)
-        val combinedGrounding = (existing.grounding + new.grounding).distinct()
-        val combinedProvenance = (existing.provenanceEntries + new.provenanceEntries).distinct()
-
-        return existing.copy(
-            confidence = boostedConfidence,
-            decay = slowedDecay,
-            grounding = combinedGrounding,
-            provenanceEntries = combinedProvenance,
-            reinforceCount = existing.reinforceCount + 1,
-            contentRevised = Instant.now(),
-            lastAccessed = Instant.now(),
-        )
-    }
+    private fun mergePropositions(existing: Proposition, new: Proposition): Proposition =
+        reinforce(existing, new, identicalRule)
 
     /**
-     * Reinforce an existing proposition with new supporting evidence.
-     * Slightly boosts confidence and adds grounding.
+     * Reinforces the stored proposition with a similar one. Confidence rises by one tenth of the
+     * new proposition's confidence up to 0.95 and never falls. Decay is multiplied by 0.85. The new
+     * proposition's grounding, provenance entries and source ids are folded in and the reinforce
+     * count goes up by one. The stored text is kept. When the stored proposition already holds all
+     * of the new one's evidence it is returned unchanged.
+     *
+     * @param existing the stored proposition
+     * @param new the similar proposition
+     * @return the reinforced copy of [existing], or [existing] itself when nothing new arrives
      */
     private fun reinforceProposition(existing: Proposition, new: Proposition): Proposition =
-        reinforce(existing, new, reinforcementRule)
+        reinforce(existing, new, similarRule)
 }

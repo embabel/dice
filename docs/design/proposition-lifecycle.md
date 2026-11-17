@@ -50,7 +50,7 @@ What triggers each transition:
 - **STALE → QUARANTINED**: `DriftSweepCapable.sweep` (default `PropositionStoreDriftSweep`), run by `DriftCheckRunner` when schema drift is detected, evaluated with `DriftQuarantinePolicy`.
 - **CONTRADICTED → QUARANTINED**: `DriftSweepCapable.sweep` (default `PropositionStoreDriftSweep`), run by `DriftCheckRunner` when schema drift is detected, evaluated with `DriftQuarantinePolicy`.
 - **SUPERSEDED → QUARANTINED**: `DriftSweepCapable.sweep` (default `PropositionStoreDriftSweep`), run by `DriftCheckRunner` when schema drift is detected, evaluated with `DriftQuarantinePolicy`.
-- **STALE → ACTIVE**: the same `DecayStatusPolicy.evaluate` call, when a proposition's decayed utility recovers back above `recoveryThreshold`. The reviser itself never flips status — `reinforceProposition` only boosts confidence and resets the decay clock, which is what lets the next sweep's utility calculation cross back over the threshold.
+- **STALE → ACTIVE**: the same `DecayStatusPolicy.evaluate` call, when a proposition's decayed utility recovers back above `recoveryThreshold`. The reviser itself never flips status — `reinforceProposition` raises confidence, folds in the new evidence and resets the decay clock, which is what lets the next sweep's utility calculation cross back over the threshold.
 - **QUARANTINED → ACTIVE/STALE/CONTRADICTED/SUPERSEDED**: `DriftSweepCapable.releaseFromQuarantine` — operator releases the hold, restoring the status the proposition carried before quarantine (stored in `DriftQuarantineKeys.PREVIOUS_STATUS`).
 A projected proposition keeps its ACTIVE status so it stays retrievable — projection records the
 lineage on the graph side rather than moving the proposition off ACTIVE. `PROMOTED` is a reserved

@@ -31,6 +31,7 @@ import com.embabel.dice.common.SchemaRegistry
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.support.Sha256ContentHasher
 import com.embabel.dice.pipeline.ChunkPropositionResult
+import com.embabel.dice.pipeline.PropositionExtractionStats
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
@@ -247,13 +248,16 @@ class PropositionPipelineController(
         }.distinct()
 
         val revisionSummary = if (allRevisions.isNotEmpty()) {
-            RevisionSummary(
-                created = allRevisions.count { it is RevisionResult.New },
-                merged = allRevisions.count { it is RevisionResult.Merged },
-                reinforced = allRevisions.count { it is RevisionResult.Reinforced },
-                contradicted = allRevisions.count { it is RevisionResult.Contradicted },
-                generalized = allRevisions.count { it is RevisionResult.Generalized },
-            )
+            // A replay changed nothing, so the shared statistics leave it out of every count.
+            PropositionExtractionStats.from(allRevisions).let { stats ->
+                RevisionSummary(
+                    created = stats.newCount,
+                    merged = stats.mergedCount,
+                    reinforced = stats.reinforcedCount,
+                    contradicted = stats.contradictedCount,
+                    generalized = stats.generalizedCount,
+                )
+            }
         } else null
 
         val chunkSummaries = chunks.zip(chunkResults).map { (chunk, result) ->
@@ -459,13 +463,16 @@ class PropositionPipelineController(
         }
 
         val revisionSummary = if (result.revisionResults.isNotEmpty()) {
-            RevisionSummary(
-                created = result.revisionResults.count { it is RevisionResult.New },
-                merged = result.revisionResults.count { it is RevisionResult.Merged },
-                reinforced = result.revisionResults.count { it is RevisionResult.Reinforced },
-                contradicted = result.revisionResults.count { it is RevisionResult.Contradicted },
-                generalized = result.revisionResults.count { it is RevisionResult.Generalized },
-            )
+            // A replay changed nothing, so the shared statistics leave it out of every count.
+            PropositionExtractionStats.from(result.revisionResults).let { stats ->
+                RevisionSummary(
+                    created = stats.newCount,
+                    merged = stats.mergedCount,
+                    reinforced = stats.reinforcedCount,
+                    contradicted = stats.contradictedCount,
+                    generalized = stats.generalizedCount,
+                )
+            }
         } else null
 
         return ExtractResponse(

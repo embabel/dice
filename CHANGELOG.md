@@ -67,10 +67,10 @@ and the consumer PRs that deliver it).
   The store never used Neo4j itself: it joins any `PropositionStore` to embabel-agent's
   `NamedEntityDataRepository`. The old name stays as a deprecated class that extends the new
   one, with the same constructor, so Kotlin code, Java code and code already compiled against
-  the old name keep working. `RagAdapterPropositionRepository` is `open` for that reason. A
-  store logs under the name it was built with, so log settings for the old name still apply to
-  stores built through it. **Compatibility: additive.** New code uses
-  `RagAdapterPropositionRepository`.
+  the old name keep working. `RagAdapterPropositionRepository` is `open` for that reason only.
+  It is marked `@ApiStatus.NonExtendable`, and a host should not subclass it. A store logs under
+  the name it was built with, so log settings for the old name still apply to stores built
+  through it. **Compatibility: additive.** New code uses `RagAdapterPropositionRepository`.
 
 - The `dice` module no longer depends on `org.javers:javers-core`. DICE never called it.
   **Compatibility: behavioral.** Upgrade note: a host that used javers, or the gson, classgraph
@@ -81,9 +81,16 @@ and the consumer PRs that deliver it).
   loaded it, and it was the one query in DICE that called an APOC function. **Compatibility:
   behavioral.** A host that read this resource from the jar keeps its own copy.
 
-- `LlmPropositionReviser` and `DefaultMemoryConsolidator` reinforce a proposition through one
-  internal helper, each with the rule it already had. Results are the same as before.
-  **Compatibility: additive.**
+- `LlmPropositionReviser` and `DefaultMemoryConsolidator` reinforce a stored proposition through one
+  internal helper. A merge of identical propositions, a reinforcement by a similar one and a
+  consolidator reinforcement each keep their own confidence step and cap, and the reviser's two
+  rules keep their decay factors. The helper folds the new proposition's grounding, provenance
+  entries and source ids into the stored one with `Proposition.absorbEvidence`, leaving out the
+  stored proposition's own id, adds one to `reinforceCount`, and stamps `contentRevised` and
+  `metadataRevised` with one instant. The reviser stamps `lastAccessed` with it too. A configured
+  `TrustScorer` writes its score afterwards, which moves `metadataRevised` again. **Compatibility:
+  behavioral.** A reinforced proposition carries the new proposition's source ids, and its
+  `metadataRevised` moves with `contentRevised`.
 
 - Drivine 0.6.2. Since 0.5.0 the index and constraint spec classes in `org.drivine.schema`
   (`VectorIndexSpec`, `UniquenessConstraintSpec`, `RangeIndexSpec` and the others) ship in
@@ -1117,6 +1124,85 @@ and the consumer PRs that deliver it).
   Java code that called the constructor directly uses the factories instead.
 
 ### Fixed
+
+- Reinforcement never lowers confidence. A stored proposition above a rule's cap keeps its value.
+  `LlmPropositionReviser` returned 0.95 for a 0.98 proposition reinforced by a similar one, and 0.99
+  for a 1.0 proposition merged with an identical one. **Compatibility: behavioral.** A proposition
+  above 0.95 (similar) or 0.99 (identical) keeps its confidence when it is reinforced.
+
+- `RevisionResult.isReplay` tells whether a merge or reinforcement left the stored proposition as
+  it was, because the stored one already held all of the new proposition's evidence, as when the
+  same chunk is processed again. `replayedCount` on a chunk or run result counts them, since
+  `propositionExtractionStats` leaves replays out. The pipeline's per-run log line and a chunk
+  result's `infoString` include the count. **Compatibility: additive.**
+
+- A proposition that brings no new evidence does not reinforce. When the stored proposition already
+  holds all of the new one's grounding, provenance entries and source ids, `LlmPropositionReviser`
+  and `DefaultMemoryConsolidator` leave the stored proposition unchanged: the same confidence,
+  decay, `reinforceCount` and timestamps, so the decay clock is not refreshed. The reviser's result
+  is still `RevisionResult.Merged` or `RevisionResult.Reinforced`, with `revised` equal to
+  `original`. The pipeline emits no `PropositionMerged` or `PropositionReinforced` event for such a
+  replay, and `PropositionExtractionStats` does not count it. A configured `TrustScorer` is not
+  called for it.
+  A proposition that names no source counts as new evidence, unless it has the stored proposition's
+  own id, which is the stored proposition meeting itself and changes nothing. When propositions
+  carry no provenance entries, their grounding ids alone identify the source, so a host that grounds
+  every observation in one id reinforces once. `propositionsToPersist()` lists each stored
+  proposition once, as the last copy the results produced for it, and leaves out a replay of a
+  stored proposition that another result in the same chunk or batch changed or contradicted, so
+  saving the list keeps that change. **Compatibility: behavioral.** Processing the same chunk
+  twice, with the same chunk id and text, counts once. A host that relied on a second pass over
+  the same chunk to raise `reinforceCount` or confidence sees no change from that pass.
+
+- Within one `PropositionPipeline` run, a proposition is revised against the latest copy of a
+  stored proposition that earlier results in the run produced, not the stored copy. When two
+  propositions in one chunk, or in two chunks of one `process` call, back up the same stored
+  proposition, the second result's `original` is the first result's `revised`, and the saved
+  proposition keeps both propositions' evidence and counts both reinforcements. It used to keep
+  only the last one's. `PropositionReviser.reviseAll` does the same for the propositions it is
+  given, in both its default and in `LlmPropositionReviser`. **Compatibility: behavioral.**
+
+- A contradiction is the copy saved for the stored proposition it contradicts, even when a merge or
+  reinforcement of that proposition in the same chunk or run applied first. `LlmPropositionReviser`
+  applies fast-path merges before the propositions it sends to the model but returns results in
+  input order, so a contradiction classified by the model could come back before a merge it built
+  on, and `propositionsToPersist()` listed the merged `ACTIVE` copy as final. Saving it undid the
+  contradiction. **Compatibility: behavioral.** The saved proposition is `CONTRADICTED` and keeps the
+  merge's evidence.
+
+- `PropositionPipeline.processOnce` and `processText` leave a proposition untouched when it already
+  holds every `additionalGrounding` id. They stamped `metadataRevised` on it. They add
+  `additionalGrounding` ids before revision, so an id the stored proposition does not hold
+  reinforces it once, even when the text and source id are unchanged. They add the ids again to
+  what revision returns, before it is counted, reported or saved, so a custom reviser that hands
+  back the stored copy without them does not drop them. **Compatibility: behavioral.**
+
+- `DefaultMemoryConsolidator` carries the session proposition's provenance entries and source ids
+  onto the proposition it reinforces and adds one to its `reinforceCount`. It kept only the
+  grounding. Session propositions that match the same stored proposition fold into it in order, and
+  `ConsolidationResult.reinforced` holds one entry for that stored proposition. It held one entry
+  per session proposition, each built from the stored copy, so saving them kept one and lost the
+  rest. A stored proposition that already held all of that evidence is left out of `reinforced`.
+  Session propositions that merge with the same stored proposition make one `PropositionMerge`,
+  whose sources are that stored proposition and each of them in order. Each one made its own merge
+  before. A proposition it merges carries the grounding, provenance entries and source ids of every
+  proposition it was merged from, and its four timestamps are one instant.
+  **Compatibility: behavioral.** `reinforced` and `storedCount` can be smaller.
+
+- `DefaultMemoryMaintenanceOrchestrator` and `DefaultDreamLoopOrchestrator` read the stored
+  propositions they consolidate against with `query(query, withProvenance = true)`. A graph store's
+  plain query leaves provenance entries out, so a session proposition whose provenance the stored
+  one already held still raised its confidence and `reinforceCount`. **Compatibility: behavioral.**
+  A cycle reads provenance for every active proposition in the context, which costs extra reads on
+  a graph store. The dream loop's change-volume check still uses the plain query. A test double
+  that stubs only `query(query)` must also answer `query(query, withProvenance)`.
+
+- `DefaultMemoryConsolidator` checks its settings in its constructor and throws
+  `IllegalArgumentException`. `promotionThreshold` and `similarityThreshold` must be 0.0 or greater
+  and not NaN. A value above 1.0 is accepted and means never promote, or never match.
+  `reinforcementBoost` must be between 0.0 and 1.0. A negative boost failed inside `consolidate`,
+  when the lowered confidence left the valid range. **Compatibility: behavioral.** A host that
+  passes a rejected value fails at construction.
 
 - A `PropositionDraft` that sets only `created` no longer copies it into `contentRevised`,
   `metadataRevised` and `lastAccessed`. `contentRevised` now takes the build moment, as the

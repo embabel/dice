@@ -35,6 +35,9 @@ interface MemoryConsolidator {
      * - Matches existing → reinforce confidence
      * - Low importance → discard
      *
+     * A session proposition whose evidence the stored one already holds leaves it unchanged, and
+     * an unchanged stored proposition is not reported as reinforced.
+     *
      * @param sessionPropositions Propositions from the current session
      * @param existingPropositions Existing long-term propositions
      * @return Consolidation result with promoted, reinforced, discarded, and merged propositions
@@ -49,9 +52,9 @@ interface MemoryConsolidator {
  * Result of memory consolidation.
  *
  * @property promoted Session propositions that became long-term memories
- * @property reinforced Existing propositions that were reinforced by session data
+ * @property reinforced Stored propositions that session propositions reinforced, one entry each, with every match's evidence folded in order. A stored proposition that already held all of that evidence is left out.
  * @property discarded Session propositions that were too low importance to keep
- * @property merged Propositions that were merged from multiple sources
+ * @property merged Propositions that were merged from multiple sources, one merge for each stored proposition that session propositions merged with
  */
 data class ConsolidationResult(
     val promoted: List<Proposition>,
@@ -75,17 +78,35 @@ data class PropositionMerge(
 )
 
 /**
- * Default implementation of MemoryConsolidator.
+ * Default implementation of MemoryConsolidator. It decides, for each session proposition, whether to
+ * reinforce a stored one, merge with it, promote the session proposition or discard it.
  *
- * @param promotionThreshold Minimum confidence to promote to long-term
- * @param similarityThreshold Minimum similarity to consider propositions as duplicates
- * @param reinforcementBoost Confidence boost when reinforcing existing propositions
+ * A similarity above 0.9 reinforces the stored proposition. A similarity from `similarityThreshold`
+ * up to 0.9 merges the two. Any other session proposition is promoted when its confidence is at or
+ * above `promotionThreshold`, and discarded otherwise.
+ *
+ * Reinforcement raises the stored confidence by `reinforcementBoost`, capped at 1.0, and never
+ * lowers it. The session proposition's grounding, provenance entries and source ids are folded in,
+ * and the reinforce count goes up by one. Decay and last-accessed time do not change. When the
+ * stored proposition already holds all of the session proposition's evidence, it is returned
+ * unchanged.
+ *
+ * @param promotionThreshold 0.0 or greater. A value above 1.0 never promotes.
+ * @param similarityThreshold 0.0 or greater. A value above 1.0 never matches.
+ * @param reinforcementBoost Added to the stored confidence when a session proposition reinforces it, from 0.0 to 1.0. The result is capped at 1.0.
+ * @throws IllegalArgumentException when a threshold is negative or NaN, or the boost is outside 0.0 to 1.0
  */
 class DefaultMemoryConsolidator(
     private val promotionThreshold: Double = 0.6,
     private val similarityThreshold: Double = 0.7,
     private val reinforcementBoost: Double = 0.1,
 ) : MemoryConsolidator {
+
+    init {
+        require(promotionThreshold >= 0.0) { "promotionThreshold must be 0.0 or greater, was $promotionThreshold" }
+        require(similarityThreshold >= 0.0) { "similarityThreshold must be 0.0 or greater, was $similarityThreshold" }
+        require(reinforcementBoost in 0.0..1.0) { "reinforcementBoost must be between 0.0 and 1.0, was $reinforcementBoost" }
+    }
 
     /** A session proposition that matches a stored one gives a fixed confidence lift, capped at 1. */
     private val reinforcementRule = ReinforcementRule(
@@ -97,9 +118,13 @@ class DefaultMemoryConsolidator(
         existingPropositions: List<Proposition>,
     ): ConsolidationResult {
         val promoted = mutableListOf<Proposition>()
-        val reinforced = mutableListOf<Proposition>()
+        // Saving two copies of one stored proposition keeps only one, so each stored proposition
+        // gets one entry: reinforcements fold into its latest copy, and every session proposition
+        // that merges with it joins one merge.
+        val storedById = LinkedHashMap<String, Proposition>()
+        val latestById = LinkedHashMap<String, Proposition>()
+        val mergingById = LinkedHashMap<String, MutableList<Proposition>>()
         val discarded = mutableListOf<Proposition>()
-        val merged = mutableListOf<PropositionMerge>()
 
         for (sessionProp in sessionPropositions) {
             // Find similar existing propositions
@@ -110,18 +135,15 @@ class DefaultMemoryConsolidator(
                     // Reinforce or merge with existing
                     val bestMatch = similar.maxByOrNull { it.second }!!.first
                     val similarity = similar.maxOf { it.second }
+                    storedById.putIfAbsent(bestMatch.id, bestMatch)
 
                     if (similarity > 0.9) {
                         // Very similar - reinforce the existing one
-                        val reinforcedProp = reinforceProposition(bestMatch, sessionProp)
-                        reinforced.add(reinforcedProp)
+                        val current = latestById[bestMatch.id] ?: bestMatch
+                        latestById[bestMatch.id] = reinforceProposition(current, sessionProp)
                     } else {
                         // Somewhat similar - merge them
-                        val mergedProp = mergePropositions(listOf(bestMatch, sessionProp))
-                        merged.add(PropositionMerge(
-                            sources = listOf(bestMatch, sessionProp),
-                            result = mergedProp,
-                        ))
+                        mergingById.getOrPut(bestMatch.id) { mutableListOf() }.add(sessionProp)
                     }
                 }
 
@@ -137,9 +159,15 @@ class DefaultMemoryConsolidator(
             }
         }
 
+        val merged = mergingById.map { (id, sessionProps) ->
+            val sources = listOf(latestById[id] ?: storedById.getValue(id)) + sessionProps
+            PropositionMerge(sources = sources, result = mergePropositions(sources))
+        }
+
         return ConsolidationResult(
             promoted = promoted,
-            reinforced = reinforced,
+            // A stored proposition that no session proposition changed has nothing to save.
+            reinforced = latestById.filter { (id, latest) -> latest != storedById[id] }.values.toList(),
             discarded = discarded,
             merged = merged,
         )
@@ -182,8 +210,11 @@ class DefaultMemoryConsolidator(
     }
 
     /**
-     * Reinforce an existing proposition with evidence from a session proposition.
-     * Boosts confidence and updates grounding.
+     * Strengthens an existing proposition with evidence from a session proposition.
+     *
+     * @param existing The stored proposition
+     * @param session The session proposition that backs it up
+     * @return The stored proposition when it already holds the evidence, otherwise a reinforced copy
      */
     private fun reinforceProposition(
         existing: Proposition,
@@ -191,20 +222,25 @@ class DefaultMemoryConsolidator(
     ): Proposition = reinforce(existing, session, reinforcementRule)
 
     /**
-     * Merge multiple propositions into one.
-     * Takes the highest confidence text and combines grounding.
+     * Merges similar propositions into one new proposition. The text and fields come from the most
+     * confident source, and its grounding, provenance entries and source ids are combined from all sources.
+     *
+     * @param propositions The stored and session propositions to merge
+     * @return A new proposition with the average confidence and one timestamp for all four times
      */
     private fun mergePropositions(propositions: List<Proposition>): Proposition {
         val bestProp = propositions.maxByOrNull { it.confidence }!!
-        val allGrounding = propositions.flatMap { it.grounding }.distinct()
-        val avgConfidence = propositions.map { it.confidence }.average()
-
+        val now = Instant.now()
         return bestProp.copy(
             id = UUID.randomUUID().toString(),
-            confidence = avgConfidence,
-            grounding = allGrounding,
-            created = Instant.now(),
-            contentRevised = Instant.now(),
+            confidence = propositions.map { it.confidence }.average(),
+            grounding = propositions.flatMap { it.grounding }.distinct(),
+            provenanceEntries = propositions.flatMap { it.provenanceEntries }.distinct(),
+            sourceIds = propositions.flatMap { it.sourceIds }.distinct(),
+            created = now,
+            contentRevised = now,
+            metadataRevised = now,
+            lastAccessed = now,
         )
     }
 }

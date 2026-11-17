@@ -51,6 +51,7 @@ import com.embabel.dice.proposition.SuggestedPropositions
 import com.embabel.dice.provenance.ContentAddressedLocator
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.proposition.revision.PropositionReviser
+import com.embabel.dice.proposition.revision.InRunPropositions
 import com.embabel.dice.proposition.revision.RevisionResult
 import org.slf4j.LoggerFactory
 import java.time.Instant
@@ -438,10 +439,20 @@ class PropositionPipeline private constructor(
      * Resolution stage: resolves entities through the shared cross-chunk resolver, applies the
      * resolutions and optionally revises against existing propositions. It must stay serial so all
      * chunks share the same entity identity within a single [process] run.
+     *
+     * @param extraction the extracted propositions and suggested entities for one chunk
+     * @param context the analysis context
+     * @param extraGrounding ids added to each proposition's grounding before revision, so an id
+     * the stored proposition does not hold counts as new evidence
+     * @param inRun the run's view of the repository, which holds the copies earlier chunks in the
+     * run produced, or null to revise against the repository alone
+     * @return the resolved, and possibly revised, propositions for the chunk
      */
     private fun resolveStage(
         extraction: ExtractionStageResult,
         context: SourceAnalysisContext,
+        extraGrounding: List<String> = emptyList(),
+        inRun: InRunPropositions? = null,
     ): ChunkPropositionResult.Success {
         val chunk = extraction.chunk
         val suggestedPropositions = extraction.screening.result
@@ -490,7 +501,7 @@ class PropositionPipeline private constructor(
         // Step 4: Apply resolutions to create final propositions, each stamped with provenance
         // back to its source chunk. Done before revision so merges union the entries and a brand
         // new proposition keeps its grounding.
-        val propositions = stampProvenance(
+        val stamped = stampProvenance(
             leaveUnresolved(
                 chunk.id,
                 extractor.resolvePropositions(suggestedPropositions, resolutions, context),
@@ -501,23 +512,34 @@ class PropositionPipeline private constructor(
             chunk,
             context,
         )
+        val propositions = if (extraGrounding.isEmpty()) stamped
+        else stamped.map { it.withGroundingNotHeld(extraGrounding) }
         logger.debug("Created {} propositions", propositions.size)
 
         // Step 5: Optionally revise propositions against existing ones
+        var chunkLayer: InRunPropositions? = null
         val revisionResults = if (reviser != null && propositionRepository != null) {
-            val results = reviser.reviseAll(propositions, propositionRepository)
+            // This chunk revises through its own layer, so a failure part way through leaves the
+            // run's view untouched. The results join the run's view only once the chunk succeeds.
+            val layer = InRunPropositions.layeredOver(inRun ?: propositionRepository)
+            chunkLayer = layer
+            // A reviser can hand back a copy without the extra ids, as when it treats the
+            // proposition as a replay, so they are added again before anything reports or saves it.
+            val results = reviser.reviseAll(propositions, layer).map { it.withAdditionalGrounding(extraGrounding) }
+            val stats = PropositionExtractionStats.from(results)
             logger.debug(
                 "Revised {} propositions: {} new, {} merged, {} reinforced, {} contradicted",
                 results.size,
-                results.count { it is RevisionResult.New },
-                results.count { it is RevisionResult.Merged },
-                results.count { it is RevisionResult.Reinforced },
-                results.count { it is RevisionResult.Contradicted },
+                stats.newCount,
+                stats.mergedCount,
+                stats.reinforcedCount,
+                stats.contradictedCount,
             )
             // Emit one pre-persistence candidate event per RevisionResult (revision-only).
             // These are early signals; the canonical durable event is PropositionPersisted,
             // emitted by the repository decorator when the result is actually saved.
-            results.forEach { revision ->
+            // A replay changes nothing, so it emits nothing.
+            results.filterNot { it.isReplay }.forEach { revision ->
                 val event = when (revision) {
                     is RevisionResult.New -> PropositionDiscovered(revision.proposition)
                     is RevisionResult.Merged -> PropositionMerged(revision.original, revision.revised)
@@ -551,6 +573,7 @@ class PropositionPipeline private constructor(
             emptyList()
         }
 
+        if (inRun != null) chunkLayer?.publishTo(revisionResults, inRun)
         return ChunkPropositionResult.Success(
             chunkId = chunk.id,
             suggestedPropositions = suggestedPropositions,
@@ -628,7 +651,8 @@ class PropositionPipeline private constructor(
      * @param context Analysis context with schema, entity resolver, etc.
      * @param historyStore Tracks what's been processed; null to skip dedup
      * @param contentHasher Strategy for computing content hashes
-     * @param additionalGrounding Extra ids to add to the grounding of each proposition
+     * @param additionalGrounding Extra ids that join the grounding of each proposition before
+     * revision, so an id the stored proposition does not hold counts as new evidence
      * @return Result with propositions and entities, or null if already processed
      *
      * Note: This method does NOT persist anything. It returns UNSAVED results. The caller
@@ -676,7 +700,8 @@ class PropositionPipeline private constructor(
      * @param text The text to process
      * @param sourceId Identifier for the source, used as both the chunk id and the parent id
      * @param context Analysis context with schema, entity resolver, etc.
-     * @param additionalGrounding Extra ids to add to the grounding of each proposition
+     * @param additionalGrounding Extra ids that join the grounding of each proposition before
+     * revision, so an id the stored proposition does not hold counts as new evidence
      * @return Result with propositions and entities
      */
     @JvmOverloads
@@ -692,7 +717,7 @@ class PropositionPipeline private constructor(
         // id straight to a stored entity for one-hop provenance. A caller that passes a UUID as
         // the sourceId gets a UUID chunk id.
         val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
-        return processChunk(chunk, context).withAdditionalGrounding(additionalGrounding)
+        return resolveStage(extractStage(chunk, context), context, additionalGrounding)
     }
 
     /**
@@ -772,13 +797,16 @@ class PropositionPipeline private constructor(
         // Resolution stage — always serial, so all chunks share the same entity identity.
         // Resolve each non-null extraction through the shared crossChunkResolver; map null
         // slots to typed ChunkPropositionResult.Failed.
+        // One view of the repository for the whole run, so a later chunk revises against the copy
+        // an earlier chunk produced rather than the stored one, and both keep their evidence.
+        val inRun = propositionRepository?.let { InRunPropositions.over(it) }
         val chunkResults: List<ChunkPropositionResult> = extractions.mapIndexed { i, extraction ->
             val chunkId = chunks[i].id
             if (extraction != null) {
                 // Isolate per-chunk: an Exception in resolution or revision gives a Failed result for
                 // this chunk only. An Error there ends the run. Listener throws never get this far,
                 // because event emission goes through the safe wrapper.
-                attemptCatching { resolveStage(extraction, crossChunkContext) }
+                attemptCatching { resolveStage(extraction, crossChunkContext, inRun = inRun) }
                     .getOrElse { e ->
                         logger.warn("Resolution failed for chunk {}: {}", chunkId, e.message, e)
                         ChunkPropositionResult.failed(chunkId, e)
@@ -803,7 +831,7 @@ class PropositionPipeline private constructor(
         if (result.hasRevision) {
             val stats = result.propositionExtractionStats
             logger.info(
-                "Extracted {} propositions from {} chunks: {} new, {} generalized, {} merged, {} reinforced, {} contradicted ({} fully resolved)",
+                "Extracted {} propositions from {} chunks: {} new, {} generalized, {} merged, {} reinforced, {} contradicted, {} replayed ({} fully resolved)",
                 allPropositions.size,
                 chunks.size,
                 stats.newCount,
@@ -811,6 +839,7 @@ class PropositionPipeline private constructor(
                 stats.mergedCount,
                 stats.reinforcedCount,
                 stats.contradictedCount,
+                result.replayedCount,
                 allPropositions.count { it.isFullyResolved() }
             )
         } else {
@@ -844,7 +873,7 @@ internal fun ChunkPropositionResult.withAdditionalGrounding(ids: List<String>): 
     else when (this) {
         // Only a successful result carries propositions to ground; Failed has nothing to enrich.
         is ChunkPropositionResult.Success -> copy(
-            propositions = propositions.map { it.withGrounding(ids) },
+            propositions = propositions.map { it.withGroundingNotHeld(ids) },
             revisionResults = revisionResults.map { it.withAdditionalGrounding(ids) },
         )
         is ChunkPropositionResult.Failed -> this
@@ -853,14 +882,26 @@ internal fun ChunkPropositionResult.withAdditionalGrounding(ids: List<String>): 
 /**
  * Adds grounding to the proposition(s) a [RevisionResult] will persist. Only the proposition
  * sourced from the current text is enriched — a `Contradicted` result's pre-existing `original`
- * (whose confidence is merely reduced) keeps its own provenance unchanged.
+ * (whose confidence is merely reduced) keeps its own provenance unchanged. A proposition that
+ * already holds every id is returned as it is.
  */
 internal fun RevisionResult.withAdditionalGrounding(ids: List<String>): RevisionResult =
     if (ids.isEmpty()) this
     else when (this) {
-        is RevisionResult.New -> copy(proposition = proposition.withGrounding(ids))
-        is RevisionResult.Merged -> copy(revised = revised.withGrounding(ids))
-        is RevisionResult.Reinforced -> copy(revised = revised.withGrounding(ids))
-        is RevisionResult.Contradicted -> copy(new = new.withGrounding(ids))
-        is RevisionResult.Generalized -> copy(proposition = proposition.withGrounding(ids))
+        is RevisionResult.New -> copy(proposition = proposition.withGroundingNotHeld(ids))
+        is RevisionResult.Merged -> copy(revised = revised.withGroundingNotHeld(ids))
+        is RevisionResult.Reinforced -> copy(revised = revised.withGroundingNotHeld(ids))
+        is RevisionResult.Contradicted -> copy(new = new.withGroundingNotHeld(ids))
+        is RevisionResult.Generalized -> copy(proposition = proposition.withGroundingNotHeld(ids))
     }
+
+/**
+ * Adds [ids] to this proposition's grounding when at least one of them is missing. A proposition
+ * that holds every id brings no new evidence, so it keeps its revision time and stays equal to
+ * the stored copy.
+ *
+ * @param ids the extra grounding ids
+ * @return this proposition when it holds every id, otherwise a copy with the missing ids added
+ */
+private fun Proposition.withGroundingNotHeld(ids: List<String>): Proposition =
+    if (grounding.containsAll(ids)) this else withGrounding(ids)
