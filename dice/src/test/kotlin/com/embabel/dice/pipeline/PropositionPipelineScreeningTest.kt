@@ -476,6 +476,54 @@ class PropositionPipelineScreeningTest {
         assertNull(second.mentions.single().resolvedId)
     }
 
+    @Test
+    fun `E19 propositions with the same text keep their own verdicts when the extractor reverses them`() {
+        val objectAlice = alice.copy(role = "OBJECT")
+        val inner = SuggestingPropositionExtractor.of(proposition(aliceMetBob, alice), proposition(aliceMetBob, objectAlice))
+        val reversing = object : PropositionExtractor by inner {
+            override fun resolvePropositions(
+                suggestedPropositions: SuggestedPropositions,
+                resolutions: com.embabel.dice.common.Resolutions<SuggestedEntityResolution>,
+                context: SourceAnalysisContext,
+            ): List<Proposition> = inner.resolvePropositions(suggestedPropositions, resolutions, context).reversed()
+        }
+        val rejectsObjectAlice = object : MentionFilter {
+            override fun isValid(mention: SuggestedMention, propositionText: String): Boolean =
+                !(mention.span == "Alice" && mention.role == "OBJECT")
+            override fun rejectionReason(mention: SuggestedMention): String? = "object"
+        }
+
+        val result = pipeline(reversing)
+            .withMentionFilter(rejectsObjectAlice)
+            .processChunk(chunk(), context().withMintNewEntities(true))
+
+        val subject = result.propositions.single { it.mentions.single().role.name == "SUBJECT" }
+        val objectOne = result.propositions.single { it.mentions.single().role.name == "OBJECT" }
+        assertNotNull(subject.mentions.single().resolvedId)
+        assertNull(objectOne.mentions.single().resolvedId)
+    }
+
+    @Test
+    fun `E20 a span grounded only through a known entity is ungrounded when its span and type carry two ids`() {
+        val known = SourceAnalysisContext(
+            schema = DataDictionary.fromClasses("test"),
+            entityResolver = resolver,
+            contextId = ContextId("screening-test"),
+            knownEntities = listOf(
+                MentionFixtures.knownPerson("p-smith", "William Smith", "Bill"),
+                MentionFixtures.knownPerson("p-jones", "William Jones", "Will"),
+            ),
+        )
+        val smith = SuggestedMention(span = "William", type = "Person", role = "SUBJECT", suggestedId = "p-smith")
+        val jones = SuggestedMention(span = "William", type = "Person", role = "SUBJECT", suggestedId = "p-jones")
+
+        val result = dropPipeline(SuggestingPropositionExtractor.of(proposition("Bill waved", smith), proposition("Will sang", jones)))
+            .processChunk(chunk(), known)
+
+        assertEquals(2, result.rejectedMentions.count { it.check == RejectedMention.Check.GROUNDING })
+        assertTrue(result.propositions.all { it.mentions.isEmpty() }, "mentions: ${result.propositions.map { it.mentions }}")
+    }
+
     private fun inMemoryRepo(): PropositionRepository = object : PropositionRepository {
         private val store = mutableMapOf<String, Proposition>()
         override val luceneSyntaxNotes: String = "test"

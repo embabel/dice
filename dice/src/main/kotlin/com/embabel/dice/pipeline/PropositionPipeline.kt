@@ -355,9 +355,11 @@ class PropositionPipeline private constructor(
      *
      * Resolution assigns ids by span and type, so a rejected mention would otherwise share the id
      * of an accepted mention with the same span and type. An extractor may return the resolved
-     * propositions and their mentions in any order, so each resolved proposition is paired with
-     * the screened proposition of the same text, and each mention with the occurrence of the same
-     * span and type at the same rank. A resolved proposition with no screened twin is left as it is.
+     * propositions and their mentions in any order, so they are paired with the screened ones by
+     * content: a proposition by its text and its mentions' span, type and role, and a mention by its
+     * span, type and role and its rank among mentions that share all three. Items that match on all
+     * of that cannot be told apart, so either pairing gives the same propositions. A resolved
+     * proposition with no screened twin is left as it is.
      *
      * @param propositions the propositions the extractor resolved
      * @param screened the screened propositions they were resolved from
@@ -370,20 +372,19 @@ class PropositionPipeline private constructor(
         unresolved: List<Set<Int>>,
     ): List<Proposition> {
         if (unresolved.all { it.isEmpty() }) return propositions
-        // Every screened proposition, in order, with its text and the (span, type, rank) of each
-        // mention to leave unresolved. Each resolved proposition takes the first unpaired one with
-        // its text, so propositions that share a text pair up in the order they were screened.
         val pending = screened.propositions.mapIndexed { index, proposition ->
-            proposition.text to occurrences(proposition.mentions.map { MentionKey.from(it) }, unresolved.getOrNull(index).orEmpty())
+            val marks = proposition.mentions.map { markOf(it.span, it.type, it.role) }
+            Triple(proposition.text, marks.sortedBy { it.toString() }, ranked(marks, unresolved.getOrNull(index).orEmpty()))
         }.toMutableList()
         return propositions.map { proposition ->
-            val match = pending.indexOfFirst { it.first == proposition.text }
+            val marks = proposition.mentions.map { markOf(it.span, it.type, it.role.name) }
+            val signature = marks.sortedBy { it.toString() }
+            val match = pending.indexOfFirst { it.first == proposition.text && it.second == signature }
             if (match < 0) return@map proposition
-            val clear = pending.removeAt(match).second
+            val clear = pending.removeAt(match).third
             if (clear.isEmpty()) return@map proposition
-            val keys = proposition.mentions.map { MentionKey(it.span.lowercase().trim(), it.type.lowercase().trim()) }
-            val ranked = occurrences(keys, keys.indices.toSet())
-            val positions = keys.indices.filter { ranked[it] in clear && proposition.mentions[it].resolvedId != null }.toSet()
+            val all = ranked(marks, marks.indices.toSet())
+            val positions = marks.indices.filter { all[it] in clear && proposition.mentions[it].resolvedId != null }.toSet()
             if (positions.isEmpty()) proposition
             else proposition.copy(mentions = proposition.mentions.mapIndexed { position, mention ->
                 if (position in positions) mention.copy(resolvedId = null) else mention
@@ -392,18 +393,38 @@ class PropositionPipeline private constructor(
     }
 
     /**
-     * Names the mentions at the given positions by span and type and by how many earlier mentions
-     * share that span and type.
+     * A mention's span, type and role, compared the way resolution compares span and type.
      *
-     * @param keys the span and type of each mention, in order
-     * @param positions the positions to name
-     * @return one (key, rank) pair per named position, in position order
+     * @property span the span, lower case and trimmed
+     * @property type the type, lower case and trimmed
+     * @property role the role, upper case and trimmed
      */
-    private fun occurrences(keys: List<MentionKey>, positions: Set<Int>): List<Pair<MentionKey, Int>> {
-        val seen = mutableMapOf<MentionKey, Int>()
-        return keys.mapIndexedNotNull { position, key ->
-            val rank = seen.merge(key, 1, Int::plus)!! - 1
-            if (position in positions) key to rank else null
+    private data class MentionMark(val span: String, val type: String, val role: String)
+
+    /**
+     * Builds a mention's mark from its raw span, type and role.
+     *
+     * @param span the span as written
+     * @param type the type as written
+     * @param role the role as written
+     * @return the normalized mark
+     */
+    private fun markOf(span: String, type: String, role: String): MentionMark =
+        MentionMark(span.lowercase().trim(), type.lowercase().trim(), role.uppercase().trim())
+
+    /**
+     * Names the mentions at the given positions by their mark and by how many earlier mentions
+     * share that mark.
+     *
+     * @param marks the mark of each mention, in order
+     * @param positions the positions to name
+     * @return one (mark, rank) pair per named position, in position order
+     */
+    private fun ranked(marks: List<MentionMark>, positions: Set<Int>): List<Pair<MentionMark, Int>> {
+        val seen = mutableMapOf<MentionMark, Int>()
+        return marks.mapIndexedNotNull { position, mark ->
+            val rank = seen.merge(mark, 1, Int::plus)!! - 1
+            if (position in positions) mark to rank else null
         }
     }
 

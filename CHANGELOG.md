@@ -224,7 +224,8 @@ and the consumer PRs that deliver it).
   an inflected or plural form, or a name run together with a number, is a different word. A mention
   that names a known entity of the context, by suggested id, or by name or alias compared the way
   entity resolution compares them, is grounded when the text names that entity, and when several
-  known entities share that name the text must name all of them. A mention of something the text
+  known entities share that name the text must name all of them. Such a mention is ungrounded when
+  its span and type carry two different suggested ids in the chunk. A mention of something the text
   only implies is ungrounded, with or without an id. By default the mentions are kept.
   `withUngroundedMentions(UngroundedMentionHandling.DROP)` removes them before resolution, so they
   are never resolved, never minted as an entity and not left on the proposition; the proposition
