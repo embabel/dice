@@ -12,7 +12,8 @@
 
     <groupId>com.embabel.dice.examples</groupId>
     <artifactId>dice-examples</artifactId>
-    <version>0.5.0-SNAPSHOT</version>
+    <!-- The examples are never published, so their own version stays as it is. -->
+    <version>1.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>DICE Examples</name>
     <description>Focused examples of the DICE API. Built on its own and never published.</description>
@@ -36,11 +37,15 @@
 
     <properties>
         <java.version>21</java.version>
+        <!-- The Kotlin version DICE is built with. -->
+        <kotlin.version>2.2.21</kotlin.version>
         <!--
-            The DICE version the examples build against: the snapshot the root pom.xml builds.
-            Keep this version in step with it. CI fails when the two differ.
+            The DICE version the examples build against. It is the version in the root pom.xml,
+            and the build stops when the two differ. A release moves the root version, so set
+            this one to match afterwards. The Build workflow checks this value on every commit
+            except the release plugin's own, which come before this line can change.
         -->
-        <dice.version>${project.version}</dice.version>
+        <dice.version>0.5.0-SNAPSHOT</dice.version>
         <!-- DICE compiles against this Embabel Agent version, so the examples run on the same one. -->
         <embabel-agent.version>1.5.4</embabel-agent.version>
         <spring-modulith.version>2.1.0</spring-modulith.version>
@@ -108,7 +113,138 @@
         </dependency>
     </dependencies>
 
-    <!-- Embabel snapshots are published here. Released versions are on Maven Central. -->
+    <build>
+        <plugins>
+            <!--
+                Stops the build when dice.version, embabel-agent.version or kotlin.version differs
+                from the library's. Every module inherits the check, so a module built on its own
+                runs it too. The library's versions come from the root pom.xml and from the build
+                parent it names, which sets the Kotlin version. Maven fetches that parent's POM
+                the way it fetches any artifact, so the check works with any local repository
+                layout. Run it alone with ./mvnw -B -N -f examples/pom.xml initialize. In a full
+                build of the examples, run compile or a later phase, since examples-java needs
+                examples-common compiled first.
+
+                Three steps, in phase order: read the root pom.xml, fetch the build parent's POM,
+                then compare.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>fetch-library-build-parent</id>
+                        <phase>initialize</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>com.embabel.build</groupId>
+                                    <artifactId>embabel-build-parent</artifactId>
+                                    <!-- Read from the root pom.xml in the validate phase. -->
+                                    <version>${library.project.parent.version}</version>
+                                    <type>pom</type>
+                                    <!-- Named by version, so a stale copy of another version is never read. -->
+                                    <destFileName>embabel-build-parent-${library.project.parent.version}.pom</destFileName>
+                                </artifactItem>
+                            </artifactItems>
+                            <outputDirectory>${project.build.directory}/library</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>read-library-versions</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <!-- The next two steps read the root pom.xml's values as library.project.* -->
+                            <exportAntProperties>true</exportAntProperties>
+                            <target>
+                                <!--
+                                    The library's pom.xml is the one above the examples: one level
+                                    up from examples/, two from a module. Found from this project's
+                                    own directory, so it does not matter where the build starts.
+                                -->
+                                <condition property="library.root" value="${basedir}/..">
+                                    <and>
+                                        <available file="${basedir}/../pom.xml"/>
+                                        <resourcecontains resource="${basedir}/../pom.xml" substring="&lt;artifactId&gt;dice-parent&lt;/artifactId&gt;"/>
+                                    </and>
+                                </condition>
+                                <condition property="library.root" value="${basedir}/../..">
+                                    <and>
+                                        <available file="${basedir}/../../pom.xml"/>
+                                        <resourcecontains resource="${basedir}/../../pom.xml" substring="&lt;artifactId&gt;dice-parent&lt;/artifactId&gt;"/>
+                                    </and>
+                                </condition>
+                                <fail unless="library.root"
+                                      message="The examples check their versions against the DICE pom.xml above them, and there is none above ${basedir}. Build them inside a checkout of the DICE repository."/>
+                                <xmlproperty file="${library.root}/pom.xml" prefix="library"/>
+                            </target>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>check-library-versions</id>
+                        <phase>initialize</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <xmlproperty file="${project.build.directory}/library/embabel-build-parent-${library.project.parent.version}.pom" prefix="buildparent"/>
+                                <!-- A kotlin.version set in the root pom.xml wins over the build parent's. -->
+                                <condition property="library.kotlin.version" value="${library.project.properties.kotlin.version}">
+                                    <isset property="library.project.properties.kotlin.version"/>
+                                </condition>
+                                <condition property="library.kotlin.version" value="${buildparent.project.properties.kotlin.version}">
+                                    <isset property="buildparent.project.properties.kotlin.version"/>
+                                </condition>
+                                <fail unless="library.kotlin.version"
+                                      message="Cannot read the library's Kotlin version from embabel-build-parent ${library.project.parent.version}."/>
+
+                                <fail message="examples/pom.xml builds against DICE ${dice.version}, but the root pom.xml is ${library.project.version}. Set dice.version to ${library.project.version}.">
+                                    <condition>
+                                        <not>
+                                            <equals arg1="${library.project.version}" arg2="${dice.version}"/>
+                                        </not>
+                                    </condition>
+                                </fail>
+                                <fail message="examples/pom.xml uses Embabel Agent ${embabel-agent.version}, but DICE compiles against ${library.project.properties.embabel-agent.version}. Set embabel-agent.version to ${library.project.properties.embabel-agent.version}.">
+                                    <condition>
+                                        <not>
+                                            <equals arg1="${library.project.properties.embabel-agent.version}" arg2="${embabel-agent.version}"/>
+                                        </not>
+                                    </condition>
+                                </fail>
+                                <fail message="examples/pom.xml compiles with Kotlin ${kotlin.version}, but DICE is built with ${library.kotlin.version}. Set kotlin.version to ${library.kotlin.version}.">
+                                    <condition>
+                                        <not>
+                                            <equals arg1="${library.kotlin.version}" arg2="${kotlin.version}"/>
+                                        </not>
+                                    </condition>
+                                </fail>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <!--
+        Embabel Agent releases come from the first repository and its snapshots from the second.
+        The library's own build may move to an Embabel Agent snapshot, and the version check
+        then asks for the same one here.
+    -->
     <repositories>
         <repository>
             <id>embabel-releases</id>
@@ -117,6 +253,11 @@
                 <enabled>false</enabled>
             </snapshots>
         </repository>
+        <!--
+            Maven checks this repository for newer snapshots once a day and takes whichever copy
+            is newest. Installing the library just before building the examples makes the
+            installed DICE the newest.
+        -->
         <repository>
             <id>embabel-snapshots</id>
             <url>https://repo.embabel.com/artifactory/libs-snapshot</url>
@@ -125,6 +266,7 @@
             </releases>
             <snapshots>
                 <enabled>true</enabled>
+                <updatePolicy>never</updatePolicy>
             </snapshots>
         </repository>
     </repositories>
