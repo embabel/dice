@@ -15,9 +15,9 @@
  */
 package com.embabel.dice;
 
+import com.embabel.dice.incremental.AbstractChunkHistoryStore;
 import com.embabel.dice.incremental.AnalysisBookmark;
 import com.embabel.dice.incremental.BookmarkKey;
-import com.embabel.dice.incremental.ChunkHistoryStore;
 import com.embabel.dice.incremental.HashKey;
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore;
 import com.embabel.dice.incremental.ProcessedChunkRecord;
@@ -30,15 +30,16 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Checks that a Java developer can write a chunk history store by overriding the plain
- * String form, and that the built-in in-memory store clears a context through either form.
+ * Checks that a Java developer can write a chunk history store by extending
+ * AbstractChunkHistoryStore and writing the String clear, and that the built-in in-memory store
+ * clears a context through either form.
  */
 class ChunkHistoryStoreJavaInteropTest {
 
     /**
      * A store written in Java. It only records which contexts were cleared.
      */
-    static final class RecordingStore implements ChunkHistoryStore {
+    static final class RecordingStore extends AbstractChunkHistoryStore {
 
         final List<String> clearedContextValues = new ArrayList<>();
 

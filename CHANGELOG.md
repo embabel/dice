@@ -1088,9 +1088,10 @@ and the consumer PRs that deliver it).
   them, and the `ContextId` forms keep their names. A Kotlin class that already declares a member
   with the same signature as one of these needs `override` on it. `clearByContextValue` calls
   `clearByContext(ContextId)`, so a store that overrides only that method is reached from Java too.
-  A store written in Java overrides `clearByContextValue`, and `clearByContext` calls it, so existing
-  Kotlin code that clears a context reaches a Java store as well. A store that overrides neither
-  still clears nothing. **Compatibility: additive.**
+  A store written in Java extends the new `AbstractChunkHistoryStore` and writes
+  `clearByContextValue`, which both clear methods reach, so Kotlin code that clears a context
+  reaches a Java store as well. A store that overrides neither method clears nothing.
+  **Compatibility: additive.**
 
 - `PropositionContradicted`, `UngroundedMentionsFound`, `DreamLoopReport`,
   `CollapseUndoContextMismatchException` and `DriftReport` gain `of(...)` factories that take the

@@ -88,8 +88,9 @@ class DrivineChunkHistoryStore(
     }
 
     /**
-     * Deletes every processed chunk for the context, for Java callers. It is declared here, rather
-     * than inherited from the interface, so Spring runs it in a transaction like [clearByContext].
+     * Deletes every processed chunk for the context, for Java callers. Spring applies this class's
+     * `@Transactional` only to the methods the class declares, so the method is declared here and
+     * runs in a transaction like [clearByContext]. The inherited default would run outside one.
      *
      * @throws IllegalArgumentException if contextIdValue is blank
      */

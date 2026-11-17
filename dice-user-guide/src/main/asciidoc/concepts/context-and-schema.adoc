@@ -133,14 +133,14 @@ val pass = ConsolidationPass.of("session") { contextIdValue, propositions ->
 }
 ----
 
-A chunk history store written in Java overrides `clearByContextValue`, because Java cannot override
-`clearByContext(ContextId)`. A store written in Kotlin overrides `clearByContext(ContextId)`, and
-`clearByContextValue` calls it, so Java code reaches either kind of store through
-`clearByContextValue`.
+A chunk history store written in Java extends `AbstractChunkHistoryStore` and writes
+`clearByContextValue`, because Java cannot override `clearByContext(ContextId)`. Both clear methods
+reach it. A store written in Kotlin overrides `clearByContext(ContextId)`, and
+`clearByContextValue` calls it.
 
 [source,java]
 ----
-public class InMemoryChunkHistory implements ChunkHistoryStore {
+public class InMemoryChunkHistory extends AbstractChunkHistoryStore {
 
     @Override
     public void clearByContextValue(String contextIdValue) {

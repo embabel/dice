@@ -2006,6 +2006,12 @@ public final class com/embabel/dice/evidence/Searched$Companion {
 	public final fun unscoped ()Lcom/embabel/dice/evidence/Searched;
 }
 
+public abstract class com/embabel/dice/incremental/AbstractChunkHistoryStore : com/embabel/dice/incremental/ChunkHistoryStore {
+	public fun <init> ()V
+	public fun clearByContext-GRzcY08 (Ljava/lang/String;)V
+	public abstract fun clearByContextValue (Ljava/lang/String;)V
+}
+
 public abstract class com/embabel/dice/incremental/AbstractIncrementalAnalyzer : com/embabel/dice/incremental/IncrementalAnalyzer {
 	public fun <init> (Lcom/embabel/dice/incremental/ChunkHistoryStore;Lcom/embabel/dice/incremental/IncrementalSourceFormatter;Lcom/embabel/dice/incremental/WindowConfig;Lcom/embabel/dice/common/ContentHasher;)V
 	public synthetic fun <init> (Lcom/embabel/dice/incremental/ChunkHistoryStore;Lcom/embabel/dice/incremental/IncrementalSourceFormatter;Lcom/embabel/dice/incremental/WindowConfig;Lcom/embabel/dice/common/ContentHasher;ILkotlin/jvm/internal/DefaultConstructorMarker;)V

@@ -15,6 +15,7 @@
  */
 package com.embabel.dice;
 
+import com.embabel.dice.incremental.AbstractChunkHistoryStore;
 import com.embabel.dice.incremental.AnalysisBookmark;
 import com.embabel.dice.incremental.BookmarkKey;
 import com.embabel.dice.incremental.ChunkHistoryStore;
@@ -33,14 +34,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Checks that existing Kotlin code calling clearByContext(ContextId) reaches a store written in Java.
  *
- * E1: a Java store that overrides only clearByContextValue is cleared by the Kotlin clearByContext
+ * E1: a Java store that extends AbstractChunkHistoryStore is cleared by the Kotlin clearByContext
  *     call, so a hash it recorded for that context is no longer reported as processed.
- * E2: a Java store that overrides neither clear method still treats both calls as a no-op.
+ * E2: a Java store that implements the interface and writes no clear treats both calls as a no-op.
  */
 class ChunkHistoryStoreKotlinCallerJavaTest {
 
-    /** A Java store that keeps processed hashes and clears them only through the String form. */
-    static final class HashSetStore implements ChunkHistoryStore {
+    /** A Java store that keeps processed hashes and writes the one clear its base class asks for. */
+    static final class HashSetStore extends AbstractChunkHistoryStore {
 
         private final Set<HashKey> processed = new HashSet<>();
 
@@ -65,7 +66,7 @@ class ChunkHistoryStoreKotlinCallerJavaTest {
         }
     }
 
-    /** A Java store that overrides no clear method at all. */
+    /** A Java store that implements the interface and overrides no clear method. */
     static final class NoClearStore implements ChunkHistoryStore {
 
         @Override
@@ -84,7 +85,7 @@ class ChunkHistoryStoreKotlinCallerJavaTest {
     }
 
     @Test
-    void e1_theKotlinClearReachesAJavaStoreThatOverridesOnlyTheStringForm() {
+    void e1_theKotlinClearReachesAJavaStoreThatExtendsTheBaseClass() {
         HashSetStore store = new HashSetStore();
         store.recordProcessed(new ProcessedChunkRecord(
                 BookmarkKey.of("acme", "source-1"), HashKey.of("acme", "h"), 0, 1, Instant.EPOCH));
