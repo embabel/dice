@@ -122,10 +122,9 @@ Then extract:
 
 [source,java]
 ----
-var context = new SourceAnalysisContext(
-        dataDictionary,                                 // your domain schema
-        EscalatingEntityResolver.create(entityRepo),    // how mentions become entities
-        new ContextId("quickstart"));                   // the scope everything lands in
+var context = SourceAnalysisContext.withContextId("quickstart")         // the scope everything lands in
+        .withEntityResolver(EscalatingEntityResolver.create(entityRepo))  // how mentions become entities
+        .withSchema(dataDictionary);                                      // your domain schema
 
 var chunk = new Chunk("chunk-1",
         "Ada Lovelace worked with Charles Babbage on the Analytical Engine.");
@@ -172,16 +171,16 @@ would make "load everything" a one-liner.
 ----
 // Everything in this context.
 var all = propositionRepository.query(
-        PropositionQuery.againstContext(new ContextId("quickstart")));
+        PropositionQuery.againstContext("quickstart"));
 
 // Only what is still strongly believed, best first.
 var confident = propositionRepository.query(
-        PropositionQuery.againstContext(new ContextId("quickstart"))
+        PropositionQuery.againstContext("quickstart")
                 .withMinEffectiveConfidence(0.7));
 
 // Everything mentioning one entity.
 var aboutAda = propositionRepository.query(
-        PropositionQuery.againstContext(new ContextId("quickstart"))
+        PropositionQuery.againstContext("quickstart")
                 .withEntityId(adaId));
 ----
 

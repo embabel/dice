@@ -71,7 +71,7 @@ data class DefaultMemoryMaintenanceOrchestrator(
     private val abstractionThreshold: Int = 5,
     private val abstractionTargetCount: Int = 3,
     private val retireBelow: Double? = null,
-    private val retireDecayK: Double = 2.0,
+    private val retireDecayK: Double = Proposition.DEFAULT_DECAY_K,
     private val decayManager: DecayManager? = null,
     private val collector: CollectorRunner? = null,
 ) : MemoryMaintenanceOrchestrator {

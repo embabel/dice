@@ -16,6 +16,7 @@
 package com.embabel.dice.pipeline
 
 import com.embabel.agent.rag.model.Chunk
+import com.embabel.dice.common.attemptCatching
 import com.embabel.dice.common.ContentHasher
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.NewEntity
@@ -642,6 +643,9 @@ class PropositionPipeline private constructor(
      * Process a text once, with hash-based deduplication.
      * Ideal for one-shot ingestion of documents, notes, or other static text.
      *
+     * With a history store, it records the text as processed in that store once extraction succeeds.
+     * It saves no propositions and no entities.
+     *
      * @param text The text to process
      * @param sourceId Identifier for the source (used for chunk metadata and bookmark tracking)
      * @param context Analysis context with schema, entity resolver, etc.
@@ -651,7 +655,7 @@ class PropositionPipeline private constructor(
      * revision, so an id the stored proposition does not hold counts as new evidence
      * @return Result with propositions and entities, or null if already processed
      *
-     * Note: This method does NOT persist anything — it returns UNSAVED results. The caller
+     * Note: This method does NOT persist anything. It returns UNSAVED results. The caller
      * must persist the returned entities and propositions via
      * [PersistablePropositions.persist][PersistablePropositions.persist] within its own
      * transaction scope; nothing is written to any repository otherwise.
@@ -665,48 +669,33 @@ class PropositionPipeline private constructor(
         contentHasher: ContentHasher = Sha256ContentHasher,
         additionalGrounding: List<String> = emptyList(),
     ): ChunkPropositionResult? {
-        if (historyStore != null) {
-            val hash = contentHasher.hash(text)
-            if (historyStore.isProcessed(HashKey(context.contextId, hash))) {
-                logger.debug("Content already processed (hash: {})", hash.take(8))
-                return null
-            }
-            // Use sourceId AS the chunk id, not just parentId. This
-            // makes proposition.grounding carry the caller's stable
-            // sourceId (e.g. `email:<threadId>`, `file:<name>`,
-            // `url:<href>`) instead of an opaque UUID. Downstream
-            // wiring (GroundingWiringService) can then resolve that id
-            // directly to a stored entity for one-hop provenance.
-            // Backward-compatible: callers that pass UUID-shaped
-            // sourceIds get UUID chunk ids exactly as before.
-            val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
-            val result = resolveStage(extractStage(chunk, context), context, additionalGrounding)
-            historyStore.recordProcessed(
-                ProcessedChunkRecord(
-                    bookmarkKey = BookmarkKey(context.contextId, sourceId),
-                    hashKey = HashKey(context.contextId, hash),
-                    startIndex = 0,
-                    endIndex = 1,
-                    processedAt = Instant.now(),
-                )
-            )
-            return result.withAdditionalGrounding(additionalGrounding)
+        if (historyStore == null) return processText(text, sourceId, context, additionalGrounding)
+        val hash = contentHasher.hash(text)
+        if (historyStore.isProcessed(HashKey(context.contextId, hash))) {
+            logger.debug("Content already processed (hash: {})", hash.take(8))
+            return null
         }
-        // Same id-as-sourceId convention as the history-store branch:
-        // proposition.grounding carries the caller's stable sourceId so
-        // GroundingWiringService can resolve it to a source entity.
-        val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
-        return resolveStage(extractStage(chunk, context), context, additionalGrounding)
+        val result = processText(text, sourceId, context, additionalGrounding)
+        historyStore.recordProcessed(
+            ProcessedChunkRecord(
+                bookmarkKey = BookmarkKey(context.contextId, sourceId),
+                hashKey = HashKey(context.contextId, hash),
+                startIndex = 0,
+                endIndex = 1,
+                processedAt = Instant.now(),
+            )
+        )
+        return result
     }
 
     /**
-     * Processes a text as a single chunk, without any deduplication. Use this when no history
-     * store is involved, since the result is never null.
-     *
-     * Like [processOnce], this records nothing and returns an UNSAVED result. The caller must
-     * persist it via [PersistablePropositions.persist][PersistablePropositions.persist].
+     * Processes a text as a single chunk. It checks no history and records none. Like processOnce,
+     * it saves no propositions: the result is unsaved.
      *
      * The source id becomes the chunk id, so the grounding of each proposition carries it.
+     *
+     * Note: This method does NOT persist anything. The caller must persist the result via
+     * [PersistablePropositions.persist][PersistablePropositions.persist].
      *
      * @param text The text to process
      * @param sourceId Identifier for the source, used as both the chunk id and the parent id
@@ -722,6 +711,11 @@ class PropositionPipeline private constructor(
         context: SourceAnalysisContext,
         additionalGrounding: List<String> = emptyList(),
     ): ChunkPropositionResult {
+        // Use sourceId AS the chunk id, not just parentId. This makes proposition.grounding
+        // carry the caller's stable sourceId (e.g. `email:<threadId>`, `file:<name>`,
+        // `url:<href>`) instead of an opaque UUID, so GroundingWiringService can resolve that
+        // id straight to a stored entity for one-hop provenance. A caller that passes a UUID as
+        // the sourceId gets a UUID chunk id.
         val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
         return resolveStage(extractStage(chunk, context), context, additionalGrounding)
     }
@@ -732,6 +726,10 @@ class PropositionPipeline private constructor(
      * For cross-chunk entity resolution, the context's EntityResolver is wrapped with
      * an InMemoryEntityResolver via MultiEntityResolver. This ensures entities discovered
      * in earlier chunks can be recognized in later chunks without external persistence.
+     *
+     * An Exception in one chunk gives a Failed result for that chunk. An Error is not caught and
+     * ends the run. An event listener is the exception: anything a listener throws, Error included,
+     * is caught and logged, so it never stops the run.
      *
      * @param chunks The chunks to process
      * @param context Configuration including schema
@@ -767,16 +765,35 @@ class PropositionPipeline private constructor(
         // ConcurrentHashMap so a concurrent execution strategy can record failures safely without an
         // external lock; the resolution stage reads it only after every extraction has been joined.
         val failures = ConcurrentHashMap<String, Throwable>()
+        val interruptedBefore = Thread.currentThread().isInterrupted
         val extractions: List<ExtractionStageResult?> =
             executionStrategy.execute(chunks) { chunk ->
-                runCatching { extractStage(chunk, crossChunkContext) }
+                attemptCatching { extractStage(chunk, crossChunkContext) }
                     .getOrElse { e ->
                         logger.warn("Extraction failed for chunk {}: {}", chunk.id, e.message, e)
                         failures[chunk.id] = e
-                        throw e // let the strategy's runCatching map this to a null slot
+                        throw e // rethrow so the strategy turns this chunk into a null slot
                     }
             }
 
+        // An interrupt raised during extraction is held until this run is over, so it fails only the
+        // chunk it came from and not the resolution of the others. An interrupt the caller already
+        // had is left in place.
+        val extractionInterrupted = !interruptedBefore && Thread.interrupted()
+        try {
+            return resolveAndReport(chunks, extractions, failures, crossChunkContext)
+        } finally {
+            if (extractionInterrupted) Thread.currentThread().interrupt()
+        }
+    }
+
+    /** The serial second half of [process]: resolves each extraction and reports the run. */
+    private fun resolveAndReport(
+        chunks: List<Chunk>,
+        extractions: List<ExtractionStageResult?>,
+        failures: Map<String, Throwable>,
+        crossChunkContext: SourceAnalysisContext,
+    ): PropositionResults {
         // Resolution stage — always serial, so all chunks share the same entity identity.
         // Resolve each non-null extraction through the shared crossChunkResolver; map null
         // slots to typed ChunkPropositionResult.Failed.
@@ -786,9 +803,10 @@ class PropositionPipeline private constructor(
         val chunkResults: List<ChunkPropositionResult> = extractions.mapIndexed { i, extraction ->
             val chunkId = chunks[i].id
             if (extraction != null) {
-                // Isolate per-chunk: a throw in resolution, revision, or event emission surfaces
-                // as a Failed result for this chunk only, never aborting the whole run.
-                runCatching { resolveStage(extraction, crossChunkContext, inRun = inRun) }
+                // Isolate per-chunk: an Exception in resolution or revision gives a Failed result for
+                // this chunk only. An Error there ends the run. Listener throws never get this far,
+                // because event emission goes through the safe wrapper.
+                attemptCatching { resolveStage(extraction, crossChunkContext, inRun = inRun) }
                     .getOrElse { e ->
                         logger.warn("Resolution failed for chunk {}: {}", chunkId, e.message, e)
                         ChunkPropositionResult.failed(chunkId, e)

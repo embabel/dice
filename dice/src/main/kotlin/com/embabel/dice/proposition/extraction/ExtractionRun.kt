@@ -17,6 +17,8 @@ package com.embabel.dice.proposition.extraction
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.provenance.SourceRevisionRef
+import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
 import org.jetbrains.annotations.ApiStatus
 import java.time.Instant
 import java.util.Collections
@@ -35,11 +37,13 @@ import java.util.Collections
  */
 @ApiStatus.Experimental
 data class ExtractionRunKey(
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
     val runRef: ExtractionRunRef,
 ) {
 
     /** The tenant id as a plain string, for Java callers, since `ContextId` is a value class. */
+    @JsonIgnore
     fun getContextIdValue(): String = contextId.value
 
     companion object {
@@ -129,6 +133,7 @@ data class ExtractionRunKey(
  */
 @ApiStatus.Experimental
 class ExtractionRun @JvmOverloads constructor(
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
     val lineage: ExtractionRunLineage,
     val status: ExtractionRunStatus,
@@ -240,6 +245,7 @@ class ExtractionRun @JvmOverloads constructor(
     fun key(): ExtractionRunKey = ExtractionRunKey(contextId, ref)
 
     /** The tenant id as a plain string, for Java callers, since `ContextId` is a value class. */
+    @JsonIgnore
     fun getContextIdValue(): String = contextId.value
 
     /**

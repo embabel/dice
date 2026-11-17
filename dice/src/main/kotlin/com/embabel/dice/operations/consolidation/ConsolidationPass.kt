@@ -17,11 +17,12 @@ package com.embabel.dice.operations.consolidation
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.Proposition
+import java.util.function.BiFunction
 
 /**
  * One composable step in a consolidation cycle. A pass receives the current snapshot of
  * propositions for a context, decides what should change, and reports it back as a
- * [ConsolidationPassResult] — it never writes anything itself.
+ * [ConsolidationPassResult]. It never writes anything itself.
  *
  * ## Purity contract
  *
@@ -51,6 +52,43 @@ interface ConsolidationPass {
      * @return What changed (if anything), or why nothing did, as a [ConsolidationPassResult].
      */
     fun run(contextId: ContextId, propositions: List<Proposition>): ConsolidationPassResult
+
+    /**
+     * Same as [run] for callers that have a plain string context id, so they don't need to
+     * wrap it in a [ContextId] first. It has its own name so Kotlin calls to [run] never
+     * have two overloads to choose between.
+     *
+     * @param contextIdValue The id of the context the snapshot belongs to.
+     * @param propositions The pre-fetched snapshot to consolidate.
+     * @return What changed (if anything), or why nothing did.
+     */
+    fun runValue(contextIdValue: String, propositions: List<Proposition>): ConsolidationPassResult =
+        run(ContextId(contextIdValue), propositions)
+
+    companion object {
+
+        /**
+         * Builds a pass from a name and a function. Java code uses this, because it can't write
+         * a lambda for a pass: the interface needs both a name and a run method.
+         *
+         * @param name The name reported by [name] on the returned pass.
+         * @param body The work to do. It gets the context id as a string and the snapshot.
+         * @return A pass that calls [body] with the context id's string value.
+         */
+        @JvmStatic
+        fun of(
+            name: String,
+            body: BiFunction<in String, in List<Proposition>, out ConsolidationPassResult>,
+        ): ConsolidationPass {
+            val passName = name
+            return object : ConsolidationPass {
+                override val name: String = passName
+
+                override fun run(contextId: ContextId, propositions: List<Proposition>): ConsolidationPassResult =
+                    body.apply(contextId.value, propositions)
+            }
+        }
+    }
 }
 
 /**
@@ -91,7 +129,7 @@ sealed class ConsolidationPassResult {
     ) : ConsolidationPassResult()
 
     /**
-     * The pass had nothing to do — the snapshot is already consolidated as far as this pass is
+     * The pass had nothing to do. The snapshot is already consolidated as far as this pass is
      * concerned. Returning [NoOp] (not an empty [Changed]) is how a pass signals it has settled,
      * which lets the consolidation loop detect convergence.
      *

@@ -37,11 +37,16 @@ annotation class PropositionDsl
  * }
  * ```
  *
- * Each function sets one value by calling the draft step with the same name. The builder has no
- * public properties, so a name inside the block is always one of these functions.
+ * Each function sets one value by calling the draft step with the same name. The one exception is
+ * grounding: the ids collect here and go onto the draft once, when the block returns. The builder
+ * has no public properties, so a name inside the block is always one of these functions.
  */
 @PropositionDsl
 class PropositionDraftBuilder internal constructor(private var draft: PropositionDraft) {
+
+    // The grounding ids in the order first given, with repeats dropped. Starts from whatever the
+    // draft already holds, so existing grounding is kept.
+    private val grounding = LinkedHashSet<String>(draft.grounding)
 
     /** Sets the proposition id. */
     fun id(id: String) {
@@ -80,7 +85,7 @@ class PropositionDraftBuilder internal constructor(private var draft: Propositio
 
     /** Appends the chunk ids to the grounding and removes duplicates. */
     fun grounding(chunkIds: List<String>) {
-        draft = draft.withGrounding(chunkIds)
+        grounding.addAll(chunkIds)
     }
 
     /** Sets the creation time. */
@@ -158,5 +163,5 @@ class PropositionDraftBuilder internal constructor(private var draft: Propositio
      *
      * @return the draft holding every value set in the block
      */
-    internal fun build(): PropositionDraft = draft
+    internal fun build(): PropositionDraft = draft.withExactGrounding(grounding.toList())
 }

@@ -65,6 +65,15 @@ val result = pipeline.processText(noteText, "note:42", context)
 `processOnce` does the same and also skips a text it has seen before when you pass a
 `ChunkHistoryStore`, so its result can be null.
 
+`processOnce` records the text in the history store once it has been processed. The record holds the
+content hash, the source id and the time of processing, all scoped to the context. The check uses the
+hash, so the same text under a new source id is still skipped. Nothing is recorded if processing throws,
+so the next call tries again.
+
+`processText` does none of that. It never checks the history store and never writes to it, so calling it
+twice on the same text runs extraction twice. Use `processOnce` for ingestion that may see the same text
+again, and `processText` when every call should run.
+
 ==== Persist within your own transaction
 
 The pipeline stores nothing. That is deliberate — DICE never decides your transaction boundary.

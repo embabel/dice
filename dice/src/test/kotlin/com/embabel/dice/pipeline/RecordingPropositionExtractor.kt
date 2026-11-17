@@ -61,6 +61,3 @@ class RecordingPropositionExtractor : PropositionExtractor {
         ),
     )
 }
-
-internal fun processTextIsNotNull(pipeline: PropositionPipeline, context: SourceAnalysisContext): ChunkPropositionResult =
-    pipeline.processText("t", "s", context)

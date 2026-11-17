@@ -918,7 +918,8 @@ class DrivinePropositionRepository(
         if (!withProvenance) findAll() else withRawProvenance(findAll())
 
     /**
-     * The materialised `effectiveConfidence` (default k = 2.0, as of the last sweep) only matches a
+     * The materialised `effectiveConfidence` (computed with the default `k`,
+     * `Proposition.DEFAULT_DECAY_K`, as of the last sweep) only matches a
      * query that uses those defaults. When [PropositionQuery.decayK] or
      * [PropositionQuery.effectiveConfidenceAsOf] is non-default AND effective confidence actually drives
      * the query, fall back to live computation — see [queryWithLiveDecay].
@@ -1741,7 +1742,7 @@ class DrivinePropositionRepository(
         )
 
         /** Mirrors the [PropositionQuery.decayK] default; the materialised column is computed at this k. */
-        private const val DEFAULT_DECAY_K = 2.0
+        private const val DEFAULT_DECAY_K = Proposition.DEFAULT_DECAY_K
 
         /**
          * Cascade-aware bulk-clear Cypher, externalised to `queries/clear_propositions.cypher` so it runs

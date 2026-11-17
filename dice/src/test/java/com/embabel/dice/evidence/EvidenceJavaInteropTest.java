@@ -191,10 +191,12 @@ class EvidenceJavaInteropTest {
                 .withGrounding(List.of("chunk-1"))
                 .withDecay(0.05)
                 .withCreated(recordedAt)
+                .withContentRevised(recordedAt)
                 .toProposition();
         Proposition second = Proposition.draft("support-team", "Ada studied mathematics", 0.8)
                 .withId("claim-2")
                 .withCreated(recordedAt)
+                .withContentRevised(recordedAt)
                 .toProposition();
         EvidenceConverter converter = EvidenceConverter.create()
                 .withDecayK(4.0)

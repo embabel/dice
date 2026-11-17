@@ -17,6 +17,7 @@ package com.embabel.dice.projection.memory.collector
 
 import com.embabel.agent.core.ContextId
 import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
 import java.time.Clock
 
 /**
@@ -27,21 +28,22 @@ import java.time.Clock
  * A runner builds this once per sweep; tests can build one directly to exercise the strategy
  * without a runner at all.
  *
- * @property runId Identifies this run in the trace store — every edge, component and decision
+ * @property runId Identifies this run in the trace store, so every edge, component and decision
  *   recorded during the run is tagged with it.
  * @property contextId The context being swept.
  * @property contextIdValue [contextId] as a plain string, for Java callers.
  * @property dryRun When true, the strategy should still compute and record its full trace but
- *   must not have any side effect beyond that (no marks are a "commitment" either way — this
+ *   must not have any side effect beyond that (no marks are a "commitment" either way. This
  *   flag is here for callers that want to preview a run's trace before acting on it).
  * @property clock Source of "now" for anything the run needs to timestamp. Defaults to the
  *   system clock; tests can supply a fixed one.
  */
 data class CollectorRunContext(
     val runId: String,
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
-    val dryRun: Boolean = false,
-    val clock: Clock = Clock.systemUTC(),
+    val dryRun: Boolean = DEFAULT_DRY_RUN,
+    val clock: Clock = defaultClock(),
 ) {
 
     /** [contextId] as a plain string, for Java callers. */
@@ -49,6 +51,11 @@ data class CollectorRunContext(
     val contextIdValue: String get() = contextId.value
 
     companion object {
+
+        private const val DEFAULT_DRY_RUN = false
+
+        private fun defaultClock(): Clock = Clock.systemUTC()
+
         /**
          * Builds a run context from plain values. Java uses this, because it cannot call the constructor.
          *
@@ -57,14 +64,15 @@ data class CollectorRunContext(
          * @param dryRun Whether the run should only preview its trace.
          * @param clock The source of "now" for the run.
          * @return The run context.
+         * @throws IllegalArgumentException if contextIdValue is blank
          */
         @JvmStatic
         @JvmOverloads
         fun of(
             runId: String,
             contextIdValue: String,
-            dryRun: Boolean = false,
-            clock: Clock = Clock.systemUTC(),
+            dryRun: Boolean = DEFAULT_DRY_RUN,
+            clock: Clock = defaultClock(),
         ): CollectorRunContext = CollectorRunContext(runId, ContextId(contextIdValue), dryRun, clock)
     }
 }

@@ -66,7 +66,7 @@ class GraphDecayManager(
          * [Proposition.effectiveConfidenceAt], matching `PropositionQuery.decayK`. A query using a
          * different `k` falls back to live decay rather than reading this column.
          */
-        private const val DECAY_K = 2.0
+        private const val DECAY_K = Proposition.DEFAULT_DECAY_K
 
         /** Rows per committed batch in the `IN TRANSACTIONS` sweep. */
         private const val BATCH_ROWS = 10_000

@@ -21,6 +21,7 @@ import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.temporal.TemporalMetadata
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -33,6 +34,10 @@ import java.time.Instant
 // 3. E2: an out-of-range value fails when the block returns, with the constructor's message.
 // 4. E3: a name in the caller's scope does not capture a builder call.
 // 5. E4: the block entry point is synthetic, so Java does not see it.
+// 6. E5: grounding calls keep first-seen order and drop repeats.
+// 7. E6: a block with 2,000 grounding calls keeps every id in call order.
+// 8. E7: a builder that starts with grounding keeps it and appends to it.
+// 9. E8: an unset content time takes the build moment, not the created value.
 class PropositionDslTest {
 
     private val contextId = ContextId("acme")
@@ -162,5 +167,49 @@ class PropositionDslTest {
 
         assertFalse(invokes.isEmpty())
         assertTrue(invokes.all { it.isSynthetic })
+    }
+
+    @Test
+    fun `E5 grounding calls keep first-seen order and drop repeats`() {
+        val fact = Proposition(contextId, text, 0.9) {
+            grounding("a")
+            grounding("b", "a")
+            grounding("c")
+        }
+
+        assertEquals(listOf("a", "b", "c"), fact.grounding)
+    }
+
+    @Test
+    fun `E6 a block with 2000 grounding calls keeps every id in call order`() {
+        val ids = (1..2000).map { "chunk-$it" }
+
+        val fact = Proposition(contextId, text, 0.9) {
+            ids.forEach { grounding(it) }
+        }
+
+        assertEquals(2000, fact.grounding.size)
+        assertEquals(ids, fact.grounding)
+    }
+
+    @Test
+    fun `E7 a builder that starts with grounding keeps it and appends to it`() {
+        val seeded = Proposition.draft("acme", text, 0.9).withExactGrounding(listOf("x", "y"))
+        val builder = PropositionDraftBuilder(seeded)
+
+        builder.grounding("y", "z")
+
+        assertEquals(listOf("x", "y", "z"), builder.build().grounding)
+    }
+
+    @Test
+    fun `E8 an unset content time takes the build moment, not the created value`() {
+        val before = Instant.now()
+        val recordedAt = Instant.parse("2020-01-01T00:00:00Z")
+
+        val fact = Proposition(contextId, text, 0.9) { created(recordedAt) }
+
+        assertNotEquals(recordedAt, fact.contentRevised)
+        assertFalse(fact.contentRevised.isBefore(before))
     }
 }

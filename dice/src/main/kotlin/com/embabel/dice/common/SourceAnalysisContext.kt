@@ -17,6 +17,8 @@ package com.embabel.dice.common
 
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
+import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.embabel.dice.provenance.SourceLocator
 import com.embabel.dice.provenance.SourceRevisionRef
 import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef
@@ -64,6 +66,7 @@ import com.embabel.dice.proposition.extraction.ExtractionRunRef
 data class SourceAnalysisContext @JvmOverloads constructor(
     val schema: DataDictionary,
     val entityResolver: EntityResolver,
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
     val knownEntities: List<KnownEntity> = emptyList(),
     val relations: Relations = Relations.empty(),
@@ -124,6 +127,7 @@ data class SourceAnalysisContext @JvmOverloads constructor(
     /**
      * Returns the context ID as a String for Java interop.
      */
+    @JsonIgnore
     fun getContextIdValue(): String = contextId.value
 
     /**
