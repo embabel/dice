@@ -27,6 +27,8 @@ import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.FileTime
+import java.time.Duration
 import kotlin.io.path.copyTo
 import kotlin.io.path.createDirectories
 import kotlin.io.path.readText
@@ -99,14 +101,35 @@ class ApiListingTest {
     }
 
     @Test
-    fun `a source file name under both the generated and a hand-written root stops the program`() {
+    fun `a source file under both the generated and a hand-written root stops the program`() {
+        val generated = dir.resolve("generated")
+        generated.resolve(FIXTURE_PACKAGE).createDirectories().resolve("Stable.kt").writeText("")
+
+        assertEquals(2, listing("update", "--generated=$generated", sourceRoot("Stable.kt")))
+        assertTrue(err.toString().contains("$FIXTURE_PACKAGE/Stable.kt is both generated and hand-written"), err.toString())
+    }
+
+    @Test
+    fun `a hand-written file that declares the generated file's package stops the program from any directory`() {
         val generated = dir.resolve("generated")
         generated.resolve(FIXTURE_PACKAGE).createDirectories().resolve("Stable.kt").writeText("")
         val handWritten = dir.resolve("src")
-        handWritten.resolve("other").createDirectories().resolve("Stable.kt").writeText("")
+        handWritten.resolve("elsewhere").createDirectories().resolve("Stable.kt")
+            .writeText("@file:JvmName(\"Other\")\n\npackage ${FIXTURE_PACKAGE.replace('/', '.')}\n")
 
         assertEquals(2, listing("update", "--generated=$generated", "--source=$handWritten"))
-        assertTrue(err.toString().contains("Stable.kt is both generated and hand-written"), err.toString())
+        assertTrue(err.toString().contains("$FIXTURE_PACKAGE/Stable.kt is both generated and hand-written"), err.toString())
+    }
+
+    @Test
+    fun `a hand-written file of the same name in another package is not a clash`() {
+        val generated = dir.resolve("generated")
+        generated.resolve(FIXTURE_PACKAGE).createDirectories().resolve("Stable.kt").writeText("")
+        val handWritten = dir.resolve("src")
+        handWritten.resolve("other").createDirectories().resolve("Stable.kt").writeText("package other\n")
+
+        assertEquals(0, listing("update", "--generated=$generated", "--source=$handWritten"), err.toString())
+        assertFalse(api.resolve("m.api").readText().contains("/Stable {"))
     }
 
     @Test
@@ -135,6 +158,56 @@ class ApiListingTest {
         assertEquals(1, listing("check", sourceRoot("Stable.kt", "ExperimentalFunctions.kt")))
         val hint = err.toString().lines().filter { it.contains("earlier build") }
         assertTrue(hint.any { it.contains("$FIXTURE_PACKAGE/MixedFunctionsKt") }, err.toString())
+    }
+
+    @Test
+    fun `a class whose file is gone is named even when another package has a file of that name`() {
+        listing("update")
+        val stable = api.resolve("m.api")
+        stable.writeText(stable.readText().replace(Regex("public final class [^\\n]*/MixedFunctionsKt \\{[^}]*}\\n\\n"), ""))
+        val sources = sourceRoot("Stable.kt", "ExperimentalFunctions.kt", "GeneratedModel.kt")
+        dir.resolve("src/other").createDirectories().resolve("MixedFunctions.kt").writeText("package other\n")
+
+        assertEquals(1, listing("check", sources))
+        val hint = err.toString().lines().filter { it.contains("earlier build") }
+        assertTrue(hint.any { it.contains("$FIXTURE_PACKAGE/MixedFunctionsKt") }, err.toString())
+    }
+
+    @Test
+    fun `a class the compiler no longer writes from a file that still exists is named`() {
+        val classes = fixtureClasses().resolve(FIXTURE_PACKAGE)
+        val facade = classes.resolve("GeneratedModelKt.class")
+        Files.setLastModifiedTime(facade, FileTime.from(Files.getLastModifiedTime(facade).toInstant().minus(Duration.ofHours(1))))
+        val sources = sourceRoot("Stable.kt", "ExperimentalFunctions.kt", "MixedFunctions.kt", "GeneratedModel.kt")
+        listing("update", sources)
+        val stable = api.resolve("m.api")
+        stable.writeText(stable.readText().replace(Regex("public final class [^\\n]*/GeneratedModelKt \\{[^}]*}\\n\\n"), ""))
+
+        assertEquals(1, listing("check", sources))
+        val hint = err.toString().lines().single { it.contains("earlier build") }
+        assertEquals(listOf("$FIXTURE_PACKAGE/GeneratedModelKt"), hint.substringAfter("them: ").split(", "))
+    }
+
+    @Test
+    fun `without hand-written source roots no class is blamed for a missing file`() {
+        val generated = "--generated=" + dir.resolve("generated")
+        listing("update", generated)
+        val stable = api.resolve("m.api")
+        stable.writeText(stable.readText().replace("longestFirst", "shortestFirst"))
+
+        assertEquals(1, listing("check", generated))
+        assertFalse(err.toString().contains("earlier build"), err.toString())
+    }
+
+    @Test
+    fun `a passing check reads no class file`() {
+        val classes = fixtureClasses()
+        classes.resolve(FIXTURE_PACKAGE).resolve("Unreadable.class").writeText("not a class file")
+        val dump = "public final class a/B {\n}\n"
+        api.createDirectories().resolve("m.api").writeText(dump)
+        val args = arrayOf("check", classes.toString(), api.toString(), "m", sourceRoot("Stable.kt"))
+
+        assertEquals(0, ApiListing.run(args, PrintStream(out), PrintStream(err)) { _, _ -> dump }, err.toString())
     }
 
     @Test

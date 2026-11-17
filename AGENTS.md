@@ -68,7 +68,8 @@ must be regenerated:
 
 Update mode deletes each module's `target/classes` first, so a class left by an earlier build cannot reach a
 listing. It also builds only the published modules, since the others have no listings. Check mode leaves the
-directory alone, and `./mvnw clean` removes such a class.
+directory alone. When a check fails, the message names any class that looks left by an earlier build, and
+`./mvnw clean` removes such a class.
 
 Never edit a `.api` file by hand. A pull request that changes one changes the public API, so its listing
 diff belongs in the review.
@@ -81,8 +82,8 @@ major and minor version is ahead of it, so raise it when the Kotlin version move
 
 Generated code is left out. A module names its generated source root in `api.listing.generated.sources`, as
 `dice-storage` does for Drivine's query DSL, whose output `./mvnw clean` also deletes. The check stops when a
-generated file has the same name as a hand-written one, because it cannot tell their classes apart. A file
-facade (`FooKt`) whose top-level functions are all experimental goes to the experimental listing.
+generated file has the same name and package as a hand-written one, because it cannot tell their classes apart.
+A file facade (`FooKt`) whose top-level functions are all experimental goes to the experimental listing.
 
 A marker on an enum entry, or on a member of a stable type, moves nothing and does not show in the count.
 Count the types (stable, then experimental):

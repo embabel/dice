@@ -21,6 +21,8 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -29,6 +31,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.BiFunction;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.jetbrains.kotlin.abi.tools.AbiTools;
 import org.jetbrains.kotlin.abi.tools.api.AbiFilters;
@@ -47,9 +51,9 @@ import org.objectweb.asm.Opcodes;
  * differs from the compiled classes. {@code update} mode rewrites the listings.
  *
  * <p>A class compiled from a file under the {@code --generated} source root is left out, because
- * generated code carries no compatibility promise. The program stops when such a file name also
- * appears under a hand-written {@code --source} root, because it cannot tell which file a class
- * came from.
+ * generated code carries no compatibility promise. The program stops when a hand-written
+ * {@code --source} root has a file of the same name in the same package, because it cannot tell
+ * which file a class came from.
  *
  * <p>Usage: {@code ApiListing <check|update> <classes-dir> <api-dir> <module-name>
  * [--generated=<source-root>] [--source=<source-root>]...}
@@ -61,6 +65,16 @@ public final class ApiListing {
     private static final String GENERATED = "--generated=";
 
     private static final String SOURCE = "--source=";
+
+    /** The first package declaration in a Kotlin or Java file. */
+    private static final Pattern PACKAGE = Pattern.compile("^\\s*package\\s+([\\w.`]+)", Pattern.MULTILINE);
+
+    /**
+     * How much older than the newest class from the same source file a class must be to count as left
+     * from an earlier build. The compiler writes every class of a file in the same run, well inside
+     * this, and a coarse file system clock still keeps them within it.
+     */
+    private static final Duration EARLIER_BUILD = Duration.ofSeconds(2);
 
     public static void main(String[] args) throws IOException {
         System.exit(run(args, System.out, System.err));
@@ -113,15 +127,17 @@ public final class ApiListing {
         Path classesDir = Path.of(args[1]);
         List<File> classFiles = classFiles(classesDir);
         Map<Path, String> sourceNames = new HashMap<>();
-        Set<String> handWritten = fileNames(sourceRoots);
+        Set<String> handWritten = null;
         if (generated != null) {
+            handWritten = sourceFiles(sourceRoots);
             List<File> kept = new ArrayList<>();
             Set<String> clashes = new TreeSet<>();
             for (File classFile : classFiles) {
-                if (!isGenerated(classesDir, classFile.toPath(), generated, sourceNames)) {
+                String source = sourcePath(classesDir, classFile.toPath(), sourceNames);
+                if (source == null || !Files.isRegularFile(generated.resolve(source))) {
                     kept.add(classFile);
-                } else if (handWritten.contains(sourceName(classFile.toPath(), sourceNames))) {
-                    clashes.add(sourceName(classFile.toPath(), sourceNames));
+                } else if (handWritten.contains(source)) {
+                    clashes.add(source);
                 }
             }
             if (!clashes.isEmpty()) {
@@ -132,16 +148,6 @@ public final class ApiListing {
                 return 2;
             }
             classFiles = kept;
-        }
-        Set<String> stale = new TreeSet<>();
-        if (!sourceRoots.isEmpty()) {
-            for (File classFile : classFiles) {
-                String source = sourceName(classFile.toPath(), sourceNames);
-                String relative = classesDir.relativize(classFile.toPath()).toString().replace(File.separatorChar, '/');
-                if (!source.isEmpty() && !handWritten.contains(source) && !relative.contains("$")) {
-                    stale.add(relative.substring(0, relative.length() - ".class".length()));
-                }
-            }
         }
         if (classFiles.isEmpty()) {
             err.println("No compiled classes to list under " + args[1] + ". Compile the module first.");
@@ -186,9 +192,12 @@ public final class ApiListing {
         if (!matches) {
             err.println("The public API changed. Review the difference above, then regenerate the"
                     + " listings with: ./mvnw -B -Dapi.listing.mode=update process-classes");
+            // Worked out only after a failure, so a passing build skips the extra reading
+            Set<String> sources = sourceRoots.isEmpty() ? null : handWritten != null ? handWritten : sourceFiles(sourceRoots);
+            Set<String> stale = leftFromEarlierBuild(classesDir, classFiles, sources, sourceNames);
             if (!stale.isEmpty()) {
-                err.println("These classes have no source file, so they come from an earlier build and"
-                        + " ./mvnw clean removes them: " + String.join(", ", stale));
+                err.println("These classes look left from an earlier build, because their source file is gone"
+                        + " or no longer compiles to them, and ./mvnw clean removes them: " + String.join(", ", stale));
             }
             return 1;
         }
@@ -206,42 +215,106 @@ public final class ApiListing {
     }
 
     /**
-     * Collects the names of the files under some source roots.
+     * Collects the source files under some source roots, each as its package directory and file name,
+     * such as {@code com/embabel/dice/Mention.kt}.
+     *
+     * <p>Kotlin does not make a file's directory match its package, so a Kotlin or Java file is
+     * recorded under both its directory and the package it declares.
      *
      * @param roots the source roots, any of which may be missing
-     * @return the file names, such as {@code Mention.kt}
+     * @return the package directory and file name of each file
      */
-    private static Set<String> fileNames(List<Path> roots) throws IOException {
-        Set<String> names = new HashSet<>();
+    private static Set<String> sourceFiles(List<Path> roots) throws IOException {
+        Set<String> files = new HashSet<>();
         for (Path root : roots) {
             if (Files.isDirectory(root)) {
+                List<Path> paths;
                 try (Stream<Path> walk = Files.walk(root)) {
-                    walk.filter(Files::isRegularFile).forEach(path -> names.add(path.getFileName().toString()));
+                    paths = walk.filter(Files::isRegularFile).toList();
+                }
+                for (Path path : paths) {
+                    String name = path.getFileName().toString();
+                    Path dir = root.relativize(path).getParent();
+                    files.add(packagePath(dir == null ? "" : dir.toString().replace(File.separatorChar, '/'), name));
+                    if (name.endsWith(".kt") || name.endsWith(".java")) {
+                        // Read as Latin-1 so an odd byte cannot stop the read; package names are plain ASCII
+                        Matcher declared = PACKAGE.matcher(new String(Files.readAllBytes(path), StandardCharsets.ISO_8859_1));
+                        String pkg = declared.find() ? declared.group(1).replace("`", "").replace('.', '/') : "";
+                        files.add(packagePath(pkg, name));
+                    }
                 }
             }
         }
-        return names;
+        return files;
+    }
+
+    private static String packagePath(String packageDir, String fileName) {
+        return packageDir.isEmpty() ? fileName : packageDir + "/" + fileName;
     }
 
     /**
-     * Tells whether a class was compiled from a file under the generated source root. A class with no
-     * source file name is kept.
+     * Finds the source file a class was compiled from, as its package directory and file name.
      *
      * @param classesDir the module's class directory
      * @param classFile a class file under it
-     * @param generatedRoot the generated source root
      * @param sourceNames source file names already read, by outermost class file
-     * @return true when the source file exists under the root, in the class's package directory
+     * @return the path, such as {@code com/embabel/dice/Mention.kt}, or null when the class records no
+     *     source file name
      */
-    private static boolean isGenerated(Path classesDir, Path classFile, Path generatedRoot,
-            Map<Path, String> sourceNames) throws IOException {
+    private static String sourcePath(Path classesDir, Path classFile, Map<Path, String> sourceNames)
+            throws IOException {
         String source = sourceName(classFile, sourceNames);
         if (source.isEmpty()) {
-            return false;
+            return null;
         }
         Path packageDir = classesDir.relativize(classFile).getParent();
-        Path sourceDir = packageDir == null ? generatedRoot : generatedRoot.resolve(packageDir.toString());
-        return Files.isRegularFile(sourceDir.resolve(source));
+        return packagePath(packageDir == null ? "" : packageDir.toString().replace(File.separatorChar, '/'), source);
+    }
+
+    /**
+     * Picks out the classes that look left from an earlier build, for the hint after a failed check.
+     *
+     * <p>Two signs give such a class away. Its source file is in no hand-written source root, because
+     * the file was deleted or moved. Or it is older than the newest class from the same source file:
+     * the compiler writes every class of a file it compiles, so a class it no longer writes keeps the
+     * time of an earlier build. That second sign catches a class deleted from a file that still exists.
+     *
+     * @param classesDir the module's class directory
+     * @param classFiles the classes that went into the listing
+     * @param handWritten the hand-written source files from {@link #sourceFiles}, or null when the
+     *     program was given no source roots
+     * @param sourceNames source file names already read, by outermost class file
+     * @return the class names, such as {@code com/embabel/dice/Mention}, leaving out a nested class
+     *     whose outer class is named
+     */
+    private static Set<String> leftFromEarlierBuild(Path classesDir, List<File> classFiles, Set<String> handWritten,
+            Map<Path, String> sourceNames) throws IOException {
+        Map<String, List<Path>> bySource = new HashMap<>();
+        Map<Path, FileTime> times = new HashMap<>();
+        Map<String, FileTime> newest = new HashMap<>();
+        for (File file : classFiles) {
+            Path classFile = file.toPath();
+            String source = sourcePath(classesDir, classFile, sourceNames);
+            if (source != null) {
+                FileTime time = Files.getLastModifiedTime(classFile);
+                times.put(classFile, time);
+                bySource.computeIfAbsent(source, key -> new ArrayList<>()).add(classFile);
+                newest.merge(source, time, (a, b) -> a.compareTo(b) >= 0 ? a : b);
+            }
+        }
+        Set<String> stale = new TreeSet<>();
+        for (Map.Entry<String, List<Path>> entry : bySource.entrySet()) {
+            boolean gone = handWritten != null && !handWritten.contains(entry.getKey());
+            FileTime cutoff = FileTime.from(newest.get(entry.getKey()).toInstant().minus(EARLIER_BUILD));
+            for (Path classFile : entry.getValue()) {
+                if (gone || times.get(classFile).compareTo(cutoff) < 0) {
+                    String relative = classesDir.relativize(classFile).toString().replace(File.separatorChar, '/');
+                    stale.add(relative.substring(0, relative.length() - ".class".length()));
+                }
+            }
+        }
+        stale.removeIf(name -> name.contains("$") && stale.contains(name.substring(0, name.indexOf('$'))));
+        return stale;
     }
 
     /**
