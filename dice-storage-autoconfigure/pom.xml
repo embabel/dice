@@ -185,7 +185,7 @@
                 </executions>
             </plugin>
             <plugin>
-                <!-- Fails verify when the public API differs from api/dice-storage-autoconfigure*.api -->
+                <!-- Fails the build after compile when the public API differs from api/dice-storage-autoconfigure*.api -->
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-antrun-plugin</artifactId>
             </plugin>

@@ -1970,4 +1970,3 @@ public final class com/embabel/dice/web/rest/SourceLocatorInputDto {
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
-

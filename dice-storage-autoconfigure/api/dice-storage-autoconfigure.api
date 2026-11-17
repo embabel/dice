@@ -175,4 +175,3 @@ public final class com/embabel/dice/storage/autoconfigure/PropositionVectorIndex
 
 public final class com/embabel/dice/storage/autoconfigure/PropositionVectorIndexConvergence$Companion {
 }
-
