@@ -68,7 +68,8 @@ import java.util.concurrent.ConcurrentHashMap
  * - [withMentionFilter] — drop low-quality entity mentions before resolution
  * - [withEventListener] — observe pipeline events
  * - [withExecutionStrategy] — control how the extraction stage is dispatched
- * - [withUngroundedMentions] — keep or drop mentions whose span isn't in their proposition
+ * - [withUngroundedMentions]: keep or drop mentions the grounding check rejects, by default those
+ *   neither in their proposition's text nor naming a known entity the text names
  * - [withMentionGrounding]: replace the check that decides whether a mention is grounded
  *
  * Example usage:
@@ -238,8 +239,10 @@ class PropositionPipeline private constructor(
         PropositionPipeline(extractor, reviser, propositionRepository, mentionFilter, rawEventListener, strategy, ungroundedMentions, groundingCheck, mentionFilterHandling)
 
     /**
-     * Choose what happens to a mention whose span doesn't appear in the text of the proposition
-     * it's attached to.
+     * Choose what happens to a mention the grounding check rejects. With the default check,
+     * [GroundedMentionFilter], that is a mention whose span is not in the text of its proposition
+     * at word edges and that does not name, by name or alias, a known entity the text names.
+     * [withMentionGrounding] replaces the check.
      *
      * With [UngroundedMentionHandling.KEEP], the default, such mentions go through exactly as the
      * extractor returned them: they are resolved like any other mention and stay on the
@@ -251,8 +254,7 @@ class PropositionPipeline private constructor(
      * [UngroundedMentionsFound] per chunk, and listed on the chunk result in
      * [ChunkPropositionResult.rejectedMentions].
      *
-     * When a dropped mention carried a suggested id and no remaining mention with the same span
-     * and type has one, the resolver candidates for that span and type get that id.
+     * A dropped mention takes its suggested id with it; no other mention inherits it.
      *
      * @param handling whether to keep or drop ungrounded mentions
      * @return A new pipeline instance with that handling
@@ -348,15 +350,16 @@ class PropositionPipeline private constructor(
      * Resolution assigns ids by span and type, so a mention left unresolved would otherwise get the
      * id of an accepted mention with the same span and type. The extractor returns one proposition
      * per screened proposition, in order, with the mentions in order, so the verdicts are applied
-     * by position. A resolved proposition whose mentions do not line up with its screened one by
-     * span and type, or every proposition when the counts differ, is handled safely instead: each of
-     * its mentions whose span and type was left unresolved anywhere in the chunk loses its id, and
-     * one warning with counts is logged.
+     * by position. A resolved proposition that does not line up with its screened one, by count or
+     * by each mention's span and type, cannot be matched safely: when the chunk had any mention left
+     * unresolved or dropped, every resolved id in such a proposition is taken off, and one warning
+     * with counts is logged.
      *
      * @param chunkId the id of the chunk, for the warning
      * @param propositions the propositions the extractor resolved
      * @param screened the screened propositions they were resolved from
      * @param unresolved for each screened proposition, the positions of mentions to leave unresolved
+     * @param removedAny true when a check left any mention of the chunk unresolved or dropped it
      * @return [propositions] when nothing changes, otherwise a copy without those ids
      */
     private fun leaveUnresolved(
@@ -364,37 +367,32 @@ class PropositionPipeline private constructor(
         propositions: List<Proposition>,
         screened: SuggestedPropositions,
         unresolved: List<Set<Int>>,
+        removedAny: Boolean,
     ): List<Proposition> {
-        if (unresolved.all { it.isEmpty() }) return propositions
+        if (!removedAny) return propositions
         val sameCount = propositions.size == screened.propositions.size
-        val unresolvedKeys by lazy {
-            screened.propositions.flatMapIndexed { index, proposition ->
-                unresolved.getOrNull(index).orEmpty().map { MentionKey.from(proposition.mentions[it]) }
-            }.toSet()
-        }
         var misaligned = 0
-        val cleared = propositions.mapIndexed { index, proposition ->
+        var cleared = 0
+        val result = propositions.mapIndexed { index, proposition ->
             val twin = if (sameCount) screened.propositions[index] else null
-            val keys = proposition.mentions.map { MentionKey.from(it) }
-            val clear = if (twin != null && keys == twin.mentions.map { MentionKey.from(it) }) {
-                unresolved.getOrNull(index).orEmpty()
-            } else {
-                misaligned++
-                keys.indices.filter { keys[it] in unresolvedKeys }.toSet()
-            }
-            if (clear.none { proposition.mentions[it].resolvedId != null }) proposition
-            else proposition.copy(mentions = proposition.mentions.mapIndexed { position, mention ->
+            val aligned = twin != null && proposition.mentions.map { MentionKey.from(it) } == twin.mentions.map { MentionKey.from(it) }
+            val clear = if (aligned) unresolved.getOrNull(index).orEmpty() else proposition.mentions.indices.toSet()
+            if (!aligned) misaligned++
+            val withId = clear.filter { proposition.mentions[it].resolvedId != null }
+            if (withId.isEmpty()) return@mapIndexed proposition
+            if (!aligned) cleared += withId.size
+            proposition.copy(mentions = proposition.mentions.mapIndexed { position, mention ->
                 if (position in clear) mention.copy(resolvedId = null) else mention
             })
         }
         if (misaligned > 0) {
             logger.warn(
-                "{} returned {} propositions for {} screened in chunk {}, {} out of line; " +
-                    "left every mention with a rejected span and type unresolved in those",
-                extractor::class.java.name, propositions.size, screened.propositions.size, chunkId, misaligned,
+                "{} returned {} propositions for {} screened in chunk {}; {} did not line up with what it was given, " +
+                    "so the pipeline cleared every id in them ({} mentions left unresolved)",
+                extractor::class.java.name, propositions.size, screened.propositions.size, chunkId, misaligned, cleared,
             )
         }
-        return cleared
+        return result
     }
 
     /**
@@ -459,6 +457,7 @@ class PropositionPipeline private constructor(
                 extractor.resolvePropositions(suggestedPropositions, resolutions, context),
                 suggestedPropositions,
                 extraction.screening.unresolved,
+                extraction.screening.rejected.any { it.handling != RejectedMentionHandling.KEEP },
             ),
             chunk,
             context,

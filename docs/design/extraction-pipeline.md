@@ -212,9 +212,9 @@ A mention left unresolved keeps no id, even when another mention with the same s
 resolved. Resolution assigns ids by span and type, so the pipeline takes the id off afterwards by
 position: `PropositionExtractor.resolvePropositions` returns one proposition per suggested
 proposition, in order, with the mentions in order. When an extractor's output does not line up
-with what it was given, by span and type or by count, the pipeline takes the id off every mention
-in the propositions that do not line up whose span and type was left unresolved anywhere in the
-chunk, and logs one warning with counts. A mention left unresolved or dropped never keeps an id; a
+with what it was given, by span and type or by count, and the chunk had a mention dropped or left
+unresolved, the pipeline takes the id off every mention in the propositions that do not line up,
+and logs one warning saying how many it cleared. A mention left unresolved or dropped never keeps an id; a
 mention the filter only reports under `KEEP` is resolved like any other.
 
 Every rejection is on the chunk result as a `RejectedMention`: the chunk id, the position and text

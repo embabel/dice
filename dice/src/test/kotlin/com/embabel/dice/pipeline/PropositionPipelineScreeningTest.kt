@@ -411,12 +411,9 @@ class PropositionPipelineScreeningTest {
                 .withMentionFilter(carolOnlyWithBob)
                 .processChunk(chunk(), context().withMintNewEntities(true))
 
-            val withAlice = result.propositions.single { it.text == aliceMetCarol }
-            assertNull(withAlice.mentions.single { it.span == "Carol" }.resolvedId)
-            assertNotNull(withAlice.mentions.single { it.span == "Alice" }.resolvedId)
-            assertNotNull(result.propositions.single { it.text == "Carol met Bob" }.mentions.single { it.span == "Bob" }.resolvedId)
+            assertTrue(result.propositions.flatMap { it.mentions }.all { it.resolvedId == null }, "propositions: ${result.propositions}")
         }
-        assertEquals(1, logged.count { it.formattedMessage.contains("out of line") }, "logged: ${logged.map { it.formattedMessage }}")
+        assertEquals(1, logged.count { it.formattedMessage.contains("cleared every id") }, "logged: ${logged.map { it.formattedMessage }}")
     }
 
     @Test
@@ -590,9 +587,27 @@ class PropositionPipelineScreeningTest {
             assertTrue(carols.all { it.resolvedId == null }, "carols: $carols")
         }
         assertTrue(
-            logged.any { it.formattedMessage.contains("c-merge") && it.formattedMessage.contains("out of line") },
+            logged.any { it.formattedMessage.contains("c-merge") && it.formattedMessage.contains("cleared every id") },
             "logged: ${logged.map { it.formattedMessage }}",
         )
         assertTrue(logged.none { it.formattedMessage.contains("Carol") }, "logged: ${logged.map { it.formattedMessage }}")
+    }
+
+    @Test
+    fun `S2 a mention left unresolved keeps no id when the extractor rewrites spans`() {
+        val canonicalising = reshaping(SuggestingPropositionExtractor.of(proposition(aliceMetBob, alice, alice))) { resolved ->
+            resolved.map { proposition -> proposition.copy(mentions = proposition.mentions.map { it.copy(span = it.span + " Smith") }) }
+        }
+
+        val logged = warnings {
+            val result = pipeline(canonicalising).withMentionFilter(secondRejected).processChunk(chunk("c-canon"), context().withMintNewEntities(true))
+            val mentions = result.propositions.single().mentions
+            assertNull(mentions[1].resolvedId, "mentions: $mentions")
+            assertTrue(mentions.all { it.resolvedId == null }, "mentions: $mentions")
+        }
+        assertTrue(
+            logged.any { it.formattedMessage.contains("c-canon") && it.formattedMessage.contains("cleared every id") },
+            "logged: ${logged.map { it.formattedMessage }}",
+        )
     }
 }

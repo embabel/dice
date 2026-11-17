@@ -235,9 +235,9 @@ and the consumer PRs that deliver it).
   `withMentionFilter(filter)` does, keeps it on the proposition unresolved, even when a mention with
   the same span and type is resolved elsewhere in the chunk, and `DROP` removes it.
   `PropositionExtractor.resolvePropositions` is now documented to return the propositions and their
-  mentions in the order it was given them; when an extractor's output does not line up, every
-  mention with a rejected span and type in the propositions that do not line up is left unresolved
-  and a warning is logged. **Compatibility: additive.**
+  mentions in the order it was given them; when an extractor's output does not line up and the
+  chunk had a mention dropped or left unresolved, every mention in the propositions that do not
+  line up is left unresolved and a warning is logged. **Compatibility: additive.**
 
 - `ChunkPropositionResult.rejectedMentions` and `PropositionResults.rejectedMentions` list every
   mention a check rejected as a `RejectedMention`, with the chunk id, the position and text of the
