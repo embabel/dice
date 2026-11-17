@@ -93,6 +93,14 @@ public abstract interface class com/embabel/dice/metamodel/GovernedTypeSelector 
 public final class com/embabel/dice/metamodel/GovernedTypeSelector$Companion {
 }
 
+public final class com/embabel/dice/metamodel/InMemoryDriftReportStore : com/embabel/dice/metamodel/DriftReportStore {
+	public fun <init> ()V
+	public fun driftReports (Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public fun driftReportsInContext-X4vlq90 (Ljava/lang/String;Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public fun globalDriftReports (Ljava/lang/String;ILjava/time/Instant;)Ljava/util/List;
+	public fun saveDriftReport (Lcom/embabel/dice/metamodel/DriftReport;)V
+}
+
 public final class com/embabel/dice/metamodel/MetamodelDiff {
 	public fun <init> (Lcom/embabel/dice/metamodel/MetamodelVersion;Lcom/embabel/dice/metamodel/MetamodelVersion;Ljava/util/List;)V
 	public fun equals (Ljava/lang/Object;)Z

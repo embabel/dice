@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.storage
+package com.embabel.dice.conformance
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.EntityMention
@@ -27,9 +27,11 @@ import com.embabel.dice.proposition.extraction.ExtractionRunRef
 import com.embabel.dice.proposition.extraction.ExtractionRunStatus
 import com.embabel.dice.proposition.extraction.PropositionRunLinkScopeException
 import com.embabel.dice.proposition.extraction.PropositionRunLinkStore
+import org.jetbrains.annotations.ApiStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import java.time.Instant
 
@@ -39,10 +41,11 @@ import java.time.Instant
  * backend that disagrees with the in-memory reference fails at authoring time.
  *
  * The cases here are the ones a backend gets wrong in a way a single-backend test would miss. A
- * write that MERGEs without resolving its endpoints accepts a cross-tenant link silently. A read
+ * write that upserts without resolving its endpoints accepts a cross-tenant link silently. A read
  * that scopes on the run id and forgets the tenant returns a neighbour's rows. A batch that writes
  * as it validates leaves half a link set behind when one id is rejected.
  */
+@ApiStatus.Experimental
 abstract class AbstractPropositionRunLinkStoreContractTest {
 
     protected val tenant: ContextId = ContextId("link-tenant")
@@ -69,10 +72,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     /**
      * A proposition in [tenant] that exactly one test deletes.
      *
-     * It gets its own id because a backend may not be able to put a deleted proposition back: on
-     * Drivine, deleting a `:Proposition` with raw Cypher and re-saving the same id through the
-     * repository returns a node with a null `contextId`. One disposable fixture is cheaper than
-     * making every backend's seeding re-entrant.
+     * It gets its own id because a backend may not be able to put a deleted proposition back under
+     * the same id. One disposable fixture is cheaper than making every backend's seeding re-entrant.
      */
     protected val disposablePropositionId: String = "prop-disposable"
 
@@ -87,7 +88,7 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     protected abstract fun deleteProposition(id: String)
 
     /**
-     * A store whose backing graph already holds [fixtureRunIds] under both tenants,
+     * A store whose backend already holds [fixtureRunIds] under both tenants,
      * [fixturePropositionIds] in [tenant], [neighbourPropositionIds] in [neighbour], and no links.
      */
     protected abstract fun store(): PropositionRunLinkStore
@@ -110,13 +111,39 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
         grounding = listOf("chunk-1"),
     )
 
+    /** [tenant] as a plain string, for Java subclasses. */
+    protected val tenantValue: String get() = tenant.value
+
+    /** [neighbour] as a plain string, for Java subclasses. */
+    protected val neighbourValue: String get() = neighbour.value
+
+    /**
+     * Builds a fixture run from a plain context id. Java subclasses seed with this.
+     *
+     * @param runId The run id, one of [fixtureRunIds].
+     * @param contextIdValue The context the run belongs to.
+     * @return The run to save.
+     */
+    protected fun runIn(runId: String, contextIdValue: String): ExtractionRun = run(runId, ContextId(contextIdValue))
+
+    /**
+     * Builds a fixture proposition from a plain context id. Java subclasses seed with this.
+     *
+     * @param id The proposition id.
+     * @param contextIdValue The context the proposition belongs to.
+     * @return The proposition to save.
+     */
+    protected fun propositionIn(id: String, contextIdValue: String): Proposition =
+        proposition(id, ContextId(contextIdValue))
+
     private fun key(runId: String, contextId: ContextId = tenant) =
         ExtractionRunKey(contextId, ExtractionRunRef(runId))
 
     // ---- the write ----
 
     @Test
-    fun `a link is readable from both ends`() {
+    @DisplayName("a link is readable from both ends")
+    open fun aLinkIsReadableFromBothEnds() {
         val store = store()
 
         assertEquals(2, store.link(key("link-run-a"), listOf("prop-1", "prop-2")))
@@ -129,7 +156,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    fun `linking is idempotent and counts the same on a replay`() {
+    @DisplayName("linking is idempotent and counts the same on a replay")
+    open fun linkingIsIdempotentAndCountsTheSameOnAReplay() {
         val store = store()
 
         val first = store.link(key("link-run-a"), listOf("prop-1", "prop-2"))
@@ -140,7 +168,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    fun `a repeated id in one call is one link`() {
+    @DisplayName("a repeated id in one call is one link")
+    open fun aRepeatedIdInOneCallIsOneLink() {
         val store = store()
 
         assertEquals(1, store.link(key("link-run-a"), listOf("prop-1", "prop-1", "prop-1")))
@@ -148,7 +177,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    fun `one proposition links to many runs and one run links to many propositions`() {
+    @DisplayName("one proposition links to many runs and one run links to many propositions")
+    open fun onePropositionLinksToManyRunsAndOneRunLinksToManyPropositions() {
         // The many-to-many claim, which is what makes re-extraction expressible at all.
         val store = store()
 
@@ -164,7 +194,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    fun `an empty batch is a no-op`() {
+    @DisplayName("an empty batch is a no-op")
+    open fun anEmptyBatchIsANoOp() {
         val store = store()
 
         assertEquals(0, store.link(key("link-run-a"), emptyList()))
@@ -172,7 +203,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    fun `the single-proposition convenience writes the same link`() {
+    @DisplayName("the single-proposition convenience writes the same link")
+    open fun theSinglePropositionConvenienceWritesTheSameLink() {
         val store = store()
 
         assertEquals(1, store.link(key("link-run-a"), "prop-2"))
@@ -182,7 +214,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     // ---- the tenant guard ----
 
     @Test
-    fun `a link against a run this tenant does not hold is rejected`() {
+    @DisplayName("a link against a run this tenant does not hold is rejected")
+    open fun aLinkAgainstARunThisTenantDoesNotHoldIsRejected() {
         val store = store()
 
         assertThrows(ExtractionRunNotFoundException::class.java) {
@@ -192,9 +225,10 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    fun `a run cannot claim a neighbour's proposition`() {
-        // `nb-prop-1` exists — it is just someone else's. That is the case a backend that MERGEs
-        // without resolving its endpoints gets wrong, and it is not the same as an id nobody holds.
+    @DisplayName("a run cannot claim a neighbour's proposition")
+    open fun aRunCannotClaimANeighboursProposition() {
+        // `nb-prop-1` exists and belongs to another tenant. A backend that upserts without
+        // resolving its endpoints gets this case wrong. It differs from an id nobody holds.
         val store = store()
 
         val rejected = assertThrows(PropositionRunLinkScopeException::class.java) {
@@ -207,7 +241,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    fun `a link naming a proposition nobody holds is rejected and writes nothing`() {
+    @DisplayName("a link naming a proposition nobody holds is rejected and writes nothing")
+    open fun aLinkNamingAPropositionNobodyHoldsIsRejectedAndWritesNothing() {
         val store = store()
 
         val rejected = assertThrows(PropositionRunLinkScopeException::class.java) {
@@ -222,7 +257,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     // ---- bounded, scoped reads ----
 
     @Test
-    fun `both reads are bounded and ordered by id`() {
+    @DisplayName("both reads are bounded and ordered by id")
+    open fun bothReadsAreBoundedAndOrderedById() {
         val store = store()
         store.link(key("link-run-a"), listOf("prop-3", "prop-1", "prop-2"))
         store.link(key("link-run-b"), listOf("prop-1"))
@@ -235,7 +271,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    fun `both reads reject a limit that is not positive`() {
+    @DisplayName("both reads reject a limit that is not positive")
+    open fun bothReadsRejectALimitThatIsNotPositive() {
         val store = store()
 
         listOf(0, -1).forEach { limit ->
@@ -249,7 +286,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    fun `every read fails closed across tenants`() {
+    @DisplayName("every read fails closed across tenants")
+    open fun everyReadFailsClosedAcrossTenants() {
         // Both tenants hold a run called `link-run-a`. Only the neighbour's has links, and nothing
         // this tenant asks returns them.
         val store = store()
@@ -268,7 +306,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    fun `link reports exactly the ids it was given`() {
+    @DisplayName("link reports exactly the ids it was given")
+    open fun linkReportsExactlyTheIdsItWasGiven() {
         // The number is the batch's own size, on the first write and on a replay. A backend that
         // returned "how many were new" would report 2 then 0 and invite a caller to read 0 as
         // failure; one that linked a subset and returned that subset's size would be reporting a
@@ -281,7 +320,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    fun `a link to a deleted proposition disappears from both reads`() {
+    @DisplayName("a link to a deleted proposition disappears from both reads")
+    open fun aLinkToADeletedPropositionDisappearsFromBothReads() {
         // A link is about a claim that exists. Delete the claim and the lineage goes with it: on a
         // graph because the edge is detached with the node, and a reference implementation has to
         // agree rather than keep answering from a map the deletion never reached. Otherwise
@@ -310,7 +350,8 @@ abstract class AbstractPropositionRunLinkStoreContractTest {
     }
 
     @Test
-    fun `a read for an unknown proposition or run is empty rather than an error`() {
+    @DisplayName("a read for an unknown proposition or run is empty rather than an error")
+    open fun aReadForAnUnknownPropositionOrRunIsEmptyRatherThanAnError() {
         val store = store()
 
         assertTrue(store.runsOf(tenant, "prop-nowhere", 10).isEmpty())

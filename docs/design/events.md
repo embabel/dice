@@ -94,8 +94,10 @@ new proposition against what's stored — **`PropositionDiscovered`**, **`Propos
 **`ExtractionBatchCompleted`** with run statistics at the end of a batch. These are pre-persistence
 signals about what the reviser decided; the durable record of a save is still `PropositionPersisted`.
 
-The pipeline also emits **`UngroundedMentionsFound`** for each chunk in which a mention's span was
-not in its own proposition's text, listing the mentions and saying whether they were kept or dropped.
+The pipeline also emits **`UngroundedMentionsFound`** for each chunk in which the grounding check
+rejected a mention, listing the mentions and saying whether they were kept or dropped. The chunk
+result lists every rejected mention, from the grounding check and from a `MentionFilter`, as
+`rejectedMentions`.
 
 ## The emitter map
 

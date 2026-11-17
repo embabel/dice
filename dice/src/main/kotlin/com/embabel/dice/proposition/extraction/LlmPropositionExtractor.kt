@@ -26,6 +26,8 @@ import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.common.filter.MentionFilter
+import com.embabel.dice.common.filter.checkedVerdicts
+import com.embabel.dice.common.validation.ValidationResult
 import com.embabel.dice.proposition.MentionKey
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionExtractor
@@ -311,15 +313,16 @@ data class LlmPropositionExtractor(
         val uniqueMentions = mutableMapOf<MentionKey, SuggestedMention>()
 
         for (proposition in suggestedPropositions.propositions) {
-            for (mention in proposition.mentions) {
+            val verdicts = if (mentionFilter == null || proposition.mentions.isEmpty()) {
+                null
+            } else {
+                mentionFilter.checkedVerdicts(proposition, context)
+            }
 
-                // Apply filter if provided
-                if (mentionFilter != null && !mentionFilter.isValid(mention, proposition.text)) {
-                    logger.warn(
-                        "Filtered mention '{}': {}",
-                        mention.span,
-                        mentionFilter.rejectionReason(mention)
-                    )
+            for ((index, mention) in proposition.mentions.withIndex()) {
+                val verdict = verdicts?.get(index)
+                if (verdict is ValidationResult.Invalid) {
+                    logger.debug("Filtered mention '{}': {}", mention.span, verdict.reason)
                     continue
                 }
 
@@ -386,12 +389,8 @@ data class LlmPropositionExtractor(
             val recommended = resolution.recommended ?: continue
             val suggested = resolution.suggested
 
-            // The suggested entity's name and labels give us the mention key
-            // Must lowercase to match MentionKey.from() which lowercases mention.type
-            val key = MentionKey(
-                span = suggested.name.lowercase().trim(),
-                type = suggested.labels.firstOrNull()?.lowercase()?.trim() ?: continue,
-            )
+            // The suggested entity's name and first label give the mention key.
+            val key = MentionKey.of(suggested.name, suggested.labels.firstOrNull() ?: continue)
             map[key] = recommended.id
         }
 

@@ -15,7 +15,10 @@
  */
 package com.embabel.dice.common.filter
 
+import com.embabel.dice.common.SourceAnalysisContext
+import com.embabel.dice.common.validation.ValidationResult
 import com.embabel.dice.proposition.SuggestedMention
+import com.embabel.dice.proposition.SuggestedProposition
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tag
 
@@ -46,18 +49,34 @@ class ObservableMentionFilter(
 
     override fun isValid(mention: SuggestedMention, propositionText: String): Boolean {
         val valid = delegate.isValid(mention, propositionText)
-
-        val tags = listOf(
-            Tag.of("entity.type", mention.type),
-            Tag.of("valid", valid.toString())
-        )
-
-        meterRegistry.counter("dice.mentions.validated", tags).increment()
-
+        record(mention.type, valid)
         return valid
     }
 
     override fun rejectionReason(mention: SuggestedMention): String? {
         return delegate.rejectionReason(mention)
+    }
+
+    /**
+     * Asks the delegate once for the whole proposition and counts each result.
+     *
+     * @param proposition The proposition whose mentions are judged
+     * @param context The analysis context of the run
+     * @return The delegate's results
+     */
+    override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> {
+        val results = delegate.checkedVerdicts(proposition, context)
+        proposition.mentions.zip(results).forEach { (mention, result) -> record(mention.type, result.isValid) }
+        return results
+    }
+
+    /**
+     * Counts one verdict on a mention.
+     *
+     * @param type the mention's entity type
+     * @param valid whether the mention was accepted
+     */
+    private fun record(type: String, valid: Boolean) {
+        meterRegistry.counter("dice.mentions.validated", listOf(Tag.of("entity.type", type), Tag.of("valid", valid.toString()))).increment()
     }
 }

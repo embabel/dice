@@ -20,6 +20,7 @@ import com.embabel.agent.rag.filter.EntityFilter
 import com.embabel.agent.rag.model.NamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.common.core.types.TextSimilaritySearchRequest
+import com.embabel.dice.common.NameNormalizer
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.resolver.CandidateSearcher
 import com.embabel.dice.common.resolver.SearchResult
@@ -36,17 +37,38 @@ import org.slf4j.LoggerFactory
  * - "Brahms" matches "Johannes Brahms"
  * - "Doe" does NOT match "John Doe" (too short with default minPartLength=4)
  *
+ * Names are normalized before they are split into parts. Use [withNameNormalizer] to change the
+ * rules.
+ *
  * @param repository The repository for text search
  * @param minPartLength Minimum length for partial match
  * @param topK Maximum candidates to retrieve
  * @param similarityThreshold Minimum similarity score for text search
  */
-class PartialNameCandidateSearcher(
+class PartialNameCandidateSearcher private constructor(
     private val repository: NamedEntityDataRepository,
-    private val minPartLength: Int = 4,
-    private val topK: Int = 10,
-    private val similarityThreshold: Double = 0.5,
+    private val minPartLength: Int,
+    private val topK: Int,
+    private val similarityThreshold: Double,
+    private val nameNormalizer: NameNormalizer,
 ) : CandidateSearcher {
+
+    @JvmOverloads
+    constructor(
+        repository: NamedEntityDataRepository,
+        minPartLength: Int = 4,
+        topK: Int = 10,
+        similarityThreshold: Double = 0.5,
+    ) : this(repository, minPartLength, topK, similarityThreshold, NameNormalizer.standard())
+
+    /**
+     * Returns a searcher that normalizes names with the given normalizer before comparing parts.
+     *
+     * @param nameNormalizer the rules that decide when two names are the same
+     * @return a new searcher; this one is unchanged
+     */
+    fun withNameNormalizer(nameNormalizer: NameNormalizer): PartialNameCandidateSearcher =
+        PartialNameCandidateSearcher(repository, minPartLength, topK, similarityThreshold, nameNormalizer)
 
     private val logger = LoggerFactory.getLogger(PartialNameCandidateSearcher::class.java)
 
@@ -68,8 +90,9 @@ class PartialNameCandidateSearcher(
             )
 
             // Find candidates with partial name match
+            val normalizedSuggested = nameNormalizer.normalize(suggested.name, suggested.labels)
             val matches = results.filter { result ->
-                isPartialMatch(suggested.name, result.match.name)
+                isPartialMatch(normalizedSuggested, nameNormalizer.normalize(result.match.name, result.match.labels()))
             }
 
             candidates.addAll(results.map { it.match })
@@ -81,15 +104,14 @@ class PartialNameCandidateSearcher(
                 return SearchResult(confident = match, candidates = candidates)
             }
         } catch (e: Exception) {
-            logger.debug("Partial name search failed for '{}': {}", suggested.name, e.message)
+            logger.warn("Partial name search failed, so it found no candidates: {}", e.javaClass.name)
+            logger.debug("Partial name search failed for '{}'", suggested.name, e)
         }
 
         return SearchResult.candidates(candidates)
     }
 
-    private fun isPartialMatch(name1: String, name2: String): Boolean {
-        val normalized1 = NormalizedNameCandidateSearcher.normalizeName(name1)
-        val normalized2 = NormalizedNameCandidateSearcher.normalizeName(name2)
+    private fun isPartialMatch(normalized1: String, normalized2: String): Boolean {
 
         val parts1 = normalized1.lowercase().split(Regex("\\s+"))
         val parts2 = normalized2.lowercase().split(Regex("\\s+"))

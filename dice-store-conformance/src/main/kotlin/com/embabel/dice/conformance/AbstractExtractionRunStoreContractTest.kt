@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.storage
+package com.embabel.dice.conformance
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.common.DiceEvent
@@ -48,10 +48,12 @@ import com.embabel.dice.proposition.extraction.ExtractionRunTransition
 import com.embabel.dice.proposition.extraction.ExtractionRunTransitionOutcome
 import com.embabel.dice.proposition.extraction.ExtractionRuntimeIdentity
 import com.embabel.dice.provenance.SourceRevisionRef
+import org.jetbrains.annotations.ApiStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import java.time.Instant
 
@@ -62,11 +64,12 @@ import java.time.Instant
  * authoring time instead of in production.
  *
  * The cases here are the ones a durable backend gets wrong in a way a single-backend test would
- * miss. A `MERGE … SET` upsert passes "a terminal write is recorded" and fails "an incompatible
- * terminal rewrite is rejected", because overwriting is what MERGE does. A finder that filters in
- * memory passes every single-tenant read and fails "a page scopes before it limits". A chain walk
- * written as a recursive Cypher pattern passes on a healthy graph and hangs on a cycle.
+ * miss. An upsert that overwrites passes "a terminal write is recorded" and fails "an incompatible
+ * terminal rewrite is rejected". A finder that filters in memory passes every single-tenant read
+ * and fails "a page scopes before it limits". A chain walk written as a recursive query passes on
+ * healthy data and hangs on a cycle.
  */
+@ApiStatus.Experimental
 abstract class AbstractExtractionRunStoreContractTest {
 
     /**
@@ -121,7 +124,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     // ---- the state machine ----
 
     @Test
-    fun `a saved run starts running and is readable by its key`() {
+    @DisplayName("a saved run starts running and is readable by its key")
+    open fun aSavedRunStartsRunningAndIsReadableByItsKey() {
         val store = store()
         val run = running("contract-start")
 
@@ -132,7 +136,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a first save must name version 0`() {
+    @DisplayName("a first save must name version 0")
+    open fun aFirstSaveMustNameVersion0() {
         val store = store()
         val run = ExtractionRun(
             contextId = tenant,
@@ -148,7 +153,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `each terminal edge is reachable from running`() {
+    @DisplayName("each terminal edge is reachable from running")
+    open fun eachTerminalEdgeIsReachableFromRunning() {
         listOf(
             ExtractionRunStatus.COMPLETED to ExtractionRunTransition.completed(finishedAt),
             ExtractionRunStatus.FAILED to ExtractionRunTransition.failed(finishedAt),
@@ -168,7 +174,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a terminal status cannot enter through save`() {
+    @DisplayName("a terminal status cannot enter through save")
+    open fun aTerminalStatusCannotEnterThroughSave() {
         val store = store()
         val completed = ExtractionRun(
             contextId = tenant,
@@ -183,7 +190,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `no edge leaves a terminal state`() {
+    @DisplayName("no edge leaves a terminal state")
+    open fun noEdgeLeavesATerminalState() {
         val terminals = listOf(
             ExtractionRunTransition.completed(finishedAt),
             ExtractionRunTransition.failed(finishedAt),
@@ -206,7 +214,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a terminal run is not re-openable and takes no more records`() {
+    @DisplayName("a terminal run is not re-openable and takes no more records")
+    open fun aTerminalRunIsNotReOpenableAndTakesNoMoreRecords() {
         val store = store()
         val run = running("contract-closed")
         store.save(run)
@@ -220,7 +229,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a terminal write against a run nobody started is rejected`() {
+    @DisplayName("a terminal write against a run nobody started is rejected")
+    open fun aTerminalWriteAgainstARunNobodyStartedIsRejected() {
         val store = store()
 
         assertThrows(ExtractionRunNotFoundException::class.java) {
@@ -229,7 +239,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `an empty run completes`() {
+    @DisplayName("an empty run completes")
+    open fun anEmptyRunCompletes() {
         val store = store()
         val run = running("contract-empty")
         store.save(run)
@@ -244,7 +255,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     // ---- idempotency ----
 
     @Test
-    fun `the same terminal write replays as success`() {
+    @DisplayName("the same terminal write replays as success")
+    open fun theSameTerminalWriteReplaysAsSuccess() {
         val store = store()
         val run = running("contract-replay")
         store.save(run)
@@ -264,7 +276,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `an incompatible terminal rewrite is rejected and changes nothing`() {
+    @DisplayName("an incompatible terminal rewrite is rejected and changes nothing")
+    open fun anIncompatibleTerminalRewriteIsRejectedAndChangesNothing() {
         // Incompatible means a different transition identity: another terminal status, or another
         // finish time. Both are checked here; the finish-time half gets its own per-status test
         // below, because this one varies status while holding finish time fixed.
@@ -290,7 +303,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a retry carrying different counts and failures replays, and the first write's outcome stands`() {
+    @DisplayName("a retry carrying different counts and failures replays, and the first write's outcome stands")
+    open fun aRetryCarryingDifferentCountsAndFailuresReplaysAndTheFirstWritesOutcomeStands() {
         // The fingerprint covers the transition's identity — the terminal status and the finish
         // time — so a second write agreeing on both is the same terminal write however different
         // the numbers it carries. It replays, and the run keeps what the write that landed first
@@ -331,7 +345,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     // ---- announcing a run that ended ----
 
     @Test
-    fun `an applied transition announces the run once, and a replay announces nothing`() {
+    @DisplayName("an applied transition announces the run once, and a replay announces nothing")
+    open fun anAppliedTransitionAnnouncesTheRunOnceAndAReplayAnnouncesNothing() {
         val listener = RecordingListener()
         val store = store(listener)
         val run = running("contract-announce-once")
@@ -359,7 +374,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `every terminal status announces the run it ended`() {
+    @DisplayName("every terminal status announces the run it ended")
+    open fun everyTerminalStatusAnnouncesTheRunItEnded() {
         listOf(
             ExtractionRunStatus.COMPLETED to ExtractionRunTransition.completed(finishedAt),
             ExtractionRunStatus.FAILED to ExtractionRunTransition.failed(finishedAt),
@@ -386,7 +402,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `writes that do not end a run announce nothing`() {
+    @DisplayName("writes that do not end a run announce nothing")
+    open fun writesThatDoNotEndARunAnnounceNothing() {
         // A backend announcing on every write would pass the exactly-once test above and still
         // notify a downstream consumer about a run that has not finished.
         val listener = RecordingListener()
@@ -403,7 +420,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a rejected terminal write announces nothing`() {
+    @DisplayName("a rejected terminal write announces nothing")
+    open fun aRejectedTerminalWriteAnnouncesNothing() {
         val listener = RecordingListener()
         val store = store(listener)
         val run = running("contract-announce-rejected")
@@ -422,7 +440,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `concurrent terminal writers announce the run exactly once between them`() {
+    @DisplayName("concurrent terminal writers announce the run exactly once between them")
+    open fun concurrentTerminalWritersAnnounceTheRunExactlyOnceBetweenThem() {
         // The race that makes exactly-once worth pinning: many threads send the same terminal
         // write, one applies it and the rest replay. A backend announcing outside its own
         // compare-and-set, or on the replay path, notifies a consumer once per caller.
@@ -457,7 +476,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a retry differing only in finish time is an incompatible rewrite, for every terminal status`() {
+    @DisplayName("a retry differing only in finish time is an incompatible rewrite, for every terminal status")
+    open fun aRetryDifferingOnlyInFinishTimeIsAnIncompatibleRewriteForEveryTerminalStatus() {
         // docs/design/extraction-runs.md:432 promises finish time participates in the fingerprint
         // like every other terminal field: minting a fresh finishedAt on a retry produces an
         // incompatible rewrite that gets rejected. Every other terminal test either holds finish
@@ -491,7 +511,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a replay after an interleaved invocation record is still a replay`() {
+    @DisplayName("a replay after an interleaved invocation record is still a replay")
+    open fun aReplayAfterAnInterleavedInvocationRecordIsStillAReplay() {
         // The discriminating case for what the fingerprint covers. A backend that re-derived the
         // digest from the stored run rather than recording the string the transition computed sees
         // a run whose invocation list has grown, produces a different digest, and rejects a correct
@@ -510,7 +531,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a rebuilt terminal write with the same payload replays`() {
+    @DisplayName("a rebuilt terminal write with the same payload replays")
+    open fun aRebuiltTerminalWriteWithTheSamePayloadReplays() {
         // A retry after a crash rebuilds the payload rather than keeping the object. The comparison
         // is on the fingerprint, so it still replays — and a backend comparing object identity or a
         // stored timestamp of the write would fail here.
@@ -532,7 +554,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `keeping counts and replacing them are different claims on the run that lands, and the digest sees neither`() {
+    @DisplayName("keeping counts and replacing them are different claims on the run that lands, and the digest sees neither")
+    open fun keepingCountsAndReplacingThemAreDifferentClaimsOnTheRunThatLandsAndTheDigestSeesNeither() {
         // Null means keep and a value means replace, and the difference shows in what the terminal
         // run holds. The digest sees neither: both writes name the same status and finish time, so
         // whichever arrives second replays. A backend has to get both halves right — apply the
@@ -595,7 +618,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a terminal write through the store preserves every field it does not own, header version included`() {
+    @DisplayName("a terminal write through the store preserves every field it does not own, header version included")
+    open fun aTerminalWriteThroughTheStorePreservesEveryFieldItDoesNotOwnHeaderVersionIncluded() {
         // ExtractionRunTransition.applyTo is pinned field-by-field in dice's own
         // ExtractionRunLifecycleTest; this pins the same promise through a store's transition(),
         // which is what a backend that maps rows in and out actually has to get right.
@@ -705,7 +729,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `null counts and failures on a transition keep what the stored run held, and values replace them`() {
+    @DisplayName("null counts and failures on a transition keep what the stored run held, and values replace them")
+    open fun nullCountsAndFailuresOnATransitionKeepWhatTheStoredRunHeldAndValuesReplaceThem() {
         // The existing fingerprint-distinction test proves null and a value are different claims;
         // this one proves what each claim actually leaves behind in the store, checked by reading
         // back what is persisted, alongside what is returned. Both counts objects below set disjoint
@@ -767,7 +792,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a save that disagrees with the stored run's start time is rejected`() {
+    @DisplayName("a save that disagrees with the stored run's start time is rejected")
+    open fun aSaveThatDisagreesWithTheStoredRunsStartTimeIsRejected() {
         val store = store()
         val run = running("contract-identity")
         store.save(run)
@@ -779,7 +805,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a save that disagrees with the stored run's lineage is rejected`() {
+    @DisplayName("a save that disagrees with the stored run's lineage is rejected")
+    open fun aSaveThatDisagreesWithTheStoredRunsLineageIsRejected() {
         // Separate from the start-time case on purpose: a backend guarding one and not the other
         // passes a combined test that only varies the start time.
         val store = store()
@@ -801,7 +828,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a running run carrying a finish time is rejected`() {
+    @DisplayName("a running run carrying a finish time is rejected")
+    open fun aRunningRunCarryingAFinishTimeIsRejected() {
         val store = store()
         val finishedWhileRunning = ExtractionRun(
             contextId = tenant,
@@ -816,7 +844,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a header save embedding a brand-new invocation never creates the row`() {
+    @DisplayName("a header save embedding a brand-new invocation never creates the row")
+    open fun aHeaderSaveEmbeddingABrandNewInvocationNeverCreatesTheRow() {
         // recordInvocation is the sole door onto invocation state. An id a save's payload names,
         // that recordInvocation never wrote, must not appear afterward — a save cannot originate a
         // row any more than it can update or delete one.
@@ -841,7 +870,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a header save embedding a changed invocation never updates the stored row`() {
+    @DisplayName("a header save embedding a changed invocation never updates the stored row")
+    open fun aHeaderSaveEmbeddingAChangedInvocationNeverUpdatesTheStoredRow() {
         val store = store()
         val run = running("contract-save-never-updates")
         val saved = store.save(run)
@@ -865,7 +895,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a header save embedding an empty invocation list never deletes a stored row`() {
+    @DisplayName("a header save embedding an empty invocation list never deletes a stored row")
+    open fun aHeaderSaveEmbeddingAnEmptyInvocationListNeverDeletesAStoredRow() {
         // A durable backend gets this for free — a header write never touches a child row — and an
         // in-memory one that replaced the stored run wholesale would silently undo recordInvocation.
         // The two have to agree, so the rule is asserted here rather than in one backend's own test.
@@ -891,7 +922,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a stale header save carrying an old invocation snapshot leaves the newer stored invocation intact`() {
+    @DisplayName("a stale header save carrying an old invocation snapshot leaves the newer stored invocation intact")
+    open fun aStaleHeaderSaveCarryingAnOldInvocationSnapshotLeavesTheNewerStoredInvocationIntact() {
         // The defect this contract closes: recordInvocation never moves the header's version, so a
         // header save built on a run read before a later recordInvocation call landed can still name
         // the version currently stored and be accepted. A merged write let that stale, non-empty
@@ -931,7 +963,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a first save lands at version 0, an accepted update raises it by one, and a replay leaves it alone`() {
+    @DisplayName("a first save lands at version 0, an accepted update raises it by one, and a replay leaves it alone")
+    open fun aFirstSaveLandsAtVersion0AnAcceptedUpdateRaisesItByOneAndAReplayLeavesItAlone() {
         // The version a save returns is the store's word on what is now stored: a first save names 0
         // and gets 0 back, a header change accepted at the stored version gets that version plus
         // one, and a save whose content already matches keeps whatever is stored.
@@ -967,7 +1000,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a stale header save is rejected, and the header it read is left in place`() {
+    @DisplayName("a stale header save is rejected, and the header it read is left in place")
+    open fun aStaleHeaderSaveIsRejectedAndTheHeaderItReadIsLeftInPlace() {
         // Writer A reads the run at version 0, does real work, and saves what it found. That save
         // is accepted and the header moves to version 1. Writer B read the run before any of that
         // landed, so its own save still names version 0 — the version the store has already moved
@@ -1010,7 +1044,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `an accepted header save replaces the whole header at once`() {
+    @DisplayName("an accepted header save replaces the whole header at once")
+    open fun anAcceptedHeaderSaveReplacesTheWholeHeaderAtOnce() {
         // A field-by-field merge would keep the first profile, union the source revisions, and take
         // the larger count. A whole-header replace does none of that: the second save's values win
         // outright, proving the accepted write is not quietly combined with what came before it.
@@ -1092,7 +1127,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a save whose content already matches what is stored replays as a no-op at a stale version`() {
+    @DisplayName("a save whose content already matches what is stored replays as a no-op at a stale version")
+    open fun aSaveWhoseContentAlreadyMatchesWhatIsStoredReplaysAsANoOpAtAStaleVersion() {
         // The promise: a byte-identical resend is a no-op regardless of the version it names. A
         // caller retrying a save it never learned had landed must not be told it conflicted.
         val store = store()
@@ -1130,7 +1166,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a stale-version resend replays as a no-op even with a terminal invocation recorded since`() {
+    @DisplayName("a stale-version resend replays as a no-op even with a terminal invocation recorded since")
+    open fun aStaleVersionResendReplaysAsANoOpEvenWithATerminalInvocationRecordedSince() {
         // A stale-version header resend still has to be recognised as a no-op on its header content
         // alone. What a save's own invocations field carries is not part of that comparison at all
         // now, so a terminal child record recorded since the resend was built plays no part in the
@@ -1177,7 +1214,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `recording an invocation does not move the header version`() {
+    @DisplayName("recording an invocation does not move the header version")
+    open fun recordingAnInvocationDoesNotMoveTheHeaderVersion() {
         val store = store()
         val run = running("contract-version-invocation")
         val saved = store.save(run)
@@ -1206,7 +1244,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     // ---- concurrency ----
 
     @Test
-    fun `two threads racing to end one run produce exactly one applied transition`() {
+    @DisplayName("two threads racing to end one run produce exactly one applied transition")
+    open fun twoThreadsRacingToEndOneRunProduceExactlyOneAppliedTransition() {
         // Compare-and-set is what the contract is named for, and a backend delivers it from its
         // transaction rather than from anything in this suite. A read-then-write with no isolation
         // passes every sequential case above and produces two APPLIED here, or one APPLIED and one
@@ -1253,7 +1292,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `two threads racing to save the same header produce exactly one accepted write`() {
+    @DisplayName("two threads racing to save the same header produce exactly one accepted write")
+    open fun twoThreadsRacingToSaveTheSameHeaderProduceExactlyOneAcceptedWrite() {
         // The version compare has to be atomic. A check-then-write backend with no isolation lets
         // both threads read version 0, both pass the comparison, and both land.
         repeat(20) { attempt ->
@@ -1300,7 +1340,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `two threads racing to record conflicting terminal outcomes for one attempt produce exactly one accepted write`() {
+    @DisplayName("two threads racing to record conflicting terminal outcomes for one attempt produce exactly one accepted write")
+    open fun twoThreadsRacingToRecordConflictingTerminalOutcomesForOneAttemptProduceExactlyOneAcceptedWrite() {
         repeat(20) { attempt ->
             val store = store()
             val run = running("contract-race-record-$attempt")
@@ -1352,7 +1393,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a header save racing with a recordInvocation write settles independently and neither is lost`() {
+    @DisplayName("a header save racing with a recordInvocation write settles independently and neither is lost")
+    open fun aHeaderSaveRacingWithARecordInvocationWriteSettlesIndependentlyAndNeitherIsLost() {
         // save no longer contends for invocation state at all, so a header save and a
         // recordInvocation write racing on the same run never conflict with each other — each
         // settles on its own key. The header change and the invocation write both land.
@@ -1405,7 +1447,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `two concurrent IN_FLIGHT writers on different attempts both land, losing neither`() {
+    @DisplayName("two concurrent IN_FLIGHT writers on different attempts both land, losing neither")
+    open fun twoConcurrentInFlightWritersOnDifferentAttemptsBothLandLosingNeither() {
         // Each invocation row is decided on its own (invocationIndex, attempt) key, so two writers
         // recording different attempts contend for nothing shared: each is decided purely against
         // its own row, on a key entirely independent of the header generation. Both writes have to
@@ -1455,7 +1498,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     // ---- invocation records ----
 
     @Test
-    fun `records are keyed by invocation and attempt and read back in plan order`() {
+    @DisplayName("records are keyed by invocation and attempt and read back in plan order")
+    open fun recordsAreKeyedByInvocationAndAttemptAndReadBackInPlanOrder() {
         val store = store()
         val run = running("contract-records")
         store.save(run)
@@ -1478,7 +1522,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a changed IN_FLIGHT record updates in place through recordInvocation, clearing an omitted fact`() {
+    @DisplayName("a changed IN_FLIGHT record updates in place through recordInvocation, clearing an omitted fact")
+    open fun aChangedInFlightRecordUpdatesInPlaceThroughRecordInvocationClearingAnOmittedFact() {
         // The existing plan-order test replays the identical object twice, and adding a new fact on
         // top of an old one cannot tell field-merging apart from whole-record replacement — both
         // land on the same value for a field present in both writes. Omitting startedAt, usage and
@@ -1513,7 +1558,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a run with several attempts reads back equal to the run that was saved`() {
+    @DisplayName("a run with several attempts reads back equal to the run that was saved")
+    open fun aRunWithSeveralAttemptsReadsBackEqualToTheRunThatWasSaved() {
         // The case that catches a backend disagreeing with the reference on invocation order. A
         // durable store keeps identified rows and returns them in plan order; an in-memory one used
         // to return the order the caller listed. Since `equals` compares the list, a run whose
@@ -1556,7 +1602,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `recording against a run nobody started is rejected`() {
+    @DisplayName("recording against a run nobody started is rejected")
+    open fun recordingAgainstARunNobodyStartedIsRejected() {
         val store = store()
 
         assertThrows(ExtractionRunNotFoundException::class.java) {
@@ -1565,7 +1612,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a delayed IN_FLIGHT write does not replace a terminal record for the same attempt`() {
+    @DisplayName("a delayed IN_FLIGHT write does not replace a terminal record for the same attempt")
+    open fun aDelayedInFlightWriteDoesNotReplaceATerminalRecordForTheSameAttempt() {
         val store = store()
         val run = running("contract-invocation-terminal")
         store.save(run)
@@ -1589,7 +1637,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `repeating the same terminal invocation write is idempotent`() {
+    @DisplayName("repeating the same terminal invocation write is idempotent")
+    open fun repeatingTheSameTerminalInvocationWriteIsIdempotent() {
         // Carries a full providerResponse, so the replay round-trips that field through
         // recordInvocation unchanged too, alongside the other fields the invocation tests touch.
         val store = store()
@@ -1618,7 +1667,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a terminal record's identical replay through recordInvocation lands back at its stored position`() {
+    @DisplayName("a terminal record's identical replay through recordInvocation lands back at its stored position")
+    open fun aTerminalRecordsIdenticalReplayThroughRecordInvocationLandsBackAtItsStoredPosition() {
         // docs/design/extraction-runs.md:302 promises an identical replay lands back at the
         // position the stored record already held. The idempotent-replay test above holds only
         // one record, where position is unobservable: replaying the only entry in a one-element
@@ -1648,7 +1698,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a same-outcome write that differs from a terminal record is rejected too`() {
+    @DisplayName("a same-outcome write that differs from a terminal record is rejected too")
+    open fun aSameOutcomeWriteThatDiffersFromATerminalRecordIsRejectedToo() {
         // A different outcome is one way to erase what a terminal record holds. A delayed duplicate
         // claiming the same outcome, missing the usage and provider facts the first write actually
         // carried, would erase them just as surely if it were allowed to update in place.
@@ -1675,7 +1726,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a CANCELLED terminal record is locked the same as SUCCEEDED and FAILED, through recordInvocation`() {
+    @DisplayName("a CANCELLED terminal record is locked the same as SUCCEEDED and FAILED, through recordInvocation")
+    open fun aCancelledTerminalRecordIsLockedTheSameAsSucceededAndFailedThroughRecordInvocation() {
         // ExtractionRunStore.kt:204 locks SUCCEEDED, FAILED and CANCELLED alike, but every other
         // terminal-lock test in this suite happens to store a SUCCEEDED or FAILED record. A backend
         // that locks only those two outcomes and leaves CANCELLED writable would pass every one of
@@ -1784,7 +1836,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     )
 
     @Test
-    fun `a terminal record rejects a recordInvocation resend that differs in exactly one field`() {
+    @DisplayName("a terminal record rejects a recordInvocation resend that differs in exactly one field")
+    open fun aTerminalRecordRejectsARecordInvocationResendThatDiffersInExactlyOneField() {
         terminalInvocationDeltas.forEach { (fieldName, mutate) ->
             val store = store()
             val run = running("contract-terminal-delta-record-$fieldName")
@@ -1807,7 +1860,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a terminal record with absent timing rejects a recordInvocation resend that clears its start time`() {
+    @DisplayName("a terminal record with absent timing rejects a recordInvocation resend that clears its start time")
+    open fun aTerminalRecordWithAbsentTimingRejectsARecordInvocationResendThatClearsItsStartTime() {
         // ExtractionInvocationRecord.kt:219 permits a terminal record with no timing at all — a
         // SUCCEEDED attempt with no startedAt is constructible, because timing here is only ever
         // an observation. The shared terminal-delta table above cannot reach this case: its
@@ -1834,7 +1888,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `an IN_FLIGHT record accepts a recordInvocation update that differs in exactly one field`() {
+    @DisplayName("an IN_FLIGHT record accepts a recordInvocation update that differs in exactly one field")
+    open fun anInFlightRecordAcceptsARecordInvocationUpdateThatDiffersInExactlyOneField() {
         inFlightInvocationDeltas.forEach { (fieldName, mutate) ->
             val store = store()
             val run = running("contract-inflight-delta-record-$fieldName")
@@ -1928,7 +1983,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     )
 
     @Test
-    fun `a save changing exactly one owned header field bumps the version as a genuinely accepted write`() {
+    @DisplayName("a save changing exactly one owned header field bumps the version as a genuinely accepted write")
+    open fun aSaveChangingExactlyOneOwnedHeaderFieldBumpsTheVersionAsAGenuinelyAcceptedWrite() {
         // The bundled header-replace test above changes every owned field at once, so a backend
         // whose no-op comparison quietly skips one particular field still looks correct there —
         // every other field's difference is enough to trigger the version bump regardless of that
@@ -1959,7 +2015,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     // door that can write it. ----
 
     @Test
-    fun `every replay fidelity value comes back from save unchanged and outlives a terminal write`() {
+    @DisplayName("every replay fidelity value comes back from save unchanged and outlives a terminal write")
+    open fun everyReplayFidelityValueComesBackFromSaveUnchangedAndOutlivesATerminalWrite() {
         // replayFidelity has one entry door: ExtractionRunTransition.applyTo's own KDoc says
         // transition() always carries forward whatever value the run already holds.
         ExtractionReplayFidelity.entries.forEach { fidelity ->
@@ -1992,7 +2049,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `every failure code comes back from save unchanged and outlives a terminal write that keeps it`() {
+    @DisplayName("every failure code comes back from save unchanged and outlives a terminal write that keeps it")
+    open fun everyFailureCodeComesBackFromSaveUnchangedAndOutlivesATerminalWriteThatKeepsIt() {
         ExtractionFailureCode.entries.forEach { code ->
             val store = store()
             val run = running("contract-failure-code-save-${code.name}").let {
@@ -2034,7 +2092,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `every failure code comes back from transition unchanged and survives its own replay`() {
+    @DisplayName("every failure code comes back from transition unchanged and survives its own replay")
+    open fun everyFailureCodeComesBackFromTransitionUnchangedAndSurvivesItsOwnReplay() {
         // The transition door's own write is the terminal write, so there is no later terminal
         // write left to check the value against; a replay of the same transition is the store's
         // own definition of "untouched" for a run that has already ended.
@@ -2076,7 +2135,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     // ---- bounded, scoped reads ----
 
     @Test
-    fun `a page scopes before it limits`() {
+    @DisplayName("a page scopes before it limits")
+    open fun aPageScopesBeforeItLimits() {
         val store = store()
         (1..5).forEach {
             store.save(running("contract-neighbour-$it", neighbour, startedAt.plusSeconds(100L + it)))
@@ -2089,7 +2149,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a page is newest first and tie-broken by run id`() {
+    @DisplayName("a page is newest first and tie-broken by run id")
+    open fun aPageIsNewestFirstAndTieBrokenByRunId() {
         val store = store()
         listOf("contract-c", "contract-a", "contract-b").forEach { store.save(running(it)) }
 
@@ -2100,7 +2161,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `since bounds the window at or after the instant given`() {
+    @DisplayName("since bounds the window at or after the instant given")
+    open fun sinceBoundsTheWindowAtOrAfterTheInstantGiven() {
         val store = store()
         (0..3).forEach { store.save(running("contract-since-$it", startedAt = startedAt.plusSeconds(it * 10L))) }
 
@@ -2113,7 +2175,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `every page rejects a limit that is not positive`() {
+    @DisplayName("every page rejects a limit that is not positive")
+    open fun everyPageRejectsALimitThatIsNotPositive() {
         val store = store()
         val root = ExtractionRunRef("contract-root")
 
@@ -2136,7 +2199,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     // ---- lineage ----
 
     @Test
-    fun `children are one hop down the parent axis`() {
+    @DisplayName("children are one hop down the parent axis")
+    open fun childrenAreOneHopDownTheParentAxis() {
         val store = store()
         val parent = ExtractionRunLineage.root(ExtractionRunRef("contract-parent"))
         val child = ExtractionRunLineage.childOf(ExtractionRunRef("contract-child"), parent)
@@ -2152,7 +2216,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a whole lineage comes back from its root reference`() {
+    @DisplayName("a whole lineage comes back from its root reference")
+    open fun aWholeLineageComesBackFromItsRootReference() {
         val store = store()
         val root = ExtractionRunLineage.root(ExtractionRunRef("contract-root"))
         val one = ExtractionRunLineage.childOf(ExtractionRunRef("contract-pass-1"), root)
@@ -2169,7 +2234,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `the chain walk is bounded, excludes the run, and stops at an unresolvable parent`() {
+    @DisplayName("the chain walk is bounded, excludes the run, and stops at an unresolvable parent")
+    open fun theChainWalkIsBoundedExcludesTheRunAndStopsAtAnUnresolvableParent() {
         val store = store()
         val root = ExtractionRunLineage.root(ExtractionRunRef("contract-root"))
         val one = ExtractionRunLineage.childOf(ExtractionRunRef("contract-1"), root)
@@ -2195,7 +2261,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `the chain walk terminates on a cycle`() {
+    @DisplayName("the chain walk terminates on a cycle")
+    open fun theChainWalkTerminatesOnACycle() {
         val store = store()
         val root = ExtractionRunRef("contract-cycle-root")
         val a = ExtractionRunLineage.fromStoredFields(
@@ -2220,7 +2287,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     // ---- tenants ----
 
     @Test
-    fun `two tenants holding the same run id never collide`() {
+    @DisplayName("two tenants holding the same run id never collide")
+    open fun twoTenantsHoldingTheSameRunIdNeverCollide() {
         val store = store()
         val mine = running("contract-shared", tenant, startedAt)
         val theirs = running("contract-shared", neighbour, startedAt.plusSeconds(60))
@@ -2237,7 +2305,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `every read fails closed across tenants`() {
+    @DisplayName("every read fails closed across tenants")
+    open fun everyReadFailsClosedAcrossTenants() {
         val store = store()
         val root = ExtractionRunLineage.root(ExtractionRunRef("contract-root"))
         val child = ExtractionRunLineage.childOf(ExtractionRunRef("contract-child"), root)
@@ -2254,7 +2323,8 @@ abstract class AbstractExtractionRunStoreContractTest {
     }
 
     @Test
-    fun `a chain walk stops rather than crossing into another tenant`() {
+    @DisplayName("a chain walk stops rather than crossing into another tenant")
+    open fun aChainWalkStopsRatherThanCrossingIntoAnotherTenant() {
         val store = store()
         val parent = ExtractionRunLineage.root(ExtractionRunRef("contract-parent"))
         val child = ExtractionRunLineage.childOf(ExtractionRunRef("contract-child"), parent)

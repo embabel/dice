@@ -1,0 +1,316 @@
+[[features-scoped-reads]]
+=== Scoped reads
+
+*Activation*: a store that lists `StoreCapability.SCOPED_READS`, and
+`StoreCapability.SCOPED_VECTOR_SEARCH` for similarity search. `StoreCapabilities.find` returns null
+for a store that does not list the capability. The types are the contract a store implements.
+
+*Availability*: `dice`, package `com.embabel.dice.store`.
+
+[WARNING]
+====
+Experimental. The API may change before 1.0.
+====
+
+A scoped read returns propositions from a named set of contexts and from no other context. The host
+states the contexts, the filters every read keeps and the most a read may take. No read runs without
+a spec, and no method of a spec returns a wider one.
+
+[cols="1,3", options="header"]
+|===
+| Type | What it states
+
+| `ContextReadScope`
+| The contexts a read may touch. At least one, each named by id.
+
+| `ScopedReadSpec`
+| The scope a read may touch now and the filters every returned proposition meets.
+
+| `ReadCriteria`
+| Which propositions a read keeps. It has no context field, so only a scoped read accepts it.
+
+| `ReadQuery`
+| Criteria with an order and a limit.
+
+| `ReadKeywordQuery`
+| The tokens of a keyword match, with criteria, an order among equal matches and a limit.
+
+| `ReadVectorSearchRequest`
+| The text, the criteria, the result size and the score floor of a similarity search.
+
+| `ReadBudget`
+| The most rows a read returns or counts and the most vector candidates a similarity search has.
+
+| `ScopedReads`
+| Query, count and keyword match that a store runs under a spec and a budget.
+
+| `ScopedVectorSearch`
+| Similarity search that a store runs under a spec and a budget.
+|===
+
+==== Building a scope
+
+[source,java]
+----
+ContextReadScope scope = ContextReadScope.ofValues("alice-session", "team-handbook");
+ScopedReadSpec spec = ScopedReadSpec.of(scope);
+----
+
+[source,kotlin]
+----
+val scope = ContextReadScope.of(listOf(aliceSession, teamHandbook))
+----
+
+A scope with no context, or with a null or blank id in its collection, throws
+`IllegalArgumentException`. A null passed as the first id of `ofValues(first, more...)` throws
+`NullPointerException`. Ids are compared exactly, and no id stands for every context.
+
+==== Narrowing
+
+`narrow` returns a spec with one more filter. `narrowToContexts` returns a spec that allows fewer
+contexts. A proposition is returned only when its context is one the spec allows and it meets every
+filter.
+
+[source,java]
+----
+ScopedReadSpec active = spec.narrow(
+        criteria -> criteria.withStatus(PropositionStatus.ACTIVE).withMinConfidence(0.6));
+ScopedReadSpec aliceOnly = active.narrowToContexts("alice-session");
+----
+
+[source,kotlin]
+----
+val active = spec.narrow(
+    ReadCriteria {
+        statuses = setOf(PropositionStatus.ACTIVE)
+        minConfidence = 0.6
+    },
+)
+----
+
+`narrowToContexts` with a context the spec does not allow throws `ReadScopeViolationException`. The
+exception carries the contexts the spec allows, so a narrowed spec reports only the contexts it was
+narrowed to. A filter that carries `effectiveConfidenceAsOf` throws `IllegalArgumentException`,
+because the criteria of each read set it. A narrowing function that returns null throws
+`NullPointerException` with a message that names the function. Criteria that set nothing add no
+filter, and `narrow` then returns the same spec.
+
+Narrowing guarantees two things. No method of a spec returns a wider spec: each returns a spec that
+allows the same contexts or fewer and has every filter the first one has. A narrowed spec does not
+hold or report the contexts it was narrowed from, so `getScope()`, `toString()` and a refusal name
+only the contexts it allows now.
+
+A spec is a value in the same process. Its scope and its filters are readable, because a store needs
+them, and the factories are public. Code that holds a spec can call
+`ScopedReadSpec.of(spec.getScope())` and get a spec over the same contexts with no filter. Code that
+knows a context id can build a scope over it. The filters bind only code that passes the spec on
+unchanged or narrowed.
+
+[cols="1,2,3", options="header"]
+|===
+| Who | Holds | Trusted with
+
+| The host
+| The `PropositionStore` and the access rules.
+| Deciding which contexts and filters a caller gets and how much a read may take. It resolves
+  `ScopedReads` and `ScopedVectorSearch` with `StoreCapabilities.find`, and it builds the scope, the
+  first spec and the budget.
+
+| Reading code
+| A `ScopedReads` or `ScopedVectorSearch` handle, a spec and a budget.
+| Passing that spec, or one narrowed from it, and that budget to every read.
+
+| The store
+| The spec, the request and the budget of each call.
+| Applying them. It does not decide access.
+|===
+
+The handle is the store object seen through one interface, and a budget is a value with public
+factories. Reading code that casts the handle to `PropositionStore`, or builds a spec or a larger
+budget of its own, is outside what the types stop.
+
+==== Reading under a budget
+
+`ReadBudget.ofRows` caps the rows a read returns or counts. It allows no similarity search until
+`withMaxVectorCandidates` sets a cap. A vector candidate is a proposition the search may return that
+has an embedding, and a scoped search compares the text with each one. The host builds the budget
+and resolves the capabilities on the store.
+
+[source,java]
+----
+ReadBudget budget = ReadBudget.ofRows(200).withMaxVectorCandidates(5_000);
+ScopedReads reads = StoreCapabilities.find(store, ScopedReads.class);
+ScopedVectorSearch search = StoreCapabilities.find(store, ScopedVectorSearch.class);
+----
+
+The reading code is handed `reads`, `search`, a spec and the budget.
+
+[source,java]
+----
+ReadCriteria aboutAlice = ReadCriteria.empty().withEntityId("alice");
+
+if (reads != null) {
+    List<Proposition> recent = reads.query(
+            active, ReadQuery.of(aboutAlice).orderedByCreated().withLimit(20), budget);
+    int total = reads.count(active, aboutAlice, budget);
+    List<Proposition> mentions = reads.matchKeywords(
+            active, ReadKeywordQuery.forTokens("peanut", "allergy").withLimit(10), budget);
+}
+if (search != null && budget.isVectorSearchAllowed()) {
+    List<VectorMatch> nearest = search.findNearest(
+            active, ReadVectorSearchRequest.forText("What does Alice eat?").withTopK(5), budget);
+}
+----
+
+Kotlin finds an interface by type and builds each request in a block.
+
+[source,kotlin]
+----
+val budget = ReadBudget.ofRows(200).withMaxVectorCandidates(5_000)
+val reads = StoreCapabilities.find<ScopedReads>(store)
+val search = StoreCapabilities.find<ScopedVectorSearch>(store)
+
+val recent = reads?.query(active, ReadQuery(ReadCriteria { entityId = "alice" }) { limit = 20 }, budget)
+val mentions = reads?.matchKeywords(active, ReadKeywordQuery(listOf("peanut", "allergy")) { limit = 10 }, budget)
+val nearest = search?.findNearest(active, ReadVectorSearchRequest("What does Alice eat?") { topK = 5 }, budget)
+----
+
+Each read takes criteria of its own, which the store applies along with the filters of the spec.
+`ReadCriteria.empty()` adds none. Criteria have no context field. To read one context of a spec,
+pass `spec.narrowToContexts(...)`.
+
+A request that a store could not run cannot be built. `withLimit` and `withTopK` reject a value
+below 1. `ReadKeywordQuery.forTokens` rejects an empty list and a null or blank token. It holds the
+tokens lower-cased, with duplicates dropped, and a proposition matches when its text contains a
+token, ignoring case. `count` returns at most `maxRows`. A count that would be larger is refused.
+
+==== Failures
+
+A store never returns a shortened or wider result in place of one of these.
+
+[cols="2,3", options="header"]
+|===
+| Exception | When
+
+| `ReadScopeViolationException`
+| A spec is narrowed to a context it does not allow. It carries the contexts the spec allows and the
+  context that was asked for.
+
+| `ReadBudgetExceededException`
+| A read needs more than its budget allows. It carries the resource, the cap and what the read
+  needed.
+
+| `UnsupportedCapabilityException`
+| The store does not apply a criterion or an order of the spec or the request. It carries the
+  `StoreCapability` and names the criterion or the order.
+
+| `IllegalArgumentException`
+| A request or criteria that cannot be built: a limit or `topK` below 1, an empty id list, no token.
+|===
+
+The first two extend `ReadRefusedException`. It is a `RuntimeException` and is not an
+`IllegalArgumentException`, so a handler for invalid arguments does not catch a refusal.
+
+[source,java]
+----
+try {
+    recent = reads.query(active, query, budget);
+} catch (ReadBudgetExceededException refusal) {
+    log.warn("{} refused: {}", refusal.getResource(), refusal.getMessage());
+} catch (ReadRefusedException refusal) {
+    log.warn("The read was refused: {}", refusal.getMessage());
+}
+----
+
+The resource of a `ReadBudgetExceededException` says what the caller can do.
+
+[cols="1,3", options="header"]
+|===
+| Resource | What the caller does
+
+| `ROWS`
+| Narrows the spec or the criteria, asks for a smaller limit or `topK`, or is given a budget with a
+  larger row cap.
+
+| `VECTOR_CANDIDATES`
+| Narrows the spec or the criteria, or is given a budget with a larger candidate cap. A smaller
+  `topK` does not help, because the search compares the text with every candidate.
+
+| `VECTOR_SEARCH`
+| Retrying does not help. The budget allows no similarity search, and the host passes one built with
+  `withMaxVectorCandidates`. `budget.isVectorSearchAllowed()` says so before the call.
+|===
+
+==== Rules a store keeps
+
+A store first selects the propositions whose context the spec allows and that meet every filter of
+the spec and the read's criteria. That selection is the store's own work.
+
+* The store orders, cuts to a limit, matches keywords, picks the nearest K and counts among the
+  selected propositions only.
+* A proposition outside the selection is never returned or counted, and no value of it enters a
+  returned score or the order of a result.
+* A scoped similarity search compares the text with every vector candidate, so it is exact over the
+  selection.
+* A store that keeps its data in a database runs the selection, keyword matching, the ordering, the
+  limit and the count there. For a similarity search it also runs the comparison, the score floor
+  and the cut to K there.
+* The store reads the properties of `ReadCriteria` and builds its own query. `ReadCriterion` and
+  `ReadOrder` name the stored value each criterion and each order uses. It never runs criteria
+  through a read that takes no spec.
+* One read computes effective confidence at one instant: the `effectiveConfidenceAsOf` of the read's
+  criteria, or one reading of the store's clock. `Proposition.effectiveConfidenceAt` defines the
+  value.
+
+Every read makes its checks in one order and stops at the first that fails: the spec, the request,
+the budget, and only then the read. The store lists the criteria and the orders it applies by name,
+so a criterion or an order added in a later version throws and is never skipped.
+
+[source,java]
+----
+spec.requireOnly(APPLIED_CRITERIA, StoreCapability.SCOPED_READS);
+query.requireOnly(APPLIED_CRITERIA, APPLIED_ORDERS, StoreCapability.SCOPED_READS);
+Integer limit = query.getLimit();
+if (limit != null) {
+    budget.requireRows(limit);
+}
+----
+
+[cols="2,3", options="header"]
+|===
+| Check | Called by
+
+| `spec.requireOnly(criteria, capability)`
+| Every read, first.
+
+| `requireOnly` on the request
+| Every read, second. `count` calls it on its criteria.
+
+| `budget.requireRows(count)`
+| `query` and `matchKeywords` with the request's limit before they read, or with the rows they would
+  return when the request sets no limit. `count` with the number it reaches. `findNearest` with
+  `topK`. A counted number is passed as the `long` the database returned.
+
+| `budget.requireVectorSearch()`
+| `findNearest` only, before the store embeds the text or reads.
+
+| `budget.requireVectorCandidates(count)`
+| `findNearest` only, with the candidates that have an embedding.
+|===
+
+The full rules are in the KDoc of `ScopedReads` and `ScopedVectorSearch`. The capability table is in
+<<reference-store-contract-capabilities>>.
+
+==== Entity candidates
+
+`ScopedCandidateSearcher` in `com.embabel.dice.common.resolver` finds the existing entities a suggested
+entity may refer to. Its `search` method takes a `ContextReadScope`, and it returns only entities that
+a reader of one of those contexts may see. Code that reads under a spec passes the spec's scope.
+
+[source,java]
+----
+ScopedCandidateSearcher searcher = (suggested, schema, scope) -> SearchResult.empty();
+SearchResult found = searcher.search(suggested, schema, aliceOnly.getScope());
+----
+
+To resolve a mention that will be written, pass a scope that names only the context being written to.

@@ -34,6 +34,9 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Integration tests for the durable lineage stores against a Neo4j testcontainer (provided by
@@ -62,7 +65,7 @@ class DrivineLineageRecordStoreIntegrationTest {
 
     @AfterEach
     fun cleanUp() {
-        listOf("ProjectionRecord", "CollectorRecord", "CollectorRun").forEach { label ->
+        LineageSchema.LABELS.forEach { label ->
             persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:$label) DETACH DELETE n"))
         }
     }
@@ -289,4 +292,139 @@ class DrivineLineageRecordStoreIntegrationTest {
         assertNull(reloaded!!.finishedAt)
         assertTrue(reloaded.dryRun)
     }
+
+    @Test
+    fun `run headers an earlier build wrote come first, by finish instant and then run id`() {
+        val legacy = listOf(
+            CollectorRun("legacy-1", Instant.parse("2026-01-01T00:00:00Z"), Instant.parse("2026-01-01T00:00:05Z")),
+            CollectorRun("legacy-2", Instant.parse("2026-01-01T00:00:01Z"), Instant.parse("2026-01-01T00:00:05.500Z"), dryRun = true),
+            CollectorRun("legacy-3", Instant.parse("2026-01-01T00:00:06Z")),
+            CollectorRun("legacy-4", Instant.parse("2026-01-01T00:00:07Z"), Instant.parse("2026-01-01T00:00:09Z")),
+            CollectorRun("legacy-5", Instant.parse("2026-01-01T00:00:08Z"), Instant.parse("2026-01-01T00:00:09Z")),
+        )
+        // Created in reverse, so a read that returns nodes in creation order gets them backwards.
+        legacy.reversed().forEach(::writeEarlierBuildHeader)
+        val recorded = CollectorRun(
+            runId = "run-recorded",
+            startedAt = Instant.parse("2025-06-01T00:00:00Z"),
+            finishedAt = Instant.parse("2025-06-01T00:01:00Z"),
+        )
+        collectorStore.recordRun(recorded)
+
+        assertEquals(legacy + recorded, collectorStore.runs())
+        assertNull(collectorStore.findRun("legacy-3")!!.finishedAt)
+    }
+
+    @Test
+    fun `a header with no number comes before every numbered header, whenever it was created`() {
+        collectorStore.recordRun(CollectorRun("run-numbered", Instant.parse("2026-01-01T00:00:00Z"), Instant.parse("2026-01-01T00:01:00Z")))
+        writeEarlierBuildHeader(
+            CollectorRun("legacy-late", Instant.parse("2027-01-01T00:00:00Z"), Instant.parse("2027-01-01T00:01:00Z")),
+        )
+
+        assertEquals(listOf("legacy-late", "run-numbered"), collectorStore.runs().map { it.runId })
+    }
+
+    @Test
+    fun `recording a run again keeps its number, and an earlier-build header stays unnumbered`() {
+        val legacy = CollectorRun("legacy", Instant.parse("2026-01-01T00:00:00Z"), Instant.parse("2026-01-01T00:01:00Z"))
+        writeEarlierBuildHeader(legacy)
+        val runA = CollectorRun("run-a", Instant.parse("2026-03-01T00:00:00Z"))
+        val runB = CollectorRun("run-b", Instant.parse("2026-02-01T00:00:00Z"))
+        val runC = CollectorRun("run-c", Instant.parse("2026-01-15T00:00:00Z"))
+        listOf(runA, runB, runC).forEach(collectorStore::recordRun)
+
+        assertEquals(listOf(1L, 2L, 3L), listOf("run-a", "run-b", "run-c").map(::storedSequence))
+        assertEquals(3L, counterValue())
+
+        val finishedA = runA.copy(finishedAt = Instant.parse("2026-03-01T00:10:00Z"))
+        collectorStore.recordRun(finishedA)
+        val flippedLegacy = legacy.copy(dryRun = !legacy.dryRun)
+        collectorStore.recordRun(flippedLegacy)
+
+        assertEquals(listOf("legacy", "run-a", "run-b", "run-c"), collectorStore.runs().map { it.runId })
+        assertEquals(3L, counterValue())
+        assertNull(storedSequence("legacy"))
+        assertEquals(finishedA, collectorStore.findRun("run-a"))
+        assertEquals(flippedLegacy, collectorStore.findRun("legacy"))
+
+        // Among unnumbered headers a re-recorded one moves to wherever its new finish instant puts it.
+        writeEarlierBuildHeader(CollectorRun("legacy-later", Instant.parse("2026-01-01T00:00:30Z"), Instant.parse("2026-01-01T00:02:00Z")))
+        collectorStore.recordRun(flippedLegacy.copy(finishedAt = Instant.parse("2026-01-01T00:03:00Z")))
+
+        assertEquals(listOf("legacy-later", "legacy", "run-a", "run-b", "run-c"), collectorStore.runs().map { it.runId })
+        assertNull(storedSequence("legacy"))
+        assertEquals(3L, counterValue())
+    }
+
+    @Test
+    fun `run headers recorded at once from many threads get distinct numbers`() {
+        val threads = 48
+        val pool = Executors.newFixedThreadPool(threads)
+        try {
+            val ready = CountDownLatch(threads)
+            val go = CountDownLatch(1)
+            val starts = (1..threads).map { i ->
+                pool.submit<Unit> {
+                    ready.countDown()
+                    assertTrue(go.await(30, TimeUnit.SECONDS), "the start signal never came")
+                    collectorStore.recordRun(CollectorRun("concurrent-$i", Instant.parse("2026-01-01T00:00:00Z")))
+                }
+            }
+            assertTrue(ready.await(30, TimeUnit.SECONDS), "not every thread reached the start line")
+            go.countDown()
+            starts.forEach { it.get(60, TimeUnit.SECONDS) }
+        } finally {
+            pool.shutdownNow()
+        }
+
+        val numbers = (1..threads).map { storedSequence("concurrent-$it") }
+        assertEquals((1L..threads.toLong()).toList(), numbers.map { requireNotNull(it) }.sorted())
+        assertEquals(threads.toLong(), counterValue())
+    }
+
+    /**
+     * Write a run header the way a build without numbered headers did, with raw Cypher. That build
+     * set `runId`, `startedAt` and `dryRun`, plus `finishedAt` for a finished run, and no `sequence`.
+     *
+     * @param run The header to write.
+     */
+    private fun writeEarlierBuildHeader(run: CollectorRun) {
+        val finished = run.finishedAt?.let { ", finishedAt: ${'$'}finishedAt" }.orEmpty()
+        persistenceManager.execute(
+            QuerySpecification.withStatement(
+                "CREATE (n:CollectorRun {runId: ${'$'}runId, startedAt: ${'$'}startedAt, dryRun: ${'$'}dryRun$finished})",
+            ).bind(
+                mapOf(
+                    "runId" to run.runId,
+                    "startedAt" to run.startedAt.toString(),
+                    "dryRun" to run.dryRun,
+                    "finishedAt" to run.finishedAt?.toString(),
+                ),
+            ),
+        )
+    }
+
+    /**
+     * Read the `sequence` a run header holds. It is storage bookkeeping, so read it straight out.
+     *
+     * @param runId The header's run id.
+     * @return The number, or null when the header has none.
+     */
+    private fun storedSequence(runId: String): Long? = persistenceManager.maybeGetOne(
+        QuerySpecification.withStatement(
+            "MATCH (n:CollectorRun {runId: ${'$'}runId}) RETURN n.sequence AS sequence",
+        ).bind(mapOf("runId" to runId)).transform(Long::class.javaObjectType),
+    )
+
+    /**
+     * Read how far the run header counter has been advanced.
+     *
+     * @return The counter's value, or null when no counter exists.
+     */
+    private fun counterValue(): Long? = persistenceManager.maybeGetOne(
+        QuerySpecification.withStatement(
+            "MATCH (c:CollectorRunCounter) RETURN c.sequence AS sequence",
+        ).transform(Long::class.javaObjectType),
+    )
 }

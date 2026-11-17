@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.storage
 
+import com.embabel.dice.conformance.AbstractPropositionRunLinkStoreContractTest
 import com.embabel.dice.proposition.extraction.ExtractionRunKey
 import com.embabel.dice.proposition.extraction.ExtractionRunRef
 import com.embabel.dice.proposition.extraction.PropositionRunLinkStore
