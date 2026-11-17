@@ -75,7 +75,8 @@ diff belongs in the review.
 The listings come from JetBrains' Kotlin ABI tools (`org.jetbrains.kotlin:abi-tools`, the library behind the
 Kotlin Gradle plugin's ABI validation), run from `build-support/src/main/java/com/embabel/dice/apilisting/ApiListing.java`.
 They read Kotlin metadata, so `internal` declarations stay out. The `abi-tools.version` property in the root
-pom sets their version, apart from the Kotlin compiler version. Raise it when the Kotlin version moves.
+pom sets their version, apart from the Kotlin compiler version. The build stops at `validate` when Kotlin's
+major and minor version is ahead of it, so raise it when the Kotlin version moves.
 
 Generated code is left out. A module names its generated source root in `api.listing.generated.sources`, as
 `dice-storage` does for Drivine's query DSL, whose output `./mvnw clean` also deletes. The check stops when a

@@ -123,7 +123,8 @@
         <!--
             Kotlin ABI tools version for the API listings. It is kept apart from kotlin.version so a
             compiler upgrade cannot change the listing format in the same change. It reads the
-            compiler's metadata, so raise it when the build parent raises the Kotlin version.
+            compiler's metadata, and its versions follow Kotlin's, so the build stops when Kotlin's
+            major and minor version passes this one (see the enforcer plugin below).
         -->
         <abi-tools.version>2.2.21</abi-tools.version>
         <!-- Reads the source file name of a compiled class, so the listing can leave generated code out -->
@@ -336,6 +337,42 @@
             </plugins>
         </pluginManagement>
         <plugins>
+            <plugin>
+                <!--
+                    The ABI tools read the Kotlin compiler's metadata, so they must be at least as new as
+                    Kotlin. Their versions follow Kotlin's, and the build stops at validate when Kotlin's
+                    major and minor version is ahead of abi-tools.version.
+                -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <!-- The build parent's dependency convergence report stays off, as it was before this plugin was named here -->
+                        <id>enforce-versions</id>
+                        <phase>none</phase>
+                    </execution>
+                    <execution>
+                        <id>abi-tools-keeps-up-with-kotlin</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <fail>true</fail>
+                            <rules combine.self="override">
+                                <evaluateBeanshell>
+                                    <condition><![CDATA[
+                                        String[] kotlin = "${kotlin.version}".split("[.-]");
+                                        String[] abiTools = "${abi-tools.version}".split("[.-]");
+                                        Integer.parseInt(kotlin[0]) * 1000 + Integer.parseInt(kotlin[1])
+                                            <= Integer.parseInt(abiTools[0]) * 1000 + Integer.parseInt(abiTools[1])
+                                    ]]></condition>
+                                    <message>Kotlin ${kotlin.version} is newer than the Kotlin ABI tools ${abi-tools.version} that write the public API listings. Raise abi-tools.version in the root pom.xml to a release with the same major and minor version as Kotlin, then regenerate the listings with ./mvnw -B -Dapi.listing.mode=update process-classes and review the difference.</message>
+                                </evaluateBeanshell>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <!--
                     Register src/main/kotlin and src/main/java as compile source roots (configured in
