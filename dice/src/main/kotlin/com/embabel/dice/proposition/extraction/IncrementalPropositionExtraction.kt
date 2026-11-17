@@ -40,7 +40,6 @@ import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Async
 import java.io.InputStream
 import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
 import java.util.function.Function
@@ -121,32 +120,41 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
 ) {
 
     /**
-     * Where `(proposition, run)` links go, once a host has bound one with [withRunLineage].
+     * What a host has bound on this extractor.
      *
-     * Volatile because it is written on whatever thread builds the extractor and read on the async
-     * extraction threads. It is written exactly once — [runLineageBound] enforces that — so a
-     * reader sees either the initial null or the bound store, never a value that later changes
-     * underneath it.
+     * Immutable. A binding call replaces the whole value under [bindingLock], so a chunk that reads
+     * [binding] once is stored under one consistent policy, run link store and writer.
+     *
+     * @property policy What happens when lineage cannot be written
+     * @property runLinkStore The store bound with [withRunLineage], or null
+     * @property writer The writer bound with [withPersistUnitWriter], or null to use the sequential one
+     * @property lineageBound Whether [withRunLineage] has been called
+     * @property writerBound Whether [withPersistUnitWriter] has been called
      */
-    @Volatile
-    private var propositionRunLinkStore: PropositionRunLinkStore? = null
+    private class Binding(
+        val policy: LineageFailurePolicy = LineageFailurePolicy.DEFAULT,
+        val runLinkStore: PropositionRunLinkStore? = null,
+        val writer: PersistUnitWriter? = null,
+        val lineageBound: Boolean = false,
+        val writerBound: Boolean = false,
+    )
 
     /**
-     * What happens when lineage cannot be written. Bound with the store, and volatile for the same
-     * reason: written on the thread that builds the extractor, read on the extraction threads.
+     * The current bindings. Volatile because the extraction threads read it. It is reassigned only
+     * inside a binding call.
      */
     @Volatile
-    private var lineageFailurePolicy: LineageFailurePolicy = LineageFailurePolicy.DEFAULT
+    private var binding = Binding()
 
-    /** Whether [withRunLineage] has been called. Binding is one-time; see there for why. */
-    private val runLineageBound = AtomicBoolean(false)
+    /** Guards both binding calls, so the checks and the replacement of [binding] are one step. */
+    private val bindingLock = Any()
 
-    /** The writer bound with [withPersistUnitWriter], or null to use the sequential one. */
+    /**
+     * Runs between a binding call's checks and its write. A test sets it to hold a call there. It
+     * does nothing by default.
+     */
     @Volatile
-    private var persistUnitWriter: PersistUnitWriter? = null
-
-    /** Whether [withPersistUnitWriter] has been called. Binding is one-time, as for run lineage. */
-    private val persistUnitWriterBound = AtomicBoolean(false)
+    internal var afterBindingCheck: () -> Unit = {}
 
     /**
      * Binds the store that records which extraction run produced which claims, and returns this
@@ -199,6 +207,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * actually carries a run: with no store bound and a run set, [LineageFailurePolicy.STRICT]
      * fails that call. A host that passes runs must bind a store.
      *
+     * Binding is safe from more than one thread. When a run link store and a writer are bound at the
+     * same time, one call binds and the other throws. A chunk that is being stored when a binding is
+     * made is stored under the bindings it started with.
+     *
      * @param propositionRunLinkStore The lineage store, or null to record no lineage.
      * @param policy What happens when lineage cannot be written. See [LineageFailurePolicy].
      * @return this extractor.
@@ -208,19 +220,20 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     open fun withRunLineage(
         propositionRunLinkStore: PropositionRunLinkStore?,
         policy: LineageFailurePolicy,
-    ): IncrementalPropositionExtraction {
-        check(propositionRunLinkStore == null || persistUnitWriter == null) {
+    ): IncrementalPropositionExtraction = synchronized(bindingLock) {
+        val current = binding
+        check(propositionRunLinkStore == null || current.writer == null) {
             "a persist unit writer is bound on this extractor and records run links in its own store. " +
                 "Pass null here and give the run link store to the writer"
         }
-        check(runLineageBound.compareAndSet(false, true)) {
+        check(!current.lineageBound) {
             "run lineage is already bound on this extractor; it binds once, before the extractor " +
                 "starts handling events, so an analysis in flight cannot have its audit record " +
                 "redirected or erased"
         }
-        this.propositionRunLinkStore = propositionRunLinkStore
-        this.lineageFailurePolicy = policy
-        return this
+        afterBindingCheck()
+        binding = Binding(policy, propositionRunLinkStore, current.writer, lineageBound = true, writerBound = current.writerBound)
+        this
     }
 
     /**
@@ -236,6 +249,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * Reads this extractor makes go to the repositories it was constructed with, so the writer must
      * write to the same ones.
      * Binding is one-time. Bind before the extractor starts handling events.
+     * Binding is safe from more than one thread. When a run link store and a writer are bound at the
+     * same time, one call binds and the other throws. A chunk that is being stored when a binding is
+     * made is stored under the bindings it started with.
      *
      * When the bound writer reports a failed write, storing the chunk throws what
      * [PersistOutcome.persistedOrThrow] throws. A cause that is a `RuntimeException` is thrown as it
@@ -264,17 +280,19 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * [withRunLineage].
      */
     @ApiStatus.Experimental
-    open fun withPersistUnitWriter(writer: PersistUnitWriter): IncrementalPropositionExtraction {
-        check(propositionRunLinkStore == null) {
+    open fun withPersistUnitWriter(writer: PersistUnitWriter): IncrementalPropositionExtraction = synchronized(bindingLock) {
+        val current = binding
+        check(current.runLinkStore == null) {
             "a run link store is bound on this extractor. A bound writer records run links in its own " +
                 "store, so give that store to the writer and call withRunLineage(null, policy) here"
         }
-        check(persistUnitWriterBound.compareAndSet(false, true)) {
+        check(!current.writerBound) {
             "a persist unit writer is already bound on this extractor. Bind it once, before the " +
                 "extractor starts handling events"
         }
-        this.persistUnitWriter = writer
-        return this
+        afterBindingCheck()
+        binding = Binding(current.policy, current.runLinkStore, writer, current.lineageBound, writerBound = true)
+        this
     }
 
     private val analyzer: IncrementalAnalyzer<Message, ChunkPropositionResult> =
@@ -693,8 +711,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * @param context The analysis the result belongs to. Its run, if any, is attributed.
      */
     private fun persistAndProject(result: ChunkPropositionResult, context: SourceAnalysisContext) {
+        val bound = binding
         val currentRun = context.currentRun
-        val unit = PersistUnit.of(result).let { if (currentRun != null) recordRunLineage(it, context, currentRun) else it }
+        val unit = PersistUnit.of(result).let { if (currentRun != null) recordRunLineage(it, context, currentRun, bound.policy) else it }
         val newEntitiesToSave = unit.newEntities.size
 
         val stats = result.propositionExtractionStats
@@ -708,17 +727,17 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             logger.info("Updated entity: name='{}', labels={}", entity.name, entity.labels())
         }
 
-        val boundWriter = persistUnitWriter
+        val boundWriter = bound.writer
         val outcome = if (boundWriter == null) {
             // Built per call, because withRunLineage can bind the run link store after construction.
             // The lineage lines are logged between the run link and the structural relationships, so
             // an Error from the relationships cannot lose them.
-            SequentialPersistUnitWriter(propositionRepository, entityRepository, propositionRunLinkStore) { key, runLinks, lineageFailure ->
-                logRunLineage(key.runRef.runId, runLinks, lineageFailure)
+            SequentialPersistUnitWriter(propositionRepository, entityRepository, bound.runLinkStore) { key, runLinks, lineageFailure ->
+                logRunLineage(key.runRef.runId, runLinks, lineageFailure, bound.policy)
             }.write(unit)
         } else {
             val written = boundWriter.write(unit)
-            if (currentRun != null) logRunLineage(currentRun.runId, written.runLinks, written.lineageFailure)
+            if (currentRun != null) logRunLineage(currentRun.runId, written.runLinks, written.lineageFailure, bound.policy)
             written
         }
         // A bound writer's checked cause is wrapped in PersistUnitFailedException, so a Java caller
@@ -764,10 +783,16 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * @param unit What the chunk produced.
      * @param context The analysis the chunk belongs to. Its context id scopes the run.
      * @param currentRun The run the analysis carries.
-     * @return The unit with the run and this extractor's lineage policy.
+     * @param policy What happens when the run link cannot be recorded.
+     * @return The unit with the run and the policy.
      */
-    private fun recordRunLineage(unit: PersistUnit, context: SourceAnalysisContext, currentRun: ExtractionRunRef): PersistUnit =
-        unit.withRun(ExtractionRunKey(context.contextId, currentRun), lineageFailurePolicy)
+    private fun recordRunLineage(
+        unit: PersistUnit,
+        context: SourceAnalysisContext,
+        currentRun: ExtractionRunRef,
+        policy: LineageFailurePolicy,
+    ): PersistUnit =
+        unit.withRun(ExtractionRunKey(context.contextId, currentRun), policy)
 
     /**
      * Logs how linking a unit's claims to its run went.
@@ -779,11 +804,17 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * @param runId The id of the run the claims came from.
      * @param runLinks What the run link store returned, or null when no link call was made.
      * @param lineageFailure Set when a link was asked for and not recorded.
+     * @param policy The lineage policy the chunk is stored under.
      */
-    private fun logRunLineage(runId: String, runLinks: Int?, lineageFailure: LineageNotRecordedException?) {
+    private fun logRunLineage(
+        runId: String,
+        runLinks: Int?,
+        lineageFailure: LineageNotRecordedException?,
+        policy: LineageFailurePolicy,
+    ) {
         if (lineageFailure == null) {
             runLinks?.let { logger.info("Attributed {} propositions to extraction run {}", it, runId) }
-        } else if (lineageFailurePolicy == LineageFailurePolicy.LENIENT) {
+        } else if (policy == LineageFailurePolicy.LENIENT) {
             logger.warn(
                 "Lineage not recorded for extraction run {}; continuing under LENIENT policy",
                 runId, lineageFailure,
