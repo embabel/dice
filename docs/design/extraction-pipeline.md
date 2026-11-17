@@ -173,9 +173,10 @@ rule about anything else goes in the filter. `GroundedMentionFilter` accepts a m
 is in that text. It also accepts a mention whose span equals the name or an alias of a known
 entity of the analysis, when the text contains that entity's name or an alias. Names are compared
 the way `KnownEntityResolver` compares them, so a title or a suffix makes no difference, and a
-grounded mention resolves to that entity. `KnownEntityResolver` takes the first known entity with a
-matching name, so a span that is the name of several known entities is grounded only when the text
-names every one of them. A `suggestedId` alone grounds nothing: `KnownEntityResolver` does not
+grounded mention resolves to that entity. When several known entities share a name,
+`KnownEntityResolver` prefers the one whose labels overlap the mention's type and otherwise takes the
+first, which the text says nothing about, so a span that is the name of several known entities is
+grounded only when the text names every one of them. A `suggestedId` alone grounds nothing: `KnownEntityResolver` does not
 follow it, and a mention with the same span and type elsewhere could carry another. A blank span is
 never grounded.
 
@@ -203,16 +204,9 @@ attach particles to a name. A symbol that composition spells out as letters or d
 trade mark sign or a footnote digit, does not join the word beside it. The text of a proposition is
 normalised once, however many mentions it has.
 
-Under DROP, the mentions grounding drops can pass a `suggestedId` on to the resolver candidates
-with the same span and type. Resolution gives every mention of one span and type the same id, so
-this is decided once per span and type for the whole chunk, never per proposition. A span and type
-gets an id only when every dropped mention of it that carries an id carries the same one, that id
-belongs to a known entity of the analysis whose name or an alias is the span (compared the way
-`GroundedMentionFilter` compares names), no other span and type would take the same id, and no
-candidate of it holds an id of its own. So the id can only choose among the known entities the span
-itself names, and never points a mention at something its own text does not name. The filter has
-judged every mention as written and is not asked again. The propositions keep their mentions as the
-model wrote them, and a rejection always reports the mention as the model wrote it.
+A mention either check drops takes its `suggestedId` with it; no other mention inherits it. The
+filter judges every mention as written, once per proposition. The propositions keep their mentions
+as the model wrote them, and a rejection always reports the mention as the model wrote it.
 
 A mention left unresolved keeps no id, even when another mention with the same span and type is
 resolved. Resolution assigns ids by span and type, so the pipeline takes the id off afterwards by

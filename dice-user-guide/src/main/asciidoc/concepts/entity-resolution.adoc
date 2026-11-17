@@ -118,7 +118,8 @@ as Chinese, Japanese or Thai, are matched wherever the span occurs.
 A mention whose span is one of the names or aliases of a known entity of the context is also
 grounded when the text names that entity, so the mention "Thomas" is grounded on "Tom moved to
 Paris" when Thomas is known as Tom. When several known entities share that name, the text must name
-all of them, because resolution could link the mention to any of them. A suggested id alone grounds
+all of them, because resolution picks among them by how their labels overlap the mention's type,
+which the text says nothing about. A suggested id alone grounds
 nothing, because resolution matches known entities by name. A mention of something the text only
 implies, such as a hobby named `Cycling` on the claim "Alice cycles", is ungrounded, with or without
 an id.

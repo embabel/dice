@@ -375,7 +375,7 @@ class PropositionPipeline private constructor(
         var misaligned = 0
         val cleared = propositions.mapIndexed { index, proposition ->
             val twin = if (sameCount) screened.propositions[index] else null
-            val keys = proposition.mentions.map { MentionKey(it.span.lowercase().trim(), it.type.lowercase().trim()) }
+            val keys = proposition.mentions.map { MentionKey.from(it) }
             val clear = if (twin != null && keys == twin.mentions.map { MentionKey.from(it) }) {
                 unresolved.getOrNull(index).orEmpty()
             } else {

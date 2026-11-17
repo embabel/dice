@@ -282,8 +282,6 @@ class MentionGroundingTest {
             )
         }
         assertTrue(MentionGrounding.isBlank(s(0x200B, 0x200D)))
-        assertTrue(MentionGrounding.sameName(MentionGrounding.prepare("Stra" + s(0xDF) + "e"), MentionGrounding.prepare("STRASSE")))
-        assertFalse(MentionGrounding.sameName(MentionGrounding.prepare(""), MentionGrounding.prepare("")))
     }
 
     @Test

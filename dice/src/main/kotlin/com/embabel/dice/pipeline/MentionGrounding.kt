@@ -118,15 +118,6 @@ internal object MentionGrounding {
     fun isBlank(span: String): Boolean = prepare(span).folded.isEmpty()
 
     /**
-     * Tells whether two prepared texts are the same name.
-     *
-     * @param a the first prepared text
-     * @param b the second prepared text
-     * @return true when both are equal after folding, and false when either is empty
-     */
-    fun sameName(a: PreparedText, b: PreparedText): Boolean = a.folded.isNotEmpty() && a.folded == b.folded
-
-    /**
      * Finds why a prepared span is not grounded in a prepared text.
      *
      * @param span the prepared span

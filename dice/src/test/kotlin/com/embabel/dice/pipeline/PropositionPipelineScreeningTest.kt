@@ -227,32 +227,6 @@ class PropositionPipelineScreeningTest {
     }
 
     @Test
-    fun `E6 a dropped mention passes its suggested id to the candidate with the same span and type`() {
-        val inner = SuggestingPropositionExtractor.of(
-            MentionFixtures.proposition("Bob likes tea", MentionFixtures.mention("Alice", "p1")),
-            MentionFixtures.proposition("Alice likes jazz", MentionFixtures.mention("Alice")),
-        )
-        val offered = CopyOnWriteArrayList<SuggestedMention>()
-        val recording = object : PropositionExtractor by inner {
-            override fun toSuggestedEntities(
-                suggestedPropositions: SuggestedPropositions,
-                context: SourceAnalysisContext,
-                sourceText: String?,
-                mentionFilter: MentionFilter?,
-            ): SuggestedEntities {
-                offered.addAll(suggestedPropositions.propositions.flatMap { it.mentions })
-                return inner.toSuggestedEntities(suggestedPropositions, context, sourceText, mentionFilter)
-            }
-        }
-
-        val result = dropPipeline(recording)
-            .processChunk(chunk(), context().withKnownEntities(MentionFixtures.knownPerson("p1", "Alice Smith", "Alice")))
-
-        assertEquals(listOf("p1"), offered.filter { it.span == "Alice" }.map { it.suggestedId })
-        assertEquals("p1", result.propositions.single { it.text == "Alice likes jazz" }.mentions.single().resolvedId)
-    }
-
-    @Test
     fun `E7 withMentionGrounding replaces the grounding check`() {
         val rejectAll = customCheck { true }
         val result = dropPipeline(SuggestingPropositionExtractor.of(mixed()))
@@ -446,23 +420,6 @@ class PropositionPipelineScreeningTest {
     }
 
     @Test
-    fun `E17 the filter judges the id a dropped mention passes on`() {
-        val blocksId = object : MentionFilter {
-            override fun isValid(mention: SuggestedMention, propositionText: String): Boolean = mention.suggestedId != "blocked-id"
-            override fun rejectionReason(mention: SuggestedMention): String? = "blocked id"
-        }
-        val ungroundedAlice = alice.copy(suggestedId = "blocked-id")
-        val known = context().withKnownEntities(MentionFixtures.knownPerson("blocked-id", "Alice Smith"))
-
-        val result = dropPipeline(SuggestingPropositionExtractor.of(proposition("Bob slept", ungroundedAlice), proposition(aliceMetBob, alice)))
-            .withMentionFilter(blocksId)
-            .processChunk(chunk(), known)
-
-        assertTrue(resolver.entities.none { it.id == "blocked-id" }, "resolver saw: ${resolver.entities.map { it.id }}")
-        assertTrue(result.rejectedMentions.none { it.check == RejectedMention.Check.FILTER }, "rejected: ${result.rejectedMentions}")
-    }
-
-    @Test
     fun `E18 propositions with the same text keep their own verdicts`() {
         val objectAlice = alice.copy(role = "OBJECT")
         val rejectsObjectAlice = object : MentionFilter {
@@ -637,15 +594,5 @@ class PropositionPipelineScreeningTest {
             "logged: ${logged.map { it.formattedMessage }}",
         )
         assertTrue(logged.none { it.formattedMessage.contains("Carol") }, "logged: ${logged.map { it.formattedMessage }}")
-    }
-
-    @Test
-    fun `L2 under DROP a dropped mention's id reaches resolution only when it is a known entity's id`() {
-        val madeUp = alice.copy(suggestedId = "made-up")
-
-        dropPipeline(SuggestingPropositionExtractor.of(proposition("Bob slept", madeUp), proposition(aliceMetBob, alice)))
-            .processChunk(chunk(), context())
-
-        assertTrue(resolver.entities.none { it.id == "made-up" }, "resolver saw: ${resolver.entities.map { it.id }}")
     }
 }

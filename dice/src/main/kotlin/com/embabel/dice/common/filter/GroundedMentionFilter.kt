@@ -24,6 +24,7 @@ import com.embabel.dice.pipeline.PreparedText
 import com.embabel.dice.pipeline.UngroundedMention
 import com.embabel.dice.proposition.SuggestedMention
 import com.embabel.dice.proposition.SuggestedProposition
+import java.util.IdentityHashMap
 
 /**
  * A mention filter that accepts a mention only when its proposition's text names it.
@@ -39,10 +40,10 @@ import com.embabel.dice.proposition.SuggestedProposition
  * the text "Tom moved to Paris" is grounded. A suggested id alone grounds nothing, because entity
  * resolution matches known entities by name and does not follow the id.
  *
- * Entity resolution takes the first known entity with a matching name, so a span that is the name
- * of several known entities is grounded only when the text names every one of them. With Bob and
- * Alice both known as Pat, the mention "Pat" on "Alice waved" is ungrounded, with or without
- * Alice's id, because resolution could link it to Bob.
+ * When several known entities share the span's name, entity resolution picks one by how its labels
+ * overlap the mention's type, which the text says nothing about, so the span is grounded only when
+ * the text names every one of them. With Bob and Alice both known as Pat, the mention "Pat" on
+ * "Alice waved" is ungrounded, with or without Alice's id, because resolution could link it to Bob.
  *
  * A mention that names something the text only implies is rejected. The mention "Cycling" on
  * "Alice cycles" is ungrounded even with the id of a known entity called Cycling. A blank span is
@@ -89,26 +90,9 @@ internal object KnownEntityGrounding {
     /**
      * Finds why each mention of a proposition is ungrounded.
      *
-     * The text is prepared once per proposition. The known entities are looked at only when a
-     * mention fails the span check, and then once for the whole proposition.
-     *
-     * @param proposition the proposition whose mentions are judged
-     * @param knownEntities the known entities of the analysis
-     * @param prepare folds a text so spans can be looked up in it
-     * @return one reason per mention in order, null for a grounded mention
-     */
-    fun reasons(
-        proposition: SuggestedProposition,
-        knownEntities: List<KnownEntity>,
-        prepare: (String) -> PreparedText = MentionGrounding::prepare,
-    ): List<UngroundedMention.Reason?> {
-        if (proposition.mentions.isEmpty()) return emptyList()
-        return reasons(proposition, lazy { knownNames(knownEntities, prepare) }, prepare)
-    }
-
-    /**
-     * Finds why each mention of a proposition is ungrounded, with the known entities' names
-     * prepared ahead.
+     * The text is prepared once per proposition. A mention that fails the span check is compared by
+     * name with the known entities, and only the known entities that share its name are looked for
+     * in the text, each at most once per proposition.
      *
      * @param proposition the proposition whose mentions are judged
      * @param knownNames the prepared names of the known entities, read only when a mention misses
@@ -122,20 +106,15 @@ internal object KnownEntityGrounding {
     ): List<UngroundedMention.Reason?> {
         if (proposition.mentions.isEmpty()) return emptyList()
         val text = prepare(proposition.text)
-        val known by lazy { knownNames.value.map { KnownForms(it.names, it.forms.any { form -> MentionGrounding.reasonUngrounded(form, text) == null }) } }
+        val named = IdentityHashMap<KnownNames, Boolean>()
+        val inText = { known: KnownNames ->
+            named.getOrPut(known) { known.forms.any { form -> MentionGrounding.reasonUngrounded(form, text) == null } }
+        }
         return proposition.mentions.map { mention ->
             val reason = MentionGrounding.reasonUngrounded(prepare(mention.span), text)
-            if (reason == UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION && namesOneOf(mention, known)) null else reason
+            if (reason == UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION && namesOneOf(mention, knownNames.value, inText)) null else reason
         }
     }
-
-    /**
-     * A known entity's name forms, and whether the proposition text names it.
-     *
-     * @property names the entity's name forms after name normalization
-     * @property inText true when one of the entity's names is in the text at word edges
-     */
-    private class KnownForms(val names: List<String>, val inText: Boolean)
 
     /**
      * A known entity's names, normalized for comparing with a span and prepared for finding in a text.
@@ -165,20 +144,22 @@ internal object KnownEntityGrounding {
     }
 
     /**
-     * Tells whether a mention names a known entity that the text names, and only such an entity.
+     * Tells whether a mention names a known entity that the text names, and only such entities.
      *
-     * Entity resolution matches a known entity by name and picks the first one when several share
-     * the name. So the mention is grounded only when its name belongs to a known entity and every
-     * known entity with that name is one the text names.
+     * Entity resolution links a mention to a known entity with the same name, preferring one whose
+     * labels overlap the mention's type and otherwise taking the first. Which one it picks depends on
+     * labels the text says nothing about, so the mention is grounded only when its name belongs to a
+     * known entity and every known entity with that name is one the text names.
      *
      * @param mention the mention
-     * @param known the known entities of the analysis with their names
+     * @param known the prepared names of the known entities
+     * @param inText tells whether the text names a known entity
      * @return true when the mention can only resolve to a known entity the text names
      */
-    private fun namesOneOf(mention: SuggestedMention, known: List<KnownForms>): Boolean {
-        if (known.none { it.inText }) return false
+    private fun namesOneOf(mention: SuggestedMention, known: List<KnownNames>, inText: (KnownNames) -> Boolean): Boolean {
         val name = NormalizedNameCandidateSearcher.normalizeName(mention.span)
-        val sameName = if (name.isBlank()) emptyList() else known.filter { forms -> forms.names.any { it.equals(name, ignoreCase = true) } }
-        return sameName.isNotEmpty() && sameName.all { it.inText }
+        if (name.isBlank()) return false
+        val sameName = known.filter { entity -> entity.names.any { it.equals(name, ignoreCase = true) } }
+        return sameName.isNotEmpty() && sameName.all(inText)
     }
 }

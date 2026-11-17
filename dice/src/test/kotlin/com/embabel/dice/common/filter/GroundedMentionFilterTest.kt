@@ -133,17 +133,17 @@ class GroundedMentionFilterTest {
         val known = listOf(thomas)
 
         val zeds = proposition("Tom moved to Paris", *Array(40) { mention("Zed$it") })
-        KnownEntityGrounding.reasons(zeds, known, recording)
+        KnownEntityGrounding.reasons(zeds, lazy { KnownEntityGrounding.knownNames(known, recording) }, recording)
         assertEquals(1, prepared.count { it == "Tom moved to Paris" })
         assertTrue(prepared.count { it == "Thomas" } <= 2)
         assertTrue(prepared.count { it == "Tom" } <= 2)
 
         prepared.clear()
-        KnownEntityGrounding.reasons(proposition("Tom moved to Paris"), known, recording)
+        KnownEntityGrounding.reasons(proposition("Tom moved to Paris"), lazy { KnownEntityGrounding.knownNames(known, recording) }, recording)
         assertEquals(emptyList<String>(), prepared)
 
         prepared.clear()
-        KnownEntityGrounding.reasons(proposition("Tom moved to Paris", mention("Tom"), mention("Paris")), known, recording)
+        KnownEntityGrounding.reasons(proposition("Tom moved to Paris", mention("Tom"), mention("Paris")), lazy { KnownEntityGrounding.knownNames(known, recording) }, recording)
         assertFalse("Thomas" in prepared)
     }
 
@@ -217,5 +217,20 @@ class GroundedMentionFilterTest {
         assertEquals(listOf(Valid), first)
         assertEquals(first, second)
         assertEquals(listOf(notInText), other)
+    }
+
+    @Test
+    fun `L5 only known entities that share the missed mention's name are looked for in the text`() {
+        val untouchable = object : AbstractList<PreparedText>() {
+            override val size: Int get() = throw AssertionError("looked for Bob in the text")
+            override fun get(index: Int): PreparedText = throw AssertionError("looked for Bob in the text")
+        }
+        val names = lazy {
+            KnownEntityGrounding.knownNames(listOf(thomas)) + KnownEntityGrounding.KnownNames(listOf("Bob"), untouchable)
+        }
+
+        val reasons = KnownEntityGrounding.reasons(proposition("Tom moved to Paris", mention("Thomas"), mention("Zed")), names)
+
+        assertEquals(listOf(null, com.embabel.dice.pipeline.UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION), reasons)
     }
 }

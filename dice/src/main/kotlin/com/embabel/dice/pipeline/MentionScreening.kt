@@ -18,12 +18,9 @@ package com.embabel.dice.pipeline
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.filter.MentionFilter
 import com.embabel.dice.common.filter.checkedVerdicts
-import com.embabel.dice.common.resolver.searcher.NormalizedNameCandidateSearcher
 import com.embabel.dice.common.validation.ValidationResult
-import com.embabel.dice.proposition.MentionKey
 import com.embabel.dice.proposition.SuggestedProposition
 import com.embabel.dice.proposition.SuggestedPropositions
-import org.slf4j.LoggerFactory
 
 /**
  * The result of screening one chunk's mentions with a grounding check and an optional filter.
@@ -69,8 +66,6 @@ internal data class ScreeningOutcome(
  * removed separately. Nothing is copied that does not change.
  */
 internal object MentionScreening {
-
-    private val logger = LoggerFactory.getLogger(MentionScreening::class.java)
 
     /**
      * The verdicts on one proposition's mentions, and what they mean for each mention.
@@ -122,9 +117,8 @@ internal object MentionScreening {
      * Screens the mentions of one chunk's propositions.
      *
      * The filter judges each proposition with the mentions the grounding check dropped already
-     * taken off, as the model wrote them. Under DROP, the mentions grounding dropped can pass a
-     * suggested id on to the resolver candidates with the same span and type. That is decided once
-     * per span and type for the whole chunk, the way resolution works: see [hints].
+     * taken off, as the model wrote them. A mention either check drops takes its suggested id with
+     * it; no other mention inherits it.
      *
      * @param chunkId the id of the chunk the pipeline processed, which every rejection carries
      * @param extracted the propositions the extractor returned for the chunk
@@ -159,10 +153,8 @@ internal object MentionScreening {
             rejectedMentions(chunkId, index, verdict.proposition, verdict.filter, RejectedMention.Check.FILTER, filterHandling)
         }
         val resultPropositions = verdicts.map { keep(it.proposition, it.kept) }
-        val hints = if (dropUngrounded) hints(chunkId, verdicts, context) else emptyMap()
         val candidatePropositions = verdicts.zip(resultPropositions) { verdict, kept ->
-            val resolvable = if (verdict.resolvable.size == verdict.kept.size) kept else keep(verdict.proposition, verdict.resolvable)
-            withHints(resolvable, hints)
+            if (verdict.resolvable.size == verdict.kept.size) kept else keep(verdict.proposition, verdict.resolvable)
         }
         val result = rebuild(extracted, resultPropositions)
         val candidates = rebuild(result, candidatePropositions)
@@ -242,85 +234,4 @@ internal object MentionScreening {
     private fun rebuild(base: SuggestedPropositions, propositions: List<SuggestedProposition>): SuggestedPropositions =
         if (propositions.zip(base.propositions).all { (a, b) -> a === b }) base
         else base.copy(propositions = propositions)
-
-    /**
-     * Decides, once per span and type for the whole chunk, which suggested id the mentions grounding
-     * dropped pass on to the resolver candidates.
-     *
-     * Resolution gives every mention of one span and type the same id, so the decision is made per
-     * span and type, never per proposition. A span and type gets an id only when:
-     * - every dropped mention of it that carries an id carries the same one;
-     * - that id belongs to a known entity of the context whose name or an alias is the span,
-     *   compared the way [com.embabel.dice.common.filter.GroundedMentionFilter] compares names;
-     * - no other span and type would take the same id;
-     * - no candidate of it holds an id of its own.
-     *
-     * So the id can only choose among the known entities that the span itself names, which entity
-     * resolution would match by name anyway. It never points a mention at something its own text
-     * does not name, and the filter, which has judged every mention as written, is not asked again.
-     *
-     * @param chunkId the id of the chunk, for the debug line
-     * @param verdicts the verdicts on each proposition
-     * @param context the analysis context, whose known entities decide which ids may pass on
-     * @return the id to pass on for each span and type
-     */
-    private fun hints(chunkId: String, verdicts: List<Verdicts>, context: SourceAnalysisContext): Map<MentionKey, String> {
-        val namesById = context.knownEntities
-            .mapNotNull { known ->
-                val id = (known.id as String?)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                val names = (listOf<String?>(known.name) + known.aliases).filterNotNull().filter { it.isNotBlank() }
-                    .map { NormalizedNameCandidateSearcher.normalizeName(it) }
-                id to names
-            }
-            .groupBy({ it.first }, { it.second })
-            .mapValues { (_, names) -> names.flatten() }
-        if (namesById.isEmpty()) return emptyMap()
-        val held = verdicts.flatMap { verdict -> verdict.resolvable.map { verdict.proposition.mentions[it] } }
-            .filterNot { it.suggestedId.isNullOrBlank() }
-            .map { MentionKey.from(it) }
-            .toSet()
-        val carried = verdicts.flatMap { verdict -> verdict.grounding.keys.sorted().map { verdict.proposition.mentions[it] } }
-            .mapNotNull { mention -> mention.suggestedId?.takeIf { it.isNotBlank() }?.let { MentionKey.from(mention) to it } }
-            .groupBy({ it.first }, { it.second })
-        val offered = carried
-            .mapNotNull { (key, ids) -> ids.distinct().singleOrNull()?.let { key to it } }
-            .filter { (key, id) -> namesSpan(namesById[id], key.span) }
-        val shared = offered.groupBy({ it.second }, { it.first }).filterValues { it.size > 1 }.keys
-        val passed = offered.filter { (key, id) -> id !in shared && key !in held }.toMap()
-        if (carried.isNotEmpty()) {
-            logger.debug(
-                "Chunk {}: dropped mentions carried ids for {} span(s) and type(s), {} passed on, {} withheld",
-                chunkId, carried.size, passed.size, carried.size - passed.size,
-            )
-        }
-        return passed
-    }
-
-    /**
-     * Tells whether one of a known entity's names is the span, after name normalization and
-     * ignoring case.
-     *
-     * @param names the known entity's normalized names, or null when the id is not a known entity's
-     * @param span the span of the mentions that would take the id
-     * @return true when a name matches
-     */
-    private fun namesSpan(names: List<String>?, span: String): Boolean {
-        if (names.isNullOrEmpty()) return false
-        val normalized = NormalizedNameCandidateSearcher.normalizeName(span)
-        return normalized.isNotBlank() && names.any { it.equals(normalized, ignoreCase = true) }
-    }
-
-    /**
-     * Gives a candidate proposition's mentions the ids passed on for their span and type.
-     *
-     * @param proposition the candidate proposition
-     * @param hints the id to pass on for each span and type
-     * @return the same proposition when no hint applies, otherwise a copy with the hinted ids
-     */
-    private fun withHints(proposition: SuggestedProposition, hints: Map<MentionKey, String>): SuggestedProposition {
-        if (hints.isEmpty() || proposition.mentions.none { MentionKey.from(it) in hints }) return proposition
-        return proposition.copy(mentions = proposition.mentions.map { mention ->
-            hints[MentionKey.from(mention)]?.let { mention.copy(suggestedId = it) } ?: mention
-        })
-    }
 }

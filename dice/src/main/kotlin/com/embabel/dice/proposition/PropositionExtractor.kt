@@ -93,7 +93,24 @@ data class MentionKey(
     val type: String,
 ) {
     companion object {
-        fun from(mention: SuggestedMention): MentionKey =
-            MentionKey(span = mention.span.lowercase().trim(), type = mention.type.lowercase().trim())
+        fun from(mention: SuggestedMention): MentionKey = of(mention.span, mention.type)
+
+        /**
+         * Builds the key of a resolved mention, the same way as for a suggested one.
+         *
+         * @param mention the resolved mention
+         * @return its key
+         */
+        internal fun from(mention: EntityMention): MentionKey = of(mention.span, mention.type)
+
+        /**
+         * Builds a key from a span and a type, lower case and trimmed, which is how every key is compared.
+         *
+         * @param span the span as written
+         * @param type the type as written
+         * @return the key
+         */
+        internal fun of(span: String, type: String): MentionKey =
+            MentionKey(span = span.lowercase().trim(), type = type.lowercase().trim())
     }
 }
