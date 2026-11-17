@@ -19,10 +19,10 @@ and the consumer PRs that deliver it).
   The store never used Neo4j itself: it joins any `PropositionStore` to embabel-agent's
   `NamedEntityDataRepository`. The old name stays as a deprecated class that extends the new
   one, with the same constructor, so Kotlin code, Java code and code already compiled against
-  the old name keep working. `RagAdapterPropositionRepository` is `open` for that reason. A
-  store logs under the name it was built with, so log settings for the old name still apply to
-  stores built through it. **Compatibility: additive.** New code uses
-  `RagAdapterPropositionRepository`.
+  the old name keep working. `RagAdapterPropositionRepository` is `open` for that reason only.
+  It is marked `@ApiStatus.NonExtendable`, and a host should not subclass it. A store logs under
+  the name it was built with, so log settings for the old name still apply to stores built
+  through it. **Compatibility: additive.** New code uses `RagAdapterPropositionRepository`.
 
 - The `dice` module no longer depends on `org.javers:javers-core`. DICE never called it.
   **Compatibility: behavioral.** Upgrade note: a host that used javers, or the gson, classgraph
@@ -33,9 +33,15 @@ and the consumer PRs that deliver it).
   loaded it, and it was the one query in DICE that called an APOC function. **Compatibility:
   behavioral.** A host that read this resource from the jar keeps its own copy.
 
-- `LlmPropositionReviser` and `DefaultMemoryConsolidator` reinforce a proposition through one
-  internal helper, each with the rule it already had. Results are the same as before.
-  **Compatibility: additive.**
+- `LlmPropositionReviser` and `DefaultMemoryConsolidator` reinforce a stored proposition through one
+  internal helper. A merge of identical propositions, a reinforcement by a similar one and a
+  consolidator reinforcement each keep their own confidence step and cap, and the reviser's two
+  rules keep their decay factors. The helper folds the new proposition's grounding, provenance
+  entries and source ids into the stored one with `Proposition.absorbEvidence`, adds one to
+  `reinforceCount`, and stamps `contentRevised` and `metadataRevised` with one instant. The reviser
+  stamps `lastAccessed` with it too. A configured `TrustScorer` writes its score afterwards, which
+  moves `metadataRevised` again. **Compatibility: behavioral.** A reinforced proposition carries
+  the new proposition's source ids, and its `metadataRevised` moves with `contentRevised`.
 
 - Drivine 0.6.2. Since 0.5.0 the index and constraint spec classes in `org.drivine.schema`
   (`VectorIndexSpec`, `UniquenessConstraintSpec`, `RangeIndexSpec` and the others) ship in
@@ -916,6 +922,48 @@ and the consumer PRs that deliver it).
   Nothing a real connector emits comes close to any of the four.
 
 ### Fixed
+
+- Reinforcement never lowers confidence. A stored proposition above a rule's cap keeps its value.
+  `LlmPropositionReviser` returned 0.95 for a 0.98 proposition reinforced by a similar one, and 0.99
+  for a 1.0 proposition merged with an identical one. **Compatibility: behavioral.** A proposition
+  above 0.95 (similar) or 0.99 (identical) keeps its confidence when it is reinforced.
+
+- A proposition that brings no new evidence does not reinforce. When the stored proposition already
+  holds all of the new one's grounding, provenance entries and source ids, `LlmPropositionReviser`
+  and `DefaultMemoryConsolidator` leave the stored proposition unchanged: the same confidence,
+  decay, `reinforceCount` and timestamps, so the decay clock is not refreshed. The reviser's result
+  is still `RevisionResult.Merged` or `RevisionResult.Reinforced`, with `revised` equal to
+  `original`, so the pipeline still emits `PropositionMerged` or `PropositionReinforced` and
+  `MergeCandidateGate` still routes it to review. A configured `TrustScorer` is not called for it.
+  A proposition that names no source counts as new evidence, unless it has the stored proposition's
+  own id, which is the stored proposition meeting itself and changes nothing. When propositions carry no provenance
+  entries, their grounding ids alone identify the source, so a host that grounds every observation
+  in one id reinforces once. **Compatibility: behavioral.** Processing the same chunk twice, with
+  the same chunk id and text, counts once. A host that relied on a second pass over the same chunk
+  to raise `reinforceCount` or confidence sees no change from that pass.
+
+- `PropositionPipeline.processOnce` and `processText` leave a proposition untouched when it already
+  holds every `additionalGrounding` id. They stamped `metadataRevised` on it.
+  **Compatibility: behavioral.**
+
+- `DefaultMemoryConsolidator` carries the session proposition's provenance entries and source ids
+  onto the proposition it reinforces and adds one to its `reinforceCount`. It kept only the
+  grounding. Session propositions that match the same stored proposition fold into it in order, and
+  `ConsolidationResult.reinforced` holds one entry for that stored proposition. It held one entry
+  per session proposition, each built from the stored copy, so saving them kept one and lost the
+  rest. A proposition it merges carries the grounding, provenance entries and source ids of every
+  proposition it was merged from, and its four timestamps are one instant.
+  **Compatibility: behavioral.** `reinforced` and `storedCount` can be smaller.
+
+- `SessionConsolidationPass` does not save a reinforced proposition that equals its snapshot copy,
+  and reports `NoOp` when a session brought nothing else. **Compatibility: behavioral.**
+
+- `DefaultMemoryConsolidator` checks its settings in its constructor and throws
+  `IllegalArgumentException`. `promotionThreshold` and `similarityThreshold` must be 0.0 or greater
+  and not NaN. A value above 1.0 is accepted and means never promote, or never match.
+  `reinforcementBoost` must be between 0.0 and 1.0. A negative boost failed inside `consolidate`,
+  when the lowered confidence left the valid range. **Compatibility: behavioral.** A host that
+  passes a rejected value fails at construction.
 
 - `MetamodelAutoConfiguration` and the metamodel wiring tests referenced the drift quarantine types
   at their former home in `com.embabel.dice.metamodel(.support)`. They moved to
