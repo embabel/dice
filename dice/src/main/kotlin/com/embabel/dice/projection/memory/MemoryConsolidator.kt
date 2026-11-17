@@ -75,17 +75,35 @@ data class PropositionMerge(
 )
 
 /**
- * Default implementation of MemoryConsolidator.
+ * Default implementation of MemoryConsolidator. It decides, for each session proposition, whether to
+ * reinforce a stored one, merge with it, promote the session proposition or discard it.
  *
- * @param promotionThreshold Minimum confidence to promote to long-term
- * @param similarityThreshold Minimum similarity to consider propositions as duplicates
- * @param reinforcementBoost Confidence boost when reinforcing existing propositions
+ * A similarity above 0.9 reinforces the stored proposition. A similarity from `similarityThreshold`
+ * up to 0.9 merges the two. Any other session proposition is promoted when its confidence is at or
+ * above `promotionThreshold`, and discarded otherwise.
+ *
+ * Reinforcement raises the stored confidence by `reinforcementBoost`, capped at 1.0, and never
+ * lowers it. The session proposition's grounding, provenance entries and source ids are folded in,
+ * and the reinforce count goes up by one. Decay and last-accessed time do not change. When the
+ * stored proposition already holds all of the session proposition's evidence, it is returned
+ * unchanged.
+ *
+ * @param promotionThreshold 0.0 or greater. A value above 1.0 never promotes.
+ * @param similarityThreshold 0.0 or greater. A value above 1.0 never matches.
+ * @param reinforcementBoost Added to the stored confidence when a session proposition reinforces it, from 0.0 to 1.0. The result is capped at 1.0.
+ * @throws IllegalArgumentException when a threshold is negative or NaN, or the boost is outside 0.0 to 1.0
  */
 class DefaultMemoryConsolidator(
     private val promotionThreshold: Double = 0.6,
     private val similarityThreshold: Double = 0.7,
     private val reinforcementBoost: Double = 0.1,
 ) : MemoryConsolidator {
+
+    init {
+        require(promotionThreshold >= 0.0) { "promotionThreshold must be 0.0 or greater, was $promotionThreshold" }
+        require(similarityThreshold >= 0.0) { "similarityThreshold must be 0.0 or greater, was $similarityThreshold" }
+        require(reinforcementBoost in 0.0..1.0) { "reinforcementBoost must be between 0.0 and 1.0, was $reinforcementBoost" }
+    }
 
     /** A session proposition that matches a stored one gives a fixed confidence lift, capped at 1. */
     private val reinforcementRule = ReinforcementRule(
@@ -182,8 +200,11 @@ class DefaultMemoryConsolidator(
     }
 
     /**
-     * Reinforce an existing proposition with evidence from a session proposition.
-     * Boosts confidence and updates grounding.
+     * Strengthens an existing proposition with evidence from a session proposition.
+     *
+     * @param existing The stored proposition
+     * @param session The session proposition that backs it up
+     * @return The stored proposition when it already holds the evidence, otherwise a reinforced copy
      */
     private fun reinforceProposition(
         existing: Proposition,
