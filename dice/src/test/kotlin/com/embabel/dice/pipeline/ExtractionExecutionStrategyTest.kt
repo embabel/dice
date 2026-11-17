@@ -223,7 +223,7 @@ class ExtractionExecutionStrategyTest {
         assertErrorWaitsForTheOtherChunk(BatchedExtractionStrategy(batchSize = 2, executor = executor))
     }
 
-    /** Two chunks both throw an Error; the caller gets the first one with the second attached as suppressed. */
+    /** Two chunks both throw an Error. The caller gets the first one with the second attached as suppressed. */
     private fun assertLaterErrorsAreSuppressed(strategy: ExtractionExecutionStrategy) {
         val thrown = assertThrows<AssertionError> {
             strategy.execute(listOf(chunk("a"), chunk("b"), chunk("c"))) { c ->

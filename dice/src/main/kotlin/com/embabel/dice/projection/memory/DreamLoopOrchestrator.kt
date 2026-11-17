@@ -60,7 +60,7 @@ interface DreamLoopOrchestrator : MemoryMaintenanceOrchestrator {
      * Run a consolidation cycle unconditionally, regardless of how much has changed.
      *
      * @param contextId The context to consolidate.
-     * @return The cycle report; never `null`.
+     * @return The cycle report, never `null`.
      */
     fun consolidateNow(contextId: ContextId): DreamLoopReport
 
@@ -81,7 +81,7 @@ interface DreamLoopOrchestrator : MemoryMaintenanceOrchestrator {
      * Same rules as [consolidateNow]. Handy for Java callers and anyone who already holds the id as text.
      *
      * @param contextIdValue The id of the context to consolidate. Must not be blank.
-     * @return The cycle report; never `null`.
+     * @return The cycle report, never `null`.
      * @throws IllegalArgumentException if contextIdValue is blank.
      */
     fun consolidateNowValue(contextIdValue: String): DreamLoopReport = consolidateNow(ContextId(contextIdValue))

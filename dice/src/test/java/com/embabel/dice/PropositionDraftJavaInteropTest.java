@@ -43,9 +43,9 @@ class PropositionDraftJavaInteropTest {
     //    a non-blank id, and four equal times.
     // 2. E2: with all twenty-one steps set, the built proposition equals the one from the
     //    longest Proposition.create overload.
-    // 3. E3: an unset contentRevised takes the build moment; an unset created, metadataRevised or
+    // 3. E3: an unset contentRevised takes the build moment. An unset created, metadataRevised or
     //    lastAccessed follows the times that are set.
-    // 4. E4: withGrounding appends and removes duplicates; the other collection steps replace.
+    // 4. E4: withGrounding appends and removes duplicates. The other collection steps replace.
     // 5. I1: a step never changes the draft it is called on, nor follows later changes to the
     //    caller's list.
     // 6. E5: an out-of-range value fails in toProposition() with the constructor's message.

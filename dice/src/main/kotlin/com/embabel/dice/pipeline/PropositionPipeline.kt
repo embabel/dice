@@ -689,8 +689,8 @@ class PropositionPipeline private constructor(
         // Use sourceId AS the chunk id, not just parentId. This makes proposition.grounding
         // carry the caller's stable sourceId (e.g. `email:<threadId>`, `file:<name>`,
         // `url:<href>`) instead of an opaque UUID, so GroundingWiringService can resolve that
-        // id straight to a stored entity for one-hop provenance. Callers that pass UUID-shaped
-        // sourceIds get UUID chunk ids exactly as before.
+        // id straight to a stored entity for one-hop provenance. A caller that passes a UUID as
+        // the sourceId gets a UUID chunk id.
         val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
         return processChunk(chunk, context).withAdditionalGrounding(additionalGrounding)
     }
@@ -704,7 +704,7 @@ class PropositionPipeline private constructor(
      *
      * An Exception in one chunk gives a Failed result for that chunk. An Error is not caught and
      * ends the run. An event listener is the exception: anything a listener throws, Error included,
-     * is caught and logged, as before, so it never stops the run.
+     * is caught and logged, so it never stops the run.
      *
      * @param chunks The chunks to process
      * @param context Configuration including schema
@@ -776,7 +776,7 @@ class PropositionPipeline private constructor(
             val chunkId = chunks[i].id
             if (extraction != null) {
                 // Isolate per-chunk: an Exception in resolution or revision gives a Failed result for
-                // this chunk only; an Error there ends the run. Listener throws never get this far,
+                // this chunk only. An Error there ends the run. Listener throws never get this far,
                 // because event emission goes through the safe wrapper.
                 attemptCatching { resolveStage(extraction, crossChunkContext) }
                     .getOrElse { e ->

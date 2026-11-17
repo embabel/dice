@@ -68,7 +68,7 @@ class PropositionPipelineInterruptJavaTest {
         executor.shutdownNow();
     }
 
-    /** Interrupted while extracting the chunk "one"; resolution sleeps, so it fails if interrupted. */
+    /** Interrupted while extracting the chunk "one". Resolution sleeps, so it fails if interrupted. */
     static final class InterruptingExtractor implements PropositionExtractor {
 
         @Override

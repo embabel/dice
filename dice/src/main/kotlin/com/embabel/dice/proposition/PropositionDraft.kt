@@ -60,7 +60,7 @@ import java.util.UUID
  * - metadataRevised takes contentRevised, so the metadata never looks older than the content.
  * - lastAccessed takes contentRevised, as the Proposition constructor does.
  *
- * Decay is measured from contentRevised, so set it when you import an older fact; the other times
+ * Decay is measured from contentRevised, so set it when you import an older fact. The other times
  * then follow it. When no time is set, all four are the build moment. For two calls to build equal
  * propositions, set the id and contentRevised.
  *

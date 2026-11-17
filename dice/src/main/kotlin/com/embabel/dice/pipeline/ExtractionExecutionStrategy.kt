@@ -63,11 +63,11 @@ private inline fun <R> handingBackInterrupts(body: (PendingInterrupt) -> R): R {
  * a [RejectedExecutionException] from an executor that will not take more work: the chunks already
  * handed over are waited for, then the failure is thrown. When the executor rejected the chunk
  * because it was shut down, only the chunks that already started are waited for. The rest are
- * given up, because `shutdownNow` drops queued tasks so they never run; a given-up task that does
+ * given up, because `shutdownNow` drops queued tasks so they never run. A given-up task that does
  * run later does nothing. If several things fail, the first Error
  * in input order is thrown (or the first failure of any kind when none is an Error), with the
- * others attached as suppressed. An Error arrives wrapped in a [CompletionException]; this unwraps
- * it so the caller sees the Error as it was.
+ * others attached as suppressed. An Error arrives wrapped in a [CompletionException] and is unwrapped,
+ * so the caller sees the Error as it was.
  *
  * An interrupt raised during an extraction is cleared from the thread it ran on, so neither the
  * pool nor the caller is left interrupted while other chunks run, and recorded in [pending] for

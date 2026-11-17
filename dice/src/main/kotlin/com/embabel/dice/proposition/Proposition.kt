@@ -144,7 +144,7 @@ data class Proposition(
 
     /**
      * Java-friendly accessor for the context id as a plain string. It is a convenience
-     * only, so it stays out of the JSON; the context is written once, under `contextId`.
+     * only, so it stays out of the JSON. The context is written once, under `contextId`.
      */
     @get:JvmName("getContextIdValue")
     @get:JsonIgnore

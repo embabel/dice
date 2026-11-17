@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * Checks that Java can build a {@link DreamLoopReport} through its static {@code of} factory.
  *
  * Contract:
- * R1 the context id must not be blank; a blank id throws.
+ * R1 a blank context id throws.
  * E1 {@code of} returns a report holding the values it was given.
  * L1 two reports built from the same values are equal.
  */

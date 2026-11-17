@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
  * E1: a draft that sets only contentRevised, as an import does, builds a proposition whose four
  *     times all equal it, so the fact is neither created after it nor looks freshly touched.
  * E2: a draft that sets only created keeps it, and contentRevised takes the build moment, as the
- *     constructor does; metadataRevised and lastAccessed follow contentRevised.
+ *     constructor does. metadataRevised and lastAccessed follow contentRevised.
  * E3: created is never after contentRevised, and metadataRevised is never before it, when unset.
  * E4: a draft with no times set builds four equal times at the build moment.
  */

@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test
 
 /**
  * Pins the Kotlin call shapes of [ConsolidationPass] that existing code relies on, so that
- * adding a String-named sibling never makes a call ambiguous.
+ * adding a String form beside one never makes a call ambiguous.
  *
  * Contract:
  * E1: a mocked run(any(), any()) resolves and returns the stubbed result.

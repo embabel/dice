@@ -20,7 +20,7 @@ import com.embabel.agent.rag.model.Chunk
 /**
  * What happened when an extraction ran on one chunk. It keeps the chunk, the value the
  * extraction produced, and the exception if it threw. Use it when you need to know which
- * chunk failed and why, not only which slots came back empty.
+ * chunk failed and why.
  *
  * A successful outcome can still have a null [value], when the extraction itself returned null.
  *
