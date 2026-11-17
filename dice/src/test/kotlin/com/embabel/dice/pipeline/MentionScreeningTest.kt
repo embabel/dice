@@ -601,4 +601,28 @@ class MentionScreeningTest {
         assertEquals(listOf(null, null), asked[0].mentions.map { it.suggestedId })
         assertEquals(listOf("k", null), asked[1].mentions.map { it.suggestedId })
     }
+
+    @Test
+    fun `R6 the filter sees the ids already passed on when it judges the next one`() {
+        val noSharedIds = object : MentionFilter {
+            override fun isValid(mention: SuggestedMention, propositionText: String): Boolean = true
+            override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> {
+                val ids = proposition.mentions.mapNotNull { it.suggestedId }
+                return proposition.mentions.map {
+                    if (it.suggestedId != null && ids.count { id -> id == it.suggestedId } > 1) ValidationResult.Invalid("shared id")
+                    else ValidationResult.Valid
+                }
+            }
+        }
+        val outcome = screen(
+            chunk(
+                proposition("Carol slept", mention("Alice", "k"), mention("Bob", "k")),
+                proposition("Alice met Bob", mention("Alice"), mention("Bob")),
+            ),
+            filter = noSharedIds,
+            analysisContext = context(knownPerson("k", "Kim Smith")),
+        )
+        val ids = outcome.candidates.propositions[1].mentions.map { it.suggestedId }
+        assertTrue(ids.count { it == "k" } <= 1, "ids: $ids")
+    }
 }

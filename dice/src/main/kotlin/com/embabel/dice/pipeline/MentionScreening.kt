@@ -251,9 +251,9 @@ internal object MentionScreening {
      *   to a known entity of the context;
      * - no candidate of it holds an id of its own;
      * - the filter, unless it only reports, accepts the id. It is asked once, about the first
-     *   proposition that would receive the id, with the same mentions it judged before and only
-     *   the id added. The id is refused when the filter rejects a mention that took it, or a
-     *   mention it had accepted without it.
+     *   proposition that would receive the id, with the same mentions it judged before, the ids
+     *   already accepted for other spans and types, and this id added. The id is refused when the
+     *   filter rejects a mention that took it, or a mention it had accepted without it.
      *
      * @param verdicts the verdicts on each proposition
      * @param context the analysis context, whose known entities decide which ids may pass on
@@ -280,7 +280,9 @@ internal object MentionScreening {
             .mapNotNull { (key, ids) -> ids.distinct().singleOrNull()?.takeIf { it in knownIds }?.let { key to it } }
             .toMap()
         if (offered.isEmpty() || filter == null || filterHandling == RejectedMentionHandling.KEEP) return offered
-        return offered.filter { (key, id) -> filterAccepts(key, id, verdicts, filter, context) }
+        val accepted = linkedMapOf<MentionKey, String>()
+        offered.forEach { (key, id) -> if (filterAccepts(key, id, accepted, verdicts, filter, context)) accepted[key] = id }
+        return accepted
     }
 
     /**
@@ -289,6 +291,7 @@ internal object MentionScreening {
      *
      * @param key the span and type
      * @param id the id to pass on
+     * @param accepted the ids already accepted for other spans and types, shown to the filter too
      * @param verdicts the verdicts on each proposition
      * @param filter the mention filter
      * @param context the analysis context
@@ -297,15 +300,21 @@ internal object MentionScreening {
     private fun filterAccepts(
         key: MentionKey,
         id: String,
+        accepted: Map<MentionKey, String>,
         verdicts: List<Verdicts>,
         filter: MentionFilter,
         context: SourceAnalysisContext,
     ): Boolean {
         val verdict = verdicts.firstOrNull { v -> v.resolvable.any { MentionKey.from(v.proposition.mentions[it]) == key } } ?: return true
         val taking = verdict.resolvable.filter { MentionKey.from(verdict.proposition.mentions[it]) == key }.toSet()
+        val accepting = verdict.resolvable.filter { MentionKey.from(verdict.proposition.mentions[it]) in accepted }.toSet()
         val asked = verdict.proposition.copy(mentions = verdict.surviving.map { position ->
             val mention = verdict.proposition.mentions[position]
-            if (position in taking) mention.copy(suggestedId = id) else mention
+            when (position) {
+                in taking -> mention.copy(suggestedId = id)
+                in accepting -> mention.copy(suggestedId = accepted.getValue(MentionKey.from(mention)))
+                else -> mention
+            }
         })
         val answers = filter.checkedVerdicts(asked, context)
         return verdict.surviving.withIndex().none { (index, position) ->
