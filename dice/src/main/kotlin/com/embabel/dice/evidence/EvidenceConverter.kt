@@ -230,7 +230,7 @@ class EvidenceConverter private constructor(
      *
      * In a superseded result, an original the reviser marked [PropositionStatus.CONTRADICTED] reads
      * [PropositionStatus.SUPERSEDED]. Its confidence is the stored one, which the reviser already lowered.
-     * A pinned original keeps its stored status. Every other item keeps its stored status.
+     * A pinned original, and every item of a conflicting result, keeps its stored status.
      *
      * @param contradicted the contradiction to convert
      * @return the conflicting or superseded evidence
