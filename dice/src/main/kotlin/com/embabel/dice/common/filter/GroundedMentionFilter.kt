@@ -81,9 +81,30 @@ class GroundedMentionFilter : MentionFilter {
      * @return their prepared names, indexed by name
      */
     private fun knownNames(knownEntities: List<KnownEntity>): KnownEntityGrounding.KnownIndex {
+        lastKnown?.let { (seen, names) -> if (sameNames(seen, knownEntities)) return names }
         val snapshot = knownEntities.map { listOf<String?>(it.name) + it.aliases }
-        lastKnown?.let { (seen, names) -> if (seen == snapshot) return names }
         return KnownEntityGrounding.knownNames(knownEntities).also { lastKnown = snapshot to it }
+    }
+
+    /**
+     * Tells whether the known entities still have the names and aliases copied earlier, without
+     * copying them again. The same list object is not enough, because a caller may change it in
+     * place.
+     *
+     * @param seen the names and aliases copied earlier, one list per entity, name first
+     * @param knownEntities the known entities now
+     * @return true when every name and alias is the same, in the same order
+     */
+    private fun sameNames(seen: List<List<String?>>, knownEntities: List<KnownEntity>): Boolean {
+        if (seen.size != knownEntities.size) return false
+        for (index in seen.indices) {
+            val names = seen[index]
+            val known = knownEntities[index]
+            val aliases = known.aliases
+            if (names.size != aliases.size + 1 || names[0] != known.name) return false
+            for (alias in aliases.indices) if (names[alias + 1] != aliases[alias]) return false
+        }
+        return true
     }
 }
 

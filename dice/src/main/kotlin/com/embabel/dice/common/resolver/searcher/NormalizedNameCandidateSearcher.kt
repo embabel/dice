@@ -87,6 +87,12 @@ class NormalizedNameCandidateSearcher(
     }
 
     companion object {
+        private val REVERSED = Regex("^([^,]+),\\s*(.+)$")
+        private val TITLE = Regex("^(Mr\\.?|Mrs\\.?|Ms\\.?|Dr\\.?|Prof\\.?)\\s+", RegexOption.IGNORE_CASE)
+        private val SUFFIX = Regex("\\s+(Jr\\.?|Sr\\.?|II|III|IV)$", RegexOption.IGNORE_CASE)
+        private val MIDDLE_INITIAL = Regex("(?<=\\b\\w{2,})\\s+[A-Z]\\.?\\s+(?=\\w{2,}\\b)")
+        private val WHITESPACE = Regex("\\s+")
+
         /**
          * Strip surface variations a single human's name accumulates
          * across email/calendar systems, so two displays of the same
@@ -109,22 +115,22 @@ class NormalizedNameCandidateSearcher(
             // Handle "Last, First [Middle]" reversal — single comma,
             // common shape in directory exports. Take everything after
             // the comma + everything before, with a space.
-            val commaMatch = Regex("^([^,]+),\\s*(.+)$").matchEntire(s)
+            val commaMatch = REVERSED.matchEntire(s)
             if (commaMatch != null) {
                 s = "${commaMatch.groupValues[2]} ${commaMatch.groupValues[1]}".trim()
             }
             return s
                 // Remove common titles
-                .replace(Regex("^(Mr\\.?|Mrs\\.?|Ms\\.?|Dr\\.?|Prof\\.?)\\s+", RegexOption.IGNORE_CASE), "")
+                .replace(TITLE, "")
                 // Remove common suffixes
-                .replace(Regex("\\s+(Jr\\.?|Sr\\.?|II|III|IV)$", RegexOption.IGNORE_CASE), "")
+                .replace(SUFFIX, "")
                 // Strip middle initials: " M " or " M. " between
                 // two longer name tokens. Single capital letter (with
                 // optional trailing dot) surrounded by whitespace and
                 // flanked by tokens of length ≥ 2 on both sides.
-                .replace(Regex("(?<=\\b\\w{2,})\\s+[A-Z]\\.?\\s+(?=\\w{2,}\\b)"), " ")
+                .replace(MIDDLE_INITIAL, " ")
                 // Normalize whitespace
-                .replace(Regex("\\s+"), " ")
+                .replace(WHITESPACE, " ")
                 .trim()
         }
 
