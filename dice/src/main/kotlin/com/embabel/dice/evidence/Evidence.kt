@@ -16,7 +16,6 @@
 package com.embabel.dice.evidence
 
 import com.embabel.common.core.types.ZeroToOne
-import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.spi.ConflictType
 import org.jetbrains.annotations.ApiStatus
 import java.util.Collections
@@ -365,17 +364,14 @@ sealed interface Evidence {
      * A claim that replaced earlier claims.
      *
      * A caller gets this kind when a stored claim holds in place of claims it corrected or that the world moved
-     * past. Each item keeps its stored status, so a pinned earlier claim still reads
-     * [PropositionStatus.ACTIVE].
+     * past. The conflict type is [ConflictType.Revision] or [ConflictType.WorldProgression]. A custom conflict
+     * is [Conflicting], because a custom label does not say which claim holds.
      */
     class Superseded private constructor(
         /** The claim that holds. */
         val current: EvidenceItem,
         previous: List<EvidenceItem>,
-        /**
-         * How [current] replaced the first claim in [previous]: [ConflictType.Revision],
-         * [ConflictType.WorldProgression] or [ConflictType.Custom].
-         */
+        /** How [current] replaced the first claim in [previous]: [ConflictType.Revision] or [ConflictType.WorldProgression]. */
         override val conflictType: ConflictType,
     ) : Disagreement {
 
@@ -387,11 +383,12 @@ sealed interface Evidence {
 
         init {
             require(this.previous.isNotEmpty()) { "previous must not be empty" }
-            val replacement = when (conflictType) {
-                ConflictType.Revision, ConflictType.WorldProgression, is ConflictType.Custom -> true
-                ConflictType.Contradiction -> false
+            val conflictKind = when (conflictType) {
+                ConflictType.Revision, ConflictType.WorldProgression -> null
+                ConflictType.Contradiction -> "a conflict"
+                is ConflictType.Custom -> "a custom conflict"
             }
-            require(replacement) { "conflictType $conflictType is a conflict, use Evidence.conflicting" }
+            require(conflictKind == null) { "conflictType $conflictType is $conflictKind, use Evidence.conflicting" }
             EvidenceChecks.requireDistinctClaims(
                 listOf("current" to current) +
                     this.previous.mapIndexed { index, item -> "previous[$index]" to item },
@@ -485,7 +482,7 @@ sealed interface Evidence {
          * @return the new value
          * @throws IllegalArgumentException if [previous] is empty or holds a null, if two of [current] and
          *   [previous] cite the same claim id in the same context, or if [conflictType] is
-         *   [ConflictType.Contradiction], which [conflicting] takes
+         *   [ConflictType.Contradiction] or a [ConflictType.Custom], which [conflicting] takes
          */
         @JvmStatic
         fun superseded(current: EvidenceItem, previous: List<EvidenceItem>, conflictType: ConflictType): Superseded =

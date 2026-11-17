@@ -134,10 +134,10 @@ A null element in any list passed to an evidence type throws `IllegalArgumentExc
 
 | `Evidence.Superseded`
 | One claim replaced one or more earlier claims.
-| `current`, the claim that holds. `previous`, the claims it replaced, newest first, so `previous.get(0)` is the claim `current` replaced. `conflictType`, which is `Revision`, `WorldProgression` or `Custom`. Each item keeps its stored status.
+| `current`, the claim that holds. `previous`, the claims it replaced, newest first, so `previous.get(0)` is the claim `current` replaced. `conflictType`, which is `Revision` or `WorldProgression`.
 |===
 
-`Conflicting` and `Superseded` are both an `Evidence.Disagreement`, which carries `getConflictType()`. `Evidence.conflicting` rejects `Revision` and `WorldProgression` and names `Evidence.superseded`. `Evidence.superseded` rejects `Contradiction` and names `Evidence.conflicting`. Both accept `Custom`.
+`Conflicting` and `Superseded` are both an `Evidence.Disagreement`, which carries `getConflictType()`. `Evidence.conflicting` rejects `Revision` and `WorldProgression` and names `Evidence.superseded`. `Evidence.superseded` rejects `Contradiction` and `Custom` and names `Evidence.conflicting`. A custom label does not say which claim holds, so a custom conflict is `Conflicting`.
 
 [source,java]
 ----

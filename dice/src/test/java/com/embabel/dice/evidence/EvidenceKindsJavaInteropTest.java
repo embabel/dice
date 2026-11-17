@@ -179,14 +179,16 @@ class EvidenceKindsJavaInteropTest {
     }
 
     @Test
-    void bothFactoriesAcceptACustomConflictType() {
+    void aCustomConflictTypeIsConflictingOnly() {
         ConflictType custom = new ConflictType.Custom("policy-change");
 
         Evidence.Conflicting conflicting = Evidence.conflicting(List.of(moved, stayed), custom);
-        Evidence.Superseded superseded = Evidence.superseded(moved, List.of(stayed), custom);
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                () -> Evidence.superseded(moved, List.of(stayed), custom));
 
         assertEquals(custom, conflicting.getConflictType());
-        assertEquals(custom, superseded.getConflictType());
+        assertEquals("conflictType Custom(label=policy-change) is a custom conflict, use Evidence.conflicting",
+                thrown.getMessage());
     }
 
     @Test
