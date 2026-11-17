@@ -100,7 +100,8 @@ tick, through `embabel.dice.store.decay.k`.
 
 ==== The four clocks
 
-`contentRevised` is the *decay anchor*. It moves only when the claim itself changes.
+`contentRevised` is the *decay anchor*. It moves when the claim itself changes, and when a
+reinforcement backs the claim up, even if the reinforcement leaves the confidence as it was.
 
 Administrative changes — flipping status, pinning, attaching grounding — touch `metadataRevised` and
 leave `contentRevised` alone. This is what stops housekeeping from silently making stale beliefs look
@@ -193,7 +194,11 @@ A draft without an id gets a new id on every `toProposition()` call. `withId` fi
 calls to build equal propositions, also set `withContentRevised`.
 
 `toDraft()` starts a draft from an existing proposition. It copies a proposition with some fields
-changed and leaves its revision times alone, which the `with*` methods on `Proposition` do not.
+changed. A change to any field other than the text, the mentions or the confidence leaves the
+revision times alone, which the `with*` methods on `Proposition` do not. A change to one of those
+three records a content revision at `contentRevised` when the draft sets a new one, or else at the
+moment `toProposition()` runs, which then also becomes `contentRevised`. A draft given another id
+builds a new claim, which has no revision record.
 
 [source,java]
 ----

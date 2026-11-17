@@ -70,10 +70,12 @@ class CustomerMemoryTests {
         var plan = Proposition.draft("acme", "Acme is on the Team plan", 0.95)
                 .withDecay(0.005)
                 .withCreated(recorded)
+                .withContentRevised(recorded)
                 .toProposition();
         var outage = Proposition.draft("acme", "CSV export times out at Acme for reports over 50,000 rows", 0.85)
                 .withDecay(0.05)
                 .withCreated(recorded)
+                .withContentRevised(recorded)
                 .toProposition();
         repository.saveAll(List.of(plan, outage));
         var thirtyDaysOn = recorded.plus(Duration.ofDays(30));

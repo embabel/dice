@@ -16,6 +16,7 @@
 package com.embabel.dice.evidence
 
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.temporal.TemporalMetadata
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -159,12 +160,17 @@ class EvidenceItemTest {
     fun `block that sets every optional value matches the chain with the same arguments`() {
         val recordedAt = Instant.parse("2024-01-01T00:00:00Z")
         val revisedAt = Instant.parse("2024-06-01T00:00:00Z")
+        val temporal = TemporalMetadata(observedAt = recordedAt, supersedes = listOf("p-0"))
+        val source = EvidenceItem.of("s", Citation.of("p-2", "ctx-main"), 0.7)
         val fromBlock = EvidenceItem("t", citation, 0.8) {
             effectiveConfidence = 0.6
             status = PropositionStatus.SUPERSEDED
             this.recordedAt = recordedAt
             this.revisedAt = revisedAt
+            derivedFrom = listOf(source)
             derivedFromIds = listOf("p-1", "p-2")
+            reinforceCount = 4
+            this.temporal = temporal
             score = 0.42
             retrieval(vectorHit)
             retrieval(keywordHit)
@@ -175,11 +181,18 @@ class EvidenceItemTest {
             .withRecordedAt(recordedAt)
             .withRevisedAt(revisedAt)
             .withDerivedFromIds(listOf("p-1", "p-2"))
+            .withDerivedFrom(listOf(source))
+            .withReinforceCount(4)
+            .withTemporal(temporal)
             .withScore(0.42)
             .withRetrieval(vectorHit)
             .withRetrieval(keywordHit)
         assertEquals(fromChain, fromBlock)
         assertEquals(fromChain.hashCode(), fromBlock.hashCode())
+        assertEquals(4, fromBlock.reinforceCount)
+        assertEquals(temporal, fromBlock.temporal)
+        assertEquals(listOf(source), fromBlock.derivedFrom)
+        assertEquals(listOf("p-1", "p-2"), fromBlock.derivedFromIds)
     }
 
     @Test

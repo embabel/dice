@@ -40,4 +40,16 @@ object DiceMetadataKeys {
      * quarantined by a drift policy. Cleared when the proposition is released via `releaseFromQuarantine`.
      */
     const val QUARANTINE_REASON = "dice.metamodel.quarantine.reason"
+
+    /**
+     * When a stored claim's text, mentions or confidence last changed. The value is the time as
+     * ISO-8601 text.
+     *
+     * The entry is written only when one of those values actually changes on a stored claim. The
+     * reviser's merge, a reinforcement and a contradiction write it when they change the confidence.
+     * A new claim has no entry: a draft, a draft copy with a new id and the consolidator's merge all
+     * start without one. A caller that replaces the metadata map drops it, and the claim then reads
+     * as not revised. `Proposition.lastContentRevision` reads this entry.
+     */
+    const val CONTENT_REVISED = "dice.content.revised"
 }

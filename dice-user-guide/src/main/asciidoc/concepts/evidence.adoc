@@ -1,7 +1,9 @@
 [[concepts-evidence]]
 === Evidence
 
-Evidence is what a caller that assembles model context receives. Build it with the factories below, or convert DICE results with `EvidenceConverter`. Each item carries its citation, its confidence, and the retrievals that found it, so the caller can decide what to include and cite. Evidence has four kinds, and a `switch` or `when` tells them apart. The grounding and provenance behind one claim are in its `Citation`.
+Evidence is what a caller that assembles model context receives. Build it with the factories below, or convert DICE results with `EvidenceConverter`. Each item carries its citation, its confidence, and the retrievals that found it, so the caller can decide what to include and cite. The grounding and provenance behind one claim are in its `Citation`.
+
+Every type in `com.embabel.dice.evidence` is experimental, and its API can change before 1.0. Evidence has five kinds, and a `switch` or `when` tells them apart. `Evidence` is sealed, so a kind added later is a compile error in a `switch` with no default branch.
 
 ==== A piece of evidence
 
@@ -24,11 +26,23 @@ Evidence is what a caller that assembles model context receives. Build it with t
 | `status`
 | The claim's `PropositionStatus`, such as `ACTIVE` or `SUPERSEDED`.
 
-| `recordedAt` and `revisedAt`
-| When the claim was recorded and when it was last revised.
+| `recordedAt`
+| When the claim was first recorded.
+
+| `revisedAt`
+| When the claim's text, mentions or confidence last changed after it was recorded. The reviser's merge, a reinforcement or a contradiction counts when it changes the confidence. A consolidator merge builds a new claim, which has no revision. Null when no revision is recorded.
+
+| `reinforceCount`
+| How many times the claim has been merged or reinforced. 0 when not known.
+
+| `temporal`
+| The claim's `TemporalMetadata`: when it holds in the world and which claims it replaces or contradicts. Null when not known. The item keeps its own copy of the id lists.
 
 | `derivedFromIds`
-| The ids of the claims this item was derived from. An item with ids is derived.
+| The ids of the stored claims this claim was abstracted from. Empty for an observation. An item with ids is derived.
+
+| `derivedFrom`
+| The loaded claims this claim was abstracted from. It may hold only some of `derivedFromIds`. Each one cites an id in `derivedFromIds`, and no two cite the same id. When the item has no ids, `withDerivedFrom` sets them from the loaded claims.
 
 | `score`
 | The final ranking score. Null when there is none.
@@ -45,6 +59,21 @@ EvidenceItem item = EvidenceItem.of("Ada wrote the first program", Citation.of("
         .withRetrieval(Retrieval.of(RetrieverId.VECTOR).withRank(1).withScore(0.83));
 ----
 
+[source,java]
+----
+TemporalMetadata temporal = new TemporalMetadata(
+        Instant.parse("2024-01-01T00:00:00Z"), null, null, null, List.of("p-3"), List.of("p-4"));
+
+EvidenceItem reinforced = item.withReinforceCount(3).withTemporal(temporal);
+----
+
+[source,java]
+----
+EvidenceItem source2 =
+        EvidenceItem.of("Ada wrote notes on the engine", Citation.of("p-2", "support-team"), 0.8);
+EvidenceItem abstraction = item.withDerivedFromIds(List.of("p-1", "p-2", "p-3")).withDerivedFrom(List.of(source2));
+----
+
 In Kotlin, a block sets the optional values while the item is built.
 
 [source,kotlin]
@@ -52,15 +81,34 @@ In Kotlin, a block sets the optional values while the item is built.
 val citation = Citation.of("prop-42", "ctx-main")
 val vectorHit = Retrieval.of(RetrieverId.VECTOR).withRank(1).withScore(0.87)
 val recordedAt = Instant.parse("2024-01-01T00:00:00Z")
+val temporal = TemporalMetadata(observedAt = recordedAt, supersedes = listOf("p-0"))
+val source = EvidenceItem.of("s", Citation.of("p-2", "ctx-main"), 0.7)
 val item = EvidenceItem("t", citation, 0.8) {
     effectiveConfidence = 0.6
     status = PropositionStatus.SUPERSEDED
     this.recordedAt = recordedAt
+    derivedFrom = listOf(source)
     derivedFromIds = listOf("p-1", "p-2")
+    reinforceCount = 4
+    this.temporal = temporal
     score = 0.42
     retrieval(vectorHit)
 }
 ----
+
+Two citations name the same claim when their claim id and context are equal. `sameClaimAs` checks that, and leaves chunk ids, provenance and the URI out.
+
+[source,java]
+----
+Citation citation = Citation.of("p-17", "support-team").withChunkIds(List.of("chunk-1"));
+Citation otherChunks = Citation.of("p-17", "support-team").withChunkIds(List.of("chunk-2"));
+Citation otherContext = Citation.of("p-17", "billing-team");
+
+citation.sameClaimAs(otherChunks);   // true
+citation.sameClaimAs(otherContext);  // false
+----
+
+A null element in any list passed to an evidence type throws `IllegalArgumentException` with the list name and index, such as `items[1] must not be null`.
 
 ==== What a lookup found
 
@@ -69,21 +117,27 @@ val item = EvidenceItem("t", citation, 0.8) {
 | Kind | When you get it | What it carries
 
 | `Evidence.Recorded`
-| The search found one or more stored claims.
+| The search found one or more stored claims, including abstractions.
 | `items`, a non-empty list of `EvidenceItem`.
 
 | `Evidence.Derived`
-| A derivation rule produced a conclusion from stored claims.
-| `conclusion`, `confidence`, `effectiveConfidence`, `rule`, `inputIds`, `inputs`, `citation` and `status`. `inputs` and `citation` are set with `withInputs` and `withCitation`. `effectiveConfidence` and `status` are set with `withEffectiveConfidence` and `withStatus`.
+| An `EvidenceProvider` answered a rule or logic query with a conclusion it worked out at lookup time from stored claims. DICE's converter does not produce it.
+| `conclusion`, `confidence`, `rule`, `inputIds` (never empty) and `inputs`. `inputs` is set with `withInputs`. Each input cites an id in `inputIds`, and a subset is accepted.
 
 | `Evidence.Missing`
 | There is nothing to return, including when every result was filtered out.
 | `searched`: the contexts, query and filters that were searched.
 
 | `Evidence.Conflicting`
-| Two or more claims with different ids disagree.
-| `items` and `conflictType`.
+| Two or more claims disagree. No two of them are the same claim.
+| `items` and `conflictType`, which is `Contradiction` or `Custom`.
+
+| `Evidence.Superseded`
+| One claim replaced one or more earlier claims.
+| `current`, the claim that holds. `previous`, the claims it replaced, newest first, so `previous.get(0)` is the claim `current` replaced. `conflictType`, which is `Revision` or `WorldProgression`.
 |===
+
+`Conflicting` and `Superseded` are both an `Evidence.Disagreement`, which carries `getConflictType()`. `Evidence.conflicting` rejects `Revision` and `WorldProgression` and names `Evidence.superseded`. `Evidence.superseded` rejects `Contradiction` and `Custom` and names `Evidence.conflicting`. A custom label does not say which claim holds, so a custom conflict is `Conflicting`.
 
 [source,java]
 ----
@@ -99,8 +153,7 @@ Evidence.Derived derived = Evidence.derived(
                 0.8,
                 DerivationRule.of("prolog").withRuleId("grandparent").withExpression("grandparent(X, Y)"),
                 List.of("p-17"))
-        .withInputs(List.of(item))
-        .withCitation(Citation.of("p-19", "support-team"));
+        .withInputs(List.of(item));
 ----
 
 [source,java]
@@ -116,9 +169,20 @@ Evidence.Conflicting conflicting =
         Evidence.conflicting(List.of(item, other), ConflictType.Contradiction.INSTANCE);
 ----
 
+[source,java]
+----
+EvidenceItem moved =
+        EvidenceItem.of("Ada lives in London", Citation.of("p-3", "support-team"), 0.9);
+EvidenceItem stayed =
+        EvidenceItem.of("Ada lives in Marylebone", Citation.of("p-4", "support-team"), 0.6)
+                .withStatus(PropositionStatus.SUPERSEDED);
+Evidence.Superseded superseded =
+        Evidence.superseded(moved, List.of(stayed), ConflictType.WorldProgression.INSTANCE);
+----
+
 ==== Branching on the kind
 
-`Evidence` is sealed, so the compiler checks that a `switch` or `when` covers all four kinds.
+`Evidence` is sealed, so the compiler checks that a `switch` or `when` covers all five kinds.
 
 [source,java]
 ----
@@ -127,6 +191,8 @@ String label = switch (evidence) {
     case Evidence.Derived derived -> "derived " + derived.getConclusion();
     case Evidence.Missing missing -> "missing " + missing.getSearched().getQuery();
     case Evidence.Conflicting conflicting -> "conflicting " + conflicting.getItems().size();
+    case Evidence.Superseded superseded ->
+            "superseded " + superseded.getPrevious().get(0).getCitation().getPropositionId();
 };
 ----
 
@@ -137,12 +203,24 @@ val label = when (evidence) {
     is Evidence.Derived -> "derived"
     is Evidence.Missing -> "missing"
     is Evidence.Conflicting -> "conflicting"
+    is Evidence.Superseded -> "superseded"
 }
+----
+
+`Evidence.Disagreement` is sealed too, so a `switch` over it needs two cases.
+
+[source,java]
+----
+String text = switch (disagreement) {
+    case Evidence.Conflicting conflicting -> conflicting.getItems().size() + " claims disagree";
+    case Evidence.Superseded superseded -> superseded.getCurrent().getCitation().getPropositionId()
+            + " replaced " + superseded.getPrevious().get(0).getCitation().getPropositionId();
+};
 ----
 
 ==== Converting existing results
 
-`EvidenceConverter` turns results you already have into evidence.
+`EvidenceConverter` turns results you already have into evidence. A stored claim always converts to an `EvidenceItem`, and an abstraction is an item whose `derivedFromIds` is not empty. Every item carries the claim's reinforce count and temporal metadata, and its `revisedAt` is the claim's `getLastContentRevision()`.
 
 [cols="2,2,3", options="header"]
 |===
@@ -150,11 +228,11 @@ val label = when (evidence) {
 
 | Claims, and the retriever that found them
 | `fromPropositions(propositions, searched, retriever)`
-| `Recorded` items, with a `Retrieval` for the retriever.
+| `Recorded` items in input order, each with a `Retrieval` for the retriever.
 
 | Claims
 | `fromPropositions(propositions, searched)`
-| `Recorded` items.
+| `Recorded` items in input order.
 
 | Scored hits
 | `fromSimilarityResults(hits, searched)`
@@ -173,17 +251,80 @@ val label = when (evidence) {
 | One `EvidenceItem`, with the hit's score and a `Retrieval`.
 
 | A lineage
+| `item(lineage)`
+| One `EvidenceItem`. Its status, reinforce count, chunk ids and provenance come from the lineage. Its temporal metadata is the lineage's when set, otherwise the claim's. The loaded sources become `derivedFrom`.
+
+| A lineage
 | `fromLineage(lineage)`
-| `Derived` for an abstraction, with its source claims as inputs, its effective confidence and its status. Otherwise `Recorded` with one item.
+| `Recorded` with the one item `item(lineage)` builds.
 
 | A revision contradiction
 | `fromContradiction(contradicted)`
-| `Conflicting`, with the original claim first and the new claim second.
+| An `Evidence.Disagreement`, by conflict type (table below).
 
-| An empty list of claims or hits
+| An empty list of claims or hits, or one where every entry is skipped
 | `fromPropositions` or `fromSimilarityResults`
 | `Missing`, with the `Searched`.
 |===
+
+[cols="1,3", options="header"]
+|===
+| `conflictType` | `fromContradiction` returns
+
+| `Contradiction`
+| `Conflicting` with the original claim first and the new claim second.
+
+| `Custom`
+| `Conflicting` with the original claim first and the new claim second.
+
+| `Revision`
+| `Superseded` with the new claim as `current` and the original as `previous`.
+
+| `WorldProgression`
+| `Superseded` with the new claim as `current` and the original as `previous`.
+
+| `Revision` or `WorldProgression`, pinned original
+| `Conflicting` with conflict type `Contradiction`, the original first and the new claim second.
+|===
+
+`previous` presents the original as replaced. The reviser marks a replaced original `CONTRADICTED` and lowers its confidence, so in a `Superseded` result that original reads `SUPERSEDED`. Its confidence is the stored one, already lowered. The reviser never replaces a pinned original: it keeps the claim as it is and stores the new claim beside it for someone to resolve. `fromContradiction` reports those two as `Conflicting`, so neither is presented as the claim that holds. `Conflicting` items keep their stored statuses.
+
+[source,java]
+----
+Evidence.Disagreement disagreement = converter.fromContradiction(
+        new RevisionResult.Contradicted(original, replacement, ConflictType.Revision.INSTANCE));
+----
+
+The list methods take the retriever's result in order. A rank is the entry's 1-based position in the list you pass. Claims with blank text are skipped, and the entries after them keep their position.
+
+The converter does not filter by score or status. Filter in the store query or in your own code, and record the filter with `Searched.withFilter`.
+
+Each conversion call reads the converter's clock once, so every item in one result has its decay worked out at the same instant. To build one result from several `item(hit, retriever, rank)` calls, such as a later page of results, use a converter with a fixed clock and rank each hit by its position in the whole list.
+
+[source,java]
+----
+Instant now = Instant.parse("2026-01-11T00:00:00Z");
+Proposition london = Proposition.draft("support-team", "Ada lives in London", 0.8)
+        .withId("claim-11")
+        .withCreated(now)
+        .toProposition();
+Proposition library = Proposition.draft("support-team", "Ada works at the library", 0.8)
+        .withId("claim-12")
+        .withCreated(now)
+        .toProposition();
+List<SimpleSimilaritySearchResult<Proposition>> page = List.of(
+        new SimpleSimilaritySearchResult<>(london, 0.6),
+        new SimpleSimilaritySearchResult<>(library, 0.5));
+int offset = 10;
+
+EvidenceConverter pinned = EvidenceConverter.create().withClock(Clock.fixed(now, ZoneOffset.UTC));
+
+List<EvidenceItem> items = new ArrayList<>();
+for (int i = 0; i < page.size(); i++) {
+    items.add(pinned.item(page.get(i), RetrieverId.VECTOR, offset + i + 1));
+}
+Evidence evidence = Evidence.of(items, Searched.of("support-team"));
+----
 
 When a query sets a decay rate, pass it to the converter with `withDecayK`.
 
@@ -212,9 +353,27 @@ Evidence evidence = converter.fromPropositions(
         RetrieverId.KEYWORD);
 ----
 
+==== When a claim was revised
+
+A proposition records a content revision in its metadata, under `dice.content.revised` (`DiceMetadataKeys.CONTENT_REVISED`), as the revision time in ISO-8601 text. `getLastContentRevision()` returns that time. The entry is written only when the text, mentions or confidence actually changes, so `withText` with the same text records nothing. A status, pin, grounding or metadata change records no revision. A reinforcement that leaves the confidence as it was still moves `contentRevised`, the decay anchor, and keeps the earlier revision time.
+
+A new claim starts with no record. `Proposition.draft(...)` builds one, and so does `toDraft()` with another id. A `toDraft()` copy with the same id keeps the original's record, or records a new one when its text, mentions or confidence differ. The draft ignores any value for the key given to `withMetadata`. A claim whose metadata map was replaced some other way returns null.
+
+[source,java]
+----
+Proposition drafted = Proposition.draft("acme", "Alice lives in Paris", 0.9).toProposition();
+Proposition revised = drafted.withText("Alice lives in Lyon");
+
+revised.getLastContentRevision();                               // the same instant as getContentRevised()
+revised.getMetadata().get(DiceMetadataKeys.CONTENT_REVISED);    // that instant as ISO-8601 text
+revised.withText("Alice lives in Lyon").getLastContentRevision();         // unchanged
+revised.toDraft().withId("p-2").toProposition().getLastContentRevision(); // null, a new claim
+drafted.withStatus(PropositionStatus.STALE).getLastContentRevision();     // null
+----
+
 ==== Returning evidence from a lookup
 
-`EvidenceProvider` is the interface a lookup implements to return `Evidence` for a query. It is experimental, and its API may change before 1.0.
+`EvidenceProvider` is the interface a lookup implements to return `Evidence` for a query.
 
 [source,java]
 ----

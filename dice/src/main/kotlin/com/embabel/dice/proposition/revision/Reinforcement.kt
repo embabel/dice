@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.proposition.revision
 
+import com.embabel.dice.proposition.ContentRevisions
 import com.embabel.dice.proposition.Proposition
 import java.time.Instant
 
@@ -39,7 +40,8 @@ internal class ReinforcementRule(
  * The evidence's grounding, provenance entries and source ids are folded in with
  * [Proposition.absorbEvidence]. The stored proposition's own id is never folded into its source
  * ids. The reinforce count goes up by one for new evidence. Confidence never goes below the
- * stored value. One instant is stamped on both the content and metadata revision times.
+ * stored value. One instant is stamped on both the content and metadata revision times. A content
+ * revision is recorded only when the confidence changes.
  *
  * The stored proposition comes back as it is in two cases. The evidence has the same id, or the
  * evidence names a source and the stored proposition already holds all of it. A source is a
@@ -63,14 +65,16 @@ internal fun reinforce(existing: Proposition, evidence: Proposition, rule: Reinf
         evidence.sourceIds.isEmpty()
     if (!namesNoSource && existing.holdsAllSourcesOf(sources)) return existing
     val now = Instant.now()
-    return existing.absorbEvidence(sources).copy(
-        confidence = rule.confidence(existing, evidence).coerceIn(existing.confidence, 1.0),
+    val confidence = rule.confidence(existing, evidence).coerceIn(existing.confidence, 1.0)
+    val reinforced = existing.absorbEvidence(sources).copy(
+        confidence = confidence,
         decay = rule.decayFactor?.let { (existing.decay * it).coerceIn(0.0, 1.0) } ?: existing.decay,
         reinforceCount = existing.reinforceCount + 1,
         contentRevised = now,
         metadataRevised = now,
         lastAccessed = if (rule.touchLastAccessed) now else existing.lastAccessed,
     )
+    return if (confidence != existing.confidence) ContentRevisions.record(reinforced, now) else reinforced
 }
 
 /**

@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.evidence
 
+import org.jetbrains.annotations.ApiStatus
+
 /**
  * Name of a retriever, such as the vector index or the graph walk that produced a hit.
  *
@@ -24,6 +26,7 @@ package com.embabel.dice.evidence
  * RetrieverId id = RetrieverId.of(" Vector ");  // equal to RetrieverId.VECTOR
  * ```
  */
+@ApiStatus.Experimental
 class RetrieverId private constructor(
     /** The normalized retriever name. */
     val name: String,
@@ -92,6 +95,7 @@ class RetrieverId private constructor(
  *     .withEntityPath(List.of("alice", "acme", "berlin"));  // hops == 2
  * ```
  */
+@ApiStatus.Experimental
 class Retrieval private constructor(
     /** The retriever that produced this hit. */
     val retriever: RetrieverId,
@@ -105,7 +109,7 @@ class Retrieval private constructor(
 ) {
 
     /** Entity ids walked from the starting entity to the last one. Empty when the path is not known. */
-    val entityPath: List<String> = java.util.List.copyOf(entityPath)
+    val entityPath: List<String> = EvidenceChecks.copyOf("entityPath", entityPath)
 
     init {
         require(rank == null || rank >= 1) { "rank starts at 1, was $rank" }
@@ -152,11 +156,12 @@ class Retrieval private constructor(
      *
      * @param entityPath the entity ids from the starting entity to the last one
      * @return the updated retrieval
-     * @throws IllegalArgumentException if [entityPath] is empty or contains a blank id
+     * @throws IllegalArgumentException if [entityPath] is empty or contains a null or blank id
      */
     fun withEntityPath(entityPath: List<String>): Retrieval {
-        require(entityPath.isNotEmpty()) { "entityPath must not be empty" }
-        return Retrieval(retriever, rank, score, entityPath.size - 1, entityPath)
+        val path = EvidenceChecks.copyOf("entityPath", entityPath)
+        require(path.isNotEmpty()) { "entityPath must not be empty" }
+        return Retrieval(retriever, rank, score, path.size - 1, path)
     }
 
     /**

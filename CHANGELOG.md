@@ -248,16 +248,37 @@ and the consumer PRs that deliver it).
   - **Compatibility: additive.** `StoreCapability`, `ReadCriterion`, `ReadOrder` and
     `ReadBudgetResource` gain entries over time, so a Kotlin `when` or a Java `switch` expression
     over one of them keeps an `else` or `default` branch.
-- Evidence types for a caller that assembles model context, in the new package
-  `com.embabel.dice.evidence`. `EvidenceItem` is one claim with its `Citation`, its stored and
-  decayed confidence, its status, when it was recorded and revised, and a `Retrieval` for each
-  retriever that found it. The sealed `Evidence` type says what a lookup found: `Recorded` claims,
-  a `Derived` conclusion with its rule and input claims, `Missing` with what was searched, or
-  `Conflicting` claims with the conflict type. A `Derived` conclusion that is a stored claim also
-  carries its effective confidence and status. `EvidenceConverter` builds evidence from lists of
-  claims, scored hits, a lineage or a revision contradiction, and an empty list converts to
-  `Missing`. `EvidenceProvider`, **EXPERIMENTAL** (shape may change before 1.0), is the interface a
-  lookup implements to return `Evidence`. **Compatibility: additive.**
+
+- Evidence types for a caller that assembles model context, in the package
+  `com.embabel.dice.evidence`, **EXPERIMENTAL** (shape may change before 1.0). The package is new in
+  this unreleased version, and every type in it is marked `@ApiStatus.Experimental`. `EvidenceItem` is
+  one claim with its `Citation`, its stored and decayed confidence, its status, its reinforce count and
+  temporal metadata, when it was recorded and last revised, the ids and loaded copies of the claims it
+  was abstracted from, and a `Retrieval` for each retriever that found it. The sealed `Evidence` type
+  has five kinds: `Recorded` claims, a `Derived` conclusion worked out at lookup time with its rule
+  and inputs, `Missing` with what was searched, `Conflicting` claims, and `Superseded` for a claim that
+  replaced earlier ones. `Conflicting` and `Superseded` are both an `Evidence.Disagreement` with a
+  conflict type: `Contradiction` and `Custom` conflicts are `Conflicting`, and `Revision` and
+  `WorldProgression` are `Superseded`, whose earlier claims read `SUPERSEDED` when the reviser marked
+  them `CONTRADICTED`. A pinned original is never replaced, so a `Revision` or `WorldProgression`
+  against one converts to `Conflicting`. `Citation.sameClaimAs` tells claims apart by id and context. `EvidenceConverter`
+  builds items and evidence from lists of claims, scored hits, a lineage or a revision contradiction.
+  A stored claim, including an abstraction, always converts to an item, a rank is the entry's position
+  in the list passed in, and each call reads the clock once. `EvidenceProvider` is the interface a
+  lookup implements to return `Evidence`. A null list element throws `IllegalArgumentException` with
+  the list name and index. **Compatibility: additive.**
+
+- `Proposition.getLastContentRevision()` returns when a stored proposition's text, mentions or
+  confidence last changed, or null when no change is recorded. When one of them actually changes
+  (through `withText`, `withResolvedMentions`, `withConfidence`, a reinforcement or a reviser merge),
+  the proposition carries one more metadata entry under the new key `DiceMetadataKeys.CONTENT_REVISED`
+  (`dice.content.revised`), holding the time of the change as ISO-8601 text. Setting the same value
+  again records nothing. A new claim starts without the entry: a draft, a `toDraft()` copy given a new
+  id, and a consolidator merge. A `toDraft()` copy, and a draft read from JSON with an id, keeps the
+  stored claim's entry, and records a new one when its text, mentions or confidence change, so its
+  `contentRevised` moves to the time of that change as `Proposition.withText` does. A caller that
+  compares a revised proposition's whole metadata map sees this extra entry.
+  **Compatibility: behavioral.**
 
 - **EXPERIMENTAL** (shape may change before 1.0): `InMemoryDriftReportStore` in `dice-metamodel` is a
   `DriftReportStore` for tests and demos that keeps reports in memory. It replaces a report saved

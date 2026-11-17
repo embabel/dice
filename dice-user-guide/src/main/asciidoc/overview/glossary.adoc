@@ -48,8 +48,9 @@ Richer evidence links than grounding: a `ProvenanceEntry` records where a claim 
 through `SourceLocator`, how to get back to it.
 
 Evidence::
-What a lookup returns to a caller that assembles model context: stored claims, a derived conclusion,
-nothing, or claims that disagree. Each claim carries a `Citation` to its grounding and provenance.
+What a lookup returns to a caller that assembles model context. Its five kinds are stored claims, a
+conclusion worked out at lookup time, nothing, claims that conflict, and a claim that replaced earlier
+claims (`Superseded`). Each claim carries a `Citation` to its grounding and provenance.
 <<concepts-evidence>> describes each kind.
 
 Admission gate::

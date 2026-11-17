@@ -16,12 +16,10 @@
 package com.embabel.dice.evidence
 
 import com.embabel.agent.core.ContextId
-import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.spi.ConflictType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -53,7 +51,7 @@ class EvidenceTest {
 
     @Test
     fun `derived evidence rejects a blank conclusion, a confidence outside 0 to 1, and missing or blank input ids`() {
-        val rule = DerivationRule.ABSTRACTION
+        val rule = DerivationRule.of("abstraction")
         val ids = listOf("prop-1")
         listOf<() -> Unit>(
             { Evidence.derived(" ", 0.5, rule, ids) },
@@ -66,80 +64,14 @@ class EvidenceTest {
     }
 
     @Test
-    fun `derived evidence starts with no inputs or citation and takes them through its with methods`() {
-        val derived = Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, listOf("prop-1", "prop-9"))
+    fun `derived evidence starts with no inputs and takes them through withInputs`() {
+        val derived = Evidence.derived("Alice is a resident.", 0.7, DerivationRule.of("abstraction"), listOf("prop-1", "prop-9"))
         assertTrue(derived.inputs.isEmpty())
-        assertNull(derived.citation)
 
-        val citation = Citation.of("prop-50", "ctx-main")
-        val completed = derived.withInputs(listOf(alice)).withCitation(citation)
+        val completed = derived.withInputs(listOf(alice))
 
         assertEquals(listOf(alice), completed.inputs)
-        assertEquals(citation, completed.citation)
         assertEquals(listOf("prop-1", "prop-9"), completed.inputIds)
-    }
-
-    @Test
-    fun `derived evidence starts with its confidence as its effective confidence and no status`() {
-        val derived = Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, listOf("prop-1"))
-
-        assertEquals(0.7, derived.effectiveConfidence)
-        assertNull(derived.status)
-    }
-
-    @Test
-    fun `an effective confidence outside 0 to 1 or NaN is rejected`() {
-        val derived = Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, listOf("prop-1"))
-        listOf(-0.1, 1.1, Double.NaN).forEach { value ->
-            assertThrows(IllegalArgumentException::class.java) { derived.withEffectiveConfidence(value) }
-        }
-    }
-
-    @Test
-    fun `each with method changes only its own part of derived evidence`() {
-        val citation = Citation.of("prop-50", "ctx-main")
-        val base = Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, listOf("prop-1"))
-            .withInputs(listOf(alice))
-            .withCitation(citation)
-            .withEffectiveConfidence(0.4)
-            .withStatus(PropositionStatus.SUPERSEDED)
-
-        val newCitation = Citation.of("prop-51", "ctx-main")
-        val withInputs = base.withInputs(listOf(aliceElsewhere))
-        assertEquals(listOf(aliceElsewhere), withInputs.inputs)
-        assertEquals(citation, withInputs.citation)
-        assertEquals(0.4, withInputs.effectiveConfidence)
-        assertEquals(PropositionStatus.SUPERSEDED, withInputs.status)
-
-        val withCitation = base.withCitation(newCitation)
-        assertEquals(newCitation, withCitation.citation)
-        assertEquals(listOf(alice), withCitation.inputs)
-        assertEquals(0.4, withCitation.effectiveConfidence)
-        assertEquals(PropositionStatus.SUPERSEDED, withCitation.status)
-
-        val withEffective = base.withEffectiveConfidence(0.8)
-        assertEquals(0.8, withEffective.effectiveConfidence)
-        assertEquals(citation, withEffective.citation)
-        assertEquals(listOf(alice), withEffective.inputs)
-        assertEquals(PropositionStatus.SUPERSEDED, withEffective.status)
-
-        val withStatus = base.withStatus(PropositionStatus.ACTIVE)
-        assertEquals(PropositionStatus.ACTIVE, withStatus.status)
-        assertEquals(citation, withStatus.citation)
-        assertEquals(listOf(alice), withStatus.inputs)
-        assertEquals(0.4, withStatus.effectiveConfidence)
-    }
-
-    @Test
-    fun `derived evidence differing only in effective confidence or status is not equal`() {
-        val ids = listOf("prop-1")
-        val base = Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, ids)
-            .withEffectiveConfidence(0.4)
-            .withStatus(PropositionStatus.SUPERSEDED)
-
-        assertNotEquals(base, base.withEffectiveConfidence(0.5))
-        assertNotEquals(base.withEffectiveConfidence(0.0), base.withEffectiveConfidence(-0.0))
-        assertNotEquals(base, base.withStatus(PropositionStatus.ACTIVE))
     }
 
     @Test
@@ -147,17 +79,14 @@ class EvidenceTest {
         val rule = DerivationRule.of("prolog").withRuleId("resident")
         fun settled() = Evidence.derived("Alice is a resident.", 0.7, rule, listOf("prop-1"))
             .withInputs(listOf(alice))
-            .withCitation(Citation.of("prop-50", "ctx-main"))
-            .withEffectiveConfidence(0.4)
-            .withStatus(PropositionStatus.SUPERSEDED)
 
         assertEquals(settled(), settled())
         assertEquals(settled().hashCode(), settled().hashCode())
     }
 
     @Test
-    fun `conflicting evidence needs at least two items with different claim ids`() {
-        val sameClaim = EvidenceItem.of("Alice lives in Rome.", Citation.of("prop-1", "ctx-other"), 0.4)
+    fun `conflicting evidence needs at least two different claims`() {
+        val sameClaim = EvidenceItem.of("Alice lives in Rome.", Citation.of("prop-1", "ctx-main"), 0.4)
         assertThrows(IllegalArgumentException::class.java) {
             Evidence.conflicting(listOf(alice), ConflictType.Contradiction)
         }
@@ -165,10 +94,10 @@ class EvidenceTest {
             Evidence.conflicting(listOf(alice, sameClaim), ConflictType.Contradiction)
         }
 
-        val conflicting = Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.WorldProgression)
+        val conflicting = Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Contradiction)
 
         assertEquals(listOf(alice, aliceElsewhere), conflicting.items)
-        assertEquals(ConflictType.WorldProgression, conflicting.conflictType)
+        assertEquals(ConflictType.Contradiction, conflicting.conflictType)
     }
 
     @Test
@@ -183,15 +112,16 @@ class EvidenceTest {
     }
 
     @Test
-    fun `a when over the four kinds needs no else branch`() {
+    fun `a when over the five kinds needs no else branch`() {
         val labels = listOf(
             Evidence.recorded(listOf(alice)),
-            Evidence.derived("Alice is a resident.", 0.7, DerivationRule.ABSTRACTION, listOf("prop-1")),
+            Evidence.derived("Alice is a resident.", 0.7, DerivationRule.of("prolog"), listOf("prop-1")),
             Evidence.missing(searched),
             Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Contradiction),
+            Evidence.superseded(aliceElsewhere, listOf(alice), ConflictType.WorldProgression),
         ).map(::label)
 
-        assertEquals(4, labels.toSet().size)
+        assertEquals(5, labels.toSet().size)
     }
 
     @Test
@@ -202,8 +132,10 @@ class EvidenceTest {
             Evidence.derived("Alice is a resident.", 0.7, rule, listOf("prop-1")).withInputs(listOf(alice)) to
                 Evidence.derived("Alice is a resident.", 0.7, rule, listOf("prop-1")).withInputs(listOf(alice)),
             Evidence.missing(searched) to Evidence.missing(Searched.of("ctx-main").withQuery("where does Alice live")),
-            Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Revision) to
-                Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Revision),
+            Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Contradiction) to
+                Evidence.conflicting(listOf(alice, aliceElsewhere), ConflictType.Contradiction),
+            Evidence.superseded(aliceElsewhere, listOf(alice), ConflictType.Revision) to
+                Evidence.superseded(aliceElsewhere, listOf(alice), ConflictType.Revision),
         )
         pairs.forEach { (first, second) ->
             assertEquals(first, second)
@@ -224,8 +156,8 @@ class EvidenceTest {
     fun `derived evidence with confidence 0 and -0 are not equal`() {
         val ids = listOf("prop-1")
         assertNotEquals(
-            Evidence.derived("Alice is a resident.", 0.0, DerivationRule.ABSTRACTION, ids),
-            Evidence.derived("Alice is a resident.", -0.0, DerivationRule.ABSTRACTION, ids),
+            Evidence.derived("Alice is a resident.", 0.0, DerivationRule.of("abstraction"), ids),
+            Evidence.derived("Alice is a resident.", -0.0, DerivationRule.of("abstraction"), ids),
         )
     }
 
@@ -266,12 +198,11 @@ class EvidenceTest {
         assertEquals("prolog", DerivationRule.of(" prolog ").method)
         assertThrows(IllegalArgumentException::class.java) { DerivationRule.of("prolog").withRuleId(" ") }
         assertThrows(IllegalArgumentException::class.java) { DerivationRule.of("prolog").withExpression(" ") }
-        assertEquals(DerivationRule.ABSTRACTION, DerivationRule.of("abstraction"))
     }
 
     @Test
     fun `a derivation rule method is lower-cased, so its case does not change equality`() {
-        assertEquals(DerivationRule.ABSTRACTION, DerivationRule.of("Abstraction"))
+        assertEquals(DerivationRule.of("abstraction"), DerivationRule.of(" Abstraction "))
         assertEquals("prolog", DerivationRule.of(" Prolog ").method)
     }
 
@@ -330,12 +261,13 @@ class EvidenceTest {
      * Names the kind of an evidence value with a `when` that has no `else` branch.
      *
      * @param evidence the value to name
-     * @return a different label for each of the four kinds
+     * @return a different label for each of the five kinds
      */
     private fun label(evidence: Evidence): String = when (evidence) {
         is Evidence.Recorded -> "recorded"
         is Evidence.Derived -> "derived"
         is Evidence.Missing -> "missing"
         is Evidence.Conflicting -> "conflicting"
+        is Evidence.Superseded -> "superseded"
     }
 }

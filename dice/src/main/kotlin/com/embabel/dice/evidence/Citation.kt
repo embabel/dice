@@ -19,6 +19,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonProperty
+import org.jetbrains.annotations.ApiStatus
 
 /**
  * Identifies a stored claim, the context it lives in, and the source material it was extracted from.
@@ -36,6 +37,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * val citation = Citation.of("prop-42", ContextId("ctx-main"))
  * ```
  */
+@ApiStatus.Experimental
 class Citation private constructor(
     /** Id of the stored claim. */
     val propositionId: String,
@@ -53,10 +55,10 @@ class Citation private constructor(
     val contextIdValue: String = contextId.value
 
     /** Ids of the source chunks the claim was extracted from. */
-    val chunkIds: List<String> = java.util.List.copyOf(chunkIds)
+    val chunkIds: List<String> = EvidenceChecks.copyOf("chunkIds", chunkIds)
 
     /** Typed pointers into the source material. */
-    val provenance: List<ProvenanceEntry> = java.util.List.copyOf(provenance)
+    val provenance: List<ProvenanceEntry> = EvidenceChecks.copyOf("provenance", provenance)
 
     init {
         require(propositionId.isNotBlank()) { "propositionId must not be blank" }
@@ -69,7 +71,7 @@ class Citation private constructor(
      *
      * @param chunkIds ids of the source chunks
      * @return the updated citation
-     * @throws IllegalArgumentException if any chunk id is blank
+     * @throws IllegalArgumentException if any chunk id is null or blank
      */
     fun withChunkIds(chunkIds: List<String>): Citation =
         Citation(propositionId, contextId, chunkIds, provenance, uri)
@@ -79,6 +81,7 @@ class Citation private constructor(
      *
      * @param provenance typed pointers into the source material
      * @return the updated citation
+     * @throws IllegalArgumentException if any entry is null
      */
     fun withProvenance(provenance: List<ProvenanceEntry>): Citation =
         Citation(propositionId, contextId, chunkIds, provenance, uri)
@@ -92,6 +95,16 @@ class Citation private constructor(
      */
     fun withUri(uri: String): Citation =
         Citation(propositionId, contextId, chunkIds, provenance, uri)
+
+    /**
+     * Returns true when [other] names the same claim: the same [propositionId] in the same [contextId].
+     * Chunk ids, provenance and uri are not compared.
+     *
+     * @param other the citation to compare with
+     * @return true when both citations name the same claim
+     */
+    fun sameClaimAs(other: Citation): Boolean =
+        propositionId == other.propositionId && contextId == other.contextId
 
     override fun equals(other: Any?): Boolean =
         other is Citation && propositionId == other.propositionId &&

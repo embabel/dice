@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.projection.memory
 
+import com.embabel.dice.proposition.ContentRevisions
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.revision.ReinforcementRule
@@ -237,6 +238,8 @@ class DefaultMemoryConsolidator(
             grounding = propositions.flatMap { it.grounding }.distinct(),
             provenanceEntries = propositions.flatMap { it.provenanceEntries }.distinct(),
             sourceIds = propositions.flatMap { it.sourceIds }.distinct(),
+            // The merge is a new claim, so it starts without a revision record.
+            metadata = ContentRevisions.withoutRecord(bestProp.metadata),
             created = now,
             contentRevised = now,
             metadataRevised = now,

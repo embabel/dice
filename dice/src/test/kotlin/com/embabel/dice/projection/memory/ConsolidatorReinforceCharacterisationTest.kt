@@ -16,6 +16,7 @@
 package com.embabel.dice.projection.memory
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.provenance.ProvenanceEntry
@@ -125,9 +126,32 @@ class ConsolidatorReinforceCharacterisationTest {
                 reinforceCount = 3,
                 contentRevised = r.contentRevised,
                 metadataRevised = r.metadataRevised,
+                metadata = existing.metadata + (DiceMetadataKeys.CONTENT_REVISED to r.contentRevised.toString()),
             ),
             r,
         )
+    }
+
+    @Test
+    fun `the reinforced proposition records its content revision`() {
+        val r = reinforcedFrom(existing())
+        assertEquals(r.contentRevised.toString(), r.metadata[DiceMetadataKeys.CONTENT_REVISED])
+        assertEquals(r.contentRevised, r.lastContentRevision)
+    }
+
+    @Test
+    fun `a merged proposition is a new claim with no recorded content revision`() {
+        // One extra word puts the similarity between 0.7 and 0.9, so the two merge.
+        val revisedExisting = existing().withConfidence(0.9)
+        val session = session().copy(text = "Alice works at Acme Corp")
+
+        val result = DefaultMemoryConsolidator().consolidate(listOf(session), listOf(revisedExisting))
+
+        val merged = result.merged.single().result
+        assertNotNull(revisedExisting.lastContentRevision)
+        assertNotEquals(revisedExisting.id, merged.id)
+        assertFalse(merged.metadata.containsKey(DiceMetadataKeys.CONTENT_REVISED))
+        assertNull(merged.lastContentRevision)
     }
 
     @Test

@@ -516,12 +516,20 @@ class PropositionDraftJavaInteropTest {
     }
 
     @Test
-    void aStepLeavesContentRevisedAloneUnlikeProposition() {
+    void aTextChangeThroughADraftRecordsARevisionAsPropositionDoes() {
         Proposition fact = Proposition.draft("acme", "Alice lives in Paris", 0.9)
                 .withContentRevised(CONTENT_REVISED)
                 .toProposition();
+        Instant later = CONTENT_REVISED.plusSeconds(60);
 
-        assertEquals(CONTENT_REVISED, fact.toDraft().withText("x").toProposition().getContentRevised());
+        assertNotEquals(CONTENT_REVISED, fact.toDraft().withText("x").toProposition().getContentRevised());
         assertNotEquals(CONTENT_REVISED, fact.withText("x").getContentRevised());
+        // A time the caller sets for the change is the one recorded
+        assertEquals(later, fact.toDraft().withText("x").withContentRevised(later).toProposition().getContentRevised());
+        // A round trip, or a step that leaves the content as it was, changes no time
+        assertEquals(fact, fact.toDraft().toProposition());
+        assertEquals(CONTENT_REVISED, fact.toDraft().withImportance(0.7).toProposition().getContentRevised());
+        assertEquals(fact, fact.toDraft().withText(fact.getText()).toProposition());
+        assertEquals(fact, fact.toDraft().withText("x").withText(fact.getText()).toProposition());
     }
 }

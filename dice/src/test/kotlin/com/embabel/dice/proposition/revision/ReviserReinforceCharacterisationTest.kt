@@ -187,9 +187,17 @@ class ReviserReinforceCharacterisationTest {
                 contentRevised = revised.contentRevised,
                 metadataRevised = revised.metadataRevised,
                 lastAccessed = revised.lastAccessed,
+                metadata = existing.metadata + (DiceMetadataKeys.CONTENT_REVISED to revised.contentRevised.toString()),
             ),
             revised,
         )
+    }
+
+    @Test
+    fun `the reinforced proposition records its content revision`() {
+        val revised = revisedFrom(existing(), incoming())
+        assertEquals(revised.contentRevised.toString(), revised.metadata[DiceMetadataKeys.CONTENT_REVISED])
+        assertEquals(revised.contentRevised, revised.lastContentRevision)
     }
 
     @Test

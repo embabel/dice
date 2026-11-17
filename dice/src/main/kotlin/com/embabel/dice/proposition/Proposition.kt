@@ -21,6 +21,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.rag.model.Retrievable
 import com.embabel.common.core.types.ZeroToOne
+import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import com.embabel.dice.temporal.TemporalMetadata
@@ -171,11 +172,40 @@ data class Proposition(
      */
     val lastTouched: Instant get() = maxOf(contentRevised, metadataRevised)
 
-    /** Create a copy with updated text. Resets the decay clock (content anchor). */
-    fun withText(newText: String): Proposition = copy(
-        text = newText,
-        contentRevised = Instant.now(),
-    )
+    /**
+     * When the text, mentions or confidence of this claim last changed. The reviser's merge, a
+     * reinforcement and a contradiction count when they change the confidence.
+     *
+     * The time is the one stored in the [DiceMetadataKeys.CONTENT_REVISED] entry. Null when no
+     * revision is recorded or the entry does not hold a time. It is independent of
+     * [contentRevised], which also moves when a reinforcement leaves the content as it was, since
+     * that time is the decay anchor. Left out of JSON, since the metadata entry already carries it.
+     *
+     * A Kotlin `copy(id = ...)` keeps the entry. When copying into a new claim, remove
+     * [DiceMetadataKeys.CONTENT_REVISED] from the metadata, or use `toDraft().withId(...)`.
+     */
+    @get:JsonIgnore
+    val lastContentRevision: Instant?
+        get() = ContentRevisions.recordedAt(metadata)
+
+    /**
+     * Create a copy with updated text. Resets the decay clock (content anchor), and records a
+     * content revision when the text differs.
+     */
+    fun withText(newText: String): Proposition = revisedAt(Instant.now(), newText != text) { copy(text = newText) }
+
+    /**
+     * Stamps [contentRevised] on a changed copy and records a revision when something changed.
+     *
+     * @param now the time to stamp
+     * @param changed whether the text, mentions or confidence differ from this proposition's
+     * @param change makes the changed copy
+     * @return the copy, stamped, with a revision recorded at [now] when [changed]
+     */
+    private inline fun revisedAt(now: Instant, changed: Boolean, change: () -> Proposition): Proposition {
+        val stamped = change().copy(contentRevised = now)
+        return if (changed) ContentRevisions.record(stamped, now) else stamped
+    }
 
     companion object {
 
@@ -308,7 +338,7 @@ data class Proposition(
      * Create a copy with updated mentions.
      */
     fun withResolvedMentions(resolvedMentions: List<EntityMention>): Proposition =
-        copy(mentions = resolvedMentions, contentRevised = Instant.now())
+        revisedAt(Instant.now(), resolvedMentions != mentions) { copy(mentions = resolvedMentions) }
 
     /**
      * Create a copy with updated status. Administrative change: touches only
@@ -329,7 +359,7 @@ data class Proposition(
      */
     fun withConfidence(newConfidence: Double): Proposition {
         require(newConfidence in 0.0..1.0) { "Confidence must be between 0.0 and 1.0" }
-        return copy(confidence = newConfidence, contentRevised = Instant.now())
+        return revisedAt(Instant.now(), newConfidence != confidence) { copy(confidence = newConfidence) }
     }
 
     /**
