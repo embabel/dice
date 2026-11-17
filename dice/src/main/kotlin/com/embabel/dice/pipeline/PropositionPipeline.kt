@@ -285,7 +285,7 @@ class PropositionPipeline private constructor(
         // resolver candidate. In DROP mode the ungrounded mentions leave both the propositions
         // and the candidates for entity creation. In KEEP mode nothing changes but the report.
         // The caller's filter runs here too, so the extractor is handed no filter. It judges each
-        // proposition once, and is asked once more for each span and type that would take a known
+        // proposition once, and is asked again only about a proposition that would take a known
         // entity's id from a mention grounding dropped.
         val screening = MentionScreening.screen(
             chunkId = chunk.id,

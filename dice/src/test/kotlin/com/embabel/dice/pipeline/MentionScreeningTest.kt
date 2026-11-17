@@ -555,7 +555,7 @@ class MentionScreeningTest {
     }
 
     @Test
-    fun `R3 the filter is asked once more per span and type that receives an id`() {
+    fun `R3 the filter is asked once more about each proposition that receives an id, and no more`() {
         val recording = RecordingFilter()
         screen(
             chunk(
@@ -567,7 +567,8 @@ class MentionScreeningTest {
             filter = recording,
             analysisContext = context(knownPerson("k", "Alice Smith")),
         )
-        assertEquals(4, recording.seen.size, "asked about: ${recording.seen.map { it.text }}")
+        assertEquals(6, recording.seen.size, "asked about: ${recording.seen.map { it.text }}")
+        assertEquals(3, recording.seen.count { proposition -> proposition.mentions.any { it.suggestedId == "k" } })
     }
 
     @Test
@@ -623,6 +624,32 @@ class MentionScreeningTest {
             analysisContext = context(knownPerson("k", "Kim Smith")),
         )
         val ids = outcome.candidates.propositions[1].mentions.map { it.suggestedId }
+        assertTrue(ids.count { it == "k" } <= 1, "ids: $ids")
+    }
+
+    @Test
+    fun `R7 an id is refused when the filter rejects it in any proposition that would receive it`() {
+        val noSharedIds = object : MentionFilter {
+            override fun isValid(mention: SuggestedMention, propositionText: String): Boolean = true
+            override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> {
+                val ids = proposition.mentions.mapNotNull { it.suggestedId }
+                return proposition.mentions.map {
+                    if (it.suggestedId != null && ids.count { id -> id == it.suggestedId } > 1) ValidationResult.Invalid("shared id")
+                    else ValidationResult.Valid
+                }
+            }
+        }
+        val outcome = screen(
+            chunk(
+                proposition("Carol slept", mention("Alice", "k"), mention("Bob", "k")),
+                proposition("Alice slept", mention("Alice")),
+                proposition("Bob slept", mention("Bob")),
+                proposition("Alice met Bob", mention("Alice"), mention("Bob")),
+            ),
+            filter = noSharedIds,
+            analysisContext = context(knownPerson("k", "Kim Smith")),
+        )
+        val ids = outcome.candidates.propositions[3].mentions.map { it.suggestedId }
         assertTrue(ids.count { it == "k" } <= 1, "ids: $ids")
     }
 }

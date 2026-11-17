@@ -209,9 +209,11 @@ this is decided once per span and type for the whole chunk, never per propositio
 gets an id only when every dropped mention of it that carries an id carries the same one, that id
 belongs to a known entity of the analysis, and no candidate of it holds an id of its own. A
 made-up id never steers resolution. Unless the filter only reports (`KEEP`), it is then asked once
-about the first proposition that would receive the id, with the same mentions it judged before,
-the ids already accepted for other spans and types, and this id added; when it rejects a mention that took the id, or one it had accepted without it,
-no mention of that span and type gets the id. The propositions keep their mentions as the model
+more about each proposition that would receive an id, with the same mentions it judged before and
+all the passed-on ids in place. When it rejects a mention that took an id, that id is withdrawn
+from the whole chunk; when it rejects a mention it had accepted without the ids, every id that
+proposition took is withdrawn. The propositions are asked again with the ids that remain until the
+filter accepts them all. The propositions keep their mentions as the model
 wrote them, and a rejection always reports the mention as the model wrote it.
 
 A mention left unresolved keeps no id, even when another mention with the same span and type is
