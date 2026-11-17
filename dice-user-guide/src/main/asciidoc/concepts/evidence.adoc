@@ -30,7 +30,7 @@ Every type in `com.embabel.dice.evidence` is experimental, and its API can chang
 | When the claim was first recorded.
 
 | `revisedAt`
-| When the claim's text, mentions or confidence last changed after it was recorded. A merge, a reinforcement and a contradiction change confidence, so each counts as a revision. Null when no revision is recorded.
+| When the claim's text, mentions or confidence last changed after it was recorded. A merge, a reinforcement or a contradiction counts when it changes the confidence. Null when no revision is recorded.
 
 | `reinforceCount`
 | How many times the claim has been merged or reinforced. 0 when not known.
@@ -350,7 +350,9 @@ Evidence evidence = converter.fromPropositions(
 
 ==== When a claim was revised
 
-A proposition records a content revision in its metadata. When its text, mentions or confidence is revised, it gains the entry `dice.content.revised` (`DiceMetadataKeys.CONTENT_REVISED`) set to `true`, and `getLastContentRevision()` returns its `contentRevised` time. A status, pin, grounding or metadata change records no revision. A claim that was never revised, or whose metadata map was replaced, returns null.
+A proposition records a content revision in its metadata, under `dice.content.revised` (`DiceMetadataKeys.CONTENT_REVISED`), as the revision time in ISO-8601 text. `getLastContentRevision()` returns that time. The entry is written only when the text, mentions or confidence actually changes, so `withText` with the same text records nothing. A status, pin, grounding or metadata change records no revision. A reinforcement that leaves the confidence as it was still moves `contentRevised`, the decay anchor, and keeps the earlier revision time.
+
+A new claim starts with no record. `Proposition.draft(...)` builds one, and so does `toDraft()` with another id. A `toDraft()` copy with the same id keeps the original's record, or records a new one when its text, mentions or confidence differ. The draft ignores any value for the key given to `withMetadata`. A claim whose metadata map was replaced some other way returns null.
 
 [source,java]
 ----
@@ -358,8 +360,10 @@ Proposition drafted = Proposition.draft("acme", "Alice lives in Paris", 0.9).toP
 Proposition revised = drafted.withText("Alice lives in Lyon");
 
 revised.getLastContentRevision();                               // the same instant as getContentRevised()
-revised.getMetadata().get(DiceMetadataKeys.CONTENT_REVISED);    // Boolean.TRUE
-drafted.withStatus(PropositionStatus.STALE).getLastContentRevision();  // null
+revised.getMetadata().get(DiceMetadataKeys.CONTENT_REVISED);    // that instant as ISO-8601 text
+revised.withText("Alice lives in Lyon").getLastContentRevision();         // unchanged
+revised.toDraft().withId("p-2").toProposition().getLastContentRevision(); // null, a new claim
+drafted.withStatus(PropositionStatus.STALE).getLastContentRevision();     // null
 ----
 
 ==== Returning evidence from a lookup

@@ -182,7 +182,11 @@ A draft without an id gets a new id on every `toProposition()` call. `withId` fi
 calls to build equal propositions, also set a time with `withCreated` or `withContentRevised`.
 
 `toDraft()` starts a draft from an existing proposition. It copies a proposition with some fields
-changed and leaves its revision times alone, which the `with*` methods on `Proposition` do not.
+changed. A change to any field other than the text, the mentions or the confidence leaves the
+revision times alone, which the `with*` methods on `Proposition` do not. A change to one of those
+three records a content revision at `contentRevised` when the draft sets a new one, or else at the
+moment `toProposition()` runs, which then also becomes `contentRevised`. A draft given another id
+builds a new claim, which has no revision record.
 
 [source,java]
 ----
