@@ -115,11 +115,13 @@ different word, so "Apple" is not found in "Apples", and neither is a name run t
 number: "iPhone" is not found in "iPhone15". Scripts that join words without spaces, such
 as Chinese, Japanese or Thai, are matched wherever the span occurs.
 
-A mention that names one of the context's known entities, by its suggested id or by the entity's
-name or an alias, is also grounded when the text names that entity. When several known entities
-share that name, the text must name all of them, because resolution could link the mention to any
-of them. A mention of something the text only implies, such as a hobby named `Cycling` on the claim "Alice cycles", is ungrounded, with or
-without an id.
+A mention whose span is one of the names or aliases of a known entity of the context is also
+grounded when the text names that entity, so the mention "Thomas" is grounded on "Tom moved to
+Paris" when Thomas is known as Tom. When several known entities share that name, the text must name
+all of them, because resolution could link the mention to any of them. A suggested id alone grounds
+nothing, because resolution matches known entities by name. A mention of something the text only
+implies, such as a hobby named `Cycling` on the claim "Alice cycles", is ungrounded, with or without
+an id.
 
 Ungrounded mentions are reported, and by default they are otherwise left alone. To have them
 removed before resolution, so they are never resolved or minted:

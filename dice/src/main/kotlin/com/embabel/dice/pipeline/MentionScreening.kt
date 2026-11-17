@@ -109,10 +109,9 @@ internal object MentionScreening {
         filterHandling: RejectedMentionHandling,
     ): ScreeningOutcome {
         val dropUngrounded = groundingHandling == RejectedMentionHandling.DROP
-        val checked = extracted.propositions.map { proposition ->
+        val groundingVerdicts = extracted.propositions.map { proposition ->
             rejections(grounding, proposition, proposition.mentions.indices.toList(), context)
         }
-        val groundingVerdicts = withConflictingIds(extracted.propositions, checked)
         val surviving = extracted.propositions.mapIndexed { index, proposition ->
             val all = proposition.mentions.indices.toList()
             if (dropUngrounded) all.filterNot { it in groundingVerdicts[index] } else all
@@ -245,42 +244,6 @@ internal object MentionScreening {
     private fun rebuild(base: SuggestedPropositions, propositions: List<SuggestedProposition>): SuggestedPropositions =
         if (propositions.zip(base.propositions).all { (a, b) -> a === b }) base
         else base.copy(propositions = propositions)
-
-    /**
-     * Rejects mentions that are grounded only through a known entity when their span and type
-     * carry different suggested ids in the chunk.
-     *
-     * Resolution gives every mention with the same span and type one id, so only one of those ids
-     * can survive. A mention whose span is in its own text is grounded whatever id it ends up with.
-     * A mention grounded only because its id or name points at a known entity the text names is
-     * not, once its span and type might resolve to another entity.
-     *
-     * @param propositions the propositions as extracted
-     * @param checked the grounding check's reasons for each proposition, keyed by mention position
-     * @return [checked] when nothing changes, otherwise a copy with the extra rejections
-     */
-    private fun withConflictingIds(
-        propositions: List<SuggestedProposition>,
-        checked: List<Map<Int, String>>,
-    ): List<Map<Int, String>> {
-        val idsByKey = propositions.flatMapIndexed { index, proposition ->
-            proposition.mentions.withIndex().filter { it.index !in checked[index] }.map { it.value }
-        }
-            .mapNotNull { mention -> mention.suggestedId?.takeIf { it.isNotBlank() }?.let { MentionKey.from(mention) to it } }
-            .groupBy({ it.first }, { it.second })
-        val conflicting = idsByKey.filterValues { it.distinct().size > 1 }.keys
-        if (conflicting.isEmpty()) return checked
-        return propositions.mapIndexed { index, proposition ->
-            val extra = proposition.mentions.withIndex()
-                .filter { (position, mention) ->
-                    position !in checked[index] &&
-                        MentionKey.from(mention) in conflicting &&
-                        MentionGrounding.reasonUngrounded(mention.span, proposition.text) != null
-                }
-                .associate { (position, _) -> position to UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION.name }
-            if (extra.isEmpty()) checked[index] else checked[index] + extra
-        }
-    }
 
     /**
      * Finds the suggested ids that mentions grounding dropped can pass on.

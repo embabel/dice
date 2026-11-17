@@ -170,13 +170,14 @@ called from several threads at once.
 
 The grounding check answers one question, whether the text of a proposition supports a mention. A
 rule about anything else goes in the filter. `GroundedMentionFilter` accepts a mention when its span
-is in that text. It also accepts a mention that names a known entity of the analysis, by
-`suggestedId` or by a span equal to the entity's name or an alias, when the text contains that
-entity's name or an alias. Names are compared the way `KnownEntityResolver` compares them, so a
-title or a suffix makes no difference. A known entity the text does not name is treated like any
-other mention. `KnownEntityResolver` matches by name before it looks at an id and takes the first
-match, so a span that is the name of several known entities is grounded only when the text names
-every one of them. A blank span is never grounded.
+is in that text. It also accepts a mention whose span equals the name or an alias of a known
+entity of the analysis, when the text contains that entity's name or an alias. Names are compared
+the way `KnownEntityResolver` compares them, so a title or a suffix makes no difference, and a
+grounded mention resolves to that entity. `KnownEntityResolver` takes the first known entity with a
+matching name, so a span that is the name of several known entities is grounded only when the text
+names every one of them. A `suggestedId` alone grounds nothing: `KnownEntityResolver` does not
+follow it, and a mention with the same span and type elsewhere could carry another. A blank span is
+never grounded.
 
 Grounding defaults to `KEEP` because the stock prompt asks for mentions the text only implies, such
 as a `Cycling` mention on the proposition "Alice cycles". Such a mention is ungrounded, with or
@@ -214,11 +215,6 @@ resolved. Resolution assigns ids by span and type, so the pipeline takes the id 
 position. `PropositionExtractor.resolvePropositions` returns one proposition per suggested
 proposition, in order, with the mentions in order. For an extractor that reorders its output, the
 pipeline pairs propositions and mentions by text, span, type and role instead.
-
-For the same reason, a mention whose span is not in its text, grounded only because it points at a
-known entity, is treated as ungrounded when its span and type carry two different suggested ids in
-the chunk. Resolution can honour only one of those ids, and the mention's own text does not show
-which. This holds whatever grounding check is installed.
 
 Every rejection is on the chunk result as a `RejectedMention`: the chunk id, the position and text
 of the proposition, the mention, the reason, which check rejected it and what the pipeline did with

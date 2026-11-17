@@ -222,14 +222,13 @@ and the consumer PRs that deliver it).
   forms, invisible characters, and the typographic variants of quotes and dashes. In scripts that
   put spaces between words, such as Latin, Cyrillic and Greek, the span must sit at word edges, so
   an inflected or plural form, or a name run together with a number, is a different word. A mention
-  that names a known entity of the context, by suggested id, or by name or alias compared the way
-  entity resolution compares them, is grounded when the text names that entity, and when several
-  known entities share that name the text must name all of them. Such a mention is ungrounded when
-  its span and type carry two different suggested ids in the chunk. A mention of something the text
-  only implies is ungrounded, with or without an id. By default the mentions are kept.
-  `withUngroundedMentions(UngroundedMentionHandling.DROP)` removes them before resolution, so they
-  are never resolved, never minted as an entity and not left on the proposition; the proposition
-  itself is always kept. **Compatibility: additive.**
+  that names a known entity of the context, by name or alias compared the way entity resolution
+  compares them, is grounded when the text names that entity, and when several known entities share
+  that name the text must name all of them. A suggested id alone grounds nothing. A mention of
+  something the text only implies is ungrounded, with or without an id. By default the mentions are
+  kept. `withUngroundedMentions(UngroundedMentionHandling.DROP)` removes them before resolution, so
+  they are never resolved, never minted as an entity and not left on the proposition; the
+  proposition itself is always kept. **Compatibility: additive.**
 
 - `MentionFilter.validateMentions(proposition, context)` judges all mentions of one proposition in
   one call and returns a `ValidationResult` per mention. The default calls `isValid` and

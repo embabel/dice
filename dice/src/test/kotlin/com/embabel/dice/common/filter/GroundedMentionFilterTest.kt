@@ -71,8 +71,8 @@ class GroundedMentionFilterTest {
     }
 
     @Test
-    fun `E4 a mention with the id of a known entity the text names is grounded`() {
-        assertEquals(listOf(Valid), judge(context(thomas), "Tom moved to Paris", mention("Thomas Smith", "user-1")))
+    fun `E4 an id alone does not ground a mention, even of a known entity the text names`() {
+        assertEquals(listOf(notInText), judge(context(thomas), "Tom moved to Paris", mention("Thomas Smith", "user-1")))
     }
 
     @Test
@@ -160,7 +160,7 @@ class GroundedMentionFilterTest {
         val known = context(thomas, knownPerson("user-2", "Alice"))
         assertEquals(listOf(notInText), judge(known, "Alice moved to Paris", mention("Thomas Smith", "user-1")))
         assertEquals(listOf(notInText), judge(known, "Alice moved to Paris", mention("Thomas")))
-        assertEquals(listOf(Valid), judge(known, "Alice moved to Paris", mention("Ally", "user-2")))
+        assertEquals(listOf(notInText), judge(known, "Alice moved to Paris", mention("Ally", "user-2")))
     }
 
     @Test
@@ -185,7 +185,7 @@ class GroundedMentionFilterTest {
         assertEquals(listOf(notInText), judge(known, "Alice waved", mention("Pat")))
         assertEquals(listOf(notInText), judge(known, "Alice waved", mention("Pat", "p-alice")))
         assertEquals(listOf(Valid), judge(known, "Alice waved to Bob", mention("Pat")))
-        assertEquals(listOf(Valid), judge(known, "Alice waved", mention("Ally", "p-alice")))
+        assertEquals(listOf(notInText), judge(known, "Alice waved", mention("Ally", "p-alice")))
     }
 
     @Test

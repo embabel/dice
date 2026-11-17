@@ -504,7 +504,7 @@ class PropositionPipelineScreeningTest {
     }
 
     @Test
-    fun `E20 a span grounded only through a known entity is ungrounded when its span and type carry two ids`() {
+    fun `E20 a mention grounded only by its id is ungrounded, with or without a wrapped check`() {
         val known = SourceAnalysisContext(
             schema = DataDictionary.fromClasses("test"),
             entityResolver = resolver,
@@ -527,6 +527,27 @@ class PropositionPipelineScreeningTest {
             assertEquals(2, result.rejectedMentions.count { it.check == RejectedMention.Check.GROUNDING })
             assertTrue(result.propositions.all { it.mentions.isEmpty() }, "mentions: ${result.propositions.map { it.mentions }}")
         }
+    }
+
+    @Test
+    fun `E21 a mention with a role resolution does not know is left unresolved all the same`() {
+        val unknownRole = alice.copy(role = "UNKNOWN")
+        val secondRejected = object : MentionFilter {
+            override fun isValid(mention: SuggestedMention, propositionText: String): Boolean = true
+            override fun rejectionReason(mention: SuggestedMention): String? = null
+            override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext) =
+                proposition.mentions.mapIndexed { index, _ ->
+                    if (index == 1) ValidationResult.Invalid("second") else ValidationResult.Valid
+                }
+        }
+
+        val result = pipeline(SuggestingPropositionExtractor.of(proposition(aliceMetBob, unknownRole, unknownRole)))
+            .withMentionFilter(secondRejected)
+            .processChunk(chunk(), context().withMintNewEntities(true))
+
+        val mentions = result.propositions.single().mentions
+        assertNotNull(mentions[0].resolvedId)
+        assertNull(mentions[1].resolvedId)
     }
 
     private fun inMemoryRepo(): PropositionRepository = object : PropositionRepository {

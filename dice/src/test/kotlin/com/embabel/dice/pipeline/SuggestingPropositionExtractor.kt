@@ -22,8 +22,6 @@ import com.embabel.dice.common.SuggestedEntities
 import com.embabel.dice.common.SuggestedEntity
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.common.filter.MentionFilter
-import com.embabel.dice.proposition.EntityMention
-import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionExtractor
 import com.embabel.dice.proposition.SuggestedProposition
@@ -95,7 +93,7 @@ class SuggestingPropositionExtractor(private val suggested: SuggestedProposition
                 contextId = context.contextId,
                 text = sp.text,
                 mentions = sp.mentions.map { m ->
-                    EntityMention(span = m.span, type = m.type, role = MentionRole.valueOf(m.role), resolvedId = nameToId[m.span.lowercase()])
+                    m.toEntityMention(nameToId[m.span.lowercase()])
                 },
                 confidence = sp.confidence,
                 grounding = listOf(suggestedPropositions.chunkId),

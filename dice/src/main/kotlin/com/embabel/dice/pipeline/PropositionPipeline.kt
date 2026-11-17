@@ -42,6 +42,7 @@ import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.HashKey
 import com.embabel.dice.incremental.ProcessedChunkRecord
 import com.embabel.dice.proposition.MentionKey
+import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionExtractor
 import com.embabel.dice.proposition.PropositionRepository
@@ -382,11 +383,11 @@ class PropositionPipeline private constructor(
             }
         }
         val pending = screened.propositions.mapIndexed { index, proposition ->
-            val marks = proposition.mentions.map { markOf(it.span, it.type, it.role) }
+            val marks = proposition.mentions.map { markOf(it.span, it.type, it.toEntityMention().role) }
             Triple(proposition.text, marks.sortedBy { it.toString() }, ranked(marks, unresolved.getOrNull(index).orEmpty()))
         }.toMutableList()
         return propositions.map { proposition ->
-            val marks = proposition.mentions.map { markOf(it.span, it.type, it.role.name) }
+            val marks = proposition.mentions.map { markOf(it.span, it.type, it.role) }
             val signature = marks.sortedBy { it.toString() }
             val match = pending.indexOfFirst { it.first == proposition.text && it.second == signature }
             if (match < 0) return@map proposition
@@ -413,8 +414,8 @@ class PropositionPipeline private constructor(
         propositions.size == screened.propositions.size &&
             propositions.zip(screened.propositions).all { (resolved, suggested) ->
                 resolved.text == suggested.text &&
-                    resolved.mentions.map { markOf(it.span, it.type, it.role.name) } ==
-                    suggested.mentions.map { markOf(it.span, it.type, it.role) }
+                    resolved.mentions.map { markOf(it.span, it.type, it.role) } ==
+                    suggested.mentions.map { markOf(it.span, it.type, it.toEntityMention().role) }
             }
 
     /**
@@ -422,20 +423,20 @@ class PropositionPipeline private constructor(
      *
      * @property span the span, lower case and trimmed
      * @property type the type, lower case and trimmed
-     * @property role the role, upper case and trimmed
+     * @property role the role
      */
-    private data class MentionMark(val span: String, val type: String, val role: String)
+    private data class MentionMark(val span: String, val type: String, val role: MentionRole)
 
     /**
-     * Builds a mention's mark from its raw span, type and role.
+     * Builds a mention's mark from its span, type and resolved role.
      *
      * @param span the span as written
      * @param type the type as written
-     * @param role the role as written
+     * @param role the role as resolution sets it
      * @return the normalized mark
      */
-    private fun markOf(span: String, type: String, role: String): MentionMark =
-        MentionMark(span.lowercase().trim(), type.lowercase().trim(), role.uppercase().trim())
+    private fun markOf(span: String, type: String, role: MentionRole): MentionMark =
+        MentionMark(span.lowercase().trim(), type.lowercase().trim(), role)
 
     /**
      * Names the mentions at the given positions by their mark and by how many earlier mentions

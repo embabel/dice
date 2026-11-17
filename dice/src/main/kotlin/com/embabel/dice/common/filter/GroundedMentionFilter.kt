@@ -33,16 +33,16 @@ import com.embabel.dice.proposition.SuggestedProposition
  *
  * With the analysis context, a mention is also grounded when it names a known entity and the text
  * names that same entity. The text names a known entity when the entity's name or one of its
- * aliases appears in the text at word edges. The mention names the entity when its suggested id is
- * the entity's id, or when its span and one of the entity's names are equal after name
- * normalization, ignoring case, which is how entity resolution matches a known entity. The extraction prompt asks for the canonical name with the entity's
- * id, so with Thomas known under the alias Tom, the mention "Thomas" on the text
- * "Tom moved to Paris" is grounded.
+ * aliases appears in the text at word edges. The mention names the entity when its span and one of
+ * the entity's names are equal after name normalization, ignoring case, which is how entity
+ * resolution matches a known entity. With Thomas known under the alias Tom, the mention "Thomas" on
+ * the text "Tom moved to Paris" is grounded. A suggested id alone grounds nothing, because entity
+ * resolution matches known entities by name and does not follow the id.
  *
- * Entity resolution matches a known entity by name first, so a span that is the name of several
- * known entities is grounded only when the text names every one of them. With Bob and Alice both
- * known as Pat, the mention "Pat" on "Alice waved" is ungrounded, with or without Alice's id,
- * because resolution could link it to Bob.
+ * Entity resolution takes the first known entity with a matching name, so a span that is the name
+ * of several known entities is grounded only when the text names every one of them. With Bob and
+ * Alice both known as Pat, the mention "Pat" on "Alice waved" is ungrounded, with or without
+ * Alice's id, because resolution could link it to Bob.
  *
  * A mention that names something the text only implies is rejected. The mention "Cycling" on
  * "Alice cycles" is ungrounded even with the id of a known entity called Cycling. A blank span is
@@ -96,28 +96,25 @@ internal object KnownEntityGrounding {
     }
 
     /**
-     * A known entity's id and name forms, and whether the proposition text names it.
+     * A known entity's name forms, and whether the proposition text names it.
      *
-     * @property id the entity's id, or null when it is blank
      * @property names the entity's name forms after name normalization
      * @property inText true when one of the entity's names is in the text at word edges
      */
-    private class KnownForms(val id: String?, val names: List<String>, val inText: Boolean)
+    private class KnownForms(val names: List<String>, val inText: Boolean)
 
     /**
-     * Collects a known entity's id and names, and checks whether the text names the entity.
+     * Collects a known entity's names, and checks whether the text names the entity.
      *
      * @param known the known entity
      * @param text the prepared proposition text
      * @param prepare folds a text so spans can be looked up in it
-     * @return the entity's id, names and whether the text names it, or null when it has no non-blank name
+     * @return the entity's names and whether the text names it, or null when it has no non-blank name
      */
     private fun knownForms(known: KnownEntity, text: PreparedText, prepare: (String) -> PreparedText): KnownForms? {
         val forms = (listOf<String?>(known.name) + known.aliases).filterNotNull().filter { it.isNotBlank() }
         if (forms.isEmpty()) return null
-        val id: String? = known.id
         return KnownForms(
-            id = id?.takeIf { it.isNotBlank() },
             names = forms.map { NormalizedNameCandidateSearcher.normalizeName(it) }.filter { it.isNotBlank() },
             inText = forms.any { MentionGrounding.reasonUngrounded(prepare(it), text) == null },
         )
@@ -126,10 +123,9 @@ internal object KnownEntityGrounding {
     /**
      * Tells whether a mention names a known entity that the text names, and only such an entity.
      *
-     * Entity resolution matches a known entity by name before it looks at a suggested id, and picks
-     * the first one when several share the name. So when the mention's name belongs to any known
-     * entity, it is grounded only if every known entity with that name is one the text names.
-     * Otherwise its suggested id must belong to a known entity the text names.
+     * Entity resolution matches a known entity by name and picks the first one when several share
+     * the name. So the mention is grounded only when its name belongs to a known entity and every
+     * known entity with that name is one the text names.
      *
      * @param mention the mention
      * @param known the known entities of the analysis with their names
@@ -139,8 +135,6 @@ internal object KnownEntityGrounding {
         if (known.none { it.inText }) return false
         val name = NormalizedNameCandidateSearcher.normalizeName(mention.span)
         val sameName = if (name.isBlank()) emptyList() else known.filter { forms -> forms.names.any { it.equals(name, ignoreCase = true) } }
-        if (sameName.isNotEmpty()) return sameName.all { it.inText }
-        val id = mention.suggestedId?.takeIf { it.isNotBlank() } ?: return false
-        return known.any { it.inText && it.id == id }
+        return sameName.isNotEmpty() && sameName.all { it.inText }
     }
 }
