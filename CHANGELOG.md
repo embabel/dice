@@ -124,6 +124,30 @@ and the consumer PRs that deliver it).
 
 ### Added
 
+- Scoped reads, **EXPERIMENTAL** (may change before 1.0). These are interfaces and value types. See
+  "Scoped reads" in the user guide.
+  - `ContextReadScope` names the contexts a read may touch: at least one, each by id.
+  - `ScopedReadSpec` holds the scope a read may touch and the filters it keeps. `narrow` adds a
+    filter and `narrowToContexts` keeps some of the contexts. A narrowed spec reports only the
+    contexts it allows.
+  - `ReadCriteria` says which propositions a read keeps. It has no context field, so only a scoped
+    read accepts it. `ReadQuery` adds an order and a limit. `ReadKeywordQuery` is the tokens, the
+    criteria and the limit of a keyword match. `ReadVectorSearchRequest` is the text, the criteria,
+    the result size and the score floor of a similarity search.
+  - `ReadBudget` caps the rows a read returns or counts and the vector candidates a similarity
+    search has.
+  - `ScopedReads` (query, count, keyword match) and `ScopedVectorSearch` (similarity search) are the
+    interfaces a store implements. It lists `StoreCapability.SCOPED_READS` and
+    `StoreCapability.SCOPED_VECTOR_SEARCH`.
+  - A store lists the `ReadCriterion` and `ReadOrder` entries it applies. A read that sets any other
+    throws `UnsupportedCapabilityException`.
+  - `ReadScopeViolationException` is thrown when a spec is narrowed to a context it does not allow,
+    and `ReadBudgetExceededException` when a read needs more than its budget. Both extend
+    `ReadRefusedException`, which is not an `IllegalArgumentException`.
+  - `ScopedCandidateSearcher` is entity candidate search that takes a scope.
+  - **Compatibility: additive.** `StoreCapability`, `ReadCriterion`, `ReadOrder` and
+    `ReadBudgetResource` gain entries over time, so a Kotlin `when` or a Java `switch` expression
+    over one of them keeps an `else` or `default` branch.
 - Evidence types for a caller that assembles model context, in the new package
   `com.embabel.dice.evidence`. `EvidenceItem` is one claim with its `Citation`, its stored and
   decayed confidence, its status, when it was recorded and revised, and a `Retrieval` for each

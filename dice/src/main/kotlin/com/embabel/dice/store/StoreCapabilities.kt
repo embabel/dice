@@ -24,6 +24,9 @@ import java.util.EnumSet
  * An optional thing a proposition store can do. Each one has an interface that states its rules.
  * A store that lists a capability implements that interface.
  *
+ * Entries are added over time. A Kotlin `when` and a Java `switch` expression over this enum
+ * keep an `else` or `default` branch.
+ *
  * EXPERIMENTAL. This API may change before 1.0.
  *
  * @property contract The interface a store implements when it lists this capability.
@@ -33,6 +36,12 @@ enum class StoreCapability(val contract: Class<*>) {
 
     /** Similarity search that filters before it picks the nearest K. */
     FILTERED_VECTOR_SEARCH(FilteredVectorSearch::class.java),
+
+    /** Query, count and keyword match held to a set of contexts and a budget. */
+    SCOPED_READS(ScopedReads::class.java),
+
+    /** Similarity search held to a set of contexts and a budget. */
+    SCOPED_VECTOR_SEARCH(ScopedVectorSearch::class.java),
 }
 
 /**
@@ -40,6 +49,9 @@ enum class StoreCapability(val contract: Class<*>) {
  *
  * With [AFTER_TOP_K], a search for the five closest propositions about one customer picks the
  * five closest overall and then drops the ones about other customers, which can leave none.
+ *
+ * The mode describes similarity search that takes no read scope. A store lists
+ * [StoreCapability.SCOPED_VECTOR_SEARCH] under any mode, and listing it does not change the mode.
  *
  * EXPERIMENTAL. This API may change before 1.0.
  */
@@ -133,6 +145,7 @@ class StoreCapabilities private constructor(
      * @param capability The capability to add.
      * @return A descriptor that also supports [capability]. Adding
      *   [StoreCapability.FILTERED_VECTOR_SEARCH] sets [VectorFiltering.BEFORE_TOP_K].
+     *   Adding any other capability keeps the filtering mode.
      */
     fun with(capability: StoreCapability): StoreCapabilities =
         if (capability == StoreCapability.FILTERED_VECTOR_SEARCH) {
