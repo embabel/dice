@@ -218,6 +218,16 @@ class ReviserReinforceCharacterisationTest {
     }
 
     @Test
+    fun `evidence whose only source is the stored proposition changes nothing without grounding or provenance`() {
+        val stored = proposition("Alice is a developer", 0.6, grounding = listOf("g1"))
+        val evidence = proposition("Alice codes", 0.8, sourceIds = listOf(stored.id))
+        for (revised in listOf(revisedFrom(stored, evidence), mergedFrom(stored, evidence))) {
+            assertSame(stored, revised)
+            assertEquals(stored.reinforceCount, revised.reinforceCount)
+        }
+    }
+
+    @Test
     fun `the stored proposition's own id is left out of its source ids`() {
         val stored = proposition("Alice is a developer", 0.6, grounding = listOf("g1"))
         val evidence = proposition("Alice codes", 0.8, grounding = listOf("g2"), sourceIds = listOf(stored.id, "q"))

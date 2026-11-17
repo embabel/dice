@@ -45,7 +45,8 @@ internal class ReinforcementRule(
  * evidence names a source and the stored proposition already holds all of it. A source is a
  * grounding id, a provenance entry or a source id. Without provenance entries the grounding ids
  * are the source identity. Evidence that names no source counts as new and still reinforces,
- * although [Proposition.absorbEvidence] alone treats it as already held.
+ * although [Proposition.absorbEvidence] alone treats it as already held. Evidence whose only
+ * source is the stored proposition leaves it unchanged.
  *
  * @param existing the stored proposition
  * @param evidence the proposition that backs it up
@@ -56,9 +57,9 @@ internal fun reinforce(existing: Proposition, evidence: Proposition, rule: Reinf
     if (existing.id == evidence.id) return existing
     val sources = evidence.copy(sourceIds = evidence.sourceIds.filter { it != existing.id })
     val folded = existing.absorbEvidence(sources)
-    val namesNoSource = sources.grounding.isEmpty() &&
-        sources.provenanceEntries.isEmpty() &&
-        sources.sourceIds.isEmpty()
+    val namesNoSource = evidence.grounding.isEmpty() &&
+        evidence.provenanceEntries.isEmpty() &&
+        evidence.sourceIds.isEmpty()
     if (!namesNoSource && folded.reinforceCount == existing.reinforceCount) return existing
     val now = Instant.now()
     return folded.copy(
