@@ -78,7 +78,7 @@ List<Proposition> confident = repository.findByEffectiveConfidenceAbove(0.5, Pro
 
 // Propositions created in a window, ranked by confidence at the end of the window.
 List<Proposition> quarter = repository.findByCreatedBetweenOrderedByEffectiveConfidence(
-        start, end, Proposition.DEFAULT_DECAY_K);
+        start, end, end, Proposition.DEFAULT_DECAY_K);
 ----
 
 Then Kotlin:
@@ -87,12 +87,12 @@ Then Kotlin:
 ----
 val ranked = repository.findAllOrderedByEffectiveConfidence(Proposition.DEFAULT_DECAY_K)
 val confident = repository.findByEffectiveConfidenceAbove(0.5, Proposition.DEFAULT_DECAY_K)
-val quarter = repository.findByCreatedBetweenOrderedByEffectiveConfidence(
-    start, end, Proposition.DEFAULT_DECAY_K)
+val quarter = repository.findByCreatedBetweenOrderedByEffectiveConfidence(start, end)
 ----
 
-The window query also takes an `asOf` instant before `k`. Without it, the ranking is measured at the end
-of the window.
+The window query also takes an `asOf` instant before `k`. The Java call passes `end` there, so the window
+is ranked by confidence at its end. The Kotlin call leaves both `asOf` and `k` to their defaults, which
+are the end of the window and `Proposition.DEFAULT_DECAY_K`.
 
 ==== Example
 

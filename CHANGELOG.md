@@ -961,15 +961,18 @@ and the consumer PRs that deliver it).
 
 - `LlmPropositionExtractorBuilder` and `Outcome` have public constructors, so Java can build them
   directly. `Outcome`'s constructor now checks its arguments and throws `IllegalArgumentException`
-  for a combination no factory makes, such as a skipped outcome that carries a value.
-  **Compatibility: additive.**
+  for a combination no factory makes, such as a skipped outcome that carries a value. Java code that
+  called the constructor with an inconsistent combination now gets `IllegalArgumentException`; use
+  `Outcome.success`, `failure` or `skipped` instead. **Compatibility: behavioral.**
 
 ### Fixed
 
 - A `PropositionDraft` that sets only `created` no longer copies it into `contentRevised`,
   `metadataRevised` and `lastAccessed`. Those now take the build moment, as the `Proposition`
   constructor does, so an imported fact stops decaying by its whole age the moment it is built. To
-  keep the old anchor, set `contentRevised` as well as `created`.
+  keep the old anchor, set `contentRevised` as well as `created`. The same goes the other way: a draft
+  that sets only `contentRevised` no longer copies it into `created` and `metadataRevised`, which also
+  take the build moment, so set `created` as well when you import an older fact.
 
 - `MetamodelAutoConfiguration` and the metamodel wiring tests referenced the drift quarantine types
   at their former home in `com.embabel.dice.metamodel(.support)`. They moved to

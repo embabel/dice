@@ -512,7 +512,8 @@ class PropositionPipeline private constructor(
      * in earlier chunks can be recognized in later chunks without external persistence.
      *
      * An Exception in one chunk gives a Failed result for that chunk. An Error is not caught and
-     * ends the run.
+     * ends the run. An event listener is the exception: anything a listener throws, Error included,
+     * is caught and logged, as before, so it never stops the run.
      *
      * @param chunks The chunks to process
      * @param context Configuration including schema
@@ -564,8 +565,9 @@ class PropositionPipeline private constructor(
         val chunkResults: List<ChunkPropositionResult> = extractions.mapIndexed { i, extraction ->
             val chunkId = chunks[i].id
             if (extraction != null) {
-                // Isolate per-chunk: an Exception in resolution, revision or event emission gives a
-                // Failed result for this chunk only; an Error ends the run.
+                // Isolate per-chunk: an Exception in resolution or revision gives a Failed result for
+                // this chunk only; an Error there ends the run. Listener throws never get this far,
+                // because event emission goes through the safe wrapper.
                 attemptCatching { resolveStage(extraction, crossChunkContext) }
                     .getOrElse { e ->
                         logger.warn("Resolution failed for chunk {}: {}", chunkId, e.message, e)
