@@ -51,7 +51,7 @@ by the starter) applies them idempotently on startup — there is no migration r
   `Source.key`, the composite `(Proposition.contextId, Proposition.text)` dedup backstop, and the range
   indexes queries filter by (`contextId`, `status`, `level`, `effectiveConfidence`, `Mention.resolvedId`, …).
 - `lineageRecordSchema` — natural-key uniqueness for `ProjectionRecord`, `CollectorRecord`, and
-  `CollectorRun`, which lets the lineage stores `MERGE` (upsert) without duplicating.
+  `CollectorRun`, which lets the lineage stores `MERGE` (upsert) without duplicating. It also holds uniqueness on the `CollectorRunCounter` node that numbers run headers.
 - `propositionVectorIndexSchema` — the cosine vector index on `Proposition.embedding`, sized to the
   embedding model's dimension and stamped with the model name as the schema version. Gated behind
   `embabel.dice.store.vector-index.enabled` (default true).

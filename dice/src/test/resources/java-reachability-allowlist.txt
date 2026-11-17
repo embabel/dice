@@ -2,6 +2,7 @@
 # using the full class name and JVM parameter descriptor from the API listings.
 # Each line is a known gap. Remove a line once the function gets a String form;
 # JavaReachabilityListingTest fails if a line here is covered or no longer exists.
+# Java form exists with a different parameter shape; listed so the strict check stays exact.
 com/embabel/dice/agent/DiscoveryTools#asTools(Lcom/embabel/dice/query/discovery/RetrievalRouter;Lcom/embabel/dice/projection/lineage/ProjectionRecordStore;Lcom/embabel/dice/projection/memory/CollectorRunner;Ljava/lang/String;)
 com/embabel/dice/agent/DiscoveryTools$Companion#asTools(Lcom/embabel/dice/query/discovery/RetrievalRouter;Lcom/embabel/dice/projection/lineage/ProjectionRecordStore;Lcom/embabel/dice/projection/memory/CollectorRunner;Ljava/lang/String;)
 com/embabel/dice/metamodel/DriftCheckRunner#run(Ljava/lang/String;)
@@ -59,7 +60,8 @@ com/embabel/dice/storage/DrivinePropositionRepository#pathBetween(Ljava/lang/Str
 com/embabel/dice/storage/DrivinePropositionRepository#whyExplain(Ljava/lang/String;Ljava/lang/String;)
 com/embabel/dice/storage/ExtractionRunSchema#requireStorableTenant(Ljava/lang/String;)
 com/embabel/dice/storage/GraphDecayManager#materialize(Ljava/lang/String;)
-
-# Java form exists with a different parameter shape; listed so the strict check stays exact.
 com/embabel/dice/proposition/extraction/ExtractionRunStore#childrenOf(Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;I)
 com/embabel/dice/proposition/extraction/ExtractionRunStore#runsOfRoot(Ljava/lang/String;Lcom/embabel/dice/proposition/extraction/ExtractionRunRef;ILjava/time/Instant;)
+com/embabel/dice/conformance/AbstractPropositionRunLinkStoreContractTest#proposition(Ljava/lang/String;Ljava/lang/String;)
+com/embabel/dice/conformance/AbstractPropositionRunLinkStoreContractTest#run(Ljava/lang/String;Ljava/lang/String;)
+com/embabel/dice/metamodel/InMemoryDriftReportStore#driftReportsInContext(Ljava/lang/String;Ljava/lang/String;ILjava/time/Instant;)

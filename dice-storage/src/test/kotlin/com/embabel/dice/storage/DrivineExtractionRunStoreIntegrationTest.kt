@@ -18,6 +18,7 @@ package com.embabel.dice.storage
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.common.DiceEvent
 import com.embabel.dice.common.DiceEventListener
+import com.embabel.dice.conformance.RedirectableEventListener
 import com.embabel.dice.proposition.extraction.ExtractionActorRef
 import com.embabel.dice.proposition.extraction.ExtractionCohortRef
 import com.embabel.dice.proposition.extraction.ExtractionContentProfileRef

@@ -45,6 +45,25 @@ import org.springframework.transaction.annotation.Transactional
  * stored and re-authorize a collapse that was undone. It is written through `coalesce` instead, so
  * a stamp arriving wins and a replay preserves whatever is there. The append-only in-memory store
  * gets the same property for free, since the stamped record stays beside the replayed one.
+ *
+ * [runs] returns run headers in the order they were first recorded. [recordRun] gives a header the
+ * next number off one `(:CollectorRunCounter)` node when it creates the header, in the same
+ * statement, and stores it as `sequence` on the `(:CollectorRun)` node. Recording a run again keeps
+ * its number. The counter's uniqueness constraint comes from [LineageSchema], so concurrent first
+ * writes share one counter. Setting `lockedBy` on the counter takes its write lock before the
+ * increment reads it, so two runs started at once get distinct numbers.
+ *
+ * A header with no `sequence` was written by an earlier build, or by a build that was rolled back
+ * after this one ran. [runs] returns those headers first, ordered by the instant in `finishedAt`, or
+ * in `startedAt` for an unfinished header, then by `runId`. The collector writes a header when its
+ * run finishes, so the finish instant is the closest record of when such a header was inserted.
+ * Recording one of those headers again gives it no number. Its place among the unnumbered headers
+ * then follows the finish instant it was recorded with, or its start instant while it is
+ * unfinished, then its `runId`.
+ *
+ * No uniqueness constraint names `sequence`. [DiceOwnedSchema] builds a label's ownership shape from
+ * every property its uniqueness constraints name, so such a constraint would make every unnumbered
+ * header read as domain drift.
  */
 @Transactional
 class DrivineCollectorRecordStore(
@@ -81,11 +100,20 @@ class DrivineCollectorRecordStore(
             QuerySpecification.withStatement(
                 """
                 MERGE ${LineageSchema.mergePattern("n", LineageSchema.COLLECTOR_RUN)}
+                ON CREATE SET n.sequence = 0
                 SET n.startedAt  = ${'$'}startedAt,
                     n.finishedAt = ${'$'}finishedAt,
                     n.dryRun     = ${'$'}dryRun
+                WITH n
+                WHERE n.sequence = 0
+                MERGE ${LineageSchema.mergePattern("c", LineageSchema.COLLECTOR_RUN_COUNTER)}
+                SET c.lockedBy = ${'$'}runId
+                WITH n, c
+                SET c.sequence = coalesce(c.sequence, 0) + 1
+                WITH n, c
+                SET n.sequence = c.sequence
                 """.trimIndent(),
-            ).bind(CollectorRunRowMapper.bindMap(run)),
+            ).bind(CollectorRunRowMapper.bindMap(run) + ("name" to RUN_COUNTER_NAME)),
         )
     }
 
@@ -134,8 +162,26 @@ class DrivineCollectorRecordStore(
     override fun runs(): List<CollectorRun> {
         @Suppress("UNCHECKED_CAST")
         val rows = persistenceManager.query(
-            QuerySpecification.withStatement("MATCH (n:CollectorRun) RETURN n") as QuerySpecification<Any>,
+            QuerySpecification.withStatement(
+                """
+                MATCH (n:CollectorRun)
+                RETURN n
+                ORDER BY coalesce(n.sequence, 0), ${InstantText.sortKey("coalesce(n.finishedAt, n.startedAt)")}, n.runId
+                """.trimIndent(),
+            ).bind(mapOf(InstantText.PATTERN_PARAMETER to InstantText.PATTERN)) as QuerySpecification<Any>,
         )
         return rows.filterIsInstance<Map<*, *>>().map(CollectorRunRowMapper::fromRow)
+    }
+
+    private companion object {
+
+        /**
+         * The name of the one counter every run header takes its number from.
+         *
+         * A header created by [recordRun] gets a `sequence` of 1 or more. The statement marks a node
+         * it has just created with 0, and only a node carrying that mark advances the counter. An
+         * earlier-build header has no `sequence`, so recording it again leaves it unnumbered.
+         */
+        private const val RUN_COUNTER_NAME: String = "runs"
     }
 }

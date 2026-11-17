@@ -133,6 +133,13 @@ class DiceOwnedSchemaTest {
     }
 
     @Test
+    fun `a run header an earlier build wrote is still dice's own`() {
+        // A uniqueness constraint naming sequence would add it to this shape. A header written
+        // before run headers were numbered has no sequence, so it would then read as domain drift.
+        assertEquals("n.runId IS NOT NULL", owned.ownedNodePredicate("n", "CollectorRun"))
+    }
+
+    @Test
     fun `the ownership predicate asks for every property of the shape`() {
         assertEquals(
             "s.key IS NOT NULL AND s.kind IS NOT NULL",

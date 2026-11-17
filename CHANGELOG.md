@@ -10,6 +10,53 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- Entity names are compared through a `NameNormalizer`, and the standard one applies its person
+  rules only to entities labelled `Person`. Before, every name lost a leading English title, a
+  trailing generational suffix and a single-letter middle initial, and "Last, First" was turned
+  around, whatever kind of entity it named. "Series A Round" and "Series B Round" both compared as
+  "Series Round" and could resolve to one entity, and "Paris, France" compared as "France Paris".
+  Now a name that is not a person's only has its whitespace collapsed. Each name is normalized
+  with the labels of its own entity: a mention's type for a mention, the stored labels for a known
+  or stored entity. For a person's name the rules now recognize letters and whitespace in any
+  script, so "José M García" compares as "José García" and a non-breaking space separates name
+  parts like any other space. This applies to `NormalizedNameCandidateSearcher`,
+  `PartialNameCandidateSearcher`, `KnownEntityResolver`, `InMemoryEntityResolver` and
+  `GroundedMentionFilter`. `NormalizedNameCandidateSearcher.normalizeName` and
+  `DefaultCanonicalNameSelector` still apply the person rules to every name. Migration:
+  `PersonNameNormalizer.english().forEveryName()` compares every name as a person's again. Pass it
+  to `PropositionPipeline.withNameNormalizer`, to
+  `IncrementalPropositionExtraction.withNameNormalizer` and to
+  `DefaultCandidateSearchers.create(repository, normalizer)`. A schema whose people carry another label names it with
+  `PersonNameNormalizer.english().withPersonLabels("Contact")`. A name with nothing left after normalization matches nothing. Stored entities are not changed.
+  **Compatibility: behavioral.**
+
+- A candidate searcher whose store call fails now logs a warning that names the search and the
+  exception class. The name or id searched for and the stack trace are logged at debug level. `DefaultGroundingResolver` does the same for a failed lookup. Before, these were logged at
+  debug level only, so a store outage showed up as mentions resolving to new entities with nothing
+  in the log. The searcher still returns no candidates and resolution carries on.
+  **Compatibility: behavioral.**
+
+- A mention the mention filter leaves unresolved now stays unresolved. Before, entity resolution
+  assigned ids by span and type, so such a mention got the id of an accepted mention with the same
+  span and type elsewhere in the chunk. `PropositionExtractor.resolvePropositions` is now
+  documented to return the propositions and their mentions in the order it was given them, and the
+  pipeline applies the filter's verdicts by position. When an extractor's output does not line up
+  with what it was given, by count or by each mention's span and type, and the chunk had a mention
+  dropped or left unresolved, the pipeline clears every id in the propositions that do not line up
+  and logs one warning saying how many it cleared. Migration: `withMentionFilter(filter,
+  RejectedMentionHandling.KEEP)` keeps the earlier resolution of rejected mentions, and an extractor
+  whose `resolvePropositions` keeps the order and the mentions it was given, as
+  `LlmPropositionExtractor` does, is not affected by the clearing. **Compatibility: behavioral.**
+
+- `PropositionPipeline` applies the mention filter itself, for every `PropositionExtractor`, and
+  passes `null` as the `mentionFilter` argument of `toSuggestedEntities`. An extractor that ignores
+  that argument has its mentions filtered all the same. `LlmPropositionExtractor.toSuggestedEntities`
+  called directly with a filter asks it through `validateMentions`, which gives the same result for
+  a filter that only implements `isValid`. For rejected mentions the pipeline logs one line of
+  counts per chunk, at warning level when a mention was dropped or left unresolved and at debug
+  level otherwise. Spans are logged at debug level only, by the pipeline and by
+  `LlmPropositionExtractor`. **Compatibility: behavioral.**
+
 - The build now checks the committed public API listings of the published modules. `./mvnw verify` fails when
   a module's compiled public API differs from its `api/*.api` file. To update the listings after an API change,
   run `./mvnw -B -DskipTests -Dapi.listing.mode=update clean verify`. **Compatibility: additive.** A build
@@ -155,6 +202,44 @@ and the consumer PRs that deliver it).
 
 ### Added
 
+- `NameNormalizer` chooses how entity names are compared, and `PersonNameNormalizer` is the
+  built-in implementation with its rules open to change: the labels that mark a person, the titles
+  and suffixes removed, and whether middle initials and "Last, First" order are handled. Java
+  builds one with a chain, `PersonNameNormalizer.english().withTitles("Herr", "Frau")`, and Kotlin
+  with a block, `PersonNameNormalizer { titles("Herr", "Frau") }`. `NameNormalizer.whitespaceOnly()`
+  has no language-specific rules, and a lambda `(name, labels) -> ...` is a normalizer.
+  `PropositionPipeline.withNameNormalizer` and `EntityPipeline.withNameNormalizer` set it for a
+  run. `DefaultCandidateSearchers.create` and `withoutVector` take one as a second argument, and
+  the name searchers, `KnownEntityResolver`, `InMemoryEntityResolver`, `GroundedMentionFilter` and
+  `IncrementalPropositionExtraction` each have `withNameNormalizer`.
+  `NormalizedNameCandidateSearcher` and `PartialNameCandidateSearcher` gain Java constructors for
+  their shorter argument lists.
+  **Compatibility: additive.**
+
+- Scoped reads, **EXPERIMENTAL** (may change before 1.0). These are interfaces and value types. See
+  "Scoped reads" in the user guide.
+  - `ContextReadScope` names the contexts a read may touch: at least one, each by id.
+  - `ScopedReadSpec` holds the scope a read may touch and the filters it keeps. `narrow` adds a
+    filter and `narrowToContexts` keeps some of the contexts. A narrowed spec reports only the
+    contexts it allows.
+  - `ReadCriteria` says which propositions a read keeps. It has no context field, so only a scoped
+    read accepts it. `ReadQuery` adds an order and a limit. `ReadKeywordQuery` is the tokens, the
+    criteria and the limit of a keyword match. `ReadVectorSearchRequest` is the text, the criteria,
+    the result size and the score floor of a similarity search.
+  - `ReadBudget` caps the rows a read returns or counts and the vector candidates a similarity
+    search has.
+  - `ScopedReads` (query, count, keyword match) and `ScopedVectorSearch` (similarity search) are the
+    interfaces a store implements. It lists `StoreCapability.SCOPED_READS` and
+    `StoreCapability.SCOPED_VECTOR_SEARCH`.
+  - A store lists the `ReadCriterion` and `ReadOrder` entries it applies. A read that sets any other
+    throws `UnsupportedCapabilityException`.
+  - `ReadScopeViolationException` is thrown when a spec is narrowed to a context it does not allow,
+    and `ReadBudgetExceededException` when a read needs more than its budget. Both extend
+    `ReadRefusedException`, which is not an `IllegalArgumentException`.
+  - `ScopedCandidateSearcher` is entity candidate search that takes a scope.
+  - **Compatibility: additive.** `StoreCapability`, `ReadCriterion`, `ReadOrder` and
+    `ReadBudgetResource` gain entries over time, so a Kotlin `when` or a Java `switch` expression
+    over one of them keeps an `else` or `default` branch.
 - Evidence types for a caller that assembles model context, in the new package
   `com.embabel.dice.evidence`. `EvidenceItem` is one claim with its `Citation`, its stored and
   decayed confidence, its status, when it was recorded and revised, and a `Retrieval` for each
@@ -165,6 +250,28 @@ and the consumer PRs that deliver it).
   claims, scored hits, a lineage or a revision contradiction, and an empty list converts to
   `Missing`. `EvidenceProvider`, **EXPERIMENTAL** (shape may change before 1.0), is the interface a
   lookup implements to return `Evidence`. **Compatibility: additive.**
+
+- **EXPERIMENTAL** (shape may change before 1.0): `InMemoryDriftReportStore` in `dice-metamodel` is a
+  `DriftReportStore` for tests and demos that keeps reports in memory. It replaces a report saved
+  again under the same schema, version, capture instant and context, applies each read's scope
+  before its limit and returns the newest first. **Compatibility: additive.**
+
+- **EXPERIMENTAL** (shape may change before 1.0): `dice-store-conformance` is a published module of
+  abstract JUnit suites, one for each DICE store interface, in `com.embabel.dice.conformance`. A
+  backend adds it at test scope, extends a suite and returns its store from one method. A failing
+  test names a documented behaviour the store does not keep. Nine suites cover `PropositionStore`,
+  `ExtractionRunStore`, `PropositionRunLinkStore`, `SweptBaselineStore`, `DriftReportStore`,
+  `ChunkHistoryStore`, `CollectorRecordStore`, `CollectorTraceStore` and `ProjectionRecordStore`.
+  `AbstractFilteredVectorSearchContractTest` reads the `StoreCapabilities` a store publishes. It
+  checks filter-before-K search for a store that lists `FILTERED_VECTOR_SEARCH`, checks only the
+  `AFTER_TOP_K` promise for a store that declares that mode, and is reported as skipped for a store
+  that declares neither. `ConformanceEmbeddings` and `ConformanceEmbeddingService` give the store
+  under test vectors at known angles. `RedirectableEventListener` is the listener a store that is
+  built once, such as a Spring bean, is built with. The test points it at the listener each case
+  supplies. A subclass written in Java or Kotlin can override any case, for example to turn it off
+  with `@Disabled`. JUnit Jupiter is a compile dependency of the module. The user guide page "Verify
+  a storage backend" has Java and Kotlin examples.
+  **Compatibility: additive.**
 
 - **EXPERIMENTAL** (shape may change before 1.0): a chunk's extraction output can be stored as one
   unit. `PersistUnit` holds the claims, the entities they refer to and an optional extraction run.
@@ -234,11 +341,37 @@ and the consumer PRs that deliver it).
 - `PropositionPipeline` checks each mention an extractor returns against the text of its own
   proposition before entity resolution, and emits one `UngroundedMentionsFound` event per chunk
   listing every mention whose span is blank or does not appear in that text, with the reason. The
-  comparison ignores letter case, runs of whitespace, Unicode composition and width forms, and
-  typographic quotes and hyphens, and is otherwise literal. By default the mentions are kept.
-  `withUngroundedMentions(UngroundedMentionHandling.DROP)` removes them before resolution, so they
-  are never resolved, never minted as an entity and not left on the proposition; the proposition
-  itself is always kept. **Compatibility: additive.**
+  comparison uses full case folding and ignores runs of whitespace, Unicode composition and width
+  forms, invisible characters, and the typographic variants of quotes and dashes. In scripts that
+  put spaces between words, such as Latin, Cyrillic and Greek, the span must sit at word edges, so
+  an inflected or plural form, or a name run together with a number, is a different word. A mention
+  that names a known entity of the context, by name or alias compared the way entity resolution
+  compares them, is grounded when the text names that entity, and when several known entities share
+  that name the text must name all of them. A suggested id alone grounds nothing. A mention of
+  something the text only implies is ungrounded, with or without an id. By default the mentions are
+  kept. `withUngroundedMentions(UngroundedMentionHandling.DROP)` removes them before resolution, so
+  they are never resolved, never minted as an entity and not left on the proposition; the
+  proposition itself is always kept. **Compatibility: additive.**
+
+- `MentionFilter.validateMentions(proposition, context)` judges all mentions of one proposition in
+  one call and returns a `ValidationResult` per mention. The default calls `isValid` and
+  `rejectionReason`, so existing filters work unchanged. A mocked `MentionFilter` must stub
+  `validateMentions` too, because a mock returns an empty list for it and the pipeline fails the
+  chunk when the number of results does not match the number of mentions. `CompositeMentionFilter`
+  and `ObservableMentionFilter` pass it on to the filters they wrap. `GroundedMentionFilter` is the
+  pipeline's grounding check as a `MentionFilter`, and `PropositionPipeline.withMentionGrounding`
+  replaces it. `withMentionFilter(filter, RejectedMentionHandling)` chooses what happens to a
+  mention the filter rejects. `KEEP` only reports it, `LEAVE_UNRESOLVED`, which is what
+  `withMentionFilter(filter)` does, keeps it on the proposition unresolved, and `DROP` removes it.
+  **Compatibility: additive.**
+
+- `ChunkPropositionResult.rejectedMentions` and `PropositionResults.rejectedMentions` list every
+  mention a check rejected as a `RejectedMention`, with the chunk id, the position and text of the
+  proposition, the reason, the check and what the pipeline did. `ChunkPropositionResult.Success`
+  has a six-argument constructor that takes the list, and a four-argument constructor for Java.
+  Its five-argument constructor, `copy` and `componentN` are unchanged. `Success` is a regular
+  class with those members written out, so `Success::class.isData` is false, and its `equals`
+  includes `rejectedMentions`. **Compatibility: additive.**
 
 - A Kotlin DSL for stamping in `dice-metamodel`. **EXPERIMENTAL** (shape may change
   before 1.0): `MetamodelVersion(dictionary) { }` and `DeclaredSchema(dictionary) { }`
@@ -996,6 +1129,27 @@ and the consumer PRs that deliver it).
   `Proposition.draft` starts with, such as an importance of 0.5, with or without Jackson's Kotlin
   module. JSON without `contextId`, `text` or `confidence` fails the read with a message naming the
   key. **Compatibility: additive.**
+
+- Four `dice-storage` stores keep behaviour their interfaces document.
+  `DrivineChunkHistoryStore.clearAll` removes every processed chunk in every context. It inherited
+  the interface default, which removes nothing. `DrivineCollectorRecordStore.runs` returns run
+  headers in the order they were first recorded. Its query had no ordering. Each header takes the
+  next number from a `(:CollectorRunCounter)` node when it is first recorded.
+  `DrivineCollectorTraceStore.findDecisionRetiring` picks the newest decision by the instant in
+  `createdAt`. It ordered the stored text, and text order differs from time order for two instants
+  in the same second. `DrivineDriftReportStore` stores a report's `declaredDiff` as JSON and reads
+  it back. It dropped the diff on save, so a stored report read back with no declared diff. The JSON
+  carries a format version, currently 1, and a read refuses any other version.
+  **Compatibility: behavioral, `dice-storage` only.** A host that calls `ChunkHistoryStore.clearAll`
+  on the graph store loses its chunk history, as the interface documents. Stored data needs no
+  migration. A run header written by an earlier build has no number. Those headers come first,
+  ordered by finish instant, or start instant for a header with no finish, then by run id. A
+  decision written by an earlier build is ordered by the `createdAt` it already holds. A drift
+  report written by an earlier build reads back with no declared diff. `LineageSchema` declares a
+  uniqueness constraint on `CollectorRunCounter.name`. A host that declares the lineage constraints
+  by hand adds it. A host that rolls back to an earlier build keeps the counter node. That build
+  lists `CollectorRunCounter` as an unknown entity type in a whole-graph drift check, and deleting
+  the node would restart numbering at 1 on the next upgrade.
 
 - `MetamodelAutoConfiguration` and the metamodel wiring tests referenced the drift quarantine types
   at their former home in `com.embabel.dice.metamodel(.support)`. They moved to

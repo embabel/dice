@@ -104,15 +104,74 @@ sealed interface ChunkPropositionResult : PersistablePropositions, HasInfoString
     val chunkId: String
 
     /**
-     * A chunk that was processed successfully.
+     * The mentions the pipeline's checks rejected in this chunk, each with the reason and what was
+     * done with it. Empty for a failed chunk.
      */
-    data class Success(
+    val rejectedMentions: List<RejectedMention> get() = emptyList()
+
+    /**
+     * A chunk that was processed successfully.
+     *
+     * The members a data class would generate are written out, because adding a property to a data
+     * class would move its constructor and `copy`.
+     */
+    class Success(
         override val chunkId: String,
         val suggestedPropositions: SuggestedPropositions,
         val entityResolutions: Resolutions<SuggestedEntityResolution>,
         override val propositions: List<Proposition>,
-        override val revisionResults: List<RevisionResult> = emptyList(),
+        override val revisionResults: List<RevisionResult>,
+        override val rejectedMentions: List<RejectedMention>,
     ) : ChunkPropositionResult {
+
+        @JvmOverloads
+        constructor(
+            chunkId: String,
+            suggestedPropositions: SuggestedPropositions,
+            entityResolutions: Resolutions<SuggestedEntityResolution>,
+            propositions: List<Proposition>,
+            revisionResults: List<RevisionResult> = emptyList(),
+        ) : this(chunkId, suggestedPropositions, entityResolutions, propositions, revisionResults, emptyList())
+
+        operator fun component1(): String = chunkId
+        operator fun component2(): SuggestedPropositions = suggestedPropositions
+        operator fun component3(): Resolutions<SuggestedEntityResolution> = entityResolutions
+        operator fun component4(): List<Proposition> = propositions
+        operator fun component5(): List<RevisionResult> = revisionResults
+
+        fun copy(
+            chunkId: String = this.chunkId,
+            suggestedPropositions: SuggestedPropositions = this.suggestedPropositions,
+            entityResolutions: Resolutions<SuggestedEntityResolution> = this.entityResolutions,
+            propositions: List<Proposition> = this.propositions,
+            revisionResults: List<RevisionResult> = this.revisionResults,
+        ): Success = Success(chunkId, suggestedPropositions, entityResolutions, propositions, revisionResults, rejectedMentions)
+
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is Success) return false
+            return chunkId == other.chunkId &&
+                suggestedPropositions == other.suggestedPropositions &&
+                entityResolutions == other.entityResolutions &&
+                propositions == other.propositions &&
+                revisionResults == other.revisionResults &&
+                rejectedMentions == other.rejectedMentions
+        }
+
+        override fun hashCode(): Int {
+            var result = chunkId.hashCode()
+            result = 31 * result + suggestedPropositions.hashCode()
+            result = 31 * result + entityResolutions.hashCode()
+            result = 31 * result + propositions.hashCode()
+            result = 31 * result + revisionResults.hashCode()
+            result = 31 * result + rejectedMentions.hashCode()
+            return result
+        }
+
+        override fun toString(): String =
+            "Success(chunkId=$chunkId, suggestedPropositions=$suggestedPropositions, " +
+                "entityResolutions=$entityResolutions, propositions=$propositions, " +
+                "revisionResults=$revisionResults, rejectedMentions=$rejectedMentions)"
 
         override fun newEntities(): List<NamedEntityData> =
             entityResolutions.resolutions
@@ -258,6 +317,10 @@ data class PropositionResults(
     /** Chunk ids of all chunks that failed to process. */
     val failedChunkIds: List<String>
         get() = chunkResults.filterIsInstance<ChunkPropositionResult.Failed>().map { it.chunkId }
+
+    /** The rejected mentions of every chunk, in chunk order. */
+    val rejectedMentions: List<RejectedMention>
+        get() = chunkResults.flatMap { it.rejectedMentions }
 
     override fun newEntities(): List<NamedEntityData> =
         chunkResults.flatMap { it.newEntities() }.distinctBy { it.id }
