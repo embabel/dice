@@ -241,8 +241,9 @@ and the consumer PRs that deliver it).
   replaces it. `withMentionFilter(filter, RejectedMentionHandling)` chooses what happens to a
   mention the filter rejects. `KEEP` only reports it, `LEAVE_UNRESOLVED`, which is what
   `withMentionFilter(filter)` does, keeps it on the proposition unresolved, even when a mention with
-  the same span and type is resolved elsewhere in the chunk, and `DROP` removes it. **Compatibility:
-  additive.**
+  the same span and type is resolved elsewhere in the chunk, and `DROP` removes it.
+  `PropositionExtractor.resolvePropositions` is now documented to return the propositions and their
+  mentions in the order it was given them. **Compatibility: additive.**
 
 - `ChunkPropositionResult.rejectedMentions` and `PropositionResults.rejectedMentions` list every
   mention a check rejected as a `RejectedMention`, with the chunk id, the position and text of the

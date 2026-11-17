@@ -210,13 +210,15 @@ The id is passed on before the filter runs, so the filter judges each mention wi
 be resolved with.
 
 A mention left unresolved keeps no id, even when another mention with the same span and type is
-resolved. Resolution assigns ids by span and type, so the pipeline takes the id off afterwards. It
-pairs each resolved proposition with the screened one by its text and its mentions' span, type and
-role, so an extractor that returns them in another order gets the same result.
+resolved. Resolution assigns ids by span and type, so the pipeline takes the id off afterwards, by
+position. `PropositionExtractor.resolvePropositions` returns one proposition per suggested
+proposition, in order, with the mentions in order. For an extractor that reorders its output, the
+pipeline pairs propositions and mentions by text, span, type and role instead.
 
-For the same reason, with `GroundedMentionFilter` in place a mention grounded only through a known
-entity is treated as ungrounded when its span and type carry two different suggested ids in the
-chunk. Resolution can honour only one of those ids, and the mention's own text does not show which.
+For the same reason, a mention whose span is not in its text, grounded only because it points at a
+known entity, is treated as ungrounded when its span and type carry two different suggested ids in
+the chunk. Resolution can honour only one of those ids, and the mention's own text does not show
+which. This holds whatever grounding check is installed.
 
 Every rejection is on the chunk result as a `RejectedMention`: the chunk id, the position and text
 of the proposition, the mention, the reason, which check rejected it and what the pipeline did with

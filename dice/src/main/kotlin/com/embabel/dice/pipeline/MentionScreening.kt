@@ -16,7 +16,6 @@
 package com.embabel.dice.pipeline
 
 import com.embabel.dice.common.SourceAnalysisContext
-import com.embabel.dice.common.filter.GroundedMentionFilter
 import com.embabel.dice.common.filter.MentionFilter
 import com.embabel.dice.common.validation.ValidationResult
 import com.embabel.dice.proposition.MentionKey
@@ -113,7 +112,7 @@ internal object MentionScreening {
         val checked = extracted.propositions.map { proposition ->
             rejections(grounding, proposition, proposition.mentions.indices.toList(), context)
         }
-        val groundingVerdicts = if (grounding is GroundedMentionFilter) withConflictingIds(extracted.propositions, checked) else checked
+        val groundingVerdicts = withConflictingIds(extracted.propositions, checked)
         val surviving = extracted.propositions.mapIndexed { index, proposition ->
             val all = proposition.mentions.indices.toList()
             if (dropUngrounded) all.filterNot { it in groundingVerdicts[index] } else all

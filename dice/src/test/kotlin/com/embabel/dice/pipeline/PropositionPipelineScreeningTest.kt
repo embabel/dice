@@ -517,11 +517,16 @@ class PropositionPipelineScreeningTest {
         val smith = SuggestedMention(span = "William", type = "Person", role = "SUBJECT", suggestedId = "p-smith")
         val jones = SuggestedMention(span = "William", type = "Person", role = "SUBJECT", suggestedId = "p-jones")
 
-        val result = dropPipeline(SuggestingPropositionExtractor.of(proposition("Bill waved", smith), proposition("Will sang", jones)))
-            .processChunk(chunk(), known)
+        val extractor = SuggestingPropositionExtractor.of(proposition("Bill waved", smith), proposition("Will sang", jones))
+        val wrapped = com.embabel.dice.common.filter.GroundedMentionFilter()
+            .let { ObservableMentionFilter(it, SimpleMeterRegistry()) }
 
-        assertEquals(2, result.rejectedMentions.count { it.check == RejectedMention.Check.GROUNDING })
-        assertTrue(result.propositions.all { it.mentions.isEmpty() }, "mentions: ${result.propositions.map { it.mentions }}")
+        for (pipeline in listOf(dropPipeline(extractor), dropPipeline(extractor).withMentionGrounding(wrapped))) {
+            val result = pipeline.processChunk(chunk(), known)
+
+            assertEquals(2, result.rejectedMentions.count { it.check == RejectedMention.Check.GROUNDING })
+            assertTrue(result.propositions.all { it.mentions.isEmpty() }, "mentions: ${result.propositions.map { it.mentions }}")
+        }
     }
 
     private fun inMemoryRepo(): PropositionRepository = object : PropositionRepository {

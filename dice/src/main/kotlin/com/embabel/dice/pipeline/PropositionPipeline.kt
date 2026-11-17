@@ -354,12 +354,12 @@ class PropositionPipeline private constructor(
      * Takes the resolved id off each mention that a check left unresolved.
      *
      * Resolution assigns ids by span and type, so a rejected mention would otherwise share the id
-     * of an accepted mention with the same span and type. An extractor may return the resolved
-     * propositions and their mentions in any order, so they are paired with the screened ones by
-     * content: a proposition by its text and its mentions' span, type and role, and a mention by its
-     * span, type and role and its rank among mentions that share all three. Items that match on all
-     * of that cannot be told apart, so either pairing gives the same propositions. A resolved
-     * proposition with no screened twin is left as it is.
+     * of an accepted mention with the same span and type. An extractor returns the resolved
+     * propositions and their mentions in the screened order, and when the output agrees with that
+     * order, by text and by each mention's span, type and role, they are paired by position. For an
+     * extractor that reorders its output they are paired by content instead: a proposition by its
+     * text and its mentions' span, type and role, and a mention by those fields and its rank among
+     * mentions that share them. A resolved proposition with no screened twin is left as it is.
      *
      * @param propositions the propositions the extractor resolved
      * @param screened the screened propositions they were resolved from
@@ -372,6 +372,15 @@ class PropositionPipeline private constructor(
         unresolved: List<Set<Int>>,
     ): List<Proposition> {
         if (unresolved.all { it.isEmpty() }) return propositions
+        if (inScreenedOrder(propositions, screened)) {
+            return propositions.mapIndexed { index, proposition ->
+                val positions = unresolved.getOrNull(index).orEmpty()
+                if (positions.none { proposition.mentions[it].resolvedId != null }) proposition
+                else proposition.copy(mentions = proposition.mentions.mapIndexed { position, mention ->
+                    if (position in positions) mention.copy(resolvedId = null) else mention
+                })
+            }
+        }
         val pending = screened.propositions.mapIndexed { index, proposition ->
             val marks = proposition.mentions.map { markOf(it.span, it.type, it.role) }
             Triple(proposition.text, marks.sortedBy { it.toString() }, ranked(marks, unresolved.getOrNull(index).orEmpty()))
@@ -391,6 +400,22 @@ class PropositionPipeline private constructor(
             })
         }
     }
+
+    /**
+     * Tells whether resolved propositions line up with the screened ones by position.
+     *
+     * @param propositions the propositions the extractor resolved
+     * @param screened the screened propositions
+     * @return true when each resolved proposition has the text of the screened one at its position
+     * and the same mentions, by span, type and role, in the same order
+     */
+    private fun inScreenedOrder(propositions: List<Proposition>, screened: SuggestedPropositions): Boolean =
+        propositions.size == screened.propositions.size &&
+            propositions.zip(screened.propositions).all { (resolved, suggested) ->
+                resolved.text == suggested.text &&
+                    resolved.mentions.map { markOf(it.span, it.type, it.role.name) } ==
+                    suggested.mentions.map { markOf(it.span, it.type, it.role) }
+            }
 
     /**
      * A mention's span, type and role, compared the way resolution compares span and type.

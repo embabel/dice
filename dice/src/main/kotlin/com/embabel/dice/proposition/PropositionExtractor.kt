@@ -68,6 +68,10 @@ interface PropositionExtractor {
     /**
      * Apply entity resolution results to create final Propositions.
      *
+     * Return one proposition per suggested proposition, in the same order, each with its mentions
+     * in the same order as the suggested mentions. [com.embabel.dice.pipeline.PropositionPipeline]
+     * relies on that order to keep a mention it left unresolved without an id.
+     *
      * @param suggestedPropositions The original suggested propositions
      * @param resolutions Entity resolution results from EntityResolver
      * @param context The source analysis context containing contextId
