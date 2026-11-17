@@ -27,8 +27,10 @@ import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SourceAnalysisRequestEvent
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.incremental.BookmarkKey
+import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore
 import com.embabel.dice.incremental.IncrementalSource
+import com.embabel.dice.incremental.ProcessedChunkRecord
 import com.embabel.dice.pipeline.ChunkPropositionResult
 import com.embabel.dice.pipeline.PropositionPipeline
 import com.embabel.dice.projection.graph.GraphProjectionService
@@ -48,6 +50,7 @@ import io.mockk.verify
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
+import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -70,22 +73,28 @@ class WindowRecordedAfterStoreTest {
 
     /**
      * An in-memory repository that throws from the save calls listed in [failingSaves], counted
-     * from one, and runs [beforeFailing] just before it throws.
+     * from one, and runs [beforeFailing] just before it throws. [failure] builds the exception for
+     * a given save number. [onSave] runs on every save that goes through.
      */
     private class FlakyRepository(
         private val failingSaves: Set<Int>,
         private val beforeFailing: () -> Unit = {},
+        private val failure: (Int) -> Exception = { IllegalStateException("store is down") },
+        private val onSave: (Int) -> Unit = {},
         private val delegate: PropositionRepository = InMemoryPropositionRepository(),
     ) : PropositionRepository by delegate {
 
         private val saves = AtomicInteger()
 
         override fun save(proposition: Proposition): Proposition {
-            if (saves.incrementAndGet() in failingSaves) {
+            val number = saves.incrementAndGet()
+            if (number in failingSaves) {
                 beforeFailing()
-                throw IllegalStateException("store is down")
+                throw failure(number)
             }
-            return delegate.save(proposition)
+            val saved = delegate.save(proposition)
+            onSave(number)
+            return saved
         }
 
         override fun saveAll(propositions: Collection<Proposition>) {
@@ -105,7 +114,7 @@ class WindowRecordedAfterStoreTest {
         val pipeline: PropositionPipeline,
         val chunkResult: ChunkPropositionResult,
         val repository: PropositionRepository,
-        val history: InMemoryChunkHistoryStore,
+        val history: ChunkHistoryStore,
     )
 
     private val claim = Proposition(
@@ -127,6 +136,8 @@ class WindowRecordedAfterStoreTest {
     private fun harness(
         repository: PropositionRepository = FlakyRepository(failingSaves = emptySet()),
         projectionFails: Boolean = false,
+        projectionFailure: () -> Exception = { IllegalStateException("projector is down") },
+        history: ChunkHistoryStore = InMemoryChunkHistoryStore(),
     ): Harness {
         val pipeline = mockk<PropositionPipeline>()
         val result = ChunkPropositionResult.Success(
@@ -139,12 +150,11 @@ class WindowRecordedAfterStoreTest {
 
         val projection = mockk<GraphProjectionService>()
         every { projection.projectAndPersist(any()) } answers {
-            if (projectionFails) throw IllegalStateException("projector is down")
+            if (projectionFails) throw projectionFailure()
             ProjectionResults<ProjectedRelationship>(emptyList()) to
                 RelationshipPersistenceResult(persistedCount = 0, failedCount = 0)
         }
 
-        val history = InMemoryChunkHistoryStore()
         val extraction = IncrementalPropositionExtraction(
             propositionPipeline = pipeline,
             chunkHistoryStore = history,
@@ -306,5 +316,177 @@ class WindowRecordedAfterStoreTest {
             .describedAs("the third event is still queued")
             .isFalse()
         Thread.interrupted()
+    }
+
+    /** What a drain run on its own thread ended with. */
+    private class DrainRun(val surfaced: Throwable?, val stillInterrupted: Boolean)
+
+    /**
+     * Runs an event for `source-a` on its own thread and holds it in its first analysis until an
+     * event for each of [queued] is queued behind it, then lets the drain finish.
+     *
+     * @param queued The sources to queue while the drain is held.
+     * @return What the draining thread saw.
+     */
+    private fun Harness.drainWithQueued(vararg queued: String): DrainRun {
+        val firstEntered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val calls = AtomicInteger()
+        every { pipeline.processChunk(any(), any()) } answers {
+            if (calls.incrementAndGet() == 1) {
+                firstEntered.countDown()
+                release.await(5, TimeUnit.SECONDS)
+            }
+            chunkResult
+        }
+        val surfaced = AtomicReference<Throwable?>()
+        val stillInterrupted = AtomicReference<Boolean>()
+        val drainer = Thread {
+            try {
+                extraction.extractPropositions(event(source = "source-a"))
+            } catch (t: Throwable) {
+                surfaced.set(t)
+            } finally {
+                stillInterrupted.set(Thread.interrupted())
+            }
+        }
+        drainer.start()
+        assertThat(firstEntered.await(5, TimeUnit.SECONDS)).isTrue()
+        queued.forEach { extraction.extractPropositions(event(source = it)) }
+        release.countDown()
+        drainer.join(10_000)
+        return DrainRun(surfaced.get(), stillInterrupted.get())
+    }
+
+    @Test
+    fun `a lineage exception from the claim save leaves the window unrecorded`() {
+        // The claim save itself throws a LineageNotRecordedException, so nothing is stored. Its
+        // type must not be read as "the claims are saved and only the run link failed".
+        val lineageFromSave = LineageNotRecordedException(ExtractionRunKey(tenant, runRef), "save failed")
+        val harness = harness(
+            repository = FlakyRepository(failingSaves = setOf(1), failure = { lineageFromSave }),
+        )
+
+        assertThatThrownBy { harness.extraction.extractPropositions(event()) }.isSameAs(lineageFromSave)
+        assertThat(harness.repository.findById(claim.id)).isNull()
+        assertThat(harness.bookmark()).isNull()
+
+        harness.extraction.extractPropositions(event())
+        verify(exactly = 2) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.repository.findById(claim.id)).isNotNull()
+        assertThat(harness.bookmark()).isNotNull()
+    }
+
+    @Test
+    fun `a save listener that asks for extraction on the same thread does not analyse the window twice`() {
+        lateinit var extraction: IncrementalPropositionExtraction
+        val repository = FlakyRepository(
+            failingSaves = emptySet(),
+            onSave = { number -> if (number == 1) extraction.extractPropositions(event()) },
+        )
+        val harness = harness(repository = repository)
+        extraction = harness.extraction
+
+        harness.extraction.extractPropositions(event())
+
+        verify(exactly = 1) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.bookmark()).isNotNull()
+        assertThat(harness.extraction.isIdle)
+            .describedAs("the nested event ran after the window was recorded")
+            .isTrue()
+    }
+
+    @Test
+    fun `a call that starts interrupted stores nothing and leaves its event queued`() {
+        val harness = harness()
+        try {
+            Thread.currentThread().interrupt()
+            harness.extraction.extractPropositions(event())
+
+            assertThat(Thread.currentThread().isInterrupted).isTrue()
+        } finally {
+            Thread.interrupted()
+        }
+        verify(exactly = 0) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.repository.findById(claim.id)).isNull()
+        assertThat(harness.extraction.isIdle).isFalse()
+    }
+
+    @Test
+    fun `a failure caused by an interrupt stops the drain and sets the flag again`() {
+        // A blocking call that is interrupted clears the flag as it throws. The drain must still
+        // treat the failure as an interrupt.
+        val harness = harness(
+            repository = FlakyRepository(
+                failingSaves = setOf(1),
+                failure = { IllegalStateException("save interrupted", InterruptedException()) },
+            ),
+        )
+
+        val run = harness.drainWithQueued("source-b")
+
+        assertThat(run.surfaced).isInstanceOf(IllegalStateException::class.java).hasMessage("save interrupted")
+        assertThat(run.stillInterrupted).isTrue()
+        verify(exactly = 1) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.extraction.isIdle)
+            .describedAs("the second event is still queued")
+            .isFalse()
+    }
+
+    @Test
+    fun `a checked exception from the store reaches the caller wrapped with its step`() {
+        val disk = IOException("disk is full")
+        val harness = harness(repository = FlakyRepository(failingSaves = setOf(1), failure = { disk }))
+
+        assertThatThrownBy { harness.extraction.extractPropositions(event()) }
+            .isInstanceOf(PersistUnitFailedException::class.java)
+            .hasCause(disk)
+            .satisfies({ assertThat((it as PersistUnitFailedException).step).isEqualTo(PersistStep.PROPOSITIONS) })
+        assertThat(harness.bookmark()).isNull()
+    }
+
+    @Test
+    fun `a checked exception from projection reaches the caller unchecked with the window recorded`() {
+        val disk = IOException("graph is full")
+        val harness = harness(projectionFails = true, projectionFailure = { disk })
+
+        assertThatThrownBy { harness.extraction.extractPropositions(event()) }
+            .isInstanceOf(RuntimeException::class.java)
+            .hasCause(disk)
+        assertThat(harness.bookmark()).isNotNull()
+    }
+
+    @Test
+    fun `a failed window record keeps the deferred STRICT lineage failure as suppressed`() {
+        val historyDown = IllegalStateException("history is down")
+        val inner = InMemoryChunkHistoryStore()
+        val history = object : ChunkHistoryStore by inner {
+            override fun recordProcessed(record: ProcessedChunkRecord) =
+                throw historyDown
+        }
+        val harness = harness(history = history)
+        harness.extraction.withRunLineage(null, LineageFailurePolicy.STRICT)
+
+        assertThatThrownBy { harness.extraction.extractPropositions(event(currentRun = runRef)) }
+            .isSameAs(historyDown)
+        assertThat(historyDown.suppressed)
+            .hasSize(1)
+            .allSatisfy { assertThat(it).isInstanceOf(LineageNotRecordedException::class.java) }
+    }
+
+    @Test
+    fun `a later failure in the same drain is added to the first as suppressed`() {
+        val harness = harness(
+            repository = FlakyRepository(
+                failingSaves = setOf(1, 2),
+                failure = { number -> IllegalStateException("save $number failed") },
+            ),
+        )
+
+        val run = harness.drainWithQueued("source-b")
+
+        assertThat(run.surfaced).hasMessage("save 1 failed")
+        assertThat(run.surfaced!!.suppressed.map { it.message }).containsExactly("save 2 failed")
+        verify(exactly = 2) { harness.pipeline.processChunk(any(), any()) }
     }
 }

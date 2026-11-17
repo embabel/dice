@@ -41,6 +41,8 @@ import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Async
 import java.io.InputStream
+import java.io.InterruptedIOException
+import java.nio.channels.ClosedByInterruptException
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -517,13 +519,25 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * empty, the remembered failure (if any) is rethrown, so it reaches whoever called
      * [extractPropositions] and is not lost behind the events that came after it. A host that runs
      * extraction inside its own transaction has to see that failure to roll the transaction back,
-     * and a STRICT lineage failure has to reach the caller that asked for it.
+     * and a STRICT lineage failure has to reach the caller that asked for it. Each later failure is
+     * logged at `warn` with its event's source id and added to the first one as a suppressed
+     * exception.
      *
-     * An interrupted thread stops the drain. When the thread's interrupt flag is set after an event,
-     * this call polls no further event and starts no second drain. The events still queued wait for
-     * the next call, and the first failure is rethrown with the flag left set.
+     * A call made on the thread that is already draining, for example from a save listener, leaves
+     * its event queued and returns. The outer drain runs that event after the current window is
+     * recorded, so the same window is not analysed twice.
+     *
+     * An interrupted thread stops the drain. The interrupt flag is checked before every poll, so a
+     * call that starts interrupted stores nothing. A failure whose cause chain holds an
+     * [InterruptedException], an [InterruptedIOException] or a [ClosedByInterruptException] counts as
+     * an interrupt too, and the flag is set again. The events still queued wait for the next call,
+     * and the first failure is rethrown with the flag left set.
      */
     private fun processPendingEvents() {
+        if (extractionLock.isHeldByCurrentThread) {
+            logger.debug("Extraction requested from inside a drain, {} event(s) queued", pendingEvents.size)
+            return
+        }
         if (!extractionLock.tryLock()) {
             logger.debug("Extraction in progress, {} event(s) queued", pendingEvents.size)
             return
@@ -531,18 +545,18 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         var firstFailure: Exception? = null
         var interrupted = false
         try {
-            var next = pendingEvents.poll()
-            while (next != null) {
-                try {
-                    processEvent(next)
-                } catch (e: Exception) {
-                    if (firstFailure == null) firstFailure = e
-                }
+            while (true) {
                 if (Thread.currentThread().isInterrupted) {
                     interrupted = true
                     break
                 }
-                next = pendingEvents.poll()
+                val next = pendingEvents.poll() ?: break
+                try {
+                    processEvent(next)
+                } catch (e: Exception) {
+                    if (isInterrupt(e)) Thread.currentThread().interrupt()
+                    firstFailure = keepFirst(firstFailure, e, next)
+                }
             }
         } finally {
             extractionLock.unlock()
@@ -551,10 +565,51 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             try {
                 processPendingEvents()
             } catch (e: Exception) {
-                if (firstFailure == null) firstFailure = e
+                firstFailure = keepFirst(firstFailure, e, null)
             }
         }
         firstFailure?.let { throw it }
+    }
+
+    /**
+     * Returns the failure to rethrow at the end of a drain. The first failure wins. A later one is
+     * logged and added to it as a suppressed exception.
+     *
+     * @param first The failure kept so far, or null.
+     * @param later The failure just caught.
+     * @param event The event that failed, or null when the failure came from a later drain.
+     * @return The failure to keep.
+     */
+    private fun keepFirst(first: Exception?, later: Exception, event: SourceAnalysisRequestEvent?): Exception {
+        if (first == null) return later
+        if (later !== first) {
+            val sourceId = event?.let { runCatching { it.incrementalSource().id }.getOrNull() }
+            logger.warn("Extraction failed for source {} after an earlier failure in the same drain", sourceId, later)
+            first.addSuppressed(later)
+        }
+        return first
+    }
+
+    /**
+     * Whether [failure] was caused by the thread being interrupted. A blocking call clears the
+     * interrupt flag as it throws, so the cause chain is the only trace left.
+     *
+     * @param failure What an event threw.
+     * @return True when the cause chain holds an interrupt exception.
+     */
+    private fun isInterrupt(failure: Throwable): Boolean {
+        val seen = HashSet<Throwable>()
+        var current: Throwable? = failure
+        while (current != null && seen.add(current)) {
+            if (current is InterruptedException ||
+                current is InterruptedIOException ||
+                current is ClosedByInterruptException
+            ) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
     }
 
     /**
@@ -565,24 +620,37 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * unrecorded and the next event for the same source analyses it again.
      *
      * A failure before the store step starts, while building the context or analysing the window, is
-     * logged and swallowed, and the next event tries the window again. From the store step onwards
+     * logged and swallowed, and the next event tries the window again. If that failure came from an
+     * interrupt, the interrupt flag is set again so the drain stops. From the store step onwards
      * (storing, recording the window, projection and grounding) a failure is thrown to
      * [processPendingEvents], which passes it on to whoever called [extractPropositions]. A host that
      * runs extraction inside its own transaction has to see that failure to roll the transaction
      * back. A [LineageNotRecordedException] is also logged at `error` with the run id.
      *
-     * With no writer bound, a [LineageFailurePolicy.STRICT] lineage failure leaves the claims stored
-     * and only their attribution missing. The window is recorded, so the same claims are not stored a
-     * second time, and the exception is thrown once the window is recorded. Projection and grounding
-     * do not run. With a writer bound, every failed write leaves the window unrecorded, because the
-     * writer may have undone the claims.
+     * Every exception thrown from here is unchecked, so a Java caller can catch it and a Spring
+     * `@Transactional` method rolls back on it by default. A failed write is thrown the way
+     * [PersistOutcome.persistedOrThrow] throws it, with or without a writer bound: a
+     * `RuntimeException` as it is, a checked cause inside a [PersistUnitFailedException] with its
+     * step. Any other checked exception, from recording the window, projection or grounding, is
+     * wrapped in a `RuntimeException` that keeps it as the cause.
+     *
+     * The writer's outcome decides whether the window is recorded after a failed write. With no
+     * writer bound, a failure at [PersistStep.RUN_LINKS] with [PersistStep.PROPOSITIONS] left in the
+     * store means the claims are stored and only their attribution is missing. The window is
+     * recorded, so the same claims are not stored a second time, and the failure is thrown once the
+     * window is recorded. Projection and grounding do not run. If recording the window fails too,
+     * the run link failure is logged at `error` and added to the recording failure as a suppressed
+     * exception. Every other failed write leaves the window unrecorded. With a writer bound, that is
+     * every failed write, because the writer may have undone the claims.
      *
      * @param event The event to process.
      */
     private fun processEvent(event: SourceAnalysisRequestEvent) {
         var storeStarted = false
+        var sourceId: String? = null
         try {
             val source = event.incrementalSource()
+            sourceId = source.id
             if (source.size < windowConfig.overlapSize) {
                 logger.info(
                     "Source {} has {} items, need at least {} for extraction",
@@ -609,25 +677,43 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             )
 
             var stored: PropositionPersistenceResult? = null
-            var deferredLineageFailure: LineageNotRecordedException? = null
-            val result = analyzer.analyzeThenRecord(source, context) { analysed ->
-                storeStarted = true
-                if (analysed.propositions.isNotEmpty()) {
-                    logger.info(analysed.infoString(true, 1))
-                    try {
-                        stored = storeUnit(analysed, context)
-                    } catch (e: LineageNotRecordedException) {
-                        // With no writer bound, this only comes from the sequential writer's run link
-                        // step, after the claims are saved, so the window can be recorded.
-                        if (persistUnitWriter != null) throw e
-                        deferredLineageFailure = e
+            var deferredFailure: RuntimeException? = null
+            val result = try {
+                analyzer.analyzeThenRecord(source, context) { analysed ->
+                    storeStarted = true
+                    if (analysed.propositions.isNotEmpty()) {
+                        logger.info(analysed.infoString(true, 1))
+                        val boundWriter = persistUnitWriter
+                        when (val outcome = writeUnit(analysed, context, boundWriter)) {
+                            is PersistOutcome.Stored -> stored = outcome.persisted
+                            is PersistOutcome.Failed -> {
+                                // The same exception persistedOrThrow throws, for both writers.
+                                val failure = outcome.cause as? RuntimeException
+                                    ?: PersistUnitFailedException(outcome.step, outcome.cause)
+                                val claimsStored = boundWriter == null &&
+                                    outcome.step == PersistStep.RUN_LINKS &&
+                                    PersistStep.PROPOSITIONS in outcome.leftInStore
+                                if (!claimsStored) throw failure
+                                deferredFailure = failure
+                            }
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                deferredFailure?.let { deferred ->
+                    logger.error(
+                        "Claims for source {} are stored but their run links failed, and the window " +
+                            "could not be recorded",
+                        source.id, deferred,
+                    )
+                    if (deferred !== e) e.addSuppressed(deferred)
+                }
+                throw e
             } ?: run {
                 logger.info("Analysis skipped (not ready or already processed)")
                 return
             }
-            deferredLineageFailure?.let { throw it }
+            deferredFailure?.let { throw it }
 
             if (result.propositions.isEmpty()) {
                 logger.info("Analysis completed but no propositions extracted")
@@ -644,7 +730,11 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             )
             throw e
         } catch (e: Exception) {
-            if (storeStarted) throw e
+            if (storeStarted) {
+                throw e as? RuntimeException
+                    ?: RuntimeException("Extraction failed for source $sourceId after its store step started", e)
+            }
+            if (isInterrupt(e)) Thread.currentThread().interrupt()
             logger.warn("Failed to extract propositions", e)
         } finally {
             inFlightCount.decrementAndGet()
@@ -774,6 +864,31 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * @return What the repository returned for the saved propositions.
      */
     private fun storeUnit(result: ChunkPropositionResult, context: SourceAnalysisContext): PropositionPersistenceResult {
+        val boundWriter = persistUnitWriter
+        // A bound writer's checked cause is wrapped in PersistUnitFailedException, so a Java caller
+        // can catch it. With no writer bound the cause is thrown as it is, whatever its type.
+        return when (val outcome = writeUnit(result, context, boundWriter)) {
+            is PersistOutcome.Stored -> outcome.persisted
+            is PersistOutcome.Failed -> if (boundWriter == null) throw outcome.cause else outcome.persistedOrThrow()
+        }
+    }
+
+    /**
+     * Writes what an analysis produced as one [PersistUnit] and returns how the write ended.
+     *
+     * With no writer bound, the sequential writer runs the steps on this extractor's repositories.
+     * Run lineage is logged either way, and the saved counts are logged when the unit is stored.
+     *
+     * @param result What the analysis produced.
+     * @param context The analysis the result belongs to. Its run, if any, is attributed.
+     * @param boundWriter The writer bound when the caller started, or null for the sequential writer.
+     * @return The writer's outcome.
+     */
+    private fun writeUnit(
+        result: ChunkPropositionResult,
+        context: SourceAnalysisContext,
+        boundWriter: PersistUnitWriter?,
+    ): PersistOutcome {
         val currentRun = context.currentRun
         val unit = PersistUnit.of(result).let { if (currentRun != null) recordRunLineage(it, context, currentRun) else it }
         val newEntitiesToSave = unit.newEntities.size
@@ -789,7 +904,6 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             logger.info("Updated entity: name='{}', labels={}", entity.name, entity.labels())
         }
 
-        val boundWriter = persistUnitWriter
         val outcome = if (boundWriter == null) {
             // Built per call, because withRunLineage can bind the run link store after construction.
             // The lineage lines are logged between the run link and the structural relationships, so
@@ -802,12 +916,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             if (currentRun != null) logRunLineage(currentRun.runId, written.runLinks, written.lineageFailure)
             written
         }
-        // A bound writer's checked cause is wrapped in PersistUnitFailedException, so a Java caller
-        // can catch it. With no writer bound the cause is thrown as it is, whatever its type.
-        val persisted = when (outcome) {
-            is PersistOutcome.Stored -> outcome.persisted
-            is PersistOutcome.Failed -> if (boundWriter == null) throw outcome.cause else outcome.persistedOrThrow()
-        }
+        if (outcome is PersistOutcome.Failed) return outcome
 
         if (newProps > 0 || updatedProps > 0 || newEntitiesToSave > 0) {
             logger.info(
@@ -817,7 +926,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         } else {
             logger.info("No new data to persist (all propositions were duplicates)")
         }
-        return persisted
+        return outcome
     }
 
     /**

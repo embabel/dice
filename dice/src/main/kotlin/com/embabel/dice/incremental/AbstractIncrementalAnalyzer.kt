@@ -106,11 +106,15 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
      * only once [store] returns. If [store] throws, nothing is recorded and the exception goes up
      * to the caller, so the same window is analysed again next time.
      *
+     * Only Kotlin code in this module can call it. The method is synthetic in bytecode, so Java
+     * source cannot see it.
+     *
      * @param source The source to read the next window from
      * @param context Analysis context
      * @param store Saves the result somewhere durable before the window is marked as done
      * @return The result, or null when the window was not ready or was already processed.
      */
+    @JvmSynthetic
     internal fun analyzeThenRecord(
         source: IncrementalSource<T>,
         context: SourceAnalysisContext,

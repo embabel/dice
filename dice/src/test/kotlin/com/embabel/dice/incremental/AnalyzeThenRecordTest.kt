@@ -41,6 +41,7 @@ import org.junit.jupiter.api.Test
  *     processChunk nor the store runs.
  * I1  analyze keeps its trigger rule and still records before it returns.
  * L1  After a successful call, a second call on the same unchanged source returns null.
+ * J1  analyzeThenRecord is synthetic in bytecode, so Java source cannot call it.
  */
 class AnalyzeThenRecordTest {
 
@@ -245,5 +246,16 @@ class AnalyzeThenRecordTest {
         assertEquals(4, store.getLastBookmark(BookmarkKey(contextId, "src"))?.endIndex)
         assertEquals(true, store.isProcessed(hashOf(fourItemText)))
         assertEquals(listOf("onProcessed:result-1"), analyzer.events)
+    }
+
+    // J1: an internal function compiles to a public method with a mangled name. Marking it
+    // synthetic hides it from javac.
+    @Test
+    fun `J1 analyzeThenRecord is synthetic so Java source cannot call it`() {
+        val methods = AbstractIncrementalAnalyzer::class.java.declaredMethods
+            .filter { it.name.startsWith("analyzeThenRecord") }
+
+        assertEquals(1, methods.size)
+        assertEquals(true, methods.single().isSynthetic)
     }
 }
