@@ -100,7 +100,7 @@ internal class InMemoryPersistUnitWriter(
         val linkStore = runLinkStore
         val linkFailure = if (run != null && linkStore != null && before.runLinks != null) {
             // Links the run gained since the before-image, limited to the unit's own ids, so a link
-            // another caller added to the run is kept.
+            // another caller added to the run for another id is kept.
             attempt(PersistStep.RUN_LINKS) {
                 linkStore.unlink(run, (linkStore.linkedTo(run) - before.runLinks).intersect(unitIds))
             }

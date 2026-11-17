@@ -360,7 +360,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * @param event The source to analyse and the user it belongs to.
      * @throws LineageNotRecordedException when a run link cannot be recorded under
      * [LineageFailurePolicy.STRICT] for an event this call processes. An event queued while another
-     * call holds the extraction lock is processed, and its failure thrown, by that call.
+     * call holds the extraction lock is processed by the call that takes it off the queue. A call
+     * that processes several failing events logs each failure and throws the first.
      */
     open fun extractPropositions(event: SourceAnalysisRequestEvent) {
         pendingEvents.add(event)
@@ -790,7 +791,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * thrown. Inside a caller's transaction, what was written commits or rolls back with it.
      * Under [LineageFailurePolicy.LENIENT] the failure is logged as a warning and the rest runs.
      * A database error in the run link step can abort a caller's transaction under either policy.
-     * Under LENIENT the write still reports the unit as stored, and the caller's commit then fails.
+     * Under LENIENT the write carries on. A later step can then fail, or the write reports the unit
+     * as stored and the caller's commit fails.
      * A bound writer decides what a failed write leaves in the store.
      *
      * A failed write throws what [PersistOutcome.persistedOrThrow] throws, with or without a bound

@@ -153,7 +153,8 @@ wrapped in `PersistUnitFailedException`, which carries the step that failed and 
 exception as its cause.
 
 A database error in the run link step can abort the transaction. Under
-`LineageFailurePolicy.LENIENT` the outcome is still `Stored`, and the commit then fails.
+`LineageFailurePolicy.LENIENT` the writer carries on. A later step can then fail, or the outcome is
+`Stored` and the commit fails.
 
 [source,java]
 ----

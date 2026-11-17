@@ -73,8 +73,8 @@ class AnalyzedWindow<out R> internal constructor(
     private var marked = false
 
     /**
-     * True once [markProcessed] has completed, even when it wrote nothing because the bookmark had
-     * moved.
+     * True once the history store call in [markProcessed] has returned, even when it wrote nothing
+     * because the bookmark had moved.
      */
     val isMarkedProcessed: Boolean
         get() = marked

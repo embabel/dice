@@ -31,8 +31,8 @@ import org.jetbrains.annotations.ApiStatus
  * earlier steps written. To store a unit all or nothing, call it inside a transaction and roll that
  * transaction back when the outcome is [PersistOutcome.Failed].
  * A database error in the run link step can abort that transaction. Under
- * [LineageFailurePolicy.LENIENT] the outcome is still [PersistOutcome.Stored], and the commit then
- * fails.
+ * [LineageFailurePolicy.LENIENT] the writer carries on. A later step can then fail, or the outcome
+ * is [PersistOutcome.Stored] and the commit fails.
  *
  * From Java:
  *
@@ -135,8 +135,8 @@ fun interface PersistUnitWriter {
          * Units through one writer run one at a time, so use one writer per set of stores.
          * Another thread can read a unit part way through.
          * The undo expects no other writer to touch the unit's ids during the unit. If one does, a
-         * claim it saved under one of those ids is overwritten, and an entity it saved or a run
-         * link it added is kept.
+         * claim it saved under one of those ids is overwritten, and a link it added from one of
+         * them to the unit's run is removed. An entity it saved is kept.
          * An entity is put back only while the store holds an instance the unit wrote. Putting it
          * back goes through `save`, so a repository with an embedder embeds it again. When that
          * call fails, [PersistOutcome.Failed.leftInStore] holds [PersistStep.ENTITIES].
