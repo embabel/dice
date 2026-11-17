@@ -58,7 +58,7 @@ These map onto the lifecycle in [proposition-lifecycle](../docs/design/propositi
 | `pipeline` | `PropositionPipeline` (two-stage extract→resolve), `PropositionResults`, `PersistablePropositions`; execution strategies: `ExtractionExecutionStrategy` + `SerialExtractionStrategy`/`ParallelExtractionStrategy`/`BatchedExtractionStrategy` |
 | `spi` | Policy extension points: `TrustScorer`, `AuthorityResolver`/`AuthorityTier`, `AuthorityWeightedTrustScorer`, `ConflictDetector`, `ConflictType`, `StatusTransitionPolicy`, the mark-and-sweep `SweepPolicy`/`StatusTransitionSweepPolicy` with its `SweepAction`/`PropositionMark`/`MarkReason` vocabulary, and their shipped defaults |
 | `common` | `SourceAnalysisContext`, `EntityResolver`, `Relations`, `ContentHasher`, `KnowledgeType`, events, `SchemaAdherence`, validation rules |
-| `common.filter` | `MentionFilter`, `SchemaValidatedMentionFilter`, `ObservableMentionFilter`, context-aware filters |
+| `common.filter` | `MentionFilter`, `GroundedMentionFilter`, `SchemaValidatedMentionFilter`, `ObservableMentionFilter`, context-aware filters |
 | `common.resolver` | `EscalatingEntityResolver`, `InMemoryEntityResolver`, `KnownEntityResolver`, `ChainedEntityResolver`, `LlmCandidateBakeoff`, `ContextCompressor` |
 | `common.resolver.searcher` | `CandidateSearcher` and all implementations: `ByIdCandidateSearcher`, `ByExactNameCandidateSearcher`, `NormalizedNameCandidateSearcher`, `PartialNameCandidateSearcher`, `FuzzyNameCandidateSearcher`, `VectorCandidateSearcher`, `AgenticCandidateSearcher`; `DefaultCandidateSearchers` factory |
 | `entity` | `EntityPipeline`, `EntityIncrementalAnalyzer`, `EntityResolutionService`, `EntityResolutionTools`, `LlmEntityExtractor`, result types |

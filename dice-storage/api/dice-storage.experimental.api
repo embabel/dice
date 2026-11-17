@@ -29,6 +29,7 @@ public class com/embabel/dice/storage/DrivinePropositionRunLinkStore : com/embab
 public final class com/embabel/dice/storage/LineageSchema : com/embabel/dice/storage/DiceStorageSchema {
 	public static final field COLLECTOR_RECORD Ljava/lang/String;
 	public static final field COLLECTOR_RUN Ljava/lang/String;
+	public static final field COLLECTOR_RUN_COUNTER Ljava/lang/String;
 	public static final field INSTANCE Lcom/embabel/dice/storage/LineageSchema;
 	public static final field PROJECTION_RECORD Ljava/lang/String;
 	public final fun getLABELS ()Ljava/util/List;

@@ -49,6 +49,9 @@ object LineageSchema : DiceStorageSchema {
     /** One node per collector run. */
     const val COLLECTOR_RUN: String = "CollectorRun"
 
+    /** One node per named counter that numbers run headers in the order they were first recorded. */
+    const val COLLECTOR_RUN_COUNTER: String = "CollectorRunCounter"
+
     /**
      * The properties each record is keyed on: the values that decide whether a write updates an
      * existing node or creates one.
@@ -57,6 +60,7 @@ object LineageSchema : DiceStorageSchema {
         PROJECTION_RECORD to listOf("propositionId", "runId", "target"),
         COLLECTOR_RECORD to listOf("propositionId", "runId"),
         COLLECTOR_RUN to listOf("runId"),
+        COLLECTOR_RUN_COUNTER to listOf("name"),
     )
 
     /** Every node label the lineage stores write, for test cleanup and for drift exclusion. */

@@ -743,7 +743,7 @@ same guarantee from its transaction, and the cross-backend suite races two threa
 and asserts exactly one `APPLIED` and one `REPLAYED`, so the claim is inherited rather than
 remembered. Removing the monitor from `transition` fails that test and nothing else.
 
-`AbstractExtractionRunStoreContractTest` in `dice-storage` is the cross-backend suite. Each backend
+`AbstractExtractionRunStoreContractTest` in `dice-store-conformance` is the cross-backend suite. Each backend
 supplies a store and inherits the whole thing, so the Drivine store is held to the in-memory
 reference's semantics at authoring time. The cases there are the ones a durable backend gets wrong
 in a way a single-backend test would miss: a `MERGE … SET` upsert passes "a terminal write is

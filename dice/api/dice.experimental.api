@@ -31,6 +31,10 @@ public final class com/embabel/dice/common/ExtractionRunTransitioned : com/embab
 	public fun toString ()Ljava/lang/String;
 }
 
+public abstract interface class com/embabel/dice/common/resolver/ScopedCandidateSearcher {
+	public abstract fun search (Lcom/embabel/dice/common/SuggestedEntity;Lcom/embabel/agent/core/DataDictionary;Lcom/embabel/dice/store/ContextReadScope;)Lcom/embabel/dice/common/resolver/SearchResult;
+}
+
 public abstract interface class com/embabel/dice/evidence/EvidenceProvider {
 	public abstract fun evidence (Ljava/lang/Object;)Lcom/embabel/dice/evidence/Evidence;
 }
@@ -1442,8 +1446,356 @@ public abstract interface class com/embabel/dice/store/CapabilityReporting {
 	public abstract fun getCapabilities ()Lcom/embabel/dice/store/StoreCapabilities;
 }
 
+public final class com/embabel/dice/store/ContextReadScope {
+	public static final field Companion Lcom/embabel/dice/store/ContextReadScope$Companion;
+	public synthetic fun <init> (Ljava/util/Collection;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final synthetic fun contains-GRzcY08 (Ljava/lang/String;)Z
+	public final fun containsValue (Ljava/lang/String;)Z
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getContextIdValues ()Ljava/util/Set;
+	public fun hashCode ()I
+	public static final fun ofValues (Ljava/lang/String;[Ljava/lang/String;)Lcom/embabel/dice/store/ContextReadScope;
+	public static final fun ofValues (Ljava/util/Collection;)Lcom/embabel/dice/store/ContextReadScope;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/store/ContextReadScope$Companion {
+	public final synthetic fun of (Ljava/util/Collection;)Lcom/embabel/dice/store/ContextReadScope;
+	public final fun ofValues (Ljava/lang/String;[Ljava/lang/String;)Lcom/embabel/dice/store/ContextReadScope;
+	public final fun ofValues (Ljava/util/Collection;)Lcom/embabel/dice/store/ContextReadScope;
+}
+
 public abstract interface class com/embabel/dice/store/FilteredVectorSearch {
 	public abstract fun findNearest (Lcom/embabel/dice/store/VectorSearchRequest;)Ljava/util/List;
+}
+
+public final class com/embabel/dice/store/ReadBudget {
+	public static final field Companion Lcom/embabel/dice/store/ReadBudget$Companion;
+	public static final field MAX_CAP I
+	public synthetic fun <init> (IILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMaxRows ()I
+	public final fun getMaxVectorCandidates ()I
+	public fun hashCode ()I
+	public final fun isVectorSearchAllowed ()Z
+	public static final fun ofRows (I)Lcom/embabel/dice/store/ReadBudget;
+	public final fun requireRows (I)V
+	public final fun requireRows (J)V
+	public final fun requireVectorCandidates (I)V
+	public final fun requireVectorCandidates (J)V
+	public final fun requireVectorSearch ()V
+	public fun toString ()Ljava/lang/String;
+	public final fun withMaxRows (I)Lcom/embabel/dice/store/ReadBudget;
+	public final fun withMaxVectorCandidates (I)Lcom/embabel/dice/store/ReadBudget;
+}
+
+public final class com/embabel/dice/store/ReadBudget$Companion {
+	public final fun ofRows (I)Lcom/embabel/dice/store/ReadBudget;
+}
+
+public final class com/embabel/dice/store/ReadBudgetExceededException : com/embabel/dice/store/ReadRefusedException {
+	public final fun getAllowed ()I
+	public final fun getRequested ()J
+	public final fun getResource ()Lcom/embabel/dice/store/ReadBudgetResource;
+}
+
+public final class com/embabel/dice/store/ReadBudgetResource : java/lang/Enum {
+	public static final field ROWS Lcom/embabel/dice/store/ReadBudgetResource;
+	public static final field VECTOR_CANDIDATES Lcom/embabel/dice/store/ReadBudgetResource;
+	public static final field VECTOR_SEARCH Lcom/embabel/dice/store/ReadBudgetResource;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/store/ReadBudgetResource;
+	public static fun values ()[Lcom/embabel/dice/store/ReadBudgetResource;
+}
+
+public final class com/embabel/dice/store/ReadCriteria {
+	public static final field Companion Lcom/embabel/dice/store/ReadCriteria$Companion;
+	public static final field DEFAULT_DECAY_K D
+	public synthetic fun <init> (Ljava/lang/String;Ljava/util/Collection;Ljava/util/Collection;Ljava/util/Collection;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/Double;Ljava/time/Instant;DLjava/lang/Double;Ljava/lang/Integer;Ljava/lang/Double;Ljava/lang/Boolean;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public static final fun empty ()Lcom/embabel/dice/store/ReadCriteria;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAccessedAfter ()Ljava/time/Instant;
+	public final fun getAccessedBefore ()Ljava/time/Instant;
+	public final fun getAllEntityIds ()Ljava/util/List;
+	public final fun getAnyEntityIds ()Ljava/util/List;
+	public final fun getBelowEffectiveConfidence ()Ljava/lang/Double;
+	public final fun getCreatedAfter ()Ljava/time/Instant;
+	public final fun getCreatedBefore ()Ljava/time/Instant;
+	public final fun getDecayK ()D
+	public final fun getEffectiveConfidenceAsOf ()Ljava/time/Instant;
+	public final fun getEntityId ()Ljava/lang/String;
+	public final fun getMaxLevel ()Ljava/lang/Integer;
+	public final fun getMinConfidence ()Ljava/lang/Double;
+	public final fun getMinEffectiveConfidence ()Ljava/lang/Double;
+	public final fun getMinImportance ()Ljava/lang/Double;
+	public final fun getMinLevel ()Ljava/lang/Integer;
+	public final fun getMinReinforceCount ()Ljava/lang/Integer;
+	public final fun getMinTrustScore ()Ljava/lang/Double;
+	public final fun getPinned ()Ljava/lang/Boolean;
+	public final fun getRevisedAfter ()Ljava/time/Instant;
+	public final fun getRevisedBefore ()Ljava/time/Instant;
+	public final fun getSpecified ()Ljava/util/Set;
+	public final fun getStatuses ()Ljava/util/Set;
+	public fun hashCode ()I
+	public final fun requireOnly (Ljava/util/Set;Lcom/embabel/dice/store/StoreCapability;)V
+	public fun toString ()Ljava/lang/String;
+	public final fun withAccessedAfter (Ljava/time/Instant;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withAccessedBefore (Ljava/time/Instant;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withAccessedBetween (Ljava/time/Instant;Ljava/time/Instant;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withAllEntities (Ljava/lang/String;[Ljava/lang/String;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withAllEntityIds (Ljava/util/Collection;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withAnyEntity (Ljava/lang/String;[Ljava/lang/String;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withAnyEntityIds (Ljava/util/Collection;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withBelowEffectiveConfidence (D)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withCreatedAfter (Ljava/time/Instant;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withCreatedBefore (Ljava/time/Instant;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withCreatedBetween (Ljava/time/Instant;Ljava/time/Instant;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withDecayK (D)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withEffectiveConfidenceAsOf (Ljava/time/Instant;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withEntityId (Ljava/lang/String;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withMaxLevel (I)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withMinConfidence (D)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withMinEffectiveConfidence (D)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withMinImportance (D)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withMinLevel (I)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withMinReinforceCount (I)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withMinTrustScore (D)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withPinned (Z)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withRevisedAfter (Ljava/time/Instant;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withRevisedBefore (Ljava/time/Instant;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withRevisedBetween (Ljava/time/Instant;Ljava/time/Instant;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withStatus (Lcom/embabel/dice/proposition/PropositionStatus;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withStatuses (Lcom/embabel/dice/proposition/PropositionStatus;[Lcom/embabel/dice/proposition/PropositionStatus;)Lcom/embabel/dice/store/ReadCriteria;
+	public final fun withStatuses (Ljava/util/Collection;)Lcom/embabel/dice/store/ReadCriteria;
+}
+
+public final class com/embabel/dice/store/ReadCriteria$Companion {
+	public final fun empty ()Lcom/embabel/dice/store/ReadCriteria;
+	public final synthetic fun invoke (Lkotlin/jvm/functions/Function1;)Lcom/embabel/dice/store/ReadCriteria;
+}
+
+public final class com/embabel/dice/store/ReadCriteriaBuilder {
+	public final fun getAccessedAfter ()Ljava/time/Instant;
+	public final fun getAccessedBefore ()Ljava/time/Instant;
+	public final fun getAllEntityIds ()Ljava/util/Collection;
+	public final fun getAnyEntityIds ()Ljava/util/Collection;
+	public final fun getBelowEffectiveConfidence ()Ljava/lang/Double;
+	public final fun getCreatedAfter ()Ljava/time/Instant;
+	public final fun getCreatedBefore ()Ljava/time/Instant;
+	public final fun getDecayK ()D
+	public final fun getEffectiveConfidenceAsOf ()Ljava/time/Instant;
+	public final fun getEntityId ()Ljava/lang/String;
+	public final fun getMaxLevel ()Ljava/lang/Integer;
+	public final fun getMinConfidence ()Ljava/lang/Double;
+	public final fun getMinEffectiveConfidence ()Ljava/lang/Double;
+	public final fun getMinImportance ()Ljava/lang/Double;
+	public final fun getMinLevel ()Ljava/lang/Integer;
+	public final fun getMinReinforceCount ()Ljava/lang/Integer;
+	public final fun getMinTrustScore ()Ljava/lang/Double;
+	public final fun getPinned ()Ljava/lang/Boolean;
+	public final fun getRevisedAfter ()Ljava/time/Instant;
+	public final fun getRevisedBefore ()Ljava/time/Instant;
+	public final fun getStatuses ()Ljava/util/Collection;
+	public final fun setAccessedAfter (Ljava/time/Instant;)V
+	public final fun setAccessedBefore (Ljava/time/Instant;)V
+	public final fun setAllEntityIds (Ljava/util/Collection;)V
+	public final fun setAnyEntityIds (Ljava/util/Collection;)V
+	public final fun setBelowEffectiveConfidence (Ljava/lang/Double;)V
+	public final fun setCreatedAfter (Ljava/time/Instant;)V
+	public final fun setCreatedBefore (Ljava/time/Instant;)V
+	public final fun setDecayK (D)V
+	public final fun setEffectiveConfidenceAsOf (Ljava/time/Instant;)V
+	public final fun setEntityId (Ljava/lang/String;)V
+	public final fun setMaxLevel (Ljava/lang/Integer;)V
+	public final fun setMinConfidence (Ljava/lang/Double;)V
+	public final fun setMinEffectiveConfidence (Ljava/lang/Double;)V
+	public final fun setMinImportance (Ljava/lang/Double;)V
+	public final fun setMinLevel (Ljava/lang/Integer;)V
+	public final fun setMinReinforceCount (Ljava/lang/Integer;)V
+	public final fun setMinTrustScore (Ljava/lang/Double;)V
+	public final fun setPinned (Ljava/lang/Boolean;)V
+	public final fun setRevisedAfter (Ljava/time/Instant;)V
+	public final fun setRevisedBefore (Ljava/time/Instant;)V
+	public final fun setStatuses (Ljava/util/Collection;)V
+}
+
+public final class com/embabel/dice/store/ReadCriterion : java/lang/Enum {
+	public static final field ACCESSED_AFTER Lcom/embabel/dice/store/ReadCriterion;
+	public static final field ACCESSED_BEFORE Lcom/embabel/dice/store/ReadCriterion;
+	public static final field ALL_ENTITY_IDS Lcom/embabel/dice/store/ReadCriterion;
+	public static final field ANY_ENTITY_IDS Lcom/embabel/dice/store/ReadCriterion;
+	public static final field BELOW_EFFECTIVE_CONFIDENCE Lcom/embabel/dice/store/ReadCriterion;
+	public static final field CREATED_AFTER Lcom/embabel/dice/store/ReadCriterion;
+	public static final field CREATED_BEFORE Lcom/embabel/dice/store/ReadCriterion;
+	public static final field DECAY_K Lcom/embabel/dice/store/ReadCriterion;
+	public static final field EFFECTIVE_CONFIDENCE_AS_OF Lcom/embabel/dice/store/ReadCriterion;
+	public static final field ENTITY_ID Lcom/embabel/dice/store/ReadCriterion;
+	public static final field MAX_LEVEL Lcom/embabel/dice/store/ReadCriterion;
+	public static final field MIN_CONFIDENCE Lcom/embabel/dice/store/ReadCriterion;
+	public static final field MIN_EFFECTIVE_CONFIDENCE Lcom/embabel/dice/store/ReadCriterion;
+	public static final field MIN_IMPORTANCE Lcom/embabel/dice/store/ReadCriterion;
+	public static final field MIN_LEVEL Lcom/embabel/dice/store/ReadCriterion;
+	public static final field MIN_REINFORCE_COUNT Lcom/embabel/dice/store/ReadCriterion;
+	public static final field MIN_TRUST_SCORE Lcom/embabel/dice/store/ReadCriterion;
+	public static final field PINNED Lcom/embabel/dice/store/ReadCriterion;
+	public static final field REVISED_AFTER Lcom/embabel/dice/store/ReadCriterion;
+	public static final field REVISED_BEFORE Lcom/embabel/dice/store/ReadCriterion;
+	public static final field STATUSES Lcom/embabel/dice/store/ReadCriterion;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/store/ReadCriterion;
+	public static fun values ()[Lcom/embabel/dice/store/ReadCriterion;
+}
+
+public final class com/embabel/dice/store/ReadKeywordQuery {
+	public static final field Companion Lcom/embabel/dice/store/ReadKeywordQuery$Companion;
+	public synthetic fun <init> (Ljava/util/Collection;Lcom/embabel/dice/store/ReadCriteria;Lcom/embabel/dice/store/ReadOrder;Ljava/lang/Integer;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun forTokens (Ljava/lang/String;[Ljava/lang/String;)Lcom/embabel/dice/store/ReadKeywordQuery;
+	public static final fun forTokens (Ljava/util/Collection;)Lcom/embabel/dice/store/ReadKeywordQuery;
+	public final fun getCriteria ()Lcom/embabel/dice/store/ReadCriteria;
+	public final fun getLimit ()Ljava/lang/Integer;
+	public final fun getOrder ()Lcom/embabel/dice/store/ReadOrder;
+	public final fun getTokens ()Ljava/util/List;
+	public fun hashCode ()I
+	public final fun requireOnly (Ljava/util/Set;Ljava/util/Set;Lcom/embabel/dice/store/StoreCapability;)V
+	public fun toString ()Ljava/lang/String;
+	public final fun withCriteria (Lcom/embabel/dice/store/ReadCriteria;)Lcom/embabel/dice/store/ReadKeywordQuery;
+	public final fun withLimit (I)Lcom/embabel/dice/store/ReadKeywordQuery;
+	public final fun withOrder (Lcom/embabel/dice/store/ReadOrder;)Lcom/embabel/dice/store/ReadKeywordQuery;
+}
+
+public final class com/embabel/dice/store/ReadKeywordQuery$Companion {
+	public final fun forTokens (Ljava/lang/String;[Ljava/lang/String;)Lcom/embabel/dice/store/ReadKeywordQuery;
+	public final fun forTokens (Ljava/util/Collection;)Lcom/embabel/dice/store/ReadKeywordQuery;
+	public final synthetic fun invoke (Ljava/util/Collection;Lkotlin/jvm/functions/Function1;)Lcom/embabel/dice/store/ReadKeywordQuery;
+	public static synthetic fun invoke$default (Lcom/embabel/dice/store/ReadKeywordQuery$Companion;Ljava/util/Collection;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lcom/embabel/dice/store/ReadKeywordQuery;
+}
+
+public final class com/embabel/dice/store/ReadKeywordQueryBuilder {
+	public final fun getCriteria ()Lcom/embabel/dice/store/ReadCriteria;
+	public final fun getLimit ()Ljava/lang/Integer;
+	public final fun getOrder ()Lcom/embabel/dice/store/ReadOrder;
+	public final fun setCriteria (Lcom/embabel/dice/store/ReadCriteria;)V
+	public final fun setLimit (Ljava/lang/Integer;)V
+	public final fun setOrder (Lcom/embabel/dice/store/ReadOrder;)V
+}
+
+public final class com/embabel/dice/store/ReadOrder : java/lang/Enum {
+	public static final field CREATED_DESC Lcom/embabel/dice/store/ReadOrder;
+	public static final field EFFECTIVE_CONFIDENCE_DESC Lcom/embabel/dice/store/ReadOrder;
+	public static final field IMPORTANCE_DESC Lcom/embabel/dice/store/ReadOrder;
+	public static final field LAST_ACCESSED_DESC Lcom/embabel/dice/store/ReadOrder;
+	public static final field NONE Lcom/embabel/dice/store/ReadOrder;
+	public static final field REINFORCE_COUNT_DESC Lcom/embabel/dice/store/ReadOrder;
+	public static final field REVISED_DESC Lcom/embabel/dice/store/ReadOrder;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/store/ReadOrder;
+	public static fun values ()[Lcom/embabel/dice/store/ReadOrder;
+}
+
+public final class com/embabel/dice/store/ReadQuery {
+	public static final field Companion Lcom/embabel/dice/store/ReadQuery$Companion;
+	public synthetic fun <init> (Lcom/embabel/dice/store/ReadCriteria;Lcom/embabel/dice/store/ReadOrder;Ljava/lang/Integer;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCriteria ()Lcom/embabel/dice/store/ReadCriteria;
+	public final fun getLimit ()Ljava/lang/Integer;
+	public final fun getOrder ()Lcom/embabel/dice/store/ReadOrder;
+	public fun hashCode ()I
+	public static final fun of (Lcom/embabel/dice/store/ReadCriteria;)Lcom/embabel/dice/store/ReadQuery;
+	public final fun orderedByCreated ()Lcom/embabel/dice/store/ReadQuery;
+	public final fun orderedByEffectiveConfidence ()Lcom/embabel/dice/store/ReadQuery;
+	public final fun orderedByImportance ()Lcom/embabel/dice/store/ReadQuery;
+	public final fun orderedByLastAccessed ()Lcom/embabel/dice/store/ReadQuery;
+	public final fun orderedByReinforceCount ()Lcom/embabel/dice/store/ReadQuery;
+	public final fun orderedByRevised ()Lcom/embabel/dice/store/ReadQuery;
+	public final fun requireOnly (Ljava/util/Set;Ljava/util/Set;Lcom/embabel/dice/store/StoreCapability;)V
+	public fun toString ()Ljava/lang/String;
+	public final fun withLimit (I)Lcom/embabel/dice/store/ReadQuery;
+	public final fun withOrder (Lcom/embabel/dice/store/ReadOrder;)Lcom/embabel/dice/store/ReadQuery;
+}
+
+public final class com/embabel/dice/store/ReadQuery$Companion {
+	public final synthetic fun invoke (Lcom/embabel/dice/store/ReadCriteria;Lkotlin/jvm/functions/Function1;)Lcom/embabel/dice/store/ReadQuery;
+	public static synthetic fun invoke$default (Lcom/embabel/dice/store/ReadQuery$Companion;Lcom/embabel/dice/store/ReadCriteria;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lcom/embabel/dice/store/ReadQuery;
+	public final fun of (Lcom/embabel/dice/store/ReadCriteria;)Lcom/embabel/dice/store/ReadQuery;
+}
+
+public final class com/embabel/dice/store/ReadQueryBuilder {
+	public final fun getLimit ()Ljava/lang/Integer;
+	public final fun getOrder ()Lcom/embabel/dice/store/ReadOrder;
+	public final fun setLimit (Ljava/lang/Integer;)V
+	public final fun setOrder (Lcom/embabel/dice/store/ReadOrder;)V
+}
+
+public abstract class com/embabel/dice/store/ReadRefusedException : java/lang/RuntimeException {
+	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class com/embabel/dice/store/ReadScopeViolationException : com/embabel/dice/store/ReadRefusedException {
+	public final fun getAllowedContextIdValues ()Ljava/util/Set;
+	public final fun getContextIdValue ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/store/ReadVectorSearchRequest {
+	public static final field Companion Lcom/embabel/dice/store/ReadVectorSearchRequest$Companion;
+	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/store/ReadCriteria;ILcom/embabel/dice/store/SimilarityScore;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun forText (Ljava/lang/String;)Lcom/embabel/dice/store/ReadVectorSearchRequest;
+	public final fun getCriteria ()Lcom/embabel/dice/store/ReadCriteria;
+	public final fun getMinScore ()Lcom/embabel/dice/store/SimilarityScore;
+	public final fun getText ()Ljava/lang/String;
+	public final fun getTopK ()I
+	public fun hashCode ()I
+	public final fun requireOnly (Ljava/util/Set;Lcom/embabel/dice/store/StoreCapability;)V
+	public fun toString ()Ljava/lang/String;
+	public final fun withCriteria (Lcom/embabel/dice/store/ReadCriteria;)Lcom/embabel/dice/store/ReadVectorSearchRequest;
+	public final fun withMinScore (Lcom/embabel/dice/store/SimilarityScore;)Lcom/embabel/dice/store/ReadVectorSearchRequest;
+	public final fun withTopK (I)Lcom/embabel/dice/store/ReadVectorSearchRequest;
+}
+
+public final class com/embabel/dice/store/ReadVectorSearchRequest$Companion {
+	public final fun forText (Ljava/lang/String;)Lcom/embabel/dice/store/ReadVectorSearchRequest;
+	public final synthetic fun invoke (Ljava/lang/String;Lkotlin/jvm/functions/Function1;)Lcom/embabel/dice/store/ReadVectorSearchRequest;
+	public static synthetic fun invoke$default (Lcom/embabel/dice/store/ReadVectorSearchRequest$Companion;Ljava/lang/String;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lcom/embabel/dice/store/ReadVectorSearchRequest;
+}
+
+public final class com/embabel/dice/store/ReadVectorSearchRequestBuilder {
+	public final fun getCriteria ()Lcom/embabel/dice/store/ReadCriteria;
+	public final fun getMinScore ()Lcom/embabel/dice/store/SimilarityScore;
+	public final fun getTopK ()I
+	public final fun setCriteria (Lcom/embabel/dice/store/ReadCriteria;)V
+	public final fun setMinScore (Lcom/embabel/dice/store/SimilarityScore;)V
+	public final fun setTopK (I)V
+}
+
+public final class com/embabel/dice/store/ScopedReadSpec {
+	public static final field Companion Lcom/embabel/dice/store/ScopedReadSpec$Companion;
+	public synthetic fun <init> (Lcom/embabel/dice/store/ContextReadScope;Ljava/util/List;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFilters ()Ljava/util/List;
+	public final fun getScope ()Lcom/embabel/dice/store/ContextReadScope;
+	public fun hashCode ()I
+	public final fun narrow (Lcom/embabel/dice/store/ReadCriteria;)Lcom/embabel/dice/store/ScopedReadSpec;
+	public final fun narrow (Ljava/util/function/UnaryOperator;)Lcom/embabel/dice/store/ScopedReadSpec;
+	public final fun narrowToContexts (Ljava/lang/String;[Ljava/lang/String;)Lcom/embabel/dice/store/ScopedReadSpec;
+	public final fun narrowToContexts (Ljava/util/Collection;)Lcom/embabel/dice/store/ScopedReadSpec;
+	public static final fun of (Lcom/embabel/dice/store/ContextReadScope;)Lcom/embabel/dice/store/ScopedReadSpec;
+	public final fun requireOnly (Ljava/util/Set;Lcom/embabel/dice/store/StoreCapability;)V
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/store/ScopedReadSpec$Companion {
+	public final fun of (Lcom/embabel/dice/store/ContextReadScope;)Lcom/embabel/dice/store/ScopedReadSpec;
+}
+
+public abstract interface class com/embabel/dice/store/ScopedReads {
+	public abstract fun count (Lcom/embabel/dice/store/ScopedReadSpec;Lcom/embabel/dice/store/ReadCriteria;Lcom/embabel/dice/store/ReadBudget;)I
+	public abstract fun matchKeywords (Lcom/embabel/dice/store/ScopedReadSpec;Lcom/embabel/dice/store/ReadKeywordQuery;Lcom/embabel/dice/store/ReadBudget;)Ljava/util/List;
+	public abstract fun query (Lcom/embabel/dice/store/ScopedReadSpec;Lcom/embabel/dice/store/ReadQuery;Lcom/embabel/dice/store/ReadBudget;)Ljava/util/List;
+}
+
+public abstract interface class com/embabel/dice/store/ScopedVectorSearch {
+	public abstract fun findNearest (Lcom/embabel/dice/store/ScopedReadSpec;Lcom/embabel/dice/store/ReadVectorSearchRequest;Lcom/embabel/dice/store/ReadBudget;)Ljava/util/List;
 }
 
 public final class com/embabel/dice/store/SimilarityScore : java/lang/Comparable {
@@ -1501,6 +1853,8 @@ public final class com/embabel/dice/store/StoreCapabilitiesBuilder {
 
 public final class com/embabel/dice/store/StoreCapability : java/lang/Enum {
 	public static final field FILTERED_VECTOR_SEARCH Lcom/embabel/dice/store/StoreCapability;
+	public static final field SCOPED_READS Lcom/embabel/dice/store/StoreCapability;
+	public static final field SCOPED_VECTOR_SEARCH Lcom/embabel/dice/store/StoreCapability;
 	public final fun getContract ()Ljava/lang/Class;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/store/StoreCapability;

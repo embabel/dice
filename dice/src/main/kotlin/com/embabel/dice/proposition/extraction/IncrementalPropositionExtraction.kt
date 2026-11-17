@@ -19,6 +19,7 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.chat.Message
+import com.embabel.dice.common.NameNormalizer
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.KnownEntity
 import com.embabel.dice.common.Relations
@@ -147,6 +148,33 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
 
     /** Whether [withPersistUnitWriter] has been called. Binding is one-time, as for run lineage. */
     private val persistUnitWriterBound = AtomicBoolean(false)
+
+    /** The rules set with [withNameNormalizer] for matching a mention to a known entity. */
+    @Volatile
+    private var nameNormalizer: NameNormalizer = NameNormalizer.standard()
+
+    /**
+     * Choose the rules that decide when a mention names a known entity.
+     *
+     * The extractor matches mentions against the current user and the other known entities of a
+     * source before it asks the entity resolver. Give it the normalizer the pipeline has, set
+     * with `PropositionPipeline.withNameNormalizer`, so both agree on which names are the same.
+     * Set it before the extractor starts handling events. The default is
+     * [NameNormalizer.standard].
+     *
+     * Java:
+     * ```java
+     * NameNormalizer normalizer = PersonNameNormalizer.english().withPersonLabels("Person", "Contact");
+     * extraction.withNameNormalizer(normalizer);
+     * ```
+     *
+     * @param nameNormalizer the rules to use
+     * @return this extractor
+     */
+    open fun withNameNormalizer(nameNormalizer: NameNormalizer): IncrementalPropositionExtraction {
+        this.nameNormalizer = nameNormalizer
+        return this
+    }
 
     /**
      * Binds the store that records which extraction run produced which claims, and returns this
@@ -621,7 +649,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         var ctx = SourceAnalysisContext
             .withContextId(contextIdProvider.apply(user))
             .withEntityResolver(
-                KnownEntityResolver.withKnownEntities(allKnown, entityResolver),
+                KnownEntityResolver.withKnownEntities(allKnown, entityResolver, nameNormalizer),
             )
             .withSchema(dataDictionary)
             .withRelations(relations)

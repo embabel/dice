@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.storage
+package com.embabel.dice.conformance
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.common.DiceMetadataKeys
@@ -21,7 +21,9 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionQuery.OrderBy
 import com.embabel.dice.proposition.PropositionStore
+import org.jetbrains.annotations.ApiStatus
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import java.time.Instant
 
@@ -37,6 +39,7 @@ import java.time.Instant
  * - the "revised" clock, which keys on last-touched (the later of content/metadata revision), not the
  *   decay anchor, so a metadata-only touch counts as a revision.
  */
+@ApiStatus.Experimental
 abstract class AbstractPropositionStoreContractTest {
 
     /** A fresh, empty store for the test about to run. */
@@ -62,7 +65,8 @@ abstract class AbstractPropositionStoreContractTest {
     // ---- minTrustScore: honoured identically, and fail-open for unscored propositions ----
 
     @Test
-    fun `minTrustScore excludes low-trust but keeps high-trust and unscored`() {
+    @DisplayName("minTrustScore excludes low-trust but keeps high-trust and unscored")
+    open fun minTrustScoreExcludesLowTrustButKeepsHighTrustAndUnscored() {
         val store = store()
         val low = store.save(prop("low trust", trustScore = 0.2))
         val high = store.save(prop("high trust", trustScore = 0.8))
@@ -83,7 +87,8 @@ abstract class AbstractPropositionStoreContractTest {
     private val cutoff = Instant.parse("2022-01-01T00:00:00Z")
 
     @Test
-    fun `revisedAfter filters on lastTouched, so a recent metadata touch keeps an old-content proposition`() {
+    @DisplayName("revisedAfter filters on lastTouched, so a recent metadata touch keeps an old-content proposition")
+    open fun revisedAfterFiltersOnLastTouchedSoARecentMetadataTouchKeepsAnOldContentProposition() {
         val store = store()
         // Content last changed in 2020 but metadata was touched in 2023 → lastTouched = 2023.
         val touched = store.save(prop("old content, recent metadata", contentRevised = old, metadataRevised = recent))
@@ -98,7 +103,8 @@ abstract class AbstractPropositionStoreContractTest {
     }
 
     @Test
-    fun `REVISED_DESC orders by lastTouched`() {
+    @DisplayName("REVISED_DESC orders by lastTouched")
+    open fun revisedDescOrdersByLastTouched() {
         val store = store()
         val touched = store.save(prop("old content, recent metadata", contentRevised = old, metadataRevised = recent))
         val stale = store.save(prop("untouched since 2021", contentRevised = mid, metadataRevised = mid))
@@ -112,7 +118,8 @@ abstract class AbstractPropositionStoreContractTest {
     // ---- count(query): a filtered count agrees with the size of the same query's results ----
 
     @Test
-    fun `count(query) equals the number of matching propositions on both backends`() {
+    @DisplayName("count(query) equals the number of matching propositions")
+    open fun countQueryEqualsTheNumberOfMatchingPropositions() {
         val store = store()
         store.save(propWithConfidence("high a", 0.9))
         store.save(propWithConfidence("high b", 0.8))
@@ -125,7 +132,8 @@ abstract class AbstractPropositionStoreContractTest {
     }
 
     @Test
-    fun `count(query) is capped by the query's limit on both backends`() {
+    @DisplayName("count(query) is capped by the query's limit")
+    open fun countQueryIsCappedByTheQuerysLimit() {
         val store = store()
         store.save(propWithConfidence("high a", 0.9))
         store.save(propWithConfidence("high b", 0.8))
@@ -141,7 +149,8 @@ abstract class AbstractPropositionStoreContractTest {
     // ---- belowEffectiveConfidence: strict upper bound, mirroring minEffectiveConfidence ----
 
     @Test
-    fun `belowEffectiveConfidence keeps only propositions strictly under the threshold`() {
+    @DisplayName("belowEffectiveConfidence keeps only propositions strictly under the threshold")
+    open fun belowEffectiveConfidenceKeepsOnlyPropositionsStrictlyUnderTheThreshold() {
         val store = store()
         val low = store.save(propWithConfidence("low", 0.2))
         val high = store.save(propWithConfidence("high", 0.9))
@@ -156,7 +165,8 @@ abstract class AbstractPropositionStoreContractTest {
     // ---- keywordOverlap: case-insensitive term overlap, ranked by overlap count ----
 
     @Test
-    fun `keywordOverlap matches case-insensitively and ranks by overlap`() {
+    @DisplayName("keywordOverlap matches case-insensitively and ranks by overlap")
+    open fun keywordOverlapMatchesCaseInsensitivelyAndRanksByOverlap() {
         val store = store()
         val canva = store.save(propWithConfidence("I love Canva design", 0.9))
         val both = store.save(propWithConfidence("Canva and Figma both", 0.9))
@@ -172,7 +182,8 @@ abstract class AbstractPropositionStoreContractTest {
     }
 
     @Test
-    fun `keywordOverlap returns nothing for empty tokens`() {
+    @DisplayName("keywordOverlap returns nothing for empty tokens")
+    open fun keywordOverlapReturnsNothingForEmptyTokens() {
         val store = store()
         store.save(propWithConfidence("anything", 0.9))
         assertEquals(emptyList<String>(), store.keywordOverlap(PropositionQuery.forContextId(ctx), emptyList(), 10).map { it.id })

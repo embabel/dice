@@ -30,7 +30,6 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -228,13 +227,13 @@ class PropositionPipelineGroundingTest {
     }
 
     @Test
-    fun `E9 copy-builders keep the mention filter and the DROP handling`() {
+    fun `E9 copy-builders keep the DROP handling and the extractor is handed no filter`() {
         val filter = object : MentionFilter {
             override fun isValid(mention: SuggestedMention, propositionText: String): Boolean = true
         }
         val filtered = FakeExtractor(mixed())
         defaultPipeline(filtered).withMentionFilter(filter).processChunk(chunk(), context())
-        assertSame(filter, filtered.filtersSeen.single())
+        assertEquals(listOf<MentionFilter?>(null), filtered.filtersSeen)
 
         val dropped: List<(PropositionPipeline) -> PropositionPipeline> = listOf(
             { it.withMentionFilter(filter) },

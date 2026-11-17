@@ -41,8 +41,8 @@ The `dice` module is organised by responsibility. This is the map for finding th
   `CanonicalNameSelector`, `EvidenceFloor`, `DiceEvent`, `DiceEventListeners`, `DiceMetadataKeys`.
 
 | `com.embabel.dice.common.filter`
-| `MentionFilter`, `SchemaValidatedMentionFilter`, `ContextAwareMentionFilters`,
-  `ObservableMentionFilter`.
+| `MentionFilter`, `GroundedMentionFilter`, `SchemaValidatedMentionFilter`,
+  `ContextAwareMentionFilters`, `ObservableMentionFilter`.
 
 | `com.embabel.dice.common.resolver`
 | `EscalatingEntityResolver`, `ChainedEntityResolver`, `KnownEntityResolver`,
