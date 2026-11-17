@@ -122,6 +122,10 @@ interface PropositionReviser {
     /**
      * Revise multiple propositions, returning results for each.
      *
+     * Each proposition is revised against the copies the earlier ones produced, so when two of
+     * them back up the same stored proposition, the second result starts from the first one's
+     * copy and both keep their evidence.
+     *
      * @param propositions The propositions to revise
      * @param repository The proposition repository
      * @return List of revision results
@@ -129,7 +133,10 @@ interface PropositionReviser {
     fun reviseAll(
         propositions: List<Proposition>,
         repository: PropositionRepository,
-    ): List<RevisionResult> = propositions.map { revise(it, repository) }
+    ): List<RevisionResult> {
+        val inRun = InRunPropositions.over(repository)
+        return propositions.map { revise(it, inRun).also(inRun::record) }
+    }
 
     /**
      * Classify the relationship between propositions.

@@ -21,9 +21,11 @@ import com.embabel.dice.common.*
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.SuggestedPropositions
 import com.embabel.dice.proposition.revision.RevisionResult
+import com.embabel.dice.proposition.revision.isReplay
 
 /**
- * Statistics about proposition revision outcomes.
+ * Statistics about proposition revision outcomes. A replay, a merge or reinforcement that left the
+ * stored proposition as it was, is not counted.
  */
 data class PropositionExtractionStats(
     /** Number of propositions that were new (not similar to existing) */
@@ -43,8 +45,8 @@ data class PropositionExtractionStats(
     companion object {
         fun from(revisionResults: List<RevisionResult>): PropositionExtractionStats = PropositionExtractionStats(
             newCount = revisionResults.count { it is RevisionResult.New },
-            mergedCount = revisionResults.count { it is RevisionResult.Merged },
-            reinforcedCount = revisionResults.count { it is RevisionResult.Reinforced },
+            mergedCount = revisionResults.count { it is RevisionResult.Merged && !it.isReplay() },
+            reinforcedCount = revisionResults.count { it is RevisionResult.Reinforced && !it.isReplay() },
             contradictedCount = revisionResults.count { it is RevisionResult.Contradicted },
             generalizedCount = revisionResults.count { it is RevisionResult.Generalized },
         )
@@ -73,14 +75,15 @@ interface PropositionExtractionResult {
      * - Contradicted: both the original (with reduced confidence) and the new
      * - Generalized: the new generalizing proposition
      *
-     * A replay is left out when another result in the list changed that same stored copy, so
+     * Each stored proposition appears once, as the last copy the results produced for it. A replay
+     * is left out when another result changed or contradicted that same stored proposition, so
      * saving the list cannot undo that change.
      */
     val revisedPropositionsToPersist: List<Proposition>
         get() {
-            val changedOriginals = revisionResults.mapNotNull { it.changedOriginal() }.toSet()
-            return revisionResults
-                .filterNot { result -> result.replayed()?.let { it in changedOriginals } == true }
+            val changedIds = revisionResults.mapNotNull { it.changedStoredId() }.toSet()
+            val toPersist = revisionResults
+                .filterNot { it.isReplay() && it.storedId() in changedIds }
                 .flatMap { result ->
                     when (result) {
                         is RevisionResult.New -> listOf(result.proposition)
@@ -90,6 +93,8 @@ interface PropositionExtractionResult {
                         is RevisionResult.Generalized -> listOf(result.proposition)
                     }
                 }
+            val lastIndexById = toPersist.withIndex().associate { (index, proposition) -> proposition.id to index }
+            return toPersist.filterIndexed { index, proposition -> lastIndexById[proposition.id] == index }
         }
 }
 
@@ -278,23 +283,21 @@ data class PropositionResults(
 }
 
 /**
- * Returns the stored proposition this result replays, or null when the result changes something.
- *
- * @return the unchanged proposition of a replayed merge or reinforcement, otherwise null
+ * Returns the id of the stored proposition a merge or reinforcement started from, or null for
+ * other results.
  */
-private fun RevisionResult.replayed(): Proposition? = when (this) {
-    is RevisionResult.Merged -> revised.takeIf { it == original }
-    is RevisionResult.Reinforced -> revised.takeIf { it == original }
+private fun RevisionResult.storedId(): String? = when (this) {
+    is RevisionResult.Merged -> original.id
+    is RevisionResult.Reinforced -> original.id
     else -> null
 }
 
 /**
- * Returns the stored proposition this result started from, or null when the result changes nothing.
- *
- * @return the original of a merge or reinforcement that changed it, otherwise null
+ * Returns the id of the stored proposition this result changed, or null when it changed none.
+ * A contradiction counts as a change to the proposition it contradicts.
  */
-private fun RevisionResult.changedOriginal(): Proposition? = when (this) {
-    is RevisionResult.Merged -> original.takeIf { revised != original }
-    is RevisionResult.Reinforced -> original.takeIf { revised != original }
+private fun RevisionResult.changedStoredId(): String? = when (this) {
+    is RevisionResult.Merged, is RevisionResult.Reinforced -> if (isReplay()) null else storedId()
+    is RevisionResult.Contradicted -> original.id
     else -> null
 }

@@ -56,13 +56,12 @@ internal class ReinforcementRule(
 internal fun reinforce(existing: Proposition, evidence: Proposition, rule: ReinforcementRule): Proposition {
     if (existing.id == evidence.id) return existing
     val sources = evidence.copy(sourceIds = evidence.sourceIds.filter { it != existing.id })
-    val folded = existing.absorbEvidence(sources)
     val namesNoSource = evidence.grounding.isEmpty() &&
         evidence.provenanceEntries.isEmpty() &&
         evidence.sourceIds.isEmpty()
-    if (!namesNoSource && folded.reinforceCount == existing.reinforceCount) return existing
+    if (!namesNoSource && existing.holdsAllSourcesOf(sources)) return existing
     val now = Instant.now()
-    return folded.copy(
+    return existing.absorbEvidence(sources).copy(
         confidence = rule.confidence(existing, evidence).coerceIn(existing.confidence, 1.0),
         decay = rule.decayFactor?.let { (existing.decay * it).coerceIn(0.0, 1.0) } ?: existing.decay,
         reinforceCount = existing.reinforceCount + 1,
@@ -70,4 +69,25 @@ internal fun reinforce(existing: Proposition, evidence: Proposition, rule: Reinf
         metadataRevised = now,
         lastAccessed = if (rule.touchLastAccessed) now else existing.lastAccessed,
     )
+}
+
+/**
+ * Whether this proposition already holds every grounding id, provenance entry and source id that
+ * [evidence] names.
+ */
+private fun Proposition.holdsAllSourcesOf(evidence: Proposition): Boolean =
+    grounding.containsAll(evidence.grounding) &&
+        provenanceEntries.containsAll(evidence.provenanceEntries) &&
+        sourceIds.containsAll(evidence.sourceIds)
+
+/**
+ * Whether this result is a replay: a merge or reinforcement that left the stored proposition as it
+ * was, because the stored one already held all of the evidence.
+ *
+ * @return true for a merge or reinforcement whose revised proposition equals its original
+ */
+internal fun RevisionResult.isReplay(): Boolean = when (this) {
+    is RevisionResult.Merged -> revised == original
+    is RevisionResult.Reinforced -> revised == original
+    else -> false
 }

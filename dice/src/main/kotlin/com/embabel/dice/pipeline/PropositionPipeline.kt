@@ -47,7 +47,9 @@ import com.embabel.dice.proposition.SuggestedPropositions
 import com.embabel.dice.provenance.ContentAddressedLocator
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.proposition.revision.PropositionReviser
+import com.embabel.dice.proposition.revision.InRunPropositions
 import com.embabel.dice.proposition.revision.RevisionResult
+import com.embabel.dice.proposition.revision.isReplay
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -255,12 +257,15 @@ class PropositionPipeline private constructor(
      * @param context the analysis context
      * @param extraGrounding ids added to each proposition's grounding before revision, so an id
      * the stored proposition does not hold counts as new evidence
+     * @param inRun the run's view of the repository, which holds the copies earlier chunks in the
+     * run produced, or null to revise against the repository alone
      * @return the resolved, and possibly revised, propositions for the chunk
      */
     private fun resolveStage(
         extraction: ExtractionStageResult,
         context: SourceAnalysisContext,
         extraGrounding: List<String> = emptyList(),
+        inRun: InRunPropositions? = null,
     ): ChunkPropositionResult.Success {
         val (chunk, suggestedPropositions, suggestedEntities) = extraction
 
@@ -323,19 +328,23 @@ class PropositionPipeline private constructor(
 
         // Step 5: Optionally revise propositions against existing ones
         val revisionResults = if (reviser != null && propositionRepository != null) {
-            val results = reviser.reviseAll(propositions, propositionRepository)
+            val view = inRun ?: InRunPropositions.over(propositionRepository)
+            val results = reviser.reviseAll(propositions, view)
+            results.forEach(view::record)
+            val stats = PropositionExtractionStats.from(results)
             logger.debug(
                 "Revised {} propositions: {} new, {} merged, {} reinforced, {} contradicted",
                 results.size,
-                results.count { it is RevisionResult.New },
-                results.count { it is RevisionResult.Merged },
-                results.count { it is RevisionResult.Reinforced },
-                results.count { it is RevisionResult.Contradicted },
+                stats.newCount,
+                stats.mergedCount,
+                stats.reinforcedCount,
+                stats.contradictedCount,
             )
             // Emit one pre-persistence candidate event per RevisionResult (revision-only).
             // These are early signals; the canonical durable event is PropositionPersisted,
             // emitted by the repository decorator when the result is actually saved.
-            results.forEach { revision ->
+            // A replay changes nothing, so it emits nothing.
+            results.filterNot { it.isReplay() }.forEach { revision ->
                 val event = when (revision) {
                     is RevisionResult.New -> PropositionDiscovered(revision.proposition)
                     is RevisionResult.Merged -> PropositionMerged(revision.original, revision.revised)
@@ -434,21 +443,6 @@ class PropositionPipeline private constructor(
         resolveStage(extractStage(chunk, context), context)
 
     /**
-     * Processes one chunk with extra grounding ids that join each proposition before revision.
-     *
-     * @param chunk the chunk to process
-     * @param context the analysis context
-     * @param extraGrounding ids to add to each proposition's grounding
-     * @return the processing result
-     */
-    private fun processChunk(
-        chunk: Chunk,
-        context: SourceAnalysisContext,
-        extraGrounding: List<String>,
-    ): ChunkPropositionResult =
-        resolveStage(extractStage(chunk, context), context, extraGrounding)
-
-    /**
      * Process a text once, with hash-based deduplication.
      * Ideal for one-shot ingestion of documents, notes, or other static text.
      *
@@ -490,7 +484,7 @@ class PropositionPipeline private constructor(
             // Backward-compatible: callers that pass UUID-shaped
             // sourceIds get UUID chunk ids exactly as before.
             val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
-            val result = processChunk(chunk, context, additionalGrounding)
+            val result = resolveStage(extractStage(chunk, context), context, additionalGrounding)
             historyStore.recordProcessed(
                 ProcessedChunkRecord(
                     bookmarkKey = BookmarkKey(context.contextId, sourceId),
@@ -506,7 +500,7 @@ class PropositionPipeline private constructor(
         // proposition.grounding carries the caller's stable sourceId so
         // GroundingWiringService can resolve it to a source entity.
         val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
-        return processChunk(chunk, context, additionalGrounding).withAdditionalGrounding(additionalGrounding)
+        return resolveStage(extractStage(chunk, context), context, additionalGrounding)
     }
 
     /**
@@ -533,7 +527,7 @@ class PropositionPipeline private constructor(
         additionalGrounding: List<String> = emptyList(),
     ): ChunkPropositionResult {
         val chunk = Chunk.create(text = text, parentId = sourceId, id = sourceId)
-        return processChunk(chunk, context, additionalGrounding).withAdditionalGrounding(additionalGrounding)
+        return resolveStage(extractStage(chunk, context), context, additionalGrounding)
     }
 
     /**
@@ -590,12 +584,15 @@ class PropositionPipeline private constructor(
         // Resolution stage — always serial, so all chunks share the same entity identity.
         // Resolve each non-null extraction through the shared crossChunkResolver; map null
         // slots to typed ChunkPropositionResult.Failed.
+        // One view of the repository for the whole run, so a later chunk revises against the copy
+        // an earlier chunk produced rather than the stored one, and both keep their evidence.
+        val inRun = propositionRepository?.let { InRunPropositions.over(it) }
         val chunkResults: List<ChunkPropositionResult> = extractions.mapIndexed { i, extraction ->
             val chunkId = chunks[i].id
             if (extraction != null) {
                 // Isolate per-chunk: a throw in resolution, revision, or event emission surfaces
                 // as a Failed result for this chunk only, never aborting the whole run.
-                runCatching { resolveStage(extraction, crossChunkContext) }
+                runCatching { resolveStage(extraction, crossChunkContext, inRun = inRun) }
                     .getOrElse { e ->
                         logger.warn("Resolution failed for chunk {}: {}", chunkId, e.message, e)
                         ChunkPropositionResult.failed(chunkId, e)

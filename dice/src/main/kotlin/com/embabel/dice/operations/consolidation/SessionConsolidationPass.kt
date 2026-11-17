@@ -46,14 +46,11 @@ class SessionConsolidationPass @JvmOverloads constructor(
     override fun run(contextId: ContextId, propositions: List<Proposition>): ConsolidationPassResult {
         return try {
             val result = consolidator.consolidate(sessionPropositions, propositions)
-            // A reinforced entry equal to its snapshot copy brought no new evidence, so the pass skips it.
-            val unchanged = propositions.toSet()
-            val reinforced = result.reinforced.filterNot { it in unchanged }
-            val toSave = result.promoted + reinforced + result.merged.map { it.result }
+            val toSave = result.promoted + result.reinforced + result.merged.map { it.result }
             logger.debug(
                 "Session consolidation for {}: {} session vs {} long-term proposition(s) -> {} promoted, {} reinforced, {} merged, {} discarded",
                 contextId, sessionPropositions.size, propositions.size,
-                result.promoted.size, reinforced.size, result.merged.size, result.discarded.size,
+                result.promoted.size, result.reinforced.size, result.merged.size, result.discarded.size,
             )
             if (toSave.isEmpty()) {
                 ConsolidationPassResult.NoOp(name, "nothing to promote, reinforce, or merge")
@@ -62,7 +59,7 @@ class SessionConsolidationPass @JvmOverloads constructor(
                     passName = name,
                     propositionsToSave = toSave,
                     summary = "consolidated session: ${result.promoted.size} promoted, " +
-                        "${reinforced.size} reinforced, ${result.merged.size} merged, " +
+                        "${result.reinforced.size} reinforced, ${result.merged.size} merged, " +
                         "${result.discarded.size} discarded",
                 )
             }

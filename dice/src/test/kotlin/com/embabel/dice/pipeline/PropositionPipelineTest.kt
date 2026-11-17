@@ -1291,7 +1291,7 @@ class PropositionPipelineTest {
         }
 
         @Test
-        fun `a replay of a newer stored copy stays after an older copy's reinforcement`() {
+        fun `a replay is left out after a reinforcement of the same stored proposition whatever copy it holds`() {
             val newer = stored.copy(confidence = 0.95, grounding = stored.grounding + "chunk-other")
             val results = PropositionResults(
                 chunkResults = listOf(
@@ -1301,7 +1301,7 @@ class PropositionPipelineTest {
                 allPropositions = emptyList(),
             )
 
-            assertEquals(listOf(reinforced, newer), results.revisedPropositionsToPersist)
+            assertEquals(listOf(reinforced), results.revisedPropositionsToPersist)
         }
 
         @Test
@@ -1327,7 +1327,7 @@ class PropositionPipelineTest {
         }
 
         @Test
-        fun `a replay of a newer stored copy in the same chunk stays after an older copy's reinforcement`() {
+        fun `a replay in the same chunk is left out after a reinforcement of the same stored proposition whatever copy it holds`() {
             val newer = stored.copy(confidence = 0.95, grounding = stored.grounding + "chunk-other")
             val result = chunk(
                 "chunk-1",
@@ -1335,7 +1335,7 @@ class PropositionPipelineTest {
                 RevisionResult.Merged(original = newer, revised = newer),
             )
 
-            assertEquals(listOf(reinforced, newer), result.revisedPropositionsToPersist)
+            assertEquals(listOf(reinforced), result.revisedPropositionsToPersist)
         }
     }
 

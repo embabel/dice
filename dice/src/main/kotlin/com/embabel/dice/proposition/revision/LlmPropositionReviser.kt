@@ -281,13 +281,16 @@ data class LlmPropositionReviser(
             logger.info("Batch dedup: dropped {} of {} propositions with identical canonical text", dropped, propositions.size)
         }
 
-        // 2. For each proposition: embedding search + fast paths
+        // 2. For each proposition: embedding search + fast paths. Each result is revised against
+        // the copies earlier results in this call produced, so two propositions that back up the
+        // same stored one both keep their evidence.
+        val inRun = InRunPropositions.over(repository)
         val results = mutableListOf<Pair<Int, RevisionResult>>()
         val pending = mutableListOf<Pair<Int, PendingClassification>>()
 
         for ((index, prop) in deduped.withIndex()) {
-            when (val outcome = retrieveAndFastPath(prop, repository)) {
-                is RevisionResult -> results.add(index to outcome)
+            when (val outcome = retrieveAndFastPath(prop, inRun)) {
+                is RevisionResult -> results.add(index to outcome.also(inRun::record))
                 is PendingClassification -> pending.add(index to outcome)
             }
         }
@@ -299,7 +302,7 @@ data class LlmPropositionReviser(
                 pending.size, deduped.size, classifyBatchSize
             )
             val pendingItems = pending.map { it.second }
-            val batchResults = classifyBatch(pendingItems, repository)
+            val batchResults = classifyBatch(pendingItems, inRun)
             for ((i, result) in batchResults.withIndex()) {
                 results.add(pending[i].first to result)
             }
@@ -411,7 +414,7 @@ data class LlmPropositionReviser(
         if (items.size == 1) {
             val item = items.first()
             val classified = classify(item.newProposition, item.candidates)
-            return listOf(classifiedToResult(item.newProposition, classified, repository))
+            return listOf(classifiedToResult(item.newProposition, classified, repository).also { recordInRun(repository, it) })
         }
 
         val allResults = mutableListOf<RevisionResult>()
@@ -480,11 +483,19 @@ data class LlmPropositionReviser(
                     )
                 }
 
-                allResults.add(classifiedToResult(item.newProposition, classified, repository))
+                allResults.add(classifiedToResult(item.newProposition, classified, repository).also { recordInRun(repository, it) })
             }
         }
 
         return allResults
+    }
+
+    /**
+     * Records [result] on [repository] when it is a run view, so the next result in the batch
+     * starts from the copy this one produced.
+     */
+    private fun recordInRun(repository: PropositionRepository, result: RevisionResult) {
+        (repository as? InRunPropositions)?.record(result)
     }
 
     /**
