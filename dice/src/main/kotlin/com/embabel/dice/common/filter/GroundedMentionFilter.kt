@@ -62,12 +62,12 @@ class GroundedMentionFilter : MentionFilter {
         if (MentionGrounding.isBlank(mention.span)) UngroundedMention.Reason.BLANK_SPAN.name else null
 
     /**
-     * A copy of the known entities last seen and their prepared names, reused while the known
-     * entities stay the same. The copy is compared by content, so a list changed in place is
-     * prepared again.
+     * The names and aliases of the known entities last seen, copied as strings, and their prepared
+     * names. They are reused while the names stay the same, so a list, an entity or an alias list
+     * changed in place is prepared again.
      */
     @Volatile
-    private var lastKnown: Pair<List<KnownEntity>, KnownEntityGrounding.KnownIndex>? = null
+    private var lastKnown: Pair<List<List<String?>>, KnownEntityGrounding.KnownIndex>? = null
 
     override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> =
         KnownEntityGrounding.reasons(proposition, lazy { knownNames(context.knownEntities) })
@@ -81,8 +81,9 @@ class GroundedMentionFilter : MentionFilter {
      * @return their prepared names, indexed by name
      */
     private fun knownNames(knownEntities: List<KnownEntity>): KnownEntityGrounding.KnownIndex {
-        lastKnown?.let { (entities, names) -> if (entities == knownEntities) return names }
-        return KnownEntityGrounding.knownNames(knownEntities).also { lastKnown = knownEntities.toList() to it }
+        val snapshot = knownEntities.map { listOf<String?>(it.name) + it.aliases }
+        lastKnown?.let { (seen, names) -> if (seen == snapshot) return names }
+        return KnownEntityGrounding.knownNames(knownEntities).also { lastKnown = snapshot to it }
     }
 }
 
@@ -164,14 +165,15 @@ internal object KnownEntityGrounding {
             fun of(names: List<KnownNames>): KnownIndex = names as? KnownIndex ?: KnownIndex(names)
 
             /**
-             * Folds a name so that two names get the same key exactly when they are equal ignoring
-             * case, as String.equals(other, ignoreCase = true) decides it.
+             * Folds a name one code point at a time, so that two names get the same key exactly
+             * when they are equal ignoring case, as String.equals(other, ignoreCase = true) decides
+             * it, letters outside the Basic Multilingual Plane included.
              *
              * @param name the name
              * @return its key
              */
             private fun caseKey(name: String): String = buildString(name.length) {
-                name.forEach { append(Character.toLowerCase(Character.toUpperCase(it))) }
+                name.codePoints().forEach { appendCodePoint(Character.toLowerCase(Character.toUpperCase(it))) }
             }
         }
     }

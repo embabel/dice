@@ -250,4 +250,35 @@ class GroundedMentionFilterTest {
         known.add(thomas)
         assertEquals(listOf(Valid), filter.validateMentions(tomMoved, analysis))
     }
+
+    @Test
+    fun `S4 the filter sees an alias removed from a known entity in place`() {
+        val aliases = mutableListOf("Tom")
+        val entity = KnownEntity(
+            com.embabel.agent.rag.model.SimpleNamedEntityData(
+                id = "user-1", name = "Thomas", description = "Thomas",
+                labels = setOf("Person"), properties = emptyMap(),
+            ),
+            "A known person",
+            aliases,
+        )
+        val analysis = context(entity)
+        val filter = GroundedMentionFilter()
+        val tomWaved = proposition("Tom waved", mention("Thomas"))
+
+        assertEquals(listOf(Valid), filter.validateMentions(tomWaved, analysis))
+        aliases.clear()
+        assertEquals(listOf(notInText), filter.validateMentions(tomWaved, analysis))
+    }
+
+    @Test
+    fun `S5 names outside the Basic Multilingual Plane are compared ignoring case as the resolver does`() {
+        val upper = String(Character.toChars(0x1E900))
+        val lower = String(Character.toChars(0x1E922))
+        assertTrue(upper.equals(lower, ignoreCase = true))
+        val known = context(knownPerson("p-bob", "Bob", lower), knownPerson("p-alice", "Alice", upper))
+
+        assertEquals(listOf(notInText), judge(known, "Alice waved", mention(upper)))
+        assertEquals(listOf(Valid), judge(known, "Alice waved to Bob", mention(upper)))
+    }
 }
