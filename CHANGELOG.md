@@ -19,11 +19,12 @@ and the consumer PRs that deliver it).
   level otherwise. Spans are logged at debug level only, by the pipeline and by
   `LlmPropositionExtractor`. **Compatibility: behavioral.**
 
-- With `withUngroundedMentions(UngroundedMentionHandling.DROP)`, when a dropped mention's suggested
-  id is the id of a known entity of the analysis and no candidate with the same span and type holds
-  an id of its own, the resolver candidates for that span and type get that id, unless the mention
-  filter turns it down. Any other suggested id is dropped with its mention. **Compatibility:
-  behavioral.**
+- With `withUngroundedMentions(UngroundedMentionHandling.DROP)`, the mentions grounding drops pass
+  a suggested id on to the resolver candidates with the same span and type when they all agree on
+  one id, it is the id of a known entity of the analysis, no candidate of that span and type holds
+  an id of its own, and the mention filter, unless it only reports, accepts the id. The decision is
+  made once per span and type for the chunk. Any other suggested id is dropped with its mention.
+  **Compatibility: behavioral.**
 
 - The build now checks the committed public API listings of the published modules. `./mvnw verify` fails when
   a module's compiled public API differs from its `api/*.api` file. To update the listings after an API change,

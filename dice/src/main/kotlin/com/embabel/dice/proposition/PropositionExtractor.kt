@@ -55,7 +55,7 @@ interface PropositionExtractor {
      * @param context The source analysis context
      * @param sourceText Optional source text for context during entity resolution
      * @param mentionFilter Optional filter applied to the mentions before entities are created, asked
-     *   through [MentionFilter.validateMentions]. [com.embabel.dice.pipeline.PropositionPipeline] screens mentions itself and passes null.
+     *   through [MentionFilter.validateMentions]. The pipeline screens mentions itself and passes null.
      * @return SuggestedEntities suitable for EntityResolver.resolve()
      */
     fun toSuggestedEntities(
@@ -69,7 +69,7 @@ interface PropositionExtractor {
      * Apply entity resolution results to create final Propositions.
      *
      * Return one proposition per suggested proposition, in the same order, each with its mentions
-     * in the same order as the suggested mentions. [com.embabel.dice.pipeline.PropositionPipeline]
+     * in the same order as the suggested mentions. The pipeline
      * relies on that order to keep a mention it left unresolved without an id.
      *
      * @param suggestedPropositions The original suggested propositions

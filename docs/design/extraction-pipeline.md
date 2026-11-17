@@ -203,15 +203,16 @@ attach particles to a name. A symbol that composition spells out as letters or d
 trade mark sign or a footnote digit, does not join the word beside it. The text of a proposition is
 normalised once, however many mentions it has.
 
-When grounding drops a mention whose `suggestedId` is the id of a known entity of the analysis,
-the resolver candidates with the same span and type get that id, as long as none of them holds an
-id of its own after the filter has run. An id that matches no known entity is dropped with its
-mention, so a made-up id never steers resolution. The proposition keeps its mentions as the model
-wrote them. The filter judges every mention as the model wrote it, and is then asked again about
-each candidate proposition with the passed-on ids in place, so a filter that compares mentions sees
-them together. A hinted mention it turns down keeps no id, and if the ids make it turn down any
-other mention, none of that proposition's mentions gets one. A rejection
-always reports the mention as the model wrote it.
+Under DROP, the mentions grounding drops can pass a `suggestedId` on to the resolver candidates
+with the same span and type. Resolution gives every mention of one span and type the same id, so
+this is decided once per span and type for the whole chunk, never per proposition. A span and type
+gets an id only when every dropped mention of it that carries an id carries the same one, that id
+belongs to a known entity of the analysis, and no candidate of it holds an id of its own. A
+made-up id never steers resolution. Unless the filter only reports (`KEEP`), it is then asked once
+about the first proposition that would receive the id, with the same mentions it judged before and
+only the id added; when it rejects a mention that took the id, or one it had accepted without it,
+no mention of that span and type gets the id. The propositions keep their mentions as the model
+wrote them, and a rejection always reports the mention as the model wrote it.
 
 A mention left unresolved keeps no id, even when another mention with the same span and type is
 resolved. Resolution assigns ids by span and type, so the pipeline takes the id off afterwards by
@@ -219,7 +220,8 @@ position: `PropositionExtractor.resolvePropositions` returns one proposition per
 proposition, in order, with the mentions in order. When an extractor's output does not line up
 with what it was given, by span and type or by count, the pipeline takes the id off every mention
 in the propositions that do not line up whose span and type was left unresolved anywhere in the
-chunk, and logs one warning with counts. A rejected mention never keeps an id.
+chunk, and logs one warning with counts. A mention left unresolved or dropped never keeps an id; a
+mention the filter only reports under `KEEP` is resolved like any other.
 
 Every rejection is on the chunk result as a `RejectedMention`: the chunk id, the position and text
 of the proposition, the mention, the reason, which check rejected it and what the pipeline did with

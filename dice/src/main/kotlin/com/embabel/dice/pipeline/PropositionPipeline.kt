@@ -268,7 +268,6 @@ class PropositionPipeline private constructor(
         val chunk: Chunk,
         val screening: ScreeningOutcome,
         val suggestedEntities: SuggestedEntities,
-        val rejected: List<RejectedMention>,
     )
 
     /**
@@ -285,10 +284,11 @@ class PropositionPipeline private constructor(
         // Check every mention against its own proposition before any of them can become a
         // resolver candidate. In DROP mode the ungrounded mentions leave both the propositions
         // and the candidates for entity creation. In KEEP mode nothing changes but the report.
-        // The caller's filter runs here too, so the extractor is handed no filter. Each mention is
-        // judged by the filter once as written, and once more only if it is offered a known
-        // entity's id that grounding dropped.
+        // The caller's filter runs here too, so the extractor is handed no filter. It judges each
+        // proposition once, and is asked once more for each span and type that would take a known
+        // entity's id from a mention grounding dropped.
         val screening = MentionScreening.screen(
+            chunkId = chunk.id,
             extracted = extracted,
             context = context,
             grounding = groundingCheck,
@@ -306,8 +306,7 @@ class PropositionPipeline private constructor(
         )
         logger.debug("Created {} suggested entities", suggestedEntities.suggestedEntities.size)
 
-        val rejected = screening.rejected.map { if (it.chunkId == chunk.id) it else it.copy(chunkId = chunk.id) }
-        return ExtractionStageResult(chunk, screening, suggestedEntities, rejected)
+        return ExtractionStageResult(chunk, screening, suggestedEntities)
     }
 
     /**
@@ -415,7 +414,7 @@ class PropositionPipeline private constructor(
 
         // Reported here rather than in the extraction stage because this stage is always serial,
         // so listeners are never called from several threads at once.
-        logRejections(chunk.id, extraction.rejected)
+        logRejections(chunk.id, extraction.screening.rejected)
         if (ungrounded.isNotEmpty()) {
             eventListener.onEvent(
                 UngroundedMentionsFound(context.contextId, chunk.id, ungrounded, ungroundedMentions)
@@ -521,7 +520,7 @@ class PropositionPipeline private constructor(
             entityResolutions = resolutions,
             propositions = propositions,
             revisionResults = revisionResults,
-            rejectedMentions = extraction.rejected,
+            rejectedMentions = extraction.screening.rejected,
         )
     }
 

@@ -102,7 +102,7 @@ class MentionScreeningTest {
         filterHandling: RejectedMentionHandling = LEAVE_UNRESOLVED,
         analysisContext: SourceAnalysisContext = context(),
     ): ScreeningOutcome =
-        MentionScreening.screen(suggested, analysisContext, grounding, groundingHandling, filter, filterHandling)
+        MentionScreening.screen(suggested.chunkId, suggested, analysisContext, grounding, groundingHandling, filter, filterHandling)
 
     /**
      * Builds one chunk's propositions.
@@ -341,7 +341,7 @@ class MentionScreeningTest {
      * @return the outcome
      */
     private fun screenDropping(suggested: SuggestedPropositions): ScreeningOutcome =
-        MentionScreening.screen(suggested, context(), GroundedMentionFilter(), DROP, null, LEAVE_UNRESOLVED)
+        MentionScreening.screen(suggested.chunkId, suggested, context(), GroundedMentionFilter(), DROP, null, LEAVE_UNRESOLVED)
 
     @Test
     fun `ME9 only the mention's own proposition counts`() {
@@ -521,5 +521,84 @@ class MentionScreeningTest {
             analysisContext = context(knownPerson("k", "Alice Smith")),
         )
         assertEquals(listOf(null, "k"), outcome.candidates.propositions[1].mentions.map { it.suggestedId })
+    }
+
+    @Test
+    fun `R1 under KEEP a reported mention does not cancel a passed-on id`() {
+        val outcome = screen(
+            chunk(
+                proposition("Bob slept", mention("Alice", "k")),
+                proposition("Alice met Bob", mention("Alice"), mention("Bob")),
+            ),
+            filter = PickingFilter { it.span == "Bob" },
+            filterHandling = KEEP,
+            analysisContext = context(knownPerson("k", "Alice Smith")),
+        )
+        assertEquals(listOf("k", null), outcome.candidates.propositions[1].mentions.map { it.suggestedId })
+    }
+
+    @Test
+    fun `R2 a passed-on id the filter turns down reaches no mention of that span and type`() {
+        val outcome = screen(
+            chunk(
+                proposition("Bob slept", mention("Alice", "k")),
+                proposition("Alice likes jazz", mention("Alice")),
+                proposition("Alice likes tea", mention("Alice")),
+            ),
+            filter = object : MentionFilter {
+                override fun isValid(mention: SuggestedMention, propositionText: String): Boolean =
+                    !(mention.suggestedId == "k" && propositionText == "Alice likes jazz")
+            },
+            analysisContext = context(knownPerson("k", "Alice Smith")),
+        )
+        assertTrue(outcome.candidates.propositions.flatMap { it.mentions }.none { it.suggestedId == "k" }, "candidates: ${outcome.candidates}")
+    }
+
+    @Test
+    fun `R3 the filter is asked once more per span and type that receives an id`() {
+        val recording = RecordingFilter()
+        screen(
+            chunk(
+                proposition("Bob slept", mention("Alice", "k")),
+                proposition("Alice likes jazz", mention("Alice")),
+                proposition("Alice likes tea", mention("Alice")),
+                proposition("Alice likes rum", mention("Alice")),
+            ),
+            filter = recording,
+            analysisContext = context(knownPerson("k", "Alice Smith")),
+        )
+        assertEquals(4, recording.seen.size, "asked about: ${recording.seen.map { it.text }}")
+    }
+
+    @Test
+    fun `R4 dropped mentions that disagree on the id pass none on`() {
+        val outcome = screen(
+            chunk(
+                proposition("Bob slept", mention("Alice", "k1")),
+                proposition("Bob woke", mention("Alice", "k2")),
+                proposition("Alice likes jazz", mention("Alice")),
+            ),
+            analysisContext = context(knownPerson("k1", "Alice Smith"), knownPerson("k2", "Alice Jones")),
+        )
+        assertNull(outcome.candidates.propositions[2].mentions.single().suggestedId)
+    }
+
+    @Test
+    fun `R5 the filter is asked about an id with the same mentions it judged before`() {
+        val recording = RecordingFilter(PickingFilter { it.span == "Carol" })
+        screen(
+            chunk(
+                proposition("Bob slept", mention("Alice", "k")),
+                proposition("Alice met Carol", mention("Alice"), mention("Carol")),
+            ),
+            filter = recording,
+            filterHandling = LEAVE_UNRESOLVED,
+            analysisContext = context(knownPerson("k", "Alice Smith")),
+        )
+        val asked = recording.seen.filter { it.text == "Alice met Carol" }
+        assertEquals(2, asked.size, "asked about: ${recording.seen}")
+        assertEquals(asked[0].mentions.map { it.span }, asked[1].mentions.map { it.span })
+        assertEquals(listOf(null, null), asked[0].mentions.map { it.suggestedId })
+        assertEquals(listOf("k", null), asked[1].mentions.map { it.suggestedId })
     }
 }
