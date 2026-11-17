@@ -2482,12 +2482,19 @@ and the consumer PRs that deliver it).
   Before, the window was recorded ahead of the write, so a failed or rolled-back write lost it for
   good. Now a failed store leaves the window unrecorded, and the next event for that source analyses
   it again. Projection and grounding run after the window is recorded. From the store step onwards,
-  a failure reaches the caller of `extractPropositions`, as a STRICT lineage failure already did. The
-  call drains the rest of the queue first and then throws the first failure. A failure while building
-  the context or analysing the window is still logged, and the window is retried. If the thread is
-  interrupted, the drain stops and the remaining events stay queued. With the default writer, a STRICT
-  lineage failure still leaves the claims stored. The window is recorded so the claims are not stored
-  again, and the exception is thrown. A host doing one-time processing keeps its chunk history in the
-  same transactional store as the claims (the Drivine stores do this) and calls `extractPropositions`
-  inside a transaction. Without a transaction, a write that fails part way is retried, and the retry
-  can add the window's claims again. **Compatibility: behavioral.**
+  an exception reaches the caller of `extractPropositions`, as a STRICT lineage failure already did.
+  Failures that projection and grounding only count are not thrown. Every exception that reaches the
+  caller is unchecked. A failed write is thrown the way `PersistOutcome.persistedOrThrow()` throws it,
+  and any other checked exception is wrapped in a `RuntimeException` that keeps it as the cause. The
+  call drains the rest of the queue first and then throws the first failure. Later failures are logged
+  and attached to it as suppressed.
+  A failure while building the context or analysing the window is still logged, and the window is
+  retried. A call made from inside a drain on the same thread, such as from a save listener, leaves its
+  event queued for the outer drain. If the thread is interrupted, or a failure was caused by an
+  interrupt, the drain stops, the flag stays set and the remaining events stay queued. With the default
+  writer, a run link failure that leaves the claims stored records the window, so the claims are not
+  stored again, and then throws. Any other failed write leaves the window unrecorded. `analyze` still
+  records the window before it returns. A host doing one-time processing keeps its chunk history in
+  the same transactional store as the claims (the Drivine stores do this) and calls
+  `extractPropositions` inside a transaction. Without a transaction, a write that fails part way is
+  retried, and the retry can add the window's claims again. **Compatibility: behavioral.**

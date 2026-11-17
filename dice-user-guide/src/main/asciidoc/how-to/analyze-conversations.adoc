@@ -102,14 +102,22 @@ stored claim, the second builds on the first, so the saved claim keeps both sour
 
 ==== When a write fails
 
-A window is recorded as processed only after its claims are stored. If the store fails, the window
-stays unrecorded, and the next event for the same source analyses it again. Projection and grounding
-run after the window is recorded, and a failure in either one reaches the caller too.
+`IncrementalPropositionExtraction` records a window as processed only after its claims are stored.
+If the store fails, the window stays unrecorded, and the next event for the same source analyses it
+again. Projection and grounding run after the window is recorded. An exception thrown by projection
+or grounding reaches the caller. A failure those services only count, such as a failed relationship
+write or a failed grounding edge, does not.
 
-`extractPropositions` drains the events that are queued, then throws the first failure it saw. A
-failure while building the context or analysing a window is logged, and that window is retried on the
-next event. If the thread is interrupted, the drain stops and the events still queued wait for the
-next call.
+`analyze` records the window before it returns, so in the example above a failed
+`result.persist(...)` leaves the window recorded and it is not analysed again. If you store the
+result yourself and need the window to stay unrecorded when the write fails, use
+`IncrementalPropositionExtraction`, or keep the chunk history store in the same transaction as the
+write.
+
+`extractPropositions` drains the events that are queued, then throws the first failure it saw. Every
+exception it throws is unchecked. A failure while building the context or analysing a window is
+logged, and that window is retried on the next event. If the thread is interrupted, the drain stops
+and the events still queued wait for the next call.
 
 A failure that reaches the caller lets a host transaction roll back. For one-time processing, keep the
 chunk history in the same transactional store as the claims. The Drivine stores do this. Call
