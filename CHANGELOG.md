@@ -169,6 +169,37 @@ and the consumer PRs that deliver it).
   `StaleObjectException` when the proposition is changed by another writer on each of the three
   attempts.
 
+- `Proposition`, `ExtractionRunKey` and `Citation` JSON no longer write `contextIdValue`. Each still
+  writes `contextId`, which holds the same string. **Compatibility: behavioral.** Upgrade: a
+  consumer that reads `contextIdValue` from this JSON reads `contextId` instead. Stored
+  `Proposition` files that still carry `contextIdValue` load as before.
+
+- The extraction strategies and `PropositionPipeline.process` no longer turn an `Error` into a null
+  slot or a `Failed` chunk. An `Error` now reaches the caller. Exceptions are handled as before.
+  **Compatibility: behavioral.** Upgrade: code that relied on an `Error` coming back as a null slot
+  or a `Failed` chunk must catch the `Error` where it calls `execute` or `process`.
+
+- `ConsecutiveFailureBreaker` sets the thread's interrupt flag again when a call is interrupted. The
+  interrupt still counts as one failure. **Compatibility: behavioral.** Upgrade: code that checks
+  `Thread.interrupted()` after a breaker call now sees the interrupt, and should handle it as it
+  would any other interrupt.
+
+- The concurrent extraction strategies carry an interrupt back to the caller. When an extraction is
+  interrupted on a pool thread, its slot is null as before, the pool thread's flag is cleared, and the
+  flag of the thread that called `execute` is set when `execute` returns or throws. A batched
+  strategy holds it until its last window, so a later chunk run on the calling thread is not failed
+  by an earlier interrupt, and `PropositionPipeline.process` holds it until its resolution stage is
+  done, so it fails only the chunk it came from. **Compatibility:
+  behavioral.** Upgrade: code that checks `Thread.interrupted()` after `execute` now sees the
+  interrupt and should handle it as it would any other.
+
+- When the executor rejects a chunk, the concurrent strategies wait for the chunks they already
+  handed over before they throw the `RejectedExecutionException`. Before, the exception reached the
+  caller while those chunks were still running. When the rejection comes from an executor that was
+  shut down, a chunk that was handed over but had not started is given up and never runs its
+  extraction, so `shutdownNow`, which drops queued tasks, cannot leave the strategy waiting forever.
+  **Compatibility: behavioral.**
+
 ### Added
 
 - `NameNormalizer` chooses how entity names are compared, and `PersonNameNormalizer` is the
@@ -235,8 +266,11 @@ and the consumer PRs that deliver it).
   the proposition carries one more metadata entry under the new key `DiceMetadataKeys.CONTENT_REVISED`
   (`dice.content.revised`), holding the time of the change as ISO-8601 text. Setting the same value
   again records nothing. A new claim starts without the entry: a draft, a `toDraft()` copy given a new
-  id, and a consolidator merge. A caller that compares a revised proposition's whole metadata map sees
-  this extra entry. **Compatibility: behavioral.**
+  id, and a consolidator merge. A `toDraft()` copy, and a draft read from JSON with an id, keeps the
+  stored claim's entry, and records a new one when its text, mentions or confidence change, so its
+  `contentRevised` moves to the time of that change as `Proposition.withText` does. A caller that
+  compares a revised proposition's whole metadata map sees this extra entry.
+  **Compatibility: behavioral.**
 
 - **EXPERIMENTAL** (shape may change before 1.0): `InMemoryDriftReportStore` in `dice-metamodel` is a
   `DriftReportStore` for tests and demos that keeps reports in memory. It replaces a report saved
@@ -303,13 +337,14 @@ and the consumer PRs that deliver it).
   leaves out the resolved id, the role and the hints. The forms that take the extra arguments are
   unchanged. **Compatibility: additive.**
 
-- Java can read the context id of every public type that has one. `PropositionContradicted`,
+- Java can read the context id of these types as a `String`. `PropositionContradicted`,
   `UngroundedMentionsFound`, `BookmarkKey`, `HashKey`, `ProcessedChunkRecord`, `DreamLoopReport`,
   `CollectorRunContext`, `CollapseUndoCommand`, `DriftReport` and `DriftCheckResult` gain
   `getContextIdValue()`. `CollapseUndoContextMismatchException` gains `getCommandedContextIdValue()`
   and `getActualContextIdValue()`. Each returns the `ContextId` as a `String`, and the typed Kotlin
-  properties are unchanged. The new getters are left out of Jackson output in every module, so
-  the JSON form of events and reports is the same as before. `BookmarkKey`, `HashKey`,
+  properties are unchanged. A public type with a `contextId` property writes it under the key
+  `contextId`, with or without Jackson's Kotlin module, and does not write `contextIdValue`.
+  `BookmarkKey`, `HashKey`,
   `CollectorRunContext` and `CollapseUndoCommand` also gain a static `of(...)` factory that takes
   the context id as a `String`, because Java cannot call their constructors.
   **Compatibility: additive.**
@@ -1066,7 +1101,56 @@ and the consumer PRs that deliver it).
   longer than its limit now gets a rejection where it previously got an oversized index entry.
   Nothing a real connector emits comes close to any of the four.
 
+- Java can pass a context id as a `String` to more of the API. `ConsolidationPass.runValue`,
+  `DreamLoopOrchestrator.consolidateValue` and `consolidateNowValue`,
+  `MemoryMaintenanceOrchestrator.maintainValue`, `CollectorRunner.runValue` and `collectValue`, and
+  `ChunkHistoryStore.clearByContextValue` each have a `String` form beside the `ContextId` one, and
+  `ConsolidationPass.of(name, body)` builds a pass from a `String` function. The new forms are default methods, so existing implementations get
+  them, and the `ContextId` forms keep their names. A Kotlin class that already declares a member
+  with the same signature as one of these needs `override` on it. `clearByContextValue` calls
+  `clearByContext(ContextId)`, so a store that overrides only that method is reached from Java too.
+  A store written in Java extends the new `AbstractChunkHistoryStore` and writes
+  `clearByContextValue`, which both clear methods reach, so Kotlin code that clears a context
+  reaches a Java store as well. A store that overrides neither method clears nothing.
+  **Compatibility: additive.**
+
+- `PropositionContradicted`, `UngroundedMentionsFound`, `DreamLoopReport`,
+  `CollapseUndoContextMismatchException` and `DriftReport` gain `of(...)` factories that take the
+  context id as a `String`. **Compatibility: additive.**
+
+- `ExtractionExecutionStrategy.attemptAll(chunks, extract)` runs an extraction over a list of chunks
+  and returns one `ChunkOutcome` per chunk, in the same order. A `ChunkOutcome` has `getChunk()`,
+  `getValue()`, `getException()`, `isSuccess()` and `isFailure()`, so a Java caller reads each
+  outcome without checking slots for null. `attemptAll` is a default method, so existing strategies
+  get it, and `executeAll` is unchanged. **Compatibility: additive.**
+
+- `PropositionDraft.withExactGrounding(List<String>)` sets the grounding to exactly the ids given, in
+  order, and an empty list clears it. Where `withGrounding` adds ids, this replaces the list.
+  **Compatibility: additive.**
+
+- `LlmPropositionExtractorBuilder` has a public constructor that takes `LlmOptions`, so Java can
+  build one directly. **Compatibility: additive.**
+
+- `ConsecutiveFailureBreaker.Outcome` has static `success`, `failure` and `skipped` factories. Its
+  constructor stays internal, and now throws `IllegalArgumentException` for values that contradict
+  each other, such as a skipped outcome that carries a value. **Compatibility: additive.** Upgrade:
+  Java code that called the constructor directly uses the factories instead.
+
 ### Fixed
+
+- A `PropositionDraft` that sets only `created` no longer copies it into `contentRevised`,
+  `metadataRevised` and `lastAccessed`. `contentRevised` now takes the build moment, as the
+  `Proposition` constructor does, and the other two follow it, so an imported fact stops decaying by
+  its whole age the moment it is built. An unset `created` takes the earliest time that is set and is
+  never after `contentRevised`, and an unset `metadataRevised` follows `contentRevised`, so a draft
+  that sets only `contentRevised`, as an import does, still gets all four times from it.
+  **Compatibility: behavioral.** Upgrade: to keep `created` as the decay anchor, set
+  `contentRevised` as well as `created`.
+
+- Reading a `PropositionDraft` from JSON that leaves out a key now gives that key the value
+  `Proposition.draft` starts with, such as an importance of 0.5, with or without Jackson's Kotlin
+  module. JSON without `contextId`, `text` or `confidence` fails the read with a message naming the
+  key. **Compatibility: additive.**
 
 - Four `dice-storage` stores keep behaviour their interfaces document.
   `DrivineChunkHistoryStore.clearAll` removes every processed chunk in every context. It inherited

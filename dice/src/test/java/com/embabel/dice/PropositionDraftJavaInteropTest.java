@@ -43,8 +43,9 @@ class PropositionDraftJavaInteropTest {
     //    a non-blank id, and four equal times.
     // 2. E2: with all twenty-one steps set, the built proposition equals the one from the
     //    longest Proposition.create overload.
-    // 3. E3: an unset time follows the one before it.
-    // 4. E4: withGrounding appends and removes duplicates; the other collection steps replace.
+    // 3. E3: an unset contentRevised takes the build moment. An unset created, metadataRevised or
+    //    lastAccessed follows the times that are set.
+    // 4. E4: withGrounding appends and removes duplicates. The other collection steps replace.
     // 5. I1: a step never changes the draft it is called on, nor follows later changes to the
     //    caller's list.
     // 6. E5: an out-of-range value fails in toProposition() with the constructor's message.
@@ -55,6 +56,8 @@ class PropositionDraftJavaInteropTest {
     //     proposition built from it.
     // 11. I4: a proposition keeps its source ids when code tries to clear them through the draft.
     // 12. I5: a draft made with toDraft() does not follow later changes to the proposition's list.
+    // 13. E7: withExactGrounding replaces the grounding in order, keeps repeated ids, and an
+    //     empty list clears it. The draft it was called on keeps its own grounding.
 
     private static final Instant CREATED = Instant.parse("2025-01-01T00:00:00Z");
     private static final Instant CONTENT_REVISED = Instant.parse("2025-02-01T00:00:00Z");
@@ -156,14 +159,15 @@ class PropositionDraftJavaInteropTest {
     }
 
     @Test
-    void e3_anUnsetTimeFollowsTheOneBeforeIt() {
+    void e3_anUnsetTimeFollowsTheTimesThatAreSet() {
         PropositionDraft draft = Proposition.draft("acme", "Alice lives in Paris", 0.9);
+        Instant before = Instant.now();
 
         Proposition createdOnly = draft.withCreated(CREATED).toProposition();
         assertEquals(CREATED, createdOnly.getCreated());
-        assertEquals(CREATED, createdOnly.getContentRevised());
-        assertEquals(CREATED, createdOnly.getMetadataRevised());
-        assertEquals(CREATED, createdOnly.getLastAccessed());
+        assertFalse(createdOnly.getContentRevised().isBefore(before));
+        assertEquals(createdOnly.getContentRevised(), createdOnly.getMetadataRevised());
+        assertEquals(createdOnly.getContentRevised(), createdOnly.getLastAccessed());
 
         Proposition revisedOnly = draft.withContentRevised(CONTENT_REVISED).toProposition();
         assertEquals(CONTENT_REVISED, revisedOnly.getCreated());
@@ -201,6 +205,29 @@ class PropositionDraftJavaInteropTest {
     }
 
     @Test
+    void e7_withExactGroundingReplacesTheGroundingAndAnEmptyListClearsIt() {
+        PropositionDraft base = Proposition.draft("acme", "Alice lives in Paris", 0.9)
+                .withGrounding(List.of("a", "b"));
+
+        PropositionDraft replaced = base.withExactGrounding(List.of("c"));
+        assertEquals(List.of("c"), replaced.getGrounding());
+        assertEquals(List.of("c"), replaced.toProposition().getGrounding());
+        assertEquals(List.of("a", "b"), base.getGrounding());
+        assertThrows(UnsupportedOperationException.class, () -> replaced.getGrounding().add("d"));
+
+        PropositionDraft ordered = base.withExactGrounding(List.of("z", "a", "m"));
+        assertEquals(List.of("z", "a", "m"), ordered.getGrounding());
+
+        PropositionDraft repeated = base.withExactGrounding(List.of("a", "a"));
+        assertEquals(List.of("a", "a"), repeated.getGrounding());
+
+        PropositionDraft cleared = base.withExactGrounding(List.of());
+        assertTrue(cleared.getGrounding().isEmpty());
+        assertTrue(cleared.toProposition().getGrounding().isEmpty());
+        assertEquals(List.of("a", "b"), base.getGrounding());
+    }
+
+    @Test
     void i1_aStepNeverChangesTheDraftItIsCalledOn() {
         PropositionDraft d = Proposition.draft("acme", "Alice lives in Paris", 0.9);
         d.withDecay(0.3);
@@ -214,20 +241,28 @@ class PropositionDraftJavaInteropTest {
 
     @Test
     void e5_anOutOfRangeValueFailsWhenTheDraftIsBuilt() {
-        PropositionDraft badConfidence = Proposition.draft("acme", "Alice lives in Paris", 1.5);
+        PropositionDraft badConfidence = assertDoesNotThrow(
+                () -> Proposition.draft("acme", "Alice lives in Paris", 1.5));
         IllegalArgumentException confidence =
                 assertThrows(IllegalArgumentException.class, badConfidence::toProposition);
         assertEquals("Confidence must be between 0.0 and 1.0", confidence.getMessage());
 
-        PropositionDraft badDecay = Proposition.draft("acme", "Alice lives in Paris", 0.9).withDecay(-0.1);
+        PropositionDraft badDecay = assertDoesNotThrow(
+                () -> Proposition.draft("acme", "Alice lives in Paris", 0.9).withDecay(-0.1));
         IllegalArgumentException decay =
                 assertThrows(IllegalArgumentException.class, badDecay::toProposition);
         assertEquals("Decay must be between 0.0 and 1.0", decay.getMessage());
 
-        PropositionDraft badLevel = Proposition.draft("acme", "Alice lives in Paris", 0.9).withLevel(1);
+        PropositionDraft badLevel = assertDoesNotThrow(
+                () -> Proposition.draft("acme", "Alice lives in Paris", 0.9).withLevel(1));
         IllegalArgumentException level =
                 assertThrows(IllegalArgumentException.class, badLevel::toProposition);
         assertEquals("Abstracted propositions (level > 0) must have sourceIds", level.getMessage());
+    }
+
+    @Test
+    void l1_everyFieldSetSurvivesADraftRoundTrip() {
+        assertEquals(everyFieldSet(), everyFieldSet().toDraft().toProposition());
     }
 
     @Test
@@ -425,5 +460,76 @@ class PropositionDraftJavaInteropTest {
         assertThrows(UnsupportedOperationException.class, () -> d.getSourceIds().clear());
         assertThrows(UnsupportedOperationException.class, () -> d.getMetadata().put("extra", 1));
         assertThrows(UnsupportedOperationException.class, () -> d.getProvenanceEntries().clear());
+    }
+
+    @Test
+    void withProvenanceDropsRepeatedEntriesKeepingTheFirst() {
+        Proposition p = Proposition.draft("acme", "x", 0.9)
+                .withProvenance(List.of(FIRST_SOURCE, FIRST_SOURCE, SECOND_SOURCE))
+                .toProposition();
+
+        assertEquals(List.of(FIRST_SOURCE, SECOND_SOURCE), p.getProvenanceEntries());
+    }
+
+    @Test
+    void withProvenanceMatchesPropositionWithProvenanceOnRepeatedEntries() {
+        List<ProvenanceEntry> repeated = List.of(FIRST_SOURCE, FIRST_SOURCE, SECOND_SOURCE);
+        Proposition base = Proposition.draft("acme", "x", 0.9).toProposition();
+
+        Proposition fromDraft = Proposition.draft("acme", "x", 0.9)
+                .withProvenance(repeated)
+                .toProposition();
+
+        assertEquals(base.withProvenance(repeated).getProvenanceEntries(), fromDraft.getProvenanceEntries());
+    }
+
+    @Test
+    void toDraftRoundTripDropsARepeatedProvenanceEntry() {
+        Proposition p = Proposition.create(
+                "p-dup",
+                "acme",
+                "Alice lives in Paris",
+                List.of(ALICE),
+                0.9,
+                0.0,
+                0.5,
+                null,
+                List.of(),
+                CREATED,
+                CREATED,
+                CREATED,
+                PropositionStatus.ACTIVE,
+                0,
+                List.of(),
+                0,
+                Map.of(),
+                null,
+                null,
+                new ArrayList<>(List.of(FIRST_SOURCE, FIRST_SOURCE)));
+
+        Proposition rebuilt = p.toDraft()
+                .withProvenance(p.getProvenanceEntries())
+                .toProposition();
+
+        assertEquals(List.of(FIRST_SOURCE), rebuilt.getProvenanceEntries());
+        assertEquals(2, p.getProvenanceEntries().size());
+    }
+
+    @Test
+    void aTextChangeThroughADraftRecordsARevisionAsPropositionDoes() {
+        Proposition fact = Proposition.draft("acme", "Alice lives in Paris", 0.9)
+                .withContentRevised(CONTENT_REVISED)
+                .toProposition();
+        Instant later = CONTENT_REVISED.plusSeconds(60);
+
+        assertNotEquals(CONTENT_REVISED, fact.toDraft().withText("x").toProposition().getContentRevised());
+        assertNotEquals(CONTENT_REVISED, fact.withText("x").getContentRevised());
+        // A time the caller sets for the change is the one recorded
+        assertEquals(later, fact.toDraft().withText("x").withContentRevised(later).toProposition().getContentRevised());
+        // A round trip, or a step that leaves the content as it was, changes no time
+        assertEquals(fact, fact.toDraft().toProposition());
+        assertEquals(CONTENT_REVISED, fact.toDraft().withImportance(0.7).toProposition().getContentRevised());
+        assertEquals(fact, fact.toDraft().withText(fact.getText()).toProposition());
+        assertEquals(fact, fact.toDraft().withText("x").withText(fact.getText()).toProposition());
     }
 }

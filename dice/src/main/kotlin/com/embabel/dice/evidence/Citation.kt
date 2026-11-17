@@ -17,6 +17,8 @@ package com.embabel.dice.evidence
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.provenance.ProvenanceEntry
+import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
 import org.jetbrains.annotations.ApiStatus
 
 /**
@@ -40,6 +42,7 @@ class Citation private constructor(
     /** Id of the stored claim. */
     val propositionId: String,
     /** The context the claim belongs to. */
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
     chunkIds: List<String>,
     provenance: List<ProvenanceEntry>,
@@ -48,6 +51,7 @@ class Citation private constructor(
 ) {
 
     /** The value of [contextId], for Java callers. */
+    @get:JsonIgnore
     val contextIdValue: String = contextId.value
 
     /** Ids of the source chunks the claim was extracted from. */

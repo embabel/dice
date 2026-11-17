@@ -22,6 +22,14 @@ indefinitely that is a production incident waiting to happen.
 plain string, as above. Java reads an id back with `getContextIdValue()`, which every public type
 with a `contextId` property has.
 
+Most public declarations that take a `ContextId` also have a Java form that takes the id as a
+plain string. The rest, mostly methods a store or strategy implements rather than calls, do not
+have one yet; the build keeps a list of them and fails if a new one appears without a Java form.
+A Java form is named after the `ContextId` form with `Value` on the end. So `runValue`,
+`consolidateNowValue` and `clearByContextValue` take a string, and `findByContextIdValue` follows
+the same rule. The suffix means no Kotlin call that passes a `ContextId` becomes ambiguous. A
+constructor gets a static `of(...)`, and a read gets `getContextIdValue()`.
+
 [cols="2,3",options="header"]
 |===
 | Area | Types with `getContextIdValue()`
@@ -77,8 +85,8 @@ What a context should represent is your decision. Common choices: one per user, 
 per conversation, one per document collection. Contexts do not nest; if you need a hierarchy, encode
 it in the value and query by prefix at your own layer.
 
-Four types that a caller builds take a `ContextId` in their constructor. Java builds them with a
-static `of(...)` that takes the id as a string.
+These types take a `ContextId` in their constructor. Java builds each one with a static `of(...)`
+that takes the id as a string.
 
 [source,java]
 ----
@@ -86,6 +94,14 @@ BookmarkKey bookmark = BookmarkKey.of("acme", "conversation-1");
 HashKey hash = HashKey.of("acme", contentHash);
 CollectorRunContext run = CollectorRunContext.of("run-1", "acme");
 CollapseUndoCommand command = CollapseUndoCommand.of("acme", survivorId, retiredId);
+PropositionContradicted contradicted = PropositionContradicted.of("acme", original, newer);
+UngroundedMentionsFound found = UngroundedMentionsFound.of("acme", chunkId, mentions, handling);
+DreamLoopReport report = DreamLoopReport.of("acme", cycleStarted, cycleCompleted, passResults,
+        examined, transitioned, newPropositions, triggered);
+CollapseUndoContextMismatchException mismatch =
+        CollapseUndoContextMismatchException.of("acme", propositionId, "other");
+DriftReport drift = DriftReport.of(schemaName, versionHash, driftedEntityTypes,
+        driftedRelationshipTypes, capturedAt, "acme");
 ----
 
 Kotlin calls the constructors.
@@ -94,6 +110,48 @@ Kotlin calls the constructors.
 ----
 val bookmark = BookmarkKey(ContextId("acme"), "conversation-1")
 ----
+
+The orchestrator, the collector runner and consolidation passes take the id as a string too. Java
+first:
+
+[source,java]
+----
+DreamLoopReport report = orchestrator.consolidateNowValue("acme");
+CollectorRunResult result = runner.runValue("acme", true);
+ConsolidationPass pass = ConsolidationPass.of("session", (contextIdValue, propositions) ->
+        new ConsolidationPassResult.NoOp("session", "nothing to merge"));
+----
+
+Kotlin passes a `ContextId`, and builds a pass from a lambda the same way.
+
+[source,kotlin]
+----
+val report = orchestrator.consolidateNow(ContextId("acme"))
+val result = runner.run(ContextId("acme"), dryRun = true)
+val pass = ConsolidationPass.of("session") { contextIdValue, propositions ->
+    ConsolidationPassResult.NoOp("session", "nothing to merge")
+}
+----
+
+A chunk history store written in Java extends `AbstractChunkHistoryStore` and writes
+`clearByContextValue`, because Java cannot override `clearByContext(ContextId)`. Both clear methods
+reach it. A store written in Kotlin overrides `clearByContext(ContextId)`, and
+`clearByContextValue` calls it.
+
+[source,java]
+----
+public class InMemoryChunkHistory extends AbstractChunkHistoryStore {
+
+    @Override
+    public void clearByContextValue(String contextIdValue) {
+        // drop every chunk record and bookmark held for this context
+    }
+
+    // The other ChunkHistoryStore methods go here.
+}
+----
+
+A public type with a `contextId` property writes it as a plain string under the key `contextId`, with or without Jackson's Kotlin module. `contextIdValue` is not written.
 
 ==== SourceAnalysisContext
 

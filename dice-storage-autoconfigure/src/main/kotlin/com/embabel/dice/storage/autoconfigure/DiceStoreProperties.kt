@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.storage.autoconfigure
 
+import com.embabel.dice.proposition.Proposition
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.context.properties.NestedConfigurationProperty
 
@@ -39,8 +40,8 @@ data class DiceStoreProperties(
         var enabled: Boolean = true,
         /** Delay between ticks, in milliseconds. Default 1 hour. */
         var intervalMs: Long = 3_600_000,
-        /** Decay-rate multiplier `k` for the staleness policy. */
-        var k: Double = 2.0,
+        /** Decay-rate multiplier `k` for the staleness policy. Defaults to the same value Proposition uses. */
+        var k: Double = Proposition.DEFAULT_DECAY_K,
         /** Hard-delete STALE propositions during the lifecycle sweep. */
         var pruneStale: Boolean = false,
     )

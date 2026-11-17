@@ -47,7 +47,7 @@ interface TemporalQueryCapable {
 
     /**
      * Find propositions last touched within a time range. "Touched" means any
-     * update — content or administrative — so this anchors on [Proposition.lastTouched]
+     * update, content or administrative, so this anchors on [Proposition.lastTouched]
      * (the later of contentRevised/metadataRevised), not the decay anchor alone.
      *
      * @param start Start of range (inclusive)
@@ -65,20 +65,20 @@ interface TemporalQueryCapable {
      * Find all propositions ordered by effective confidence (highest first).
      * Applies time-based decay to confidence scores.
      *
-     * @param k Decay rate multiplier (default 2.0)
+     * @param k Decay rate multiplier, defaults to [Proposition.DEFAULT_DECAY_K]
      * @return Propositions ordered by decayed confidence
      */
-    fun findAllOrderedByEffectiveConfidence(k: Double = 2.0): List<Proposition> =
+    fun findAllOrderedByEffectiveConfidence(k: Double = Proposition.DEFAULT_DECAY_K): List<Proposition> =
         findAll().sortedByDescending { it.effectiveConfidence(k) }
 
     /**
      * Find propositions with effective confidence above a threshold.
      *
      * @param threshold Minimum effective confidence (after decay)
-     * @param k Decay rate multiplier (default 2.0)
+     * @param k Decay rate multiplier, defaults to [Proposition.DEFAULT_DECAY_K]
      * @return Propositions with effective confidence >= threshold, ordered by confidence
      */
-    fun findByEffectiveConfidenceAbove(threshold: Double, k: Double = 2.0): List<Proposition> =
+    fun findByEffectiveConfidenceAbove(threshold: Double, k: Double = Proposition.DEFAULT_DECAY_K): List<Proposition> =
         findAll()
             .filter { it.effectiveConfidence(k) >= threshold }
             .sortedByDescending { it.effectiveConfidence(k) }
@@ -90,14 +90,14 @@ interface TemporalQueryCapable {
      * @param start Start of creation range
      * @param end End of creation range
      * @param asOf Calculate effective confidence as of this time (defaults to end of range)
-     * @param k Decay rate multiplier (default 2.0)
+     * @param k Decay rate multiplier, defaults to [Proposition.DEFAULT_DECAY_K]
      * @return Propositions from range, ordered by effective confidence at the given time
      */
     fun findByCreatedBetweenOrderedByEffectiveConfidence(
         start: Instant,
         end: Instant,
         asOf: Instant = end,
-        k: Double = 2.0,
+        k: Double = Proposition.DEFAULT_DECAY_K,
     ): List<Proposition> =
         findByCreatedBetween(start, end)
             .sortedByDescending { it.effectiveConfidenceAt(asOf, k) }

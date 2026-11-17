@@ -38,7 +38,7 @@ import org.slf4j.LoggerFactory
  */
 class DecayCollectorStrategy @JvmOverloads constructor(
     private val retireBelow: Double,
-    private val retireDecayK: Double = 2.0,
+    private val retireDecayK: Double = Proposition.DEFAULT_DECAY_K,
 ) : CollectorStrategy {
 
     private val logger = LoggerFactory.getLogger(DecayCollectorStrategy::class.java)

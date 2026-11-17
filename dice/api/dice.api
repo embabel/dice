@@ -391,6 +391,7 @@ public final class com/embabel/dice/common/ProjectionBatchCompleted : com/embabe
 }
 
 public final class com/embabel/dice/common/PropositionContradicted : com/embabel/dice/common/DiceEvent {
+	public static final field Companion Lcom/embabel/dice/common/PropositionContradicted$Companion;
 	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/dice/proposition/Proposition;Ljava/time/Instant;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/dice/proposition/Proposition;Ljava/time/Instant;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/dice/proposition/Proposition;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -407,7 +408,14 @@ public final class com/embabel/dice/common/PropositionContradicted : com/embabel
 	public final fun getOriginal ()Lcom/embabel/dice/proposition/Proposition;
 	public fun getTimestamp ()Ljava/time/Instant;
 	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/common/PropositionContradicted;
+	public static final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/dice/proposition/Proposition;Ljava/time/Instant;)Lcom/embabel/dice/common/PropositionContradicted;
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/common/PropositionContradicted$Companion {
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/common/PropositionContradicted;
+	public final fun of (Ljava/lang/String;Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/dice/proposition/Proposition;Ljava/time/Instant;)Lcom/embabel/dice/common/PropositionContradicted;
 }
 
 public final class com/embabel/dice/common/PropositionDemoted : com/embabel/dice/common/DiceEvent {
@@ -916,6 +924,7 @@ public abstract interface class com/embabel/dice/common/SuggestedEntityResolutio
 }
 
 public final class com/embabel/dice/common/UngroundedMentionsFound : com/embabel/dice/common/DiceEvent {
+	public static final field Companion Lcom/embabel/dice/common/UngroundedMentionsFound$Companion;
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/pipeline/UngroundedMentionHandling;Ljava/time/Instant;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/pipeline/UngroundedMentionHandling;Ljava/time/Instant;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/pipeline/UngroundedMentionHandling;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -934,7 +943,14 @@ public final class com/embabel/dice/common/UngroundedMentionsFound : com/embabel
 	public final fun getMentions ()Ljava/util/List;
 	public fun getTimestamp ()Ljava/time/Instant;
 	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/pipeline/UngroundedMentionHandling;)Lcom/embabel/dice/common/UngroundedMentionsFound;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/pipeline/UngroundedMentionHandling;Ljava/time/Instant;)Lcom/embabel/dice/common/UngroundedMentionsFound;
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/common/UngroundedMentionsFound$Companion {
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/pipeline/UngroundedMentionHandling;)Lcom/embabel/dice/common/UngroundedMentionsFound;
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Lcom/embabel/dice/pipeline/UngroundedMentionHandling;Ljava/time/Instant;)Lcom/embabel/dice/common/UngroundedMentionsFound;
 }
 
 public final class com/embabel/dice/common/VetoedEntity : com/embabel/dice/common/SuggestedEntityResolution {
@@ -1748,6 +1764,12 @@ public final class com/embabel/dice/entity/ResolutionOutcome : java/lang/Enum {
 	public static fun values ()[Lcom/embabel/dice/entity/ResolutionOutcome;
 }
 
+public abstract class com/embabel/dice/incremental/AbstractChunkHistoryStore : com/embabel/dice/incremental/ChunkHistoryStore {
+	public fun <init> ()V
+	public fun clearByContext-GRzcY08 (Ljava/lang/String;)V
+	public abstract fun clearByContextValue (Ljava/lang/String;)V
+}
+
 public abstract class com/embabel/dice/incremental/AbstractIncrementalAnalyzer : com/embabel/dice/incremental/IncrementalAnalyzer {
 	public fun <init> (Lcom/embabel/dice/incremental/ChunkHistoryStore;Lcom/embabel/dice/incremental/IncrementalSourceFormatter;Lcom/embabel/dice/incremental/WindowConfig;Lcom/embabel/dice/common/ContentHasher;)V
 	public synthetic fun <init> (Lcom/embabel/dice/incremental/ChunkHistoryStore;Lcom/embabel/dice/incremental/IncrementalSourceFormatter;Lcom/embabel/dice/incremental/WindowConfig;Lcom/embabel/dice/common/ContentHasher;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -1799,6 +1821,7 @@ public final class com/embabel/dice/incremental/BookmarkKey$Companion {
 public abstract interface class com/embabel/dice/incremental/ChunkHistoryStore {
 	public fun clearAll ()V
 	public fun clearByContext-GRzcY08 (Ljava/lang/String;)V
+	public fun clearByContextValue (Ljava/lang/String;)V
 	public abstract fun getLastBookmark (Lcom/embabel/dice/incremental/BookmarkKey;)Lcom/embabel/dice/incremental/AnalysisBookmark;
 	public abstract fun isProcessed (Lcom/embabel/dice/incremental/HashKey;)Z
 	public abstract fun recordProcessed (Lcom/embabel/dice/incremental/ProcessedChunkRecord;)V
@@ -2072,8 +2095,15 @@ public final class com/embabel/dice/operations/consolidation/AbstractionPass : c
 }
 
 public abstract interface class com/embabel/dice/operations/consolidation/ConsolidationPass {
+	public static final field Companion Lcom/embabel/dice/operations/consolidation/ConsolidationPass$Companion;
 	public abstract fun getName ()Ljava/lang/String;
+	public static fun of (Ljava/lang/String;Ljava/util/function/BiFunction;)Lcom/embabel/dice/operations/consolidation/ConsolidationPass;
 	public abstract fun run-3HJnzs4 (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/operations/consolidation/ConsolidationPassResult;
+	public fun runValue (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/operations/consolidation/ConsolidationPassResult;
+}
+
+public final class com/embabel/dice/operations/consolidation/ConsolidationPass$Companion {
+	public final fun of (Ljava/lang/String;Ljava/util/function/BiFunction;)Lcom/embabel/dice/operations/consolidation/ConsolidationPass;
 }
 
 public abstract class com/embabel/dice/operations/consolidation/ConsolidationPassResult {
@@ -2226,6 +2256,24 @@ public final class com/embabel/dice/pipeline/BatchedExtractionStrategy : com/emb
 	public fun execute (Ljava/util/List;Lkotlin/jvm/functions/Function1;)Ljava/util/List;
 }
 
+public final class com/embabel/dice/pipeline/ChunkOutcome {
+	public static final field Companion Lcom/embabel/dice/pipeline/ChunkOutcome$Companion;
+	public synthetic fun <init> (Lcom/embabel/agent/rag/model/Chunk;Ljava/lang/Object;Ljava/lang/Exception;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public static final fun failure (Lcom/embabel/agent/rag/model/Chunk;Ljava/lang/Exception;)Lcom/embabel/dice/pipeline/ChunkOutcome;
+	public final fun getChunk ()Lcom/embabel/agent/rag/model/Chunk;
+	public final fun getException ()Ljava/lang/Exception;
+	public final fun getValue ()Ljava/lang/Object;
+	public final fun isFailure ()Z
+	public final fun isSuccess ()Z
+	public static final fun success (Lcom/embabel/agent/rag/model/Chunk;Ljava/lang/Object;)Lcom/embabel/dice/pipeline/ChunkOutcome;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/pipeline/ChunkOutcome$Companion {
+	public final fun failure (Lcom/embabel/agent/rag/model/Chunk;Ljava/lang/Exception;)Lcom/embabel/dice/pipeline/ChunkOutcome;
+	public final fun success (Lcom/embabel/agent/rag/model/Chunk;Ljava/lang/Object;)Lcom/embabel/dice/pipeline/ChunkOutcome;
+}
+
 public abstract interface class com/embabel/dice/pipeline/ChunkPropositionResult : com/embabel/common/core/types/HasInfoString, com/embabel/dice/pipeline/PersistablePropositions {
 	public static final field Companion Lcom/embabel/dice/pipeline/ChunkPropositionResult$Companion;
 	public static fun failed (Ljava/lang/String;Ljava/lang/Throwable;)Lcom/embabel/dice/pipeline/ChunkPropositionResult$Failed;
@@ -2290,6 +2338,7 @@ public final class com/embabel/dice/pipeline/ChunkPropositionResult$Success : co
 }
 
 public abstract interface class com/embabel/dice/pipeline/ExtractionExecutionStrategy {
+	public fun attemptAll (Ljava/util/List;Ljava/util/function/Function;)Ljava/util/List;
 	public abstract fun execute (Ljava/util/List;Lkotlin/jvm/functions/Function1;)Ljava/util/List;
 	public fun executeAll (Ljava/util/List;Ljava/util/function/Function;)Ljava/util/List;
 }
@@ -3083,8 +3132,11 @@ public final class com/embabel/dice/projection/memory/CollectorRunResult {
 public abstract interface class com/embabel/dice/projection/memory/CollectorRunner {
 	public static final field Companion Lcom/embabel/dice/projection/memory/CollectorRunner$Companion;
 	public abstract fun collect-GRzcY08 (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/CollectorRunResult;
+	public fun collectValue (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/CollectorRunResult;
 	public abstract fun run-3HJnzs4 (Ljava/lang/String;Z)Lcom/embabel/dice/projection/memory/CollectorRunResult;
 	public static synthetic fun run-3HJnzs4$default (Lcom/embabel/dice/projection/memory/CollectorRunner;Ljava/lang/String;ZILjava/lang/Object;)Lcom/embabel/dice/projection/memory/CollectorRunResult;
+	public fun runValue (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/CollectorRunResult;
+	public fun runValue (Ljava/lang/String;Z)Lcom/embabel/dice/projection/memory/CollectorRunResult;
 	public static fun withRepository (Lcom/embabel/dice/proposition/PropositionRepository;)Lcom/embabel/dice/projection/memory/CollectorRunner$Builder;
 }
 
@@ -3202,10 +3254,13 @@ public final class com/embabel/dice/projection/memory/DefaultMemoryRetriever : c
 public abstract interface class com/embabel/dice/projection/memory/DreamLoopOrchestrator : com/embabel/dice/projection/memory/MemoryMaintenanceOrchestrator {
 	public abstract fun consolidate-GRzcY08 (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/DreamLoopReport;
 	public abstract fun consolidateNow-GRzcY08 (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/DreamLoopReport;
+	public fun consolidateNowValue (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/DreamLoopReport;
+	public fun consolidateValue (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/DreamLoopReport;
 	public abstract fun withPass (Lcom/embabel/dice/operations/consolidation/ConsolidationPass;)Lcom/embabel/dice/projection/memory/DreamLoopOrchestrator;
 }
 
 public final class com/embabel/dice/projection/memory/DreamLoopReport {
+	public static final field Companion Lcom/embabel/dice/projection/memory/DreamLoopReport$Companion;
 	public synthetic fun <init> (Ljava/lang/String;Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;IIIZILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Ljava/lang/String;Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;IIIZLkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1-SSYM5D4 ()Ljava/lang/String;
@@ -3229,7 +3284,12 @@ public final class com/embabel/dice/projection/memory/DreamLoopReport {
 	public final fun getTotalTransitioned ()I
 	public final fun getTriggered ()Z
 	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;IIIZ)Lcom/embabel/dice/projection/memory/DreamLoopReport;
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/projection/memory/DreamLoopReport$Companion {
+	public final fun of (Ljava/lang/String;Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;IIIZ)Lcom/embabel/dice/projection/memory/DreamLoopReport;
 }
 
 public final class com/embabel/dice/projection/memory/DuplicateCollectorStrategy : com/embabel/dice/projection/memory/RunAwareCollectorStrategy {
@@ -3279,6 +3339,8 @@ public abstract interface class com/embabel/dice/projection/memory/MemoryMainten
 	public static final field Companion Lcom/embabel/dice/projection/memory/MemoryMaintenanceOrchestrator$Companion;
 	public abstract fun maintain-3HJnzs4 (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/projection/memory/MaintenanceResult;
 	public static synthetic fun maintain-3HJnzs4$default (Lcom/embabel/dice/projection/memory/MemoryMaintenanceOrchestrator;Ljava/lang/String;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/projection/memory/MaintenanceResult;
+	public fun maintainValue (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/MaintenanceResult;
+	public fun maintainValue (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/projection/memory/MaintenanceResult;
 	public static fun withRepository (Lcom/embabel/dice/proposition/PropositionRepository;)Lcom/embabel/dice/projection/memory/MemoryMaintenanceOrchestrator$NeedsConsolidator;
 }
 
@@ -3690,12 +3752,22 @@ public final class com/embabel/dice/proposition/ConsecutiveFailureBreaker$Compan
 }
 
 public final class com/embabel/dice/proposition/ConsecutiveFailureBreaker$Outcome {
+	public static final field Companion Lcom/embabel/dice/proposition/ConsecutiveFailureBreaker$Outcome$Companion;
+	public static final fun failure (Ljava/lang/Exception;)Lcom/embabel/dice/proposition/ConsecutiveFailureBreaker$Outcome;
 	public final fun getException ()Ljava/lang/Exception;
 	public final fun getValue ()Ljava/lang/Object;
 	public final fun isFailure ()Z
 	public final fun isSkipped ()Z
 	public final fun isSuccess ()Z
+	public static final fun skipped ()Lcom/embabel/dice/proposition/ConsecutiveFailureBreaker$Outcome;
+	public static final fun success (Ljava/lang/Object;)Lcom/embabel/dice/proposition/ConsecutiveFailureBreaker$Outcome;
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/ConsecutiveFailureBreaker$Outcome$Companion {
+	public final fun failure (Ljava/lang/Exception;)Lcom/embabel/dice/proposition/ConsecutiveFailureBreaker$Outcome;
+	public final fun skipped ()Lcom/embabel/dice/proposition/ConsecutiveFailureBreaker$Outcome;
+	public final fun success (Ljava/lang/Object;)Lcom/embabel/dice/proposition/ConsecutiveFailureBreaker$Outcome;
 }
 
 public abstract class com/embabel/dice/proposition/DecayManager : com/embabel/dice/proposition/DecaySweeper {
@@ -4190,6 +4262,7 @@ public final class com/embabel/dice/proposition/Proposition$Companion {
 }
 
 public final class com/embabel/dice/proposition/PropositionDraft {
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/PropositionDraft$Values;Lcom/embabel/dice/proposition/Proposition;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getConfidence ()D
 	public final fun getContentRevised ()Ljava/time/Instant;
 	public final fun getContextId-SSYM5D4 ()Ljava/lang/String;
@@ -4219,6 +4292,7 @@ public final class com/embabel/dice/proposition/PropositionDraft {
 	public final fun withContentRevised (Ljava/time/Instant;)Lcom/embabel/dice/proposition/PropositionDraft;
 	public final fun withCreated (Ljava/time/Instant;)Lcom/embabel/dice/proposition/PropositionDraft;
 	public final fun withDecay (D)Lcom/embabel/dice/proposition/PropositionDraft;
+	public final fun withExactGrounding (Ljava/util/List;)Lcom/embabel/dice/proposition/PropositionDraft;
 	public final fun withGrounding (Ljava/util/List;)Lcom/embabel/dice/proposition/PropositionDraft;
 	public final fun withId (Ljava/lang/String;)Lcom/embabel/dice/proposition/PropositionDraft;
 	public final fun withImportance (D)Lcom/embabel/dice/proposition/PropositionDraft;
@@ -4730,6 +4804,7 @@ public final class com/embabel/dice/proposition/extraction/LlmPropositionExtract
 }
 
 public final class com/embabel/dice/proposition/extraction/LlmPropositionExtractorBuilder {
+	public fun <init> (Lcom/embabel/common/ai/model/LlmOptions;)V
 	public final fun withAi (Lcom/embabel/agent/api/common/Ai;)Lcom/embabel/dice/proposition/extraction/LlmPropositionExtractor;
 }
 
@@ -5896,12 +5971,18 @@ public final class com/embabel/dice/spi/CollapseUndoConfigurationException : jav
 }
 
 public final class com/embabel/dice/spi/CollapseUndoContextMismatchException : java/lang/IllegalArgumentException {
+	public static final field Companion Lcom/embabel/dice/spi/CollapseUndoContextMismatchException$Companion;
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getActualContextId-SSYM5D4 ()Ljava/lang/String;
 	public final fun getActualContextIdValue ()Ljava/lang/String;
 	public final fun getCommandedContextId-SSYM5D4 ()Ljava/lang/String;
 	public final fun getCommandedContextIdValue ()Ljava/lang/String;
 	public final fun getPropositionId ()Ljava/lang/String;
+	public static final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/spi/CollapseUndoContextMismatchException;
+}
+
+public final class com/embabel/dice/spi/CollapseUndoContextMismatchException$Companion {
+	public final fun of (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/embabel/dice/spi/CollapseUndoContextMismatchException;
 }
 
 public final class com/embabel/dice/spi/CollapseUndoResult {

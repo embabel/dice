@@ -62,6 +62,44 @@ interface CollectorRunner {
      */
     fun run(contextId: ContextId, dryRun: Boolean = false): CollectorRunResult
 
+    /**
+     * Run the mark phase only, for a context given by its plain string id.
+     *
+     * Same as [collect], but takes the id as a String so Java callers don't have to build a
+     * ContextId first.
+     *
+     * @param contextIdValue The id of the context to evaluate. Must not be blank.
+     * @return A mark-only result with a blank runId.
+     * @throws IllegalArgumentException if contextIdValue is blank.
+     */
+    fun collectValue(contextIdValue: String): CollectorRunResult = collect(ContextId(contextIdValue))
+
+    /**
+     * Run the full mark + sweep, for a context given by its plain string id.
+     *
+     * Same as [run] with `dryRun = false`, but takes the id as a String so Java callers don't
+     * have to build a ContextId first.
+     *
+     * @param contextIdValue The id of the context to evaluate. Must not be blank.
+     * @return A result partitioned into marks/applied/skipped/hardDeleted.
+     * @throws IllegalArgumentException if contextIdValue is blank.
+     */
+    fun runValue(contextIdValue: String): CollectorRunResult = run(ContextId(contextIdValue))
+
+    /**
+     * Run the full mark + sweep, for a context given by its plain string id, with a dry-run flag.
+     *
+     * Same as [run], but takes the id as a String so Java callers don't have to build a
+     * ContextId first.
+     *
+     * @param contextIdValue The id of the context to evaluate. Must not be blank.
+     * @param dryRun When true, preview only, with no proposition changes and no events.
+     * @return A result partitioned into marks/applied/skipped/hardDeleted.
+     * @throws IllegalArgumentException if contextIdValue is blank.
+     */
+    fun runValue(contextIdValue: String, dryRun: Boolean): CollectorRunResult =
+        run(ContextId(contextIdValue), dryRun)
+
     companion object {
 
         /**

@@ -50,6 +50,19 @@ class LlmPropositionExtractorBuilderJavaInteropTest {
     }
 
     @Test
+    void constructingBuilderDirectlyGivesSameExtractorAsBuilderFactory() {
+        LlmOptions llmOptions = mock(LlmOptions.class);
+        Ai ai = mock(Ai.class);
+
+        LlmPropositionExtractor fromConstructor = new LlmPropositionExtractorBuilder(llmOptions).withAi(ai);
+        LlmPropositionExtractor fromBuilder = LlmPropositionExtractor.builder(llmOptions).withAi(ai);
+        LlmPropositionExtractor fromWithLlm = LlmPropositionExtractor.withLlm(llmOptions).withAi(ai);
+
+        assertEquals(fromWithLlm, fromConstructor);
+        assertEquals(fromBuilder, fromConstructor);
+    }
+
+    @Test
     void extractorFromBuilderAcceptsSchemaAdherenceChange() {
         LlmOptions llmOptions = mock(LlmOptions.class);
         Ai ai = mock(Ai.class);

@@ -8,9 +8,14 @@ short way to write "load everything".
 
 [source,java]
 ----
-var base = PropositionQuery.againstContext(new ContextId("user:42"));
-// or, equivalently
-var base = PropositionQuery.forContextId(new ContextId("user:42"));
+var base = PropositionQuery.againstContext("user:42");
+----
+
+In Kotlin, you can also pass a `ContextId` directly:
+
+[source,kotlin]
+----
+val base = PropositionQuery.forContextId(ContextId("user:42"))
 ----
 
 ==== By belief

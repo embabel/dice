@@ -49,14 +49,71 @@ interface ChunkHistoryStore {
     fun recordProcessed(record: ProcessedChunkRecord)
 
     /**
-     * Remove all history for the given context. Default no-op for backward compatibility.
+     * Removes all history for one context. The default removes nothing.
+     *
+     * A store written in Kotlin overrides this method. A store written in Java cannot, because the
+     * method takes a `ContextId`, so it extends [AbstractChunkHistoryStore].
+     *
+     * @param contextId The context to clear.
      */
     fun clearByContext(contextId: ContextId) {}
+
+    /**
+     * Removes all history for one context, named by its id as a string. Java calls this method.
+     *
+     * The default calls [clearByContext], so it reaches every store that overrides that method.
+     *
+     * @param contextIdValue The context to clear, as a plain string.
+     * @throws IllegalArgumentException from the default, if contextIdValue is blank
+     */
+    fun clearByContextValue(contextIdValue: String) = clearByContext(ContextId(contextIdValue))
 
     /**
      * Remove all history across every context. Default no-op for backward compatibility.
      */
     fun clearAll() {}
+}
+
+/**
+ * A base class for a chunk history store that has one clear to write.
+ *
+ * A subclass implements [clearByContextValue], and [clearByContext] calls it, so code that clears a
+ * context through either method reaches the subclass. A store written in Java extends this class,
+ * because Java cannot override `clearByContext(ContextId)`.
+ *
+ * ```java
+ * public class TableChunkHistoryStore extends AbstractChunkHistoryStore {
+ *
+ *     @Override
+ *     public void clearByContextValue(String contextIdValue) {
+ *         // drop every chunk record and bookmark held for this context
+ *     }
+ *
+ *     // getLastBookmark, isProcessed and recordProcessed go here.
+ * }
+ * ```
+ *
+ * Spring applies a class-level `@Transactional` only to the methods a class declares itself.
+ * [clearByContext] is declared here and calls [clearByContextValue] on the store directly, so that
+ * call does not pass through a Spring proxy. A store that needs a transaction for its clear opens
+ * one inside [clearByContextValue], for example with `TransactionTemplate`.
+ */
+abstract class AbstractChunkHistoryStore : ChunkHistoryStore {
+
+    /**
+     * Removes all history for one context. Both clear methods end here.
+     *
+     * @param contextIdValue The context to clear, as a plain string. It is never blank when the
+     *   call came through [clearByContext].
+     */
+    abstract override fun clearByContextValue(contextIdValue: String)
+
+    /**
+     * Removes all history for one context by calling [clearByContextValue] with the context's id.
+     *
+     * @param contextId The context to clear.
+     */
+    override fun clearByContext(contextId: ContextId) = clearByContextValue(contextId.value)
 }
 
 /**

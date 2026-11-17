@@ -233,6 +233,7 @@
                         <configuration>
                             <sourceDirs>
                                 <source>${project.basedir}/src/test/kotlin</source>
+                                <source>${project.basedir}/src/test/java</source>
                             </sourceDirs>
                         </configuration>
                     </execution>

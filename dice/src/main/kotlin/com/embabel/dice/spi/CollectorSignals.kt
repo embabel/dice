@@ -24,6 +24,7 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.proposition.ProvenanceSubtractionCapable
 import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
 import org.slf4j.LoggerFactory
 import java.time.Instant
 
@@ -218,6 +219,7 @@ data class CollapseUndoResult(
  * @property retiredId the one retired member to restore
  */
 data class CollapseUndoCommand(
+    @get:JsonProperty("contextId")
     val contextId: ContextId,
     val survivorId: String,
     val retiredId: String,
@@ -240,7 +242,7 @@ data class CollapseUndoCommand(
          * @param survivorId The collapse's survivor.
          * @param retiredId The one retired member to restore.
          * @return The undo command.
-         * @throws IllegalArgumentException if [survivorId] or [retiredId] is blank
+         * @throws IllegalArgumentException if [survivorId] or [retiredId] is blank, or contextIdValue is blank
          */
         @JvmStatic
         fun of(contextIdValue: String, survivorId: String, retiredId: String): CollapseUndoCommand =
@@ -259,8 +261,10 @@ data class CollapseUndoCommand(
  * @property actualContextIdValue [actualContextId] as a plain string, for Java callers.
  */
 class CollapseUndoContextMismatchException(
+    @get:JsonProperty("commandedContextId")
     val commandedContextId: ContextId,
     val propositionId: String,
+    @get:JsonProperty("actualContextId")
     val actualContextId: ContextId,
 ) : IllegalArgumentException(
     "Proposition $propositionId belongs to context ${actualContextId.value}, and the undo was " +
@@ -275,9 +279,30 @@ class CollapseUndoContextMismatchException(
     @get:JsonIgnore
     val actualContextIdValue: String get() = actualContextId.value
 
-    private companion object {
+    companion object {
         /** Fixed, so an instance serialized by an earlier release can still be read. */
         private const val serialVersionUID: Long = 4887747240668435430L
+
+        /**
+         * Builds the exception from plain values. Java uses this, so it does not have to wrap each id
+         * in a ContextId first.
+         *
+         * @param commandedContextIdValue The context the undo was issued for.
+         * @param propositionId The proposition that failed the check.
+         * @param actualContextIdValue The context that proposition really belongs to.
+         * @return The exception.
+         */
+        @JvmStatic
+        fun of(
+            commandedContextIdValue: String,
+            propositionId: String,
+            actualContextIdValue: String,
+        ): CollapseUndoContextMismatchException =
+            CollapseUndoContextMismatchException(
+                commandedContextId = ContextId(commandedContextIdValue),
+                propositionId = propositionId,
+                actualContextId = ContextId(actualContextIdValue),
+            )
     }
 }
 

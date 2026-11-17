@@ -19,6 +19,7 @@ import org.jetbrains.annotations.ApiStatus
 
 import com.embabel.agent.core.ContextId
 import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
 import java.util.Objects
 
 /**
@@ -52,6 +53,7 @@ class DriftCheckResult(
     val schemaName: String get() = report.schemaName
 
     /** The context the check was scoped to, or `null` when it covered the whole graph. */
+    @get:JsonProperty("contextId")
     val contextId: ContextId? get() = report.contextId
 
     /** [contextId] as a plain string, for Java callers. `null` when the check covered the whole graph. */
