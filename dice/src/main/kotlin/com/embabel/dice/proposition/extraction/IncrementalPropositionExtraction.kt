@@ -41,8 +41,6 @@ import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Async
 import java.io.InputStream
-import java.io.InterruptedIOException
-import java.nio.channels.ClosedByInterruptException
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -514,24 +512,26 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * Drains [pendingEvents] under [extractionLock], one event at a time.
      *
      * A failure on one queued event does not cost the rest of the queue. This loop catches what
-     * `processEvent` throws for each event, remembers the first failure, and keeps polling. Every
-     * event that was queued when the drain started still runs. Once the queue this call can see is
-     * empty, the remembered failure (if any) is rethrown, so it reaches whoever called
-     * [extractPropositions] and is not lost behind the events that came after it. A host that runs
-     * extraction inside its own transaction has to see that failure to roll the transaction back,
-     * and a STRICT lineage failure has to reach the caller that asked for it. Each later failure is
-     * logged at `warn` with its event's source id and added to the first one as a suppressed
-     * exception.
+     * `processEvent` throws for each event and remembers the first failure. At that moment it
+     * counts the events still queued, finishes only those, polls no further and starts no second
+     * drain, so a save listener that keeps queueing events cannot hold the failure back. Anything
+     * queued after the first failure waits for the next call. The first failure is then rethrown,
+     * so it reaches whoever called [extractPropositions]. A host that runs extraction inside its
+     * own transaction has to see that failure to roll the transaction back, and a STRICT lineage
+     * failure has to reach the caller that asked for it. Each later failure is logged at `warn`,
+     * and added to the first one as a suppressed exception when it is a different instance.
+     * Without a failure, the drain keeps polling until the queue is empty, then drains again if
+     * another thread queued an event after it let go of the lock.
      *
      * A call made on the thread that is already draining, for example from a save listener, leaves
      * its event queued and returns. The outer drain runs that event after the current window is
      * recorded, so the same window is not analysed twice.
      *
-     * An interrupted thread stops the drain. The interrupt flag is checked before every poll, so a
-     * call that starts interrupted stores nothing. A failure whose cause chain holds an
-     * [InterruptedException], an [InterruptedIOException] or a [ClosedByInterruptException] counts as
-     * an interrupt too, and the flag is set again. The events still queued wait for the next call,
-     * and the first failure is rethrown with the flag left set.
+     * The thread's interrupt flag stops the drain. The flag is checked before every poll, so a call
+     * that starts interrupted stores nothing. A store or pipeline that catches an interrupt must set
+     * the flag again before it returns or throws, as is the Java convention. The drain stops once
+     * the flag is set, the events still queued wait for the next call, and the first failure is
+     * rethrown with the flag left set.
      */
     private fun processPendingEvents() {
         if (extractionLock.isHeldByCurrentThread) {
@@ -545,71 +545,44 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         var firstFailure: Exception? = null
         var interrupted = false
         try {
-            while (true) {
+            // How many more events this drain may take. Unbounded until the first failure.
+            var remaining = Int.MAX_VALUE
+            while (remaining > 0) {
                 if (Thread.currentThread().isInterrupted) {
                     interrupted = true
                     break
                 }
                 val next = pendingEvents.poll() ?: break
+                if (firstFailure != null) remaining--
                 try {
                     processEvent(next)
                 } catch (e: Exception) {
-                    if (isInterrupt(e)) Thread.currentThread().interrupt()
-                    firstFailure = keepFirst(firstFailure, e, next)
+                    if (firstFailure == null) remaining = pendingEvents.size
+                    firstFailure = keepFirst(firstFailure, e)
                 }
             }
         } finally {
             extractionLock.unlock()
         }
-        if (!interrupted && pendingEvents.isNotEmpty()) {
-            try {
-                processPendingEvents()
-            } catch (e: Exception) {
-                firstFailure = keepFirst(firstFailure, e, null)
-            }
-        }
         firstFailure?.let { throw it }
+        if (!interrupted && pendingEvents.isNotEmpty()) {
+            processPendingEvents()
+        }
     }
 
     /**
      * Returns the failure to rethrow at the end of a drain. The first failure wins. A later one is
-     * logged and added to it as a suppressed exception.
+     * logged, and added to the first as a suppressed exception unless it is the same instance.
      *
      * @param first The failure kept so far, or null.
      * @param later The failure just caught.
-     * @param event The event that failed, or null when the failure came from a later drain.
      * @return The failure to keep.
      */
-    private fun keepFirst(first: Exception?, later: Exception, event: SourceAnalysisRequestEvent?): Exception {
+    private fun keepFirst(first: Exception?, later: Exception): Exception {
         if (first == null) return later
-        if (later !== first) {
-            val sourceId = event?.let { runCatching { it.incrementalSource().id }.getOrNull() }
-            logger.warn("Extraction failed for source {} after an earlier failure in the same drain", sourceId, later)
-            first.addSuppressed(later)
-        }
+        logger.warn("Extraction failed again after an earlier failure in the same drain", later)
+        if (later !== first) first.addSuppressed(later)
         return first
-    }
-
-    /**
-     * Whether [failure] was caused by the thread being interrupted. A blocking call clears the
-     * interrupt flag as it throws, so the cause chain is the only trace left.
-     *
-     * @param failure What an event threw.
-     * @return True when the cause chain holds an interrupt exception.
-     */
-    private fun isInterrupt(failure: Throwable): Boolean {
-        val seen = HashSet<Throwable>()
-        var current: Throwable? = failure
-        while (current != null && seen.add(current)) {
-            if (current is InterruptedException ||
-                current is InterruptedIOException ||
-                current is ClosedByInterruptException
-            ) {
-                return true
-            }
-            current = current.cause
-        }
-        return false
     }
 
     /**
@@ -620,12 +593,15 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * unrecorded and the next event for the same source analyses it again.
      *
      * A failure before the store step starts, while building the context or analysing the window, is
-     * logged and swallowed, and the next event tries the window again. If that failure came from an
-     * interrupt, the interrupt flag is set again so the drain stops. From the store step onwards
+     * logged and swallowed, and the next event tries the window again. From the store step onwards
      * (storing, recording the window, projection and grounding) a failure is thrown to
      * [processPendingEvents], which passes it on to whoever called [extractPropositions]. A host that
      * runs extraction inside its own transaction has to see that failure to roll the transaction
-     * back. A [LineageNotRecordedException] is also logged at `error` with the run id.
+     * back. A [LineageNotRecordedException] is always thrown, also when it comes before the store
+     * step, and is logged at `error` with the run id.
+     *
+     * Catching an [InterruptedException] clears the thread's interrupt flag, so whenever this method
+     * catches one, or a write step failed with one, it sets the flag again and the drain stops.
      *
      * Every exception thrown from here is unchecked, so a Java caller can catch it and a Spring
      * `@Transactional` method rolls back on it by default. A failed write is thrown the way
@@ -647,6 +623,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      */
     private fun processEvent(event: SourceAnalysisRequestEvent) {
         var storeStarted = false
+        var writeInterrupted = false
         var sourceId: String? = null
         try {
             val source = event.incrementalSource()
@@ -687,9 +664,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                         when (val outcome = writeUnit(analysed, context, boundWriter)) {
                             is PersistOutcome.Stored -> stored = outcome.persisted
                             is PersistOutcome.Failed -> {
-                                // The same exception persistedOrThrow throws, for both writers.
-                                val failure = outcome.cause as? RuntimeException
-                                    ?: PersistUnitFailedException(outcome.step, outcome.cause)
+                                // The flag is set again in the finally block, after the window is
+                                // recorded, so an interruptible history store is not cut short.
+                                writeInterrupted = outcome.cause is InterruptedException
+                                val failure = thrownBy(outcome)
                                 val claimsStored = boundWriter == null &&
                                     outcome.step == PersistStep.RUN_LINKS &&
                                     PersistStep.PROPOSITIONS in outcome.leftInStore
@@ -730,15 +708,31 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             )
             throw e
         } catch (e: Exception) {
+            if (e is InterruptedException) Thread.currentThread().interrupt()
             if (storeStarted) {
                 throw e as? RuntimeException
                     ?: RuntimeException("Extraction failed for source $sourceId after its store step started", e)
             }
-            if (isInterrupt(e)) Thread.currentThread().interrupt()
             logger.warn("Failed to extract propositions", e)
         } finally {
+            if (writeInterrupted) Thread.currentThread().interrupt()
             inFlightCount.decrementAndGet()
         }
+    }
+
+    /**
+     * Returns the exception [PersistOutcome.persistedOrThrow] throws for a failed write.
+     *
+     * @param outcome The failed write.
+     * @return A `RuntimeException` cause as it is, or a checked one inside a [PersistUnitFailedException].
+     */
+    private fun thrownBy(outcome: PersistOutcome.Failed): RuntimeException {
+        try {
+            outcome.persistedOrThrow()
+        } catch (e: RuntimeException) {
+            return e
+        }
+        throw IllegalStateException("A failed write returned a result")
     }
 
     private fun buildContext(

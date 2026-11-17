@@ -15,6 +15,10 @@
  */
 package com.embabel.dice.proposition.extraction
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntity
@@ -50,7 +54,9 @@ import io.mockk.verify
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 import java.io.IOException
+import java.net.SocketTimeoutException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -169,14 +175,21 @@ class WindowRecordedAfterStoreTest {
         return Harness(extraction, pipeline, result, repository, history)
     }
 
-    private fun event(currentRun: ExtractionRunRef? = null, source: String = sourceId): SourceAnalysisRequestEvent {
+    private fun event(
+        currentRun: ExtractionRunRef? = null,
+        source: String = sourceId,
+        sourceCalls: AtomicInteger = AtomicInteger(),
+    ): SourceAnalysisRequestEvent {
         val incremental = mockk<IncrementalSource<Message>>(relaxed = true)
         every { incremental.id } returns source
         every { incremental.size } returns 1
         // Each source gets its own text, so the history store's hash check tells sources apart.
         every { incremental.getItems(any(), any()) } returns listOf(UserMessage("Alice writes in $source"))
         return object : SourceAnalysisRequestEvent(this, user()) {
-            override fun incrementalSource(): IncrementalSource<Message> = incremental
+            override fun incrementalSource(): IncrementalSource<Message> {
+                sourceCalls.incrementAndGet()
+                return incremental
+            }
 
             override fun currentRun(): ExtractionRunRef? = currentRun
         }
@@ -358,6 +371,51 @@ class WindowRecordedAfterStoreTest {
         return DrainRun(surfaced.get(), stillInterrupted.get())
     }
 
+    /**
+     * Queues [events] in order and drains them all in one call on this thread. Every event but the
+     * last is queued while the thread is interrupted, so no drain runs until the last call, and the
+     * drain counts them all as queued when it started.
+     *
+     * @param events The events to drain, in queue order.
+     * @return What the drain ended with. The interrupt flag is cleared before this returns.
+     */
+    private fun Harness.drainAll(vararg events: SourceAnalysisRequestEvent): DrainRun {
+        try {
+            Thread.currentThread().interrupt()
+            events.dropLast(1).forEach { extraction.extractPropositions(it) }
+        } finally {
+            Thread.interrupted()
+        }
+        var surfaced: Throwable? = null
+        try {
+            extraction.extractPropositions(events.last())
+        } catch (t: Throwable) {
+            surfaced = t
+        }
+        return DrainRun(surfaced, Thread.interrupted())
+    }
+
+    /**
+     * Runs [block] and collects what the extractor logged at `warn` while it ran.
+     *
+     * @param block The call to observe.
+     * @return The warnings, in order.
+     */
+    private fun warnings(block: () -> Unit): List<ILoggingEvent> {
+        val logger = LoggerFactory.getLogger(IncrementalPropositionExtraction::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().also {
+            it.start()
+            logger.addAppender(it)
+        }
+        try {
+            block()
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+        return appender.list.filter { it.level == Level.WARN }
+    }
+
     @Test
     fun `a lineage exception from the claim save leaves the window unrecorded`() {
         // The claim save itself throws a LineageNotRecordedException, so nothing is stored. Its
@@ -413,12 +471,13 @@ class WindowRecordedAfterStoreTest {
     }
 
     @Test
-    fun `a failure caused by an interrupt stops the drain and sets the flag again`() {
-        // A blocking call that is interrupted clears the flag as it throws. The drain must still
-        // treat the failure as an interrupt.
+    fun `a store that catches an interrupt and sets the flag again stops the drain`() {
+        // The store catches the interrupt and sets the flag again before it throws, as is the Java
+        // convention. The drain sees the flag and stops.
         val harness = harness(
             repository = FlakyRepository(
                 failingSaves = setOf(1),
+                beforeFailing = { Thread.currentThread().interrupt() },
                 failure = { IllegalStateException("save interrupted", InterruptedException()) },
             ),
         )
@@ -487,6 +546,100 @@ class WindowRecordedAfterStoreTest {
 
         assertThat(run.surfaced).hasMessage("save 1 failed")
         assertThat(run.surfaced!!.suppressed.map { it.message }).containsExactly("save 2 failed")
+        verify(exactly = 2) { harness.pipeline.processChunk(any(), any()) }
+    }
+
+    @Test
+    fun `a socket timeout from a save does not stop the next queued event`() {
+        val timeout = SocketTimeoutException("Read timed out")
+        val harness = harness(repository = FlakyRepository(failingSaves = setOf(1), failure = { timeout }))
+
+        val run = harness.drainAll(event(source = "source-a"), event(source = "source-b"))
+
+        assertThat(run.surfaced).isInstanceOf(PersistUnitFailedException::class.java).hasCause(timeout)
+        assertThat(run.stillInterrupted).isFalse()
+        verify(exactly = 2) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.extraction.isIdle).isTrue()
+    }
+
+    @Test
+    fun `a save that throws InterruptedException stops the drain with the flag set`() {
+        // Throwing InterruptedException clears the flag, so the extractor sets it again.
+        val interrupted = InterruptedException("save interrupted")
+        val harness = harness(repository = FlakyRepository(failingSaves = setOf(1), failure = { interrupted }))
+
+        val run = harness.drainAll(event(source = "source-a"), event(source = "source-b"))
+
+        assertThat(run.surfaced).isInstanceOf(PersistUnitFailedException::class.java).hasCause(interrupted)
+        assertThat(run.stillInterrupted).isTrue()
+        verify(exactly = 1) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.extraction.isIdle)
+            .describedAs("the second event is still queued")
+            .isFalse()
+    }
+
+    @Test
+    fun `a save listener that keeps queueing the source cannot hold a failure back from the caller`() {
+        // Every save queues the same source again and every window record fails. Without a bound
+        // the drain would keep saving forever. The listener gives up after ten saves only so a
+        // broken drain still ends.
+        val inner = InMemoryChunkHistoryStore()
+        val history = object : ChunkHistoryStore by inner {
+            override fun recordProcessed(record: ProcessedChunkRecord) =
+                throw IllegalStateException("disk full")
+        }
+        lateinit var extraction: IncrementalPropositionExtraction
+        val saves = AtomicInteger()
+        val repository = FlakyRepository(
+            failingSaves = emptySet(),
+            onSave = { number ->
+                saves.set(number)
+                if (number < 10) extraction.extractPropositions(event())
+            },
+        )
+        val harness = harness(repository = repository, history = history)
+        extraction = harness.extraction
+
+        assertThatThrownBy { harness.extraction.extractPropositions(event()) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessage("disk full")
+        assertThat(saves.get()).isLessThanOrEqualTo(2)
+    }
+
+    @Test
+    fun `a later failure is logged without asking its event for the source again`() {
+        val firstCalls = AtomicInteger()
+        val secondCalls = AtomicInteger()
+        val harness = harness(
+            repository = FlakyRepository(
+                failingSaves = setOf(1, 2),
+                failure = { number -> IllegalStateException("save $number failed") },
+            ),
+        )
+
+        val run = harness.drainAll(
+            event(source = "source-a", sourceCalls = firstCalls),
+            event(source = "source-b", sourceCalls = secondCalls),
+        )
+
+        assertThat(run.surfaced).hasMessage("save 1 failed")
+        assertThat(firstCalls.get()).isEqualTo(1)
+        assertThat(secondCalls.get()).isEqualTo(1)
+    }
+
+    @Test
+    fun `a later failure that reuses the first exception is still logged`() {
+        val shared = IllegalStateException("store is down")
+        val harness = harness(repository = FlakyRepository(failingSaves = setOf(1, 2), failure = { shared }))
+
+        lateinit var run: DrainRun
+        val warned = warnings {
+            run = harness.drainAll(event(source = "source-a"), event(source = "source-b"))
+        }
+
+        assertThat(run.surfaced).isSameAs(shared)
+        assertThat(shared.suppressed).isEmpty()
+        assertThat(warned.filter { it.throwableProxy?.message == "store is down" }).hasSize(1)
         verify(exactly = 2) { harness.pipeline.processChunk(any(), any()) }
     }
 }
