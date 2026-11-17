@@ -61,24 +61,28 @@ class GroundedMentionFilter : MentionFilter {
     override fun rejectionReason(mention: SuggestedMention): String? =
         if (MentionGrounding.isBlank(mention.span)) UngroundedMention.Reason.BLANK_SPAN.name else null
 
-    /** The known entities last seen and their prepared names, reused while a run keeps the same list. */
+    /**
+     * A copy of the known entities last seen and their prepared names, reused while the known
+     * entities stay the same. The copy is compared by content, so a list changed in place is
+     * prepared again.
+     */
     @Volatile
-    private var lastKnown: Pair<List<KnownEntity>, List<KnownEntityGrounding.KnownNames>>? = null
+    private var lastKnown: Pair<List<KnownEntity>, KnownEntityGrounding.KnownIndex>? = null
 
     override fun validateMentions(proposition: SuggestedProposition, context: SourceAnalysisContext): List<ValidationResult> =
         KnownEntityGrounding.reasons(proposition, lazy { knownNames(context.knownEntities) })
             .map { reason -> if (reason == null) ValidationResult.Valid else ValidationResult.Invalid(reason.name) }
 
     /**
-     * Prepares the names of the known entities once for each list of known entities, so a chunk's
+     * Prepares the names of the known entities once for as long as they stay the same, so a chunk's
      * propositions, which share one analysis context, do not prepare them again.
      *
      * @param knownEntities the known entities of the analysis
-     * @return their prepared names
+     * @return their prepared names, indexed by name
      */
-    private fun knownNames(knownEntities: List<KnownEntity>): List<KnownEntityGrounding.KnownNames> {
-        lastKnown?.let { (entities, names) -> if (entities === knownEntities) return names }
-        return KnownEntityGrounding.knownNames(knownEntities).also { lastKnown = knownEntities to it }
+    private fun knownNames(knownEntities: List<KnownEntity>): KnownEntityGrounding.KnownIndex {
+        lastKnown?.let { (entities, names) -> if (entities == knownEntities) return names }
+        return KnownEntityGrounding.knownNames(knownEntities).also { lastKnown = knownEntities.toList() to it }
     }
 }
 
@@ -112,7 +116,7 @@ internal object KnownEntityGrounding {
         }
         return proposition.mentions.map { mention ->
             val reason = MentionGrounding.reasonUngrounded(prepare(mention.span), text)
-            if (reason == UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION && namesOneOf(mention, knownNames.value, inText)) null else reason
+            if (reason == UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION && namesOneOf(mention, KnownIndex.of(knownNames.value), inText)) null else reason
         }
     }
 
@@ -125,23 +129,71 @@ internal object KnownEntityGrounding {
     class KnownNames(val names: List<String>, val forms: List<PreparedText>)
 
     /**
+     * The prepared names of the known entities, with an index from each name to the entities that
+     * carry it.
+     *
+     * Names are indexed by a key under which two names are equal exactly when they are equal
+     * ignoring case, the comparison entity resolution uses.
+     *
+     * @property entries the prepared names, one entry per known entity with a name
+     */
+    class KnownIndex(private val entries: List<KnownNames>) : AbstractList<KnownNames>() {
+        private val byName: Map<String, List<KnownNames>> =
+            entries.flatMap { entry -> entry.names.distinctBy(::caseKey).map { caseKey(it) to entry } }
+                .groupBy({ it.first }, { it.second })
+
+        override val size: Int get() = entries.size
+
+        override fun get(index: Int): KnownNames = entries[index]
+
+        /**
+         * Finds the known entities that carry a name.
+         *
+         * @param name a normalized name
+         * @return the entities with that name, ignoring case, in their order
+         */
+        fun named(name: String): List<KnownNames> = byName[caseKey(name)].orEmpty()
+
+        companion object {
+            /**
+             * Wraps prepared names in an index, or returns them when they already are one.
+             *
+             * @param names the prepared names
+             * @return the index
+             */
+            fun of(names: List<KnownNames>): KnownIndex = names as? KnownIndex ?: KnownIndex(names)
+
+            /**
+             * Folds a name so that two names get the same key exactly when they are equal ignoring
+             * case, as String.equals(other, ignoreCase = true) decides it.
+             *
+             * @param name the name
+             * @return its key
+             */
+            private fun caseKey(name: String): String = buildString(name.length) {
+                name.forEach { append(Character.toLowerCase(Character.toUpperCase(it))) }
+            }
+        }
+    }
+
+    /**
      * Prepares the names of the known entities that have at least one non-blank name.
      *
      * @param knownEntities the known entities of the analysis
      * @param prepare folds a text so spans can be looked up in it
-     * @return the prepared names, one entry per known entity with a name
+     * @return the prepared names, one entry per known entity with a name, indexed by name
      */
     fun knownNames(
         knownEntities: List<KnownEntity>,
         prepare: (String) -> PreparedText = MentionGrounding::prepare,
-    ): List<KnownNames> = knownEntities.mapNotNull { known ->
+    ): KnownIndex = KnownIndex(knownEntities.mapNotNull { known ->
         val forms = (listOf<String?>(known.name) + known.aliases).filterNotNull().filter { it.isNotBlank() }
         if (forms.isEmpty()) null
         else KnownNames(
             names = forms.map { NormalizedNameCandidateSearcher.normalizeName(it) }.filter { it.isNotBlank() },
             forms = forms.map(prepare),
         )
-    }
+    })
 
     /**
      * Tells whether a mention names a known entity that the text names, and only such entities.
@@ -152,14 +204,14 @@ internal object KnownEntityGrounding {
      * known entity and every known entity with that name is one the text names.
      *
      * @param mention the mention
-     * @param known the prepared names of the known entities
+     * @param known the prepared names of the known entities, indexed by name
      * @param inText tells whether the text names a known entity
      * @return true when the mention can only resolve to a known entity the text names
      */
-    private fun namesOneOf(mention: SuggestedMention, known: List<KnownNames>, inText: (KnownNames) -> Boolean): Boolean {
+    private fun namesOneOf(mention: SuggestedMention, known: KnownIndex, inText: (KnownNames) -> Boolean): Boolean {
         val name = NormalizedNameCandidateSearcher.normalizeName(mention.span)
         if (name.isBlank()) return false
-        val sameName = known.filter { entity -> entity.names.any { it.equals(name, ignoreCase = true) } }
+        val sameName = known.named(name)
         return sameName.isNotEmpty() && sameName.all(inText)
     }
 }

@@ -233,4 +233,21 @@ class GroundedMentionFilterTest {
 
         assertEquals(listOf(null, com.embabel.dice.pipeline.UngroundedMention.Reason.SPAN_NOT_IN_PROPOSITION), reasons)
     }
+
+    @Test
+    fun `S3 the filter sees known entities added to the same list in place`() {
+        val known = mutableListOf(knownPerson("p-bob", "Bob"))
+        val analysis = SourceAnalysisContext(
+            schema = com.embabel.agent.core.DataDictionary.fromClasses("test"),
+            entityResolver = com.embabel.dice.common.resolver.AlwaysCreateEntityResolver,
+            contextId = com.embabel.agent.core.ContextId("mention-test"),
+            knownEntities = known,
+        )
+        val filter = GroundedMentionFilter()
+        val tomMoved = proposition("Tom moved to Paris", mention("Thomas"))
+
+        assertEquals(listOf(notInText), filter.validateMentions(tomMoved, analysis))
+        known.add(thomas)
+        assertEquals(listOf(Valid), filter.validateMentions(tomMoved, analysis))
+    }
 }
