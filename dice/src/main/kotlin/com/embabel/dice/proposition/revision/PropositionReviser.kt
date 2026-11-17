@@ -55,17 +55,32 @@ data class ClassifiedProposition(
  * Result of revising a proposition against the existing store.
  */
 sealed class RevisionResult {
+
+    /**
+     * Whether this result is a replay: a merge or reinforcement that left the stored proposition as
+     * it was, because the stored one already held all of the new proposition's evidence. Processing
+     * the same chunk again gives a replay. A replay changes nothing in the store, and revision
+     * statistics leave it out of their counts.
+     */
+    open val isReplay: Boolean get() = false
+
     /** Merged with an existing identical proposition */
     data class Merged(
         val original: Proposition,
         val revised: Proposition,
-    ) : RevisionResult()
+    ) : RevisionResult() {
+        /** True when [revised] equals [original], so the merge added no evidence. */
+        override val isReplay: Boolean get() = revised == original
+    }
 
     /** Reinforced an existing similar proposition */
     data class Reinforced(
         val original: Proposition,
         val revised: Proposition,
-    ) : RevisionResult()
+    ) : RevisionResult() {
+        /** True when [revised] equals [original], so the reinforcement added no evidence. */
+        override val isReplay: Boolean get() = revised == original
+    }
 
     /**
      * Contradicted an existing proposition. Both are stored; the [original] normally has its

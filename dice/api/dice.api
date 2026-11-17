@@ -2563,6 +2563,7 @@ public final class com/embabel/dice/pipeline/PersistablePropositions$Companion {
 public abstract interface class com/embabel/dice/pipeline/PropositionExtractionResult {
 	public fun getHasRevision ()Z
 	public fun getPropositionExtractionStats ()Lcom/embabel/dice/pipeline/PropositionExtractionStats;
+	public fun getReplayedCount ()I
 	public fun getRevisedPropositionsToPersist ()Ljava/util/List;
 	public abstract fun getRevisionResults ()Ljava/util/List;
 }
@@ -5356,6 +5357,7 @@ public abstract interface class com/embabel/dice/proposition/revision/Propositio
 }
 
 public abstract class com/embabel/dice/proposition/revision/RevisionResult {
+	public fun isReplay ()Z
 }
 
 public final class com/embabel/dice/proposition/revision/RevisionResult$Contradicted : com/embabel/dice/proposition/revision/RevisionResult {
@@ -5397,6 +5399,7 @@ public final class com/embabel/dice/proposition/revision/RevisionResult$Merged :
 	public final fun getOriginal ()Lcom/embabel/dice/proposition/Proposition;
 	public final fun getRevised ()Lcom/embabel/dice/proposition/Proposition;
 	public fun hashCode ()I
+	public fun isReplay ()Z
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -5421,6 +5424,7 @@ public final class com/embabel/dice/proposition/revision/RevisionResult$Reinforc
 	public final fun getOriginal ()Lcom/embabel/dice/proposition/Proposition;
 	public final fun getRevised ()Lcom/embabel/dice/proposition/Proposition;
 	public fun hashCode ()I
+	public fun isReplay ()Z
 	public fun toString ()Ljava/lang/String;
 }
 

@@ -173,6 +173,9 @@ class InRunRevisionTest {
         assertTrue(events.none { it is PropositionMerged || it is PropositionReinforced }, "events: $events")
         assertEquals(0, result.propositionExtractionStats.mergedCount)
         assertEquals(0, result.propositionExtractionStats.total)
+        assertTrue(replay.isReplay)
+        assertEquals(1, result.replayedCount)
+        assertTrue("1 replayed" in result.infoString(false, 0), result.infoString(false, 0))
     }
 
     @Test

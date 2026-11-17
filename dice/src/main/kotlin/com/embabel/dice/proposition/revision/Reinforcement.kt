@@ -81,15 +81,3 @@ private fun Proposition.holdsAllSourcesOf(evidence: Proposition): Boolean =
     grounding.containsAll(evidence.grounding) &&
         provenanceEntries.containsAll(evidence.provenanceEntries) &&
         sourceIds.containsAll(evidence.sourceIds)
-
-/**
- * Whether this result is a replay: a merge or reinforcement that left the stored proposition as it
- * was, because the stored one already held all of the evidence.
- *
- * @return true for a merge or reinforcement whose revised proposition equals its original
- */
-internal fun RevisionResult.isReplay(): Boolean = when (this) {
-    is RevisionResult.Merged -> revised == original
-    is RevisionResult.Reinforced -> revised == original
-    else -> false
-}

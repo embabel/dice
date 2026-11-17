@@ -87,7 +87,17 @@ A restatement that names a source reinforces a stored claim only when the stored
 already hold that source. A source is a grounding id, a provenance entry or a source id.
 A restatement that names no source still reinforces. Processing the same chunk again, with the
 same chunk id and text, leaves the stored claim unchanged: the result is still merged or
-reinforced, and its `revised` equals its `original`. When two chunks in one run restate the same
+reinforced, its `revised` equals its `original`, and `isReplay()` returns true. Revision
+statistics leave replays out of their counts, and `replayedCount` on the chunk or run result says
+how many there were, so a retried run shows up as replays.
+
+[source,java]
+----
+ChunkPropositionResult result = pipeline.processChunk(chunk, context);
+long replays = result.getRevisionResults().stream().filter(RevisionResult::isReplay).count();
+int sameNumber = result.getReplayedCount();
+----
+ When two chunks in one run restate the same
 stored claim, the second builds on the first, so the saved claim keeps both sources.
 
 ==== Scope per user

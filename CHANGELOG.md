@@ -1062,6 +1062,12 @@ and the consumer PRs that deliver it).
   for a 1.0 proposition merged with an identical one. **Compatibility: behavioral.** A proposition
   above 0.95 (similar) or 0.99 (identical) keeps its confidence when it is reinforced.
 
+- `RevisionResult.isReplay` tells whether a merge or reinforcement left the stored proposition as
+  it was, because the stored one already held all of the new proposition's evidence, as when the
+  same chunk is processed again. `replayedCount` on a chunk or run result counts them, since
+  `propositionExtractionStats` leaves replays out. The pipeline's per-run log line and a chunk
+  result's `infoString` include the count. **Compatibility: additive.**
+
 - A proposition that brings no new evidence does not reinforce. When the stored proposition already
   holds all of the new one's grounding, provenance entries and source ids, `LlmPropositionReviser`
   and `DefaultMemoryConsolidator` leave the stored proposition unchanged: the same confidence,

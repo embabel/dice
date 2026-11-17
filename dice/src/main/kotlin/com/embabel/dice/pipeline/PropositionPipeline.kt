@@ -52,7 +52,6 @@ import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.proposition.revision.PropositionReviser
 import com.embabel.dice.proposition.revision.InRunPropositions
 import com.embabel.dice.proposition.revision.RevisionResult
-import com.embabel.dice.proposition.revision.isReplay
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -539,7 +538,7 @@ class PropositionPipeline private constructor(
             // These are early signals; the canonical durable event is PropositionPersisted,
             // emitted by the repository decorator when the result is actually saved.
             // A replay changes nothing, so it emits nothing.
-            results.filterNot { it.isReplay() }.forEach { revision ->
+            results.filterNot { it.isReplay }.forEach { revision ->
                 val event = when (revision) {
                     is RevisionResult.New -> PropositionDiscovered(revision.proposition)
                     is RevisionResult.Merged -> PropositionMerged(revision.original, revision.revised)
@@ -814,7 +813,7 @@ class PropositionPipeline private constructor(
         if (result.hasRevision) {
             val stats = result.propositionExtractionStats
             logger.info(
-                "Extracted {} propositions from {} chunks: {} new, {} generalized, {} merged, {} reinforced, {} contradicted ({} fully resolved)",
+                "Extracted {} propositions from {} chunks: {} new, {} generalized, {} merged, {} reinforced, {} contradicted, {} replayed ({} fully resolved)",
                 allPropositions.size,
                 chunks.size,
                 stats.newCount,
@@ -822,6 +821,7 @@ class PropositionPipeline private constructor(
                 stats.mergedCount,
                 stats.reinforcedCount,
                 stats.contradictedCount,
+                result.replayedCount,
                 allPropositions.count { it.isFullyResolved() }
             )
         } else {

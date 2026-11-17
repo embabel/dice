@@ -22,7 +22,6 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.SuggestedPropositions
 import com.embabel.dice.proposition.revision.RevisionResult
-import com.embabel.dice.proposition.revision.isReplay
 
 /**
  * Statistics about proposition revision outcomes. A replay, a merge or reinforcement that left the
@@ -46,8 +45,8 @@ data class PropositionExtractionStats(
     companion object {
         fun from(revisionResults: List<RevisionResult>): PropositionExtractionStats = PropositionExtractionStats(
             newCount = revisionResults.count { it is RevisionResult.New },
-            mergedCount = revisionResults.count { it is RevisionResult.Merged && !it.isReplay() },
-            reinforcedCount = revisionResults.count { it is RevisionResult.Reinforced && !it.isReplay() },
+            mergedCount = revisionResults.count { it is RevisionResult.Merged && !it.isReplay },
+            reinforcedCount = revisionResults.count { it is RevisionResult.Reinforced && !it.isReplay },
             contradictedCount = revisionResults.count { it is RevisionResult.Contradicted },
             generalizedCount = revisionResults.count { it is RevisionResult.Generalized },
         )
@@ -63,6 +62,13 @@ interface PropositionExtractionResult {
 
     /** Statistics about revision outcomes */
     val propositionExtractionStats: PropositionExtractionStats get() = PropositionExtractionStats.from(revisionResults)
+
+    /**
+     * Number of revision results that were replays: merges or reinforcements that left the stored
+     * proposition as it was, as when the same chunk is processed again. [propositionExtractionStats]
+     * leaves them out of its counts, so a retried run shows its replays here.
+     */
+    val replayedCount: Int get() = revisionResults.count { it.isReplay }
 
     /** Whether revision was enabled */
     val hasRevision: Boolean get() = revisionResults.isNotEmpty()
@@ -84,7 +90,7 @@ interface PropositionExtractionResult {
         get() {
             val changedIds = revisionResults.mapNotNull { it.changedStoredId() }.toSet()
             val toPersist = revisionResults
-                .filterNot { it.isReplay() && it.storedId() in changedIds }
+                .filterNot { it.isReplay && it.storedId() in changedIds }
                 .flatMap { result ->
                     when (result) {
                         is RevisionResult.New -> listOf(result.proposition)
@@ -242,6 +248,7 @@ sealed interface ChunkPropositionResult : PersistablePropositions, HasInfoString
                     append("${stats.reinforcedCount} reinforced, ")
                     append("${stats.contradictedCount} contradicted, ")
                     append("${stats.generalizedCount} generalized")
+                    if (replayedCount > 0) append(", $replayedCount replayed")
                 }
                 append(")")
 
@@ -376,8 +383,8 @@ private fun RevisionResult.storedId(): String? = when (this) {
  * Returns the copy a merge or reinforcement that changed something started from, or null.
  */
 private fun RevisionResult.changedOriginal(): Proposition? = when (this) {
-    is RevisionResult.Merged -> original.takeUnless { isReplay() }
-    is RevisionResult.Reinforced -> original.takeUnless { isReplay() }
+    is RevisionResult.Merged -> original.takeUnless { isReplay }
+    is RevisionResult.Reinforced -> original.takeUnless { isReplay }
     else -> null
 }
 
@@ -395,7 +402,7 @@ private fun RevisionResult.contradictedCopy(): Proposition? =
  * A contradiction counts as a change to the proposition it contradicts.
  */
 private fun RevisionResult.changedStoredId(): String? = when (this) {
-    is RevisionResult.Merged, is RevisionResult.Reinforced -> if (isReplay()) null else storedId()
+    is RevisionResult.Merged, is RevisionResult.Reinforced -> if (isReplay) null else storedId()
     is RevisionResult.Contradicted -> original.id
     else -> null
 }
