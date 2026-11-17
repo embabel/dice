@@ -104,7 +104,8 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
     /**
      * Analyses the next window like [analyze], hands the result to [store], and records the window
      * only once [store] returns. If [store] throws, nothing is recorded and the exception goes up
-     * to the caller, so the same window is analysed again next time.
+     * to the caller, so the next call analyses again from the same starting point. That window may
+     * end later if the source has grown since.
      *
      * Only Kotlin code in this module can call it. The method is synthetic in bytecode, so Java
      * source cannot see it.

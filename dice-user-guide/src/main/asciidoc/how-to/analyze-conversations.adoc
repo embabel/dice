@@ -103,10 +103,12 @@ stored claim, the second builds on the first, so the saved claim keeps both sour
 ==== When a write fails
 
 `IncrementalPropositionExtraction` records a window as processed only after its claims are stored.
-If the store fails, the window stays unrecorded, and the next event for the same source analyses it
-again. Projection and grounding run after the window is recorded. An exception thrown by projection
-or grounding reaches the caller. A failure those services only count, such as a failed relationship
-write or a failed grounding edge, does not.
+If the store fails, the window stays unrecorded, and the next event for the same source analyses
+again from the same starting point. The window may end later if the source has grown since. One
+failure is the exception: with no writer bound, a failure at the run link step after the claims are
+saved records the window and is still thrown. Projection and grounding run after the window is
+recorded. An exception thrown by projection or grounding reaches the caller. A failure those
+services only count, such as a failed relationship write or a failed grounding edge, does not.
 
 `analyze` records the window before it returns, so in the example above a failed
 `result.persist(...)` leaves the window recorded and it is not analysed again. If you store the
@@ -115,9 +117,12 @@ result yourself and need the window to stay unrecorded when the write fails, use
 write.
 
 `extractPropositions` drains the events that are queued, then throws the first failure it saw. Every
-exception it throws is unchecked. A failure while building the context or analysing a window is
-logged, and that window is retried on the next event. If the thread is interrupted, the drain stops
-and the events still queued wait for the next call.
+exception it throws is unchecked. After the first failure the drain finishes only the events queued
+at that moment, and events queued later wait for the next call. A failure while building the context
+or analysing a window is logged, and that window is retried on the next event. A
+`LineageNotRecordedException` is always thrown, also when it comes before the store step. If the
+thread's interrupt flag is set, the drain stops and the events still queued wait for the next call. A
+store or pipeline that catches an interrupt must set the flag again, as is the Java convention.
 
 A failure that reaches the caller lets a host transaction roll back. For one-time processing, keep the
 chunk history in the same transactional store as the claims. The Drivine stores do this. Call
