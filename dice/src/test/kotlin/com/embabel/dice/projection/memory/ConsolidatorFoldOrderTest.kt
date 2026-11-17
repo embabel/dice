@@ -89,7 +89,7 @@ class ConsolidatorFoldOrderTest {
     }
 
     @Test
-    fun `a replay alone returns the stored proposition`() {
-        assertEquals(listOf(stored), reinforced(listOf(r)))
+    fun `a replay alone leaves nothing to save`() {
+        assertEquals(emptyList<Proposition>(), reinforced(listOf(r)))
     }
 }

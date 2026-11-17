@@ -141,19 +141,19 @@ class ConsolidatorReinforceCharacterisationTest {
     }
 
     @Test
-    fun `a session proposition whose evidence is already held leaves the stored one unchanged`() {
+    fun `a session proposition whose evidence is already held leaves nothing to save`() {
         val existing = existing()
         val held = proposition(confidence = 0.3, grounding = listOf("g1"), provenance = listOf(pA))
         val result = DefaultMemoryConsolidator().consolidate(listOf(held), listOf(existing))
-        assertEquals(listOf(existing), result.reinforced)
+        assertTrue(result.reinforced.isEmpty(), "reinforced ${result.reinforced}")
         assertTrue(result.promoted.isEmpty(), "promoted ${result.promoted}")
         assertTrue(result.discarded.isEmpty(), "discarded ${result.discarded}")
         assertTrue(result.merged.isEmpty(), "merged ${result.merged}")
     }
 
     @Test
-    fun `a stored proposition matched against itself is returned unchanged`() {
+    fun `a stored proposition matched against itself is not reported as reinforced`() {
         val p = proposition(confidence = 0.6)
-        assertEquals(listOf(p), DefaultMemoryConsolidator().consolidate(listOf(p), listOf(p)).reinforced)
+        assertTrue(DefaultMemoryConsolidator().consolidate(listOf(p), listOf(p)).reinforced.isEmpty())
     }
 }

@@ -35,7 +35,8 @@ interface MemoryConsolidator {
      * - Matches existing → reinforce confidence
      * - Low importance → discard
      *
-     * A session proposition whose evidence the stored one already holds leaves it unchanged.
+     * A session proposition whose evidence the stored one already holds leaves it unchanged, and
+     * an unchanged stored proposition is not reported as reinforced.
      *
      * @param sessionPropositions Propositions from the current session
      * @param existingPropositions Existing long-term propositions
@@ -51,9 +52,9 @@ interface MemoryConsolidator {
  * Result of memory consolidation.
  *
  * @property promoted Session propositions that became long-term memories
- * @property reinforced Stored propositions that a session proposition matched, one entry each, with every match's evidence folded in order. An entry equals the stored proposition when no match brought new evidence.
+ * @property reinforced Stored propositions that session propositions reinforced, one entry each, with every match's evidence folded in order. A stored proposition that already held all of that evidence is left out.
  * @property discarded Session propositions that were too low importance to keep
- * @property merged Propositions that were merged from multiple sources
+ * @property merged Propositions that were merged from multiple sources, one merge for each stored proposition that session propositions merged with
  */
 data class ConsolidationResult(
     val promoted: List<Proposition>,
@@ -117,10 +118,13 @@ class DefaultMemoryConsolidator(
         existingPropositions: List<Proposition>,
     ): ConsolidationResult {
         val promoted = mutableListOf<Proposition>()
-        // Saving two copies of one stored proposition keeps only one. Each match folds into the latest copy.
+        // Saving two copies of one stored proposition keeps only one, so each stored proposition
+        // gets one entry: reinforcements fold into its latest copy, and every session proposition
+        // that merges with it joins one merge.
+        val storedById = LinkedHashMap<String, Proposition>()
         val latestById = LinkedHashMap<String, Proposition>()
+        val mergingById = LinkedHashMap<String, MutableList<Proposition>>()
         val discarded = mutableListOf<Proposition>()
-        val merged = mutableListOf<PropositionMerge>()
 
         for (sessionProp in sessionPropositions) {
             // Find similar existing propositions
@@ -131,18 +135,15 @@ class DefaultMemoryConsolidator(
                     // Reinforce or merge with existing
                     val bestMatch = similar.maxByOrNull { it.second }!!.first
                     val similarity = similar.maxOf { it.second }
-                    val current = latestById[bestMatch.id] ?: bestMatch
+                    storedById.putIfAbsent(bestMatch.id, bestMatch)
 
                     if (similarity > 0.9) {
                         // Very similar - reinforce the existing one
+                        val current = latestById[bestMatch.id] ?: bestMatch
                         latestById[bestMatch.id] = reinforceProposition(current, sessionProp)
                     } else {
                         // Somewhat similar - merge them
-                        val mergedProp = mergePropositions(listOf(current, sessionProp))
-                        merged.add(PropositionMerge(
-                            sources = listOf(current, sessionProp),
-                            result = mergedProp,
-                        ))
+                        mergingById.getOrPut(bestMatch.id) { mutableListOf() }.add(sessionProp)
                     }
                 }
 
@@ -158,9 +159,15 @@ class DefaultMemoryConsolidator(
             }
         }
 
+        val merged = mergingById.map { (id, sessionProps) ->
+            val sources = listOf(latestById[id] ?: storedById.getValue(id)) + sessionProps
+            PropositionMerge(sources = sources, result = mergePropositions(sources))
+        }
+
         return ConsolidationResult(
             promoted = promoted,
-            reinforced = latestById.values.toList(),
+            // A stored proposition that no session proposition changed has nothing to save.
+            reinforced = latestById.filter { (id, latest) -> latest != storedById[id] }.values.toList(),
             discarded = discarded,
             merged = merged,
         )
