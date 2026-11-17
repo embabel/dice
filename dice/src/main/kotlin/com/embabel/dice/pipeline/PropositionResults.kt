@@ -255,6 +255,18 @@ data class PropositionResults(
     /** All revision results across all chunks */
     override val revisionResults: List<RevisionResult> get() = chunkResults.flatMap { it.revisionResults }
 
+    /**
+     * In a batch, a replayed proposition is left out when another chunk changed the same
+     * proposition, so saving the list cannot undo that change.
+     */
+    override val revisedPropositionsToPersist: List<Proposition>
+        get() {
+            val replays = revisionResults.mapNotNull { it.replayed() }.toSet()
+            val entries = super.revisedPropositionsToPersist
+            val changedIds = entries.filterNot { it in replays }.map { it.id }.toSet()
+            return entries.filterNot { it in replays && it.id in changedIds }
+        }
+
     /** Chunk ids of all chunks that failed to process. */
     val failedChunkIds: List<String>
         get() = chunkResults.filterIsInstance<ChunkPropositionResult.Failed>().map { it.chunkId }
@@ -267,4 +279,15 @@ data class PropositionResults(
 
     override fun referenceOnlyEntities(): List<NamedEntityData> =
         chunkResults.flatMap { it.referenceOnlyEntities() }.distinctBy { it.id }
+}
+
+/**
+ * Returns the stored proposition this result replays, or null when the result changes something.
+ *
+ * @return the unchanged proposition of a replayed merge or reinforcement, otherwise null
+ */
+private fun RevisionResult.replayed(): Proposition? = when (this) {
+    is RevisionResult.Merged -> revised.takeIf { it == original }
+    is RevisionResult.Reinforced -> revised.takeIf { it == original }
+    else -> null
 }

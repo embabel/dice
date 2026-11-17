@@ -2554,6 +2554,7 @@ public final class com/embabel/dice/pipeline/PropositionResults : com/embabel/di
 	public final fun getFullyResolvedCount ()I
 	public final fun getPartiallyResolvedCount ()I
 	public fun getPropositions ()Ljava/util/List;
+	public fun getRevisedPropositionsToPersist ()Ljava/util/List;
 	public fun getRevisionResults ()Ljava/util/List;
 	public final fun getTotalPropositions ()I
 	public final fun getUnresolvedCount ()I

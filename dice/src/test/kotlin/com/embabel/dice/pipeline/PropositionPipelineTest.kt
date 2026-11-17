@@ -409,6 +409,48 @@ class PropositionPipelineTest {
             val replayed = third.revisionResults.single() as RevisionResult.Merged
             assertEquals(restored, replayed.revised)
         }
+
+        @Test
+        fun `a replay in the same batch does not undo a reinforcement`() {
+            val repository = InMemoryPropositionRepository()
+            val reviser = LlmPropositionReviser(llmOptions = io.mockk.mockk(), ai = io.mockk.mockk())
+            val pipeline = PropositionPipeline
+                .withExtractor(MockPropositionExtractor())
+                .withRevision(reviser, repository)
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+                mintNewEntities = true,
+                sourceLocator = UriLocator("https://example.com/doc-1"),
+            )
+
+            val first = pipeline.processOnce("mentions:Alice,Bob", "doc-1", context)
+                as ChunkPropositionResult.Success
+            val created = first.revisionResults.single() as RevisionResult.New
+            repository.save(created.proposition)
+            val stored = repository.findById(created.proposition.id)!!
+
+            // The first chunk changes the text under the same source id, so it reinforces. The
+            // second chunk is the original text and replays the stored proposition.
+            val batch = pipeline.process(
+                listOf(
+                    Chunk.create(text = "mentions:Alice, Bob", parentId = "doc-1", id = "doc-1"),
+                    Chunk.create(text = "mentions:Alice,Bob", parentId = "doc-1", id = "doc-1"),
+                ),
+                context,
+            )
+            val merges = batch.revisionResults.filterIsInstance<RevisionResult.Merged>()
+            assertEquals(2, merges.size)
+            assertNotEquals(merges[0].original, merges[0].revised, "the first chunk reinforces")
+            assertEquals(merges[1].original, merges[1].revised, "the second chunk replays")
+
+            batch.persist(repository, InMemoryNamedEntityDataRepository(schema))
+
+            val saved = repository.findById(stored.id)!!
+            assertEquals(1, saved.reinforceCount)
+            assertTrue(saved.confidence > stored.confidence, "confidence: ${saved.confidence}")
+        }
     }
 
     @Nested
@@ -1182,6 +1224,70 @@ class PropositionPipelineTest {
                 assertNotNull(entityRepo.findById(entity.id), "Entity ${entity.name} should be saved")
             }
             assertEquals(1, propositionRepo.count())
+        }
+    }
+
+    @Nested
+    inner class BatchWriteSetTests {
+
+        private val stored = Proposition(
+            contextId = testContextId,
+            text = "Alice knows Bob",
+            mentions = emptyList(),
+            confidence = 0.9,
+        )
+        private val reinforced = stored.copy(confidence = 0.99, reinforceCount = 1)
+
+        /**
+         * Wraps revision results in a successful chunk result.
+         *
+         * @param chunkId the chunk id
+         * @param results the revision results the chunk produced
+         * @return a successful chunk result carrying [results]
+         */
+        private fun chunk(chunkId: String, vararg results: RevisionResult): ChunkPropositionResult.Success =
+            ChunkPropositionResult.success(
+                chunkId = chunkId,
+                suggestedPropositions = SuggestedPropositions(chunkId, emptyList()),
+                entityResolutions = Resolutions(setOf(chunkId), emptyList()),
+                propositions = emptyList(),
+                revisionResults = results.toList(),
+            )
+
+        @Test
+        fun `a replay after another chunk's reinforcement is left out of the write set`() {
+            val results = PropositionResults(
+                chunkResults = listOf(
+                    chunk("chunk-1", RevisionResult.Merged(original = stored, revised = reinforced)),
+                    chunk("chunk-2", RevisionResult.Merged(original = stored, revised = stored)),
+                ),
+                allPropositions = emptyList(),
+            )
+
+            assertEquals(listOf(reinforced), results.revisedPropositionsToPersist)
+        }
+
+        @Test
+        fun `a replay before another chunk's reinforcement is left out of the write set`() {
+            val results = PropositionResults(
+                chunkResults = listOf(
+                    chunk("chunk-1", RevisionResult.Merged(original = stored, revised = stored)),
+                    chunk("chunk-2", RevisionResult.Merged(original = stored, revised = reinforced)),
+                ),
+                allPropositions = emptyList(),
+            )
+
+            assertEquals(listOf(reinforced), results.revisedPropositionsToPersist)
+        }
+
+        @Test
+        fun `a replay alone stays in the write set`() {
+            val results = PropositionResults(
+                chunkResults = listOf(chunk("chunk-1", RevisionResult.Merged(original = stored, revised = stored))),
+                allPropositions = emptyList(),
+            )
+
+            assertEquals(listOf(stored), results.revisedPropositionsToPersist)
         }
     }
 
