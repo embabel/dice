@@ -93,8 +93,18 @@ interface PropositionExtractionResult {
                         is RevisionResult.Generalized -> listOf(result.proposition)
                     }
                 }
+            // A result can come back before the one it built on, so the final copy of a stored
+            // proposition is the one no other result started from, not simply the last in the list.
+            val startedFrom = revisionResults.mapNotNull { it.changedOriginal() }.toSet()
+            val finalById = LinkedHashMap<String, Proposition>()
+            for (proposition in toPersist) {
+                val held = finalById[proposition.id]
+                if (held == null || proposition !in startedFrom || held in startedFrom) finalById[proposition.id] = proposition
+            }
             val lastIndexById = toPersist.withIndex().associate { (index, proposition) -> proposition.id to index }
-            return toPersist.filterIndexed { index, proposition -> lastIndexById[proposition.id] == index }
+            return toPersist.withIndex()
+                .filter { (index, proposition) -> lastIndexById[proposition.id] == index }
+                .map { (_, proposition) -> finalById.getValue(proposition.id) }
         }
 }
 
@@ -289,6 +299,15 @@ data class PropositionResults(
 private fun RevisionResult.storedId(): String? = when (this) {
     is RevisionResult.Merged -> original.id
     is RevisionResult.Reinforced -> original.id
+    else -> null
+}
+
+/**
+ * Returns the copy a merge or reinforcement that changed something started from, or null.
+ */
+private fun RevisionResult.changedOriginal(): Proposition? = when (this) {
+    is RevisionResult.Merged -> original.takeUnless { isReplay() }
+    is RevisionResult.Reinforced -> original.takeUnless { isReplay() }
     else -> null
 }
 

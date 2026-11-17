@@ -31,10 +31,13 @@ import com.embabel.dice.common.filter.MentionFilter
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionExtractor
+import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.SuggestedProposition
 import com.embabel.dice.proposition.SuggestedPropositions
+import com.embabel.dice.proposition.revision.ClassifiedProposition
 import com.embabel.dice.proposition.revision.LlmPropositionReviser
+import com.embabel.dice.proposition.revision.PropositionReviser
 import com.embabel.dice.proposition.revision.RevisionResult
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.text2graph.builder.Person
@@ -56,7 +59,7 @@ class InRunRevisionTest {
         override fun extract(chunk: Chunk, context: SourceAnalysisContext): SuggestedPropositions =
             SuggestedPropositions(
                 chunkId = chunk.id,
-                propositions = listOf(SuggestedProposition(text = chunk.text, mentions = emptyList(), confidence = 0.9)),
+                propositions = chunk.text.split("|").map { SuggestedProposition(text = it, mentions = emptyList(), confidence = 0.9) },
             )
 
         override fun toSuggestedEntities(
@@ -196,5 +199,51 @@ class InRunRevisionTest {
         ).revisedPropositionsToPersist
 
         assertEquals(listOf(twice), write)
+    }
+
+    @Test
+    fun `the write set keeps the last copy in the chain even when results come back out of order`() {
+        val stored = Proposition(contextId = contextId, text = "Alice knows Bob", mentions = emptyList(), confidence = 0.9)
+        val once = stored.copy(grounding = listOf("chunk-1"), reinforceCount = 1)
+        val twice = once.copy(grounding = listOf("chunk-1", "chunk-2"), reinforceCount = 2)
+
+        val write = ChunkPropositionResult.success(
+            chunkId = "chunk-1",
+            suggestedPropositions = SuggestedPropositions("chunk-1", emptyList()),
+            entityResolutions = Resolutions(setOf("chunk-1"), emptyList()),
+            propositions = emptyList(),
+            revisionResults = listOf(RevisionResult.Reinforced(once, twice), RevisionResult.Merged(stored, once)),
+        ).revisedPropositionsToPersist
+
+        assertEquals(listOf(twice), write)
+    }
+
+    @Test
+    fun `a chunk that fails after revising leaves nothing behind for later chunks`() {
+        val repository = InMemoryPropositionRepository()
+        val stored = stored(repository)
+        // Reinforces the stored proposition with each proposition's grounding, and fails on "boom".
+        val reviser = object : PropositionReviser {
+            override fun revise(newProposition: Proposition, repository: PropositionRepository): RevisionResult {
+                check(newProposition.text != "boom") { "classification failed" }
+                val original = repository.findById(stored.id)!!
+                return RevisionResult.Reinforced(original, original.absorbEvidence(newProposition))
+            }
+
+            override fun classify(newProposition: Proposition, candidates: List<Proposition>) = emptyList<ClassifiedProposition>()
+        }
+
+        val results = PropositionPipeline.withExtractor(OnePropositionPerChunk).withRevision(reviser, repository).process(
+            listOf(
+                Chunk.create(text = "Alice knows Bob|boom", parentId = "doc", id = "chunk-1"),
+                Chunk.create(text = "Alice knows Bob", parentId = "doc", id = "chunk-2"),
+            ),
+            context(),
+        )
+
+        assertEquals(listOf("chunk-1"), results.failedChunkIds)
+        val saved = results.revisedPropositionsToPersist.single()
+        assertEquals(stored.reinforceCount + 1, saved.reinforceCount)
+        assertEquals(listOf("chunk-0", "chunk-2"), saved.grounding)
     }
 }

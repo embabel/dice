@@ -96,5 +96,15 @@ internal class InRunPropositions private constructor(
          */
         fun over(repository: PropositionRepository): InRunPropositions =
             repository as? InRunPropositions ?: InRunPropositions(repository)
+
+        /**
+         * A new view on top of [repository], even when it is already a view. What this view
+         * records stays out of the one underneath until the caller records it there too, so a
+         * chunk that fails part way leaves the run as it was.
+         *
+         * @param repository the repository, or the run's view, to read through
+         * @return a fresh view
+         */
+        fun layeredOver(repository: PropositionRepository): InRunPropositions = InRunPropositions(repository)
     }
 }
