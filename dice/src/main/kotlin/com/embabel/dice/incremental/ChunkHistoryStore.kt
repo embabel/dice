@@ -16,7 +16,17 @@
 package com.embabel.dice.incremental
 
 import com.embabel.agent.core.ContextId
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * The stores whose typed clear is handing over to the String clear on this thread. Each default
+ * clear forwards to the other, so a store that overrides neither would loop without this. It is
+ * kept per store so a decorator that clears its delegate inside its own clear still reaches it.
+ */
+private val storesForwardingClear: ThreadLocal<MutableSet<ChunkHistoryStore>> =
+    ThreadLocal.withInitial { Collections.newSetFromMap(IdentityHashMap()) }
 
 /**
  * Tracks the history of processed chunks for incremental analysis.
@@ -50,22 +60,33 @@ interface ChunkHistoryStore {
 
     /**
      * Removes all history for one context. A store written in Kotlin overrides this one.
-     * Default no-op for backward compatibility.
+     *
+     * The default calls [clearByContextValue], so a store written in Java, which overrides only
+     * that method, is cleared by this call too. A store that overrides neither method clears
+     * nothing, as before.
      */
-    fun clearByContext(contextId: ContextId) {}
+    fun clearByContext(contextId: ContextId) {
+        val forwarding = storesForwardingClear.get()
+        if (!forwarding.add(this)) return
+        try {
+            clearByContextValue(contextId.value)
+        } finally {
+            forwarding.remove(this)
+        }
+    }
 
     /**
      * Removes all history for one context, named by its id as a string. The default calls
      * [clearByContext], so a store that overrides only that method is reached from Java too.
      *
      * Java cannot override [clearByContext], because it takes a ContextId, so a store written in
-     * Java overrides this method instead. Such a store is reached through this method only, so code
-     * that may be handed a Java store should call this one.
+     * Java overrides this method instead. Calls to either method reach that override.
      *
      * @param contextIdValue The context to clear, as a plain string.
      * @throws IllegalArgumentException if contextIdValue is blank
      */
     fun clearByContextValue(contextIdValue: String) {
+        if (this in storesForwardingClear.get()) return
         clearByContext(ContextId(contextIdValue))
     }
 

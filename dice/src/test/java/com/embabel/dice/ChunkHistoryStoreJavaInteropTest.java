@@ -72,12 +72,12 @@ class ChunkHistoryStoreJavaInteropTest {
     }
 
     @Test
-    void theKotlinFormOnAJavaStoreKeepsItsNoOpDefault() {
+    void theKotlinFormOnAJavaStoreReachesTheStringOverrideOnce() {
         RecordingStore store = new RecordingStore();
 
         assertDoesNotThrow(() -> ContextIdFixtures.clearByContext(store, "acme"));
 
-        assertTrue(store.clearedContextValues.isEmpty());
+        assertEquals(List.of("acme"), store.clearedContextValues);
     }
 
     @Test
