@@ -35,6 +35,8 @@ interface MemoryConsolidator {
      * - Matches existing → reinforce confidence
      * - Low importance → discard
      *
+     * A session proposition whose evidence the stored one already holds leaves it unchanged.
+     *
      * @param sessionPropositions Propositions from the current session
      * @param existingPropositions Existing long-term propositions
      * @return Consolidation result with promoted, reinforced, discarded, and merged propositions
@@ -49,7 +51,7 @@ interface MemoryConsolidator {
  * Result of memory consolidation.
  *
  * @property promoted Session propositions that became long-term memories
- * @property reinforced Existing propositions that were reinforced by session data
+ * @property reinforced Stored propositions that a session proposition matched, one entry each, with every match's evidence folded in order. An entry equals the stored proposition when no match brought new evidence.
  * @property discarded Session propositions that were too low importance to keep
  * @property merged Propositions that were merged from multiple sources
  */
@@ -115,7 +117,8 @@ class DefaultMemoryConsolidator(
         existingPropositions: List<Proposition>,
     ): ConsolidationResult {
         val promoted = mutableListOf<Proposition>()
-        val reinforced = mutableListOf<Proposition>()
+        // Saving two copies of one stored proposition keeps only one. Each match folds into the latest copy.
+        val latestById = LinkedHashMap<String, Proposition>()
         val discarded = mutableListOf<Proposition>()
         val merged = mutableListOf<PropositionMerge>()
 
@@ -128,16 +131,16 @@ class DefaultMemoryConsolidator(
                     // Reinforce or merge with existing
                     val bestMatch = similar.maxByOrNull { it.second }!!.first
                     val similarity = similar.maxOf { it.second }
+                    val current = latestById[bestMatch.id] ?: bestMatch
 
                     if (similarity > 0.9) {
                         // Very similar - reinforce the existing one
-                        val reinforcedProp = reinforceProposition(bestMatch, sessionProp)
-                        reinforced.add(reinforcedProp)
+                        latestById[bestMatch.id] = reinforceProposition(current, sessionProp)
                     } else {
                         // Somewhat similar - merge them
-                        val mergedProp = mergePropositions(listOf(bestMatch, sessionProp))
+                        val mergedProp = mergePropositions(listOf(current, sessionProp))
                         merged.add(PropositionMerge(
-                            sources = listOf(bestMatch, sessionProp),
+                            sources = listOf(current, sessionProp),
                             result = mergedProp,
                         ))
                     }
@@ -157,7 +160,7 @@ class DefaultMemoryConsolidator(
 
         return ConsolidationResult(
             promoted = promoted,
-            reinforced = reinforced,
+            reinforced = latestById.values.toList(),
             discarded = discarded,
             merged = merged,
         )
