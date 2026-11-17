@@ -20,10 +20,15 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import java.time.Duration
+import java.util.concurrent.AbstractExecutorService
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -242,5 +247,55 @@ class ExtractionExecutionStrategyTest {
     @Test
     fun `batched rethrows the first Error and suppresses the rest`() {
         assertLaterErrorsAreSuppressed(BatchedExtractionStrategy(batchSize = 3, executor = executor))
+    }
+
+    /**
+     * A one-thread pool that is shut down with shutdownNow just before the third task is handed to
+     * it, so the queued second task is dropped without running and the third is rejected.
+     */
+    private class ShutDownMidSubmission(
+        private val pool: ThreadPoolExecutor = ThreadPoolExecutor(
+            1, 1, 0, TimeUnit.MILLISECONDS, LinkedBlockingQueue(),
+        ),
+    ) : AbstractExecutorService() {
+        private var submitted = 0
+
+        override fun execute(command: Runnable) {
+            submitted++
+            if (submitted == 3) pool.shutdownNow()
+            pool.execute(command)
+        }
+
+        override fun shutdown() = pool.shutdown()
+        override fun shutdownNow(): MutableList<Runnable> = pool.shutdownNow()
+        override fun isShutdown() = pool.isShutdown
+        override fun isTerminated() = pool.isTerminated
+        override fun awaitTermination(timeout: Long, unit: TimeUnit) = pool.awaitTermination(timeout, unit)
+    }
+
+    /** The first chunk blocks until interrupted, the second is dropped by shutdownNow, the third is rejected. */
+    private fun assertRejectionAfterShutdownNowIsThrown(strategy: (ExecutorService) -> ExtractionExecutionStrategy) {
+        val pool = ShutDownMidSubmission()
+        val neverReleased = CountDownLatch(1)
+        assertTimeoutPreemptively(Duration.ofSeconds(5)) {
+            assertThrows<RejectedExecutionException> {
+                strategy(pool).execute(chunks(3)) { c ->
+                    if (c.id == "c0") neverReleased.await()
+                    c.id
+                }
+            }
+        }
+        Thread.interrupted()
+        pool.shutdownNow()
+    }
+
+    @Test
+    fun `parallel throws the rejection when shutdownNow drops a queued chunk`() {
+        assertRejectionAfterShutdownNowIsThrown { ParallelExtractionStrategy(it) }
+    }
+
+    @Test
+    fun `batched throws the rejection when shutdownNow drops a queued chunk`() {
+        assertRejectionAfterShutdownNowIsThrown { BatchedExtractionStrategy(batchSize = 3, executor = it) }
     }
 }

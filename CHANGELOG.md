@@ -148,7 +148,10 @@ and the consumer PRs that deliver it).
 
 - When the executor rejects a chunk, the concurrent strategies wait for the chunks they already
   handed over before they throw the `RejectedExecutionException`. Before, the exception reached the
-  caller while those chunks were still running. **Compatibility: behavioral.**
+  caller while those chunks were still running. When the rejection comes from an executor that was
+  shut down, a chunk that was handed over but had not started is given up and never runs its
+  extraction, so `shutdownNow`, which drops queued tasks, cannot leave the strategy waiting forever.
+  **Compatibility: behavioral.**
 
 ### Added
 
