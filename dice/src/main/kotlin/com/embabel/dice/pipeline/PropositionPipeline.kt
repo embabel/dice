@@ -327,11 +327,13 @@ class PropositionPipeline private constructor(
         logger.debug("Created {} propositions", propositions.size)
 
         // Step 5: Optionally revise propositions against existing ones
+        var chunkLayer: InRunPropositions? = null
         val revisionResults = if (reviser != null && propositionRepository != null) {
             // This chunk revises through its own layer, so a failure part way through leaves the
             // run's view untouched. The results join the run's view only once the chunk succeeds.
-            val view = InRunPropositions.layeredOver(inRun ?: propositionRepository)
-            val results = reviser.reviseAll(propositions, view)
+            val layer = InRunPropositions.layeredOver(inRun ?: propositionRepository)
+            chunkLayer = layer
+            val results = reviser.reviseAll(propositions, layer)
             val stats = PropositionExtractionStats.from(results)
             logger.debug(
                 "Revised {} propositions: {} new, {} merged, {} reinforced, {} contradicted",
@@ -379,7 +381,7 @@ class PropositionPipeline private constructor(
             emptyList()
         }
 
-        if (inRun != null) revisionResults.forEach(inRun::record)
+        if (inRun != null) chunkLayer?.publishTo(revisionResults, inRun)
         return ChunkPropositionResult.Success(
             chunkId = chunk.id,
             suggestedPropositions = suggestedPropositions,

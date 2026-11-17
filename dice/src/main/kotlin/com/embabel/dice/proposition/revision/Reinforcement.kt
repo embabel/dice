@@ -55,7 +55,9 @@ internal class ReinforcementRule(
  */
 internal fun reinforce(existing: Proposition, evidence: Proposition, rule: ReinforcementRule): Proposition {
     if (existing.id == evidence.id) return existing
-    val sources = evidence.copy(sourceIds = evidence.sourceIds.filter { it != existing.id })
+    // An abstraction must keep a source id, so a level-0 copy carries the filtered evidence. Only its
+    // grounding, provenance entries and source ids are read.
+    val sources = evidence.copy(sourceIds = evidence.sourceIds.filter { it != existing.id }, level = 0)
     val namesNoSource = evidence.grounding.isEmpty() &&
         evidence.provenanceEntries.isEmpty() &&
         evidence.sourceIds.isEmpty()

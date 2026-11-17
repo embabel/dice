@@ -36,6 +36,7 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.SuggestedProposition
 import com.embabel.dice.proposition.SuggestedPropositions
 import com.embabel.dice.proposition.revision.ClassifiedProposition
+import com.embabel.dice.proposition.revision.InRunPropositions
 import com.embabel.dice.proposition.revision.LlmPropositionReviser
 import com.embabel.dice.proposition.revision.PropositionReviser
 import com.embabel.dice.proposition.revision.RevisionResult
@@ -245,5 +246,41 @@ class InRunRevisionTest {
         val saved = results.revisedPropositionsToPersist.single()
         assertEquals(stored.reinforceCount + 1, saved.reinforceCount)
         assertEquals(listOf("chunk-0", "chunk-2"), saved.grounding)
+    }
+
+    @Test
+    fun `a chunk whose results come back out of order hands its final copy to the next chunk`() {
+        val repository = InMemoryPropositionRepository()
+        val stored = stored(repository)
+        // Like LlmPropositionReviser, applies the second proposition before the first but returns
+        // results in input order. Each proposition's text is its source id, so each one is new evidence.
+        val reviser = object : PropositionReviser {
+            override fun revise(newProposition: Proposition, repository: PropositionRepository): RevisionResult {
+                val original = repository.findById(stored.id)!!
+                return RevisionResult.Reinforced(
+                    original,
+                    original.absorbEvidence(newProposition.copy(sourceIds = listOf(newProposition.text))),
+                )
+            }
+
+            override fun reviseAll(propositions: List<Proposition>, repository: PropositionRepository): List<RevisionResult> {
+                val view = InRunPropositions.over(repository)
+                return propositions.reversed().map { revise(it, view).also(view::record) }.reversed()
+            }
+
+            override fun classify(newProposition: Proposition, candidates: List<Proposition>) = emptyList<ClassifiedProposition>()
+        }
+
+        val results = PropositionPipeline.withExtractor(OnePropositionPerChunk).withRevision(reviser, repository).process(
+            listOf(
+                Chunk.create(text = "first|second", parentId = "doc", id = "chunk-1"),
+                Chunk.create(text = "third", parentId = "doc", id = "chunk-2"),
+            ),
+            context(),
+        )
+
+        val saved = results.revisedPropositionsToPersist.single()
+        assertEquals(stored.reinforceCount + 3, saved.reinforceCount)
+        assertEquals(setOf("first", "second", "third"), saved.sourceIds.toSet())
     }
 }

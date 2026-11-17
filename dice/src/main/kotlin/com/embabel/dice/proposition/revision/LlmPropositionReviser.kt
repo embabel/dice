@@ -521,9 +521,16 @@ data class LlmPropositionReviser(
      */
     internal fun classifiedToResult(
         newProposition: Proposition,
-        classified: List<ClassifiedProposition>,
+        candidateClassifications: List<ClassifiedProposition>,
         repository: PropositionRepository,
     ): RevisionResult {
+        // A candidate was active when it was retrieved. An earlier result in the same run may have
+        // contradicted it since, and then it is no longer a candidate.
+        val classified = if (repository is InRunPropositions) {
+            candidateClassifications.filter { repository.findById(it.proposition.id)?.status != PropositionStatus.CONTRADICTED }
+        } else {
+            candidateClassifications
+        }
         val identical = classified.find { it.relation == PropositionRelation.IDENTICAL }
         val contradictory = classified.find { it.relation == PropositionRelation.CONTRADICTORY }
         val generalizes = classified.filter { it.relation == PropositionRelation.GENERALIZES }

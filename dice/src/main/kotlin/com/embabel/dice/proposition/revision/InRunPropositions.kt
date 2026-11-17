@@ -52,6 +52,20 @@ internal class InRunPropositions private constructor(
         }
     }
 
+    /**
+     * Hands this view's latest copies to [run], once a chunk revised through this view succeeded.
+     * Results a reviser did not record here are recorded first, in order, without replacing a
+     * copy the reviser did record, since that copy is the one it built on last.
+     *
+     * @param results the chunk's revision results
+     * @param run the run's view underneath this one
+     */
+    fun publishTo(results: List<RevisionResult>, run: InRunPropositions) {
+        val recorded = latest.keys.toSet()
+        results.filter { it.changedId() !in recorded }.forEach(::record)
+        run.latest.putAll(latest)
+    }
+
     override fun findById(id: String): Proposition? = latest[id] ?: delegate.findById(id)
 
     override fun query(query: PropositionQuery): List<Proposition> =
@@ -70,6 +84,13 @@ internal class InRunPropositions private constructor(
 
     override fun findSimilar(textSimilaritySearchRequest: TextSimilaritySearchRequest): List<Proposition> =
         findSimilarWithScores(textSimilaritySearchRequest).map { it.match }
+
+    private fun RevisionResult.changedId(): String? = when (this) {
+        is RevisionResult.Merged -> original.id
+        is RevisionResult.Reinforced -> original.id
+        is RevisionResult.Contradicted -> original.id
+        is RevisionResult.New, is RevisionResult.Generalized -> null
+    }
 
     /**
      * Swaps in this run's copy of [stored], or drops it when that copy no longer has a status the
