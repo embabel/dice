@@ -21,7 +21,9 @@ Each module has its own README. The tests are the examples.
 
 ## Build
 
-This build sits outside the library reactor and uses the DICE installed from this repository. It does not download DICE snapshots.
+This build sits outside the library reactor and uses the DICE installed from this repository. A
+snapshot is downloaded only when the local repository has none, so after an install the
+examples use that install.
 From the repository root, install the library, then build the examples:
 
 ```bash

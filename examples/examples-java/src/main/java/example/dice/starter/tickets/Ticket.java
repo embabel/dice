@@ -27,8 +27,15 @@ import org.jmolecules.event.types.DomainEvent;
  * @param revision 1 when the ticket is first filed, and one more each time it is edited. It
  *                 tells an edit apart from a late copy of an earlier version.
  * @param text     what was written
+ * @throws IllegalArgumentException when the revision is less than 1
  */
 public record Ticket(TicketId id, AccountId account, int revision, String text) {
+
+    public Ticket {
+        if (revision < 1) {
+            throw new IllegalArgumentException("A ticket's revision starts at 1, but was " + revision);
+        }
+    }
 
     /**
      * Identifies one ticket.

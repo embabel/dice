@@ -36,17 +36,20 @@ import org.springframework.test.annotation.DirtiesContext;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static example.dice.starter.memory.RefiledTicketTests.AS_EDITED;
+import static example.dice.starter.memory.RefiledTicketTests.AS_FILED;
 import static example.dice.starter.memory.TicketMemoryTests.ACME;
+import static example.dice.starter.memory.TicketMemoryTests.GLOBEX;
 import static example.dice.starter.memory.TicketMemoryTests.TICKET_1042;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 
 /**
- * Files a ticket whose first save fails, then files it again.
+ * Files a ticket whose save fails, then files it again. Each test starts with empty stores.
  */
 @SpringBootTest
 @Import({ScriptedModel.class, FailedSaveTests.FailingEntityStore.class})
-@DirtiesContext
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class FailedSaveTests {
 
     @Autowired Tickets tickets;
@@ -78,6 +81,28 @@ class FailedSaveTests {
                 "She prefers to be contacted by email");
         assertThat(model.promptsSeen()).hasSize(2);
         assertThat(entities.findByLabel("Customer")).extracting(entity -> entity.getName()).containsExactly("Acme");
+    }
+
+    @Test
+    void anEditWhoseSaveFailedIsFinishedWhenItIsFiledAgain() {
+
+        // The account's first save fails, so the ticket is filed twice to store it.
+        assertThatIllegalStateException().isThrownBy(() -> tickets.file(AS_FILED));
+        tickets.file(AS_FILED);
+        ((FailsOnce) stores.of(GLOBEX).entities()).failAgain();
+
+        assertThatIllegalStateException()
+                .isThrownBy(() -> tickets.file(AS_EDITED))
+                .withMessage("The entity store is unavailable");
+
+        // The first revision was retired before the save, and the writer took the edit back out.
+        assertThat(memory.currentFacts(GLOBEX)).isEmpty();
+
+        tickets.file(AS_EDITED);
+
+        assertThat(memory.currentFacts(GLOBEX)).extracting(Proposition::getText).containsExactlyInAnyOrder(
+                "Globex is on the Team plan",
+                "Ben Ruiz asked for a copy of the October invoice for Globex");
     }
 
     /**
@@ -119,6 +144,13 @@ class FailedSaveTests {
          */
         FailsOnce(DataDictionary schema) {
             super(schema);
+        }
+
+        /**
+         * Makes the next relationship write throw as well.
+         */
+        void failAgain() {
+            failed.set(false);
         }
 
         @Override

@@ -17,24 +17,42 @@ package example.dice.starter.memory;
 
 import com.embabel.agent.core.DataDictionary;
 import com.embabel.dice.pipeline.PropositionPipeline;
+import com.embabel.dice.proposition.PropositionRepository;
 import com.embabel.dice.proposition.SourceRevisionQueryCapable;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 
 class TicketExtractionTests {
 
     @Test
     void refusesAFactStoreThatCannotFindFactsByTicket() {
 
-        var store = mock(SourceRevisionQueryCapable.class);
-        when(store.getSupportsSourceRevisionQueries()).thenReturn(false);
+        var facts = mock(PropositionRepository.class, withSettings().extraInterfaces(SourceRevisionQueryCapable.class));
+        when(((SourceRevisionQueryCapable) facts).getSupportsSourceRevisionQueries()).thenReturn(false);
 
-        assertThatThrownBy(() -> new TicketExtraction(
-                mock(PropositionPipeline.class), mock(DataDictionary.class), mock(AccountStores.class), store))
+        assertThatThrownBy(() -> extractionOver(facts))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("cannot find facts by the ticket");
+    }
+
+    @Test
+    void refusesAFactStoreThatCannotTakeEvidenceOffAFact() {
+
+        var facts = mock(PropositionRepository.class, withSettings().extraInterfaces(SourceRevisionQueryCapable.class));
+        when(((SourceRevisionQueryCapable) facts).getSupportsSourceRevisionQueries()).thenReturn(true);
+
+        assertThatThrownBy(() -> extractionOver(facts))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("cannot take one ticket's evidence off a fact");
+    }
+
+    private static TicketExtraction extractionOver(PropositionRepository facts) {
+        var accountStores = mock(AccountStores.class);
+        when(accountStores.facts()).thenReturn(facts);
+        return new TicketExtraction(mock(PropositionPipeline.class), mock(DataDictionary.class), accountStores);
     }
 }

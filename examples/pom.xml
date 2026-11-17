@@ -230,8 +230,9 @@
     </build>
 
     <!--
-        Embabel Agent releases come from the first repository. Snapshots are off for both, so
-        DICE comes from the local install.
+        Embabel Agent releases come from the first repository and its snapshots from the second.
+        The library's own build may move to an Embabel Agent snapshot, and the version check
+        then asks for the same one here.
     -->
     <repositories>
         <repository>
@@ -242,8 +243,9 @@
             </snapshots>
         </repository>
         <!--
-            The installed DICE POM lists this repository with snapshots on. Declared here with
-            snapshots off, it keeps Maven from fetching a published dice-metamodel.
+            A snapshot is downloaded only when the local repository has none. After the library
+            is installed, DICE comes from that install rather than from a published snapshot, and
+            Embabel Agent is the snapshot the library build fetched.
         -->
         <repository>
             <id>embabel-snapshots</id>
@@ -252,7 +254,8 @@
                 <enabled>false</enabled>
             </releases>
             <snapshots>
-                <enabled>false</enabled>
+                <enabled>true</enabled>
+                <updatePolicy>never</updatePolicy>
             </snapshots>
         </repository>
     </repositories>

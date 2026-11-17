@@ -19,6 +19,7 @@ import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionQuery;
 import com.embabel.dice.proposition.PropositionRepository;
 import com.embabel.dice.proposition.PropositionStatus;
+import com.embabel.dice.provenance.ConnectorRef;
 import com.embabel.dice.provenance.ProvenanceEntry;
 import example.dice.common.ScriptedChatModel;
 import example.dice.starter.tickets.Ticket;
@@ -30,6 +31,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.annotation.DirtiesContext;
 
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -130,6 +132,51 @@ class RefiledTicketTests {
     }
 
     @Test
+    void aFactAnotherTicketAlsoSaysStaysWhenTheTicketIsEdited() {
+
+        tickets.file(AS_FILED);
+
+        // A second ticket says the same thing about the invoice. A reviser that merges repeated
+        // facts records that as more evidence on the fact already stored.
+        var invoice = factStartingWith("Ben Ruiz");
+        var otherTicket = new ConnectorRef("tickets", "ticket-2305");
+        propositions.addProvenance(invoice.getId(), List.of(revision(otherTicket, "1")));
+
+        tickets.file(AS_EDITED);
+
+        // The edit takes this ticket's evidence and grounding off the shared fact. The other
+        // ticket still supports it, so it stays current.
+        var shared = propositions.findById(invoice.getId());
+        assertThat(shared.getStatus()).isEqualTo(PropositionStatus.ACTIVE);
+        assertThat(shared.getProvenanceEntries())
+                .extracting(entry -> entry.getLocator().key())
+                .containsOnly(otherTicket.key());
+        assertThat(shared.getGrounding()).doesNotContain("ticket-2210");
+
+        // What only this ticket said is replaced.
+        assertThat(memory.currentFacts(GLOBEX)).extracting(Proposition::getText)
+                .contains("Globex is on the Team plan")
+                .doesNotContain("Globex is on the Starter plan");
+    }
+
+    @Test
+    void aRevisionTheApplicationDidNotNumberIsIgnored() {
+
+        tickets.file(AS_FILED);
+
+        // Something else stored evidence for this ticket with a revision that is not a number.
+        var fact = factStartingWith("Globex is on");
+        propositions.addProvenance(fact.getId(),
+                List.of(revision(new ConnectorRef("tickets", "ticket-2210"), "2026-11-16T09:00")));
+
+        tickets.file(AS_EDITED);
+
+        assertThat(memory.currentFacts(GLOBEX)).extracting(Proposition::getText).containsExactlyInAnyOrder(
+                "Globex is on the Team plan",
+                "Ben Ruiz asked for a copy of the October invoice for Globex");
+    }
+
+    @Test
     void aTicketFiledFromSeveralThreadsAtOnceIsStoredOnce() throws Exception {
 
         var modelCallsBefore = model.promptsSeen().size();
@@ -155,5 +202,16 @@ class RefiledTicketTests {
                 "CSV export times out at Acme for reports over 50,000 rows",
                 "She prefers to be contacted by email");
         assertThat(model.promptsSeen()).hasSize(modelCallsBefore + 1);
+    }
+
+    private Proposition factStartingWith(String text) {
+        return memory.currentFacts(GLOBEX).stream()
+                .filter(fact -> fact.getText().startsWith(text))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private static ProvenanceEntry revision(ConnectorRef ticket, String revision) {
+        return new ProvenanceEntry(ticket, null, null, null, null, revision);
     }
 }

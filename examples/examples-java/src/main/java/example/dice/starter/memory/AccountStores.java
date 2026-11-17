@@ -20,6 +20,7 @@ import com.embabel.agent.rag.service.NamedEntityDataRepository;
 import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository;
 import com.embabel.dice.common.EntityResolver;
 import com.embabel.dice.common.resolver.EscalatingEntityResolver;
+import com.embabel.dice.proposition.PropositionRepository;
 import com.embabel.dice.proposition.extraction.PersistUnitWriter;
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository;
 import example.dice.starter.customers.AccountId;
@@ -63,16 +64,25 @@ class AccountStores {
     }
 
     private final DataDictionary schema;
-    private final InMemoryPropositionRepository propositions;
+    private final InMemoryPropositionRepository facts;
     private final Map<AccountId, Stores> stores = new ConcurrentHashMap<>();
 
     /**
-     * @param schema       the schema each entity store reads entity types from
-     * @param propositions the fact store every account's writer saves to
+     * @param schema the schema each entity store reads entity types from
+     * @param facts  the fact store every account's writer saves to
      */
-    AccountStores(@Qualifier("supportSchema") DataDictionary schema, InMemoryPropositionRepository propositions) {
+    AccountStores(@Qualifier("supportSchema") DataDictionary schema, InMemoryPropositionRepository facts) {
         this.schema = schema;
-        this.propositions = propositions;
+        this.facts = facts;
+    }
+
+    /**
+     * The fact store every account shares. Each fact carries its account as its context.
+     *
+     * @return the store the writers save to
+     */
+    PropositionRepository facts() {
+        return facts;
     }
 
     /**
@@ -87,7 +97,7 @@ class AccountStores {
             return new Stores(
                     entities,
                     EscalatingEntityResolver.withoutVector(entities),
-                    PersistUnitWriter.inMemory(propositions, entities),
+                    PersistUnitWriter.inMemory(facts, entities),
                     new ReentrantLock());
         });
     }
