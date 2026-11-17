@@ -2263,8 +2263,8 @@ public abstract interface class com/embabel/dice/operations/consolidation/Consol
 	public static final field Companion Lcom/embabel/dice/operations/consolidation/ConsolidationPass$Companion;
 	public abstract fun getName ()Ljava/lang/String;
 	public static fun of (Ljava/lang/String;Ljava/util/function/BiFunction;)Lcom/embabel/dice/operations/consolidation/ConsolidationPass;
-	public fun run (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/operations/consolidation/ConsolidationPassResult;
 	public abstract fun run-3HJnzs4 (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/operations/consolidation/ConsolidationPassResult;
+	public fun runValue (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/operations/consolidation/ConsolidationPassResult;
 }
 
 public final class com/embabel/dice/operations/consolidation/ConsolidationPass$Companion {
@@ -3368,10 +3368,10 @@ public final class com/embabel/dice/projection/memory/DefaultMemoryRetriever : c
 }
 
 public abstract interface class com/embabel/dice/projection/memory/DreamLoopOrchestrator : com/embabel/dice/projection/memory/MemoryMaintenanceOrchestrator {
-	public fun consolidate (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/DreamLoopReport;
 	public abstract fun consolidate-GRzcY08 (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/DreamLoopReport;
-	public fun consolidateNow (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/DreamLoopReport;
 	public abstract fun consolidateNow-GRzcY08 (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/DreamLoopReport;
+	public fun consolidateNowValue (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/DreamLoopReport;
+	public fun consolidateValue (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/DreamLoopReport;
 	public abstract fun withPass (Lcom/embabel/dice/operations/consolidation/ConsolidationPass;)Lcom/embabel/dice/projection/memory/DreamLoopOrchestrator;
 }
 
@@ -3453,10 +3453,10 @@ public abstract interface class com/embabel/dice/projection/memory/MemoryConsoli
 
 public abstract interface class com/embabel/dice/projection/memory/MemoryMaintenanceOrchestrator {
 	public static final field Companion Lcom/embabel/dice/projection/memory/MemoryMaintenanceOrchestrator$Companion;
-	public fun maintain (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/MaintenanceResult;
-	public fun maintain (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/projection/memory/MaintenanceResult;
 	public abstract fun maintain-3HJnzs4 (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/projection/memory/MaintenanceResult;
 	public static synthetic fun maintain-3HJnzs4$default (Lcom/embabel/dice/projection/memory/MemoryMaintenanceOrchestrator;Ljava/lang/String;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/projection/memory/MaintenanceResult;
+	public fun maintainValue (Ljava/lang/String;)Lcom/embabel/dice/projection/memory/MaintenanceResult;
+	public fun maintainValue (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/projection/memory/MaintenanceResult;
 	public static fun withRepository (Lcom/embabel/dice/proposition/PropositionRepository;)Lcom/embabel/dice/projection/memory/MemoryMaintenanceOrchestrator$NeedsConsolidator;
 }
 
@@ -4018,15 +4018,11 @@ public class com/embabel/dice/proposition/EventEmittingPropositionRepository : c
 	public fun findAbstractionsOf (Ljava/lang/String;)Ljava/util/List;
 	public fun findAll ()Ljava/util/List;
 	public fun findAll (Z)Ljava/util/List;
-	public fun findAllOrderedByEffectiveConfidence ()Ljava/util/List;
 	public fun findAllOrderedByEffectiveConfidence (D)Ljava/util/List;
 	public fun findByContextId-GRzcY08 (Ljava/lang/String;)Ljava/util/List;
 	public fun findByContextIdValue (Ljava/lang/String;)Ljava/util/List;
 	public fun findByCreatedBetween (Ljava/time/Instant;Ljava/time/Instant;)Ljava/util/List;
-	public fun findByCreatedBetweenOrderedByEffectiveConfidence (Ljava/time/Instant;Ljava/time/Instant;)Ljava/util/List;
-	public fun findByCreatedBetweenOrderedByEffectiveConfidence (Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;)Ljava/util/List;
 	public fun findByCreatedBetweenOrderedByEffectiveConfidence (Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;D)Ljava/util/List;
-	public fun findByEffectiveConfidenceAbove (D)Ljava/util/List;
 	public fun findByEffectiveConfidenceAbove (DD)Ljava/util/List;
 	public fun findByEntity (Lcom/embabel/agent/rag/service/RetrievableIdentifier;)Ljava/util/List;
 	public fun findByGrounding (Ljava/lang/String;)Ljava/util/List;
@@ -4816,15 +4812,11 @@ public abstract interface class com/embabel/dice/proposition/SuggestionHandler {
 
 public abstract interface class com/embabel/dice/proposition/TemporalQueryCapable {
 	public abstract fun findAll ()Ljava/util/List;
-	public fun findAllOrderedByEffectiveConfidence ()Ljava/util/List;
 	public fun findAllOrderedByEffectiveConfidence (D)Ljava/util/List;
 	public static synthetic fun findAllOrderedByEffectiveConfidence$default (Lcom/embabel/dice/proposition/TemporalQueryCapable;DILjava/lang/Object;)Ljava/util/List;
 	public fun findByCreatedBetween (Ljava/time/Instant;Ljava/time/Instant;)Ljava/util/List;
-	public fun findByCreatedBetweenOrderedByEffectiveConfidence (Ljava/time/Instant;Ljava/time/Instant;)Ljava/util/List;
-	public fun findByCreatedBetweenOrderedByEffectiveConfidence (Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;)Ljava/util/List;
 	public fun findByCreatedBetweenOrderedByEffectiveConfidence (Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;D)Ljava/util/List;
 	public static synthetic fun findByCreatedBetweenOrderedByEffectiveConfidence$default (Lcom/embabel/dice/proposition/TemporalQueryCapable;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;DILjava/lang/Object;)Ljava/util/List;
-	public fun findByEffectiveConfidenceAbove (D)Ljava/util/List;
 	public fun findByEffectiveConfidenceAbove (DD)Ljava/util/List;
 	public static synthetic fun findByEffectiveConfidenceAbove$default (Lcom/embabel/dice/proposition/TemporalQueryCapable;DDILjava/lang/Object;)Ljava/util/List;
 	public fun findByRevisedBetween (Ljava/time/Instant;Ljava/time/Instant;)Ljava/util/List;
