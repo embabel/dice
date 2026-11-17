@@ -16,6 +16,7 @@
 package com.embabel.dice.common.resolver.searcher
 
 import com.embabel.agent.rag.service.NamedEntityDataRepository
+import com.embabel.dice.common.NameNormalizer
 import com.embabel.dice.common.resolver.CandidateSearcher
 
 /**
@@ -32,7 +33,14 @@ import com.embabel.dice.common.resolver.CandidateSearcher
  * Java usage:
  * ```java
  * List<CandidateSearcher> searchers = DefaultCandidateSearchers.create(repository);
+ *
+ * // The same chain with your own name rules
+ * List<CandidateSearcher> tuned = DefaultCandidateSearchers.create(
+ *     repository, PersonNameNormalizer.english().withPersonLabels("Person", "Contact"));
  * ```
+ *
+ * Each searcher has its own thresholds. To change one, build the list yourself from the searcher
+ * classes in this package.
  */
 object DefaultCandidateSearchers {
 
@@ -43,14 +51,19 @@ object DefaultCandidateSearchers {
      * @return List of searchers ordered cheapest-first
      */
     @JvmStatic
-    fun create(repository: NamedEntityDataRepository): List<CandidateSearcher> = listOf(
-        ByIdCandidateSearcher(repository),
-        ByExactNameCandidateSearcher(repository),
-        NormalizedNameCandidateSearcher(repository),
-        PartialNameCandidateSearcher(repository),
-        FuzzyNameCandidateSearcher(repository),
-        VectorCandidateSearcher(repository),
-    )
+    fun create(repository: NamedEntityDataRepository): List<CandidateSearcher> =
+        create(repository, NameNormalizer.standard())
+
+    /**
+     * Create the default chain of candidate searchers with your own name rules.
+     *
+     * @param repository The repository for search operations
+     * @param nameNormalizer The rules the name searchers use to decide when two names are the same
+     * @return List of searchers ordered cheapest-first
+     */
+    @JvmStatic
+    fun create(repository: NamedEntityDataRepository, nameNormalizer: NameNormalizer): List<CandidateSearcher> =
+        withoutVector(repository, nameNormalizer) + VectorCandidateSearcher(repository)
 
     /**
      * Create a chain without vector search.
@@ -59,11 +72,22 @@ object DefaultCandidateSearchers {
      * @return List of searchers without vector search
      */
     @JvmStatic
-    fun withoutVector(repository: NamedEntityDataRepository): List<CandidateSearcher> = listOf(
+    fun withoutVector(repository: NamedEntityDataRepository): List<CandidateSearcher> =
+        withoutVector(repository, NameNormalizer.standard())
+
+    /**
+     * Create a chain without vector search, with your own name rules.
+     *
+     * @param repository The repository for search operations
+     * @param nameNormalizer The rules the name searchers use to decide when two names are the same
+     * @return List of searchers without vector search
+     */
+    @JvmStatic
+    fun withoutVector(repository: NamedEntityDataRepository, nameNormalizer: NameNormalizer): List<CandidateSearcher> = listOf(
         ByIdCandidateSearcher(repository),
         ByExactNameCandidateSearcher(repository),
-        NormalizedNameCandidateSearcher(repository),
-        PartialNameCandidateSearcher(repository),
+        NormalizedNameCandidateSearcher(repository).withNameNormalizer(nameNormalizer),
+        PartialNameCandidateSearcher(repository).withNameNormalizer(nameNormalizer),
         FuzzyNameCandidateSearcher(repository),
     )
 

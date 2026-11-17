@@ -304,6 +304,21 @@ public final class com/embabel/dice/common/LoggingDiceEventListener : com/embabe
 	public fun onEvent (Lcom/embabel/dice/common/DiceEvent;)V
 }
 
+public abstract interface class com/embabel/dice/common/NameNormalizer {
+	public static final field Companion Lcom/embabel/dice/common/NameNormalizer$Companion;
+	public abstract fun normalize (Ljava/lang/String;Ljava/util/Collection;)Ljava/lang/String;
+	public static fun standard ()Lcom/embabel/dice/common/NameNormalizer;
+	public static fun whitespaceOnly ()Lcom/embabel/dice/common/NameNormalizer;
+}
+
+public final class com/embabel/dice/common/NameNormalizer$Companion {
+	public final fun standard ()Lcom/embabel/dice/common/NameNormalizer;
+	public final fun whitespaceOnly ()Lcom/embabel/dice/common/NameNormalizer;
+}
+
+public abstract interface annotation class com/embabel/dice/common/NameNormalizerDsl : java/lang/annotation/Annotation {
+}
+
 public final class com/embabel/dice/common/NewEntity : com/embabel/dice/common/DiceEvent, com/embabel/dice/common/SuggestedEntityResolution {
 	public fun <init> (Lcom/embabel/dice/common/SuggestedEntity;)V
 	public final fun component1 ()Lcom/embabel/dice/common/SuggestedEntity;
@@ -320,6 +335,38 @@ public final class com/embabel/dice/common/NewEntity : com/embabel/dice/common/D
 	public fun hashCode ()I
 	public fun infoString (Ljava/lang/Boolean;I)Ljava/lang/String;
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/common/PersonNameNormalizer : com/embabel/dice/common/NameNormalizer {
+	public static final field Companion Lcom/embabel/dice/common/PersonNameNormalizer$Companion;
+	public static final field PERSON_LABEL Ljava/lang/String;
+	public static final fun english ()Lcom/embabel/dice/common/PersonNameNormalizer;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun forEveryName ()Lcom/embabel/dice/common/PersonNameNormalizer;
+	public fun hashCode ()I
+	public fun normalize (Ljava/lang/String;Ljava/util/Collection;)Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+	public final fun withMiddleInitialsKept ()Lcom/embabel/dice/common/PersonNameNormalizer;
+	public final fun withNameOrderKept ()Lcom/embabel/dice/common/PersonNameNormalizer;
+	public final fun withPersonLabels ([Ljava/lang/String;)Lcom/embabel/dice/common/PersonNameNormalizer;
+	public final fun withSuffixes ([Ljava/lang/String;)Lcom/embabel/dice/common/PersonNameNormalizer;
+	public final fun withTitles ([Ljava/lang/String;)Lcom/embabel/dice/common/PersonNameNormalizer;
+}
+
+public final class com/embabel/dice/common/PersonNameNormalizer$Builder {
+	public final fun everyName ()V
+	public final fun getReorderLastFirst ()Z
+	public final fun getStripMiddleInitials ()Z
+	public final fun personLabels ([Ljava/lang/String;)V
+	public final fun setReorderLastFirst (Z)V
+	public final fun setStripMiddleInitials (Z)V
+	public final fun suffixes ([Ljava/lang/String;)V
+	public final fun titles ([Ljava/lang/String;)V
+}
+
+public final class com/embabel/dice/common/PersonNameNormalizer$Companion {
+	public final fun english ()Lcom/embabel/dice/common/PersonNameNormalizer;
+	public final synthetic fun invoke (Lkotlin/jvm/functions/Function1;)Lcom/embabel/dice/common/PersonNameNormalizer;
 }
 
 public final class com/embabel/dice/common/ProjectionBatchCompleted : com/embabel/dice/common/DiceEvent {
@@ -911,17 +958,28 @@ public final class com/embabel/dice/common/filter/CompositeMentionFilter : com/e
 	public fun <init> (Ljava/util/List;)V
 	public fun isValid (Lcom/embabel/dice/proposition/SuggestedMention;Ljava/lang/String;)Z
 	public fun rejectionReason (Lcom/embabel/dice/proposition/SuggestedMention;)Ljava/lang/String;
+	public fun validateMentions (Lcom/embabel/dice/proposition/SuggestedProposition;Lcom/embabel/dice/common/SourceAnalysisContext;)Ljava/util/List;
+}
+
+public final class com/embabel/dice/common/filter/GroundedMentionFilter : com/embabel/dice/common/filter/MentionFilter {
+	public fun <init> ()V
+	public fun isValid (Lcom/embabel/dice/proposition/SuggestedMention;Ljava/lang/String;)Z
+	public fun rejectionReason (Lcom/embabel/dice/proposition/SuggestedMention;)Ljava/lang/String;
+	public fun validateMentions (Lcom/embabel/dice/proposition/SuggestedProposition;Lcom/embabel/dice/common/SourceAnalysisContext;)Ljava/util/List;
+	public final fun withNameNormalizer (Lcom/embabel/dice/common/NameNormalizer;)Lcom/embabel/dice/common/filter/GroundedMentionFilter;
 }
 
 public abstract interface class com/embabel/dice/common/filter/MentionFilter {
 	public abstract fun isValid (Lcom/embabel/dice/proposition/SuggestedMention;Ljava/lang/String;)Z
 	public fun rejectionReason (Lcom/embabel/dice/proposition/SuggestedMention;)Ljava/lang/String;
+	public fun validateMentions (Lcom/embabel/dice/proposition/SuggestedProposition;Lcom/embabel/dice/common/SourceAnalysisContext;)Ljava/util/List;
 }
 
 public final class com/embabel/dice/common/filter/ObservableMentionFilter : com/embabel/dice/common/filter/MentionFilter {
 	public fun <init> (Lcom/embabel/dice/common/filter/MentionFilter;Lio/micrometer/core/instrument/MeterRegistry;)V
 	public fun isValid (Lcom/embabel/dice/proposition/SuggestedMention;Ljava/lang/String;)Z
 	public fun rejectionReason (Lcom/embabel/dice/proposition/SuggestedMention;)Ljava/lang/String;
+	public fun validateMentions (Lcom/embabel/dice/proposition/SuggestedProposition;Lcom/embabel/dice/common/SourceAnalysisContext;)Ljava/util/List;
 }
 
 public final class com/embabel/dice/common/filter/PropositionDuplicateFilter : com/embabel/dice/common/filter/MentionFilter {
@@ -1045,6 +1103,7 @@ public final class com/embabel/dice/common/resolver/InMemoryEntityResolver : com
 	public final fun clear ()V
 	public fun resolve (Lcom/embabel/dice/common/SuggestedEntities;Lcom/embabel/agent/core/DataDictionary;)Lcom/embabel/dice/common/Resolutions;
 	public final fun size ()I
+	public final fun withNameNormalizer (Lcom/embabel/dice/common/NameNormalizer;)Lcom/embabel/dice/common/resolver/InMemoryEntityResolver;
 }
 
 public final class com/embabel/dice/common/resolver/InMemoryEntityResolver$Config {
@@ -1069,10 +1128,13 @@ public final class com/embabel/dice/common/resolver/KnownEntityResolver : com/em
 	public fun <init> (Ljava/util/List;Lcom/embabel/dice/common/EntityResolver;)V
 	public fun resolve (Lcom/embabel/dice/common/SuggestedEntities;Lcom/embabel/agent/core/DataDictionary;)Lcom/embabel/dice/common/Resolutions;
 	public static final fun withKnownEntities (Ljava/util/List;Lcom/embabel/dice/common/EntityResolver;)Lcom/embabel/dice/common/EntityResolver;
+	public static final fun withKnownEntities (Ljava/util/List;Lcom/embabel/dice/common/EntityResolver;Lcom/embabel/dice/common/NameNormalizer;)Lcom/embabel/dice/common/EntityResolver;
+	public final fun withNameNormalizer (Lcom/embabel/dice/common/NameNormalizer;)Lcom/embabel/dice/common/resolver/KnownEntityResolver;
 }
 
 public final class com/embabel/dice/common/resolver/KnownEntityResolver$Companion {
 	public final fun withKnownEntities (Ljava/util/List;Lcom/embabel/dice/common/EntityResolver;)Lcom/embabel/dice/common/EntityResolver;
+	public final fun withKnownEntities (Ljava/util/List;Lcom/embabel/dice/common/EntityResolver;Lcom/embabel/dice/common/NameNormalizer;)Lcom/embabel/dice/common/EntityResolver;
 }
 
 public final class com/embabel/dice/common/resolver/LevelResult {
@@ -1237,8 +1299,10 @@ public final class com/embabel/dice/common/resolver/searcher/ByIdCandidateSearch
 public final class com/embabel/dice/common/resolver/searcher/DefaultCandidateSearchers {
 	public static final field INSTANCE Lcom/embabel/dice/common/resolver/searcher/DefaultCandidateSearchers;
 	public static final fun create (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Ljava/util/List;
+	public static final fun create (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;Lcom/embabel/dice/common/NameNormalizer;)Ljava/util/List;
 	public static final fun exactOnly (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Ljava/util/List;
 	public static final fun withoutVector (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Ljava/util/List;
+	public static final fun withoutVector (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;Lcom/embabel/dice/common/NameNormalizer;)Ljava/util/List;
 }
 
 public final class com/embabel/dice/common/resolver/searcher/FuzzyNameCandidateSearcher : com/embabel/dice/common/resolver/CandidateSearcher {
@@ -1256,10 +1320,13 @@ public final class com/embabel/dice/common/resolver/searcher/FuzzyNameCandidateS
 
 public final class com/embabel/dice/common/resolver/searcher/NormalizedNameCandidateSearcher : com/embabel/dice/common/resolver/CandidateSearcher {
 	public static final field Companion Lcom/embabel/dice/common/resolver/searcher/NormalizedNameCandidateSearcher$Companion;
+	public fun <init> (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)V
+	public fun <init> (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;I)V
 	public fun <init> (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;ID)V
 	public synthetic fun <init> (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;IDILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public static final fun create (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Lcom/embabel/dice/common/resolver/searcher/NormalizedNameCandidateSearcher;
 	public fun search (Lcom/embabel/dice/common/SuggestedEntity;Lcom/embabel/agent/core/DataDictionary;)Lcom/embabel/dice/common/resolver/SearchResult;
+	public final fun withNameNormalizer (Lcom/embabel/dice/common/NameNormalizer;)Lcom/embabel/dice/common/resolver/searcher/NormalizedNameCandidateSearcher;
 }
 
 public final class com/embabel/dice/common/resolver/searcher/NormalizedNameCandidateSearcher$Companion {
@@ -1269,10 +1336,14 @@ public final class com/embabel/dice/common/resolver/searcher/NormalizedNameCandi
 
 public final class com/embabel/dice/common/resolver/searcher/PartialNameCandidateSearcher : com/embabel/dice/common/resolver/CandidateSearcher {
 	public static final field Companion Lcom/embabel/dice/common/resolver/searcher/PartialNameCandidateSearcher$Companion;
+	public fun <init> (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)V
+	public fun <init> (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;I)V
+	public fun <init> (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;II)V
 	public fun <init> (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;IID)V
 	public synthetic fun <init> (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;IIDILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public static final fun create (Lcom/embabel/agent/rag/service/NamedEntityDataRepository;)Lcom/embabel/dice/common/resolver/searcher/PartialNameCandidateSearcher;
 	public fun search (Lcom/embabel/dice/common/SuggestedEntity;Lcom/embabel/agent/core/DataDictionary;)Lcom/embabel/dice/common/resolver/SearchResult;
+	public final fun withNameNormalizer (Lcom/embabel/dice/common/NameNormalizer;)Lcom/embabel/dice/common/resolver/searcher/PartialNameCandidateSearcher;
 }
 
 public final class com/embabel/dice/common/resolver/searcher/PartialNameCandidateSearcher$Companion {
@@ -1543,6 +1614,7 @@ public final class com/embabel/dice/entity/EntityPipeline {
 	public final fun process (Ljava/util/List;Lcom/embabel/dice/common/SourceAnalysisContext;)Lcom/embabel/dice/entity/EntityResults;
 	public final fun processChunk (Lcom/embabel/agent/rag/model/Chunk;Lcom/embabel/dice/common/SourceAnalysisContext;)Lcom/embabel/dice/entity/ChunkEntityResult;
 	public static final fun withExtractor (Lcom/embabel/dice/entity/EntityExtractor;)Lcom/embabel/dice/entity/EntityPipeline;
+	public final fun withNameNormalizer (Lcom/embabel/dice/common/NameNormalizer;)Lcom/embabel/dice/entity/EntityPipeline;
 }
 
 public final class com/embabel/dice/entity/EntityPipeline$Companion {
@@ -2158,6 +2230,7 @@ public abstract interface class com/embabel/dice/pipeline/ChunkPropositionResult
 	public static final field Companion Lcom/embabel/dice/pipeline/ChunkPropositionResult$Companion;
 	public static fun failed (Ljava/lang/String;Ljava/lang/Throwable;)Lcom/embabel/dice/pipeline/ChunkPropositionResult$Failed;
 	public abstract fun getChunkId ()Ljava/lang/String;
+	public fun getRejectedMentions ()Ljava/util/List;
 	public static fun success (Ljava/lang/String;Lcom/embabel/dice/proposition/SuggestedPropositions;Lcom/embabel/dice/common/Resolutions;Ljava/util/List;Ljava/util/List;)Lcom/embabel/dice/pipeline/ChunkPropositionResult$Success;
 }
 
@@ -2190,8 +2263,10 @@ public final class com/embabel/dice/pipeline/ChunkPropositionResult$Failed : com
 }
 
 public final class com/embabel/dice/pipeline/ChunkPropositionResult$Success : com/embabel/dice/pipeline/ChunkPropositionResult {
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/SuggestedPropositions;Lcom/embabel/dice/common/Resolutions;Ljava/util/List;)V
 	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/SuggestedPropositions;Lcom/embabel/dice/common/Resolutions;Ljava/util/List;Ljava/util/List;)V
 	public synthetic fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/SuggestedPropositions;Lcom/embabel/dice/common/Resolutions;Ljava/util/List;Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;Lcom/embabel/dice/proposition/SuggestedPropositions;Lcom/embabel/dice/common/Resolutions;Ljava/util/List;Ljava/util/List;Ljava/util/List;)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component2 ()Lcom/embabel/dice/proposition/SuggestedPropositions;
 	public final fun component3 ()Lcom/embabel/dice/common/Resolutions;
@@ -2203,6 +2278,7 @@ public final class com/embabel/dice/pipeline/ChunkPropositionResult$Success : co
 	public fun getChunkId ()Ljava/lang/String;
 	public final fun getEntityResolutions ()Lcom/embabel/dice/common/Resolutions;
 	public fun getPropositions ()Ljava/util/List;
+	public fun getRejectedMentions ()Ljava/util/List;
 	public fun getRevisionResults ()Ljava/util/List;
 	public final fun getSuggestedPropositions ()Lcom/embabel/dice/proposition/SuggestedPropositions;
 	public fun hashCode ()I
@@ -2277,6 +2353,7 @@ public final class com/embabel/dice/pipeline/PropositionExtractionStats$Companio
 public final class com/embabel/dice/pipeline/PropositionPipeline {
 	public static final field Companion Lcom/embabel/dice/pipeline/PropositionPipeline$Companion;
 	public final fun getHasRevision ()Z
+	public final fun getNameNormalizer ()Lcom/embabel/dice/common/NameNormalizer;
 	public final fun process (Ljava/util/List;Lcom/embabel/dice/common/SourceAnalysisContext;)Lcom/embabel/dice/pipeline/PropositionResults;
 	public final fun processChunk (Lcom/embabel/agent/rag/model/Chunk;Lcom/embabel/dice/common/SourceAnalysisContext;)Lcom/embabel/dice/pipeline/ChunkPropositionResult;
 	public final fun processOnce (Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/common/SourceAnalysisContext;)Lcom/embabel/dice/pipeline/ChunkPropositionResult;
@@ -2291,6 +2368,9 @@ public final class com/embabel/dice/pipeline/PropositionPipeline {
 	public final fun withExecutionStrategy (Lcom/embabel/dice/pipeline/ExtractionExecutionStrategy;)Lcom/embabel/dice/pipeline/PropositionPipeline;
 	public static final fun withExtractor (Lcom/embabel/dice/proposition/PropositionExtractor;)Lcom/embabel/dice/pipeline/PropositionPipeline;
 	public final fun withMentionFilter (Lcom/embabel/dice/common/filter/MentionFilter;)Lcom/embabel/dice/pipeline/PropositionPipeline;
+	public final fun withMentionFilter (Lcom/embabel/dice/common/filter/MentionFilter;Lcom/embabel/dice/pipeline/RejectedMentionHandling;)Lcom/embabel/dice/pipeline/PropositionPipeline;
+	public final fun withMentionGrounding (Lcom/embabel/dice/common/filter/MentionFilter;)Lcom/embabel/dice/pipeline/PropositionPipeline;
+	public final fun withNameNormalizer (Lcom/embabel/dice/common/NameNormalizer;)Lcom/embabel/dice/pipeline/PropositionPipeline;
 	public final fun withRevision (Lcom/embabel/dice/proposition/revision/PropositionReviser;Lcom/embabel/dice/proposition/PropositionRepository;)Lcom/embabel/dice/pipeline/PropositionPipeline;
 	public final fun withUngroundedMentions (Lcom/embabel/dice/pipeline/UngroundedMentionHandling;)Lcom/embabel/dice/pipeline/PropositionPipeline;
 }
@@ -2312,6 +2392,7 @@ public final class com/embabel/dice/pipeline/PropositionResults : com/embabel/di
 	public final fun getFullyResolvedCount ()I
 	public final fun getPartiallyResolvedCount ()I
 	public fun getPropositions ()Ljava/util/List;
+	public final fun getRejectedMentions ()Ljava/util/List;
 	public fun getRevisionResults ()Ljava/util/List;
 	public final fun getTotalPropositions ()I
 	public final fun getUnresolvedCount ()I
@@ -2320,6 +2401,46 @@ public final class com/embabel/dice/pipeline/PropositionResults : com/embabel/di
 	public fun referenceOnlyEntities ()Ljava/util/List;
 	public fun toString ()Ljava/lang/String;
 	public fun updatedEntities ()Ljava/util/List;
+}
+
+public final class com/embabel/dice/pipeline/RejectedMention {
+	public fun <init> (Ljava/lang/String;ILjava/lang/String;Lcom/embabel/dice/proposition/SuggestedMention;Ljava/lang/String;Lcom/embabel/dice/pipeline/RejectedMention$Check;Lcom/embabel/dice/pipeline/RejectedMentionHandling;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()I
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Lcom/embabel/dice/proposition/SuggestedMention;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()Lcom/embabel/dice/pipeline/RejectedMention$Check;
+	public final fun component7 ()Lcom/embabel/dice/pipeline/RejectedMentionHandling;
+	public final fun copy (Ljava/lang/String;ILjava/lang/String;Lcom/embabel/dice/proposition/SuggestedMention;Ljava/lang/String;Lcom/embabel/dice/pipeline/RejectedMention$Check;Lcom/embabel/dice/pipeline/RejectedMentionHandling;)Lcom/embabel/dice/pipeline/RejectedMention;
+	public static synthetic fun copy$default (Lcom/embabel/dice/pipeline/RejectedMention;Ljava/lang/String;ILjava/lang/String;Lcom/embabel/dice/proposition/SuggestedMention;Ljava/lang/String;Lcom/embabel/dice/pipeline/RejectedMention$Check;Lcom/embabel/dice/pipeline/RejectedMentionHandling;ILjava/lang/Object;)Lcom/embabel/dice/pipeline/RejectedMention;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCheck ()Lcom/embabel/dice/pipeline/RejectedMention$Check;
+	public final fun getChunkId ()Ljava/lang/String;
+	public final fun getHandling ()Lcom/embabel/dice/pipeline/RejectedMentionHandling;
+	public final fun getMention ()Lcom/embabel/dice/proposition/SuggestedMention;
+	public final fun getPropositionIndex ()I
+	public final fun getPropositionText ()Ljava/lang/String;
+	public final fun getReason ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/pipeline/RejectedMention$Check : java/lang/Enum {
+	public static final field FILTER Lcom/embabel/dice/pipeline/RejectedMention$Check;
+	public static final field GROUNDING Lcom/embabel/dice/pipeline/RejectedMention$Check;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/pipeline/RejectedMention$Check;
+	public static fun values ()[Lcom/embabel/dice/pipeline/RejectedMention$Check;
+}
+
+public final class com/embabel/dice/pipeline/RejectedMentionHandling : java/lang/Enum {
+	public static final field DROP Lcom/embabel/dice/pipeline/RejectedMentionHandling;
+	public static final field KEEP Lcom/embabel/dice/pipeline/RejectedMentionHandling;
+	public static final field LEAVE_UNRESOLVED Lcom/embabel/dice/pipeline/RejectedMentionHandling;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/pipeline/RejectedMentionHandling;
+	public static fun values ()[Lcom/embabel/dice/pipeline/RejectedMentionHandling;
 }
 
 public final class com/embabel/dice/pipeline/SerialExtractionStrategy : com/embabel/dice/pipeline/ExtractionExecutionStrategy {
@@ -4560,6 +4681,7 @@ public class com/embabel/dice/proposition/extraction/IncrementalPropositionExtra
 	public fun rememberText (Ljava/lang/String;Ljava/lang/String;Lcom/embabel/agent/rag/model/NamedEntity;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionPerspective;Ljava/lang/Boolean;Lcom/embabel/dice/proposition/extraction/ExtractionRequest;)V
 	public static synthetic fun rememberText$default (Lcom/embabel/dice/proposition/extraction/IncrementalPropositionExtraction;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/agent/rag/model/NamedEntity;Ljava/util/List;Lcom/embabel/dice/proposition/extraction/ExtractionPerspective;Ljava/lang/Boolean;ILjava/lang/Object;)V
 	public fun trackEvent (Lcom/embabel/dice/common/SourceAnalysisRequestEvent;)V
+	public fun withNameNormalizer (Lcom/embabel/dice/common/NameNormalizer;)Lcom/embabel/dice/proposition/extraction/IncrementalPropositionExtraction;
 	public fun withPersistUnitWriter (Lcom/embabel/dice/proposition/extraction/PersistUnitWriter;)Lcom/embabel/dice/proposition/extraction/IncrementalPropositionExtraction;
 	public fun withRunLineage (Lcom/embabel/dice/proposition/extraction/PropositionRunLinkStore;)Lcom/embabel/dice/proposition/extraction/IncrementalPropositionExtraction;
 	public fun withRunLineage (Lcom/embabel/dice/proposition/extraction/PropositionRunLinkStore;Lcom/embabel/dice/proposition/extraction/LineageFailurePolicy;)Lcom/embabel/dice/proposition/extraction/IncrementalPropositionExtraction;

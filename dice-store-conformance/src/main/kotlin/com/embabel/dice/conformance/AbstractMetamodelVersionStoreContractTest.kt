@@ -13,13 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.storage
+package com.embabel.dice.conformance
 
 import com.embabel.dice.metamodel.MetamodelVersion
 import com.embabel.dice.metamodel.MetamodelVersionStore
 import com.embabel.dice.metamodel.SweptBaselineStore
+import org.jetbrains.annotations.ApiStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 
 /**
@@ -32,6 +34,7 @@ import org.junit.jupiter.api.Test
  * treated each of those re-stamps as a new record would fill the history with copies of one version,
  * and one that moved a re-stamped version to the front would report the wrong stamp as the latest.
  */
+@ApiStatus.Experimental
 abstract class AbstractMetamodelVersionStoreContractTest {
 
     /**
@@ -59,7 +62,8 @@ abstract class AbstractMetamodelVersionStoreContractTest {
     // ---- the upsert ----
 
     @Test
-    fun `re-saving a version leaves one record`() {
+    @DisplayName("re-saving a version leaves one record")
+    open fun reSavingAVersionLeavesOneRecord() {
         val store = store()
         val schemaName = "contract-idempotent"
         val stamp = version(schemaName)
@@ -72,7 +76,8 @@ abstract class AbstractMetamodelVersionStoreContractTest {
     }
 
     @Test
-    fun `a re-save leaves the stamp where it was in the history`() {
+    @DisplayName("a re-save leaves the stamp where it was in the history")
+    open fun aReSaveLeavesTheStampWhereItWasInTheHistory() {
         // The write lands on an existing key, so it has to behave like any other re-save: content
         // refreshed, position in the write order untouched.
         val store = store()
@@ -95,7 +100,8 @@ abstract class AbstractMetamodelVersionStoreContractTest {
     // ---- keyed lookup ----
 
     @Test
-    fun `findVersion returns null for a hash the schema has never stored`() {
+    @DisplayName("findVersion returns null for a hash the schema has never stored")
+    open fun findVersionReturnsNullForAHashTheSchemaHasNeverStored() {
         val store = store()
         val schemaName = "contract-find-miss"
         val stamp = version(schemaName)
@@ -108,7 +114,8 @@ abstract class AbstractMetamodelVersionStoreContractTest {
     // ---- ordering ----
 
     @Test
-    fun `versionHistory is newest first`() {
+    @DisplayName("versionHistory is newest first")
+    open fun versionHistoryIsNewestFirst() {
         val store = store()
         val schemaName = "contract-newest-first"
 
@@ -126,7 +133,8 @@ abstract class AbstractMetamodelVersionStoreContractTest {
     // ---- schema isolation ----
 
     @Test
-    fun `one schema's writes are invisible to another`() {
+    @DisplayName("one schema's writes are invisible to another")
+    open fun oneSchemasWritesAreInvisibleToAnother() {
         val store = store()
         val schemaA = "contract-isolation-a"
         val schemaB = "contract-isolation-b"
@@ -142,7 +150,8 @@ abstract class AbstractMetamodelVersionStoreContractTest {
     }
 
     @Test
-    fun `latestVersion is null for a schema with no versions`() {
+    @DisplayName("latestVersion is null for a schema with no versions")
+    open fun latestVersionIsNullForASchemaWithNoVersions() {
         assertNull(store().latestVersion("contract-never-saved"))
     }
 
@@ -160,7 +169,8 @@ abstract class AbstractMetamodelVersionStoreContractTest {
     // check on the real behavior.
 
     @Test
-    fun `sweptVersion is null until markSwept is called`() {
+    @DisplayName("sweptVersion is null until markSwept is called")
+    open fun sweptVersionIsNullUntilMarkSweptIsCalled() {
         val store = store()
         val schemaName = "contract-swept-null"
 
@@ -173,7 +183,8 @@ abstract class AbstractMetamodelVersionStoreContractTest {
     }
 
     @Test
-    fun `markSwept moves the swept baseline to that version`() {
+    @DisplayName("markSwept moves the swept baseline to that version")
+    open fun markSweptMovesTheSweptBaselineToThatVersion() {
         val store = store()
         val schemaName = "contract-swept-moves"
         val stamp = version(schemaName)
@@ -185,7 +196,8 @@ abstract class AbstractMetamodelVersionStoreContractTest {
     }
 
     @Test
-    fun `saveVersion alone never moves an already-established swept baseline`() {
+    @DisplayName("saveVersion alone never moves an already-established swept baseline")
+    open fun saveVersionAloneNeverMovesAnAlreadyEstablishedSweptBaseline() {
         // The exact case a forwarding default gets wrong: every run re-stamps its declaration, dry,
         // scoped, or crashed alike, and none of those is a completed reconciliation.
         val store = store()
@@ -204,7 +216,8 @@ abstract class AbstractMetamodelVersionStoreContractTest {
     }
 
     @Test
-    fun `re-saving an existing, unreconciled stamp never moves the swept baseline either`() {
+    @DisplayName("re-saving an existing, unreconciled stamp never moves the swept baseline either")
+    open fun reSavingAnExistingUnreconciledStampNeverMovesTheSweptBaselineEither() {
         // The case above saves `NotYetReconciled` exactly once, as a brand-new stamp; the only
         // re-save it performs is of `reconciled` itself, through `markSwept`. Here `notYetReconciled`
         // gets saved a second time — an ordinary re-save of a stamp that already exists but was never

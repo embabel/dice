@@ -44,6 +44,20 @@ effects, build them on `PropositionPersisted` instead.
 Each chunk in which a mention was not in its own proposition's text also emits one
 `UngroundedMentionsFound` event, listing those mentions and whether they were kept or dropped.
 
+The same mentions are on the result the pipeline returns, along with any a `MentionFilter`
+rejected, so a caller can read them with no listener. `PropositionResults.getRejectedMentions()`
+lists them for a whole run. A reason can quote the mention, so log it at debug level.
+
+[source,java]
+----
+ChunkPropositionResult result = pipeline.processChunk(chunk, context);
+for (RejectedMention rejected : result.getRejectedMentions()) {
+    log.info("{} check rejected a {} mention in chunk {}: {}",
+            rejected.getCheck(), rejected.getMention().getType(),
+            rejected.getChunkId(), rejected.getHandling());
+}
+----
+
 `UngroundedMentionsFound` and `PropositionContradicted` carry the id of the context they belong to.
 Java reads it as a string with `getContextIdValue()`.
 

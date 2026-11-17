@@ -13,16 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.embabel.dice.storage
+package com.embabel.dice.conformance.example;
 
-import com.embabel.dice.proposition.PropositionStore
-import com.embabel.dice.proposition.store.InMemoryPropositionRepository
+import com.embabel.dice.conformance.AbstractCollectorTraceStoreContractTest;
+import com.embabel.dice.spi.CollectorTraceStore;
+import com.embabel.dice.spi.InMemoryCollectorTraceStore;
 
-/**
- * Runs the [AbstractPropositionStoreContractTest] suite against the in-memory backend. No Docker, so
- * it runs in the normal test phase — the always-on half of the cross-backend parity check the graph
- * IT completes.
- */
-class InMemoryPropositionStoreContractTest : AbstractPropositionStoreContractTest() {
-    override fun store(): PropositionStore = InMemoryPropositionRepository()
+/** Runs the collector trace suite from Java over the in-memory store, which is also its read side. */
+class CollectorTraceStoreContractJavaInteropTest extends AbstractCollectorTraceStoreContractTest {
+
+    @Override
+    protected CollectorTraceStore store() {
+        return new InMemoryCollectorTraceStore();
+    }
 }

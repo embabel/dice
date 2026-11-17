@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.storage
 
+import com.embabel.dice.conformance.AbstractPropositionStoreContractTest
 import com.embabel.dice.proposition.PropositionStore
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification

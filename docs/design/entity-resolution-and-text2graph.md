@@ -84,7 +84,7 @@ The default chain, cheapest to most expensive (`DefaultCandidateSearchers.create
 |---|----------|-----------------|-------|
 | 1 | `ByIdCandidateSearcher` | `suggested.id` set and resolves to exactly one row | Skips search entirely — used when the caller already knows the identity |
 | 2 | `ByExactNameCandidateSearcher` | exactly one exact (case-insensitive) name match | |
-| 3 | `NormalizedNameCandidateSearcher` | exactly one match after stripping titles/suffixes | "Dr. Watson" → "Watson" |
+| 3 | `NormalizedNameCandidateSearcher` | exactly one match after name normalization, which strips titles and suffixes from people's names | "Dr. Watson" → "Watson" |
 | 4 | `PartialNameCandidateSearcher` | exactly one partial match, part ≥ `minPartLength` (default 4) | "Holmes" → "Sherlock Holmes"; "Doe" is too short to match "John Doe" |
 | 5 | `FuzzyNameCandidateSearcher` | exactly one match within a Levenshtein ratio (default 0.2) | catches typos |
 | 6 | `VectorCandidateSearcher` | exactly one embedding hit ≥ `autoAcceptThreshold` (default 0.95) | anything ≥ `candidateThreshold` (0.7) becomes a bakeoff candidate |

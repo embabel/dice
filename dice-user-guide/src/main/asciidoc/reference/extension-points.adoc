@@ -57,7 +57,9 @@ only what your domain actually needs.
 | How one candidate is chosen from several. `LlmCandidateBakeoff` ships.
 
 | `MentionFilter`
-| Which mentions are worth resolving at all.
+| Which mentions are worth resolving at all. Override `validateMentions` to judge a proposition's
+  mentions together with the `SourceAnalysisContext`. `GroundedMentionFilter` ships as the
+  pipeline's grounding check.
 
 | `ExtractionGate`
 | Which extracted propositions are admitted. `StandardGates` holds the shipped set.
@@ -97,6 +99,9 @@ only what your domain actually needs.
 | `IngestionHandler`
 | How an artifact becomes chunks. `TextIngestionHandler` ships.
 |===
+
+`dice-store-conformance` has an abstract JUnit suite for each store interface. A backend's tests
+extend them. See <<how-to-verify-a-backend>>.
 
 ==== Projection and output
 
