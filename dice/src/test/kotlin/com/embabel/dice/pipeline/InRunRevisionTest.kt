@@ -328,4 +328,24 @@ class InRunRevisionTest {
         assertEquals(PropositionStatus.CONTRADICTED, saved.status)
         assertTrue("chunk-1" in saved.grounding, "grounding: ${saved.grounding}")
     }
+
+    @Test
+    fun `processText keeps additional grounding when a reviser hands back the stored copy`() {
+        val repository = InMemoryPropositionRepository()
+        val stored = stored(repository)
+        val reviser = object : PropositionReviser {
+            override fun revise(newProposition: Proposition, repository: PropositionRepository): RevisionResult {
+                val original = repository.findById(stored.id)!!
+                return RevisionResult.Merged(original, original)
+            }
+
+            override fun classify(newProposition: Proposition, candidates: List<Proposition>) = emptyList<ClassifiedProposition>()
+        }
+        val pipeline = PropositionPipeline.withExtractor(OnePropositionPerChunk).withRevision(reviser, repository)
+
+        val result = pipeline.processText("Alice knows Bob", "chunk-0", context(), additionalGrounding = listOf("message-42"))
+        result.persist(repository, InMemoryNamedEntityDataRepository(schema))
+
+        assertTrue("message-42" in repository.findById(stored.id)!!.grounding)
+    }
 }

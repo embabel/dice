@@ -966,8 +966,9 @@ and the consumer PRs that deliver it).
 - `PropositionPipeline.processOnce` and `processText` leave a proposition untouched when it already
   holds every `additionalGrounding` id. They stamped `metadataRevised` on it. They add
   `additionalGrounding` ids before revision, so an id the stored proposition does not hold
-  reinforces it once, even when the text and source id are unchanged.
-  **Compatibility: behavioral.**
+  reinforces it once, even when the text and source id are unchanged. They add the ids again to
+  what revision returns, before it is counted, reported or saved, so a custom reviser that hands
+  back the stored copy without them does not drop them. **Compatibility: behavioral.**
 
 - `DefaultMemoryConsolidator` carries the session proposition's provenance entries and source ids
   onto the proposition it reinforces and adds one to its `reinforceCount`. It kept only the

@@ -333,7 +333,9 @@ class PropositionPipeline private constructor(
             // run's view untouched. The results join the run's view only once the chunk succeeds.
             val layer = InRunPropositions.layeredOver(inRun ?: propositionRepository)
             chunkLayer = layer
-            val results = reviser.reviseAll(propositions, layer)
+            // A reviser can hand back a copy without the extra ids, as when it treats the
+            // proposition as a replay, so they are added again before anything reports or saves it.
+            val results = reviser.reviseAll(propositions, layer).map { it.withAdditionalGrounding(extraGrounding) }
             val stats = PropositionExtractionStats.from(results)
             logger.debug(
                 "Revised {} propositions: {} new, {} merged, {} reinforced, {} contradicted",
