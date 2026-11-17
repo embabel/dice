@@ -47,7 +47,7 @@ A `Ticket` carries a revision number: 1 when it is filed, and one more for each 
 | Resolve entities | `AccountStores`, `TicketExtraction.on` | `EscalatingEntityResolver` looks mentions up by name in the store it is given. Each account has its own store and one resolver built on it. |
 | Extract each revision once | `TicketExtraction.on` | The fact store is the record of what was stored. `findBySourceRevision` finds a revision delivered again. Otherwise `findBySourceKey` returns every fact read from the ticket, and a revision no newer than the highest one among them is skipped, which covers a late copy of an earlier revision. |
 | Store as one unit | `TicketExtraction.on` | `processText` returns unsaved results. `PersistUnitWriter.inMemory` stores them as one `PersistUnit` and puts the facts and entities back when a step fails. A relationship written before the failure stays. |
-| Replace an edited ticket's facts | `TicketExtraction.retireEarlierRevisions` | The ticket is the `SourceLocator` and its revision number is the `SourceRevisionRef`. A fact only this ticket supports is saved as `SUPERSEDED`. A fact another ticket also supports loses this ticket's evidence and grounding through `subtractFoldedEvidence` and stays current. |
+| Replace an edited ticket's facts | `TicketExtraction.on`, `TicketExtraction.takeTicketOff` | The ticket is the `SourceLocator` and its revision number is the `SourceRevisionRef`. A fact only this ticket supports is stored as `SUPERSEDED` in the same unit as the new facts. A fact another ticket also supports then loses this ticket's evidence and grounding through `subtractFoldedEvidence` and stays current. |
 | Check the fact store | `TicketExtraction` constructor | The checks are made on the store the writer saves to. It has to report `supportsSourceRevisionQueries` and `supportsProvenanceSubtraction`, or extraction refuses to start. |
 | Query | `CustomerMemory` | `PropositionQuery` scoped to one context, filtered by status, with confidence judged at a given time. |
 
@@ -66,10 +66,11 @@ works within one running application. An application with many accounts or sever
 keeps entities in a persistent store looked up by account, and delivers each account's tickets
 to one instance at a time.
 
-The earlier revisions are retired before the new one is written, and only their status and
-evidence change. A fact another ticket also supports loses this ticket's evidence and
-grounding in one step. When the write fails, the ticket has no current facts until it is delivered
-again, and that delivery extracts the revision and finishes. The entities the retired facts
+The facts only the earlier revisions support are stored as `SUPERSEDED` in the same unit as the
+new facts, so a failed write leaves the earlier revision current. Each is read again after the
+model call, so a change made while the model was answering is kept. A fact another ticket also
+supports loses this ticket's evidence and grounding in one step, after the unit is stored, and
+is superseded if no evidence is left. The entities the retired facts
 named stay in the account's store, since another ticket may name them too. A revision whose
 text gives no facts leaves nothing in the fact store, so a second delivery of it is extracted
 again. If every fact of the revision before it was kept by another ticket, nothing names that
@@ -107,7 +108,8 @@ propositions.query(
 | `RefiledTicketTests.aRevisionTheApplicationDidNotNumberIsIgnored` | A stored revision that is not a number does not stop the edit. |
 | `RefiledTicketTests.aTicketFiledFromSeveralThreadsAtOnceIsStoredOnce` | Eight threads file one ticket. One model call is made and each fact is stored once. |
 | `FailedSaveTests.aTicketWhoseSaveFailedIsStoredOnceWhenItIsFiledAgain` | The entity store fails after the facts are saved. The writer takes the facts and entities back out, and filing the ticket again stores each fact once. |
-| `FailedSaveTests.anEditWhoseSaveFailedIsFinishedWhenItIsFiledAgain` | The save of revision 2 fails after revision 1 was retired. Filing revision 2 again stores it. |
+| `FailedSaveTests.anEditWhoseSaveFailedLeavesTheEarlierRevisionCurrent` | The save of revision 2 fails. Revision 1's facts are current again, and filing revision 2 again stores it. |
 | `TicketExtractionTests.refusesAFactStoreThatCannotFindFactsByTicket` | Extraction does not start on a fact store whose `supportsSourceRevisionQueries` is false. |
 | `TicketExtractionTests.refusesAFactStoreThatCannotTakeEvidenceOffAFact` | Extraction does not start on a fact store that cannot subtract provenance. |
+| `TicketExtractionTests.refusesAFactStoreThatReportsItCannotTakeEvidenceOffAFact` | Nor on one whose `supportsProvenanceSubtraction` is false. |
 | `TicketsTests.aTicketStartsAtRevisionOne` | A ticket with revision 0 is rejected. |

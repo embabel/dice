@@ -21,9 +21,9 @@ Each module has its own README. The tests are the examples.
 
 ## Build
 
-This build sits outside the library reactor and uses the DICE installed from this repository. A
-snapshot is downloaded only when the local repository has none, so after an install the
-examples use that install.
+This build sits outside the library reactor and uses the DICE installed from this repository. Maven
+takes the newest copy of a snapshot, so install the library right before building the examples
+and they use that install.
 From the repository root, install the library, then build the examples:
 
 ```bash
@@ -70,4 +70,5 @@ call.
 
 Every module's build compares those three with the library's and stops when one differs. A
 release moves the root version, so set `dice.version` to match afterwards. The Build workflow
-passes the root version in, so the release commits build before that change.
+checks the versions in `examples/pom.xml` as they are, except on the release plugin's own two
+commits, and builds the examples against the root version so those commits build too.

@@ -18,6 +18,7 @@ package example.dice.starter.memory;
 import com.embabel.agent.core.DataDictionary;
 import com.embabel.dice.pipeline.PropositionPipeline;
 import com.embabel.dice.proposition.PropositionRepository;
+import com.embabel.dice.proposition.ProvenanceSubtractionCapable;
 import com.embabel.dice.proposition.SourceRevisionQueryCapable;
 import org.junit.jupiter.api.Test;
 
@@ -44,6 +45,19 @@ class TicketExtractionTests {
 
         var facts = mock(PropositionRepository.class, withSettings().extraInterfaces(SourceRevisionQueryCapable.class));
         when(((SourceRevisionQueryCapable) facts).getSupportsSourceRevisionQueries()).thenReturn(true);
+
+        assertThatThrownBy(() -> extractionOver(facts))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("cannot take one ticket's evidence off a fact");
+    }
+
+    @Test
+    void refusesAFactStoreThatReportsItCannotTakeEvidenceOffAFact() {
+
+        var facts = mock(PropositionRepository.class, withSettings()
+                .extraInterfaces(SourceRevisionQueryCapable.class, ProvenanceSubtractionCapable.class));
+        when(((SourceRevisionQueryCapable) facts).getSupportsSourceRevisionQueries()).thenReturn(true);
+        when(((ProvenanceSubtractionCapable) facts).getSupportsProvenanceSubtraction()).thenReturn(false);
 
         assertThatThrownBy(() -> extractionOver(facts))
                 .isInstanceOf(IllegalStateException.class)

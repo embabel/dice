@@ -52,6 +52,16 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         # install is verify plus a copy of the library in the local repository, where the examples take it from.
         run: mvn -U -B test install
+      # The examples must name the library's versions themselves. The release plugin's own commits move the
+      # root version before anyone can move dice.version, so the check skips those two commits.
+      # The subject is read from the checked-out commit, so a run that no push started sees it too.
+      - name: Check the examples' versions
+        run: |
+          if git log -1 --format=%s | grep -q '^\[maven-release-plugin\]'; then
+            echo "A release plugin commit. dice.version in examples/pom.xml moves in a later commit."
+          else
+            mvn -B -N -f examples/pom.xml initialize
+          fi
       # The examples sit outside the library reactor. They build against the library this job installed,
       # whose version a release changes, so the root version is passed in.
       - name: Build the examples

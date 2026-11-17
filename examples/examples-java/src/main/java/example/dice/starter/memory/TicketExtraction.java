@@ -25,6 +25,7 @@ import com.embabel.dice.proposition.ProvenanceSubtractionCapable;
 import com.embabel.dice.proposition.SourceRevisionQueryCapable;
 import com.embabel.dice.proposition.extraction.PersistUnit;
 import com.embabel.dice.provenance.ConnectorRef;
+import com.embabel.dice.provenance.ProvenanceEntry;
 import com.embabel.dice.provenance.ProvenanceEvidenceKey;
 import com.embabel.dice.provenance.SourceRevisionRef;
 import example.dice.starter.tickets.Ticket.TicketFiled;
@@ -32,9 +33,11 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Turns each filed ticket into stored facts.
@@ -147,61 +150,114 @@ class TicketExtraction {
             // the listener is synchronous the exception reaches the caller of Tickets.file.
             var extracted = pipeline.processText(ticket.text(), ticketId, context);
 
-            // The earlier revisions are retired before the new one is written. If a later step
-            // fails, the new revision is not stored, so the next delivery of it extracts it again
-            // and finishes the job.
-            retireEarlierRevisions(stored, source);
+            // A fact only this ticket supports is superseded in the same unit as the new facts.
+            // A fact another ticket also supports keeps its status and loses this ticket's
+            // evidence once the unit is stored.
+            var earlier = earlierRevisions(stored, source);
 
-            // processText returns unsaved results. The writer stores the new facts and their
-            // entities as one unit. When a step fails it puts the facts and entities back as they
-            // were and persistedOrThrow throws. A relationship written before the failure stays
-            // in the entity store.
+            // processText returns unsaved results. The writer stores the superseded and new facts
+            // and the new entities as one unit. When a step fails it puts the facts and entities
+            // back as they were, so the earlier revision is still current, and persistedOrThrow
+            // throws. A relationship written before the failure stays in the entity store. The
+            // writer also writes the relationships of the superseded facts again.
+            var unit = Stream.concat(earlier.superseded().stream(), extracted.propositionsToPersist().stream())
+                    .toList();
             stores.writer()
-                    .write(PersistUnit.of(
-                            extracted.propositionsToPersist(), extracted.newEntities(), extracted.updatedEntities()))
+                    .write(PersistUnit.of(unit, extracted.newEntities(), extracted.updatedEntities()))
                     .persistedOrThrow();
+
+            // Only after the new revision is stored. If this fails, the shared facts still cite
+            // the earlier revision until the ticket's next one.
+            earlier.shared().forEach(fact -> takeTicketOff(fact, source));
         } finally {
             stores.lock().unlock();
         }
     }
 
     /**
-     * Takes away what a ticket's earlier revisions said. A fact only this ticket supports becomes
-     * superseded, which takes it out of CustomerMemory and keeps it stored. A fact another ticket
-     * also supports loses this ticket's evidence and stays current.
+     * What a ticket's earlier revisions said that is still current.
+     *
+     * @param superseded the facts only this ticket supports, as superseded copies ready to store
+     * @param shared     the facts another ticket also supports
+     */
+    private record EarlierRevisions(List<Proposition> superseded, List<Proposition> shared) {
+    }
+
+    /**
+     * Sorts the current facts of a ticket's earlier revisions by whether another ticket also
+     * supports them.
+     *
+     * <p>Each fact is read again here. The copies found before the model call may be out of
+     * date by now, and storing one would undo whatever changed the fact in between.
      *
      * <p>Only the facts' status, evidence and grounding change. The entities they named stay in
      * the account's entity store, since another ticket may name them too.
+     *
+     * @param stored the facts read from the ticket, as found before extraction
+     * @param source the ticket
+     * @return the facts to supersede and the facts to take the ticket off
+     */
+    private EarlierRevisions earlierRevisions(List<Proposition> stored, ConnectorRef source) {
+        var superseded = new ArrayList<Proposition>();
+        var shared = new ArrayList<Proposition>();
+        for (var found : stored) {
+            var fact = facts.findById(found.getId());
+            if (fact == null || fact.getStatus() != PropositionStatus.ACTIVE) {
+                continue;
+            }
+            if (fact.getProvenanceEntries().stream().allMatch(entry -> isFrom(entry, source))) {
+                superseded.add(fact.withStatus(PropositionStatus.SUPERSEDED));
+            } else {
+                shared.add(fact);
+            }
+        }
+        return new EarlierRevisions(superseded, shared);
+    }
+
+    /**
+     * Takes a ticket's evidence and grounding off a fact another ticket also supports, in one
+     * step, so the fact no longer cites the ticket. A fact left with no evidence is superseded.
      *
      * <p>A fact that loses this ticket's evidence no longer records the earlier revision. When
      * every fact of that revision is kept this way and the new revision gives no facts, nothing
      * stored names either revision, so a late copy of the earlier one is extracted again.
      *
-     * @param stored the facts read from the ticket, as found before extraction
+     * @param fact   a fact the ticket supports along with another source
      * @param source the ticket
      */
-    private void retireEarlierRevisions(List<Proposition> stored, ConnectorRef source) {
-        for (var fact : stored) {
-            if (fact.getStatus() != PropositionStatus.ACTIVE) {
-                continue;
-            }
-            var fromTicket = fact.getProvenanceEntries().stream()
-                    .filter(entry -> entry.getLocator().key().equals(source.key()))
-                    .toList();
-            if (fromTicket.size() == fact.getProvenanceEntries().size()) {
-                // The account's lock keeps its other tickets from adding evidence in between.
-                facts.save(fact.withStatus(PropositionStatus.SUPERSEDED));
-            } else {
-                // The ticket's grounding goes with its evidence, so the fact no longer cites the
-                // ticket. Both come off in one step.
-                var keys = fromTicket.stream().map(ProvenanceEvidenceKey.INSTANCE::encode).toList();
-                var grounding = fromTicket.stream()
-                        .map(entry -> entry.getChunkId())
-                        .filter(Objects::nonNull)
-                        .collect(Collectors.toSet());
-                evidence.subtractFoldedEvidence(fact.getId(), keys, grounding, List.of());
+    private void takeTicketOff(Proposition fact, ConnectorRef source) {
+        var fromTicket = fact.getProvenanceEntries().stream()
+                .filter(entry -> isFrom(entry, source))
+                .toList();
+        var keys = fromTicket.stream().map(ProvenanceEvidenceKey.INSTANCE::encode).toList();
+        var grounding = fromTicket.stream()
+                .map(entry -> entry.getChunkId())
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        var left = evidence.subtractFoldedEvidence(fact.getId(), keys, grounding, List.of());
+        // Null means the fact was deleted in the meantime, and it stays deleted. The other
+        // source's evidence may have been taken off in the meantime too, leaving none. The fact
+        // is read once more before it is superseded, so evidence added or a delete made after the
+        // subtraction is not written over. Everything this application writes to an account's
+        // facts holds the account's lock, so nothing of its own can come in between. A writer
+        // outside the lock still could, because the store has no single step that changes a
+        // fact's status only if its evidence is still empty.
+        if (left != null && left.getProvenanceEntries().isEmpty()) {
+            var current = facts.findById(fact.getId());
+            if (current != null && current.getStatus() == PropositionStatus.ACTIVE
+                    && current.getProvenanceEntries().isEmpty()) {
+                facts.save(current.withStatus(PropositionStatus.SUPERSEDED));
             }
         }
+    }
+
+    /**
+     * @param entry  a piece of a fact's evidence
+     * @param source the ticket
+     * @return whether the evidence came from the ticket
+     */
+    private static boolean isFrom(ProvenanceEntry entry, ConnectorRef source) {
+        return entry.getLocator().key().equals(source.key());
     }
 
     /**
@@ -217,7 +273,7 @@ class TicketExtraction {
     private static int latestStoredRevision(List<Proposition> stored, ConnectorRef source) {
         return stored.stream()
                 .flatMap(fact -> fact.getProvenanceEntries().stream())
-                .filter(entry -> entry.getLocator().key().equals(source.key()))
+                .filter(entry -> isFrom(entry, source))
                 .map(entry -> entry.getSourceRevision())
                 .filter(Objects::nonNull)
                 .mapToInt(TicketExtraction::revisionNumber)

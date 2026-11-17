@@ -84,7 +84,7 @@ class FailedSaveTests {
     }
 
     @Test
-    void anEditWhoseSaveFailedIsFinishedWhenItIsFiledAgain() {
+    void anEditWhoseSaveFailedLeavesTheEarlierRevisionCurrent() {
 
         // The account's first save fails, so the ticket is filed twice to store it.
         assertThatIllegalStateException().isThrownBy(() -> tickets.file(AS_FILED));
@@ -95,8 +95,10 @@ class FailedSaveTests {
                 .isThrownBy(() -> tickets.file(AS_EDITED))
                 .withMessage("The entity store is unavailable");
 
-        // The first revision was retired before the save, and the writer took the edit back out.
-        assertThat(memory.currentFacts(GLOBEX)).isEmpty();
+        // The writer put the first revision's facts back as they were and took the edit out.
+        assertThat(memory.currentFacts(GLOBEX)).extracting(Proposition::getText).containsExactlyInAnyOrder(
+                "Globex is on the Starter plan",
+                "Ben Ruiz asked for a copy of the October invoice for Globex");
 
         tickets.file(AS_EDITED);
 

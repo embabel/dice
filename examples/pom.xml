@@ -42,8 +42,8 @@
         <!--
             The DICE version the examples build against. It is the version in the root pom.xml,
             and the build stops when the two differ. A release moves the root version, so set
-            this one to match afterwards. The Build workflow passes the root version in, so a
-            release commit builds before this line is changed.
+            this one to match afterwards. The Build workflow checks this value on every commit
+            except the release plugin's own, which come before this line can change.
         -->
         <dice.version>0.5.0-SNAPSHOT</dice.version>
         <!-- DICE compiles against this Embabel Agent version, so the examples run on the same one. -->
@@ -169,15 +169,26 @@
                             <!-- The next two steps read the root pom.xml's values as library.project.* -->
                             <exportAntProperties>true</exportAntProperties>
                             <target>
-                                <!-- The repository root is the directory that holds .mvn. -->
-                                <xmlproperty file="${maven.multiModuleProjectDirectory}/pom.xml" prefix="library"/>
-                                <fail message="No DICE library pom.xml at ${maven.multiModuleProjectDirectory}. Build the examples inside a checkout of the DICE repository.">
-                                    <condition>
-                                        <not>
-                                            <equals arg1="${library.project.artifactId}" arg2="dice-parent"/>
-                                        </not>
-                                    </condition>
-                                </fail>
+                                <!--
+                                    The library's pom.xml is the one above the examples: one level
+                                    up from examples/, two from a module. Found from this project's
+                                    own directory, so it does not matter where the build starts.
+                                -->
+                                <condition property="library.root" value="${basedir}/..">
+                                    <and>
+                                        <available file="${basedir}/../pom.xml"/>
+                                        <resourcecontains resource="${basedir}/../pom.xml" substring="&lt;artifactId&gt;dice-parent&lt;/artifactId&gt;"/>
+                                    </and>
+                                </condition>
+                                <condition property="library.root" value="${basedir}/../..">
+                                    <and>
+                                        <available file="${basedir}/../../pom.xml"/>
+                                        <resourcecontains resource="${basedir}/../../pom.xml" substring="&lt;artifactId&gt;dice-parent&lt;/artifactId&gt;"/>
+                                    </and>
+                                </condition>
+                                <fail unless="library.root"
+                                      message="The examples check their versions against the DICE pom.xml above them, and there is none above ${basedir}. Build them inside a checkout of the DICE repository."/>
+                                <xmlproperty file="${library.root}/pom.xml" prefix="library"/>
                             </target>
                         </configuration>
                     </execution>
@@ -243,9 +254,9 @@
             </snapshots>
         </repository>
         <!--
-            A snapshot is downloaded only when the local repository has none. After the library
-            is installed, DICE comes from that install rather than from a published snapshot, and
-            Embabel Agent is the snapshot the library build fetched.
+            Maven checks this repository for newer snapshots once a day and takes whichever copy
+            is newest. Installing the library just before building the examples makes the
+            installed DICE the newest.
         -->
         <repository>
             <id>embabel-snapshots</id>
