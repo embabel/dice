@@ -30,7 +30,7 @@ Every type in `com.embabel.dice.evidence` is experimental, and its API can chang
 | When the claim was first recorded.
 
 | `revisedAt`
-| When the claim's text, mentions or confidence last changed after it was recorded. A merge, a reinforcement or a contradiction counts when it changes the confidence. Null when no revision is recorded.
+| When the claim's text, mentions or confidence last changed after it was recorded. The reviser's merge, a reinforcement or a contradiction counts when it changes the confidence. A consolidator merge builds a new claim, which has no revision. Null when no revision is recorded.
 
 | `reinforceCount`
 | How many times the claim has been merged or reinforced. 0 when not known.

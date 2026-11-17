@@ -59,6 +59,8 @@ class PropositionRevisionJavaInteropTest {
         assertNotNull(revised.getLastContentRevision());
         assertEquals(revised.getContentRevised(), revised.getLastContentRevision());
         assertEquals(revised.getContentRevised().toString(), revised.getMetadata().get(DiceMetadataKeys.CONTENT_REVISED));
+        assertEquals(revised.getLastContentRevision(), revised.withText("Alice lives in Lyon").getLastContentRevision());
+        assertNull(revised.toDraft().withId("p-2").toProposition().getLastContentRevision());
         assertNull(drafted.withStatus(PropositionStatus.STALE).getLastContentRevision());
     }
 

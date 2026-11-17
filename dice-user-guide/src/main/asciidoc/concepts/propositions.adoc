@@ -100,7 +100,8 @@ tick, through `embabel.dice.store.decay.k`.
 
 ==== The four clocks
 
-`contentRevised` is the *decay anchor*. It moves only when the claim itself changes.
+`contentRevised` is the *decay anchor*. It moves when the claim itself changes, and when a
+reinforcement backs the claim up, even if the reinforcement leaves the confidence as it was.
 
 Administrative changes — flipping status, pinning, attaching grounding — touch `metadataRevised` and
 leave `contentRevised` alone. This is what stops housekeeping from silently making stale beliefs look

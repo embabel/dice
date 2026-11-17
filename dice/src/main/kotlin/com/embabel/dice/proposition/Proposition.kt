@@ -169,8 +169,8 @@ data class Proposition(
     val lastTouched: Instant get() = maxOf(contentRevised, metadataRevised)
 
     /**
-     * When the text, mentions or confidence of this claim last changed. A merge, a reinforcement
-     * and a contradiction count when they change the confidence.
+     * When the text, mentions or confidence of this claim last changed. The reviser's merge, a
+     * reinforcement and a contradiction count when they change the confidence.
      *
      * The time is the one stored in the [DiceMetadataKeys.CONTENT_REVISED] entry. Null when no
      * revision is recorded or the entry does not hold a time. It is independent of
