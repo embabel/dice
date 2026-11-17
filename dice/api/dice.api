@@ -2036,7 +2036,6 @@ public final class com/embabel/dice/incremental/InMemoryChunkHistoryStore : com/
 	public fun <init> ()V
 	public fun clearAll ()V
 	public fun clearByContext-GRzcY08 (Ljava/lang/String;)V
-	public fun clearByContextValue (Ljava/lang/String;)V
 	public fun getLastBookmark (Lcom/embabel/dice/incremental/BookmarkKey;)Lcom/embabel/dice/incremental/AnalysisBookmark;
 	public fun isProcessed (Lcom/embabel/dice/incremental/HashKey;)Z
 	public fun recordProcessed (Lcom/embabel/dice/incremental/ProcessedChunkRecord;)V
@@ -3869,7 +3868,6 @@ public final class com/embabel/dice/proposition/ConsecutiveFailureBreaker$Compan
 
 public final class com/embabel/dice/proposition/ConsecutiveFailureBreaker$Outcome {
 	public static final field Companion Lcom/embabel/dice/proposition/ConsecutiveFailureBreaker$Outcome$Companion;
-	public fun <init> (ZLjava/lang/Object;Ljava/lang/Exception;)V
 	public static final fun failure (Ljava/lang/Exception;)Lcom/embabel/dice/proposition/ConsecutiveFailureBreaker$Outcome;
 	public final fun getException ()Ljava/lang/Exception;
 	public final fun getValue ()Ljava/lang/Object;
@@ -4378,7 +4376,7 @@ public final class com/embabel/dice/proposition/Proposition$Companion {
 }
 
 public final class com/embabel/dice/proposition/PropositionDraft {
-	public synthetic fun <init> (Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/dice/proposition/PropositionDraft$Values;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/PropositionDraft$Values;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getConfidence ()D
 	public final fun getContentRevised ()Ljava/time/Instant;
 	public final fun getContextId-SSYM5D4 ()Ljava/lang/String;

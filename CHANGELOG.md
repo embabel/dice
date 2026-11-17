@@ -137,11 +137,15 @@ and the consumer PRs that deliver it).
   `Thread.interrupted()` after a breaker call now sees the interrupt, and should handle it as it
   would any other interrupt.
 
-- `ChunkHistoryStore.clearByContext(ContextId)` now forwards to `clearByContextValue(String)`, which
-  holds the work. **Compatibility: behavioral.** Upgrade: a Kotlin `ChunkHistoryStore` that
-  overrides only `clearByContext(ContextId)` should move its work into `clearByContextValue`. Until
-  it does, a call to `clearByContextValue` reaches the default, which does nothing. The two DICE
-  stores already do this.
+- The concurrent extraction strategies carry an interrupt back to the caller. When an extraction is
+  interrupted on a pool thread, its slot is null as before, the pool thread's flag is cleared, and the
+  flag of the thread that called `execute` is set once every chunk is done. **Compatibility:
+  behavioral.** Upgrade: code that checks `Thread.interrupted()` after `execute` now sees the
+  interrupt and should handle it as it would any other.
+
+- When the executor rejects a chunk, the concurrent strategies wait for the chunks they already
+  handed over before they throw the `RejectedExecutionException`. Before, the exception reached the
+  caller while those chunks were still running. **Compatibility: behavioral.**
 
 ### Added
 
@@ -943,7 +947,9 @@ and the consumer PRs that deliver it).
   `ChunkHistoryStore.clearByContextValue` each have a `String` form beside the `ContextId` one, and
   `ConsolidationPass.of(name, body)` builds a pass from a `String` function. The new forms are default methods, so existing implementations get
   them, and the `ContextId` forms keep their names. A Kotlin class that already declares a member
-  with the same signature as one of these needs `override` on it. **Compatibility: additive.**
+  with the same signature as one of these needs `override` on it. `clearByContextValue` calls
+  `clearByContext(ContextId)`, so a store that overrides only that method is reached from Java too.
+  A store written in Java overrides `clearByContextValue`. **Compatibility: additive.**
 
 - `PropositionContradicted`, `UngroundedMentionsFound`, `DreamLoopReport`,
   `CollapseUndoContextMismatchException` and `DriftReport` gain `of(...)` factories that take the
@@ -959,20 +965,27 @@ and the consumer PRs that deliver it).
   order, and an empty list clears it. Where `withGrounding` adds ids, this replaces the list.
   **Compatibility: additive.**
 
-- `LlmPropositionExtractorBuilder` and `Outcome` have public constructors, so Java can build them
-  directly. `Outcome`'s constructor now checks its arguments and throws `IllegalArgumentException`
-  for a combination no factory makes, such as a skipped outcome that carries a value. Java code that
-  called the constructor with an inconsistent combination now gets `IllegalArgumentException`; use
-  `Outcome.success`, `failure` or `skipped` instead. **Compatibility: behavioral.**
+- `LlmPropositionExtractorBuilder` has a public constructor that takes `LlmOptions`, so Java can
+  build one directly. **Compatibility: additive.**
+
+- `ConsecutiveFailureBreaker.Outcome` has static `success`, `failure` and `skipped` factories. Its
+  constructor stays internal. **Compatibility: additive.**
 
 ### Fixed
 
 - A `PropositionDraft` that sets only `created` no longer copies it into `contentRevised`,
-  `metadataRevised` and `lastAccessed`. Those now take the build moment, as the `Proposition`
-  constructor does, so an imported fact stops decaying by its whole age the moment it is built. To
-  keep the old anchor, set `contentRevised` as well as `created`. The same goes the other way: a draft
-  that sets only `contentRevised` no longer copies it into `created` and `metadataRevised`, which also
-  take the build moment, so set `created` as well when you import an older fact.
+  `metadataRevised` and `lastAccessed`. `contentRevised` now takes the build moment, as the
+  `Proposition` constructor does, and the other two follow it, so an imported fact stops decaying by
+  its whole age the moment it is built. An unset `created` takes the earliest time that is set and is
+  never after `contentRevised`, and an unset `metadataRevised` follows `contentRevised`, so a draft
+  that sets only `contentRevised`, as an import does, still gets all four times from it.
+  **Compatibility: behavioral.** Upgrade: to keep `created` as the decay anchor, set
+  `contentRevised` as well as `created`.
+
+- Reading a `PropositionDraft` from JSON that leaves out a key now gives that key the value
+  `Proposition.draft` starts with, such as an importance of 0.5, with or without Jackson's Kotlin
+  module. JSON without `contextId`, `text` or `confidence` fails the read with a message naming the
+  key. **Compatibility: additive.**
 
 - `MetamodelAutoConfiguration` and the metamodel wiring tests referenced the drift quarantine types
   at their former home in `com.embabel.dice.metamodel(.support)`. They moved to
