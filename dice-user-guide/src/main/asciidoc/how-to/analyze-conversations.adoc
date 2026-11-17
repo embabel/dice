@@ -83,6 +83,12 @@ Revision compares against what is already stored and classifies each new claim a
 reinforced or contradicted. It still persists nothing — `hasRevision` tells you which set
 `propositionsToPersist()` will return.
 
+A restatement that names a source reinforces a stored claim only when the stored claim does not
+already hold that source. A source is a grounding id, a provenance entry or a source id.
+A restatement that names no source still reinforces. Processing the same chunk again, with the
+same chunk id and text, leaves the stored claim unchanged: the result is still merged or
+reinforced, and its `revised` equals its `original`.
+
 ==== Scope per user
 
 Give each user their own `ContextId`. It is the boundary that keeps one user's beliefs out of
