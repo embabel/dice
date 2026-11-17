@@ -307,6 +307,72 @@ class PropositionPipelineTest {
             assertTrue(priorLocator in locators, "keeps the existing source")
             assertTrue(newLocator in locators, "adds the newly stamped source")
         }
+
+        @Test
+        fun `processing the same text twice leaves the stored proposition unchanged`() {
+            val repository = InMemoryPropositionRepository()
+            val reviser = LlmPropositionReviser(llmOptions = io.mockk.mockk(), ai = io.mockk.mockk())
+            val pipeline = PropositionPipeline
+                .withExtractor(MockPropositionExtractor())
+                .withRevision(reviser, repository)
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+                mintNewEntities = true,
+                sourceLocator = UriLocator("https://example.com/doc-1"),
+            )
+
+            val first = pipeline.processOnce("mentions:Alice,Bob", "doc-1", context, additionalGrounding = listOf("msg-1"))
+                as ChunkPropositionResult.Success
+            val created = first.revisionResults.single() as RevisionResult.New
+            repository.save(created.proposition)
+            val stored = repository.findById(created.proposition.id)!!
+
+            val second = pipeline.processOnce("mentions:Alice,Bob", "doc-1", context, additionalGrounding = listOf("msg-1"))
+                as ChunkPropositionResult.Success
+            val merged = second.revisionResults.single() as RevisionResult.Merged
+
+            assertEquals(stored, merged.revised)
+            assertEquals(merged.original, merged.revised)
+        }
+
+        @Test
+        fun `processing changed text under the same source id reinforces once`() {
+            val repository = InMemoryPropositionRepository()
+            val reviser = LlmPropositionReviser(llmOptions = io.mockk.mockk(), ai = io.mockk.mockk())
+            val pipeline = PropositionPipeline
+                .withExtractor(MockPropositionExtractor())
+                .withRevision(reviser, repository)
+            val context = SourceAnalysisContext(
+                schema = schema,
+                entityResolver = AlwaysCreateEntityResolver,
+                contextId = testContextId,
+                mintNewEntities = true,
+                sourceLocator = UriLocator("https://example.com/doc-1"),
+            )
+
+            val first = pipeline.processOnce("mentions:Alice,Bob", "doc-1", context, additionalGrounding = listOf("msg-1"))
+                as ChunkPropositionResult.Success
+            val created = first.revisionResults.single() as RevisionResult.New
+            repository.save(created.proposition)
+            val stored = repository.findById(created.proposition.id)!!
+
+            // The extractor trims entity names, so this text yields the same proposition text
+            // with a different content hash in its provenance entry.
+            val changed = "mentions:Alice, Bob"
+            val second = pipeline.processOnce(changed, "doc-1", context, additionalGrounding = listOf("msg-1"))
+                as ChunkPropositionResult.Success
+            val reinforced = second.revisionResults.single() as RevisionResult.Merged
+            assertEquals(stored.reinforceCount + 1, reinforced.revised.reinforceCount)
+            repository.save(reinforced.revised)
+            val restored = repository.findById(stored.id)!!
+
+            val third = pipeline.processOnce(changed, "doc-1", context, additionalGrounding = listOf("msg-1"))
+                as ChunkPropositionResult.Success
+            val replayed = third.revisionResults.single() as RevisionResult.Merged
+            assertEquals(restored, replayed.revised)
+        }
     }
 
     @Nested

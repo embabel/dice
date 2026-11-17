@@ -634,7 +634,7 @@ internal fun ChunkPropositionResult.withAdditionalGrounding(ids: List<String>): 
     else when (this) {
         // Only a successful result carries propositions to ground; Failed has nothing to enrich.
         is ChunkPropositionResult.Success -> copy(
-            propositions = propositions.map { it.withGrounding(ids) },
+            propositions = propositions.map { it.withGroundingNotHeld(ids) },
             revisionResults = revisionResults.map { it.withAdditionalGrounding(ids) },
         )
         is ChunkPropositionResult.Failed -> this
@@ -643,14 +643,26 @@ internal fun ChunkPropositionResult.withAdditionalGrounding(ids: List<String>): 
 /**
  * Adds grounding to the proposition(s) a [RevisionResult] will persist. Only the proposition
  * sourced from the current text is enriched — a `Contradicted` result's pre-existing `original`
- * (whose confidence is merely reduced) keeps its own provenance unchanged.
+ * (whose confidence is merely reduced) keeps its own provenance unchanged. A proposition that
+ * already holds every id is returned as it is.
  */
 internal fun RevisionResult.withAdditionalGrounding(ids: List<String>): RevisionResult =
     if (ids.isEmpty()) this
     else when (this) {
-        is RevisionResult.New -> copy(proposition = proposition.withGrounding(ids))
-        is RevisionResult.Merged -> copy(revised = revised.withGrounding(ids))
-        is RevisionResult.Reinforced -> copy(revised = revised.withGrounding(ids))
-        is RevisionResult.Contradicted -> copy(new = new.withGrounding(ids))
-        is RevisionResult.Generalized -> copy(proposition = proposition.withGrounding(ids))
+        is RevisionResult.New -> copy(proposition = proposition.withGroundingNotHeld(ids))
+        is RevisionResult.Merged -> copy(revised = revised.withGroundingNotHeld(ids))
+        is RevisionResult.Reinforced -> copy(revised = revised.withGroundingNotHeld(ids))
+        is RevisionResult.Contradicted -> copy(new = new.withGroundingNotHeld(ids))
+        is RevisionResult.Generalized -> copy(proposition = proposition.withGroundingNotHeld(ids))
     }
+
+/**
+ * Adds [ids] to this proposition's grounding when at least one of them is missing. A proposition
+ * that holds every id brings no new evidence, so it keeps its revision time and stays equal to
+ * the stored copy.
+ *
+ * @param ids the extra grounding ids
+ * @return this proposition when it holds every id, otherwise a copy with the missing ids added
+ */
+private fun Proposition.withGroundingNotHeld(ids: List<String>): Proposition =
+    if (grounding.containsAll(ids)) this else withGrounding(ids)
