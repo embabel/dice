@@ -15,7 +15,6 @@
  */
 package example.dice.starter.memory;
 
-import com.embabel.dice.common.support.Sha256ContentHasher;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionQuery;
 import com.embabel.dice.proposition.PropositionRepository;
@@ -42,20 +41,27 @@ import static example.dice.starter.memory.TicketMemoryTests.TICKET_1042;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Files a ticket more than once: edited, changed back, and from several threads at once.
+ * Files a ticket more than once: edited, changed back, delivered late, and from several threads
+ * at once. Each test starts with empty stores.
  */
 @SpringBootTest
 @Import(ScriptedModel.class)
-@DirtiesContext
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class RefiledTicketTests {
 
-    static final Ticket AS_FILED = new Ticket(new TicketId("ticket-2210"), GLOBEX, """
+    static final String STARTER_PLAN = """
             Ben Ruiz at Globex asked for a copy of the October invoice. \
-            Globex is on the Starter plan.""");
+            Globex is on the Starter plan.""";
 
-    static final Ticket AS_EDITED = new Ticket(new TicketId("ticket-2210"), GLOBEX, """
+    static final String TEAM_PLAN = """
             Ben Ruiz at Globex asked for a copy of the October invoice. \
-            Globex is on the Team plan.""");
+            Globex is on the Team plan.""";
+
+    static final Ticket AS_FILED = new Ticket(new TicketId("ticket-2210"), GLOBEX, 1, STARTER_PLAN);
+
+    static final Ticket AS_EDITED = new Ticket(new TicketId("ticket-2210"), GLOBEX, 2, TEAM_PLAN);
+
+    static final Ticket EDITED_BACK = new Ticket(new TicketId("ticket-2210"), GLOBEX, 3, STARTER_PLAN);
 
     @Autowired Tickets tickets;
     @Autowired CustomerMemory memory;
@@ -79,7 +85,7 @@ class RefiledTicketTests {
         assertThat(memory.currentFacts(GLOBEX))
                 .flatExtracting(Proposition::getProvenanceEntries)
                 .extracting(ProvenanceEntry::getSourceRevision)
-                .containsOnly(Sha256ContentHasher.INSTANCE.hash(AS_EDITED.text()));
+                .containsOnly("2");
 
         // The earlier version's facts are still stored. Only their status changed.
         var superseded = propositions.query(
@@ -90,12 +96,37 @@ class RefiledTicketTests {
     @Test
     void aTicketEditedBackSaysWhatItFirstSaid() {
 
-        tickets.file(AS_EDITED);
         tickets.file(AS_FILED);
+        tickets.file(AS_EDITED);
+        var modelCallsBefore = model.promptsSeen().size();
+
+        // The third revision has the first one's text.
+        tickets.file(EDITED_BACK);
 
         assertThat(memory.currentFacts(GLOBEX)).extracting(Proposition::getText).containsExactlyInAnyOrder(
                 "Globex is on the Starter plan",
                 "Ben Ruiz asked for a copy of the October invoice for Globex");
+        assertThat(memory.currentFacts(GLOBEX))
+                .flatExtracting(Proposition::getProvenanceEntries)
+                .extracting(ProvenanceEntry::getSourceRevision)
+                .containsOnly("3");
+        assertThat(model.promptsSeen()).hasSize(modelCallsBefore + 1);
+    }
+
+    @Test
+    void aLateCopyOfAnEarlierRevisionChangesNothing() {
+
+        tickets.file(AS_FILED);
+        tickets.file(AS_EDITED);
+        var modelCallsBefore = model.promptsSeen().size();
+
+        // The first revision's event arrives again after the edit, for example on a retry.
+        tickets.file(AS_FILED);
+
+        assertThat(memory.currentFacts(GLOBEX)).extracting(Proposition::getText).containsExactlyInAnyOrder(
+                "Globex is on the Team plan",
+                "Ben Ruiz asked for a copy of the October invoice for Globex");
+        assertThat(model.promptsSeen()).hasSize(modelCallsBefore);
     }
 
     @Test

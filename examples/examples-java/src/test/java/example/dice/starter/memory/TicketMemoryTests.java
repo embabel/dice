@@ -50,7 +50,7 @@ class TicketMemoryTests {
     static final AccountId ACME = new AccountId("acme");
     static final AccountId GLOBEX = new AccountId("globex");
 
-    static final Ticket TICKET_1042 = new Ticket(new TicketId("ticket-1042"), ACME, """
+    static final Ticket TICKET_1042 = new Ticket(new TicketId("ticket-1042"), ACME, 1, """
             Ada Okafor from Acme wrote in on 3 November. Acme is on the Team plan. \
             Ada reports that CSV export times out for reports over 50,000 rows. \
             She prefers to be contacted by email.""");
@@ -66,16 +66,16 @@ class TicketMemoryTests {
 
         tickets.file(TICKET_1042);
 
-        tickets.file(new Ticket(new TicketId("ticket-1057"), ACME, """
+        tickets.file(new Ticket(new TicketId("ticket-1057"), ACME, 1, """
                 Follow-up with Ada Okafor on 9 November. Ada confirmed the CSV export fix works for \
                 her largest report. Acme wants single sign-on enabled before their audit in December."""));
 
-        tickets.file(new Ticket(new TicketId("ticket-2210"), GLOBEX, """
+        tickets.file(new Ticket(new TicketId("ticket-2210"), GLOBEX, 1, """
                 Ben Ruiz at Globex asked for a copy of the October invoice. \
                 Globex is on the Starter plan."""));
 
         // Globex has a contact with the same name as Acme's.
-        tickets.file(new Ticket(new TicketId("ticket-2231"), GLOBEX, """
+        tickets.file(new Ticket(new TicketId("ticket-2231"), GLOBEX, 1, """
                 Ada Okafor at Globex asked to be the billing contact for the account."""));
     }
 

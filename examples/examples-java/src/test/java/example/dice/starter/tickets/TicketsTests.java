@@ -32,7 +32,7 @@ class TicketsTests {
 
         List<Object> published = new ArrayList<>();
         var tickets = new Tickets(published::add);
-        var ticket = new Ticket(new TicketId("ticket-1"), new AccountId("acme"), "Acme is on the Team plan.");
+        var ticket = new Ticket(new TicketId("ticket-1"), new AccountId("acme"), 1, "Acme is on the Team plan.");
 
         tickets.file(ticket);
 

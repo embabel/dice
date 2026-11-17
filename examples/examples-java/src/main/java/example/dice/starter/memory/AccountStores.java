@@ -23,7 +23,6 @@ import com.embabel.dice.common.resolver.EscalatingEntityResolver;
 import com.embabel.dice.proposition.extraction.PersistUnitWriter;
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository;
 import example.dice.starter.customers.AccountId;
-import example.dice.starter.tickets.Ticket.TicketId;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
@@ -38,6 +37,14 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <p>Entity resolution searches the store it is given. Given one account's store, a name in
  * that account's ticket can only match an entity the same account created.
+ *
+ * <p>Everything here lives in memory for as long as the application runs, and every account
+ * seen stays. An application with many accounts keeps entities in a persistent store and looks
+ * them up by account, and builds the resolver and writer for each ticket from that.
+ *
+ * <p>The lock keeps one account's tickets apart within this application. It does nothing for a
+ * second instance. When several instances take tickets, deliver each account's tickets to one
+ * of them at a time, for example from a queue partitioned by account.
  */
 @Component
 class AccountStores {
@@ -45,15 +52,14 @@ class AccountStores {
     /**
      * The stores of one account.
      *
-     * @param entities       the entities the account's tickets mention
-     * @param resolver       looks mentions up by name in {@code entities}
-     * @param writer         stores a ticket's facts and entities as one unit, in the fact store
-     *                       and {@code entities}
-     * @param storedVersions the version of each ticket whose facts are stored
-     * @param lock           held while one ticket of the account is extracted and stored
+     * @param entities the entities the account's tickets mention
+     * @param resolver looks mentions up by name in {@code entities}
+     * @param writer   stores a ticket's facts and entities as one unit, in the fact store and
+     *                 {@code entities}
+     * @param lock     held while one ticket of the account is extracted and stored
      */
     record Stores(NamedEntityDataRepository entities, EntityResolver resolver, PersistUnitWriter writer,
-            Map<TicketId, String> storedVersions, Lock lock) {
+            Lock lock) {
     }
 
     private final DataDictionary schema;
@@ -82,7 +88,6 @@ class AccountStores {
                     entities,
                     EscalatingEntityResolver.withoutVector(entities),
                     PersistUnitWriter.inMemory(propositions, entities),
-                    new ConcurrentHashMap<>(),
                     new ReentrantLock());
         });
     }

@@ -17,8 +17,8 @@ package example.dice.starter.memory;
 
 import com.embabel.agent.core.DataDictionary;
 import com.embabel.dice.common.SourceAnalysisContext;
-import com.embabel.dice.common.support.Sha256ContentHasher;
 import com.embabel.dice.pipeline.PropositionPipeline;
+import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.proposition.SourceRevisionQueryCapable;
 import com.embabel.dice.proposition.extraction.PersistUnit;
@@ -29,6 +29,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.stream.Stream;
 
 /**
@@ -47,11 +48,21 @@ class TicketExtraction {
      * @param schema        the extraction schema. The agent platform is a
      *                      {@code DataDictionary} bean as well, so the qualifier names this one.
      * @param accountStores what is kept for each account
-     * @param sourceQueries finds the stored facts that were read from a source. The fact store
+     * @param sourceQueries finds the stored facts that were read from a ticket. The fact store
      *                      implements it.
+     * @throws IllegalStateException when the fact store cannot find facts by their source
      */
     TicketExtraction(PropositionPipeline pipeline, @Qualifier("supportSchema") DataDictionary schema,
             AccountStores accountStores, SourceRevisionQueryCapable sourceQueries) {
+        // A store can implement the interface and still be unable to answer, for example when it
+        // wraps a backend without source queries. It would then return nothing, every filing
+        // would look new, and an edited ticket would keep what its earlier text said.
+        if (!sourceQueries.getSupportsSourceRevisionQueries()) {
+            throw new IllegalStateException(
+                    "The fact store cannot find facts by the ticket they were read from. "
+                            + "Ticket extraction needs that to skip a ticket it has stored and to "
+                            + "replace what an edited ticket said.");
+        }
         this.pipeline = pipeline;
         this.schema = schema;
         this.accountStores = accountStores;
@@ -59,9 +70,9 @@ class TicketExtraction {
     }
 
     /**
-     * Extracts facts from a filed ticket and stores them under the ticket's account. A ticket
-     * filed again with the same text is skipped. A ticket filed again with new text replaces
-     * the facts its earlier version stored.
+     * Extracts facts from a filed ticket and stores them under the ticket's account. A revision
+     * of the ticket that is already stored, or older than one that is, is skipped. A newer
+     * revision replaces the facts the earlier ones stored.
      *
      * @param event the ticket that was filed
      */
@@ -72,18 +83,25 @@ class TicketExtraction {
         var ticketId = ticket.id().value();
         var stores = accountStores.of(account);
 
-        // The ticket is the source of its facts. It has no version number of its own, so the
-        // hash of its text is the version.
+        // The ticket is the source of its facts, and its revision number is the version they
+        // were read from. Both are stored with every fact.
         var source = new ConnectorRef("tickets", ticketId);
-        var version = new SourceRevisionRef(source.key(), Sha256ContentHasher.INSTANCE.hash(ticket.text()));
+        var revision = new SourceRevisionRef(source.key(), Integer.toString(ticket.revision()));
 
-        // One ticket of an account is handled at a time. Entity resolution reads the entities
-        // earlier tickets stored, and a second delivery of this ticket has to see the version
-        // the first one records. Tickets of other accounts run alongside.
+        // One ticket of an account is handled at a time, and the lock is held through the model
+        // call. DICE resolves the ticket's mentions inside processText, after the model replies,
+        // and the entities it creates are only stored by the write below. Two tickets of one
+        // account handled at once could each create the same new customer. Tickets of other
+        // accounts run alongside.
         stores.lock().lock();
         try {
-            // Filed again with the same text, for example when the event is delivered twice.
-            if (version.getSourceRevision().equals(stores.storedVersions().get(ticket.id()))) {
+            // What the fact store holds for this ticket, from every revision and with any status.
+            // This is the record of what has been stored, so it holds across restarts.
+            var stored = sourceQueries.findBySourceKey(account.value(), source.key());
+
+            // The same revision delivered again is skipped. So is an older revision delivered
+            // late: storing it would replace what the newer one said.
+            if (latestStoredRevision(stored, revision) >= ticket.revision()) {
                 return;
             }
 
@@ -99,9 +117,9 @@ class TicketExtraction {
                     // Off by default. Tickets are the support desk's own records, so the customers
                     // and contacts they name become entities.
                     .withMintNewEntities(true)
-                    // Every fact's provenance names the ticket and the version it was read from.
+                    // Every fact's provenance names the ticket and the revision it was read from.
                     .withSourceLocator(source)
-                    .withSourceRevision(version);
+                    .withSourceRevision(revision);
 
             // The ticket id becomes the chunk id, so every fact's grounding points back at its
             // ticket. A failed model call throws here. Nothing is stored for the ticket, and
@@ -109,10 +127,10 @@ class TicketExtraction {
             // Tickets.file.
             var extracted = pipeline.processText(ticket.text(), ticketId, context);
 
-            // An edited ticket replaces what its earlier version said. The facts read from
-            // earlier versions stay stored and become superseded, which takes them out of
-            // CustomerMemory.
-            var replaced = sourceQueries.findBySourceKey(account.value(), source.key()).stream()
+            // A newer revision replaces what the earlier ones said. Their facts stay stored and
+            // become superseded, which takes them out of CustomerMemory. The entities they
+            // named stay in the account's entity store, since another ticket may name them too.
+            var replaced = stored.stream()
                     .filter(fact -> fact.getStatus() == PropositionStatus.ACTIVE)
                     .map(fact -> fact.withStatus(PropositionStatus.SUPERSEDED))
                     .toList();
@@ -120,17 +138,35 @@ class TicketExtraction {
 
             // processText returns unsaved results. The writer stores the superseded facts, the
             // new facts and their entities as one unit. When a step fails it puts the facts and
-            // entities back as they were and persistedOrThrow throws. A relationship written
-            // before the failure stays in the entity store.
+            // entities back as they were and persistedOrThrow throws, so the next filing of
+            // this revision extracts it again. A relationship written before the failure stays
+            // in the entity store.
             stores.writer()
                     .write(PersistUnit.of(facts, extracted.newEntities(), extracted.updatedEntities()))
                     .persistedOrThrow();
-
-            // The version is recorded only after its facts are stored. A ticket whose save
-            // failed is extracted again the next time it is filed.
-            stores.storedVersions().put(ticket.id(), version.getSourceRevision());
         } finally {
             stores.lock().unlock();
         }
+    }
+
+    /**
+     * The newest revision of a ticket that stored facts, or 0 when none did.
+     *
+     * <p>Superseded facts count, so a late copy of a revision that has been replaced is still
+     * recognised. A revision whose text gave no facts leaves nothing behind to count.
+     *
+     * @param stored   the facts read from the ticket
+     * @param revision any revision of the ticket, for its source key
+     * @return the highest revision number among the facts' provenance
+     */
+    private static int latestStoredRevision(List<Proposition> stored, SourceRevisionRef revision) {
+        return stored.stream()
+                .flatMap(fact -> fact.getProvenanceEntries().stream())
+                .filter(entry -> entry.getLocator().key().equals(revision.getSourceKey()))
+                .map(entry -> entry.getSourceRevision())
+                .filter(number -> number != null)
+                .mapToInt(Integer::parseInt)
+                .max()
+                .orElse(0);
     }
 }
