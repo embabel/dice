@@ -23,13 +23,17 @@ import com.embabel.dice.proposition.PropositionRepository
 /**
  * Stores a unit with one repository call after another and no transaction of its own.
  *
- * The steps run in [PersistStep] order: entities, propositions, the run link, then the structural
- * relationships. The first step that throws an [Exception] ends the write and becomes a
- * [PersistOutcome.Failed]. An [Error] propagates.
+ * A unit that carries a run under [LineageFailurePolicy.STRICT] fails at [PersistStep.PREPARE] when
+ * this writer has no run link store, before anything is written. The other steps run in
+ * [PersistStep] order: entities, propositions, the run link, then the structural relationships. The
+ * first step that throws an [Exception] ends the write and becomes a [PersistOutcome.Failed]. An
+ * [Error] propagates.
  *
  * @param propositionRepository Where propositions go.
  * @param entityRepository Where entities and the structural relationships go.
  * @param runLinkStore Where propositions are linked to their run, or null when none is bound.
+ * @param missingStoreFix What the failure message tells the caller to do when a unit carries a run
+ * and this writer has no run link store.
  * @param afterRunLink Called once for a unit that carries a run, after the run link step and before
  * the structural relationships, with the run, what the link store returned and the lineage failure
  * if there was one. The count is passed as the store returned it, negative or not. It is not called
@@ -39,11 +43,18 @@ internal class SequentialPersistUnitWriter(
     private val propositionRepository: PropositionRepository,
     private val entityRepository: NamedEntityDataRepository,
     private val runLinkStore: PropositionRunLinkStore?,
+    private val missingStoreFix: String = FACTORY_FIX,
     private val afterRunLink: (key: ExtractionRunKey, runLinks: Int?, lineageFailure: LineageNotRecordedException?) -> Unit =
         { _, _, _ -> },
 ) : PersistUnitWriter {
 
     override fun write(unit: PersistUnit): PersistOutcome {
+        val run = unit.run
+        if (run != null && runLinkStore == null && unit.lineagePolicy == LineageFailurePolicy.STRICT) {
+            // The same on every call, so it is reported before a write that would be left unattributed.
+            val lineageFailure = missingStore(run)
+            return PersistOutcome.failed(PersistStep.PREPARE, lineageFailure, emptySet(), null, lineageFailure)
+        }
         val afterEntities =
             if (unit.newEntities.isEmpty() && unit.updatedEntities.isEmpty()) emptySet() else setOf(PersistStep.ENTITIES)
         try {
@@ -60,7 +71,6 @@ internal class SequentialPersistUnitWriter(
             return PersistOutcome.failed(PersistStep.PROPOSITIONS, e, afterPropositions)
         }
 
-        val run = unit.run
         val link = try {
             if (run == null) RunLink.NOT_ASKED else linkRun(run, persisted)
         } catch (e: Exception) {
@@ -93,8 +103,8 @@ internal class SequentialPersistUnitWriter(
     /**
      * Links the stored propositions to [key], or says why they could not be linked.
      *
-     * A missing store is reported before an empty save is checked, so a wiring mistake shows up on
-     * every unit that carries a run.
+     * A missing store is reported before an empty save is checked. This is reached without a store
+     * only under [LineageFailurePolicy.LENIENT], because [write] has already failed a strict unit.
      *
      * @param key The run the propositions came from.
      * @param persisted What the proposition save returned.
@@ -105,13 +115,7 @@ internal class SequentialPersistUnitWriter(
             ?: return RunLink(
                 linkCalled = false,
                 runLinks = null,
-                lineageFailure = LineageNotRecordedException(
-                    key,
-                    "analysis carries extraction run ${key.runRef.runId} and no " +
-                        "PropositionRunLinkStore is bound, so its propositions cannot be attributed; " +
-                        "bind one with withRunLineage, or bind LineageFailurePolicy.LENIENT to accept " +
-                        "the gap",
-                ),
+                lineageFailure = missingStore(key),
             )
         val ids = persisted.canonicalIds
         if (ids.isEmpty()) return RunLink.NOT_ASKED
@@ -133,6 +137,18 @@ internal class SequentialPersistUnitWriter(
     }
 
     /**
+     * The failure for a unit that carries a run when this writer has no run link store.
+     *
+     * @param key The run the unit carries.
+     * @return The lineage failure, with the fix in its message.
+     */
+    private fun missingStore(key: ExtractionRunKey) = LineageNotRecordedException(
+        key,
+        "analysis carries extraction run ${key.runRef.runId} and no " +
+            "PropositionRunLinkStore is bound, so its propositions cannot be attributed; $missingStoreFix",
+    )
+
+    /**
      * What the run link step did.
      *
      * @property linkCalled True when the store's link method was called, including when it threw
@@ -148,5 +164,17 @@ internal class SequentialPersistUnitWriter(
             /** No link was asked for, or there was nothing to link. */
             val NOT_ASKED = RunLink(linkCalled = false, runLinks = null, lineageFailure = null)
         }
+    }
+
+    companion object {
+
+        /** The fix a writer from a [PersistUnitWriter] factory names when it has no run link store. */
+        const val FACTORY_FIX =
+            "pass one to PersistUnitWriter.sequential or PersistUnitWriter.inMemory, or use " +
+                "LineageFailurePolicy.LENIENT to accept the gap"
+
+        /** The fix the writer an extractor builds for itself names when it has no run link store. */
+        const val EXTRACTOR_FIX =
+            "bind one with withRunLineage, or bind LineageFailurePolicy.LENIENT to accept the gap"
     }
 }

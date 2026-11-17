@@ -113,6 +113,19 @@ class PersistUnitJavaInteropTest {
     }
 
     @Test
+    void aRunWithNoRunLinkStoreFailsBeforeAnythingIsWritten() {
+        PersistUnit unit = unit().withRun(ExtractionRunKey.of("java-unit-tenant", "run-1"));
+
+        PersistOutcome outcome = PersistUnitWriter.sequential(claims, entities).write(unit);
+
+        PersistOutcome.Failed failed = assertInstanceOf(PersistOutcome.Failed.class, outcome);
+        assertEquals(PersistStep.PREPARE, failed.getStep());
+        assertTrue(failed.getLeftInStore().isEmpty());
+        assertNull(claims.findById("java-unit-claim"));
+        assertTrue(failed.getCause().getMessage().contains("pass one to PersistUnitWriter.sequential"));
+    }
+
+    @Test
     void aCheckedCauseIsCaughtAsPersistUnitFailedException() {
         IOException cause = new IOException("store went away");
         PersistOutcome outcome =

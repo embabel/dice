@@ -390,4 +390,15 @@ class PersistUnitRoutingTest {
             }
         verify(exactly = 0) { projection.projectAndPersist(any()) }
     }
+
+    @Test
+    fun `E13 a bound factory-built writer with no run link store names the factory in the failure`() {
+        val extraction = extraction(answeringRepository())
+            .withPersistUnitWriter(PersistUnitWriter.sequential(answeringRepository(), mockk(relaxed = true)))
+
+        assertThatThrownBy { extraction.remember() }
+            .isInstanceOf(LineageNotRecordedException::class.java)
+            .hasMessageContaining("pass one to PersistUnitWriter.sequential or PersistUnitWriter.inMemory")
+            .hasMessageNotContaining("withRunLineage")
+    }
 }

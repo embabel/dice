@@ -169,13 +169,16 @@ class SequentialPersistUnitWriterTest {
     }
 
     @Test
-    fun `E5 under STRICT a run with no link store bound fails at RUN_LINKS with only entities and propositions stored`() {
+    fun `E5 under STRICT a run with no link store fails at PREPARE before anything is written`() {
         val unit = unitWithEntity().withRun(key, LineageFailurePolicy.STRICT)
 
         val outcome = writer(null).write(unit) as PersistOutcome.Failed
 
-        assertThat(outcome.step).isEqualTo(PersistStep.RUN_LINKS)
-        assertThat(outcome.leftInStore).containsExactly(PersistStep.ENTITIES, PersistStep.PROPOSITIONS)
+        assertThat(outcome.step).isEqualTo(PersistStep.PREPARE)
+        assertThat(outcome.cause).isInstanceOf(LineageNotRecordedException::class.java)
+        assertThat(outcome.lineageFailure).isSameAs(outcome.cause)
+        assertThat(outcome.leftInStore).isEmpty()
+        assertThat(calls).isEmpty()
     }
 
     @Test
@@ -245,14 +248,14 @@ class SequentialPersistUnitWriterTest {
     }
 
     @Test
-    fun `E12 both lineage failure messages match the extraction service's messages`() {
+    fun `E12 a factory-built writer with no run link store names the factory, and a failed link names the run`() {
         val unbound = writer(null).write(unitWithEntity().withRun(key)) as PersistOutcome.Failed
         val throwing = writer(throwingLinkStore()).write(unitWithEntity().withRun(key)) as PersistOutcome.Failed
 
         assertEquals(
             "analysis carries extraction run run-1 and no PropositionRunLinkStore is bound, so its " +
-                "propositions cannot be attributed; bind one with withRunLineage, or bind " +
-                "LineageFailurePolicy.LENIENT to accept the gap",
+                "propositions cannot be attributed; pass one to PersistUnitWriter.sequential or " +
+                "PersistUnitWriter.inMemory, or use LineageFailurePolicy.LENIENT to accept the gap",
             unbound.cause.message,
         )
         assertEquals("could not attribute 1 proposition(s) to extraction run run-1", throwing.cause.message)
@@ -266,5 +269,17 @@ class SequentialPersistUnitWriterTest {
         assertThat(outcome.runLinks).isNull()
         assertThat(outcome.lineageFailure).isNull()
         verify(atLeast = 1) { entityRepository.mergeRelationship(any(), any(), any()) }
+    }
+
+    @Test
+    fun `E14 under LENIENT a run with no link store stores the unit and carries the lineage failure`() {
+        val unit = unitWithEntity().withRun(key, LineageFailurePolicy.LENIENT)
+
+        val outcome = writer(null).write(unit)
+
+        assertThat(outcome).isInstanceOf(PersistOutcome.Stored::class.java)
+        assertThat(outcome.lineageFailure).isNotNull()
+        assertThat(outcome.runLinks).isNull()
+        assertThat(calls).contains("save entity-alice", "propositions")
     }
 }

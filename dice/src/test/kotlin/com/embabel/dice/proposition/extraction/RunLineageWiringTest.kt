@@ -278,8 +278,8 @@ class RunLineageWiringTest {
             .isInstanceOf(LineageNotRecordedException::class.java)
             .hasMessageContaining("no PropositionRunLinkStore is bound")
 
-        // The claim was saved before lineage was attempted and stands; what failed is attribution.
-        assertThat(harness.repository.findById("minted")).isNotNull()
+        // The missing store is found before anything is written, so no claim is saved.
+        assertThat(harness.repository.findById("minted")).isNull()
     }
 
     @Test

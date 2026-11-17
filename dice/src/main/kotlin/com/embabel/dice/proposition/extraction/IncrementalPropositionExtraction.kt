@@ -696,10 +696,11 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * A run on the analysis adds the run link to the unit. It changes nothing else about what is
      * stored.
      *
-     * With the sequential writer, a [LineageFailurePolicy.STRICT] lineage failure leaves the entities
-     * and claims in the store, unattributed. Structural relationships, projection and grounding do
-     * not run, and the [LineageNotRecordedException] is thrown. Inside a caller's transaction, those
-     * writes commit or roll back with it.
+     * With the sequential writer, a run with no run link store under [LineageFailurePolicy.STRICT]
+     * fails before anything is written. A [LineageFailurePolicy.STRICT] failure of the link write
+     * leaves the entities and claims in the store, unattributed. In both cases structural
+     * relationships, projection and grounding do not run, and the [LineageNotRecordedException] is
+     * thrown. Inside a caller's transaction, what was written commits or rolls back with it.
      * Under [LineageFailurePolicy.LENIENT] the failure is logged as a warning and the rest runs.
      * A bound writer decides what a failed write leaves in the store.
      *
@@ -732,7 +733,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             // Built per call, because withRunLineage can bind the run link store after construction.
             // The lineage lines are logged between the run link and the structural relationships, so
             // an Error from the relationships cannot lose them.
-            SequentialPersistUnitWriter(propositionRepository, entityRepository, bound.runLinkStore) { key, runLinks, lineageFailure ->
+            SequentialPersistUnitWriter(propositionRepository, entityRepository, bound.runLinkStore, SequentialPersistUnitWriter.EXTRACTOR_FIX) { key, runLinks, lineageFailure ->
                 logRunLineage(key.runRef.runId, runLinks, lineageFailure, bound.policy)
             }.write(unit)
         } else {

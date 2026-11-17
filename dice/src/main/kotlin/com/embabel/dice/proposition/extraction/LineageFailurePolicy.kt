@@ -53,11 +53,12 @@ enum class LineageFailurePolicy {
      * The exception reaches the caller: the direct caller for a synchronous call, or the event
      * publisher for one dispatched through the async event path, where a host using an async event
      * multicaster for that path sees it surface in its executor's own error handler. What that costs
-     * depends on who owns the transaction: with no ambient transaction the claims were already saved
-     * and stand, so the caller learns that stored claims are unattributed. Inside a host's
-     * `@Transactional`, the claims and the lineage share that transaction's fate and the failure
-     * rolls both back, which is what a host running extraction under strict attribution is asking
-     * for.
+     * depends on which of the two failed and on who owns the transaction. A missing store is found
+     * before anything is written, so no claim is saved. A link write that throws with no ambient
+     * transaction comes after the claims were saved, and they stand, so the caller learns that
+     * stored claims are unattributed. Inside a host's `@Transactional`, the claims and the lineage
+     * share that transaction's fate and the failure rolls both back, which is what a host running
+     * extraction under strict attribution is asking for.
      */
     STRICT,
 

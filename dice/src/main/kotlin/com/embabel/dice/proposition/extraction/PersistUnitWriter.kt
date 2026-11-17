@@ -69,8 +69,8 @@ fun interface PersistUnitWriter {
         /**
          * A writer that makes the repository calls one after another, with no run link store.
          *
-         * A unit that carries a run fails at [PersistStep.RUN_LINKS] under
-         * [LineageFailurePolicy.STRICT], because nothing can record the link.
+         * A unit that carries a run fails at [PersistStep.PREPARE] under
+         * [LineageFailurePolicy.STRICT], before anything is written, because nothing can record the link.
          *
          * @param propositionRepository Where propositions go.
          * @param entityRepository Where entities and the structural relationships go.
@@ -100,8 +100,8 @@ fun interface PersistUnitWriter {
         /**
          * A writer over the in-memory stores that puts them back when a step fails, with no run link store.
          *
-         * A unit that carries a run fails at [PersistStep.RUN_LINKS] under
-         * [LineageFailurePolicy.STRICT], and the stores are put back.
+         * A unit that carries a run fails at [PersistStep.PREPARE] under
+         * [LineageFailurePolicy.STRICT], before anything is written.
          * A failed unit restores claims, their embeddings and entities to what they held before the call.
          * Units through one writer run one at a time, so use one writer per set of stores.
          * Another thread can read a unit part way through.
