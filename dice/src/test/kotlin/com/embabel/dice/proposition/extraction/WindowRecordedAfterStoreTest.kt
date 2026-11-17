@@ -144,6 +144,8 @@ class WindowRecordedAfterStoreTest {
         projectionFails: Boolean = false,
         projectionFailure: () -> Exception = { IllegalStateException("projector is down") },
         history: ChunkHistoryStore = InMemoryChunkHistoryStore(),
+        mintNewEntities: Boolean = false,
+        mintedEntityProperties: (NamedEntity) -> Map<String, Any> = { emptyMap() },
     ): Harness {
         val pipeline = mockk<PropositionPipeline>()
         val result = ChunkPropositionResult.Success(
@@ -171,6 +173,8 @@ class WindowRecordedAfterStoreTest {
             entityResolver = mockk<EntityResolver>(relaxed = true),
             graphProjectionService = projection,
             properties = PropositionExtractionProperties(windowSize = 1, overlapSize = 1, triggerInterval = 1),
+            mintNewEntitiesDefault = mintNewEntities,
+            mintedEntityPropertiesProvider = mintedEntityProperties,
         )
         return Harness(extraction, pipeline, result, repository, history)
     }
@@ -572,6 +576,30 @@ class WindowRecordedAfterStoreTest {
 
         assertThat(run.surfaced).isInstanceOf(PersistUnitFailedException::class.java).hasCause(interrupted)
         assertThat(run.stillInterrupted).isTrue()
+        verify(exactly = 1) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.extraction.isIdle)
+            .describedAs("the second event is still queued")
+            .isFalse()
+    }
+
+    @Test
+    fun `a minted entity properties provider that is interrupted stops the drain with the flag set`() {
+        // The provider's failure is logged and swallowed, so the extractor has to set the flag
+        // again for the drain to see it.
+        val calls = AtomicInteger()
+        val harness = harness(
+            mintNewEntities = true,
+            mintedEntityProperties = {
+                if (calls.incrementAndGet() == 1) throw InterruptedException("provider interrupted")
+                emptyMap()
+            },
+        )
+
+        val run = harness.drainAll(event(source = "source-a"), event(source = "source-b"))
+
+        assertThat(run.surfaced).isNull()
+        assertThat(run.stillInterrupted).isTrue()
+        assertThat(calls.get()).isEqualTo(1)
         verify(exactly = 1) { harness.pipeline.processChunk(any(), any()) }
         assertThat(harness.extraction.isIdle)
             .describedAs("the second event is still queued")

@@ -792,6 +792,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         if (ctx.mintNewEntities) {
             val stamped = try {
                 mintedEntityPropertiesProvider(user)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                logger.warn("[buildContext] mintedEntityPropertiesProvider interrupted for {}", sourceId, e)
+                emptyMap()
             } catch (e: Exception) {
                 logger.warn("mintedEntityPropertiesProvider failed for {}: {}", user.name, e.message)
                 emptyMap()
