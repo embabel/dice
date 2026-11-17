@@ -212,20 +212,25 @@ class DefaultMemoryConsolidator(
     ): Proposition = reinforce(existing, session, reinforcementRule)
 
     /**
-     * Merge multiple propositions into one.
-     * Takes the highest confidence text and combines grounding.
+     * Merges similar propositions into one new proposition. The text and fields come from the most
+     * confident source, and its grounding, provenance entries and source ids are combined from all sources.
+     *
+     * @param propositions The stored and session propositions to merge
+     * @return A new proposition with the average confidence and one timestamp for all four times
      */
     private fun mergePropositions(propositions: List<Proposition>): Proposition {
         val bestProp = propositions.maxByOrNull { it.confidence }!!
-        val allGrounding = propositions.flatMap { it.grounding }.distinct()
-        val avgConfidence = propositions.map { it.confidence }.average()
-
+        val now = Instant.now()
         return bestProp.copy(
             id = UUID.randomUUID().toString(),
-            confidence = avgConfidence,
-            grounding = allGrounding,
-            created = Instant.now(),
-            contentRevised = Instant.now(),
+            confidence = propositions.map { it.confidence }.average(),
+            grounding = propositions.flatMap { it.grounding }.distinct(),
+            provenanceEntries = propositions.flatMap { it.provenanceEntries }.distinct(),
+            sourceIds = propositions.flatMap { it.sourceIds }.distinct(),
+            created = now,
+            contentRevised = now,
+            metadataRevised = now,
+            lastAccessed = now,
         )
     }
 }
