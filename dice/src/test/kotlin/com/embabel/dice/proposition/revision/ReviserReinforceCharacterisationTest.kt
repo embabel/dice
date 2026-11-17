@@ -16,6 +16,7 @@
 package com.embabel.dice.proposition.revision
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.provenance.ProvenanceEntry
@@ -90,6 +91,35 @@ class ReviserReinforceCharacterisationTest {
             listOf(ClassifiedProposition(existing, PropositionRelation.IDENTICAL, 1.0, "Same")),
             InMemoryPropositionRepository(),
         ) as RevisionResult.Merged).revised
+
+    /**
+     * Builds a reviser whose trust scorer gives every proposition 0.42.
+     *
+     * @return the scoring reviser
+     */
+    private fun scoringReviser(): LlmPropositionReviser =
+        LlmPropositionReviser(llmOptions = io.mockk.mockk(), ai = io.mockk.mockk()).withTrustScorer { _, _, _ -> 0.42 }
+
+    /**
+     * Classifies the incoming proposition against the stored one with a scoring reviser.
+     *
+     * @param existing the stored proposition
+     * @param incoming the new proposition
+     * @param relation how the incoming proposition relates to the stored one
+     * @param similarity the similarity the classifier reports
+     * @return the revision result
+     */
+    private fun scoredResult(
+        existing: Proposition,
+        incoming: Proposition,
+        relation: PropositionRelation,
+        similarity: Double,
+    ): RevisionResult =
+        scoringReviser().classifiedToResult(
+            incoming,
+            listOf(ClassifiedProposition(existing, relation, similarity, "Related")),
+            InMemoryPropositionRepository(),
+        )
 
     private fun inWindow(stamp: Instant, before: Instant, after: Instant) =
         !stamp.isBefore(before) && !stamp.isAfter(after)
@@ -236,5 +266,27 @@ class ReviserReinforceCharacterisationTest {
         val existing = existing()
         val incoming = proposition("Alice codes", 0.8, grounding = listOf("g1"), provenance = listOf(pA))
         assertEquals(existing, mergedFrom(existing, incoming))
+    }
+
+    @Test
+    fun `a replay with a trust scorer returns the stored proposition for a similar match`() {
+        val incoming = proposition("Alice codes", 0.8, grounding = listOf("g1"), provenance = listOf(pA))
+        val result = scoredResult(existing(), incoming, PropositionRelation.SIMILAR, 0.9) as RevisionResult.Reinforced
+        assertEquals(result.original, result.revised)
+        assertSame(result.original, result.revised)
+    }
+
+    @Test
+    fun `a replay with a trust scorer returns the stored proposition for an identical match`() {
+        val incoming = proposition("Alice codes", 0.8, grounding = listOf("g1"), provenance = listOf(pA))
+        val result = scoredResult(existing(), incoming, PropositionRelation.IDENTICAL, 0.9) as RevisionResult.Merged
+        assertEquals(result.original, result.revised)
+        assertSame(result.original, result.revised)
+    }
+
+    @Test
+    fun `a reinforcement with new evidence is still scored`() {
+        val result = scoredResult(existing(), incoming(), PropositionRelation.SIMILAR, 0.9) as RevisionResult.Reinforced
+        assertEquals(0.42, result.revised.metadata[DiceMetadataKeys.TRUST_SCORE])
     }
 }

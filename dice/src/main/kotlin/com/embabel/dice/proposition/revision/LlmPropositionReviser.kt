@@ -56,6 +56,13 @@ internal data class PendingClassification(
  *     .withClassifyLlm(cheaperLlmOptions)  // optional: cheaper model for classification
  * ```
  *
+ * A new proposition reinforces a stored one only when it brings evidence the stored one does not
+ * hold. When the stored proposition already holds all of its grounding, provenance entries and
+ * source ids, the result is still [RevisionResult.Merged] or [RevisionResult.Reinforced]. Its
+ * `revised` is the stored proposition unchanged, and no trust score is computed. A proposition
+ * that names no source counts as new evidence, unless it has the stored proposition's own id.
+ * Without provenance entries, the grounding ids alone identify the source.
+ *
  * @param llmOptions LLM configuration
  * @param ai AI service for LLM calls
  * @param topK Number of similar propositions to retrieve for classification
@@ -247,6 +254,17 @@ data class LlmPropositionReviser(
     }
 
     /**
+     * Scores a reinforced or merged proposition, or returns it as it is when reinforcement left
+     * the stored proposition unchanged.
+     *
+     * @param original the stored proposition
+     * @param revised what reinforcement returned for it
+     * @return [revised] itself when it is [original], otherwise [revised] with its trust score cached
+     */
+    private fun scoreUnlessUnchanged(original: Proposition, revised: Proposition): Proposition =
+        if (revised === original) revised else scoreAndCache(revised)
+
+    /**
      * Deduplicate a batch of propositions by canonical text, then use fast-path
      * (canonical match + auto-merge) where possible and batch the rest into
      * as few LLM calls as possible.
@@ -314,7 +332,7 @@ data class LlmPropositionReviser(
             val original = repository.findById(canonicalMatch.id) ?: canonicalMatch
             val merged = mergePropositions(original, newProposition)
             logger.debug("Canonical text match: {}", newProposition.text.take(60))
-            return RevisionResult.Merged(original, scoreAndCache(merged))
+            return RevisionResult.Merged(original, scoreUnlessUnchanged(original, merged))
         }
 
         // Fast path 2: vector similarity search
@@ -349,7 +367,7 @@ data class LlmPropositionReviser(
                 "Auto-merge (embedding score {} >= {}): {}",
                 topCandidate.score, autoMergeThreshold, newProposition.text.take(60)
             )
-            return RevisionResult.Merged(original, scoreAndCache(merged))
+            return RevisionResult.Merged(original, scoreUnlessUnchanged(original, merged))
         }
 
         // Apply decay for ranking
@@ -521,7 +539,7 @@ data class LlmPropositionReviser(
                     ?: identical.proposition
                 val merged = mergePropositions(original, newProposition)
                 logger.debug("Merged: {} + {} -> {}", original.text, newProposition.text, merged.text)
-                RevisionResult.Merged(original, scoreAndCache(merged))
+                RevisionResult.Merged(original, scoreUnlessUnchanged(original, merged))
             }
 
             contradictory != null -> {
@@ -579,7 +597,7 @@ data class LlmPropositionReviser(
                     ?: mostSimilar.proposition
                 val revised = reinforceProposition(original, newProposition)
                 logger.debug("Reinforced: {} -> {}", original.text, revised.text)
-                RevisionResult.Reinforced(original, scoreAndCache(revised))
+                RevisionResult.Reinforced(original, scoreUnlessUnchanged(original, revised))
             }
 
             else -> {
