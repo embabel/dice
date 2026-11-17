@@ -72,16 +72,24 @@ interface PropositionExtractionResult {
      * - Reinforced: the revised (reinforced) proposition
      * - Contradicted: both the original (with reduced confidence) and the new
      * - Generalized: the new generalizing proposition
+     *
+     * A replay is left out when another result in the list changed that same stored copy, so
+     * saving the list cannot undo that change.
      */
     val revisedPropositionsToPersist: List<Proposition>
-        get() = revisionResults.flatMap { result ->
-            when (result) {
-                is RevisionResult.New -> listOf(result.proposition)
-                is RevisionResult.Merged -> listOf(result.revised)
-                is RevisionResult.Reinforced -> listOf(result.revised)
-                is RevisionResult.Contradicted -> listOf(result.original, result.new)
-                is RevisionResult.Generalized -> listOf(result.proposition)
-            }
+        get() {
+            val changedOriginals = revisionResults.mapNotNull { it.changedOriginal() }.toSet()
+            return revisionResults
+                .filterNot { result -> result.replayed()?.let { it in changedOriginals } == true }
+                .flatMap { result ->
+                    when (result) {
+                        is RevisionResult.New -> listOf(result.proposition)
+                        is RevisionResult.Merged -> listOf(result.revised)
+                        is RevisionResult.Reinforced -> listOf(result.revised)
+                        is RevisionResult.Contradicted -> listOf(result.original, result.new)
+                        is RevisionResult.Generalized -> listOf(result.proposition)
+                    }
+                }
         }
 }
 
@@ -254,17 +262,6 @@ data class PropositionResults(
 
     /** All revision results across all chunks */
     override val revisionResults: List<RevisionResult> get() = chunkResults.flatMap { it.revisionResults }
-
-    /**
-     * A replayed proposition is left out when another chunk in the batch changed that same
-     * stored copy.
-     */
-    override val revisedPropositionsToPersist: List<Proposition>
-        get() {
-            val replays = revisionResults.mapNotNull { it.replayed() }.toSet()
-            val changedOriginals = revisionResults.mapNotNull { it.changedOriginal() }.toSet()
-            return super.revisedPropositionsToPersist.filterNot { it in replays && it in changedOriginals }
-        }
 
     /** Chunk ids of all chunks that failed to process. */
     val failedChunkIds: List<String>

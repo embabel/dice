@@ -1303,6 +1303,40 @@ class PropositionPipelineTest {
 
             assertEquals(listOf(reinforced, newer), results.revisedPropositionsToPersist)
         }
+
+        @Test
+        fun `a replay after a reinforcement in the same chunk is left out of the write set`() {
+            val result = chunk(
+                "chunk-1",
+                RevisionResult.Merged(original = stored, revised = reinforced),
+                RevisionResult.Merged(original = stored, revised = stored),
+            )
+
+            assertEquals(listOf(reinforced), result.revisedPropositionsToPersist)
+        }
+
+        @Test
+        fun `a replay before a reinforcement in the same chunk is left out of the write set`() {
+            val result = chunk(
+                "chunk-1",
+                RevisionResult.Merged(original = stored, revised = stored),
+                RevisionResult.Merged(original = stored, revised = reinforced),
+            )
+
+            assertEquals(listOf(reinforced), result.revisedPropositionsToPersist)
+        }
+
+        @Test
+        fun `a replay of a newer stored copy in the same chunk stays after an older copy's reinforcement`() {
+            val newer = stored.copy(confidence = 0.95, grounding = stored.grounding + "chunk-other")
+            val result = chunk(
+                "chunk-1",
+                RevisionResult.Merged(original = stored, revised = reinforced),
+                RevisionResult.Merged(original = newer, revised = newer),
+            )
+
+            assertEquals(listOf(reinforced, newer), result.revisedPropositionsToPersist)
+        }
     }
 
     /** Verifies that `persist` creates the expected structural relationships (HAS_PROPOSITION, MENTIONS, HAS_ENTITY). */

@@ -939,11 +939,11 @@ and the consumer PRs that deliver it).
   A proposition that names no source counts as new evidence, unless it has the stored proposition's
   own id, which is the stored proposition meeting itself and changes nothing. When propositions
   carry no provenance entries, their grounding ids alone identify the source, so a host that grounds
-  every observation in one id reinforces once. In a batch from `PropositionPipeline.process`,
-  `propositionsToPersist()` leaves out a replayed proposition when another chunk changed the same
-  stored copy, so saving the batch keeps that change. **Compatibility: behavioral.** Processing the
-  same chunk twice, with the same chunk id and text, counts once. A host that relied on a second
-  pass over the same chunk to raise `reinforceCount` or confidence sees no change from that pass.
+  every observation in one id reinforces once. `propositionsToPersist()` leaves out a replayed
+  proposition when another result in the same chunk or batch changed the same stored copy, so
+  saving the list keeps that change. **Compatibility: behavioral.** Processing the same chunk
+  twice, with the same chunk id and text, counts once. A host that relied on a second pass over
+  the same chunk to raise `reinforceCount` or confidence sees no change from that pass.
 
 - `PropositionPipeline.processOnce` and `processText` leave a proposition untouched when it already
   holds every `additionalGrounding` id. They stamped `metadataRevised` on it. They add
