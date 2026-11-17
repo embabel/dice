@@ -1289,6 +1289,20 @@ class PropositionPipelineTest {
 
             assertEquals(listOf(stored), results.revisedPropositionsToPersist)
         }
+
+        @Test
+        fun `a replay of a newer stored copy stays after an older copy's reinforcement`() {
+            val newer = stored.copy(confidence = 0.95, grounding = stored.grounding + "chunk-other")
+            val results = PropositionResults(
+                chunkResults = listOf(
+                    chunk("chunk-1", RevisionResult.Merged(original = stored, revised = reinforced)),
+                    chunk("chunk-2", RevisionResult.Merged(original = newer, revised = newer)),
+                ),
+                allPropositions = emptyList(),
+            )
+
+            assertEquals(listOf(reinforced, newer), results.revisedPropositionsToPersist)
+        }
     }
 
     /** Verifies that `persist` creates the expected structural relationships (HAS_PROPOSITION, MENTIONS, HAS_ENTITY). */

@@ -256,15 +256,14 @@ data class PropositionResults(
     override val revisionResults: List<RevisionResult> get() = chunkResults.flatMap { it.revisionResults }
 
     /**
-     * In a batch, a replayed proposition is left out when another chunk changed the same
-     * proposition, so saving the list cannot undo that change.
+     * A replayed proposition is left out when another chunk in the batch changed that same
+     * stored copy.
      */
     override val revisedPropositionsToPersist: List<Proposition>
         get() {
             val replays = revisionResults.mapNotNull { it.replayed() }.toSet()
-            val entries = super.revisedPropositionsToPersist
-            val changedIds = entries.filterNot { it in replays }.map { it.id }.toSet()
-            return entries.filterNot { it in replays && it.id in changedIds }
+            val changedOriginals = revisionResults.mapNotNull { it.changedOriginal() }.toSet()
+            return super.revisedPropositionsToPersist.filterNot { it in replays && it in changedOriginals }
         }
 
     /** Chunk ids of all chunks that failed to process. */
@@ -289,5 +288,16 @@ data class PropositionResults(
 private fun RevisionResult.replayed(): Proposition? = when (this) {
     is RevisionResult.Merged -> revised.takeIf { it == original }
     is RevisionResult.Reinforced -> revised.takeIf { it == original }
+    else -> null
+}
+
+/**
+ * Returns the stored proposition this result started from, or null when the result changes nothing.
+ *
+ * @return the original of a merge or reinforcement that changed it, otherwise null
+ */
+private fun RevisionResult.changedOriginal(): Proposition? = when (this) {
+    is RevisionResult.Merged -> original.takeIf { revised != original }
+    is RevisionResult.Reinforced -> original.takeIf { revised != original }
     else -> null
 }
