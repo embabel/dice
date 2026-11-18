@@ -48,7 +48,9 @@ import java.util.UUID
  * C1  A window analysed again after a failed store gets the same chunk id as the first attempt.
  * C2  The chunk id is a UUID that depends only on the context, the source id, the window bounds
  *     and the window text, so a fresh analyzer and history store give the same id.
- * C3  Windows that differ in context, source id or text get different chunk ids.
+ * C3  Windows that differ in context, source id, text or bounds get different chunk ids, including
+ *     strings the UTF-8 encoder would map to the same bytes.
+ * C4  The chunk id for a known window is pinned, so a change to how it is derived fails a test.
  */
 class AnalyzeThenRecordTest {
 
@@ -310,12 +312,45 @@ class AnalyzeThenRecordTest {
     }
 
     @Test
-    fun `C3 windows that differ in context, source or text get different chunk ids`() {
+    fun `C3 windows that differ in context, source or text get different chunk ids, even where UTF-8 would not tell them apart`() {
         val base = chunkIdFor("src", fourItems)
         val otherContext = context.copy(contextId = ContextId("another-tenant"))
 
         assertNotEquals(base, chunkIdFor("src", fourItems, otherContext))
         assertNotEquals(base, chunkIdFor("other-src", fourItems))
         assertNotEquals(base, chunkIdFor("src", listOf("a", "b", "c", "e")))
+        assertNotEquals(chunkIdFor("src?", fourItems), chunkIdFor("src\uD800", fourItems))
+    }
+
+    @Test
+    fun `C3 the same text at different bounds gets a different chunk id`() {
+        val config = WindowConfig(windowSize = 4, overlapSize = 0, triggerInterval = 4)
+        val fromStart = RecordingAnalyzer(InMemoryChunkHistoryStore(), config)
+        fromStart.run(ListSource("src", fourItems.toMutableList()), context) { }
+
+        val afterOne = InMemoryChunkHistoryStore()
+        afterOne.recordProcessed(
+            ProcessedChunkRecord(
+                bookmarkKey = BookmarkKey(contextId, "src"),
+                hashKey = hashOf("z"),
+                startIndex = 0,
+                endIndex = 1,
+                processedAt = java.time.Instant.EPOCH,
+            )
+        )
+        val shifted = RecordingAnalyzer(afterOne, config)
+        shifted.run(ListSource("src", (listOf("z") + fourItems).toMutableList()), context) { }
+
+        assertEquals(fromStart.chunks.single().text, shifted.chunks.single().text)
+        assertNotEquals(fromStart.chunks.single().id, shifted.chunks.single().id)
+    }
+
+    @Test
+    fun `C4 the chunk id of a known window is pinned`() {
+        val id = UUID.fromString(chunkIdFor("src", fourItems))
+
+        assertEquals(8, id.version())
+        assertEquals(2, id.variant())
+        assertEquals("e7b9969f-fb8f-828f-ae3b-95756deca1d0", id.toString())
     }
 }

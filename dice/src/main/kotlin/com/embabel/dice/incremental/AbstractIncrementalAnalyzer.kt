@@ -279,7 +279,8 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
      *
      * The id is a SHA-256 of the context, the source id, the window bounds and the text, shaped as
      * a version 8 UUID. Each field is length-prefixed so two different windows cannot run together
-     * into the same input.
+     * into the same input. Strings are hashed as their UTF-16 code units, because a UTF-8 encoder
+     * turns a lone surrogate into `?` and two different strings would hash the same.
      *
      * @param context The context the window is analysed in.
      * @param sourceId The id of the source the window comes from.
@@ -296,11 +297,11 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         text: String,
     ): String {
         val digest = MessageDigest.getInstance("SHA-256")
-        val buffer = ByteBuffer.allocate(Int.SIZE_BYTES)
         fun field(value: String) {
-            val bytes = value.toByteArray(Charsets.UTF_8)
-            digest.update(buffer.clear().putInt(bytes.size).array())
-            digest.update(bytes)
+            val bytes = ByteBuffer.allocate(Int.SIZE_BYTES + value.length * Char.SIZE_BYTES)
+            bytes.putInt(value.length)
+            value.forEach { bytes.putChar(it) }
+            digest.update(bytes.array())
         }
         field(WINDOW_CHUNK_ID_VERSION)
         field(context.contextId.value)
