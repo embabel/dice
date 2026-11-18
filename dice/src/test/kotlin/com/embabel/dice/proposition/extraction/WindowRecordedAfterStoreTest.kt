@@ -31,6 +31,7 @@ import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SourceAnalysisRequestEvent
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.incremental.BookmarkKey
+import com.embabel.dice.incremental.HashKey
 import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore
 import com.embabel.dice.incremental.IncrementalSource
@@ -57,6 +58,7 @@ import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.net.SocketTimeoutException
+import java.time.Instant
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -183,10 +185,11 @@ class WindowRecordedAfterStoreTest {
         currentRun: ExtractionRunRef? = null,
         source: String = sourceId,
         sourceCalls: AtomicInteger = AtomicInteger(),
+        size: Int = 1,
     ): SourceAnalysisRequestEvent {
         val incremental = mockk<IncrementalSource<Message>>(relaxed = true)
         every { incremental.id } returns source
-        every { incremental.size } returns 1
+        every { incremental.size } returns size
         // Each source gets its own text, so the history store's hash check tells sources apart.
         every { incremental.getItems(any(), any()) } returns listOf(UserMessage("Alice writes in $source"))
         return object : SourceAnalysisRequestEvent(this, user()) {
@@ -689,12 +692,17 @@ class WindowRecordedAfterStoreTest {
         return appender.list.filter { it.level == Level.ERROR }
     }
 
-    private fun assertStuckWindowLogged(logged: List<ILoggingEvent>, times: Int, cause: String) {
+    private fun assertStuckWindowLogged(
+        logged: List<ILoggingEvent>,
+        times: Int,
+        cause: String,
+        range: String = "[0, 1)",
+    ) {
         val stuck = logged.filter { it.formattedMessage.contains("source $sourceId") }
         assertThat(stuck).hasSize(times)
         assertThat(stuck).allSatisfy {
             assertThat(it.formattedMessage)
-                .contains("items [0, 1)")
+                .contains("items $range")
                 .contains("context ${tenant.value}")
             assertThat(it.throwableProxy?.message).isEqualTo(cause)
         }
@@ -733,5 +741,30 @@ class WindowRecordedAfterStoreTest {
 
         assertStuckWindowLogged(logged, times = 1, cause = "disk full")
         assertThat(harness.bookmark()).isNull()
+    }
+
+    @Test
+    fun `a failed store after the bookmark has moved logs that window's own range`() {
+        // The window starts the overlap before the bookmark, and its end is exclusive. A host reads
+        // these bounds to pick the bookmark that skips the window.
+        val history = InMemoryChunkHistoryStore()
+        history.recordProcessed(
+            ProcessedChunkRecord(
+                bookmarkKey = BookmarkKey(tenant, sourceId),
+                hashKey = HashKey(tenant, "earlier-window"),
+                startIndex = 0,
+                endIndex = 3,
+                processedAt = Instant.now(),
+            ),
+        )
+        val harness = harness(repository = FlakyRepository(failingSaves = setOf(1)), history = history)
+
+        val logged = errors {
+            assertThatThrownBy { harness.extraction.extractPropositions(event(size = 6)) }
+                .hasMessage("store is down")
+        }
+
+        assertStuckWindowLogged(logged, times = 1, cause = "store is down", range = "[2, 3)")
+        assertThat(harness.bookmark()?.endIndex).isEqualTo(3)
     }
 }
