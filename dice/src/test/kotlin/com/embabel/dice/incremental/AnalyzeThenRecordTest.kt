@@ -21,11 +21,14 @@ import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.common.support.Sha256ContentHasher
+import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
+import java.util.UUID
 
 /*
  * Contract for AbstractIncrementalAnalyzer.analyzeThenRecord and the analyze behaviour it shares.
@@ -42,6 +45,12 @@ import org.junit.jupiter.api.Test
  * I1  analyze keeps its trigger rule and still records before it returns.
  * L1  After a successful call, a second call on the same unchanged source returns null.
  * J1  analyzeThenRecord is synthetic in bytecode, so Java source cannot call it.
+ * C1  A window analysed again after a failed store gets the same chunk id as the first attempt.
+ * C2  The chunk id is a UUID that depends only on the context, the source id, the window bounds
+ *     and the window text, so a fresh analyzer and history store give the same id.
+ * C3  Windows that differ in context, source id, text or bounds get different chunk ids, including
+ *     strings the UTF-8 encoder would map to the same bytes.
+ * C4  The chunk id for a known window is pinned, so a change to how it is derived fails a test.
  */
 class AnalyzeThenRecordTest {
 
@@ -257,5 +266,91 @@ class AnalyzeThenRecordTest {
 
         assertEquals(1, methods.size)
         assertEquals(true, methods.single().isSynthetic)
+    }
+
+    /**
+     * Runs one fresh analyzer with an empty history over [items] and returns the id of the chunk
+     * it analysed.
+     *
+     * @param sourceId The id of the source to analyse.
+     * @param items The items in the source.
+     * @param analysisContext The context to analyse in.
+     * @return The chunk id.
+     */
+    private fun chunkIdFor(
+        sourceId: String,
+        items: List<String>,
+        analysisContext: SourceAnalysisContext = context,
+    ): String {
+        val analyzer = RecordingAnalyzer(InMemoryChunkHistoryStore())
+        analyzer.run(ListSource(sourceId, items.toMutableList()), analysisContext) { }
+        return analyzer.chunks.single().id
+    }
+
+    // C1: the retry reaches the store with the same chunk id, so revision sees the claims it
+    // already holds as a replay instead of adding them again.
+    @Test
+    fun `C1 a window analysed again after a failed store keeps its chunk id`() {
+        val analyzer = RecordingAnalyzer(InMemoryChunkHistoryStore())
+        val source = ListSource("src", fourItems.toMutableList())
+
+        assertThrows(IllegalStateException::class.java) {
+            analyzer.run(source, context) { throw IllegalStateException("store down") }
+        }
+        analyzer.run(source, context) { }
+
+        assertEquals(2, analyzer.chunks.size)
+        assertEquals(analyzer.chunks[0].id, analyzer.chunks[1].id)
+    }
+
+    @Test
+    fun `C2 the chunk id is a UUID that a fresh analyzer derives again`() {
+        val first = chunkIdFor("src", fourItems)
+
+        assertDoesNotThrow { UUID.fromString(first) }
+        assertEquals(first, chunkIdFor("src", fourItems))
+    }
+
+    @Test
+    fun `C3 windows that differ in context, source or text get different chunk ids, even where UTF-8 would not tell them apart`() {
+        val base = chunkIdFor("src", fourItems)
+        val otherContext = context.copy(contextId = ContextId("another-tenant"))
+
+        assertNotEquals(base, chunkIdFor("src", fourItems, otherContext))
+        assertNotEquals(base, chunkIdFor("other-src", fourItems))
+        assertNotEquals(base, chunkIdFor("src", listOf("a", "b", "c", "e")))
+        assertNotEquals(chunkIdFor("src?", fourItems), chunkIdFor("src\uD800", fourItems))
+    }
+
+    @Test
+    fun `C3 the same text at different bounds gets a different chunk id`() {
+        val config = WindowConfig(windowSize = 4, overlapSize = 0, triggerInterval = 4)
+        val fromStart = RecordingAnalyzer(InMemoryChunkHistoryStore(), config)
+        fromStart.run(ListSource("src", fourItems.toMutableList()), context) { }
+
+        val afterOne = InMemoryChunkHistoryStore()
+        afterOne.recordProcessed(
+            ProcessedChunkRecord(
+                bookmarkKey = BookmarkKey(contextId, "src"),
+                hashKey = hashOf("z"),
+                startIndex = 0,
+                endIndex = 1,
+                processedAt = java.time.Instant.EPOCH,
+            )
+        )
+        val shifted = RecordingAnalyzer(afterOne, config)
+        shifted.run(ListSource("src", (listOf("z") + fourItems).toMutableList()), context) { }
+
+        assertEquals(fromStart.chunks.single().text, shifted.chunks.single().text)
+        assertNotEquals(fromStart.chunks.single().id, shifted.chunks.single().id)
+    }
+
+    @Test
+    fun `C4 the chunk id of a known window is pinned`() {
+        val id = UUID.fromString(chunkIdFor("src", fourItems))
+
+        assertEquals(8, id.version())
+        assertEquals(2, id.variant())
+        assertEquals("e7b9969f-fb8f-828f-ae3b-95756deca1d0", id.toString())
     }
 }

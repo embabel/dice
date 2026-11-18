@@ -20,7 +20,10 @@ import com.embabel.dice.common.ContentHasher
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.support.Sha256ContentHasher
 import org.slf4j.LoggerFactory
+import java.nio.ByteBuffer
+import java.security.MessageDigest
 import java.time.Instant
+import java.util.UUID
 import kotlin.math.max
 import kotlin.math.min
 
@@ -179,6 +182,9 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
     /**
      * Works out the window that starts [WindowConfig.overlapSize] items before [lastIndex], formats
      * it, and builds its chunk. Returns null when the same text was already processed.
+     *
+     * The chunk id comes from [windowChunkId], so analysing the same window again after a failed
+     * store gives the same id, and revision treats claims already stored from it as a replay.
      */
     private fun prepareWindow(
         source: IncrementalSource<T>,
@@ -208,6 +214,7 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         val chunk = Chunk.Companion.create(
             text = text,
             parentId = source.id,
+            id = windowChunkId(context, source.id, startIndex, endIndex, text),
             metadata = mapOf(
                 "source_type" to "incremental",
                 "source_id" to source.id,
@@ -267,4 +274,60 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         logger.error(message, window.startIndex, window.endIndex, source.id, context.contextId.value, failure)
     }
 
+    /**
+     * Derives a chunk id from the window itself, so the same window always gets the same id.
+     *
+     * The id is a SHA-256 of the context, the source id, the window bounds and the text, shaped as
+     * a version 8 UUID. Each field is length-prefixed so two different windows cannot run together
+     * into the same input. Strings are hashed as their UTF-16 code units, because a UTF-8 encoder
+     * turns a lone surrogate into `?` and two different strings would hash the same.
+     *
+     * @param context The context the window is analysed in.
+     * @param sourceId The id of the source the window comes from.
+     * @param startIndex The first item in the window.
+     * @param endIndex The item after the last one in the window.
+     * @param text The formatted text of the window.
+     * @return The chunk id.
+     */
+    private fun windowChunkId(
+        context: SourceAnalysisContext,
+        sourceId: String,
+        startIndex: Int,
+        endIndex: Int,
+        text: String,
+    ): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        // A small buffer, flushed as it fills, so hashing a large window does not copy it whole.
+        val buffer = ByteBuffer.allocate(WINDOW_CHUNK_ID_BUFFER_BYTES)
+        fun flush() {
+            digest.update(buffer.array(), 0, buffer.position())
+            buffer.clear()
+        }
+        fun field(value: String) {
+            buffer.putInt(value.length)
+            value.forEach {
+                if (buffer.remaining() < Char.SIZE_BYTES) flush()
+                buffer.putChar(it)
+            }
+            flush()
+        }
+        field(WINDOW_CHUNK_ID_VERSION)
+        field(context.contextId.value)
+        field(sourceId)
+        field(startIndex.toString())
+        field(endIndex.toString())
+        field(text)
+        val hash = ByteBuffer.wrap(digest.digest())
+        val most = (hash.long and VERSION_MASK.inv()) or VERSION_8
+        val least = (hash.long and VARIANT_MASK.inv()) or VARIANT_RFC
+        return UUID(most, least).toString()
+    }
 }
+
+/** Bumped if the inputs to the window chunk id ever change, so old and new ids cannot clash. */
+private const val WINDOW_CHUNK_ID_VERSION = "dice-incremental-window-v1"
+private const val WINDOW_CHUNK_ID_BUFFER_BYTES = 8192
+private const val VERSION_MASK = 0xF000L
+private const val VERSION_8 = 0x8000L
+private const val VARIANT_MASK = -0x4000000000000000L
+private const val VARIANT_RFC = Long.MIN_VALUE
