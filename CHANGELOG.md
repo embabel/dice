@@ -2510,7 +2510,8 @@ and the consumer PRs that deliver it).
   queued at that moment run, and the first failure is thrown; later ones are logged. A failure while
   building the context or analysing the window is still logged, and the window is retried. A
   `LineageNotRecordedException` is always thrown, also when it comes before the store step. If the
-  thread's interrupt flag is set, the run stops, the flag stays set and queued events are dropped;
+  thread's interrupt flag is set, the run stops, the flag stays set and queued events are dropped,
+  and a caller interrupted while it waits for the lock drops its event;
   the next event for the source analyses the window again. A store or pipeline that catches an
   interrupt must set the flag again. With the default writer, a run link failure that leaves the
   claims stored records the window, so the claims are not stored again, and then throws. Any other
@@ -2519,5 +2520,6 @@ and the consumer PRs that deliver it).
   store as the claims (the Drivine stores do this) and calls `extractPropositions` inside a
   transaction. A transaction does not stop two concurrent transactions from analysing the same
   window, so serialize those through the commit. The listing of every stored proposition after an
-  extraction moves from `info` to `debug`, so claim text stays out of default logs, and a failure in
-  that listing no longer fails the extraction. **Compatibility: behavioral.**
+  extraction moves from `info` to `debug`, and a failure in that listing no longer fails the
+  extraction. The per-extraction summary at `info` still names the claims it extracted.
+  **Compatibility: behavioral.**

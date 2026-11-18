@@ -340,6 +340,10 @@ class WindowRecordedAfterStoreTest {
 
         val second = Thread({ harness.extraction.extractPropositions(event(source = "source-b")) }, "second-caller")
         second.start()
+        // Hold the first caller until the second is parked on the lock, so the two really contend.
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (second.state != Thread.State.WAITING && System.nanoTime() < deadline) Thread.onSpinWait()
+        assertThat(second.state).isEqualTo(Thread.State.WAITING)
         release.countDown()
         first.join(10_000)
         second.join(10_000)

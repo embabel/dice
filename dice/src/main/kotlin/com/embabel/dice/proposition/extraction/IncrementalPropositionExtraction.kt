@@ -528,14 +528,23 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * listener that keeps queueing cannot hold the failure back. Each later failure is logged at
      * `warn`, and the first is rethrown unchanged.
      *
-     * The thread's interrupt flag stops the run before the next event. The queued events are then
-     * dropped: an event only asks for the next window to be analysed, and the next event for that
+     * The thread's interrupt flag stops the run before the next event, and also stops a caller that
+     * is waiting for the lock. Events that do not run are dropped, and so are any events this run
+     * queued but did not reach, so none of them runs on another caller's thread. Dropping one loses
+     * nothing: an event only asks for the next window to be analysed, and the next event for that
      * source does the same, because a window is recorded only after its claims are stored.
      *
      * @param event The caller's event.
      */
     private fun processOnThisThread(event: SourceAnalysisRequestEvent) {
-        extractionLock.lock()
+        try {
+            extractionLock.lockInterruptibly()
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            logger.info("Extraction interrupted while waiting for another run, dropping its event")
+            countDropped(1)
+            return
+        }
         var firstFailure: Exception? = null
         try {
             // How many more queued events this run may take. Unbounded until the first failure.
@@ -543,10 +552,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             var next: SourceAnalysisRequestEvent? = event
             while (next != null) {
                 if (Thread.currentThread().isInterrupted) {
-                    if (pendingEvents.isNotEmpty()) {
-                        logger.info("Extraction interrupted, dropping {} queued event(s)", pendingEvents.size)
-                        pendingEvents.clear()
-                    }
+                    logger.info("Extraction interrupted, dropping the next event")
+                    countDropped(1)
                     break
                 }
                 try {
@@ -560,9 +567,27 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 if (next != null && firstFailure != null) remaining--
             }
         } finally {
+            // Whatever is still queued was queued by this run. Drop it here, so it never runs on
+            // another caller's thread or inside another caller's transaction.
+            var left = 0
+            while (pendingEvents.poll() != null) left++
+            if (left > 0) {
+                logger.info("Dropping {} event(s) queued by this run that it did not reach", left)
+                countDropped(left)
+            }
             extractionLock.unlock()
         }
         firstFailure?.let { throw it }
+    }
+
+    /**
+     * Balances the in-flight count for events that were dropped without being processed, since
+     * only processing an event counts it as done.
+     *
+     * @param events How many events were dropped.
+     */
+    private fun countDropped(events: Int) {
+        inFlightCount.addAndGet(-events)
     }
 
     /**
