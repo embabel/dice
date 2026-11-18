@@ -46,6 +46,7 @@ import org.drivine.connection.DatabaseRegistry
 import org.drivine.connection.DatabaseType
 import org.drivine.connection.NativeDriverSource
 import org.drivine.manager.StatelessGraphObjectManager
+import org.drivine.manager.DelegatingPersistenceManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.schema.RangeIndexSpec
 import org.drivine.schema.SchemaCatalog
@@ -67,6 +68,8 @@ import org.springframework.scheduling.annotation.EnableScheduling
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.ResourceTransactionManager
+import java.nio.file.Files
+import java.nio.file.Path
 import javax.sql.DataSource
 
 /**
@@ -105,40 +108,80 @@ class DiceStorageAutoConfiguration {
      * makes Drivine's over the same transaction state, so a store's transactions and a caller's
      * Drivine transactions still join each other.
      *
-     * The host's manager is kept when it manages the very data source Drivine reads, as a JDBC
-     * manager does when Drivine is given a transaction-aware proxy over the host's own data source.
-     * Drivine's statements then already run on the host's connection inside the host's
-     * transaction, and a Drivine transaction of its own on that connection would commit the host's
-     * work with it.
+     * One case keeps the host's manager: Drivine reading the very data source the manager manages
+     * through Spring's `TransactionAwareDataSourceProxy`. Inside a host transaction Drivine's
+     * statements then run on the host's connection and are the host's to commit, and a Drivine
+     * transaction of the store's own on that connection would commit the host's work with it. Any
+     * other way of sharing one SQLite file with the host's manager is refused; see
+     * [sharingWithHost].
      *
-     * With no Drivine transaction state in the context, as when a host builds Drivine by hand, there
-     * is nothing to make Drivine's manager from: the host's is used, and a warning says so.
+     * Drivine's transaction state is taken from its bean, or else from Drivine's own persistence
+     * manager. With neither, the host's manager is used and a warning says so.
      */
     private fun drivineTransactions(
         given: PlatformTransactionManager,
         persistenceManager: PersistenceManager,
     ): PlatformTransactionManager {
         if (given is DrivineTransactionManager) return given
-        if (managesDrivineDataSource(given, persistenceManager)) return given
-        transactionContextHolder?.let { return DrivineTransactionManager(it) }
+        when (sharingWithHost(given, persistenceManager)) {
+            HostSharing.THROUGH_PROXY -> return given
+            HostSharing.SAME_SQLITE_FILE -> error(
+                "The graph store's SQLite datasource '${persistenceManager.database}' and transaction manager " +
+                    "${given.javaClass.name} use the same SQLite file on connections of their own. SQLite has " +
+                    "one write lock per file, so a store write inside the manager's transaction would wait " +
+                    "for that transaction's own lock. Give Drivine a TransactionAwareDataSourceProxy over the " +
+                    "data source the manager manages, so both use one connection.",
+            )
+            HostSharing.NONE -> Unit
+        }
+        val holder = transactionContextHolder ?: (persistenceManager as? DelegatingPersistenceManager)?.contextHolder
+        holder?.let { return DrivineTransactionManager(it) }
         logger.warn(
-            "The graph stores were given transaction manager {}, which is not Drivine's, and the " +
-                "context has no Drivine transaction state to make Drivine's from. Their statements " +
-                "will not join its transactions. Publish Drivine's TransactionContextHolder as a bean.",
+            "The graph stores were given transaction manager {}, which is not Drivine's, and there is no " +
+                "Drivine transaction state to make Drivine's from. Their statements will not join its " +
+                "transactions. Publish Drivine's TransactionContextHolder as a bean.",
             given.javaClass.name,
         )
         return given
     }
 
-    /** Whether [manager] binds connections of the data source Drivine reads [persistenceManager]'s store through. */
-    private fun managesDrivineDataSource(manager: PlatformTransactionManager, persistenceManager: PersistenceManager): Boolean {
-        val managed = (manager as? ResourceTransactionManager)?.resourceFactory as? DataSource ?: return false
-        val drivine = drivineDataSource(persistenceManager) ?: return false
-        return managed in unwrapped(drivine)
+    /** How a host's transaction manager shares the store's data, if it does. */
+    private enum class HostSharing { NONE, THROUGH_PROXY, SAME_SQLITE_FILE }
+
+    /**
+     * Whether [manager] manages the data source Drivine reads [persistenceManager]'s store through,
+     * and how. Through a transaction-aware proxy is the one supported way. On SQLite, the same data
+     * source without the proxy, or another data source over the same file, is a second connection
+     * to one write lock.
+     */
+    private fun sharingWithHost(manager: PlatformTransactionManager, persistenceManager: PersistenceManager): HostSharing {
+        val managed = (manager as? ResourceTransactionManager)?.resourceFactory as? DataSource ?: return HostSharing.NONE
+        val drivine = drivineDataSource(persistenceManager) ?: return HostSharing.NONE
+        val chain = unwrapped(drivine)
+        if (isTransactionAwareProxy(chain.first()) && managed in chain.drop(1)) return HostSharing.THROUGH_PROXY
+        if (persistenceManager.type != DatabaseType.SQLITE) return HostSharing.NONE
+        if (managed in chain) return HostSharing.SAME_SQLITE_FILE
+        val drivineFile = sqliteFile(chain.last())
+        return if (drivineFile != null && drivineFile == sqliteFile(managed)) HostSharing.SAME_SQLITE_FILE else HostSharing.NONE
     }
+
+    /** Whether [dataSource] is Spring's transaction-aware proxy, which hands out a transaction's bound connection. */
+    private fun isTransactionAwareProxy(dataSource: DataSource): Boolean =
+        generateSequence<Class<*>>(dataSource.javaClass) { it.superclass }
+            .any { it.name == TRANSACTION_AWARE_PROXY }
+
+    /** The SQLite file [dataSource] opens, or null when it is not SQLite's or cannot be asked. */
+    private fun sqliteFile(dataSource: DataSource): Path? = runCatching {
+        val url = dataSource.connection.use { it.metaData.url }
+        val path = url.removePrefix("jdbc:sqlite:").substringBefore('?').removePrefix("file:")
+        Path.of(path).toAbsolutePath().normalize().let { if (Files.exists(it)) it.toRealPath() else it }
+    }.getOrNull()
 
     /** How far [unwrapped] follows delegating data sources, so a cycle cannot loop for ever. */
     private val maxDataSourceWrappers = 8
+
+    /** Spring's transaction-aware proxy, named rather than typed: spring-jdbc is the host's to bring. */
+    private val TRANSACTION_AWARE_PROXY = "org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy"
 
     /**
      * [dataSource] and each data source it delegates to, outermost first. Spring's delegating data
@@ -157,12 +200,17 @@ class DiceStorageAutoConfiguration {
 
     /**
      * Refuses a SQLite store whose transactions do not take the write lock as they begin, before a
-     * save can fail on it. See [SqliteTransactionMode].
+     * save can fail on it, and one whose transaction mode cannot be read at all. See
+     * [SqliteTransactionMode].
      */
     private fun requireLockingSqliteTransactions(persistenceManager: PersistenceManager) {
         if (persistenceManager.type != DatabaseType.SQLITE) return
-        val dataSource = drivineDataSource(persistenceManager) ?: return
-        SqliteTransactionMode.requireImmediate(dataSource, persistenceManager.database)
+        val name = persistenceManager.database
+        val dataSource = checkNotNull(drivineDataSource(persistenceManager)) {
+            "SQLite datasource '$name' gives no JDBC data source to read its transaction mode from. DICE needs " +
+                "its transactions to take the write lock as they begin: use Drivine's own SQLite provider."
+        }
+        SqliteTransactionMode.requireImmediate(dataSource, name)
     }
 
     // ---- Graph backend (embabel.dice.store.type=graph) ----

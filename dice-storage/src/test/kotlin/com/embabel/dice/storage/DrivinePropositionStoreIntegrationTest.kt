@@ -68,6 +68,7 @@ import org.springframework.test.context.DynamicPropertySource
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
 import org.springframework.transaction.interceptor.TransactionInterceptor
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Duration
 import java.time.Instant
@@ -1960,7 +1961,11 @@ class DrivinePropositionStoreIntegrationTest {
 
         override fun <T : Any> maybeGetOne(spec: QuerySpecification<T>): T? {
             val result = delegate.maybeGetOne(spec)
-            if (result == null && spec.parameters.keys == setOf("contextId", "text", "excludeId")) {
+            // Only the lookups inside the save's dedup transaction meet at the barrier. A save first
+            // checks for an exact replay with reads before any transaction, which never write.
+            if (result == null && spec.parameters.keys == setOf("contextId", "text", "excludeId") &&
+                TransactionSynchronizationManager.isActualTransactionActive()
+            ) {
                 barrier.countDown()
                 assertTrue(barrier.await(10, TimeUnit.SECONDS), "both repositories must observe no duplicate")
             }

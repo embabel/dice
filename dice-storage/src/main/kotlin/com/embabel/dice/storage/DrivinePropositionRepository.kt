@@ -59,6 +59,7 @@ import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
 
@@ -203,7 +204,8 @@ class DrivinePropositionRepository(
      * The text is embedded before any transaction opens, so a slow embedding service never holds
      * the store's locks. On SQLite that lock is the whole file's. A save that only repeats a fact the
      * store already holds, evidence and all, is answered before that, from reads alone: it writes
-     * nothing, so it needs no embedding.
+     * nothing, so it needs no embedding. Inside a caller's SQLite transaction that check is skipped,
+     * since its reads would take the lock before the embedding.
      *
      * Propositions with blank text have nothing to dedup on and are persisted directly.
      *
@@ -226,9 +228,14 @@ class DrivinePropositionRepository(
      */
     @Transactional(propagation = Propagation.SUPPORTS)
     override fun save(proposition: Proposition): Proposition {
-        exactReplay(proposition)?.let { return it }
+        val inCallerTransaction = transactionManager.hasOpenTransaction()
+        // Inside a caller's SQLite transaction the replay check's reads would take the file's write
+        // lock before the embedding, which is what the order below exists to avoid.
+        if (!(inCallerTransaction && callerTransactionHoldsWriteLock)) {
+            exactReplay(proposition)?.let { return it }
+        }
         val embedded = EmbeddedText(proposition.text, embeddingFor(proposition))
-        return if (transactionManager.hasOpenTransaction()) {
+        return if (inCallerTransaction) {
             saveInCallerTransaction(proposition, embedded)
         } else {
             saveInOwnedTransaction(proposition, embedded)
@@ -283,6 +290,8 @@ class DrivinePropositionRepository(
         val existingId = findDuplicateId(proposition.contextId.value, proposition.text, proposition.id) ?: return null
         if (existsById(proposition.id)) return null
         val existing = findById(existingId) ?: return null
+        // Loaded by id, so a writer may have moved it since the lookup. Then it is no match.
+        if (existing.contextId != proposition.contextId || existing.text != proposition.text) return null
         // As the merge does, before the novelty check can drop an entry that names a source the
         // stored one disagrees with.
         validateSourceIdentities(proposition.provenanceEntries)
@@ -1260,11 +1269,12 @@ class DrivinePropositionRepository(
 
     /**
      * The same rows as [nearestPairsByIndex], measured by Drivine on a store with no index procedure.
-     * Each pair is kept under its smaller id whichever member's search found it, so a pair only the
-     * later member's [topK] reaches is not lost.
+     * Every candidate is measured against every other, and each pair is kept under its smaller id,
+     * so each anchor's [topK] is taken among its later candidates, as the in-memory store takes it.
      */
+    @Suppress("UNUSED_PARAMETER")
     private fun nearestPairsAmong(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> =
-        graphObjectManager.loadNearestAmong(PropositionView::class.java, ids, topK, toEngineScore(similarityThreshold))
+        graphObjectManager.loadNearestAmong(PropositionView::class.java, ids, ids.size - 1, toEngineScore(similarityThreshold))
             .flatMap { (seedId, near) ->
                 near.map { other ->
                     val (anchorId, otherId) = if (seedId < other.value) seedId to other.value else other.value to seedId
@@ -1311,7 +1321,7 @@ class DrivinePropositionRepository(
      * transaction of its own: callers commonly invoke this from inside a `readOnly = true` query
      * transaction (e.g. Memory's eager load), which cannot itself take a write. On SQLite it joins
      * a caller's transaction instead, which holds the file's write lock and could not let one of its
-     * own commit; SQLite does not hold a read-only transaction to its word.
+     * own commit. Where a read-only caller's SQLite connection refuses writes, the touch is left out.
      * Empty [ids] is a no-op — no need to open a transaction for nothing.
      *
      * Declared read-only so a read-only caller's transaction can be joined at all: Spring refuses a
@@ -1326,10 +1336,20 @@ class DrivinePropositionRepository(
                     .bind(mapOf("ids" to ids.distinct(), "now" to Instant.now())),
             )
         }
-        if (callerTransactionHoldsWriteLock && transactionManager.hasOpenTransaction()) {
-            touch()
-        } else {
-            txTemplate.executeWithoutResult { touch() }
+        when {
+            !(callerTransactionHoldsWriteLock && transactionManager.hasOpenTransaction()) ->
+                txTemplate.executeWithoutResult { touch() }
+            // A read-only caller's connection may refuse writes outright, when its driver is set to
+            // enforce read-only. The access time is a hint, so the touch is then left out. SQLite
+            // fails only that statement, and the caller's transaction goes on.
+            TransactionSynchronizationManager.isCurrentTransactionReadOnly() ->
+                try {
+                    touch()
+                } catch (e: RuntimeException) {
+                    if (!StoreErrors.isSqliteReadOnlyRefusal(e)) throw e
+                    logger.debug("Read-only connection refused the access touch for {} propositions", ids.size)
+                }
+            else -> touch()
         }
     }
 
@@ -1497,7 +1517,7 @@ class DrivinePropositionRepository(
             persistenceManager.indexes.drop(spec)
         }
         val outcome = try {
-            rewriteEveryEmbedding()
+            rewriteEveryEmbedding(oneStatementAtATime = insideCallerTransaction)
         } catch (e: Throwable) {
             // Throwable, not Exception: whatever escapes, the index is remade before it does.
             if (shapeChanged) remakeIndexAfterFailure(spec, e)
@@ -1525,9 +1545,10 @@ class DrivinePropositionRepository(
     private fun requireIndexAsItIs(spec: VectorIndexSpec) {
         val existing = persistenceManager.indexes.find(spec)
         check(existing != null && existing.dimensions == spec.dimensions && existing.similarity == spec.similarity) {
-            "reembedAll needs to make the vector index ${spec.effectiveName} again, for ${spec.dimensions} " +
-                "dimensions, and on SQLite it cannot do that inside a caller's transaction: the index " +
-                "change waits for the write lock the transaction holds. Call it outside a transaction."
+            "reembedAll found the vector index ${spec.effectiveName} missing, of another shape than " +
+                "${spec.dimensions} dimensions, or unreadable from here. Making it again on SQLite inside a " +
+                "caller's transaction would wait for the write lock that transaction holds. Call reembedAll " +
+                "outside a transaction."
         }
     }
 
@@ -1572,8 +1593,14 @@ class DrivinePropositionRepository(
      *
      * A WRITE failure (the database, not the embedder) still propagates; batches already committed
      * stay committed, and a rerun rewrites them harmlessly.
+     *
+     * Inside a caller's transaction the writes go one statement at a time. A batch outside a Drivine
+     * transaction commits as it ends, and on a connection the caller's transaction lent through a
+     * transaction-aware proxy that would commit the caller's work too.
+
+     * @param oneStatementAtATime whether the writes join a caller's transaction
      */
-    private fun rewriteEveryEmbedding(): RewriteOutcome {
+    private fun rewriteEveryEmbedding(oneStatementAtATime: Boolean): RewriteOutcome {
         val views = graphObjectManager.loadAll<PropositionView> {
             where { proposition.contextId.isNotNull() } // skip malformed/foreign :Proposition nodes (see findAll)
         }.filter { it.proposition.text.isNotBlank() }
@@ -1585,7 +1612,8 @@ class DrivinePropositionRepository(
             val embedded = batch.map { view ->
                 view.proposition.id to breaker.attempt { embeddingService.embed(view.proposition.text) }
             }
-            persistenceManager.executeBatch(embedded.map { (id, result) -> rewriteOf(id, result, dimensions) })
+            val rewrites = embedded.map { (id, result) -> rewriteOf(id, result, dimensions) }
+            if (oneStatementAtATime) rewrites.forEach(persistenceManager::execute) else persistenceManager.executeBatch(rewrites)
             embedded
         }.flatten()
         if (breaker.tripped) {

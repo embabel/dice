@@ -134,6 +134,12 @@
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Test: Spring's JDBC transaction manager and proxy, as a host brings them -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-jdbc</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- Test: the SQLite driver, for the store suites run on Drivine's SQLite backend -->
         <dependency>
             <groupId>org.xerial</groupId>

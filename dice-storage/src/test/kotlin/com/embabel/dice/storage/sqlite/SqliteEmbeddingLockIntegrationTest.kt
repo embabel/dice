@@ -39,6 +39,7 @@ import org.springframework.context.annotation.Bean
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -90,20 +91,36 @@ class SqliteEmbeddingLockIntegrationTest {
 
     @Test
     fun `another write goes through while a save waits for its embedding`() {
+        writeGoesThroughWhileSaveEmbeds(insideCallerTransaction = false)
+    }
+
+    /**
+     * A caller's transaction that has not touched the store yet holds no lock either, and the
+     * save's first statement is what would take it. That statement comes after the embedding.
+     */
+    @Test
+    fun `another write goes through while a save in a fresh caller transaction waits for its embedding`() {
+        writeGoesThroughWhileSaveEmbeds(insideCallerTransaction = true)
+    }
+
+    private fun writeGoesThroughWhileSaveEmbeds(insideCallerTransaction: Boolean) {
         val embedding = HeldEmbeddingService(FakeEmbeddingService())
         val held = DrivinePropositionRepository(graphObjectManager, persistenceManager, embedding, transactionManager)
         val context = ContextId("held-embed-ctx")
         val executor = Executors.newSingleThreadExecutor()
         try {
+            val proposition = Proposition(
+                contextId = context,
+                text = "The ghost hums a slow tune",
+                mentions = listOf(EntityMention(span = "the ghost", type = "Ghost", role = MentionRole.SUBJECT)),
+                confidence = 0.9,
+            )
             val save = executor.submit<Proposition> {
-                held.save(
-                    Proposition(
-                        contextId = context,
-                        text = "The ghost hums a slow tune",
-                        mentions = listOf(EntityMention(span = "the ghost", type = "Ghost", role = MentionRole.SUBJECT)),
-                        confidence = 0.9,
-                    ),
-                )
+                if (insideCallerTransaction) {
+                    TransactionTemplate(transactionManager).execute { held.save(proposition) }!!
+                } else {
+                    held.save(proposition)
+                }
             }
             assertTrue(embedding.started.await(10, TimeUnit.SECONDS), "the save never asked for its embedding")
 

@@ -72,8 +72,10 @@ class GraphDecayManager(
             return
         }
         val match = "MATCH (p:Proposition)" + (condition?.let { " WHERE $it" } ?: "")
+        // Each batch says the condition again: a row moved out of scope since the match is left alone.
+        val recheck = condition?.let { "  WITH p WHERE $it\n" } ?: ""
         persistenceManager.execute(
-            cypherQuery("$match\nCALL {\n  WITH p\n$DECAY_EXPRESSION\n} IN TRANSACTIONS OF $batchRows ROWS")
+            cypherQuery("$match\nCALL {\n  WITH p\n$recheck$DECAY_EXPRESSION\n} IN TRANSACTIONS OF $batchRows ROWS")
                 .bind(extraParams + mapOf("now" to now))
         )
     }

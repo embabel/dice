@@ -19,9 +19,11 @@ import com.embabel.agent.api.common.Ai
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.proposition.PropositionRepository
 import org.assertj.core.api.Assertions.assertThat
+import org.drivine.connection.ConnectionProvider
 import org.drivine.connection.DatabaseRegistry
 import org.drivine.connection.DatabaseType
 import org.drivine.connection.JdbcConnectionProvider
+import org.drivine.manager.DelegatingPersistenceManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.transaction.DrivineTransactionManager
@@ -49,6 +51,8 @@ import org.springframework.transaction.support.TransactionTemplate
 import org.sqlite.SQLiteConfig
 import org.sqlite.SQLiteDataSource
 import java.nio.file.Files
+import java.nio.file.Path
+import javax.sql.DataSource
 
 /**
  * Proves that a real consumer of `dice-storage-autoconfigure` gets working `@Transactional` advice
@@ -127,26 +131,106 @@ class DiceStorageTransactionAutoConfigurationTest {
     }
 
     /**
-     * The other way a host brings its own manager: Spring's JDBC one, over the very SQLite file
-     * Drivine reads through a transaction-aware proxy. Drivine's statements then run on the host's
-     * connection in the host's transaction, and a Drivine transaction of the store's own would
-     * commit the host's work with it. The store keeps the host's manager.
+     * The one wiring DICE supports where a host's JDBC manager and Drivine share a SQLite file:
+     * Drivine reads it through a transaction-aware proxy over the host's data source. Drivine's
+     * statements then run on the host's connection in the host's transaction, and a Drivine
+     * transaction of the store's own would commit the host's work with it. The store keeps the
+     * host's manager.
      */
     @Test
-    fun `with a host's JDBC manager over Drivine's own data source, the proposition store keeps it`() {
-        val file = Files.createTempFile("dice-host-jdbc-", ".db")
-        val target = SQLiteDataSource(SQLiteConfig().apply { setTransactionMode(SQLiteConfig.TransactionMode.IMMEDIATE) })
-            .apply { url = "jdbc:sqlite:$file" }
+    fun `with a host's JDBC manager and Drivine behind a transaction-aware proxy, the proposition store keeps it`() {
+        val target = sqliteDataSource(Files.createTempFile("dice-host-jdbc-", ".db"))
         val hostManager = DataSourceTransactionManager(target)
+
+        sharedFileRunner(TransactionAwareDataSourceProxy(target), hostManager).run { ctx ->
+            val repository = ctx.getBean<PropositionRepository>()
+            val saves = ReflectionTestUtils.getField(repository, "txTemplate") as TransactionTemplate
+
+            assertThat(saves.transactionManager).isSameAs(hostManager)
+        }
+    }
+
+    /**
+     * The host's manager and Drivine on one raw pool: each takes its own connection, so a write
+     * the store makes in the host's transaction would wait for the host's own write lock. Refused.
+     */
+    @Test
+    fun `a host's JDBC manager sharing a raw pool with Drivine is refused at startup`() {
+        val target = sqliteDataSource(Files.createTempFile("dice-host-raw-", ".db"))
+
+        sharedFileRunner(target, DataSourceTransactionManager(target)).run { ctx ->
+            assertThat(ctx).hasFailed()
+            assertThat(ctx.startupFailure).rootCause()
+                .hasMessageContaining("TransactionAwareDataSourceProxy")
+        }
+    }
+
+    /** The same file through two pools of its own is the same lock and the same refusal. */
+    @Test
+    fun `a host's JDBC manager on another pool over Drivine's SQLite file is refused at startup`() {
+        val file = Files.createTempFile("dice-host-two-pools-", ".db")
+
+        sharedFileRunner(sqliteDataSource(file), DataSourceTransactionManager(sqliteDataSource(file))).run { ctx ->
+            assertThat(ctx).hasFailed()
+            assertThat(ctx.startupFailure).rootCause()
+                .hasMessageContaining("TransactionAwareDataSourceProxy")
+        }
+    }
+
+    /** A SQLite store whose transaction mode cannot be read could be DEFERRED. Refused. */
+    @Test
+    fun `a SQLite store whose transaction mode cannot be read is refused at startup`() {
+        val registry = mock<DatabaseRegistry>()
+        whenever(registry.connectionProvider("neo")).thenReturn(mock<ConnectionProvider>())
+
+        sqliteRunner(registry, mock()).run { ctx ->
+            assertThat(ctx).hasFailed()
+            assertThat(ctx.startupFailure).rootCause().hasMessageContaining("transaction mode")
+        }
+    }
+
+    /**
+     * A host that builds Drivine by hand publishes no transaction state as a bean, but Drivine's
+     * persistence manager carries its own. The stores use Drivine's manager over it.
+     */
+    @Test
+    fun `without Drivine's transaction state as a bean, the store finds it on the persistence manager`(output: CapturedOutput) {
+        val delegating = mock<DelegatingPersistenceManager>()
+        whenever(delegating.contextHolder).thenReturn(mock<TransactionContextHolder>())
+
+        ApplicationContextRunner()
+            .withUserConfiguration(SharedDataSourceStubConfig::class.java)
+            .withPropertyValues("embabel.dice.store.type=graph")
+            .withConfiguration(AutoConfigurations.of(DiceStorageAutoConfiguration::class.java))
+            .withBean(PersistenceManager::class.java, { delegating })
+            .withBean(PlatformTransactionManager::class.java, { mock<PlatformTransactionManager>() })
+            .run { ctx ->
+                val repository = ctx.getBean<PropositionRepository>()
+                val saves = ReflectionTestUtils.getField(repository, "txTemplate") as TransactionTemplate
+
+                assertThat(saves.transactionManager).isInstanceOf(DrivineTransactionManager::class.java)
+                assertThat(output.out).doesNotContain("not Drivine's")
+            }
+    }
+
+    private fun sqliteDataSource(file: Path): DataSource =
+        SQLiteDataSource(SQLiteConfig().apply { setTransactionMode(SQLiteConfig.TransactionMode.IMMEDIATE) })
+            .apply { url = "jdbc:sqlite:$file" }
+
+    /** The graph store on SQLite, Drivine reading [drivineDataSource], the host's manager [hostManager]. */
+    private fun sharedFileRunner(drivineDataSource: DataSource, hostManager: PlatformTransactionManager): ApplicationContextRunner {
         val provider = mock<JdbcConnectionProvider>()
-        whenever(provider.nativeDriver).thenReturn(TransactionAwareDataSourceProxy(target))
+        whenever(provider.nativeDriver).thenReturn(drivineDataSource)
         val registry = mock<DatabaseRegistry>()
         whenever(registry.connectionProvider("neo")).thenReturn(provider)
+        return sqliteRunner(registry, hostManager)
+    }
+
+    private fun sqliteRunner(registry: DatabaseRegistry, hostManager: PlatformTransactionManager): ApplicationContextRunner {
         val persistenceManager = mock<PersistenceManager>()
         whenever(persistenceManager.type).thenReturn(DatabaseType.SQLITE)
         whenever(persistenceManager.database).thenReturn("neo")
-
-        ApplicationContextRunner()
+        return ApplicationContextRunner()
             .withUserConfiguration(SharedDataSourceStubConfig::class.java)
             .withPropertyValues("embabel.dice.store.type=graph")
             .withConfiguration(AutoConfigurations.of(DiceStorageAutoConfiguration::class.java))
@@ -154,12 +238,6 @@ class DiceStorageTransactionAutoConfigurationTest {
             .withBean(DatabaseRegistry::class.java, { registry })
             .withBean(PersistenceManager::class.java, { persistenceManager })
             .withBean(PlatformTransactionManager::class.java, { hostManager })
-            .run { ctx ->
-                val repository = ctx.getBean<PropositionRepository>()
-                val saves = ReflectionTestUtils.getField(repository, "txTemplate") as TransactionTemplate
-
-                assertThat(saves.transactionManager).isSameAs(hostManager)
-            }
     }
 
     /**

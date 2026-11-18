@@ -47,6 +47,8 @@ internal object StoreErrors {
 
     private const val SQLITE_ERROR = "SQLITE_ERROR"
 
+    private const val SQLITE_READONLY = "SQLITE_READONLY"
+
     private val SQLITE_UNIQUENESS_CODES = setOf("SQLITE_CONSTRAINT_UNIQUE", "SQLITE_CONSTRAINT_PRIMARYKEY")
 
     /** The code of the driver exception a `SQLITE_ERROR` message quotes, right after its own text. */
@@ -68,6 +70,22 @@ internal object StoreErrors {
             if (isSqliteUniquenessFailure(current)) {
                 return true
             }
+            current = current.cause
+        }
+        return false
+    }
+
+    /**
+     * Whether SQLite refused a write because the connection is read-only, anywhere in the cause chain,
+     * either as the driver's own code or quoted inside a `SQLITE_ERROR`.
+     */
+    fun isSqliteReadOnlyRefusal(error: Throwable?): Boolean {
+        var current: Throwable? = error
+        val seen = mutableSetOf<Throwable>()
+        while (current != null && seen.add(current)) {
+            val code = sqliteResultCode(current)
+            val inner = if (code == SQLITE_ERROR) current.message?.let(NESTED_SQLITE_CODE::find)?.groupValues?.get(1) else null
+            if (code?.startsWith(SQLITE_READONLY) == true || inner?.startsWith(SQLITE_READONLY) == true) return true
             current = current.cause
         }
         return false

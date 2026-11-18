@@ -122,6 +122,33 @@ class SqlitePropositionRepositoryIntegrationTest {
         assertEquals(setOf("a" to "b", "b" to "c"), pairs)
     }
 
+    /**
+     * Four propositions at 0, 5, 30 and 33 degrees. Each one's nearest is a or d's partner, so no
+     * search names b and c together, yet c is b's closest among the later ids. With one neighbour
+     * each, the pairs are a-b, b-c and c-d, as the in-memory store finds them.
+     */
+    @Test
+    fun `findClusters keeps a pair that neither member's own search finds`() {
+        fun at(degrees: Double) = floatArrayOf(
+            Math.cos(Math.toRadians(degrees)).toFloat(),
+            Math.sin(Math.toRadians(degrees)).toFloat(),
+        )
+        val vectors = mapOf("a fact" to at(0.0), "b fact" to at(5.0), "c fact" to at(30.0), "d fact" to at(33.0))
+        val shaped = DrivinePropositionRepository(
+            graphObjectManager,
+            persistenceManager,
+            FixedEmbeddingService(vectors, FakeEmbeddingService()),
+            transactionManager,
+        )
+        listOf("a", "b", "c", "d").forEach { shaped.save(ghost("$it fact", "cluster-four", id = it)) }
+
+        val pairs = shaped.findClusters(similarityThreshold = 0.9, topK = 1, query = PropositionQuery.forContextId(ContextId("cluster-four")))
+            .flatMap { cluster -> cluster.similar.map { cluster.anchor.id to it.match.id } }
+            .toSet()
+
+        assertEquals(setOf("a" to "b", "b" to "c", "c" to "d"), pairs)
+    }
+
     private fun ghost(text: String, context: String, id: String? = null): Proposition {
         val proposition = Proposition(
             contextId = ContextId(context),

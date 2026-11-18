@@ -297,6 +297,27 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
         assertEquals(stored.id, replayed.id)
     }
 
+    /**
+     * The replay check finds a stored match by context and text, then loads it. If another writer
+     * moves that proposition to another context in between, the loaded one is no match: the save
+     * goes on and writes in its own context.
+     */
+    @Test
+    fun `a save does not answer with a match that moved to another context`() {
+        val stored = repository.save(ghost("The ghost paints the door", context = "replay-a"))
+        val moving = DrivinePropositionRepository(
+            graphObjectManager,
+            MovingAfterLookupPersistenceManager(persistenceManager, stored.id),
+            embeddingService,
+            transactionManager,
+        )
+
+        val saved = moving.save(ghost("The ghost paints the door", context = "replay-a"))
+
+        assertEquals(ContextId("replay-a"), saved.contextId)
+        assertEquals(1, repository.findByContextId(ContextId("replay-a")).size)
+    }
+
     private fun readOnly() = TransactionTemplate(transactionManager).apply { isReadOnly = true }
 
     private fun ghost(text: String, context: String = "ghost-ctx") = Proposition(
@@ -366,4 +387,27 @@ private class UnavailableEmbeddingService(delegate: EmbeddingService) : Embeddin
     override fun embed(text: String): FloatArray = error("the embedding service is down")
 
     override fun embed(texts: List<String>): List<FloatArray> = error("the embedding service is down")
+}
+
+/**
+ * Passes every call on. The first time a duplicate lookup finds [movedId], it moves that proposition
+ * to another context before answering, as a concurrent writer could between the lookup and the load.
+ */
+private class MovingAfterLookupPersistenceManager(
+    private val delegate: PersistenceManager,
+    private val movedId: String,
+) : PersistenceManager by delegate {
+    private var moved = false
+
+    override fun <T : Any> maybeGetOne(spec: QuerySpecification<T>): T? {
+        val result = delegate.maybeGetOne(spec)
+        if (!moved && result == movedId && spec.parameters.keys == setOf("contextId", "text", "excludeId")) {
+            moved = true
+            delegate.execute(
+                cypherQuery("MATCH (p:Proposition {id: ${'$'}id}) SET p.contextId = 'replay-elsewhere'")
+                    .bind(mapOf("id" to movedId)),
+            )
+        }
+        return result
+    }
 }

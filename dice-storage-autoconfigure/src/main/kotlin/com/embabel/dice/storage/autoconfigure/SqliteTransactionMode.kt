@@ -52,10 +52,14 @@ internal object SqliteTransactionMode {
      * Refuses a SQLite data source whose transactions do not take the write lock as they begin.
      *
      * @param datasourceName the Drivine datasource name, for the message
-     * @throws IllegalStateException when the mode is not `IMMEDIATE` or `EXCLUSIVE`
+     * @throws IllegalStateException when the mode is not `IMMEDIATE` or `EXCLUSIVE`, or cannot be read
      */
     fun requireImmediate(dataSource: DataSource, datasourceName: String) {
-        val mode = of(dataSource) ?: return
+        val mode = checkNotNull(of(dataSource)) {
+            "SQLite datasource '$datasourceName' gives connections whose transaction mode cannot be read. DICE " +
+                "needs its transactions to take the write lock as they begin: use Drivine's own SQLite provider, " +
+                "or a data source whose connections unwrap to the SQLite driver's."
+        }
         check(mode in LOCKING_MODES) {
             "SQLite datasource '$datasourceName' starts its transactions $mode. DICE reads and then writes in " +
                 "one transaction, so SQLite must take the write lock as each one begins: set the data " +
