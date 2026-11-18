@@ -36,6 +36,11 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Runs the [AbstractPropositionStoreContractTest] suite against
@@ -54,6 +59,9 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
 
     @Autowired
     private lateinit var graphObjectManager: StatelessGraphObjectManager
+
+    @Autowired
+    private lateinit var transactionManager: PlatformTransactionManager
 
     override fun store(): PropositionStore = repository
 
@@ -112,6 +120,48 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
 
         assertThrows<StaleObjectException> {
             graphObjectManager.save(loaded, DrivinePropositionRepository.REPLACE_MENTIONS)
+        }
+    }
+
+    /**
+     * One thread saves inside its own transaction and has already written, so on SQLite it holds
+     * the file's write lock. A second thread then saves the same text on its own. The first thread
+     * saves that text too before it commits. Neither save may wait on the other for longer than
+     * the first transaction takes, and both must end up as one proposition.
+     */
+    @Test
+    fun `a save in a caller's transaction does not stall a standalone save of the same text`() {
+        val context = ContextId("lock-order-ctx")
+        fun proposition(text: String) = Proposition(
+            contextId = context,
+            text = text,
+            mentions = listOf(EntityMention(span = "the ghost", type = "Ghost", role = MentionRole.SUBJECT)),
+            confidence = 0.9,
+        )
+        val text = "The ghost walks the east wing"
+        val callerHasWritten = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val caller = executor.submit<Proposition> {
+                TransactionTemplate(transactionManager).execute {
+                    repository.save(proposition("The ghost was seen at midnight"))
+                    callerHasWritten.countDown()
+                    // Give the standalone save time to start and reach the store.
+                    Thread.sleep(500)
+                    repository.save(proposition(text))
+                }
+            }
+            assertTrue(callerHasWritten.await(10, TimeUnit.SECONDS), "the caller's first save did not finish")
+            val standalone = executor.submit<Proposition> { repository.save(proposition(text)) }
+
+            val savedByCaller = caller.get(10, TimeUnit.SECONDS)
+            val savedStandalone = standalone.get(10, TimeUnit.SECONDS)
+
+            assertEquals(savedByCaller.id, savedStandalone.id)
+            assertEquals(1, repository.findByContextId(context).count { it.text == text })
+        } finally {
+            executor.shutdown()
+            executor.awaitTermination(60, TimeUnit.SECONDS)
         }
     }
 }
