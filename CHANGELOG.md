@@ -2519,3 +2519,9 @@ and the consumer PRs that deliver it).
   claims (the Drivine stores do this) and calls `extractPropositions` inside a transaction. Without
   a transaction, a write that fails part way is retried, and the retry can add the window's claims
   again. **Compatibility: behavioral.**
+
+- A window that `IncrementalPropositionExtraction` leaves unrecorded is logged at `error` with its
+  source, its context and its item range, and the exception is attached. This happens when storing
+  the window's claims fails, and when recording the window in the chunk history store fails. The
+  exception that reaches the caller may not name the source, so a window that fails on every event
+  could not be traced back to it. **Compatibility: additive.**

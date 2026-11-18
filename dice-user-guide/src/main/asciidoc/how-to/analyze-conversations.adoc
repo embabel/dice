@@ -134,6 +134,11 @@ chunk history in the same transactional store as the claims. The Drivine stores 
 `extractPropositions` inside a transaction. Without a transaction, a write that fails part way is
 retried, and the retry can add the window's claims again.
 
+A window whose store or record step fails is logged at `error` with its source, its context and its
+item range, and the exception is attached. The same source and start index logged on every event
+means the window fails every time, so the source makes no progress and each event pays for the
+analysis again. The end of the range can grow with the source until the window is full. To stop that, stop publishing events for the source until the cause is fixed.
+
 ==== Scope per user
 
 Give each user their own `ContextId`. It is the boundary that keeps one user's beliefs out of
