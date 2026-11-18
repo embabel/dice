@@ -19,11 +19,15 @@ import com.embabel.agent.api.common.Ai
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.proposition.PropositionRepository
 import org.assertj.core.api.Assertions.assertThat
-import org.drivine.manager.StatelessGraphObjectManager
+import org.drivine.connection.DatabaseRegistry
+import org.drivine.connection.DatabaseType
+import org.drivine.connection.JdbcConnectionProvider
 import org.drivine.manager.PersistenceManager
+import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.transaction.DrivineTransactionManager
 import org.drivine.transaction.TransactionContextHolder
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import org.springframework.aop.framework.Advised
@@ -31,13 +35,20 @@ import org.springframework.aop.support.AopUtils
 import org.springframework.beans.factory.getBean
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
+import org.springframework.boot.test.system.CapturedOutput
+import org.springframework.boot.test.system.OutputCaptureExtension
 import org.springframework.boot.transaction.autoconfigure.TransactionAutoConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.jdbc.datasource.DataSourceTransactionManager
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy
 import org.springframework.test.util.ReflectionTestUtils
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.interceptor.TransactionInterceptor
 import org.springframework.transaction.support.TransactionTemplate
+import org.sqlite.SQLiteConfig
+import org.sqlite.SQLiteDataSource
+import java.nio.file.Files
 
 /**
  * Proves that a real consumer of `dice-storage-autoconfigure` gets working `@Transactional` advice
@@ -50,6 +61,7 @@ import org.springframework.transaction.support.TransactionTemplate
  * advisors, so a regression here (e.g. dropping the `spring-boot-transaction` dependency again)
  * fails a concrete assertion, catching it even if the annotation itself silently stays inert.
  */
+@ExtendWith(OutputCaptureExtension::class)
 class DiceStorageTransactionAutoConfigurationTest {
 
     private val baseRunner = ApplicationContextRunner()
@@ -112,6 +124,67 @@ class DiceStorageTransactionAutoConfigurationTest {
 
                 assertThat(saves.transactionManager).isInstanceOf(DrivineTransactionManager::class.java)
             }
+    }
+
+    /**
+     * The other way a host brings its own manager: Spring's JDBC one, over the very SQLite file
+     * Drivine reads through a transaction-aware proxy. Drivine's statements then run on the host's
+     * connection in the host's transaction, and a Drivine transaction of the store's own would
+     * commit the host's work with it. The store keeps the host's manager.
+     */
+    @Test
+    fun `with a host's JDBC manager over Drivine's own data source, the proposition store keeps it`() {
+        val file = Files.createTempFile("dice-host-jdbc-", ".db")
+        val target = SQLiteDataSource(SQLiteConfig().apply { setTransactionMode(SQLiteConfig.TransactionMode.IMMEDIATE) })
+            .apply { url = "jdbc:sqlite:$file" }
+        val hostManager = DataSourceTransactionManager(target)
+        val provider = mock<JdbcConnectionProvider>()
+        whenever(provider.nativeDriver).thenReturn(TransactionAwareDataSourceProxy(target))
+        val registry = mock<DatabaseRegistry>()
+        whenever(registry.connectionProvider("neo")).thenReturn(provider)
+        val persistenceManager = mock<PersistenceManager>()
+        whenever(persistenceManager.type).thenReturn(DatabaseType.SQLITE)
+        whenever(persistenceManager.database).thenReturn("neo")
+
+        ApplicationContextRunner()
+            .withUserConfiguration(SharedDataSourceStubConfig::class.java)
+            .withPropertyValues("embabel.dice.store.type=graph")
+            .withConfiguration(AutoConfigurations.of(DiceStorageAutoConfiguration::class.java))
+            .withBean(TransactionContextHolder::class.java, { mock<TransactionContextHolder>() })
+            .withBean(DatabaseRegistry::class.java, { registry })
+            .withBean(PersistenceManager::class.java, { persistenceManager })
+            .withBean(PlatformTransactionManager::class.java, { hostManager })
+            .run { ctx ->
+                val repository = ctx.getBean<PropositionRepository>()
+                val saves = ReflectionTestUtils.getField(repository, "txTemplate") as TransactionTemplate
+
+                assertThat(saves.transactionManager).isSameAs(hostManager)
+            }
+    }
+
+    /**
+     * A host that builds Drivine by hand and publishes no transaction state leaves nothing to make
+     * Drivine's manager from. The stores fall back to the host's, and the log says so.
+     */
+    @Test
+    fun `without Drivine's transaction state, falling back to the host's manager is logged`(output: CapturedOutput) {
+        baseRunner
+            .withConfiguration(AutoConfigurations.of(DiceStorageAutoConfiguration::class.java))
+            .run { ctx ->
+                ctx.getBean<PropositionRepository>()
+
+                assertThat(output.out).contains("not Drivine's")
+            }
+    }
+
+    /** What [GraphBackendStubConfig] gives, less the persistence and transaction managers. */
+    @Configuration(proxyBeanMethods = false)
+    class SharedDataSourceStubConfig {
+        @Bean
+        fun ai(): Ai = GraphBackendStubConfig().ai()
+
+        @Bean
+        fun graphObjectManager(): StatelessGraphObjectManager = mock()
     }
 
     @Configuration(proxyBeanMethods = false)

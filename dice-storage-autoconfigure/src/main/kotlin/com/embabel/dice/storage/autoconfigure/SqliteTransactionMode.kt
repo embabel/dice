@@ -40,7 +40,11 @@ internal object SqliteTransactionMode {
         return dataSource.connection.use { connection ->
             if (!connection.isWrapperFor(sqliteConnection)) return null
             val sqlite = connection.unwrap(sqliteConnection)
-            (sqliteConnection.getMethod("getCurrentTransactionMode").invoke(sqlite) as? Enum<*>)?.name
+            // The configured mode, which every BEGIN uses. The driver's "current" mode is cleared
+            // whenever a connection goes back to auto-commit, so a pooled connection that has been
+            // through a transaction would report none.
+            val config = sqliteConnection.getMethod("getConnectionConfig").invoke(sqlite)
+            (config.javaClass.getMethod("getTransactionMode").invoke(config) as? Enum<*>)?.name
         }
     }
 

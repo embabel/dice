@@ -350,7 +350,7 @@ open class DrivineExtractionRunStore @JvmOverloads constructor(
     ): ExtractionRunTransitionResult {
         ExtractionRunSchema.requireStorableTenant(key.contextId)
         if (transactionManager.hasOpenTransaction()) {
-            return announce(endRun(key, transition))
+            return announce(endRun(key, transition), durable = false)
         }
 
         var lostRace: RuntimeException? = null
@@ -363,7 +363,7 @@ open class DrivineExtractionRunStore @JvmOverloads constructor(
             lostRace = e
             null
         }
-        if (result != null) return announce(result)
+        if (result != null) return announce(result, durable = true)
 
         logger.debug(
             "Terminal write for run {} in context {} lost the race; re-reading the recorded write",
@@ -470,12 +470,16 @@ open class DrivineExtractionRunStore @JvmOverloads constructor(
      * getting here, and a replay is not applied. Inside a caller's transaction the write becomes
      * durable at that caller's commit, so the announcement rides on it and is dropped with the
      * transaction if the caller rolls back. Otherwise the commit has already happened by the time
-     * this runs, and the listener is called on the spot.
+     * this runs, and the listener is called on the spot, even while a host's transaction of some
+     * other manager is open: that transaction does not hold the write, so its rollback must not
+     * swallow the announcement.
+     *
+     * @param durable whether this call's own transaction has already committed the write
      */
-    private fun announce(result: ExtractionRunTransitionResult): ExtractionRunTransitionResult {
+    private fun announce(result: ExtractionRunTransitionResult, durable: Boolean): ExtractionRunTransitionResult {
         if (!result.isApplied) return result
         val event = ExtractionRunTransitioned(result.run)
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+        if (!durable && TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(
                 object : TransactionSynchronization {
                     override fun afterCommit() {

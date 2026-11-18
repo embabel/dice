@@ -106,6 +106,18 @@ class StoreErrorsTest {
     }
 
     @Test
+    fun `a uniqueness code later in another failure's text answers false`() {
+        val error = SQLiteException(
+            "[SQLITE_ERROR] SQL error or missing database (org.sqlite.SQLiteException: " +
+                "[SQLITE_CONSTRAINT_TRIGGER] A RAISE function within a trigger fired " +
+                "(rejected: looks like [SQLITE_CONSTRAINT_UNIQUE]))",
+            SQLiteErrorCode.SQLITE_ERROR,
+        )
+
+        assertFalse(StoreErrors.isUniquenessViolation(error))
+    }
+
+    @Test
     fun `another SQLite constraint failure answers false`() {
         val error = SQLiteException("NOT NULL constraint failed: n.key", SQLiteErrorCode.SQLITE_CONSTRAINT_NOTNULL)
 

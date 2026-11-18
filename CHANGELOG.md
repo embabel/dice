@@ -23,18 +23,24 @@ and the consumer PRs that deliver it).
   procedure. The whole-graph `observe()` reads the labels the nodes wear. The decay sweep commits
   a page of propositions at a time. **Compatibility: behavioral.**
 - A save embeds its text before it opens a transaction, so a slow embedding service no longer
-  holds the store's locks. **Compatibility: behavioral.**
+  holds the store's locks. A save that only repeats a fact the store already holds, evidence and
+  all, is answered from reads and needs no embedding. **Compatibility: behavioral.**
 - On SQLite, `touchAccessed` and `reembedAll` called inside a caller's transaction join it. Each
   used to open a transaction of its own, which waited on the caller's write lock until SQLite's
-  busy timeout failed it. **Compatibility: behavioral.**
+  busy timeout failed it. Inside a caller's transaction on SQLite, a `reembedAll` that has to
+  change the vector index is refused at once, since Drivine changes an index on a connection of
+  its own. Both can be called from a read-only transaction. **Compatibility: behavioral.**
 - When the host brings its own transaction manager, the autoconfigured proposition and
   extraction-run stores still run their transactions on Drivine's, and a save or run transition
   inside the host's transaction runs in a Drivine transaction of its own. Before, each statement
-  committed on its own. **Compatibility: behavioral.**
+  committed on its own. A host manager that manages the very data source Drivine reads, such as a
+  JDBC manager with Drivine over a transaction-aware proxy, is kept, and a run transition the store
+  committed itself is announced at once. With no Drivine transaction state to build from, the
+  host's manager is used and a warning is logged. **Compatibility: behavioral.**
 - A uniqueness violation on SQLite is recognised as one, so a save that loses a dedup race reuses
   the winner, as on Neo4j. **Compatibility: behavioral.**
 - The latest chunk bookmark among records with the same time is the one whose window ends
-  furthest on. **Compatibility: behavioral.**
+  furthest on, including two spellings of one instant on SQLite. **Compatibility: behavioral.**
 - The autoconfiguration refuses a SQLite datasource whose transactions do not take the write lock
   as they begin, naming the datasource. Drivine's own SQLite provider passes.
   **Compatibility: behavioral.**

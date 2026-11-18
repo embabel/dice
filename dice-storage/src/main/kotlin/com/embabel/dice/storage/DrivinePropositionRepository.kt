@@ -201,7 +201,9 @@ class DrivinePropositionRepository(
      * holds the file's write lock, which does the same job.
      *
      * The text is embedded before any transaction opens, so a slow embedding service never holds
-     * the store's locks. On SQLite that lock is the whole file's.
+     * the store's locks. On SQLite that lock is the whole file's. A save that only repeats a fact the
+     * store already holds, evidence and all, is answered before that, from reads alone: it writes
+     * nothing, so it needs no embedding.
      *
      * Propositions with blank text have nothing to dedup on and are persisted directly.
      *
@@ -224,6 +226,7 @@ class DrivinePropositionRepository(
      */
     @Transactional(propagation = Propagation.SUPPORTS)
     override fun save(proposition: Proposition): Proposition {
+        exactReplay(proposition)?.let { return it }
         val embedded = EmbeddedText(proposition.text, embeddingFor(proposition))
         return if (transactionManager.hasOpenTransaction()) {
             saveInCallerTransaction(proposition, embedded)
@@ -268,6 +271,23 @@ class DrivinePropositionRepository(
                 txTemplate.execute { recoverDuplicate(proposition, contextId, text, embedded) } ?: throw e
             }
         }
+    }
+
+    /**
+     * The proposition already stored under [proposition]'s context and text, when [proposition] is a
+     * new id that brings no evidence the stored one lacks. The answer the dedup merge would give,
+     * found with reads alone; null when a write is needed, which the save then makes under its lock.
+     */
+    private fun exactReplay(proposition: Proposition): Proposition? {
+        if (proposition.text.isBlank()) return null
+        val existingId = findDuplicateId(proposition.contextId.value, proposition.text, proposition.id) ?: return null
+        if (existsById(proposition.id)) return null
+        val existing = findById(existingId) ?: return null
+        // As the merge does, before the novelty check can drop an entry that names a source the
+        // stored one disagrees with.
+        validateSourceIdentities(proposition.provenanceEntries)
+        val held = existing.provenanceEntries.toHashSet()
+        return existing.takeIf { proposition.provenanceEntries.all(held::contains) }
     }
 
     private fun findOrPersist(
@@ -1238,13 +1258,20 @@ class DrivinePropositionRepository(
         ) as List<Map<String, Any>>
     }
 
-    /** The same rows as [nearestPairsByIndex], measured by Drivine on a store with no index procedure. */
+    /**
+     * The same rows as [nearestPairsByIndex], measured by Drivine on a store with no index procedure.
+     * Each pair is kept under its smaller id whichever member's search found it, so a pair only the
+     * later member's [topK] reaches is not lost.
+     */
     private fun nearestPairsAmong(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> =
         graphObjectManager.loadNearestAmong(PropositionView::class.java, ids, topK, toEngineScore(similarityThreshold))
-            .flatMap { (anchorId, near) ->
-                near.filter { anchorId < it.value }
-                    .map { mapOf("anchorId" to anchorId, "otherId" to it.value, "score" to toRawCosine(it.score)) }
+            .flatMap { (seedId, near) ->
+                near.map { other ->
+                    val (anchorId, otherId) = if (seedId < other.value) seedId to other.value else other.value to seedId
+                    mapOf("anchorId" to anchorId, "otherId" to otherId, "score" to toRawCosine(other.score))
+                }
             }
+            .distinctBy { it["anchorId"] to it["otherId"] }
 
     /**
      * A Neo4j COSINE vector index reports `(1 + cosine) / 2`, not raw cosine — this converts an
@@ -1286,8 +1313,11 @@ class DrivinePropositionRepository(
      * a caller's transaction instead, which holds the file's write lock and could not let one of its
      * own commit; SQLite does not hold a read-only transaction to its word.
      * Empty [ids] is a no-op — no need to open a transaction for nothing.
+     *
+     * Declared read-only so a read-only caller's transaction can be joined at all: Spring refuses a
+     * read-write participant in one. The write itself runs in the transaction chosen below.
      */
-    @Transactional(propagation = Propagation.SUPPORTS)
+    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
     override fun touchAccessed(ids: Collection<String>) {
         if (ids.isEmpty()) return
         val touch = {
@@ -1425,26 +1455,31 @@ class DrivinePropositionRepository(
      * So the work runs outside any transaction, and a transaction a CALLER already opened is
      * suspended for it, which is the same hazard arriving from outside. The method says SUPPORTS
      * rather than nothing because this CLASS carries `@Transactional`, and saying nothing would run
-     * the whole method in a transaction and reproduce the deadlock.
+     * the whole method in a transaction and reproduce the deadlock. It says read-only so that a
+     * read-only caller's transaction can be joined at all: Spring refuses a read-write participant
+     * in one.
      *
      * SQLite is the exception. There a caller's transaction holds the file's write lock until it
      * ends, so a write made while it is suspended would wait for it, and it is waiting for the
-     * write. Inside a caller's transaction on SQLite the work joins that transaction instead.
+     * write. Inside a caller's transaction on SQLite the work joins that transaction instead. Only
+     * the vectors can be written that way: when the index itself has to change, for a model of
+     * another width, the call is refused, since Drivine changes an index on a connection of its own.
      *
      * @throws PropositionReembedIncompleteException when some propositions could not be embedded;
      * all others were written and the index is restored
      */
-    @Transactional(propagation = Propagation.SUPPORTS)
+    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
     override fun reembedAll(): PropositionReembedReport =
         if (callerTransactionHoldsWriteLock && transactionManager.hasOpenTransaction()) {
-            reembedEverything()
+            reembedEverything(insideCallerTransaction = true)
         } else {
-            outsideTransactions.execute { reembedEverything() }!!
+            outsideTransactions.execute { reembedEverything(insideCallerTransaction = false) }!!
         }
 
-    private fun reembedEverything(): PropositionReembedReport {
+    private fun reembedEverything(insideCallerTransaction: Boolean): PropositionReembedReport {
         logger.info("reembedAll start: model={} dim={}", embeddingService.name, embeddingService.dimensions)
         val spec = vectorIndexSpec(embeddingService.dimensions)
+        if (insideCallerTransaction) requireIndexAsItIs(spec)
         /*
          * `IndexManager.ensure` is deliberately non-destructive: against an index of a different
          * shape it reports Drift and changes nothing. That makes it the question "does the stored
@@ -1480,6 +1515,20 @@ class DrivinePropositionRepository(
             outcome.rewritten, embeddingService.name, shapeChanged,
         )
         return report
+    }
+
+    /**
+     * Refuses a re-embed that would change the vector index while a caller's SQLite transaction is
+     * open. Drivine records an index change on a connection of its own, which would wait for the
+     * caller's write lock until SQLite gave up. Checking first reads only.
+     */
+    private fun requireIndexAsItIs(spec: VectorIndexSpec) {
+        val existing = persistenceManager.indexes.find(spec)
+        check(existing != null && existing.dimensions == spec.dimensions && existing.similarity == spec.similarity) {
+            "reembedAll needs to make the vector index ${spec.effectiveName} again, for ${spec.dimensions} " +
+                "dimensions, and on SQLite it cannot do that inside a caller's transaction: the index " +
+                "change waits for the write lock the transaction holds. Call it outside a transaction."
+        }
     }
 
     /**

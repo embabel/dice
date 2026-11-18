@@ -626,6 +626,28 @@ class DrivineExtractionRunStoreIntegrationTest {
         assertEquals(0, terminalWriteCount(run.key()), "the terminal-write node rolled back with it")
     }
 
+    /**
+     * A host's transaction of some other manager holds nothing of the store's. The store ends the
+     * run in a transaction of its own and commits it, so the run has ended, and the listener hears
+     * so even when the host's own transaction then rolls back.
+     */
+    @Test
+    fun `a terminal write inside another manager's transaction is announced even when that transaction rolls back`() {
+        val received = mutableListOf<DiceEvent>()
+        eventListener.redirectTo(DiceEventListener { event -> synchronized(received) { received += event } })
+        val run = running("graph-announce-foreign")
+        store.save(run)
+
+        TransactionTemplate(ForeignTransactionManager()).executeWithoutResult { status ->
+            val ended = store.transition(run.key(), ExtractionRunTransition.completed(finishedAt))
+            assertEquals(ExtractionRunTransitionOutcome.APPLIED, ended.outcome)
+            status.setRollbackOnly()
+        }
+
+        assertEquals(ExtractionRunStatus.COMPLETED, store.findRun(run.key())?.status)
+        assertEquals(1, synchronized(received) { received.size }, "the committed run's end went unannounced")
+    }
+
     @Test
     fun `a stored failure holds the closed vocabulary's fields and nothing else`() {
         // The route a provider message used to take into a durable row was a failure record's text

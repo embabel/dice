@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.storage.autoconfigure
 
+import com.zaxxer.hikari.HikariConfig
+import com.zaxxer.hikari.HikariDataSource
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatCode
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -62,6 +64,33 @@ class SqliteTransactionModeTest {
     fun `a SQLite data source that starts transactions immediately is accepted`() {
         assertThatCode { SqliteTransactionMode.requireImmediate(dataSource(SQLiteConfig.TransactionMode.IMMEDIATE), "neo") }
             .doesNotThrowAnyException()
+    }
+
+    /**
+     * A pool hands out a connection that has already been through a transaction and gone back to
+     * auto-commit. The driver forgets the mode it last began with at that point, but the next
+     * BEGIN still uses the configured one.
+     */
+    @Test
+    fun `a pooled connection that has been through a transaction still shows a deferred mode`() {
+        val pool = HikariDataSource(HikariConfig().apply {
+            dataSource = dataSource(SQLiteConfig.TransactionMode.DEFERRED)
+            maximumPoolSize = 1
+        })
+        try {
+            pool.connection.use { connection ->
+                connection.autoCommit = false
+                connection.createStatement().use { it.execute("CREATE TABLE IF NOT EXISTS t (x INTEGER)") }
+                connection.commit()
+                connection.autoCommit = true
+            }
+
+            assertThatThrownBy { SqliteTransactionMode.requireImmediate(pool, "neo") }
+                .isInstanceOf(IllegalStateException::class.java)
+                .hasMessageContaining("DEFERRED")
+        } finally {
+            pool.close()
+        }
     }
 
     @Test

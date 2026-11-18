@@ -43,8 +43,6 @@ import org.springframework.test.context.DynamicPropertySource
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.TransactionStatus
-import org.springframework.transaction.support.AbstractPlatformTransactionManager
-import org.springframework.transaction.support.DefaultTransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
@@ -250,6 +248,57 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
         assertNull(repository.findById(proposition.id), "the node outlived the failed save")
     }
 
+    @Test
+    fun `touchAccessed from a read-only transaction records the access`() {
+        val saved = repository.save(ghost("The ghost dusts the piano"))
+        val touchedAt = Instant.now()
+
+        runWithin(10) {
+            readOnly().execute {
+                repository.findById(saved.id)
+                repository.touchAccessed(listOf(saved.id))
+            }
+        }
+
+        val lastAccessed = repository.findById(saved.id)!!.lastAccessed
+        assertFalse(lastAccessed.isBefore(touchedAt), "lastAccessed $lastAccessed predates the touch at $touchedAt")
+    }
+
+    @Test
+    fun `reembedAll from a read-only transaction rewrites the vectors`() {
+        val saved = repository.save(ghost("The ghost tunes the harp"))
+
+        val report = runWithin(10) {
+            readOnly().execute {
+                repository.findById(saved.id)
+                repository.reembedAll()
+            }!!
+        }
+
+        assertEquals(1, report.propositions)
+    }
+
+    /**
+     * A second extraction of a fact the store already holds, with nothing new to add, writes
+     * nothing. It is answered from the store without the embedding service, which may be down.
+     */
+    @Test
+    fun `a save that repeats a stored fact does not need the embedding service`() {
+        val stored = repository.save(ghost("The ghost winds the clock"))
+        val unembeddable = DrivinePropositionRepository(
+            graphObjectManager,
+            persistenceManager,
+            UnavailableEmbeddingService(embeddingService),
+            transactionManager,
+        )
+
+        val replayed = unembeddable.save(ghost("The ghost winds the clock"))
+
+        assertEquals(stored.id, replayed.id)
+    }
+
+    private fun readOnly() = TransactionTemplate(transactionManager).apply { isReadOnly = true }
+
     private fun ghost(text: String, context: String = "ghost-ctx") = Proposition(
         contextId = ContextId(context),
         text = text,
@@ -302,17 +351,6 @@ private class OpeningSignalTransactionManager(
     override fun rollback(status: TransactionStatus) = delegate.rollback(status)
 }
 
-/**
- * A transaction manager that knows nothing of Drivine, like one a host brings for a database of
- * its own. Its transactions hold nothing.
- */
-private class ForeignTransactionManager : AbstractPlatformTransactionManager() {
-    override fun doGetTransaction(): Any = Any()
-    override fun doBegin(transaction: Any, definition: TransactionDefinition) = Unit
-    override fun doCommit(status: DefaultTransactionStatus) = Unit
-    override fun doRollback(status: DefaultTransactionStatus) = Unit
-}
-
 /** Passes every call on, except that the read a save makes after writing the node fails. */
 private class FailingMetadataReadPersistenceManager(
     private val delegate: PersistenceManager,
@@ -321,4 +359,11 @@ private class FailingMetadataReadPersistenceManager(
         check(spec.statement?.text?.contains("STARTS WITH 'metadata.'") != true) { "the read after the node write failed" }
         return delegate.query(spec)
     }
+}
+
+/** An embedding service that is down: every call fails. */
+private class UnavailableEmbeddingService(delegate: EmbeddingService) : EmbeddingService by delegate {
+    override fun embed(text: String): FloatArray = error("the embedding service is down")
+
+    override fun embed(texts: List<String>): List<FloatArray> = error("the embedding service is down")
 }

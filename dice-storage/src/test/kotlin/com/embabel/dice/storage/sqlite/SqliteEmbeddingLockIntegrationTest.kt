@@ -23,12 +23,14 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.storage.DrivinePropositionRepository
 import com.embabel.dice.storage.FakeEmbeddingService
 import com.embabel.dice.storage.TestApplication
+import com.embabel.dice.storage.cypherQuery
 import org.drivine.connection.ConnectionProvider
 import org.drivine.connection.JdbcConnectionProvider
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.StatelessGraphObjectManager
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -43,13 +45,13 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * Two saves of the same text, each on its own, while the embedding service takes far longer than
- * SQLite's busy timeout. The file here waits only 200 ms for a lock. A save that held the write
- * lock while it waited for its embedding would make the other save give up. Both must come back
- * as one proposition.
+ * A save waiting on a slow embedding service must not hold SQLite's write lock while it waits.
+ * SQLite has one writer for the whole file, so a lock held across the embedding call would turn
+ * every other write away. The file here waits only 200 ms for a lock, and another write is made
+ * while the save is still waiting for its embedding.
  */
-@SpringBootTest(classes = [TestApplication::class, SqliteStandaloneSaveContentionIntegrationTest.ShortBusyTimeout::class])
-class SqliteStandaloneSaveContentionIntegrationTest {
+@SpringBootTest(classes = [TestApplication::class, SqliteEmbeddingLockIntegrationTest.ShortBusyTimeout::class])
+class SqliteEmbeddingLockIntegrationTest {
 
     companion object {
         @JvmStatic
@@ -83,44 +85,49 @@ class SqliteStandaloneSaveContentionIntegrationTest {
     @AfterEach
     fun cleanUp() {
         repository.clearAll()
+        persistenceManager.execute(cypherQuery("MATCH (n:LockProbe) DETACH DELETE n"))
     }
 
     @Test
-    fun `two standalone saves of the same text agree on one proposition while embedding is slow`() {
-        val slow = SlowEmbeddingService(FakeEmbeddingService(), delayMillis = 1_000)
-        val slowRepository = DrivinePropositionRepository(graphObjectManager, persistenceManager, slow, transactionManager)
-        val context = ContextId("slow-embed-ctx")
-        fun proposition() = Proposition(
-            contextId = context,
-            text = "The ghost hums a slow tune",
-            mentions = listOf(EntityMention(span = "the ghost", type = "Ghost", role = MentionRole.SUBJECT)),
-            confidence = 0.9,
-        )
-        val start = CountDownLatch(1)
-        val executor = Executors.newFixedThreadPool(2)
+    fun `another write goes through while a save waits for its embedding`() {
+        val embedding = HeldEmbeddingService(FakeEmbeddingService())
+        val held = DrivinePropositionRepository(graphObjectManager, persistenceManager, embedding, transactionManager)
+        val context = ContextId("held-embed-ctx")
+        val executor = Executors.newSingleThreadExecutor()
         try {
-            val first = executor.submit<Proposition> { start.await(); slowRepository.save(proposition()) }
-            val second = executor.submit<Proposition> { start.await(); slowRepository.save(proposition()) }
-            start.countDown()
+            val save = executor.submit<Proposition> {
+                held.save(
+                    Proposition(
+                        contextId = context,
+                        text = "The ghost hums a slow tune",
+                        mentions = listOf(EntityMention(span = "the ghost", type = "Ghost", role = MentionRole.SUBJECT)),
+                        confidence = 0.9,
+                    ),
+                )
+            }
+            assertTrue(embedding.started.await(10, TimeUnit.SECONDS), "the save never asked for its embedding")
 
-            val ids = setOf(first.get(30, TimeUnit.SECONDS).id, second.get(30, TimeUnit.SECONDS).id)
+            persistenceManager.execute(cypherQuery("CREATE (:LockProbe {id: 'probe'})"))
 
-            assertEquals(1, ids.size, "two saves of one text came back as $ids")
+            embedding.release.countDown()
+            save.get(30, TimeUnit.SECONDS)
             assertEquals(1, repository.findByContextId(context).size)
         } finally {
+            embedding.release.countDown()
             executor.shutdown()
             executor.awaitTermination(60, TimeUnit.SECONDS)
         }
     }
 }
 
-/** Gives [delegate]'s embeddings, each after waiting [delayMillis]. */
-private class SlowEmbeddingService(
-    private val delegate: EmbeddingService,
-    private val delayMillis: Long,
-) : EmbeddingService by delegate {
+/** Gives [delegate]'s embeddings, each only once [release] opens; [started] opens on the first ask. */
+private class HeldEmbeddingService(private val delegate: EmbeddingService) : EmbeddingService by delegate {
+    val started = CountDownLatch(1)
+    val release = CountDownLatch(1)
+
     override fun embed(text: String): FloatArray {
-        Thread.sleep(delayMillis)
+        started.countDown()
+        release.await(30, TimeUnit.SECONDS)
         return delegate.embed(text)
     }
 

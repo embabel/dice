@@ -66,6 +66,7 @@ import org.springframework.context.annotation.Bean
 import org.springframework.scheduling.annotation.EnableScheduling
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.ResourceTransactionManager
 import javax.sql.DataSource
 
 /**
@@ -103,10 +104,55 @@ class DiceStorageAutoConfiguration {
      * and a save's find-then-insert stopped being atomic. Given any manager but Drivine's, this
      * makes Drivine's over the same transaction state, so a store's transactions and a caller's
      * Drivine transactions still join each other.
+     *
+     * The host's manager is kept when it manages the very data source Drivine reads, as a JDBC
+     * manager does when Drivine is given a transaction-aware proxy over the host's own data source.
+     * Drivine's statements then already run on the host's connection inside the host's
+     * transaction, and a Drivine transaction of its own on that connection would commit the host's
+     * work with it.
+     *
+     * With no Drivine transaction state in the context, as when a host builds Drivine by hand, there
+     * is nothing to make Drivine's manager from: the host's is used, and a warning says so.
      */
-    private fun drivineTransactions(given: PlatformTransactionManager): PlatformTransactionManager {
+    private fun drivineTransactions(
+        given: PlatformTransactionManager,
+        persistenceManager: PersistenceManager,
+    ): PlatformTransactionManager {
         if (given is DrivineTransactionManager) return given
-        return transactionContextHolder?.let(::DrivineTransactionManager) ?: given
+        if (managesDrivineDataSource(given, persistenceManager)) return given
+        transactionContextHolder?.let { return DrivineTransactionManager(it) }
+        logger.warn(
+            "The graph stores were given transaction manager {}, which is not Drivine's, and the " +
+                "context has no Drivine transaction state to make Drivine's from. Their statements " +
+                "will not join its transactions. Publish Drivine's TransactionContextHolder as a bean.",
+            given.javaClass.name,
+        )
+        return given
+    }
+
+    /** Whether [manager] binds connections of the data source Drivine reads [persistenceManager]'s store through. */
+    private fun managesDrivineDataSource(manager: PlatformTransactionManager, persistenceManager: PersistenceManager): Boolean {
+        val managed = (manager as? ResourceTransactionManager)?.resourceFactory as? DataSource ?: return false
+        val drivine = drivineDataSource(persistenceManager) ?: return false
+        return managed in unwrapped(drivine)
+    }
+
+    /** How far [unwrapped] follows delegating data sources, so a cycle cannot loop for ever. */
+    private val maxDataSourceWrappers = 8
+
+    /**
+     * [dataSource] and each data source it delegates to, outermost first. Spring's delegating data
+     * sources, the transaction-aware proxy among them, name theirs `targetDataSource`.
+     */
+    private fun unwrapped(dataSource: DataSource): List<DataSource> =
+        generateSequence(dataSource) { current ->
+            runCatching { current.javaClass.getMethod("getTargetDataSource").invoke(current) as? DataSource }.getOrNull()
+        }.take(maxDataSourceWrappers).toList()
+
+    /** The JDBC data source behind [persistenceManager]'s store, when Drivine reaches it through one. */
+    private fun drivineDataSource(persistenceManager: PersistenceManager): DataSource? {
+        val provider = databaseRegistry?.connectionProvider(persistenceManager.database) as? NativeDriverSource<*>
+        return provider?.nativeDriver as? DataSource
     }
 
     /**
@@ -115,8 +161,7 @@ class DiceStorageAutoConfiguration {
      */
     private fun requireLockingSqliteTransactions(persistenceManager: PersistenceManager) {
         if (persistenceManager.type != DatabaseType.SQLITE) return
-        val provider = databaseRegistry?.connectionProvider(persistenceManager.database) as? NativeDriverSource<*>
-        val dataSource = provider?.nativeDriver as? DataSource ?: return
+        val dataSource = drivineDataSource(persistenceManager) ?: return
         SqliteTransactionMode.requireImmediate(dataSource, persistenceManager.database)
     }
 
@@ -142,7 +187,7 @@ class DiceStorageAutoConfiguration {
             graphObjectManager,
             persistenceManager,
             storeEmbeddingService("graph", ai, embeddingServices),
-            drivineTransactions(transactionManager),
+            drivineTransactions(transactionManager, persistenceManager),
         )
     }
 
@@ -248,7 +293,7 @@ class DiceStorageAutoConfiguration {
         transactionManager: PlatformTransactionManager,
     ): ExtractionRunStore {
         requireLockingSqliteTransactions(persistenceManager)
-        return DrivineExtractionRunStore(persistenceManager, drivineTransactions(transactionManager))
+        return DrivineExtractionRunStore(persistenceManager, drivineTransactions(transactionManager, persistenceManager))
     }
 
     /**

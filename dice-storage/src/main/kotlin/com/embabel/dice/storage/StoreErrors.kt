@@ -37,7 +37,7 @@ import org.neo4j.driver.exceptions.Neo4jException
  * Drivine writes to SQLite from inside a SQL function of its own, and SQLite reports any failure
  * there as `SQLITE_ERROR`, keeping only the message the function failed with. The driver starts
  * every message with its code's name in brackets, so for `SQLITE_ERROR` the code the write really
- * failed with is read from that bracketed name.
+ * failed with is read from the bracketed name that opens the quoted exception, and nowhere else.
  */
 internal object StoreErrors {
 
@@ -48,6 +48,9 @@ internal object StoreErrors {
     private const val SQLITE_ERROR = "SQLITE_ERROR"
 
     private val SQLITE_UNIQUENESS_CODES = setOf("SQLITE_CONSTRAINT_UNIQUE", "SQLITE_CONSTRAINT_PRIMARYKEY")
+
+    /** The code of the driver exception a `SQLITE_ERROR` message quotes, right after its own text. */
+    private val NESTED_SQLITE_CODE = Regex("""^\[SQLITE_ERROR][^(]*\(org\.sqlite\.SQLiteException: \[([A-Z_]+)]""")
 
     /**
      * Walks the cause chain looking for a Neo4j or SQLite exception that carries a uniqueness code.
@@ -73,8 +76,9 @@ internal object StoreErrors {
     private fun isSqliteUniquenessFailure(error: Throwable): Boolean {
         val code = sqliteResultCode(error) ?: return false
         if (code in SQLITE_UNIQUENESS_CODES) return true
-        val message = error.message ?: return false
-        return code == SQLITE_ERROR && SQLITE_UNIQUENESS_CODES.any { "[$it]" in message }
+        if (code != SQLITE_ERROR) return false
+        val inner = error.message?.let(NESTED_SQLITE_CODE::find)?.groupValues?.get(1) ?: return false
+        return inner in SQLITE_UNIQUENESS_CODES
     }
 
     /** The extended result code on a SQLite driver exception, or null for any other exception. */

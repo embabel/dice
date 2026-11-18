@@ -45,14 +45,15 @@ import java.time.Instant
  * by id and commits each page on its own, with the same trade-off. On SQLite this matters more:
  * a write holds the whole file, and one long sweep would keep every save waiting until it ended.
  */
-class GraphDecayManager internal constructor(
+class GraphDecayManager(
     repository: PropositionRepository,
     private val persistenceManager: PersistenceManager,
-    private val batchRows: Int,
 ) : DecayManager(repository) {
 
-    constructor(repository: PropositionRepository, persistenceManager: PersistenceManager) :
-        this(repository, persistenceManager, BATCH_ROWS)
+    /** Rows per committed batch: per `IN TRANSACTIONS` batch on Neo4j, per page on a SQL store. Tests set it. */
+    @get:JvmSynthetic
+    @set:JvmSynthetic
+    internal var batchRows: Int = BATCH_ROWS
 
     override fun materialize(contextId: ContextId) =
         sweep("p.contextId = \$contextId", mapOf("contextId" to contextId.value))
@@ -82,18 +83,19 @@ class GraphDecayManager internal constructor(
      * statement of its own. Every page is computed at the same `now`.
      */
     private fun sweepByPage(condition: String?, params: Map<String, Any>) {
-        val pageQuery = "MATCH (p:Proposition) WHERE " + (condition?.let { "$it AND " } ?: "") +
-            "p.id > \$after RETURN p.id AS id ORDER BY p.id LIMIT $batchRows"
-        var after = ""
+        val scope = condition?.let { "$it AND " } ?: ""
+        val pageQuery = "MATCH (p:Proposition) WHERE $scope(\$after IS NULL OR p.id > \$after) " +
+            "RETURN p.id AS id ORDER BY p.id LIMIT $batchRows"
+        // The page's update says the condition again: a row moved out of scope since the page was
+        // read is left alone.
+        val pageUpdate = "MATCH (p:Proposition) WHERE ${scope}p.id IN \$ids\n$DECAY_EXPRESSION"
+        var after: String? = null
         while (true) {
             val ids = persistenceManager.query(
                 cypherQuery(pageQuery).bind(params + mapOf("after" to after)).transform(String::class.java),
             )
             if (ids.isEmpty()) return
-            persistenceManager.execute(
-                cypherQuery("MATCH (p:Proposition) WHERE p.id IN \$ids\n$DECAY_EXPRESSION")
-                    .bind(params + mapOf("ids" to ids)),
-            )
+            persistenceManager.execute(cypherQuery(pageUpdate).bind(params + mapOf("ids" to ids)))
             if (ids.size < batchRows) return
             after = ids.last()
         }
@@ -107,7 +109,7 @@ class GraphDecayManager internal constructor(
          */
         private const val DECAY_K = Proposition.DEFAULT_DECAY_K
 
-        /** Rows per committed batch: per `IN TRANSACTIONS` batch on Neo4j, per page on a SQL store. */
+        /** The default for [batchRows]. */
         private const val BATCH_ROWS = 10_000
 
         /**
