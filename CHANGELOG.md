@@ -2481,3 +2481,28 @@ and the consumer PRs that deliver it).
   host constructing `InMemoryExtractionRunStore` for itself is untouched by the flag either way. No
   released DICE ever wrote this relationship type. Every new type carries `@ApiStatus.Experimental`
   and the shapes may still move while the remaining #67 slices land.
+
+- `IncrementalPropositionExtraction` records an event's window only after its claims are stored.
+  Before, the window was recorded ahead of the write, so a failed or rolled-back write lost it for
+  good. Now a failed store leaves the window unrecorded, and the next event for that source analyses
+  it again. Projection and grounding run after the window is recorded. From the store step onwards,
+  an exception reaches the caller of `extractPropositions`, as a STRICT lineage failure already did.
+  Failures that projection and grounding only count are not thrown. Every exception that reaches the
+  caller is unchecked. A failed write is thrown the way `PersistOutcome.persistedOrThrow()` throws it,
+  and any other checked exception is wrapped in a `RuntimeException` that keeps it as the cause. The
+  call drains the rest of the queue first and then throws the first failure. Later failures are logged
+  and attached to it as suppressed.
+  A failure while building the context or analysing the window is still logged, and the window is
+  retried. A call made from inside a drain on the same thread, such as from a save listener, leaves its
+  event queued for the outer drain. After the first failure the drain finishes only the events
+  queued at that moment, and events queued later wait for the next call. A
+  `LineageNotRecordedException` is always thrown, also when it comes before the store step. If the
+  thread's interrupt flag is set, the drain stops, the flag stays set and the remaining events stay
+  queued. A store or pipeline that catches an interrupt must set the flag again. A write that fails
+  with `InterruptedException` sets it. With the default writer, a run link failure that leaves the
+  claims stored records the window, so the claims are not stored again, and then throws. Any other
+  failed write leaves the window unrecorded. `analyze` still records the window before it returns. A
+  host doing one-time processing keeps its chunk history in the same transactional store as the
+  claims (the Drivine stores do this) and calls `extractPropositions` inside a transaction. Without
+  a transaction, a write that fails part way is retried, and the retry can add the window's claims
+  again. **Compatibility: behavioral.**

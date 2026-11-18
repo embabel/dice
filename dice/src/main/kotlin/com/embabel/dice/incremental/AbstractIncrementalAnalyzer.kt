@@ -76,20 +76,12 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         source: IncrementalSource<T>,
         context: SourceAnalysisContext,
     ): R? {
-        val lastBookmark = historyStore.getLastBookmark(BookmarkKey(context.contextId, source.id))
-        val lastIndex = lastBookmark?.endIndex ?: 0
+        val lastIndex = lastIndexIfTriggered(source, context) ?: return null
+        val window = prepareWindow(source, context, lastIndex) ?: return null
 
-        // Check if enough new content to trigger analysis
-        val newItemCount = source.size - lastIndex
-        if (newItemCount < config.triggerInterval) {
-            logger.debug(
-                "Source {} has {} new items, need {} to trigger",
-                source.id, newItemCount, config.triggerInterval
-            )
-            return null
-        }
-
-        return processWindow(source, context, lastIndex)
+        val result = processChunk(window.chunk, context)
+        recordWindow(source, context, window, result)
+        return result
     }
 
     override fun analyzeNow(
@@ -102,15 +94,84 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
 
         val lastBookmark = historyStore.getLastBookmark(BookmarkKey(context.contextId, source.id))
         val lastIndex = lastBookmark?.endIndex ?: 0
+        val window = prepareWindow(source, context, lastIndex) ?: return null
 
-        return processWindow(source, context, lastIndex)
+        val result = processChunk(window.chunk, context)
+        recordWindow(source, context, window, result)
+        return result
     }
 
-    private fun processWindow(
+    /**
+     * Analyses the next window like [analyze], hands the result to [store], and records the window
+     * only once [store] returns. If [store] throws, nothing is recorded and the exception goes up
+     * to the caller, so the next call analyses again from the same starting point. That window may
+     * end later if the source has grown since.
+     *
+     * Only Kotlin code in this module can call it. The method is synthetic in bytecode, so Java
+     * source cannot see it.
+     *
+     * @param source The source to read the next window from
+     * @param context Analysis context
+     * @param store Saves the result somewhere durable before the window is marked as done
+     * @return The result, or null when the window was not ready or was already processed.
+     */
+    @JvmSynthetic
+    internal fun analyzeThenRecord(
+        source: IncrementalSource<T>,
+        context: SourceAnalysisContext,
+        store: (R) -> Unit,
+    ): R? {
+        val lastIndex = lastIndexIfTriggered(source, context) ?: return null
+        val window = prepareWindow(source, context, lastIndex) ?: return null
+
+        val result = processChunk(window.chunk, context)
+        store(result)
+        recordWindow(source, context, window, result)
+        return result
+    }
+
+    /**
+     * Returns the bookmark position to continue from, or null when there are not yet enough new
+     * items to be worth analysing.
+     */
+    private fun lastIndexIfTriggered(
+        source: IncrementalSource<T>,
+        context: SourceAnalysisContext,
+    ): Int? {
+        val lastBookmark = historyStore.getLastBookmark(BookmarkKey(context.contextId, source.id))
+        val lastIndex = lastBookmark?.endIndex ?: 0
+
+        val newItemCount = source.size - lastIndex
+        if (newItemCount < config.triggerInterval) {
+            logger.debug(
+                "Source {} has {} new items, need {} to trigger",
+                source.id, newItemCount, config.triggerInterval
+            )
+            return null
+        }
+        return lastIndex
+    }
+
+    /**
+     * A window that is ready to hand to [processChunk]: where it sits in the source, the hash of
+     * its text, and the chunk itself.
+     */
+    private class PreparedWindow(
+        val startIndex: Int,
+        val endIndex: Int,
+        val contentHash: String,
+        val chunk: Chunk,
+    )
+
+    /**
+     * Works out the window that starts [WindowConfig.overlapSize] items before [lastIndex], formats
+     * it, and builds its chunk. Returns null when the same text was already processed.
+     */
+    private fun prepareWindow(
         source: IncrementalSource<T>,
         context: SourceAnalysisContext,
         lastIndex: Int,
-    ): R? {
+    ): PreparedWindow? {
         // Calculate window with overlap
         val startIndex = max(0, lastIndex - config.overlapSize)
         val endIndex = min(source.size, startIndex + config.windowSize)
@@ -131,7 +192,6 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
             return null
         }
 
-        // Create chunk and process
         val chunk = Chunk.Companion.create(
             text = text,
             parentId = source.id,
@@ -142,23 +202,29 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
                 "end_index" to endIndex,
             )
         )
+        return PreparedWindow(startIndex, endIndex, contentHash, chunk)
+    }
 
-        val result = processChunk(chunk, context)
-
-        // Record processing
+    /**
+     * Marks [window] as done in the history store and tells [onProcessed] about it.
+     */
+    private fun recordWindow(
+        source: IncrementalSource<T>,
+        context: SourceAnalysisContext,
+        window: PreparedWindow,
+        result: R,
+    ) {
         historyStore.recordProcessed(
             ProcessedChunkRecord(
                 bookmarkKey = BookmarkKey(context.contextId, source.id),
-                hashKey = HashKey(context.contextId, contentHash),
-                startIndex = startIndex,
-                endIndex = endIndex,
+                hashKey = HashKey(context.contextId, window.contentHash),
+                startIndex = window.startIndex,
+                endIndex = window.endIndex,
                 processedAt = Instant.now(),
             )
         )
 
-        onProcessed(source, startIndex, endIndex, result)
-
-        return result
+        onProcessed(source, window.startIndex, window.endIndex, result)
     }
 
 }
