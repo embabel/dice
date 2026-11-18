@@ -68,9 +68,16 @@ class DrivineChunkHistoryStore(
         val latestId = persistenceManager.maybeGetOne(
             cypherQuery(
                     "MATCH (c:ProcessedChunk {contextId: \$contextId, sourceId: \$sourceId}) " +
-                        "RETURN c.id AS id ORDER BY c.processedAt DESC LIMIT 1"
+                        "RETURN c.id AS id " +
+                        "ORDER BY ${InstantText.sortKey("c.processedAt")} DESC, c.processedAt DESC, c.id DESC LIMIT 1"
                 )
-                .bind(mapOf("contextId" to key.contextId.value, "sourceId" to key.sourceId))
+                .bind(
+                    mapOf(
+                        "contextId" to key.contextId.value,
+                        "sourceId" to key.sourceId,
+                        InstantText.PATTERN_PARAMETER to InstantText.PATTERN,
+                    ),
+                )
                 .transform(String::class.java)
         ) ?: return null
         val node = graphObjectManager.load<ProcessedChunkNode>(latestId) ?: return null
