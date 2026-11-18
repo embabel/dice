@@ -133,8 +133,8 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         } catch (e: Exception) {
             logUnrecorded(
                 source, context, window,
-                "Could not store items [{}, {}) of source {} in context {}. The bookmark has not moved, so the " +
-                    "next call for this source starts from the same item",
+                "Could not store items [{}, {}) of source {} in context {}, so this call did not record the " +
+                    "window as processed",
                 e,
             )
             throw e
@@ -240,8 +240,7 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         } catch (e: Exception) {
             logUnrecorded(
                 source, context, window,
-                "Could not record items [{}, {}) of source {} in context {} as processed. Unless the record " +
-                    "was saved anyway, the next call for this source starts from the same item",
+                "Could not record items [{}, {}) of source {} in context {} as processed",
                 e,
             )
             throw e
@@ -256,7 +255,7 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
      *
      * The exception itself goes to the caller untouched and may not say which source it came from.
      * This line does, so a host can spot a source whose window fails on every call and choose to
-     * skip it, for example by no longer asking for that source or by moving its bookmark on.
+     * stop asking for that source.
      */
     private fun logUnrecorded(
         source: IncrementalSource<T>,

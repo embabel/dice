@@ -146,6 +146,7 @@ class WindowRecordedAfterStoreTest {
         projectionFails: Boolean = false,
         projectionFailure: () -> Exception = { IllegalStateException("projector is down") },
         history: ChunkHistoryStore = InMemoryChunkHistoryStore(),
+        windowSize: Int = 1,
         mintNewEntities: Boolean = false,
         mintedEntityProperties: (NamedEntity) -> Map<String, Any> = { emptyMap() },
     ): Harness {
@@ -174,7 +175,7 @@ class WindowRecordedAfterStoreTest {
             entityRepository = mockk<NamedEntityDataRepository>(relaxed = true),
             entityResolver = mockk<EntityResolver>(relaxed = true),
             graphProjectionService = projection,
-            properties = PropositionExtractionProperties(windowSize = 1, overlapSize = 1, triggerInterval = 1),
+            properties = PropositionExtractionProperties(windowSize = windowSize, overlapSize = 1, triggerInterval = 1),
             mintNewEntitiesDefault = mintNewEntities,
             mintedEntityPropertiesProvider = mintedEntityProperties,
         )
@@ -745,8 +746,8 @@ class WindowRecordedAfterStoreTest {
 
     @Test
     fun `a failed store after the bookmark has moved logs that window's own range`() {
-        // The window starts the overlap before the bookmark, and its end is exclusive. A host reads
-        // these bounds to pick the bookmark that skips the window.
+        // The window starts the overlap before the bookmark and ends, exclusive, a window's length
+        // later, so the logged range differs from both the bookmark and a one-item window.
         val history = InMemoryChunkHistoryStore()
         history.recordProcessed(
             ProcessedChunkRecord(
@@ -757,14 +758,18 @@ class WindowRecordedAfterStoreTest {
                 processedAt = Instant.now(),
             ),
         )
-        val harness = harness(repository = FlakyRepository(failingSaves = setOf(1)), history = history)
+        val harness = harness(
+            repository = FlakyRepository(failingSaves = setOf(1)),
+            history = history,
+            windowSize = 4,
+        )
 
         val logged = errors {
-            assertThatThrownBy { harness.extraction.extractPropositions(event(size = 6)) }
+            assertThatThrownBy { harness.extraction.extractPropositions(event(size = 10)) }
                 .hasMessage("store is down")
         }
 
-        assertStuckWindowLogged(logged, times = 1, cause = "store is down", range = "[2, 3)")
+        assertStuckWindowLogged(logged, times = 1, cause = "store is down", range = "[2, 6)")
         assertThat(harness.bookmark()?.endIndex).isEqualTo(3)
     }
 }

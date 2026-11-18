@@ -137,13 +137,7 @@ retried, and the retry can add the window's claims again.
 A window whose store or record step fails is logged at `error` with its source, its context and its
 item range, and the exception is attached. The same source and range logged on every event means the
 window fails every time, so the source makes no progress and each event pays for the analysis
-again. To skip it, stop publishing events for that source, or move its bookmark past the window
-with `ChunkHistoryStore.recordProcessed`. The next window starts the window overlap before the
-bookmark's end index, so set the end index to at least the logged end plus the overlap. For items
-`[0, 10)` and an overlap of 2, that is 12. The record also marks a content hash as processed in the
-whole context, so pass a hash that names this skip, such as one built from the source id and the
-range, never the window's content hash. Skipping stops the analysis of those items. Claims a failed
-record step or a partial write already stored stay in place, without projection or grounding.
+again. To stop that, stop publishing events for the source until the cause is fixed.
 
 ==== Scope per user
 
