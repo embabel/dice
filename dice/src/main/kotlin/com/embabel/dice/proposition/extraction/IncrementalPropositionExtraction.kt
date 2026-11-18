@@ -39,9 +39,9 @@ import com.embabel.dice.proposition.PropositionRepository
 import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
-import org.springframework.scheduling.annotation.Async
 import java.io.InputStream
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
@@ -51,8 +51,9 @@ import java.util.function.Function
  * Generic async proposition extraction from incremental sources (conversations, message streams, etc.).
  * Uses [IncrementalAnalyzer] for windowed, deduplicated processing.
  *
- * This is NOT a Spring component — consuming applications create it as a `@Bean`
- * so that `@EventListener` and `@Async` are honoured by the Spring container.
+ * This is not a Spring component. An application creates it as a `@Bean` so that its
+ * `@EventListener` methods are registered. Published events run one at a time on a thread of
+ * DICE's own, not on the application's async executor.
  *
  * @param contextIdProvider maps the event's [NamedEntity] user to the context ID
  *        used for proposition storage. Defaults to [NamedEntity.getId].
@@ -329,10 +330,28 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         inFlightCount.incrementAndGet()
     }
 
-    @Async
+    /**
+     * Runs published events one at a time on a thread of DICE's own. Each extraction waits for the
+     * previous one to finish, so waiting here never ties up a thread of the application's shared
+     * async executor while another extraction is calling the LLM.
+     */
+    private val listenerWorker = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "dice-incremental-extraction").apply { isDaemon = true }
+    }
+
+    /**
+     * Hands a published event to DICE's own extraction thread and returns at once. A failure is
+     * logged at `error`, because no caller is waiting on it.
+     */
     @EventListener
     open fun onSourceAnalysisRequestEvent(event: SourceAnalysisRequestEvent) {
-        extractPropositions(event)
+        listenerWorker.execute {
+            try {
+                extractPropositions(event)
+            } catch (e: Exception) {
+                logger.error("Extraction failed for a published SourceAnalysisRequestEvent", e)
+            }
+        }
     }
 
     /**
@@ -502,8 +521,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
 
         if (result != null && result.propositions.isNotEmpty()) {
             logger.info(result.infoString(true, 1))
-            persistAndProject(result, context)
-            logAllPropositions(contextIdProvider.apply(user))
+            logStored(persistAndProject(result, context))
             logger.info("Remembered source: {}", sourceId)
         } else {
             logger.info("No propositions extracted from source: {}", sourceId)
@@ -719,8 +737,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 return
             }
 
-            stored?.let { projectStored(it) }
-            logAllPropositions(contextIdProvider.apply(event.user))
+            stored?.let {
+                projectStored(it)
+                logStored(it)
+            }
         } catch (e: LineageNotRecordedException) {
             logger.error(
                 "Lineage not recorded for extraction run {}; attribution was asked for and could " +
@@ -870,9 +890,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * @param result What the analysis produced.
      * @param context The analysis the result belongs to. Its run, if any, is attributed.
      */
-    private fun persistAndProject(result: ChunkPropositionResult, context: SourceAnalysisContext) {
-        projectStored(storeUnit(result, context))
-    }
+    private fun persistAndProject(
+        result: ChunkPropositionResult,
+        context: SourceAnalysisContext,
+    ): PropositionPersistenceResult = storeUnit(result, context).also { projectStored(it) }
 
     /**
      * Writes what an analysis produced as one [PersistUnit] and returns what the store holds for its
@@ -1010,21 +1031,17 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     }
 
     /**
-     * Logs every proposition in the context at `debug`. It is a diagnostic only: it reads the store
-     * after the work is done, so a failure here is logged and never fails the extraction, and claim
-     * text stays out of logs unless debug logging is on.
+     * Logs the propositions this extraction stored, at `debug`. It uses what is already in memory,
+     * so it reads nothing from the store and cannot fail or disturb the host's transaction.
+     *
+     * @param persisted What the repository returned for the saved propositions.
      */
-    private fun logAllPropositions(contextId: String) {
+    private fun logStored(persisted: PropositionPersistenceResult) {
         if (!logger.isDebugEnabled) return
-        try {
-            val sorted = propositionRepository.findByContextIdValue(contextId).sortedBy { it.text }
-            logger.debug("All propositions in context {} ({} total):", contextId, sorted.size)
-            for (p in sorted) {
-                logger.debug("  [{}] confidence={} '{}'", p.status, p.confidence, p.text)
-            }
-        } catch (e: Exception) {
-            if (e is InterruptedException) Thread.currentThread().interrupt()
-            logger.debug("Could not list the propositions in context {}", contextId, e)
+        val stored = persisted.distinctCanonicalPropositions.sortedBy { it.text }
+        logger.debug("Stored {} proposition(s):", stored.size)
+        for (p in stored) {
+            logger.debug("  [{}] confidence={} '{}'", p.status, p.confidence, p.text)
         }
     }
 

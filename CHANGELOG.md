@@ -2521,5 +2521,9 @@ and the consumer PRs that deliver it).
   transaction. A transaction does not stop two concurrent transactions from analysing the same
   window, so serialize those through the commit. The listing of every stored proposition after an
   extraction moves from `info` to `debug`, and a failure in that listing no longer fails the
-  extraction. The per-extraction summary at `info` still names the claims it extracted.
+  extraction. It now lists only the propositions that extraction stored, from memory, without reading
+  the store again. The per-extraction summary at `info` still names the claims it extracted. A
+  published `SourceAnalysisRequestEvent` now runs on a single extraction thread that DICE owns
+  instead of through `@Async`, so events waiting for the lock never hold threads of the application's
+  async executor.
   **Compatibility: behavioral.**
