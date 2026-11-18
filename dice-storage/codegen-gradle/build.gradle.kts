@@ -16,7 +16,8 @@
 // gradlew with whatever JAVA_HOME the outer build uses, which locally may be JDK 25. gradle/
 // gradle-daemon-jvm.properties pins the daemon to an auto-detected JDK 21 (also CI's JDK) so the
 // nested build always runs on a supported JVM regardless of the outer JAVA_HOME. Requires a JDK
-// 17-24 to be installed/discoverable; regenerate with: ./gradlew updateDaemonJvm --jvm-version=21
+// 17-24 to be installed/discoverable. Regenerate it with ./gradlew updateDaemonJvm --jvm-version=21,
+// passing the same -P version properties as the kspKotlin command below.
 //
 // Run on its own with:
 //   ./gradlew kspKotlin -PkotlinVersion=<kotlin.version> -PkspVersion=<ksp.version> -PdrivineVersion=<drivine.version>
