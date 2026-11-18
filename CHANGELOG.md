@@ -2531,7 +2531,8 @@ and the consumer PRs that deliver it).
   write without a transaction fails part way and the same window is analysed again, the retry now
   has the same chunk id. With revision on, a claim the failed write already stored is merged as a
   replay instead of being reinforced a second time, as long as the reviser matches it and the
-  source revision is unchanged. This applies to `PropositionIncrementalAnalyzer`,
+  source locator and source revision are unchanged. A window whose failed attempt ran on an
+  earlier version is reinforced once by its first retry. This applies to `PropositionIncrementalAnalyzer`,
   `EntityIncrementalAnalyzer` and `IncrementalPropositionExtraction`. Analysing the same window
   again after `ChunkHistoryStore.clearByContext` also gives the same chunk id. Stored chunk ids are
   not changed. **Compatibility: behavioral.**
