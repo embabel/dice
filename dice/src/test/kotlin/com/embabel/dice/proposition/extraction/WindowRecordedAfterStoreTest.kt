@@ -57,8 +57,10 @@ import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.net.SocketTimeoutException
+import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
@@ -288,111 +290,97 @@ class WindowRecordedAfterStoreTest {
     }
 
     @Test
-    fun `an interrupted drain stops after the failing event and leaves the rest queued`() {
-        // The first event holds the drain while two more queue behind it. The second save
-        // interrupts the draining thread and fails, so the drain must stop there and leave the
-        // third event in the queue for a later call.
+    fun `an interrupted run stops after the failing event and drops the rest`() {
+        // Two more events are queued from inside the first run. The second save interrupts the
+        // thread and fails, so the run stops there and drops the third event.
         val repository = FlakyRepository(
             failingSaves = setOf(2),
             beforeFailing = { Thread.currentThread().interrupt() },
         )
         val harness = harness(repository = repository)
+
+        val run = harness.drainAll(event(source = "source-a"), event(source = "source-b"), event(source = "source-c"))
+
+        assertThat(run.surfaced).isInstanceOf(IllegalStateException::class.java).hasMessage("store is down")
+        assertThat(run.stillInterrupted).isTrue()
+        assertThat(harness.history.getLastBookmark(BookmarkKey(tenant, "source-a"))).isNotNull()
+        verify(exactly = 2) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.extraction.isIdle)
+            .describedAs("the third event was dropped")
+            .isTrue()
+    }
+
+    @Test
+    fun `a caller on another thread runs its own event and is not rolled back by the first caller's failure`() {
+        // The first caller's save fails. A second caller that arrives while the first holds the
+        // lock waits, then runs its own event on its own thread, so the first caller's failure,
+        // and any transaction it rolls back, never touches the second caller's work.
+        val harness = harness(repository = FlakyRepository(failingSaves = setOf(1)))
         val firstEntered = CountDownLatch(1)
         val release = CountDownLatch(1)
-        val calls = AtomicInteger()
+        val threads = Collections.synchronizedList(mutableListOf<String>())
         every { harness.pipeline.processChunk(any(), any()) } answers {
-            if (calls.incrementAndGet() == 1) {
+            threads.add(Thread.currentThread().name)
+            if (threads.size == 1) {
                 firstEntered.countDown()
                 release.await(5, TimeUnit.SECONDS)
             }
             harness.chunkResult
         }
-
-        val surfaced = AtomicReference<Throwable?>()
-        val stillInterrupted = AtomicReference<Boolean>()
-        val drainer = Thread {
+        val firstFailure = AtomicReference<Throwable?>()
+        val first = Thread({
             try {
                 harness.extraction.extractPropositions(event(source = "source-a"))
             } catch (t: Throwable) {
-                surfaced.set(t)
-            } finally {
-                stillInterrupted.set(Thread.interrupted())
+                firstFailure.set(t)
             }
-        }
-        drainer.start()
+        }, "first-caller")
+        first.start()
         assertThat(firstEntered.await(5, TimeUnit.SECONDS)).isTrue()
-        harness.extraction.extractPropositions(event(source = "source-b"))
-        harness.extraction.extractPropositions(event(source = "source-c"))
-        release.countDown()
-        drainer.join(10_000)
 
-        assertThat(surfaced.get()).isInstanceOf(IllegalStateException::class.java).hasMessage("store is down")
-        assertThat(stillInterrupted.get()).isTrue()
-        verify(exactly = 2) { harness.pipeline.processChunk(any(), any()) }
-        assertThat(harness.extraction.isIdle)
-            .describedAs("the third event is still queued")
-            .isFalse()
-        Thread.interrupted()
+        val second = Thread({ harness.extraction.extractPropositions(event(source = "source-b")) }, "second-caller")
+        second.start()
+        release.countDown()
+        first.join(10_000)
+        second.join(10_000)
+
+        assertThat(firstFailure.get()).isInstanceOf(IllegalStateException::class.java).hasMessage("store is down")
+        assertThat(threads).containsExactly("first-caller", "second-caller")
+        assertThat(harness.repository.findById(claim.id)).isNotNull()
+        assertThat(harness.extraction.isIdle).isTrue()
     }
 
-    /** What a drain run on its own thread ended with. */
     private class DrainRun(val surfaced: Throwable?, val stillInterrupted: Boolean)
 
     /**
-     * Runs an event for `source-a` on its own thread and holds it in its first analysis until an
-     * event for each of [queued] is queued behind it, then lets the drain finish.
+     * Runs an event for `source-a` and queues an event for each of [queued] from inside its first
+     * analysis, on the same thread, the way a save listener would.
      *
-     * @param queued The sources to queue while the drain is held.
-     * @return What the draining thread saw.
+     * @param queued The sources to queue from inside the run.
+     * @return What the run ended with.
      */
-    private fun Harness.drainWithQueued(vararg queued: String): DrainRun {
-        val firstEntered = CountDownLatch(1)
-        val release = CountDownLatch(1)
-        val calls = AtomicInteger()
+    private fun Harness.drainWithQueued(vararg queued: String): DrainRun =
+        drainAll(event(source = "source-a"), *queued.map { event(source = it) }.toTypedArray())
+
+    /**
+     * Runs the first of [events] on this thread and queues the rest from inside its first analysis,
+     * the way a save listener on the same thread would. Only same-thread calls are queued, so this
+     * is how several events run in one call.
+     *
+     * @param events The events to run, in order.
+     * @return What the run ended with. The interrupt flag is cleared before this returns.
+     */
+    private fun Harness.drainAll(vararg events: SourceAnalysisRequestEvent): DrainRun {
+        val queuedFromInside = AtomicBoolean(false)
         every { pipeline.processChunk(any(), any()) } answers {
-            if (calls.incrementAndGet() == 1) {
-                firstEntered.countDown()
-                release.await(5, TimeUnit.SECONDS)
+            if (queuedFromInside.compareAndSet(false, true)) {
+                events.drop(1).forEach { extraction.extractPropositions(it) }
             }
             chunkResult
         }
-        val surfaced = AtomicReference<Throwable?>()
-        val stillInterrupted = AtomicReference<Boolean>()
-        val drainer = Thread {
-            try {
-                extraction.extractPropositions(event(source = "source-a"))
-            } catch (t: Throwable) {
-                surfaced.set(t)
-            } finally {
-                stillInterrupted.set(Thread.interrupted())
-            }
-        }
-        drainer.start()
-        assertThat(firstEntered.await(5, TimeUnit.SECONDS)).isTrue()
-        queued.forEach { extraction.extractPropositions(event(source = it)) }
-        release.countDown()
-        drainer.join(10_000)
-        return DrainRun(surfaced.get(), stillInterrupted.get())
-    }
-
-    /**
-     * Queues [events] in order and drains them all in one call on this thread. Every event but the
-     * last is queued while the thread is interrupted, so no drain runs until the last call, and the
-     * drain counts them all as queued when it started.
-     *
-     * @param events The events to drain, in queue order.
-     * @return What the drain ended with. The interrupt flag is cleared before this returns.
-     */
-    private fun Harness.drainAll(vararg events: SourceAnalysisRequestEvent): DrainRun {
-        try {
-            Thread.currentThread().interrupt()
-            events.dropLast(1).forEach { extraction.extractPropositions(it) }
-        } finally {
-            Thread.interrupted()
-        }
         var surfaced: Throwable? = null
         try {
-            extraction.extractPropositions(events.last())
+            extraction.extractPropositions(events.first())
         } catch (t: Throwable) {
             surfaced = t
         }
@@ -459,7 +447,7 @@ class WindowRecordedAfterStoreTest {
     }
 
     @Test
-    fun `a call that starts interrupted stores nothing and leaves its event queued`() {
+    fun `a call that starts interrupted stores nothing and keeps the flag`() {
         val harness = harness()
         try {
             Thread.currentThread().interrupt()
@@ -471,7 +459,7 @@ class WindowRecordedAfterStoreTest {
         }
         verify(exactly = 0) { harness.pipeline.processChunk(any(), any()) }
         assertThat(harness.repository.findById(claim.id)).isNull()
-        assertThat(harness.extraction.isIdle).isFalse()
+        assertThat(harness.extraction.isIdle).isTrue()
     }
 
     @Test
@@ -492,8 +480,8 @@ class WindowRecordedAfterStoreTest {
         assertThat(run.stillInterrupted).isTrue()
         verify(exactly = 1) { harness.pipeline.processChunk(any(), any()) }
         assertThat(harness.extraction.isIdle)
-            .describedAs("the second event is still queued")
-            .isFalse()
+            .describedAs("the second event was dropped")
+            .isTrue()
     }
 
     @Test
@@ -580,8 +568,8 @@ class WindowRecordedAfterStoreTest {
         assertThat(run.stillInterrupted).isTrue()
         verify(exactly = 1) { harness.pipeline.processChunk(any(), any()) }
         assertThat(harness.extraction.isIdle)
-            .describedAs("the second event is still queued")
-            .isFalse()
+            .describedAs("the second event was dropped")
+            .isTrue()
     }
 
     @Test
@@ -604,8 +592,8 @@ class WindowRecordedAfterStoreTest {
         assertThat(calls.get()).isEqualTo(1)
         verify(exactly = 1) { harness.pipeline.processChunk(any(), any()) }
         assertThat(harness.extraction.isIdle)
-            .describedAs("the second event is still queued")
-            .isFalse()
+            .describedAs("the second event was dropped")
+            .isTrue()
     }
 
     @Test

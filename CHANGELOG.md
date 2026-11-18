@@ -2502,20 +2502,22 @@ and the consumer PRs that deliver it).
   an exception reaches the caller of `extractPropositions`, as a STRICT lineage failure already did.
   Failures that projection and grounding only count are not thrown. Every exception that reaches the
   caller is unchecked. A failed write is thrown the way `PersistOutcome.persistedOrThrow()` throws it,
-  and any other checked exception is wrapped in a `RuntimeException` that keeps it as the cause. The
-  call drains the rest of the queue first and then throws the first failure. Later failures are logged
-  and attached to it as suppressed.
-  A failure while building the context or analysing the window is still logged, and the window is
-  retried. A call made from inside a drain on the same thread, such as from a save listener, leaves its
-  event queued for the outer drain. After the first failure the drain finishes only the events
-  queued at that moment, and events queued later wait for the next call. A
+  and any other checked exception is wrapped in a `RuntimeException` that keeps it as the cause.
+  Each call runs its own event on its own thread. A call from another thread waits for the lock
+  instead of handing its event to the running one, so one caller's failure cannot roll back another
+  caller's work. A call made from inside a run on the same thread, such as from a save listener, is
+  queued and runs after the current window is recorded. After the first failure only the events
+  queued at that moment run, and the first failure is thrown; later ones are logged. A failure while
+  building the context or analysing the window is still logged, and the window is retried. A
   `LineageNotRecordedException` is always thrown, also when it comes before the store step. If the
-  thread's interrupt flag is set, the drain stops, the flag stays set and the remaining events stay
-  queued. A store or pipeline that catches an interrupt must set the flag again. A write that fails
-  with `InterruptedException` sets it. With the default writer, a run link failure that leaves the
+  thread's interrupt flag is set, the run stops, the flag stays set and queued events are dropped;
+  the next event for the source analyses the window again. A store or pipeline that catches an
+  interrupt must set the flag again. With the default writer, a run link failure that leaves the
   claims stored records the window, so the claims are not stored again, and then throws. Any other
   failed write leaves the window unrecorded. `analyze` still records the window before it returns. A
-  host doing one-time processing keeps its chunk history in the same transactional store as the
-  claims (the Drivine stores do this) and calls `extractPropositions` inside a transaction. Without
-  a transaction, a write that fails part way is retried, and the retry can add the window's claims
-  again. **Compatibility: behavioral.**
+  host that wants a failed write to leave no trace keeps its chunk history in the same transactional
+  store as the claims (the Drivine stores do this) and calls `extractPropositions` inside a
+  transaction. A transaction does not stop two concurrent transactions from analysing the same
+  window, so serialize those through the commit. The listing of every stored proposition after an
+  extraction moves from `info` to `debug`, so claim text stays out of default logs, and a failure in
+  that listing no longer fails the extraction. **Compatibility: behavioral.**

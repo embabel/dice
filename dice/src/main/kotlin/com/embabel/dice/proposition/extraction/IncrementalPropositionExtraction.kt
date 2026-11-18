@@ -343,8 +343,12 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         get() = inFlightCount.get() <= 0 && pendingEvents.isEmpty() && !extractionLock.isLocked
 
     open fun extractPropositions(event: SourceAnalysisRequestEvent) {
-        pendingEvents.add(event)
-        processPendingEvents()
+        if (extractionLock.isHeldByCurrentThread) {
+            pendingEvents.add(event)
+            logger.debug("Extraction requested from inside a drain, {} event(s) queued", pendingEvents.size)
+            return
+        }
+        processOnThisThread(event)
     }
 
     /**
@@ -509,65 +513,56 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     // -- internal ---------------------------------------------------------
 
     /**
-     * Drains [pendingEvents] under [extractionLock], one event at a time.
+     * Runs [event] on the calling thread under [extractionLock], then any events queued from inside
+     * it on the same thread, and throws the first failure.
      *
-     * A failure on one queued event does not cost the rest of the queue. This loop catches what
-     * `processEvent` throws for each event and remembers the first failure. At that moment it
-     * counts the events still queued, finishes only those, polls no further and starts no second
-     * drain, so a save listener that keeps queueing events cannot hold the failure back. Anything
-     * queued after the first failure waits for the next call. The first failure is then rethrown,
-     * so it reaches whoever called [extractPropositions]. A host that runs extraction inside its
-     * own transaction has to see that failure to roll the transaction back, and a STRICT lineage
-     * failure has to reach the caller that asked for it. Each later failure is logged at `warn`.
-     * The first failure is rethrown unchanged, since it may belong to the store and outlive the drain.
-     * Without a failure, the drain keeps polling until the queue is empty, then drains again if
-     * another thread queued an event after it let go of the lock.
+     * Each caller runs its own event. A caller on another thread waits for the lock rather than
+     * handing its event to the thread that holds it, so an event always runs on the thread, and
+     * inside the transaction, of the caller that submitted it. One caller's failure can never roll
+     * back another caller's work.
      *
-     * A call made on the thread that is already draining, for example from a save listener, leaves
-     * its event queued and returns. The outer drain runs that event after the current window is
-     * recorded, so the same window is not analysed twice.
+     * A call made on the thread that already holds the lock, for example from a save listener, is
+     * queued by [extractPropositions] and run here after the current window is recorded, so the
+     * same window is not analysed twice. Those events belong to this caller, so their failures are
+     * this caller's too. After the first failure only the events queued at that moment run, so a
+     * listener that keeps queueing cannot hold the failure back. Each later failure is logged at
+     * `warn`, and the first is rethrown unchanged.
      *
-     * The thread's interrupt flag stops the drain. The flag is checked before every poll, so a call
-     * that starts interrupted stores nothing. A store or pipeline that catches an interrupt must set
-     * the flag again before it returns or throws, as is the Java convention. The drain stops once
-     * the flag is set, the events still queued wait for the next call, and the first failure is
-     * rethrown with the flag left set.
+     * The thread's interrupt flag stops the run before the next event. The queued events are then
+     * dropped: an event only asks for the next window to be analysed, and the next event for that
+     * source does the same, because a window is recorded only after its claims are stored.
+     *
+     * @param event The caller's event.
      */
-    private fun processPendingEvents() {
-        if (extractionLock.isHeldByCurrentThread) {
-            logger.debug("Extraction requested from inside a drain, {} event(s) queued", pendingEvents.size)
-            return
-        }
-        if (!extractionLock.tryLock()) {
-            logger.debug("Extraction in progress, {} event(s) queued", pendingEvents.size)
-            return
-        }
+    private fun processOnThisThread(event: SourceAnalysisRequestEvent) {
+        extractionLock.lock()
         var firstFailure: Exception? = null
-        var interrupted = false
         try {
-            // How many more events this drain may take. Unbounded until the first failure.
+            // How many more queued events this run may take. Unbounded until the first failure.
             var remaining = Int.MAX_VALUE
-            while (remaining > 0) {
+            var next: SourceAnalysisRequestEvent? = event
+            while (next != null) {
                 if (Thread.currentThread().isInterrupted) {
-                    interrupted = true
+                    if (pendingEvents.isNotEmpty()) {
+                        logger.info("Extraction interrupted, dropping {} queued event(s)", pendingEvents.size)
+                        pendingEvents.clear()
+                    }
                     break
                 }
-                val next = pendingEvents.poll() ?: break
-                if (firstFailure != null) remaining--
                 try {
                     processEvent(next)
                 } catch (e: Exception) {
                     if (firstFailure == null) remaining = pendingEvents.size
                     firstFailure = keepFirst(firstFailure, e)
                 }
+                if (remaining <= 0) break
+                next = pendingEvents.poll()
+                if (next != null && firstFailure != null) remaining--
             }
         } finally {
             extractionLock.unlock()
         }
         firstFailure?.let { throw it }
-        if (!interrupted && pendingEvents.isNotEmpty()) {
-            processPendingEvents()
-        }
     }
 
     /**
@@ -595,7 +590,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * A failure before the store step starts, while building the context or analysing the window, is
      * logged and swallowed, and the next event tries the window again. From the store step onwards
      * (storing, recording the window, projection and grounding) a failure is thrown to
-     * [processPendingEvents], which passes it on to whoever called [extractPropositions]. A host that
+     * [processOnThisThread], which passes it on to whoever called [extractPropositions]. A host that
      * runs extraction inside its own transaction has to see that failure to roll the transaction
      * back. A [LineageNotRecordedException] that escapes context building or analysis is thrown too,
      * and is logged at `error` with the run id. One that a provider throws inside context building
@@ -989,12 +984,22 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         }
     }
 
+    /**
+     * Logs every proposition in the context at `debug`. It is a diagnostic only: it reads the store
+     * after the work is done, so a failure here is logged and never fails the extraction, and claim
+     * text stays out of logs unless debug logging is on.
+     */
     private fun logAllPropositions(contextId: String) {
-        val all = propositionRepository.findByContextIdValue(contextId)
-        val sorted = all.sortedBy { it.text }
-        logger.info("All propositions in context {} ({} total):", contextId, sorted.size)
-        for (p in sorted) {
-            logger.info("  [{}] confidence={} '{}'", p.status, p.confidence, p.text)
+        if (!logger.isDebugEnabled) return
+        try {
+            val sorted = propositionRepository.findByContextIdValue(contextId).sortedBy { it.text }
+            logger.debug("All propositions in context {} ({} total):", contextId, sorted.size)
+            for (p in sorted) {
+                logger.debug("  [{}] confidence={} '{}'", p.status, p.confidence, p.text)
+            }
+        } catch (e: Exception) {
+            if (e is InterruptedException) Thread.currentThread().interrupt()
+            logger.debug("Could not list the propositions in context {}", contextId, e)
         }
     }
 

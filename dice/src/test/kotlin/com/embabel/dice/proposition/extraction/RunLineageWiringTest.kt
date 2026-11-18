@@ -50,9 +50,6 @@ import java.time.Instant
 import com.embabel.dice.common.SourceAnalysisRequestEvent
 import com.embabel.dice.incremental.IncrementalSource
 import com.embabel.chat.Message
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
 
 /**
  * What `persistAndProject` hands to projection, grounding and lineage.
@@ -284,43 +281,27 @@ class RunLineageWiringTest {
 
     @Test
     fun `a lineage failure on one queued event does not drop the next`() {
-        // The first event holds the drain open inside the pipeline while two more queue behind it.
-        // Its lineage failure must not cost those two their turn: the drain keeps going and the
-        // failure surfaces once, after the queue is empty.
+        // Two more events are queued from inside the first run, on the same thread, the way a save
+        // listener would. The first event's lineage failure must not cost those two their turn:
+        // the run keeps going and the failure surfaces once, after they have run.
         val harness = harness(
             stored = null,
             extracted = proposition("Alice likes coffee", id = "minted"),
             linkStore = null,
             policy = LineageFailurePolicy.STRICT,
         )
-        val firstEntered = CountDownLatch(1)
-        val release = CountDownLatch(1)
         var calls = 0
         every { harness.pipeline.processChunk(any(), any()) } answers {
             if (calls++ == 0) {
-                firstEntered.countDown()
-                release.await(5, TimeUnit.SECONDS)
+                harness.extraction.extractPropositions(event(currentRun = runRef, sourceId = "source-b"))
+                harness.extraction.extractPropositions(event(currentRun = runRef, sourceId = "source-c"))
             }
             harness.chunkResult
         }
 
-        val surfaced = AtomicReference<Throwable?>()
-        val drainer = Thread {
-            try {
-                harness.extraction.extractPropositions(event(currentRun = runRef, sourceId = "source-a"))
-            } catch (t: Throwable) {
-                surfaced.set(t)
-            }
-        }
-        drainer.start()
-        assertThat(firstEntered.await(5, TimeUnit.SECONDS)).isTrue()
-        // These two find the lock held and queue behind the first event.
-        harness.extraction.extractPropositions(event(currentRun = runRef, sourceId = "source-b"))
-        harness.extraction.extractPropositions(event(currentRun = runRef, sourceId = "source-c"))
-        release.countDown()
-        drainer.join(10_000)
-
-        assertThat(surfaced.get()).isInstanceOf(LineageNotRecordedException::class.java)
+        assertThatThrownBy {
+            harness.extraction.extractPropositions(event(currentRun = runRef, sourceId = "source-a"))
+        }.isInstanceOf(LineageNotRecordedException::class.java)
         verify(exactly = 3) { harness.pipeline.processChunk(any(), any()) }
         assertThat(harness.extraction.isIdle).isTrue()
     }
