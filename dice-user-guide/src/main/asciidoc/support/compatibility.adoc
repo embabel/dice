@@ -42,8 +42,8 @@ commitment. They get pinned at the 1.0 release.
 
 | tuProlog (2p-kt)
 | 1.0.4, pinned
-| The 1.1.x series needs Kotlin 2.2.21 or later, which DICE now builds with. The pin stays until
-  a release moves it.
+| Releases 1.1.0 to 1.1.5 depend on a `kotlin-stdlib-common` 2.2 jar that Kotlin does not publish,
+  and releases from 1.2.0 are built with Kotlin 2.4, which DICE's compiler cannot read.
 |===
 
 ==== Feature availability by module
