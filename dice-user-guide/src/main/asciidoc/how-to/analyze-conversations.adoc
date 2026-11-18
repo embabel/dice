@@ -123,9 +123,25 @@ write.
 `extractPropositions` runs the caller's event on the caller's thread and throws its failure. Every
 exception it throws is unchecked. A call from another thread waits for the running one to finish
 instead of handing its event over, so one caller's failure never rolls back another caller's work.
-Published events run through `@Async` on your application's executor, so while one extraction is
-calling the LLM, each other published event holds one of that executor's threads. If you publish
-bursts of events, give `@Async` a dedicated executor.
+A published `SourceAnalysisRequestEvent` is handed to a single thread DICE owns, and the publisher
+returns at once. Its queue holds 1,000 events; one it cannot take is logged at `error` and dropped,
+and the next event for the source analyses the window again. To keep your `TaskDecorator`, for
+example to carry a tenant context, or to size the queue yourself, bind your own executor before the
+first event:
+
+[source,java]
+----
+ThreadPoolTaskExecutor events = new ThreadPoolTaskExecutor();
+events.setCorePoolSize(1);
+events.setQueueCapacity(500);
+events.setTaskDecorator(tenantDecorator);
+events.initialize();
+extraction.withEventExecutor(events);
+----
+
+Give extraction an executor of its own. If a running extraction waits on the same executor, for
+example through concurrent chunk extraction, the two can wait for each other forever. When the
+Spring context closes, `close()` gives DICE's own queued events 30 seconds to finish.
 A call made from inside a running extraction on the same thread, such as from a save listener, is
 queued and run after the current window is recorded. After the first failure only the events queued
 at that moment run. A failure while building the context

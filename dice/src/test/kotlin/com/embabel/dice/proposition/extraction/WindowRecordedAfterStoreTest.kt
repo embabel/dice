@@ -62,6 +62,8 @@ import java.time.Instant
 import java.util.Collections
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -360,6 +362,25 @@ class WindowRecordedAfterStoreTest {
     }
 
     @Test
+    fun `a store failure is not reported as a cancellation when the same event was queued again`() {
+        // A save listener queues the very same event object. The first save interrupts the thread
+        // and fails, so the caller must see the store failure, not a claim that its event never ran.
+        val harness = harness(
+            repository = FlakyRepository(
+                failingSaves = setOf(1),
+                beforeFailing = { Thread.currentThread().interrupt() },
+            ),
+        )
+        val same = event(source = "source-a")
+
+        val run = harness.drainAll(same, same)
+
+        assertThat(run.surfaced).isInstanceOf(IllegalStateException::class.java).hasMessage("store is down")
+        assertThat(run.stillInterrupted).isTrue()
+        assertThat(harness.extraction.isIdle).isTrue()
+    }
+
+    @Test
     fun `a caller interrupted while waiting for the lock throws and keeps the flag`() {
         val harness = harness()
         val firstEntered = CountDownLatch(1)
@@ -415,6 +436,120 @@ class WindowRecordedAfterStoreTest {
         assertThat(harness.extraction.isIdle)
             .describedAs("the published event has not run")
             .isFalse()
+    }
+
+    /** Publishes [event] the way Spring does: the counting listener first, then the hand-off. */
+    private fun Harness.publish(event: SourceAnalysisRequestEvent) {
+        extraction.trackEvent(event)
+        extraction.onSourceAnalysisRequestEvent(event)
+    }
+
+    private fun Harness.awaitIdle() {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (!extraction.isIdle && System.nanoTime() < deadline) Thread.sleep(5)
+    }
+
+    @Test
+    fun `a published event runs on DICE's own thread and the publisher returns at once`() {
+        val harness = harness()
+        val ran = CountDownLatch(1)
+        val thread = AtomicReference<String>()
+        every { harness.pipeline.processChunk(any(), any()) } answers {
+            thread.set(Thread.currentThread().name)
+            ran.countDown()
+            harness.chunkResult
+        }
+
+        harness.publish(event())
+
+        assertThat(ran.await(5, TimeUnit.SECONDS)).isTrue()
+        assertThat(thread.get()).isEqualTo("dice-incremental-extraction")
+        harness.awaitIdle()
+        assertThat(harness.extraction.isIdle).isTrue()
+        harness.extraction.close()
+    }
+
+    @Test
+    fun `a published event cannot deadlock a running extraction that waits on the application's pool`() {
+        // With published events on the application's one-thread pool, the event would take that
+        // thread and wait for the lock while the running extraction waits for the same thread.
+        val appPool = Executors.newSingleThreadExecutor()
+        try {
+            val harness = harness()
+            val calls = AtomicInteger()
+            every { harness.pipeline.processChunk(any(), any()) } answers {
+                if (calls.incrementAndGet() == 1) {
+                    harness.publish(event(source = "source-b"))
+                    appPool.submit { }.get(5, TimeUnit.SECONDS)
+                }
+                harness.chunkResult
+            }
+
+            harness.extraction.extractPropositions(event(source = "source-a"))
+            harness.awaitIdle()
+
+            assertThat(calls.get()).isEqualTo(2)
+            assertThat(harness.extraction.isIdle).isTrue()
+            harness.extraction.close()
+        } finally {
+            appPool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `a bound executor runs published events instead of DICE's own thread`() {
+        val harness = harness()
+        val submitted = AtomicInteger()
+        harness.extraction.withEventExecutor { task ->
+            submitted.incrementAndGet()
+            task.run()
+        }
+
+        harness.publish(event())
+
+        assertThat(submitted.get()).isEqualTo(1)
+        verify(exactly = 1) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.extraction.isIdle).isTrue()
+    }
+
+    @Test
+    fun `an event the executor refuses is dropped and not left counted`() {
+        val harness = harness()
+        harness.extraction.withEventExecutor { throw RejectedExecutionException("full") }
+
+        harness.publish(event())
+
+        verify(exactly = 0) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.extraction.isIdle).isTrue()
+    }
+
+    @Test
+    fun `the event executor binds once`() {
+        val harness = harness()
+        harness.extraction.withEventExecutor { it.run() }
+
+        assertThatThrownBy { harness.extraction.withEventExecutor { it.run() } }
+            .isInstanceOf(IllegalStateException::class.java)
+    }
+
+    @Test
+    fun `close lets a queued published event finish`() {
+        val harness = harness()
+        val started = CountDownLatch(1)
+        val finished = AtomicBoolean()
+        every { harness.pipeline.processChunk(any(), any()) } answers {
+            started.countDown()
+            Thread.sleep(200)
+            finished.set(true)
+            harness.chunkResult
+        }
+
+        harness.publish(event())
+        assertThat(started.await(5, TimeUnit.SECONDS)).isTrue()
+        harness.extraction.close()
+
+        assertThat(finished.get()).isTrue()
+        assertThat(harness.extraction.isIdle).isTrue()
     }
 
     private class DrainRun(val surfaced: Throwable?, val stillInterrupted: Boolean)

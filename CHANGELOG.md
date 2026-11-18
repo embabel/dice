@@ -2525,9 +2525,13 @@ and the consumer PRs that deliver it).
   moves from `info` to `debug`, and a failure in that listing no longer fails the extraction. It now
   lists only the propositions that extraction stored, from memory, without reading the store again.
   The per-extraction summary at `info` still names the claims it extracted. A published
-  `SourceAnalysisRequestEvent` still runs through `@Async`, but while one extraction runs, each other
-  published event now waits for it on a thread of the application's async executor instead of being
-  queued. An application that publishes bursts of events should give `@Async` a dedicated executor.
+  `SourceAnalysisRequestEvent` no longer runs through `@Async`. It is handed to a single thread DICE
+  owns, with a queue of 1,000 events, and the publisher returns at once, so waiting events never hold
+  threads of the application's pools. An event the queue cannot take is logged at `error` and
+  dropped, and the next event for the source analyses the window again. Bind your own executor with
+  the experimental `withEventExecutor(Executor)` when the work needs your `TaskDecorator`, for
+  example for a tenant context, or a different queue size. The extractor is now `AutoCloseable`,
+  and `close()` gives queued events 30 seconds to finish when the Spring context shuts down.
   **Compatibility: behavioral.**
 
 - A window that `IncrementalPropositionExtraction` leaves unrecorded is logged at `error` with its
