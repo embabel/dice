@@ -21,11 +21,14 @@ import com.embabel.agent.rag.model.Chunk
 import com.embabel.dice.common.SourceAnalysisContext
 import com.embabel.dice.common.resolver.AlwaysCreateEntityResolver
 import com.embabel.dice.common.support.Sha256ContentHasher
+import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
+import java.util.UUID
 
 /*
  * Contract for AbstractIncrementalAnalyzer.analyzeThenRecord and the analyze behaviour it shares.
@@ -42,6 +45,10 @@ import org.junit.jupiter.api.Test
  * I1  analyze keeps its trigger rule and still records before it returns.
  * L1  After a successful call, a second call on the same unchanged source returns null.
  * J1  analyzeThenRecord is synthetic in bytecode, so Java source cannot call it.
+ * C1  A window analysed again after a failed store gets the same chunk id as the first attempt.
+ * C2  The chunk id is a UUID that depends only on the context, the source id, the window bounds
+ *     and the window text, so a fresh analyzer and history store give the same id.
+ * C3  Windows that differ in context, source id or text get different chunk ids.
  */
 class AnalyzeThenRecordTest {
 
@@ -257,5 +264,58 @@ class AnalyzeThenRecordTest {
 
         assertEquals(1, methods.size)
         assertEquals(true, methods.single().isSynthetic)
+    }
+
+    /**
+     * Runs one fresh analyzer with an empty history over [items] and returns the id of the chunk
+     * it analysed.
+     *
+     * @param sourceId The id of the source to analyse.
+     * @param items The items in the source.
+     * @param analysisContext The context to analyse in.
+     * @return The chunk id.
+     */
+    private fun chunkIdFor(
+        sourceId: String,
+        items: List<String>,
+        analysisContext: SourceAnalysisContext = context,
+    ): String {
+        val analyzer = RecordingAnalyzer(InMemoryChunkHistoryStore())
+        analyzer.run(ListSource(sourceId, items.toMutableList()), analysisContext) { }
+        return analyzer.chunks.single().id
+    }
+
+    // C1: the retry reaches the store with the same chunk id, so revision sees the claims it
+    // already holds as a replay instead of adding them again.
+    @Test
+    fun `C1 a window analysed again after a failed store keeps its chunk id`() {
+        val analyzer = RecordingAnalyzer(InMemoryChunkHistoryStore())
+        val source = ListSource("src", fourItems.toMutableList())
+
+        assertThrows(IllegalStateException::class.java) {
+            analyzer.run(source, context) { throw IllegalStateException("store down") }
+        }
+        analyzer.run(source, context) { }
+
+        assertEquals(2, analyzer.chunks.size)
+        assertEquals(analyzer.chunks[0].id, analyzer.chunks[1].id)
+    }
+
+    @Test
+    fun `C2 the chunk id is a UUID that a fresh analyzer derives again`() {
+        val first = chunkIdFor("src", fourItems)
+
+        assertDoesNotThrow { UUID.fromString(first) }
+        assertEquals(first, chunkIdFor("src", fourItems))
+    }
+
+    @Test
+    fun `C3 windows that differ in context, source or text get different chunk ids`() {
+        val base = chunkIdFor("src", fourItems)
+        val otherContext = context.copy(contextId = ContextId("another-tenant"))
+
+        assertNotEquals(base, chunkIdFor("src", fourItems, otherContext))
+        assertNotEquals(base, chunkIdFor("other-src", fourItems))
+        assertNotEquals(base, chunkIdFor("src", listOf("a", "b", "c", "e")))
     }
 }

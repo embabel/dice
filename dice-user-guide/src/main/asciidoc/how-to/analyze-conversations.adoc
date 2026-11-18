@@ -132,7 +132,10 @@ call. A store or pipeline that catches an interrupt must set the flag again, as 
 A failure that reaches the caller lets a host transaction roll back. For one-time processing, keep the
 chunk history in the same transactional store as the claims. The Drivine stores do this. Call
 `extractPropositions` inside a transaction. Without a transaction, a write that fails part way is
-retried, and the retry can add the window's claims again.
+retried. Each window's chunk id is derived from the context, the source id, the window bounds and
+the window text, so the retry analyses the same chunk id, and a claim the failed write already
+stored comes back as a replay. If the source has grown since, the retried window ends later and
+gets a new chunk id, so a claim stored by the failed write is reinforced again by the retry.
 
 A window whose store or record step fails is logged at `error` with its source, its context and its
 item range, and the exception is attached. The same source and start index logged on every event
