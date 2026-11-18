@@ -26,8 +26,8 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 
 /**
- * Runs the [AbstractExtractionRunStoreContractTest] suite against the Neo4j-backed
- * [DrivineExtractionRunStore] (testcontainer). This is the half that catches the graph backend
+ * Runs the [AbstractExtractionRunStoreContractTest] suite against [DrivineExtractionRunStore]
+ * on a real graph store: Neo4j here, SQLite in the `sqlite` package. This is the half that catches the graph backend
  * disagreeing with the in-memory reference, which is easy to do here: the state machine lives in a
  * Cypher `FOREACH` over a conditional list there and in Kotlin `if`s in the reference, and the
  * idempotency rule is a stored string on one side and a map entry on the other.
@@ -42,7 +42,7 @@ import org.springframework.boot.test.context.SpringBootTest
  * the bean holds one, and [store] aims it at whichever listener the case handed over.
  */
 @SpringBootTest(classes = [TestApplication::class])
-class DrivineExtractionRunStoreContractIntegrationTest : AbstractExtractionRunStoreContractTest() {
+abstract class DrivineExtractionRunStoreContractCases : AbstractExtractionRunStoreContractTest() {
 
     @Autowired
     private lateinit var graphStore: DrivineExtractionRunStore
@@ -62,7 +62,10 @@ class DrivineExtractionRunStoreContractIntegrationTest : AbstractExtractionRunSt
     fun cleanUp() {
         eventListener.redirectTo(DiceEventListener.DEV_NULL)
         ExtractionRunSchema.LABELS.forEach { label ->
-            persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:$label) DETACH DELETE n"))
+            persistenceManager.execute(cypherQuery("MATCH (n:$label) DETACH DELETE n"))
         }
     }
 }
+
+/** Runs the [DrivineExtractionRunStoreContractCases] on Neo4j. */
+class DrivineExtractionRunStoreContractIntegrationTest : DrivineExtractionRunStoreContractCases()

@@ -54,8 +54,7 @@ class GraphDecayManager(
     private fun sweep(match: String, extraParams: Map<String, Any>) {
         val now = Instant.now()
         persistenceManager.execute(
-            QuerySpecification
-                .withStatement("$match\nCALL {\n  WITH p\n$DECAY_EXPRESSION\n} IN TRANSACTIONS OF $BATCH_ROWS ROWS")
+            cypherQuery("$match\nCALL {\n  WITH p\n$DECAY_EXPRESSION\n} IN TRANSACTIONS OF $BATCH_ROWS ROWS")
                 .bind(extraParams + mapOf("now" to now))
         )
     }

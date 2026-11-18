@@ -66,8 +66,7 @@ class DrivineChunkHistoryStore(
     @Transactional(readOnly = true)
     override fun getLastBookmark(key: BookmarkKey): AnalysisBookmark? {
         val latestId = persistenceManager.maybeGetOne(
-            QuerySpecification
-                .withStatement(
+            cypherQuery(
                     "MATCH (c:ProcessedChunk {contextId: \$contextId, sourceId: \$sourceId}) " +
                         "RETURN c.id AS id ORDER BY c.processedAt DESC LIMIT 1"
                 )
@@ -81,8 +80,7 @@ class DrivineChunkHistoryStore(
     @Transactional
     override fun clearByContext(contextId: ContextId) {
         persistenceManager.execute(
-            QuerySpecification
-                .withStatement("MATCH (c:ProcessedChunk {contextId: \$contextId}) DETACH DELETE c")
+            cypherQuery("MATCH (c:ProcessedChunk {contextId: \$contextId}) DETACH DELETE c")
                 .bind(mapOf("contextId" to contextId.value))
         )
     }
@@ -100,7 +98,7 @@ class DrivineChunkHistoryStore(
     @Transactional
     override fun clearAll() {
         persistenceManager.execute(
-            QuerySpecification.withStatement("MATCH (c:ProcessedChunk) DETACH DELETE c"),
+            cypherQuery("MATCH (c:ProcessedChunk) DETACH DELETE c"),
         )
     }
 

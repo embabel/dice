@@ -63,7 +63,7 @@ class DrivineCollectorTraceStore(
     override fun recordRunContext(runId: String, contextId: ContextId) {
         logger.debug("Recording collector trace run {} for context {}", runId.take(8), contextId.value)
         persistenceManager.execute(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MERGE (r:CollectorTraceRun {runId: ${'$'}runId})
                 SET r.contextId = ${'$'}contextId,
@@ -80,7 +80,7 @@ class DrivineCollectorTraceStore(
 
         val edgeRows = edges.map { CollectorCandidateEdgeRowMapper.edgeBindMap(runId, it) }
         persistenceManager.execute(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MATCH (run:CollectorTraceRun {runId: ${'$'}runId})
                 UNWIND ${'$'}rows AS r
@@ -93,7 +93,7 @@ class DrivineCollectorTraceStore(
         val signalRows = edges.flatMap { edge -> edge.signals.map { CollectorCandidateEdgeRowMapper.signalBindMap(runId, edge, it) } }
         if (signalRows.isEmpty()) return
         persistenceManager.execute(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MATCH (run:CollectorTraceRun {runId: ${'$'}runId})
                 UNWIND ${'$'}rows AS r
@@ -113,7 +113,7 @@ class DrivineCollectorTraceStore(
 
         val rows = components.map { CollectorComponentRowMapper.bindMap(runId, it) }
         persistenceManager.execute(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MATCH (run:CollectorTraceRun {runId: ${'$'}runId})
                 UNWIND ${'$'}rows AS r
@@ -129,7 +129,7 @@ class DrivineCollectorTraceStore(
         logger.debug("Recording collector decision for component {} in run {}", decision.componentId, runId.take(8))
 
         persistenceManager.execute(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MATCH (run:CollectorTraceRun {runId: ${'$'}runId})
                 MERGE (d:CollectorDecision {id: ${'$'}row.id})
@@ -147,7 +147,7 @@ class DrivineCollectorTraceStore(
         if (decision.retired.isEmpty()) return
         val retiredRows = decision.retired.map { CollectorDecisionRowMapper.retiredBindMap(runId, decision, it) }
         persistenceManager.execute(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MATCH (run:CollectorTraceRun {runId: ${'$'}runId})
                 UNWIND ${'$'}rows AS r
@@ -167,8 +167,7 @@ class DrivineCollectorTraceStore(
         // parameterized MATCH + DETACH DELETE, no APOC/GDS needed to loop over labels in Cypher itself.
         val totalDeleted = CollectorTraceSchema.LABELS.sumOf { label ->
             val deleted = persistenceManager.maybeGetOne(
-                QuerySpecification
-                    .withStatement(
+                cypherQuery(
                         """
                         MATCH (n:$label {contextId: ${'$'}contextId})
                         WITH collect(n) AS nodes, count(n) AS deleted
@@ -306,7 +305,7 @@ class DrivineCollectorTraceStore(
     /** Runs a parameterized read and returns each result row as a `Map<*, *>`. */
     private fun queryRows(statement: String, params: Map<String, Any?>): List<Map<*, *>> {
         @Suppress("UNCHECKED_CAST")
-        val spec = QuerySpecification.withStatement(statement).let {
+        val spec = cypherQuery(statement).let {
             if (params.isEmpty()) it else it.bind(params)
         }
         return persistenceManager.query(spec).filterIsInstance<Map<*, *>>()

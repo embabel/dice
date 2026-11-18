@@ -185,7 +185,7 @@ class DrivineMetamodelVersionStore(
             version.contentHash.take(8),
         )
         persistenceManager.execute(
-            QuerySpecification.withStatement(SAVE_VERSION)
+            cypherQuery(SAVE_VERSION)
                 .bind(MetamodelVersionRowMapper.bindMap(version, clock.instant())),
         )
     }
@@ -228,7 +228,7 @@ class DrivineMetamodelVersionStore(
             version.contentHash.take(8),
         )
         persistenceManager.execute(
-            QuerySpecification.withStatement(MARK_SWEPT)
+            cypherQuery(MARK_SWEPT)
                 .bind(mapOf("schemaName" to version.schemaName, "contentHash" to version.contentHash)),
         )
     }
@@ -241,7 +241,7 @@ class DrivineMetamodelVersionStore(
     @Transactional(readOnly = true)
     override fun sweptVersion(schemaName: String): MetamodelVersion? {
         val sweptContentHash = persistenceManager.maybeGetOne(
-            QuerySpecification.withStatement(SWEPT_CONTENT_HASH)
+            cypherQuery(SWEPT_CONTENT_HASH)
                 .bind(mapOf("schemaName" to schemaName))
                 .transform(String::class.java),
         ) ?: return null
@@ -267,7 +267,7 @@ class DrivineMetamodelVersionStore(
      */
     private fun readVersions(statement: String, bindings: Map<String, Any?>): List<MetamodelVersion> {
         @Suppress("UNCHECKED_CAST")
-        val spec = QuerySpecification.withStatement(statement).bind(bindings) as QuerySpecification<Any>
+        val spec = cypherQuery(statement).bind(bindings) as QuerySpecification<Any>
         return persistenceManager.query(spec).mapNotNull { row ->
             if (row !is Map<*, *>) {
                 logger.warn(

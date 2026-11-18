@@ -27,17 +27,11 @@ import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 
 /**
- * Runs the [AbstractDriftReportStoreContractTest] suite against [DrivineDriftReportStore] on the
- * shared Neo4j testcontainer. Each case starts and ends with an empty drift log.
+ * Runs the [AbstractDriftReportStoreContractTest] suite against [DrivineDriftReportStore]. The subclasses
+ * pick the store: Neo4j here, SQLite in the `sqlite` package. Each case starts and ends with an empty drift log.
  */
 @SpringBootTest(classes = [TestApplication::class])
-class DrivineDriftReportStoreContractIntegrationTest : AbstractDriftReportStoreContractTest() {
-
-    companion object {
-        @JvmStatic
-        @DynamicPropertySource
-        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
-    }
+abstract class DrivineDriftReportStoreContractCases : AbstractDriftReportStoreContractTest() {
 
     @Autowired
     private lateinit var driftReportStore: DrivineDriftReportStore
@@ -51,7 +45,17 @@ class DrivineDriftReportStoreContractIntegrationTest : AbstractDriftReportStoreC
     @AfterEach
     fun clearDriftReports() {
         listOf("MetamodelDriftReport", "MetamodelDriftReportCounter").forEach { label ->
-            persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:$label) DETACH DELETE n"))
+            persistenceManager.execute(cypherQuery("MATCH (n:$label) DETACH DELETE n"))
         }
+    }
+}
+
+/** Runs the [DrivineDriftReportStoreContractCases] on the shared Neo4j testcontainer. */
+class DrivineDriftReportStoreContractIntegrationTest : DrivineDriftReportStoreContractCases() {
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
     }
 }

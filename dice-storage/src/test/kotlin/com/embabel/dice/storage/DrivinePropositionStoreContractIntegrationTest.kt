@@ -26,21 +26,12 @@ import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 
 /**
- * Runs the [AbstractPropositionStoreContractTest] suite against the Neo4j-backed
- * [DrivinePropositionRepository] (testcontainer). This is the half that catches a graph backend
+ * Runs the [AbstractPropositionStoreContractTest] suite against
+ * [DrivinePropositionRepository] on a real graph store: Neo4j here, SQLite in the `sqlite` package. This is the half that catches a graph backend
  * silently disagreeing with the in-memory contract — substitutability enforced, not assumed.
- *
- * Uses the shared [Neo4jTestContainer]; see that class for why Drivine's built-in testcontainer
- * is bypassed.
  */
 @SpringBootTest(classes = [TestApplication::class])
-class DrivinePropositionStoreContractIntegrationTest : AbstractPropositionStoreContractTest() {
-
-    companion object {
-        @JvmStatic
-        @DynamicPropertySource
-        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
-    }
+abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreContractTest() {
 
     @Autowired
     private lateinit var repository: DrivinePropositionRepository
@@ -53,6 +44,16 @@ class DrivinePropositionStoreContractIntegrationTest : AbstractPropositionStoreC
     @AfterEach
     fun cleanUp() {
         repository.clearAll()
-        persistenceManager.execute(QuerySpecification.withStatement("MATCH (s:Source) DETACH DELETE s"))
+        persistenceManager.execute(cypherQuery("MATCH (s:Source) DETACH DELETE s"))
+    }
+}
+
+/** Runs the [DrivinePropositionStoreContractCases] on the shared Neo4j testcontainer. */
+class DrivinePropositionStoreContractIntegrationTest : DrivinePropositionStoreContractCases() {
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
     }
 }

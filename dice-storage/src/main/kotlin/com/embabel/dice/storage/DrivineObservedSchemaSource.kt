@@ -310,7 +310,7 @@ open class DrivineObservedSchemaSource(
 
     /** Run a single-column query and collect its non-null values. */
     private fun queryStrings(statement: String, bindings: Map<String, Any?> = emptyMap()): Set<String> {
-        val spec = QuerySpecification.withStatement(statement).bind(bindings).transform(String::class.java)
+        val spec = cypherQuery(statement).bind(bindings).transform(String::class.java)
         return persistenceManager.query(spec).filterNotNull().toSet()
     }
 }

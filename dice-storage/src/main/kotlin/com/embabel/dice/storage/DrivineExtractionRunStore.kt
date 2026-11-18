@@ -644,12 +644,12 @@ open class DrivineExtractionRunStore @JvmOverloads constructor(
     )
 
     private fun execute(statement: String, bindings: Map<String, Any?>) {
-        persistenceManager.execute(QuerySpecification.withStatement(statement).bind(bindings))
+        persistenceManager.execute(cypherQuery(statement).bind(bindings))
     }
 
     private fun queryRows(statement: String, bindings: Map<String, Any?>): List<Map<*, *>> {
         @Suppress("UNCHECKED_CAST")
-        val spec = QuerySpecification.withStatement(statement).bind(bindings) as QuerySpecification<Any>
+        val spec = cypherQuery(statement).bind(bindings) as QuerySpecification<Any>
         return persistenceManager.query(spec).filterIsInstance<Map<*, *>>()
     }
 
