@@ -134,6 +134,13 @@ chunk history in the same transactional store as the claims. The Drivine stores 
 `extractPropositions` inside a transaction. Without a transaction, a write that fails part way is
 retried, and the retry can add the window's claims again.
 
+A window whose store or record step fails is logged at `error` with its source, its context and its
+item range, and the exception is attached. The same source and range logged on every event means the
+window fails every time, so the source makes no progress and each event pays for the analysis
+again. To skip it, stop publishing events for that source, or record a bookmark with `ChunkHistoryStore.recordProcessed`. The next window starts the
+window overlap before the bookmark's end index, so set that index at least the overlap past the last
+failing item. Skipping drops the claims in those items.
+
 ==== Scope per user
 
 Give each user their own `ContextId`. It is the boundary that keeps one user's beliefs out of
