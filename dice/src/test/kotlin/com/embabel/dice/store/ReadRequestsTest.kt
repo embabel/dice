@@ -17,6 +17,7 @@ package com.embabel.dice.store
 
 import com.embabel.dice.proposition.PropositionQuery
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -39,6 +40,7 @@ import java.util.EnumSet
  * E8 The keyword block and the chain give the same request.
  * E9 The orders are the orders a PropositionQuery has.
  * E10 requireOnly on a request names a criterion or an order the store does not apply, and no order always passes.
+ * E11 toString on a search or a keyword request shows the size of the text or tokens, never the words themselves.
  */
 class ReadRequestsTest {
 
@@ -180,6 +182,21 @@ class ReadRequestsTest {
                 .requireOnly(criteria, StoreCapability.SCOPED_VECTOR_SEARCH)
         }
         assertEquals(StoreCapability.SCOPED_VECTOR_SEARCH, search.capability)
+    }
+
+    @Test
+    fun `E11 toString on a search or a keyword request hides the words the user typed`() {
+        val secret = "peanut-allergy-secret"
+        val search = ReadVectorSearchRequest.forText(secret).withCriteria(aboutAlice).toString()
+        assertFalse(search.contains(secret), search)
+        assertTrue(search.contains("text=<21 chars>"), search)
+        assertTrue(search.contains("topK=${VectorSearchRequest.DEFAULT_TOP_K}"), search)
+
+        val keyword = ReadKeywordQuery.forTokens(secret, "egg").withCriteria(aboutAlice).toString()
+        assertFalse(keyword.contains(secret), keyword)
+        assertFalse(keyword.contains("egg"), keyword)
+        assertTrue(keyword.contains("tokens=<2 tokens>"), keyword)
+        assertTrue(keyword.contains("criteria="), keyword)
     }
 
     /**

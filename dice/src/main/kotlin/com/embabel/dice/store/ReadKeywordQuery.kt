@@ -104,7 +104,7 @@ class ReadKeywordQuery private constructor(
     override fun hashCode(): Int = Objects.hash(tokens, criteria, order, limit)
 
     override fun toString(): String =
-        "ReadKeywordQuery(tokens=$tokens, criteria=$criteria, order=$order, limit=$limit)"
+        "ReadKeywordQuery(tokens=<${tokens.size} tokens>, criteria=$criteria, order=$order, limit=$limit)"
 
     companion object {
 

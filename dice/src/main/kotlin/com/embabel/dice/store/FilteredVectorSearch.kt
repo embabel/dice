@@ -104,6 +104,11 @@ class VectorSearchRequest private constructor(
     init {
         require(text.isNotBlank()) { "The text to search for must not be blank" }
         require(topK >= 1) { "topK must be at least 1, but was $topK" }
+        require(this.filter.contextId != null) {
+            "A similarity search request must name a context. Start the filter from " +
+                "PropositionQuery.againstContext(...), or search several contexts with " +
+                "ScopedVectorSearch and a ContextReadScope."
+        }
     }
 
     /**
@@ -125,7 +130,9 @@ class VectorSearchRequest private constructor(
 
     override fun hashCode(): Int = Objects.hash(text, filter, topK, minScore)
 
-    override fun toString(): String = "VectorSearchRequest(text=$text, filter=$filter, topK=$topK, minScore=$minScore)"
+    // The text is left out so a log line never carries what the user typed.
+    override fun toString(): String =
+        "VectorSearchRequest(text=<${text.length} chars>, filter=$filter, topK=$topK, minScore=$minScore)"
 
     companion object {
 
@@ -134,11 +141,10 @@ class VectorSearchRequest private constructor(
 
         /**
          * @param text The text to find propositions close to.
-         * @param filter Which propositions are candidates. Start it from a context, as with any
-         *   `PropositionQuery`.
+         * @param filter Which propositions are candidates. It must name a context.
          * @return A request for [DEFAULT_TOP_K] matches with no score floor.
-         * @throws IllegalArgumentException when [text] is blank, or [filter] carries an ordering
-         *   or a limit.
+         * @throws IllegalArgumentException when [text] is blank, when [filter] names no context,
+         *   or when [filter] carries an ordering or a limit.
          */
         @JvmStatic
         fun forText(text: String, filter: PropositionQuery): VectorSearchRequest =
@@ -151,7 +157,8 @@ class VectorSearchRequest private constructor(
          * @param filter Which propositions are candidates.
          * @param block Sets the result size and the score floor.
          * @return The request.
-         * @throws IllegalArgumentException for the inputs the chain rejects.
+         * @throws IllegalArgumentException for the inputs the chain rejects, including a [filter]
+         *   that names no context.
          */
         @JvmSynthetic
         operator fun invoke(

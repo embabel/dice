@@ -102,7 +102,7 @@ class ReadVectorSearchRequest private constructor(
     override fun hashCode(): Int = Objects.hash(text, criteria, topK, minScore)
 
     override fun toString(): String =
-        "ReadVectorSearchRequest(text=$text, criteria=$criteria, topK=$topK, minScore=$minScore)"
+        "ReadVectorSearchRequest(text=<${text.length} chars>, criteria=$criteria, topK=$topK, minScore=$minScore)"
 
     companion object {
 
