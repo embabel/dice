@@ -170,13 +170,13 @@ class DrivinePropositionRepository(
     private val dedupLocks: Array<Any> = Array(DEDUP_STRIPES) { Any() }
 
     /**
-     * True on SQLite, where the stripes are not used. A SQLite transaction takes the file's write
-     * lock as it begins, so two saves already run one after the other, the find-then-insert
-     * included. A stripe on top of that can deadlock: a caller's transaction holds the write lock
-     * and waits for the stripe, while a standalone save holds the stripe and waits for the write
-     * lock until SQLite's busy timeout fails it.
+     * True on SQLite, where a save inside a caller's transaction does not take a stripe. A SQLite
+     * transaction holds the file's write lock from its first statement, so that save already runs
+     * alone. Taking the stripe as well could deadlock: the caller's transaction would hold the
+     * write lock and wait for the stripe, while a standalone save held the stripe and waited for
+     * the write lock until SQLite's busy timeout failed it.
      */
-    private val storeSerializesWriters: Boolean by lazy { persistenceManager.type == DatabaseType.SQLITE }
+    private val writeLockHeldByCallerTransaction: Boolean by lazy { persistenceManager.type == DatabaseType.SQLITE }
 
     override val storeType: PropositionStoreType get() = PropositionStoreType.STORED
 
@@ -188,8 +188,8 @@ class DrivinePropositionRepository(
      * duplicate rows. The stripe lock is held across the transaction COMMIT — the find-then-insert
      * runs inside [txTemplate], which commits before the lock is released — so a concurrent sibling
      * on the same stripe cannot read pre-commit and slip a duplicate past the existence check.
-     * SQLite has no stripe: its transaction holds the write lock from the start, which does the
-     * same job.
+     * On SQLite a save inside a caller's transaction takes no stripe: that transaction already
+     * holds the file's write lock, which does the same job.
      *
      * Propositions with blank text have nothing to dedup on and are persisted directly.
      *
@@ -223,7 +223,10 @@ class DrivinePropositionRepository(
             return doPersist(proposition)
         }
         val contextId = proposition.contextId.value
-        return withDedupLock(contextId, text) {
+        if (writeLockHeldByCallerTransaction) {
+            return findOrPersist(proposition, contextId, text)
+        }
+        return synchronized(lockFor(contextId, text)) {
             // A uniqueness race has already aborted the caller's transaction by the time we could
             // react, so recovery cannot commit here. Preserve atomicity and let it propagate.
             findOrPersist(proposition, contextId, text)
@@ -236,7 +239,7 @@ class DrivinePropositionRepository(
             return txTemplate.execute { doPersist(proposition) }!!
         }
         val contextId = proposition.contextId.value
-        return withDedupLock(contextId, text) {
+        return synchronized(lockFor(contextId, text)) {
             try {
                 txTemplate.execute { findOrPersist(proposition, contextId, text) }!!
             } catch (e: RuntimeException) {
@@ -801,11 +804,6 @@ class DrivinePropositionRepository(
 
     private fun lockFor(contextId: String, text: String): Any =
         dedupLocks[Math.floorMod("$contextId $text".hashCode(), DEDUP_STRIPES)]
-
-    /** Runs [block] holding the text's stripe, or without one where the store already serializes writers. */
-    private inline fun <T> withDedupLock(contextId: String, text: String, block: () -> T): T =
-        if (storeSerializesWriters) block() else synchronized(lockFor(contextId, text)) { block() }
-
     @Transactional(readOnly = true)
     override fun findById(id: String): Proposition? = loadStamped(id)?.proposition
 

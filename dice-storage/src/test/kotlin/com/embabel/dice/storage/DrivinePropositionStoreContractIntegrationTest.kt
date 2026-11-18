@@ -16,6 +16,7 @@
 package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
+import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.conformance.AbstractPropositionStoreContractTest
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
@@ -37,6 +38,8 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.TransactionDefinition
+import org.springframework.transaction.TransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -62,6 +65,9 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
 
     @Autowired
     private lateinit var transactionManager: PlatformTransactionManager
+
+    @Autowired
+    private lateinit var embeddingService: EmbeddingService
 
     override fun store(): PropositionStore = repository
 
@@ -125,12 +131,16 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
 
     /**
      * One thread saves inside its own transaction and has already written, so on SQLite it holds
-     * the file's write lock. A second thread then saves the same text on its own. The first thread
-     * saves that text too before it commits. Neither save may wait on the other for longer than
-     * the first transaction takes, and both must end up as one proposition.
+     * the file's write lock. A second thread then saves a text on its own and is about to open its
+     * transaction. Only then does the first thread save that same text. Neither save may wait on
+     * the other for longer than the first transaction takes, and both must end up as one
+     * proposition.
      */
     @Test
     fun `a save in a caller's transaction does not stall a standalone save of the same text`() {
+        val standaloneOpening = CountDownLatch(1)
+        val signalling = OpeningSignalTransactionManager(transactionManager, standaloneOpening)
+        val repository = DrivinePropositionRepository(graphObjectManager, persistenceManager, embeddingService, signalling)
         val context = ContextId("lock-order-ctx")
         fun proposition(text: String) = Proposition(
             contextId = context,
@@ -146,8 +156,7 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
                 TransactionTemplate(transactionManager).execute {
                     repository.save(proposition("The ghost was seen at midnight"))
                     callerHasWritten.countDown()
-                    // Give the standalone save time to start and reach the store.
-                    Thread.sleep(500)
+                    check(standaloneOpening.await(10, TimeUnit.SECONDS)) { "the standalone save never opened its transaction" }
                     repository.save(proposition(text))
                 }
             }
@@ -174,4 +183,26 @@ class DrivinePropositionStoreContractIntegrationTest : DrivinePropositionStoreCo
         @DynamicPropertySource
         fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
     }
+}
+
+/**
+ * Passes every call to [delegate], and counts down [opening] when a save asks for a transaction of
+ * its own. That is the moment a standalone save has taken its dedup stripe and is about to open
+ * its transaction.
+ */
+private class OpeningSignalTransactionManager(
+    private val delegate: PlatformTransactionManager,
+    private val opening: CountDownLatch,
+) : PlatformTransactionManager {
+
+    override fun getTransaction(definition: TransactionDefinition?): TransactionStatus {
+        if (definition?.propagationBehavior == TransactionDefinition.PROPAGATION_REQUIRES_NEW) {
+            opening.countDown()
+        }
+        return delegate.getTransaction(definition)
+    }
+
+    override fun commit(status: TransactionStatus) = delegate.commit(status)
+
+    override fun rollback(status: TransactionStatus) = delegate.rollback(status)
 }
