@@ -41,25 +41,62 @@ import java.time.Instant
  * into the next sweep. (This also means a sweep must run in its own implicit transaction, not inside
  * an enclosing one — `DecayManager` opens none, and callers must not wrap it in `@Transactional`.)
  *
- * The batching applies on Neo4j. On Drivine's SQL stores the sweep compiles to one statement, which
- * commits or rolls back as a unit.
+ * Drivine's SQL stores have no `IN TRANSACTIONS`, so there the sweep pages through the propositions
+ * by id and commits each page on its own, with the same trade-off. On SQLite this matters more:
+ * a write holds the whole file, and one long sweep would keep every save waiting until it ended.
  */
-class GraphDecayManager(
+class GraphDecayManager internal constructor(
     repository: PropositionRepository,
     private val persistenceManager: PersistenceManager,
+    private val batchRows: Int,
 ) : DecayManager(repository) {
 
+    constructor(repository: PropositionRepository, persistenceManager: PersistenceManager) :
+        this(repository, persistenceManager, BATCH_ROWS)
+
     override fun materialize(contextId: ContextId) =
-        sweep("MATCH (p:Proposition) WHERE p.contextId = \$contextId", mapOf("contextId" to contextId.value))
+        sweep("p.contextId = \$contextId", mapOf("contextId" to contextId.value))
 
-    override fun materializeAll() = sweep("MATCH (p:Proposition)", emptyMap())
+    override fun materializeAll() = sweep(null, emptyMap())
 
-    private fun sweep(match: String, extraParams: Map<String, Any>) {
+    /**
+     * Refreshes every proposition [condition] admits, all of them when it is null.
+     *
+     * @param condition a Cypher predicate over `p`, or null for no condition
+     */
+    private fun sweep(condition: String?, extraParams: Map<String, Any>) {
         val now = Instant.now()
+        if (!persistenceManager.type.speaksCypher) {
+            sweepByPage(condition, extraParams + mapOf("now" to now))
+            return
+        }
+        val match = "MATCH (p:Proposition)" + (condition?.let { " WHERE $it" } ?: "")
         persistenceManager.execute(
-            cypherQuery("$match\nCALL {\n  WITH p\n$DECAY_EXPRESSION\n} IN TRANSACTIONS OF $BATCH_ROWS ROWS")
+            cypherQuery("$match\nCALL {\n  WITH p\n$DECAY_EXPRESSION\n} IN TRANSACTIONS OF $batchRows ROWS")
                 .bind(extraParams + mapOf("now" to now))
         )
+    }
+
+    /**
+     * The sweep a page of [batchRows] propositions at a time, in id order, each page written in a
+     * statement of its own. Every page is computed at the same `now`.
+     */
+    private fun sweepByPage(condition: String?, params: Map<String, Any>) {
+        val pageQuery = "MATCH (p:Proposition) WHERE " + (condition?.let { "$it AND " } ?: "") +
+            "p.id > \$after RETURN p.id AS id ORDER BY p.id LIMIT $batchRows"
+        var after = ""
+        while (true) {
+            val ids = persistenceManager.query(
+                cypherQuery(pageQuery).bind(params + mapOf("after" to after)).transform(String::class.java),
+            )
+            if (ids.isEmpty()) return
+            persistenceManager.execute(
+                cypherQuery("MATCH (p:Proposition) WHERE p.id IN \$ids\n$DECAY_EXPRESSION")
+                    .bind(params + mapOf("ids" to ids)),
+            )
+            if (ids.size < batchRows) return
+            after = ids.last()
+        }
     }
 
     private companion object {
@@ -70,7 +107,7 @@ class GraphDecayManager(
          */
         private const val DECAY_K = Proposition.DEFAULT_DECAY_K
 
-        /** Rows per committed batch in the `IN TRANSACTIONS` sweep. */
+        /** Rows per committed batch: per `IN TRANSACTIONS` batch on Neo4j, per page on a SQL store. */
         private const val BATCH_ROWS = 10_000
 
         /**

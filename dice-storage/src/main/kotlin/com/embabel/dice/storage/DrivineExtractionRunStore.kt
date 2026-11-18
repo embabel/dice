@@ -163,7 +163,7 @@ import java.util.UUID
 @Transactional
 open class DrivineExtractionRunStore @JvmOverloads constructor(
     private val persistenceManager: PersistenceManager,
-    transactionManager: PlatformTransactionManager,
+    private val transactionManager: PlatformTransactionManager,
     private val clock: Clock = Clock.systemUTC(),
     private val listener: DiceEventListener = DiceEventListener.DEV_NULL,
 ) : ExtractionRunStore {
@@ -333,7 +333,8 @@ open class DrivineExtractionRunStore @JvmOverloads constructor(
      * Ends a run under compare-and-set. See this class's KDoc for why the answer is a schema fact
      * rather than a claim about timing.
      *
-     * Two transaction shapes, for the same reason `DrivinePropositionRepository.save` has two:
+     * Two transaction shapes, for the same reason `DrivinePropositionRepository.save` has two. Only a
+     * transaction of this store's own manager counts as the caller's:
      * - **A caller's transaction is active.** This joins it. A lost race has already ended that
      *   transaction by the time this method could react, so no recovery of ours could commit in it;
      *   the violation propagates and retrying is the caller's. Opening a nested transaction to sneak
@@ -348,7 +349,7 @@ open class DrivineExtractionRunStore @JvmOverloads constructor(
         transition: ExtractionRunTransition,
     ): ExtractionRunTransitionResult {
         ExtractionRunSchema.requireStorableTenant(key.contextId)
-        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+        if (transactionManager.hasOpenTransaction()) {
             return announce(endRun(key, transition))
         }
 
@@ -356,9 +357,9 @@ open class DrivineExtractionRunStore @JvmOverloads constructor(
         val result = try {
             txTemplate.execute { endRun(key, transition) }
         } catch (e: RuntimeException) {
-            // Neo4jErrors tells a lost compare-and-set race apart from a real failure by the
+            // StoreErrors tells a lost compare-and-set race apart from a real failure by the
             // driver's own status code, not by the exception's message.
-            if (!Neo4jErrors.isUniquenessViolation(e)) throw e
+            if (!StoreErrors.isUniquenessViolation(e)) throw e
             lostRace = e
             null
         }
@@ -696,7 +697,7 @@ open class DrivineExtractionRunStore @JvmOverloads constructor(
      * first attempt, from whichever shape ran it.
      */
     private fun <T> ownedTransaction(attempts: Int = 5, block: () -> T): T {
-        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+        if (transactionManager.hasOpenTransaction()) {
             return block()
         }
         var lastConflict: RuntimeException? = null
@@ -982,7 +983,7 @@ open class DrivineExtractionRunStore @JvmOverloads constructor(
  *
  * Matches on message substrings because which form of the message reaches `getMessage()` is not
  * guaranteed across driver versions, and there is no status code as stable as
- * [Neo4jErrors.isUniquenessViolation] gets to use here: a deadlock is a driver-side retry decision,
+ * [StoreErrors.isUniquenessViolation] gets to use here: a deadlock is a driver-side retry decision,
  * not a server status. Two writers `MERGE`-ing the same not-yet-existing key concurrently is the
  * shape [DrivineExtractionRunStore.ownedTransaction] retries, and Neo4j names it
  * with the transaction lock manager's own vocabulary, a looser target than one stable exception

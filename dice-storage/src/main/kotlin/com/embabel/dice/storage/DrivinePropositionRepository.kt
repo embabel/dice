@@ -59,7 +59,6 @@ import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
-import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
 
@@ -131,7 +130,7 @@ class DrivinePropositionRepository(
     private val graphObjectManager: StatelessGraphObjectManager,
     private val persistenceManager: PersistenceManager,
     private val embeddingService: EmbeddingService,
-    transactionManager: PlatformTransactionManager,
+    private val transactionManager: PlatformTransactionManager,
     /**
      * Name of the Neo4j vector index backing `Proposition.embedding`, used by the hand-written
      * [findClusters] Cypher. Defaults to the canonical [VECTOR_INDEX]; overridable only for tests.
@@ -170,13 +169,23 @@ class DrivinePropositionRepository(
     private val dedupLocks: Array<Any> = Array(DEDUP_STRIPES) { Any() }
 
     /**
-     * True on SQLite, where a save inside a caller's transaction does not take a stripe. A SQLite
-     * transaction holds the file's write lock from its first statement, so that save already runs
-     * alone. Taking the stripe as well could deadlock: the caller's transaction would hold the
-     * write lock and wait for the stripe, while a standalone save held the stripe and waited for
-     * the write lock until SQLite's busy timeout failed it.
+     * True on SQLite, where a transaction holds the file's write lock from its first statement
+     * until it ends, and no other transaction can write meanwhile. Two things follow inside a
+     * caller's transaction:
+     * - A save takes no stripe. It already runs alone, and taking the stripe as well could
+     *   deadlock: the caller's transaction would hold the write lock and wait for the stripe, while
+     *   a standalone save held the stripe and waited for the write lock until SQLite's busy timeout
+     *   failed it.
+     * - A write that would otherwise open a transaction of its own ([touchAccessed], [reembedAll])
+     *   joins the caller's. One of its own could not commit before the caller's ends, and the
+     *   caller is waiting for it.
      */
-    private val writeLockHeldByCallerTransaction: Boolean by lazy { persistenceManager.type == DatabaseType.SQLITE }
+    private val callerTransactionHoldsWriteLock: Boolean by lazy { persistenceManager.type == DatabaseType.SQLITE }
+
+    /** Suspends a caller's transaction for work that must not run inside one (see [reembedAll]). */
+    private val outsideTransactions = TransactionTemplate(transactionManager).apply {
+        propagationBehavior = TransactionDefinition.PROPAGATION_NOT_SUPPORTED
+    }
 
     override val storeType: PropositionStoreType get() = PropositionStoreType.STORED
 
@@ -191,6 +200,9 @@ class DrivinePropositionRepository(
      * On SQLite a save inside a caller's transaction takes no stripe: that transaction already
      * holds the file's write lock, which does the same job.
      *
+     * The text is embedded before any transaction opens, so a slow embedding service never holds
+     * the store's locks. On SQLite that lock is the whole file's.
+     *
      * Propositions with blank text have nothing to dedup on and are persisted directly.
      *
      * An update to an id already stored always writes to that id — it never redirects to a same-text
@@ -199,7 +211,8 @@ class DrivinePropositionRepository(
      * redirecting, but won't collapse either — it logs a WARN naming both ids for the dedup sweep.
      *
      * Two transaction shapes, because recovery from a uniqueness race needs a transaction the race
-     * did not already poison:
+     * did not already poison. Only a transaction of this store's own manager counts as the caller's:
+     * a host's manager for some other database opens nothing a Drivine statement would join.
      * - **A caller's transaction is active**: this joins it and stays inside it. A uniqueness
      *   violation marks that transaction rollback-only, and no write of ours could commit in it
      *   afterwards, so the violation propagates to the caller untouched — the same behaviour as
@@ -210,52 +223,59 @@ class DrivinePropositionRepository(
      *   one and can commit.
      */
     @Transactional(propagation = Propagation.SUPPORTS)
-    override fun save(proposition: Proposition): Proposition =
-        if (TransactionSynchronizationManager.isActualTransactionActive()) {
-            saveInCallerTransaction(proposition)
+    override fun save(proposition: Proposition): Proposition {
+        val embedded = EmbeddedText(proposition.text, embeddingFor(proposition))
+        return if (transactionManager.hasOpenTransaction()) {
+            saveInCallerTransaction(proposition, embedded)
         } else {
-            saveInOwnedTransaction(proposition)
+            saveInOwnedTransaction(proposition, embedded)
         }
+    }
 
-    private fun saveInCallerTransaction(proposition: Proposition): Proposition {
+    private fun saveInCallerTransaction(proposition: Proposition, embedded: EmbeddedText): Proposition {
         val text = proposition.text
         if (text.isBlank()) {
-            return doPersist(proposition)
+            return doPersist(proposition, embedded)
         }
         val contextId = proposition.contextId.value
-        if (writeLockHeldByCallerTransaction) {
-            return findOrPersist(proposition, contextId, text)
+        if (callerTransactionHoldsWriteLock) {
+            return findOrPersist(proposition, contextId, text, embedded)
         }
         return synchronized(lockFor(contextId, text)) {
             // A uniqueness race has already aborted the caller's transaction by the time we could
             // react, so recovery cannot commit here. Preserve atomicity and let it propagate.
-            findOrPersist(proposition, contextId, text)
+            findOrPersist(proposition, contextId, text, embedded)
         }
     }
 
-    private fun saveInOwnedTransaction(proposition: Proposition): Proposition {
+    private fun saveInOwnedTransaction(proposition: Proposition, embedded: EmbeddedText): Proposition {
         val text = proposition.text
         if (text.isBlank()) {
-            return txTemplate.execute { doPersist(proposition) }!!
+            return txTemplate.execute { doPersist(proposition, embedded) }!!
         }
         val contextId = proposition.contextId.value
         return synchronized(lockFor(contextId, text)) {
             try {
-                txTemplate.execute { findOrPersist(proposition, contextId, text) }!!
+                txTemplate.execute { findOrPersist(proposition, contextId, text, embedded) }!!
             } catch (e: RuntimeException) {
-                // Neo4jErrors tells this cross-instance race apart from a real failure by the
-                // driver's own status code, not by the exception's message.
-                if (!Neo4jErrors.isUniquenessViolation(e)) throw e
+                // StoreErrors tells this cross-instance race apart from a real failure by the
+                // driver's own code, not by the exception's message.
+                if (!StoreErrors.isUniquenessViolation(e)) throw e
                 // Cross-instance race: another writer inserted the same (contextId, text) and the DB
                 // (contextId, text) uniqueness constraint rejected ours. The dupe now exists — reuse
                 // it, in a transaction of its own so the failed attempt cannot roll this back.
                 logger.debug("Dedup constraint hit for context {} — reusing existing: '{}'", contextId, text)
-                txTemplate.execute { recoverDuplicate(proposition, contextId, text) } ?: throw e
+                txTemplate.execute { recoverDuplicate(proposition, contextId, text, embedded) } ?: throw e
             }
         }
     }
 
-    private fun findOrPersist(proposition: Proposition, contextId: String, text: String): Proposition {
+    private fun findOrPersist(
+        proposition: Proposition,
+        contextId: String,
+        text: String,
+        embedded: EmbeddedText,
+    ): Proposition {
         val existingId = findDuplicateId(contextId, text, proposition.id)
         val existing = existingId?.let(::findById)
         val isUpdate = existsById(proposition.id)
@@ -269,7 +289,7 @@ class DrivinePropositionRepository(
                 "Dedup: proposition already present as {} in context {} — reusing: '{}'",
                 existingId, contextId, text,
             )
-            mergeDeduplicatedProvenance(existing, proposition.provenanceEntries)
+            mergeDeduplicatedProvenance(existing, proposition.provenanceEntries, embedded)
         } else {
             // An update lands on its own node even when a same-text sibling exists. If that sibling is
             // also ACTIVE, this mints a second live copy of the same fact (only reachable without the
@@ -284,7 +304,7 @@ class DrivinePropositionRepository(
                     proposition.id, contextId, existingId, text,
                 )
             }
-            doPersist(proposition)
+            doPersist(proposition, embedded)
         }
     }
 
@@ -292,10 +312,15 @@ class DrivinePropositionRepository(
      * Re-find the winner after a cross-instance uniqueness race and union the losing writer's
      * evidence into it. The relationship MERGE is keyed by evidence identity, so a retry is a no-op.
      */
-    private fun recoverDuplicate(proposition: Proposition, contextId: String, text: String): Proposition? {
+    private fun recoverDuplicate(
+        proposition: Proposition,
+        contextId: String,
+        text: String,
+        embedded: EmbeddedText,
+    ): Proposition? {
         val winnerId = findDuplicateId(contextId, text, proposition.id) ?: return null
         val winner = findById(winnerId) ?: return null
-        return mergeDeduplicatedProvenance(winner, proposition.provenanceEntries)
+        return mergeDeduplicatedProvenance(winner, proposition.provenanceEntries, embedded)
     }
 
     /**
@@ -309,6 +334,7 @@ class DrivinePropositionRepository(
     private fun mergeDeduplicatedProvenance(
         winner: Proposition,
         incomingEntries: List<ProvenanceEntry>,
+        embedded: EmbeddedText? = null,
     ): Proposition {
         // Every incoming entry, whatever the novelty check goes on to say about it. "Already held"
         // means data-class equality, a locator's equality is its key, and a key can be ambiguous — a
@@ -326,13 +352,13 @@ class DrivinePropositionRepository(
         // disagree with. Going through doPersist would re-read every source key this batch names.
         // The winner is loaded again for its stamp, so the write is refused, and tried again on what
         // is there, when another writer changed the winner in between.
-        val revisedWinner = reviseChecked(winner.id) { current ->
+        val revisedWinner = reviseChecked(winner.id, embedded = embedded) { current ->
             val held = current.provenanceEntries.toHashSet()
             val novel = incomingEntries.filterNot(held::contains)
             if (novel.isEmpty()) current else current.withProvenanceEntries(novel)
         }
             // The winner was deleted in between: make it again, as an unchecked save does.
-            ?: return persistValidated(winner.withProvenanceEntries(novelEntries))
+            ?: return persistValidated(winner.withProvenanceEntries(novelEntries), embedded)
         persistBeyondNode(revisedWinner)
         return findById(winner.id) ?: revisedWinner
     }
@@ -405,9 +431,9 @@ class DrivinePropositionRepository(
      * Preflight the proposition's evidence for source-identity conflicts, then write it. A rejected
      * write changes nothing.
      */
-    private fun doPersist(proposition: Proposition): Proposition {
+    private fun doPersist(proposition: Proposition, embedded: EmbeddedText? = null): Proposition {
         validateSourceIdentities(proposition.provenanceEntries)
-        return persistValidated(proposition)
+        return persistValidated(proposition, embedded)
     }
 
     /**
@@ -426,8 +452,8 @@ class DrivinePropositionRepository(
      *   two endpoints, so one proposition citing one source at two revisions would store a single
      *   row and lose a revision. Authoritative replacement is the job of [setProvenance].
      */
-    private fun persistValidated(proposition: Proposition): Proposition {
-        saveNode(proposition)
+    private fun persistValidated(proposition: Proposition, embedded: EmbeddedText? = null): Proposition {
+        saveNode(proposition, embedding = embedded.vectorFor(proposition))
         return persistBeyondNode(proposition)
     }
 
@@ -490,6 +516,10 @@ class DrivinePropositionRepository(
 
     /** The vector the embedding service gave for [text]; null for a blank text, which has none. */
     private data class EmbeddedText(val text: String, val vector: List<Float>?)
+
+    /** This vector when it was made for [proposition]'s text, otherwise a fresh one. */
+    private fun EmbeddedText?.vectorFor(proposition: Proposition): List<Float>? =
+        if (this != null && text == proposition.text) vector else embeddingFor(proposition)
 
     /** A proposition as the store held it, and the stamp its node carried then. */
     private data class StampedProposition(val proposition: Proposition, val stamp: String?)
@@ -804,6 +834,7 @@ class DrivinePropositionRepository(
 
     private fun lockFor(contextId: String, text: String): Any =
         dedupLocks[Math.floorMod("$contextId $text".hashCode(), DEDUP_STRIPES)]
+
     @Transactional(readOnly = true)
     override fun findById(id: String): Proposition? = loadStamped(id)?.proposition
 
@@ -1140,6 +1171,9 @@ class DrivinePropositionRepository(
      * `(1 + cosine) / 2` index score (before this method converted back to cosine) admitted down to
      * cosine `2*t - 1` for a stored `t`; that threshold now means something stricter and should be
      * retuned.
+     *
+     * A SQL store has no vector index procedure to call. There Drivine measures each candidate
+     * against the others itself, which gives the same pairs and the same scores.
      */
     @Transactional(readOnly = true)
     override fun findClusters(
@@ -1152,23 +1186,11 @@ class DrivinePropositionRepository(
         val byId = candidates.associateBy { it.id }
         val ids = candidates.map { it.id }
 
-        // A COSINE index scores as (1 + cosine) / 2 (see toRawCosine below); the `cosine` binding here
-        // converts back to raw cosine so the gate and the returned score are both cosine, as the
-        // in-memory store returns. COSINE-only: a EUCLIDEAN index normalizes differently.
-        @Suppress("UNCHECKED_CAST")
-        val rows = persistenceManager.query(
-            cypherQuery(
-                    """
-                    UNWIND ${'$'}ids AS sid
-                    MATCH (seed:Proposition {id: sid}) WHERE seed.embedding IS NOT NULL
-                    CALL db.index.vector.queryNodes('$vectorIndexName', ${'$'}k, seed.embedding) YIELD node AS m, score
-                    WITH sid, m, 2.0 * score - 1.0 AS cosine
-                    WHERE m.id IN ${'$'}ids AND sid < m.id AND cosine >= ${'$'}threshold
-                    RETURN { anchorId: sid, otherId: m.id, score: cosine } AS row
-                    """.trimIndent()
-                )
-                .bind(mapOf("ids" to ids, "k" to topK + 1, "threshold" to similarityThreshold))
-        ) as List<Map<String, Any>>
+        val rows = if (persistenceManager.type.speaksCypher) {
+            nearestPairsByIndex(ids, similarityThreshold, topK)
+        } else {
+            nearestPairsAmong(ids, similarityThreshold, topK)
+        }
 
         val clusters = rows
             .groupBy { it["anchorId"] as String }
@@ -1191,6 +1213,38 @@ class DrivinePropositionRepository(
         )
         return clusters
     }
+
+    /**
+     * Each candidate's nearest others among [ids], one row per pair with the smaller id as the
+     * anchor, read through Neo4j's vector index in one statement.
+     */
+    private fun nearestPairsByIndex(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> {
+        // A COSINE index scores as (1 + cosine) / 2 (see toRawCosine below); the `cosine` binding here
+        // converts back to raw cosine so the gate and the returned score are both cosine, as the
+        // in-memory store returns. COSINE-only: a EUCLIDEAN index normalizes differently.
+        @Suppress("UNCHECKED_CAST")
+        return persistenceManager.query(
+            cypherQuery(
+                    """
+                    UNWIND ${'$'}ids AS sid
+                    MATCH (seed:Proposition {id: sid}) WHERE seed.embedding IS NOT NULL
+                    CALL db.index.vector.queryNodes('$vectorIndexName', ${'$'}k, seed.embedding) YIELD node AS m, score
+                    WITH sid, m, 2.0 * score - 1.0 AS cosine
+                    WHERE m.id IN ${'$'}ids AND sid < m.id AND cosine >= ${'$'}threshold
+                    RETURN { anchorId: sid, otherId: m.id, score: cosine } AS row
+                    """.trimIndent()
+                )
+                .bind(mapOf("ids" to ids, "k" to topK + 1, "threshold" to similarityThreshold))
+        ) as List<Map<String, Any>>
+    }
+
+    /** The same rows as [nearestPairsByIndex], measured by Drivine on a store with no index procedure. */
+    private fun nearestPairsAmong(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> =
+        graphObjectManager.loadNearestAmong(PropositionView::class.java, ids, topK, toEngineScore(similarityThreshold))
+            .flatMap { (anchorId, near) ->
+                near.filter { anchorId < it.value }
+                    .map { mapOf("anchorId" to anchorId, "otherId" to it.value, "score" to toRawCosine(it.score)) }
+            }
 
     /**
      * A Neo4j COSINE vector index reports `(1 + cosine) / 2`, not raw cosine — this converts an
@@ -1226,18 +1280,27 @@ class DrivinePropositionRepository(
     override fun count(): Int = graphObjectManager.count<PropositionView>().toInt()
 
     /**
-     * Batch `SET` in one round trip instead of the SPI default's per-id find-then-save. Runs in its
-     * own [Propagation.REQUIRES_NEW] transaction: callers commonly invoke this from inside a
-     * `readOnly = true` query transaction (e.g. Memory's eager load), which cannot itself take a write.
+     * Batch `SET` in one round trip instead of the SPI default's per-id find-then-save. Runs in a
+     * transaction of its own: callers commonly invoke this from inside a `readOnly = true` query
+     * transaction (e.g. Memory's eager load), which cannot itself take a write. On SQLite it joins
+     * a caller's transaction instead, which holds the file's write lock and could not let one of its
+     * own commit; SQLite does not hold a read-only transaction to its word.
      * Empty [ids] is a no-op — no need to open a transaction for nothing.
      */
-    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    @Transactional(propagation = Propagation.SUPPORTS)
     override fun touchAccessed(ids: Collection<String>) {
         if (ids.isEmpty()) return
-        persistenceManager.execute(
-            cypherQuery("MATCH (p:Proposition) WHERE p.id IN \$ids SET p.lastAccessed = \$now, ${Stamps.setClause("p")}")
-                .bind(mapOf("ids" to ids.distinct(), "now" to Instant.now())),
-        )
+        val touch = {
+            persistenceManager.execute(
+                cypherQuery("MATCH (p:Proposition) WHERE p.id IN \$ids SET p.lastAccessed = \$now, ${Stamps.setClause("p")}")
+                    .bind(mapOf("ids" to ids.distinct(), "now" to Instant.now())),
+            )
+        }
+        if (callerTransactionHoldsWriteLock && transactionManager.hasOpenTransaction()) {
+            touch()
+        } else {
+            txTemplate.executeWithoutResult { touch() }
+        }
     }
 
     /**
@@ -1359,16 +1422,27 @@ class DrivinePropositionRepository(
      * that is inherent to changing the shape of an index and is why the caller is told the index
      * was recreated. The remake happens whether the rewrite succeeded or threw.
      *
-     * NOT_SUPPORTED, not a bare absence of the annotation: this CLASS carries `@Transactional`, so
-     * saying nothing here still runs the whole method in a transaction and reproduces the deadlock.
-     * It also suspends a transaction a CALLER already opened, which is the same hazard arriving
-     * from outside — [save] overrides the class default for its own reasons and is the precedent.
+     * So the work runs outside any transaction, and a transaction a CALLER already opened is
+     * suspended for it, which is the same hazard arriving from outside. The method says SUPPORTS
+     * rather than nothing because this CLASS carries `@Transactional`, and saying nothing would run
+     * the whole method in a transaction and reproduce the deadlock.
+     *
+     * SQLite is the exception. There a caller's transaction holds the file's write lock until it
+     * ends, so a write made while it is suspended would wait for it, and it is waiting for the
+     * write. Inside a caller's transaction on SQLite the work joins that transaction instead.
      *
      * @throws PropositionReembedIncompleteException when some propositions could not be embedded;
      * all others were written and the index is restored
      */
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    override fun reembedAll(): PropositionReembedReport {
+    @Transactional(propagation = Propagation.SUPPORTS)
+    override fun reembedAll(): PropositionReembedReport =
+        if (callerTransactionHoldsWriteLock && transactionManager.hasOpenTransaction()) {
+            reembedEverything()
+        } else {
+            outsideTransactions.execute { reembedEverything() }!!
+        }
+
+    private fun reembedEverything(): PropositionReembedReport {
         logger.info("reembedAll start: model={} dim={}", embeddingService.name, embeddingService.dimensions)
         val spec = vectorIndexSpec(embeddingService.dimensions)
         /*

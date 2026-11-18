@@ -18,6 +18,27 @@ and the consumer PRs that deliver it).
   lock, because that transaction already holds the file's write lock. It no longer stalls a
   standalone save of the same text. **Compatibility: behavioral.**
 
+- The graph stores run on Drivine's SQL stores where they used Neo4j-only Cypher.
+  `findClusters` measures the candidates through Drivine instead of Neo4j's vector index
+  procedure. The whole-graph `observe()` reads the labels the nodes wear. The decay sweep commits
+  a page of propositions at a time. **Compatibility: behavioral.**
+- A save embeds its text before it opens a transaction, so a slow embedding service no longer
+  holds the store's locks. **Compatibility: behavioral.**
+- On SQLite, `touchAccessed` and `reembedAll` called inside a caller's transaction join it. Each
+  used to open a transaction of its own, which waited on the caller's write lock until SQLite's
+  busy timeout failed it. **Compatibility: behavioral.**
+- When the host brings its own transaction manager, the autoconfigured proposition and
+  extraction-run stores still run their transactions on Drivine's, and a save or run transition
+  inside the host's transaction runs in a Drivine transaction of its own. Before, each statement
+  committed on its own. **Compatibility: behavioral.**
+- A uniqueness violation on SQLite is recognised as one, so a save that loses a dedup race reuses
+  the winner, as on Neo4j. **Compatibility: behavioral.**
+- The latest chunk bookmark among records with the same time is the one whose window ends
+  furthest on. **Compatibility: behavioral.**
+- The autoconfiguration refuses a SQLite datasource whose transactions do not take the write lock
+  as they begin, naming the datasource. Drivine's own SQLite provider passes.
+  **Compatibility: behavioral.**
+
 - A `VectorSearchRequest` must name a context. `forText` and the Kotlin block throw
   `IllegalArgumentException` when the filter has none. Before, such a request was accepted and a
   store that implements `FilteredVectorSearch` could search every context with it. To search

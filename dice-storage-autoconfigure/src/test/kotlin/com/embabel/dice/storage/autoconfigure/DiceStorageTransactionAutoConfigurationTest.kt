@@ -21,6 +21,8 @@ import com.embabel.dice.proposition.PropositionRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.PersistenceManager
+import org.drivine.transaction.DrivineTransactionManager
+import org.drivine.transaction.TransactionContextHolder
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
@@ -32,8 +34,10 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.boot.transaction.autoconfigure.TransactionAutoConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.test.util.ReflectionTestUtils
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.interceptor.TransactionInterceptor
+import org.springframework.transaction.support.TransactionTemplate
 
 /**
  * Proves that a real consumer of `dice-storage-autoconfigure` gets working `@Transactional` advice
@@ -89,6 +93,24 @@ class DiceStorageTransactionAutoConfigurationTest {
             .run { ctx ->
                 val repository = ctx.getBean<PropositionRepository>()
                 assertThat(AopUtils.isAopProxy(repository)).isFalse()
+            }
+    }
+
+    /**
+     * A host that brings a transaction manager of its own (for its own database) turns Drivine's
+     * away, since Drivine registers one only when there is none. The proposition store must still
+     * run its saves in Drivine transactions, or each statement would commit on its own.
+     */
+    @Test
+    fun `with a host's own transaction manager, the proposition store still saves in Drivine transactions`() {
+        baseRunner
+            .withConfiguration(AutoConfigurations.of(DiceStorageAutoConfiguration::class.java))
+            .withBean(TransactionContextHolder::class.java, { mock<TransactionContextHolder>() })
+            .run { ctx ->
+                val repository = ctx.getBean<PropositionRepository>()
+                val saves = ReflectionTestUtils.getField(repository, "txTemplate") as TransactionTemplate
+
+                assertThat(saves.transactionManager).isInstanceOf(DrivineTransactionManager::class.java)
             }
     }
 

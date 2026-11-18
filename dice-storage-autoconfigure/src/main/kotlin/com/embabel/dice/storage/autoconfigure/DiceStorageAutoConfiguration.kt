@@ -42,6 +42,9 @@ import com.embabel.dice.storage.ExtractionRunSchema
 import com.embabel.dice.storage.GraphDecayManager
 import com.embabel.dice.storage.LineageSchema
 import com.embabel.dice.storage.diceStorageCatalog
+import org.drivine.connection.DatabaseRegistry
+import org.drivine.connection.DatabaseType
+import org.drivine.connection.NativeDriverSource
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.schema.RangeIndexSpec
@@ -49,8 +52,11 @@ import org.drivine.schema.SchemaCatalog
 import org.drivine.schema.SimilarityFunction
 import org.drivine.schema.UniquenessConstraintSpec
 import org.drivine.schema.VectorIndexSpec
+import org.drivine.transaction.DrivineTransactionManager
+import org.drivine.transaction.TransactionContextHolder
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
@@ -60,6 +66,7 @@ import org.springframework.context.annotation.Bean
 import org.springframework.scheduling.annotation.EnableScheduling
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.transaction.PlatformTransactionManager
+import javax.sql.DataSource
 
 /**
  * Auto-configures the Dice proposition store and its lineage record stores (projection records and
@@ -79,6 +86,40 @@ class DiceStorageAutoConfiguration {
 
     private val logger = LoggerFactory.getLogger(DiceStorageAutoConfiguration::class.java)
 
+    /** Drivine's transaction state, when Drivine is configured: see [drivineTransactions]. */
+    @Autowired(required = false)
+    private var transactionContextHolder: TransactionContextHolder? = null
+
+    /** Drivine's datasources, when Drivine is configured: see [requireLockingSqliteTransactions]. */
+    @Autowired(required = false)
+    private var databaseRegistry: DatabaseRegistry? = null
+
+    /**
+     * The transaction manager the graph stores run their own transactions with: Drivine's.
+     *
+     * Drivine registers its manager only when the context has none, so a host that brings one for
+     * its own database (JPA, JDBC) leaves Drivine without. The stores were then given the host's,
+     * whose transactions Drivine's statements do not join: each statement committed on its own,
+     * and a save's find-then-insert stopped being atomic. Given any manager but Drivine's, this
+     * makes Drivine's over the same transaction state, so a store's transactions and a caller's
+     * Drivine transactions still join each other.
+     */
+    private fun drivineTransactions(given: PlatformTransactionManager): PlatformTransactionManager {
+        if (given is DrivineTransactionManager) return given
+        return transactionContextHolder?.let(::DrivineTransactionManager) ?: given
+    }
+
+    /**
+     * Refuses a SQLite store whose transactions do not take the write lock as they begin, before a
+     * save can fail on it. See [SqliteTransactionMode].
+     */
+    private fun requireLockingSqliteTransactions(persistenceManager: PersistenceManager) {
+        if (persistenceManager.type != DatabaseType.SQLITE) return
+        val provider = databaseRegistry?.connectionProvider(persistenceManager.database) as? NativeDriverSource<*>
+        val dataSource = provider?.nativeDriver as? DataSource ?: return
+        SqliteTransactionMode.requireImmediate(dataSource, persistenceManager.database)
+    }
+
     // ---- Graph backend (embabel.dice.store.type=graph) ----
 
     @Bean
@@ -96,8 +137,12 @@ class DiceStorageAutoConfiguration {
             "Wiring graph proposition store (Drivine/Neo4j), vector index '{}'",
             DrivinePropositionRepository.VECTOR_INDEX,
         )
+        requireLockingSqliteTransactions(persistenceManager)
         return DrivinePropositionRepository(
-            graphObjectManager, persistenceManager, storeEmbeddingService("graph", ai, embeddingServices), transactionManager,
+            graphObjectManager,
+            persistenceManager,
+            storeEmbeddingService("graph", ai, embeddingServices),
+            drivineTransactions(transactionManager),
         )
     }
 
@@ -201,7 +246,10 @@ class DiceStorageAutoConfiguration {
     fun drivineExtractionRunStore(
         persistenceManager: PersistenceManager,
         transactionManager: PlatformTransactionManager,
-    ): ExtractionRunStore = DrivineExtractionRunStore(persistenceManager, transactionManager)
+    ): ExtractionRunStore {
+        requireLockingSqliteTransactions(persistenceManager)
+        return DrivineExtractionRunStore(persistenceManager, drivineTransactions(transactionManager))
+    }
 
     /**
      * Where `(proposition, run)` links go.

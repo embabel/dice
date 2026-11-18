@@ -21,15 +21,18 @@ import com.embabel.dice.conformance.AbstractPropositionStoreContractTest
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.storage.model.PropositionView
 import org.drivine.StaleObjectException
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.load
+import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -40,7 +43,10 @@ import org.springframework.test.context.DynamicPropertySource
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.TransactionStatus
+import org.springframework.transaction.support.AbstractPlatformTransactionManager
+import org.springframework.transaction.support.DefaultTransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
+import java.time.Instant
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -173,6 +179,95 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
             executor.awaitTermination(60, TimeUnit.SECONDS)
         }
     }
+
+    @Test
+    fun `findClusters groups propositions with the same embedding`() {
+        // The same text in two contexts is not deduplicated, so the two share an embedding.
+        repository.save(ghost("The ghost hums in the attic", context = "cluster-a"))
+        repository.save(ghost("The ghost hums in the attic", context = "cluster-b"))
+        repository.save(ghost("A lantern burns in the cellar", context = "cluster-a"))
+
+        val clusters = repository.findClusters(similarityThreshold = 0.95, topK = 10, query = PropositionQuery())
+
+        assertEquals(1, clusters.size, "clusters: $clusters")
+        assertEquals(1, clusters.single().similar.size)
+        assertEquals(1.0, clusters.single().similar.single().score, 0.001)
+    }
+
+    /**
+     * On SQLite the caller's transaction holds the file's write lock once it has read, so a touch
+     * that opened a transaction of its own would wait for the caller, which is waiting for it.
+     */
+    @Test
+    fun `touchAccessed inside a transaction that has read the store finishes and records the access`() {
+        val saved = repository.save(ghost("The ghost counts the stairs"))
+        val touchedAt = Instant.now()
+
+        runWithin(10) {
+            TransactionTemplate(transactionManager).execute {
+                repository.findById(saved.id)
+                repository.touchAccessed(listOf(saved.id))
+            }
+        }
+
+        val lastAccessed = repository.findById(saved.id)!!.lastAccessed
+        assertFalse(lastAccessed.isBefore(touchedAt), "lastAccessed $lastAccessed predates the touch at $touchedAt")
+    }
+
+    @Test
+    fun `reembedAll inside a transaction that has read the store finishes and rewrites the vectors`() {
+        val saved = repository.save(ghost("The ghost rattles the shutters"))
+
+        val report = runWithin(10) {
+            TransactionTemplate(transactionManager).execute {
+                repository.findById(saved.id)
+                repository.reembedAll()
+            }!!
+        }
+
+        assertEquals(1, report.propositions)
+    }
+
+    /**
+     * A host can bring a transaction manager of its own, which knows nothing of Drivine. A save
+     * made while that manager's transaction is open still writes all of itself or none of itself:
+     * here the write after the node fails, and the node must not be left behind.
+     */
+    @Test
+    fun `a save in a transaction of another manager writes nothing when it fails part way`() {
+        val failing = DrivinePropositionRepository(
+            graphObjectManager,
+            FailingMetadataReadPersistenceManager(persistenceManager),
+            embeddingService,
+            transactionManager,
+        )
+        val proposition = ghost("The ghost slams the cellar door")
+
+        TransactionTemplate(ForeignTransactionManager()).executeWithoutResult {
+            assertThrows<IllegalStateException> { failing.save(proposition) }
+        }
+
+        assertNull(repository.findById(proposition.id), "the node outlived the failed save")
+    }
+
+    private fun ghost(text: String, context: String = "ghost-ctx") = Proposition(
+        contextId = ContextId(context),
+        text = text,
+        mentions = listOf(EntityMention(span = "the ghost", type = "Ghost", role = MentionRole.SUBJECT)),
+        confidence = 0.9,
+    )
+
+    /** Runs [block] on another thread and fails the test if it takes longer than [seconds]. */
+    private fun <T> runWithin(seconds: Long, block: () -> T): T {
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val result = executor.submit<T> { block() }
+            return result.get(seconds, TimeUnit.SECONDS)
+        } finally {
+            executor.shutdown()
+            executor.awaitTermination(60, TimeUnit.SECONDS)
+        }
+    }
 }
 
 /** Runs the [DrivinePropositionStoreContractCases] on the shared Neo4j testcontainer. */
@@ -205,4 +300,25 @@ private class OpeningSignalTransactionManager(
     override fun commit(status: TransactionStatus) = delegate.commit(status)
 
     override fun rollback(status: TransactionStatus) = delegate.rollback(status)
+}
+
+/**
+ * A transaction manager that knows nothing of Drivine, like one a host brings for a database of
+ * its own. Its transactions hold nothing.
+ */
+private class ForeignTransactionManager : AbstractPlatformTransactionManager() {
+    override fun doGetTransaction(): Any = Any()
+    override fun doBegin(transaction: Any, definition: TransactionDefinition) = Unit
+    override fun doCommit(status: DefaultTransactionStatus) = Unit
+    override fun doRollback(status: DefaultTransactionStatus) = Unit
+}
+
+/** Passes every call on, except that the read a save makes after writing the node fails. */
+private class FailingMetadataReadPersistenceManager(
+    private val delegate: PersistenceManager,
+) : PersistenceManager by delegate {
+    override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
+        check(spec.statement?.text?.contains("STARTS WITH 'metadata.'") != true) { "the read after the node write failed" }
+        return delegate.query(spec)
+    }
 }

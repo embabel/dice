@@ -62,6 +62,7 @@ class DrivineChunkHistoryStore(
      * Most-recently-processed chunk for the source. A bare `@NodeFragment` has no generated query
      * DSL, so the "latest by processedAt" pick is a small parameterized Cypher returning the id;
      * the node itself is then loaded via the high-level API (correct temporal deserialization).
+     * Two records with the same time give the one whose window ends further on.
      */
     @Transactional(readOnly = true)
     override fun getLastBookmark(key: BookmarkKey): AnalysisBookmark? {
@@ -69,7 +70,7 @@ class DrivineChunkHistoryStore(
             cypherQuery(
                     "MATCH (c:ProcessedChunk {contextId: \$contextId, sourceId: \$sourceId}) " +
                         "RETURN c.id AS id " +
-                        "ORDER BY ${InstantText.sortKey("c.processedAt")} DESC, c.processedAt DESC, c.id DESC LIMIT 1"
+                        "ORDER BY ${InstantText.sortKey("c.processedAt")} DESC, c.processedAt DESC, c.endIndex DESC, c.id DESC LIMIT 1"
                 )
                 .bind(
                     mapOf(

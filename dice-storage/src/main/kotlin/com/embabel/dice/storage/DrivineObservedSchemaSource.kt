@@ -142,6 +142,13 @@ open class DrivineObservedSchemaSource(
     """.trimIndent()
 
     /**
+     * The same answer on a SQL store, which has no label catalogue to ask and no label to name
+     * from a parameter. There a label exists only while a node wears it, so the labels the nodes
+     * wear are the whole answer.
+     */
+    private val labelsOnNodes = "MATCH (n) UNWIND labels(n) AS label RETURN DISTINCT label"
+
+    /**
      * Dice labels the domain has also claimed: those carrying at least one node that fails
      * dice's shape for them. Whatever this returns stays in the observation.
      *
@@ -280,13 +287,15 @@ open class DrivineObservedSchemaSource(
         // that produced it already asked dice's own propositions, and it stays out of the label set
         // so the differ can hold it to the mention rule; see the class doc.
         return ObservedSchema(
-            entityTypeNames = queryStrings(labelsWithNodes) - hiddenLabels - INFRASTRUCTURE_LABELS,
+            entityTypeNames = queryStrings(wornLabels()) - hiddenLabels - INFRASTRUCTURE_LABELS,
             relationshipTypeNames = queryStrings(ALL_RELATIONSHIP_TYPES) - hiddenRelationshipTypes,
             capturedAt = clock.instant(),
             entityTypeBasis = ObservedSchema.EntityTypeBasis.GRAPH_LABELS,
             mentionTypeNames = queryStrings(mentionTypesInGraph),
         )
     }
+
+    private fun wornLabels(): String = if (persistenceManager.type.speaksCypher) labelsWithNodes else labelsOnNodes
 
     private fun observeContext(contextId: ContextId): ObservedSchema {
         val bindings = mapOf("contextId" to contextId.value)
