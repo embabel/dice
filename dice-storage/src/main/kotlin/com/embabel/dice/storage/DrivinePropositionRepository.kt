@@ -494,7 +494,7 @@ class DrivinePropositionRepository(
      * `previousStatus` and reason, say) stayed on the node. This removes every `metadata.*`
      * property the saved map no longer carries.
      *
-     * The node's keys are read first and the stale ones are set to null, which removes them. Cypher
+     * The store reads back only the stale keys, and they are set to null, which removes them. Cypher
      * only removes a property it can name, and the names here come from data, so the removal goes
      * through a map rather than `REMOVE n[k]`, which Neo4j alone accepts. Nothing is written, and
      * the stamp is left alone, when no key is stale.
@@ -502,12 +502,15 @@ class DrivinePropositionRepository(
      * @param proposition the proposition just saved, whose metadata map is the one to keep
      */
     private fun dropMetadataKeysNotIn(proposition: Proposition) {
-        val kept = proposition.metadata.keys.mapTo(HashSet()) { "metadata.$it" }
+        val kept = proposition.metadata.keys.map { "metadata.$it" }
         val stale = persistenceManager.query(
-            cypherQuery("MATCH (p:Proposition {id: ${'$'}id}) UNWIND keys(p) AS key RETURN key")
-                .bind(mapOf("id" to proposition.id))
+            cypherQuery(
+                "MATCH (p:Proposition {id: ${'$'}id}) UNWIND keys(p) AS key " +
+                    "WITH key WHERE key STARTS WITH 'metadata.' AND NOT key IN ${'$'}kept RETURN key",
+            )
+                .bind(mapOf("id" to proposition.id, "kept" to kept))
                 .transform(String::class.java),
-        ).filter { it.startsWith("metadata.") && it !in kept }
+        )
         if (stale.isEmpty()) return
         persistenceManager.execute(
             cypherQuery("MATCH (p:Proposition {id: ${'$'}id}) SET p += ${'$'}removed, ${Stamps.setClause("p")}")
