@@ -162,10 +162,18 @@ caller's own event never ran, because the thread was interrupted before or while
 throws a `CancellationException` and the flag stays set, so a surrounding transaction can roll back.
 The next event for the same source analyses the window again. A store or pipeline that catches an interrupt must set the flag again, as is the Java convention.
 
-A failure that reaches the caller lets a host transaction roll back. To make a failed write leave no
-trace, keep the chunk history in the same transactional store as the claims, as the Drivine stores
-do, and call `extractPropositions` inside a transaction. Without a transaction, a write that fails
-part way is retried, and the retry can add the window's claims again.
+A failure that reaches the caller lets a host transaction roll back. For one-time processing, keep the
+chunk history in the same transactional store as the claims. The Drivine stores do this. Call
+`extractPropositions` inside a transaction. Without a transaction, a write that fails part way is
+retried. Each window's chunk id is derived from the context, the source id, the window bounds and
+the window text, so a retry of the same window has the same chunk id. With revision on, a claim
+the failed write already stored then comes back as a replay, as long as the reviser matches it to
+the stored claim and the retry carries the same source locator and source revision. Without
+revision, the retry saves that claim again, and the repository decides whether that makes a
+second copy: the in-memory repository keeps both, and the Drivine repository reuses the stored
+claim with the same text and writes nothing when it already holds the provenance. If the source has grown since and the retried window
+ends later, it gets a new chunk id, and the retry reinforces the stored claim again. So does the
+first retry of a window whose failed attempt ran on a DICE version that gave windows random ids.
 
 A transaction alone does not stop two callers from analysing the same window. DICE releases its lock
 when `extractPropositions` returns, before the host commits, so a second transaction can still read

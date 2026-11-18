@@ -21,6 +21,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.embabel.agent.core.ContextId
 import com.embabel.agent.core.DataDictionary
+import com.embabel.agent.rag.model.Chunk
 import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.chat.Message
@@ -228,6 +229,23 @@ class WindowRecordedAfterStoreTest {
 
         harness.extraction.extractPropositions(event())
         verify(exactly = 2) { harness.pipeline.processChunk(any(), any()) }
+    }
+
+    @Test
+    fun `a window analysed again after a store failure reaches the pipeline with the same chunk id`() {
+        val harness = harness(repository = FlakyRepository(failingSaves = setOf(1)))
+        val chunkIds = mutableListOf<String>()
+        every { harness.pipeline.processChunk(any(), any()) } answers {
+            chunkIds += firstArg<Chunk>().id
+            harness.chunkResult
+        }
+
+        assertThatThrownBy { harness.extraction.extractPropositions(event()) }
+            .hasMessage("store is down")
+        harness.extraction.extractPropositions(event())
+
+        assertThat(chunkIds).hasSize(2)
+        assertThat(chunkIds[1]).isEqualTo(chunkIds[0])
     }
 
     @Test
