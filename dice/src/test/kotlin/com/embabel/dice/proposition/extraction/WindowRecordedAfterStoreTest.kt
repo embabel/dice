@@ -666,6 +666,38 @@ class WindowRecordedAfterStoreTest {
     }
 
     @Test
+    fun `a published event run inline on the publisher's thread keeps the bounded wait`() {
+        val harness = harness()
+        IncrementalPropositionExtraction::class.java.getDeclaredField("directCallLockWaitMillis").apply {
+            isAccessible = true
+            setLong(harness.extraction, 100L)
+        }
+        harness.extraction.withEventExecutor { it.run() }
+        val firstEntered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        every { harness.pipeline.processChunk(any(), any()) } answers {
+            firstEntered.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            harness.chunkResult
+        }
+        val first = Thread({ harness.extraction.extractPropositions(event(source = "source-a")) }, "first-caller")
+        first.start()
+        assertThat(firstEntered.await(5, TimeUnit.SECONDS)).isTrue()
+
+        val started = System.nanoTime()
+        try {
+            harness.publish(event(source = "source-b"))
+        } finally {
+            release.countDown()
+            first.join(10_000)
+        }
+
+        assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(3_000)
+        verify(exactly = 1) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.extraction.isIdle).isTrue()
+    }
+
+    @Test
     fun `close lets a queued published event finish`() {
         val harness = harness()
         val started = CountDownLatch(1)

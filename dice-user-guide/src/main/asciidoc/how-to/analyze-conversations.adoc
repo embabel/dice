@@ -141,7 +141,10 @@ events.initialize();
 extraction.withEventExecutor(events);
 ----
 
-Give extraction an executor of its own. If a running extraction waits on the same executor, for
+The executor must throw `RejectedExecutionException` when it is full, as `ThreadPoolTaskExecutor`
+does by default, rather than drop events silently. Published events run outside any transaction, so
+to keep a window's claims and its bookmark in one transaction, call `extractPropositions` from your
+own `@Transactional` method. Give extraction an executor of its own. If a running extraction waits on the same executor, for
 example through concurrent chunk extraction, the two can wait for each other forever. When the
 Spring context closes, `close()` gives DICE's own queued events 30 seconds to finish.
 A call made from inside a running extraction on the same thread, such as from a save listener, is

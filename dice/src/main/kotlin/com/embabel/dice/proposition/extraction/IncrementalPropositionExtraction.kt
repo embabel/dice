@@ -388,6 +388,13 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * waits on, such as the one DICE's concurrent chunk extraction uses, the two can wait for each
      * other forever. DICE does not shut a bound executor down; its owner does.
      *
+     * The executor must throw `RejectedExecutionException` when it cannot take an event, as Spring's
+     * `ThreadPoolTaskExecutor` does by default. One that drops tasks silently, such as a pool with
+     * `DiscardPolicy`, loses the event without a log, and [isIdle] then never turns true. Published
+     * events run outside any transaction a subclass declares on [onSourceAnalysisRequestEvent]; to
+     * keep claims and the window in one transaction, call [extractPropositions] from your own
+     * transactional method instead.
+     *
      * Bind once, before the extractor handles its first published event.
      *
      * Java:
@@ -442,8 +449,11 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         // the decorator around it fails, or it is never submitted.
         val released = AtomicBoolean(false)
         val release = { if (released.compareAndSet(false, true)) inFlightCount.decrementAndGet() }
+        val publisher = Thread.currentThread()
         val task = Runnable {
-            runningPublishedEvent.set(true)
+            // An executor that runs the task inline, such as a pool with CallerRunsPolicy, runs it on
+            // the publisher's thread, which may hold a transaction. It then waits like a direct caller.
+            if (Thread.currentThread() !== publisher) runningPublishedEvent.set(true)
             try {
                 extractPropositions(event)
             } catch (e: Exception) {
