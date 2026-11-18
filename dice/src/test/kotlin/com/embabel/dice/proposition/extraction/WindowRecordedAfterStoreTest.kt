@@ -31,6 +31,7 @@ import com.embabel.dice.common.Resolutions
 import com.embabel.dice.common.SourceAnalysisRequestEvent
 import com.embabel.dice.common.SuggestedEntityResolution
 import com.embabel.dice.incremental.BookmarkKey
+import com.embabel.dice.incremental.HashKey
 import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore
 import com.embabel.dice.incremental.IncrementalSource
@@ -57,6 +58,7 @@ import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.net.SocketTimeoutException
+import java.time.Instant
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -146,6 +148,7 @@ class WindowRecordedAfterStoreTest {
         projectionFails: Boolean = false,
         projectionFailure: () -> Exception = { IllegalStateException("projector is down") },
         history: ChunkHistoryStore = InMemoryChunkHistoryStore(),
+        windowSize: Int = 1,
         mintNewEntities: Boolean = false,
         mintedEntityProperties: (NamedEntity) -> Map<String, Any> = { emptyMap() },
     ): Harness {
@@ -174,7 +177,7 @@ class WindowRecordedAfterStoreTest {
             entityRepository = mockk<NamedEntityDataRepository>(relaxed = true),
             entityResolver = mockk<EntityResolver>(relaxed = true),
             graphProjectionService = projection,
-            properties = PropositionExtractionProperties(windowSize = 1, overlapSize = 1, triggerInterval = 1),
+            properties = PropositionExtractionProperties(windowSize = windowSize, overlapSize = 1, triggerInterval = 1),
             mintNewEntitiesDefault = mintNewEntities,
             mintedEntityPropertiesProvider = mintedEntityProperties,
         )
@@ -185,10 +188,11 @@ class WindowRecordedAfterStoreTest {
         currentRun: ExtractionRunRef? = null,
         source: String = sourceId,
         sourceCalls: AtomicInteger = AtomicInteger(),
+        size: Int = 1,
     ): SourceAnalysisRequestEvent {
         val incremental = mockk<IncrementalSource<Message>>(relaxed = true)
         every { incremental.id } returns source
-        every { incremental.size } returns 1
+        every { incremental.size } returns size
         // Each source gets its own text, so the history store's hash check tells sources apart.
         every { incremental.getItems(any(), any()) } returns listOf(UserMessage("Alice writes in $source"))
         return object : SourceAnalysisRequestEvent(this, user()) {
@@ -663,5 +667,102 @@ class WindowRecordedAfterStoreTest {
         assertThat(shared.suppressed).isEmpty()
         assertThat(warned.filter { it.throwableProxy?.message == "store is down" }).hasSize(1)
         verify(exactly = 2) { harness.pipeline.processChunk(any(), any()) }
+    }
+
+    /** Runs [block] and returns the `error` events logged anywhere under `com.embabel.dice`. */
+    private fun errors(block: () -> Unit): List<ILoggingEvent> {
+        val logger = LoggerFactory.getLogger("com.embabel.dice") as Logger
+        val appender = ListAppender<ILoggingEvent>().also {
+            it.start()
+            logger.addAppender(it)
+        }
+        try {
+            block()
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+        return appender.list.filter { it.level == Level.ERROR }
+    }
+
+    private fun assertStuckWindowLogged(
+        logged: List<ILoggingEvent>,
+        times: Int,
+        cause: String,
+        step: String = "store",
+        range: String = "[0, 1)",
+    ) {
+        val stuck = logged.filter { it.formattedMessage.contains("source $sourceId") }
+        assertThat(stuck).hasSize(times)
+        assertThat(stuck).allSatisfy {
+            assertThat(it.formattedMessage)
+                .startsWith("Could not $step items $range")
+                .contains("context ${tenant.value}")
+            assertThat(it.throwableProxy?.message).isEqualTo(cause)
+        }
+    }
+
+    @Test
+    fun `a window that keeps failing to store is logged at error with its source each time`() {
+        // The failure that reaches the caller may belong to another queued event and need not name
+        // its source, so the log is how a host finds the stuck source and decides to skip it.
+        val harness = harness(repository = FlakyRepository(failingSaves = setOf(1, 2)))
+
+        val logged = errors {
+            repeat(2) {
+                assertThatThrownBy { harness.extraction.extractPropositions(event()) }
+                    .hasMessage("store is down")
+            }
+        }
+
+        assertStuckWindowLogged(logged, times = 2, cause = "store is down")
+        assertThat(harness.bookmark()).isNull()
+    }
+
+    @Test
+    fun `a window whose record fails is logged at error with its source`() {
+        val inner = InMemoryChunkHistoryStore()
+        val history = object : ChunkHistoryStore by inner {
+            override fun recordProcessed(record: ProcessedChunkRecord) =
+                throw IllegalStateException("disk full")
+        }
+        val harness = harness(history = history)
+
+        val logged = errors {
+            assertThatThrownBy { harness.extraction.extractPropositions(event()) }
+                .hasMessage("disk full")
+        }
+
+        assertStuckWindowLogged(logged, times = 1, cause = "disk full", step = "record")
+        assertThat(harness.bookmark()).isNull()
+    }
+
+    @Test
+    fun `a failed store after the bookmark has moved logs that window's own range`() {
+        // The window starts the overlap before the bookmark and ends, exclusive, a window's length
+        // later, so the logged range differs from both the bookmark and a one-item window.
+        val history = InMemoryChunkHistoryStore()
+        history.recordProcessed(
+            ProcessedChunkRecord(
+                bookmarkKey = BookmarkKey(tenant, sourceId),
+                hashKey = HashKey(tenant, "earlier-window"),
+                startIndex = 0,
+                endIndex = 3,
+                processedAt = Instant.now(),
+            ),
+        )
+        val harness = harness(
+            repository = FlakyRepository(failingSaves = setOf(1)),
+            history = history,
+            windowSize = 4,
+        )
+
+        val logged = errors {
+            assertThatThrownBy { harness.extraction.extractPropositions(event(size = 10)) }
+                .hasMessage("store is down")
+        }
+
+        assertStuckWindowLogged(logged, times = 1, cause = "store is down", range = "[2, 6)")
+        assertThat(harness.bookmark()?.endIndex).isEqualTo(3)
     }
 }

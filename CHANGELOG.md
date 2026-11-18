@@ -2516,15 +2516,21 @@ and the consumer PRs that deliver it).
   interrupt must set the flag again. With the default writer, a run link failure that leaves the
   claims stored records the window, so the claims are not stored again, and then throws. Any other
   failed write leaves the window unrecorded. `analyze` still records the window before it returns. A
-  host that wants a failed write to leave no trace keeps its chunk history in the same transactional
-  store as the claims (the Drivine stores do this) and calls `extractPropositions` inside a
-  transaction. A transaction does not stop two concurrent transactions from analysing the same
-  window, so serialize those through the commit. The listing of every stored proposition after an
-  extraction moves from `info` to `debug`, and a failure in that listing no longer fails the
-  extraction. It now lists only the propositions that extraction stored, from memory, without reading
-  the store again. The per-extraction summary at `info` still names the claims it extracted. A
-  published `SourceAnalysisRequestEvent` still runs through `@Async`, but while one extraction runs,
-  each other published event now waits for it on a thread of the application's async executor
-  instead of being queued. An application that publishes bursts of events should give `@Async` a
-  dedicated executor.
+  host doing one-time processing keeps its chunk history in the same transactional store as the
+  claims (the Drivine stores do this) and calls `extractPropositions` inside a transaction. Without
+  a transaction, a write that fails part way is retried, and the retry can add the window's claims
+  again. A transaction does not stop two concurrent transactions from analysing the same window, so
+  serialize those through the commit. The listing of every stored proposition after an extraction
+  moves from `info` to `debug`, and a failure in that listing no longer fails the extraction. It now
+  lists only the propositions that extraction stored, from memory, without reading the store again.
+  The per-extraction summary at `info` still names the claims it extracted. A published
+  `SourceAnalysisRequestEvent` still runs through `@Async`, but while one extraction runs, each other
+  published event now waits for it on a thread of the application's async executor instead of being
+  queued. An application that publishes bursts of events should give `@Async` a dedicated executor.
   **Compatibility: behavioral.**
+
+- A window that `IncrementalPropositionExtraction` leaves unrecorded is logged at `error` with its
+  source, its context and its item range, and the exception is attached. This happens when storing
+  the window's claims fails, and when recording the window in the chunk history store fails. The
+  exception that reaches the caller may not name the source, so a window that fails on every event
+  could not be traced back to it. **Compatibility: additive.**
