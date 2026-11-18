@@ -297,11 +297,19 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         text: String,
     ): String {
         val digest = MessageDigest.getInstance("SHA-256")
+        // A small buffer, flushed as it fills, so hashing a large window does not copy it whole.
+        val buffer = ByteBuffer.allocate(WINDOW_CHUNK_ID_BUFFER_BYTES)
+        fun flush() {
+            digest.update(buffer.array(), 0, buffer.position())
+            buffer.clear()
+        }
         fun field(value: String) {
-            val bytes = ByteBuffer.allocate(Int.SIZE_BYTES + value.length * Char.SIZE_BYTES)
-            bytes.putInt(value.length)
-            value.forEach { bytes.putChar(it) }
-            digest.update(bytes.array())
+            buffer.putInt(value.length)
+            value.forEach {
+                if (buffer.remaining() < Char.SIZE_BYTES) flush()
+                buffer.putChar(it)
+            }
+            flush()
         }
         field(WINDOW_CHUNK_ID_VERSION)
         field(context.contextId.value)
@@ -318,6 +326,7 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
 
 /** Bumped if the inputs to the window chunk id ever change, so old and new ids cannot clash. */
 private const val WINDOW_CHUNK_ID_VERSION = "dice-incremental-window-v1"
+private const val WINDOW_CHUNK_ID_BUFFER_BYTES = 8192
 private const val VERSION_MASK = 0xF000L
 private const val VERSION_8 = 0x8000L
 private const val VARIANT_MASK = -0x4000000000000000L
