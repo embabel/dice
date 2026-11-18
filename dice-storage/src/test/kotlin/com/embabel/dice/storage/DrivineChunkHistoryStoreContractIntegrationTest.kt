@@ -83,6 +83,32 @@ abstract class DrivineChunkHistoryStoreContractCases : AbstractChunkHistoryStore
         }
     }
 
+    @Test
+    fun `the bookmark is the later record when a whole second precedes a fraction of it`() {
+        val ctx = ContextId("chunk-order-ctx")
+        val bookmarkKey = BookmarkKey(ctx, "source-1")
+        chunkHistoryStore.recordProcessed(
+            ProcessedChunkRecord(
+                bookmarkKey = bookmarkKey,
+                hashKey = HashKey(ctx, "hash-whole-second"),
+                startIndex = 0,
+                endIndex = 5,
+                processedAt = Instant.parse("2026-01-01T12:00:05Z"),
+            ),
+        )
+        chunkHistoryStore.recordProcessed(
+            ProcessedChunkRecord(
+                bookmarkKey = bookmarkKey,
+                hashKey = HashKey(ctx, "hash-half-second"),
+                startIndex = 5,
+                endIndex = 9,
+                processedAt = Instant.parse("2026-01-01T12:00:05.500Z"),
+            ),
+        )
+
+        assertEquals(9, chunkHistoryStore.getLastBookmark(bookmarkKey)?.endIndex)
+    }
+
     /**
      * Counts the nodes that carry a label, read straight from the graph.
      *
