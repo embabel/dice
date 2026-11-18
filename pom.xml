@@ -98,8 +98,8 @@
     <properties>
         <embabel-agent.version>1.5.4</embabel-agent.version>
         <!--
-            tuProlog stays pinned to 1.0.4. The 1.1.x series needs Kotlin 2.2.21 or later, which
-            the build parent now manages, so the pin can be lifted in a change of its own.
+            tuProlog stays at 1.0.4. Releases 1.1.0 to 1.1.5 depend on a kotlin-stdlib-common 2.2 jar
+            that Kotlin does not publish, and releases from 1.2.0 are built with Kotlin 2.4.
         -->
         <tuprolog.version>1.0.4</tuprolog.version>
         <drivine.version>0.6.2</drivine.version>

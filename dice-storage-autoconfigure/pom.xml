@@ -165,7 +165,6 @@
                     <args>
                         <arg>-Xjsr305=strict</arg>
                         <arg>-Xjvm-default=all</arg>
-                        <arg>-Xskip-metadata-version-check</arg>
                     </args>
                 </configuration>
                 <executions>

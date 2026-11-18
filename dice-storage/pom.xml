@@ -24,7 +24,11 @@
             Drivine's generated query DSL uses Kotlin context parameters (-Xcontext-parameters),
             a Kotlin 2.2 feature. The build parent manages a 2.2 compiler, so this module takes
             its Kotlin version from the parent like every other module.
+
+            The KSP release that runs Drivine's code generator. A KSP 2.2 release is built for one
+            Kotlin version and names it, so change this whenever kotlin.version changes.
         -->
+        <ksp.version>2.2.21-2.0.4</ksp.version>
         <!-- Gradle wrapper for the KSP codegen step; overridden to gradlew.bat on Windows (see profiles) -->
         <gradlew.executable>${project.basedir}/codegen-gradle/gradlew</gradlew.executable>
         <!-- Where the KSP codegen step writes Drivine's query DSL -->
@@ -154,8 +158,9 @@
                                 <argument>--no-daemon</argument>
                                 <argument>--console=plain</argument>
                                 <argument>--quiet</argument>
-                                <!-- Pass the pom's Drivine version through so the KSP DSL is generated
-                                     against the same Drivine it is then compiled against. -->
+                                <!-- Generate the DSL with the Kotlin, KSP and Drivine versions it is then compiled with -->
+                                <argument>-PkotlinVersion=${kotlin.version}</argument>
+                                <argument>-PkspVersion=${ksp.version}</argument>
                                 <argument>-PdrivineVersion=${drivine.version}</argument>
                             </arguments>
                         </configuration>
@@ -211,8 +216,6 @@
                         <arg>-Xjsr305=strict</arg>
                         <arg>-Xjvm-default=all</arg>
                         <arg>-Xcontext-parameters</arg>
-                        <!-- tolerate metadata from dice-core and embabel-agent built by a different Kotlin patch version -->
-                        <arg>-Xskip-metadata-version-check</arg>
                     </args>
                     <!--
                       Re-declare the all-open (spring) plugin defensively. The build parent's
