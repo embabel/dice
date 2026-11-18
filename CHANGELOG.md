@@ -2528,9 +2528,10 @@ and the consumer PRs that deliver it).
 
 - An incremental window's chunk id is derived from the context, the source id, the window bounds
   and the window text, and is shaped as a UUID. Before, every window got a random UUID. When a
-  write without a transaction fails part way and the window is analysed again, the retry now has
-  the same chunk id, so a claim the failed write already stored is merged as a replay instead of
-  being reinforced a second time. This applies to `PropositionIncrementalAnalyzer`,
+  write without a transaction fails part way and the same window is analysed again, the retry now
+  has the same chunk id. With revision on, a claim the failed write already stored is merged as a
+  replay instead of being reinforced a second time, as long as the reviser matches it and the
+  source revision is unchanged. This applies to `PropositionIncrementalAnalyzer`,
   `EntityIncrementalAnalyzer` and `IncrementalPropositionExtraction`. Analysing the same window
   again after `ChunkHistoryStore.clearByContext` also gives the same chunk id. Stored chunk ids are
   not changed. **Compatibility: behavioral.**
