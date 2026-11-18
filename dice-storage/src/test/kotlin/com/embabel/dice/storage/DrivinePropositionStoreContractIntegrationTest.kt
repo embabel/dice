@@ -21,12 +21,17 @@ import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.storage.model.PropositionView
+import org.drivine.StaleObjectException
 import org.drivine.manager.PersistenceManager
+import org.drivine.manager.StatelessGraphObjectManager
+import org.drivine.manager.load
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
@@ -46,6 +51,9 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
 
     @Autowired
     private lateinit var persistenceManager: PersistenceManager
+
+    @Autowired
+    private lateinit var graphObjectManager: StatelessGraphObjectManager
 
     override fun store(): PropositionStore = repository
 
@@ -79,6 +87,32 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
         assertTrue("metadata.keep" in keys, "keys on the node: $keys")
         assertFalse("metadata.drop" in keys, "keys on the node: $keys")
         assertEquals(mapOf("keep" to "a"), repository.findById(saved.id)!!.metadata)
+    }
+
+    /**
+     * The second save holds the proposition exactly as stored, less one metadata key. The node write
+     * changes nothing, so the mark is the key removal's.
+     */
+    @Test
+    fun `a save of a loaded proposition is refused after a metadata key is removed from it`() {
+        val saved = repository.save(
+            Proposition(
+                contextId = ContextId("metadata-ctx"),
+                text = "The ghost haunts the manor",
+                mentions = listOf(
+                    EntityMention(span = "the ghost", type = "Ghost", role = MentionRole.SUBJECT),
+                ),
+                confidence = 0.9,
+                metadata = mapOf("source" to "wiki"),
+            ),
+        )
+        val loaded = requireNotNull(graphObjectManager.load<PropositionView>(saved.id))
+
+        repository.save(saved.copy(metadata = emptyMap()))
+
+        assertThrows<StaleObjectException> {
+            graphObjectManager.save(loaded, DrivinePropositionRepository.REPLACE_MENTIONS)
+        }
     }
 }
 

@@ -10,13 +10,11 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
-- `dice-storage` marks the Cypher it writes by hand as Cypher. On Drivine's SQL stores, SQLite
-  among them, a statement without a language runs as SQL, so every store call that used such a
-  statement failed there. Drivine now compiles those statements to SQL, and the store conformance
-  suites pass on SQLite as they do on Neo4j. A save that drops metadata keys now reads the node's
-  keys and sets the stale ones to null, instead of `REMOVE p[k]`, which needed Neo4j 5.24.
-  **Compatibility: behavioral.** On Neo4j the statements run as before; a save that leaves
-  metadata keys out makes one extra read.
+- `dice-storage` marks the stores' hand-written statements as Cypher. On Drivine's SQL stores a
+  statement without a language runs as SQL. The store conformance suites pass on SQLite as they
+  do on Neo4j. A save that drops metadata keys sets the stale keys to null in place of
+  `REMOVE p[k]`, which needed Neo4j 5.24. Each save makes one extra read, which returns only the
+  stale keys. **Compatibility: behavioral.**
 
 - A `VectorSearchRequest` must name a context. `forText` and the Kotlin block throw
   `IllegalArgumentException` when the filter has none. Before, such a request was accepted and a
