@@ -15,11 +15,18 @@
  */
 package com.embabel.dice.storage
 
+import com.embabel.agent.core.ContextId
 import com.embabel.dice.conformance.AbstractPropositionStoreContractTest
+import com.embabel.dice.proposition.EntityMention
+import com.embabel.dice.proposition.MentionRole
+import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStore
 import org.drivine.manager.PersistenceManager
-import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
@@ -27,7 +34,8 @@ import org.springframework.test.context.DynamicPropertySource
 
 /**
  * Runs the [AbstractPropositionStoreContractTest] suite against
- * [DrivinePropositionRepository] on a real graph store: Neo4j here, SQLite in the `sqlite` package. This is the half that catches a graph backend
+ * [DrivinePropositionRepository] on a real graph store: Neo4j here, SQLite in the `sqlite` package.
+ * This is the half that catches a graph backend
  * silently disagreeing with the in-memory contract — substitutability enforced, not assumed.
  */
 @SpringBootTest(classes = [TestApplication::class])
@@ -45,6 +53,32 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
     fun cleanUp() {
         repository.clearAll()
         persistenceManager.execute(cypherQuery("MATCH (s:Source) DETACH DELETE s"))
+    }
+
+    @Test
+    fun `a save drops the metadata keys the map no longer carries`() {
+        val saved = repository.save(
+            Proposition(
+                contextId = ContextId("metadata-ctx"),
+                text = "The ghost haunts the manor",
+                mentions = listOf(
+                    EntityMention(span = "the ghost", type = "Ghost", role = MentionRole.SUBJECT),
+                ),
+                confidence = 0.9,
+                metadata = mapOf("keep" to "a", "drop" to "b"),
+            ),
+        )
+
+        repository.save(saved.copy(metadata = mapOf("keep" to "a")))
+
+        val keys = persistenceManager.query(
+            cypherQuery("MATCH (p:Proposition {id: ${'$'}id}) UNWIND keys(p) AS key RETURN key")
+                .bind(mapOf("id" to saved.id))
+                .transform(String::class.java),
+        )
+        assertTrue("metadata.keep" in keys, "keys on the node: $keys")
+        assertFalse("metadata.drop" in keys, "keys on the node: $keys")
+        assertEquals(mapOf("keep" to "a"), repository.findById(saved.id)!!.metadata)
     }
 }
 
