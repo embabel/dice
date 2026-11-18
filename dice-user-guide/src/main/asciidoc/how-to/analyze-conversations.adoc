@@ -125,9 +125,10 @@ exception it throws is unchecked. A call from another thread waits for the runni
 instead of handing its event over, so one caller's failure never rolls back another caller's work.
 A published `SourceAnalysisRequestEvent` is handed to a single thread DICE owns, and the publisher
 returns at once. Its queue holds 1,000 events; one it cannot take is logged at `error` and dropped,
-and the next event for the source analyses the window again. To keep your `TaskDecorator`, for
-example to carry a tenant context, or to size the queue yourself, bind your own executor before the
-first event:
+and the next event for the source analyses the window again. If your application defines exactly
+one `TaskDecorator` bean, each event is decorated with it on the publisher's thread, so a context it
+carries, such as a tenant, reaches the extraction. For any other decorator, or to size the queue
+yourself, bind your own executor before the first event:
 
 [source,java]
 ----

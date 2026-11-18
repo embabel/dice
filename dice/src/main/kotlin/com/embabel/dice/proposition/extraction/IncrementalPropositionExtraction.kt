@@ -39,8 +39,9 @@ import com.embabel.dice.proposition.PropositionRepository
 import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
-import org.springframework.core.Ordered
-import org.springframework.core.annotation.Order
+import org.springframework.beans.factory.BeanFactory
+import org.springframework.beans.factory.BeanFactoryAware
+import org.springframework.core.task.TaskDecorator
 import java.io.InputStream
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -64,9 +65,11 @@ import java.util.function.Function
  *
  * A published [SourceAnalysisRequestEvent] is handed to an executor and the publisher returns at
  * once. By default that is a single thread DICE owns, with a bounded queue, so events waiting for
- * a running extraction never hold threads of the application's own pools. An application that
- * needs its task decorator, more queue room or its own lifecycle binds its own executor with
- * [withEventExecutor]. Direct calls to [extractPropositions] run on the caller's thread.
+ * a running extraction never hold threads of the application's own pools. If the application
+ * defines exactly one `TaskDecorator` bean, each event is decorated with it on the publisher's
+ * thread, the way Spring Boot decorates its own executors. An application that needs a different
+ * decorator, more queue room or its own lifecycle binds its own executor with [withEventExecutor].
+ * Direct calls to [extractPropositions] run on the caller's thread.
  *
  * @param contextIdProvider maps the event's [NamedEntity] user to the context ID
  *        used for proposition storage. Defaults to [NamedEntity.getId].
@@ -134,7 +137,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * [SourceAnalysisContext.mintedEntityProperties].
      */
     private val mintedEntityPropertiesProvider: (NamedEntity) -> Map<String, Any> = { _ -> emptyMap() },
-) : AutoCloseable {
+) : AutoCloseable, BeanFactoryAware {
 
     /**
      * Where `(proposition, run)` links go, once a host has bound one with [withRunLineage].
@@ -346,11 +349,31 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     /** Guards creating and closing [ownEventExecutor], and binding with [withEventExecutor]. */
     private val eventExecutorGuard = Any()
 
+    /** Set by [close]. Once set, published events are refused instead of starting a new thread. */
+    private var eventExecutorClosed = false
+
+    /**
+     * The application's `TaskDecorator`, when it has exactly one, applied to every event handed to
+     * DICE's own thread, the way Spring Boot applies it to its own executors.
+     */
+    @Volatile
+    private var taskDecorator: TaskDecorator? = null
+
+    /**
+     * Picks up the application's `TaskDecorator`, if it defines exactly one, so a context it carries,
+     * such as a tenant or a no-logging marker, reaches DICE's own event thread. Spring calls this
+     * when the extractor is a bean.
+     */
+    override fun setBeanFactory(beanFactory: BeanFactory) {
+        taskDecorator = beanFactory.getBeanProvider(TaskDecorator::class.java).getIfUnique()
+    }
+
     /**
      * Runs published events on [executor] instead of DICE's own thread.
      *
-     * Use it when the work needs the application's `TaskDecorator`, for example to carry a tenant
-     * or security context, or when you want to size the queue yourself. Give extraction an executor
+     * Use it when the work needs a `TaskDecorator` other than the application's single
+     * `TaskDecorator` bean, which DICE's own thread already applies, or when you want to size the
+     * queue yourself. Give extraction an executor
      * of its own: if the executor that runs published events is also one that a running extraction
      * waits on, such as the one DICE's concurrent chunk extraction uses, the two can wait for each
      * other forever. DICE does not shut a bound executor down; its owner does.
@@ -388,10 +411,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
 
     /**
      * Counts a published event before it is handed to the executor, so [isIdle] sees events still
-     * waiting there. It runs first among this extractor's listeners.
+     * waiting there. [onSourceAnalysisRequestEvent] calls it, so counting and handing off happen in
+     * the same listener and another listener cannot come between them.
      */
-    @EventListener
-    @Order(Ordered.HIGHEST_PRECEDENCE)
     open fun trackEvent(event: SourceAnalysisRequestEvent) {
         inFlightCount.incrementAndGet()
     }
@@ -404,6 +426,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      */
     @EventListener
     open fun onSourceAnalysisRequestEvent(event: SourceAnalysisRequestEvent) {
+        trackEvent(event)
         try {
             eventExecutor().execute {
                 try {
@@ -429,26 +452,34 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      */
     override fun close() {
         val own = synchronized(eventExecutorGuard) {
-            ownEventExecutor.also { ownEventExecutor = null }
+            eventExecutorClosed = true
+            ownEventExecutor
         } ?: return
         own.shutdown()
         try {
             if (!own.awaitTermination(CLOSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 logger.warn("Extraction events still running after {} seconds; interrupting them", CLOSE_TIMEOUT_SECONDS)
-                own.shutdownNow()
+                countDiscarded(own.shutdownNow())
             }
         } catch (e: InterruptedException) {
-            own.shutdownNow()
+            countDiscarded(own.shutdownNow())
             Thread.currentThread().interrupt()
         }
     }
 
+    /** Releases the count of each queued event that shutdown removed before it ran. */
+    private fun countDiscarded(discarded: List<Runnable>) {
+        if (discarded.isEmpty()) return
+        logger.warn("Dropping {} published event(s) still queued at shutdown", discarded.size)
+        inFlightCount.addAndGet(-discarded.size)
+    }
+
     private fun eventExecutor(): Executor {
         boundEventExecutor?.let { return it }
-        ownEventExecutor?.let { return it }
-        synchronized(eventExecutorGuard) {
+        val pool = synchronized(eventExecutorGuard) {
             boundEventExecutor?.let { return it }
-            return ownEventExecutor ?: ThreadPoolExecutor(
+            if (eventExecutorClosed) throw RejectedExecutionException("the extractor is closed")
+            ownEventExecutor ?: ThreadPoolExecutor(
                 1,
                 1,
                 0L,
@@ -457,6 +488,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 { task -> Thread(task, "dice-incremental-extraction").apply { isDaemon = true } },
             ).also { ownEventExecutor = it }
         }
+        val decorator = taskDecorator ?: return pool
+        // Decorated here, on the publisher's thread, so the context the decorator captures is the
+        // publisher's.
+        return Executor { task -> pool.execute(decorator.decorate(task)) }
     }
 
     /**

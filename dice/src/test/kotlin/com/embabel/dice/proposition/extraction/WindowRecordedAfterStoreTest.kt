@@ -55,6 +55,8 @@ import io.mockk.verify
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.support.StaticListableBeanFactory
+import org.springframework.core.task.TaskDecorator
 import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.net.SocketTimeoutException
@@ -438,9 +440,8 @@ class WindowRecordedAfterStoreTest {
             .isFalse()
     }
 
-    /** Publishes [event] the way Spring does: the counting listener first, then the hand-off. */
+    /** Publishes [event] the way Spring delivers it to the extractor's listener. */
     private fun Harness.publish(event: SourceAnalysisRequestEvent) {
-        extraction.trackEvent(event)
         extraction.onSourceAnalysisRequestEvent(event)
     }
 
@@ -530,6 +531,55 @@ class WindowRecordedAfterStoreTest {
 
         assertThatThrownBy { harness.extraction.withEventExecutor { it.run() } }
             .isInstanceOf(IllegalStateException::class.java)
+    }
+
+    @Test
+    fun `the application's task decorator carries the publisher's context to DICE's thread`() {
+        val tenant = ThreadLocal<String?>()
+        val decorator = TaskDecorator { task ->
+            val captured = tenant.get()
+            Runnable {
+                tenant.set(captured)
+                try {
+                    task.run()
+                } finally {
+                    tenant.remove()
+                }
+            }
+        }
+        val harness = harness()
+        harness.extraction.setBeanFactory(StaticListableBeanFactory(mapOf("decorator" to decorator)))
+        val seen = AtomicReference<String?>()
+        val ran = CountDownLatch(1)
+        every { harness.pipeline.processChunk(any(), any()) } answers {
+            seen.set(tenant.get())
+            ran.countDown()
+            harness.chunkResult
+        }
+
+        tenant.set("quiet-tenant")
+        try {
+            harness.publish(event())
+        } finally {
+            tenant.remove()
+        }
+
+        assertThat(ran.await(5, TimeUnit.SECONDS)).isTrue()
+        assertThat(seen.get()).isEqualTo("quiet-tenant")
+        harness.extraction.close()
+    }
+
+    @Test
+    fun `a closed extractor refuses published events instead of starting a new thread`() {
+        val harness = harness()
+        harness.publish(event())
+        harness.awaitIdle()
+        harness.extraction.close()
+
+        harness.publish(event(source = "source-b"))
+
+        verify(exactly = 1) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.extraction.isIdle).isTrue()
     }
 
     @Test

@@ -2528,9 +2528,10 @@ and the consumer PRs that deliver it).
   `SourceAnalysisRequestEvent` no longer runs through `@Async`. It is handed to a single thread DICE
   owns, with a queue of 1,000 events, and the publisher returns at once, so waiting events never hold
   threads of the application's pools. An event the queue cannot take is logged at `error` and
-  dropped, and the next event for the source analyses the window again. Bind your own executor with
-  the experimental `withEventExecutor(Executor)` when the work needs your `TaskDecorator`, for
-  example for a tenant context, or a different queue size. The extractor is now `AutoCloseable`,
+  dropped, and the next event for the source analyses the window again. If the application defines
+  exactly one `TaskDecorator` bean, each event is decorated with it on the publisher's thread, so a
+  tenant or no-logging context still reaches the extraction. Bind your own executor with the
+  experimental `withEventExecutor(Executor)` for any other decorator or a different queue size. The extractor is now `AutoCloseable`,
   and `close()` gives queued events 30 seconds to finish when the Spring context shuts down.
   **Compatibility: behavioral.**
 
