@@ -105,7 +105,10 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
      * Analyses the next window like [analyze], hands the result to [store], and records the window
      * only once [store] returns. If [store] throws, nothing is recorded and the exception goes up
      * to the caller, so the next call analyses again from the same starting point. That window may
-     * end later if the source has grown since.
+     * end later if the source has grown since. A store or window record that throws an exception
+     * is logged at `error` with the source, its context and the window's item range, because a
+     * window that always fails is analysed again on every call and the caller's exception need not
+     * say which source it was.
      *
      * Only Kotlin code in this module can call it. The method is synthetic in bytecode, so Java
      * source cannot see it.
@@ -125,7 +128,17 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         val window = prepareWindow(source, context, lastIndex) ?: return null
 
         val result = processChunk(window.chunk, context)
-        store(result)
+        try {
+            store(result)
+        } catch (e: Exception) {
+            logUnrecorded(
+                source, context, window,
+                "Could not store items [{}, {}) of source {} in context {}. The bookmark has not moved, so the " +
+                    "next call for this source starts from the same item",
+                e,
+            )
+            throw e
+        }
         recordWindow(source, context, window, result)
         return result
     }
@@ -214,17 +227,45 @@ abstract class AbstractIncrementalAnalyzer<T, R>(
         window: PreparedWindow,
         result: R,
     ) {
-        historyStore.recordProcessed(
-            ProcessedChunkRecord(
-                bookmarkKey = BookmarkKey(context.contextId, source.id),
-                hashKey = HashKey(context.contextId, window.contentHash),
-                startIndex = window.startIndex,
-                endIndex = window.endIndex,
-                processedAt = Instant.now(),
+        try {
+            historyStore.recordProcessed(
+                ProcessedChunkRecord(
+                    bookmarkKey = BookmarkKey(context.contextId, source.id),
+                    hashKey = HashKey(context.contextId, window.contentHash),
+                    startIndex = window.startIndex,
+                    endIndex = window.endIndex,
+                    processedAt = Instant.now(),
+                )
             )
-        )
+        } catch (e: Exception) {
+            logUnrecorded(
+                source, context, window,
+                "Could not record items [{}, {}) of source {} in context {} as processed. Unless the record " +
+                    "was saved anyway, the next call for this source starts from the same item",
+                e,
+            )
+            throw e
+        }
 
         onProcessed(source, window.startIndex, window.endIndex, result)
+    }
+
+    /**
+     * Logs [message] at `error` with the window's item range, the source and the context, and with
+     * [failure] attached.
+     *
+     * The exception itself goes to the caller untouched and may not say which source it came from.
+     * This line does, so a host can spot a source whose window fails on every call and choose to
+     * skip it, for example by no longer asking for that source or by moving its bookmark on.
+     */
+    private fun logUnrecorded(
+        source: IncrementalSource<T>,
+        context: SourceAnalysisContext,
+        window: PreparedWindow,
+        message: String,
+        failure: Exception,
+    ) {
+        logger.error(message, window.startIndex, window.endIndex, source.id, context.contextId.value, failure)
     }
 
 }

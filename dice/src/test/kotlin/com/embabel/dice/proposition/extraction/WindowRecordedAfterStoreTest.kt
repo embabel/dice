@@ -672,4 +672,66 @@ class WindowRecordedAfterStoreTest {
         assertThat(warned.filter { it.throwableProxy?.message == "store is down" }).hasSize(1)
         verify(exactly = 2) { harness.pipeline.processChunk(any(), any()) }
     }
+
+    /** Runs [block] and returns the `error` events logged anywhere under `com.embabel.dice`. */
+    private fun errors(block: () -> Unit): List<ILoggingEvent> {
+        val logger = LoggerFactory.getLogger("com.embabel.dice") as Logger
+        val appender = ListAppender<ILoggingEvent>().also {
+            it.start()
+            logger.addAppender(it)
+        }
+        try {
+            block()
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+        return appender.list.filter { it.level == Level.ERROR }
+    }
+
+    private fun assertStuckWindowLogged(logged: List<ILoggingEvent>, times: Int, cause: String) {
+        val stuck = logged.filter { it.formattedMessage.contains("source $sourceId") }
+        assertThat(stuck).hasSize(times)
+        assertThat(stuck).allSatisfy {
+            assertThat(it.formattedMessage)
+                .contains("items [0, 1)")
+                .contains("context ${tenant.value}")
+            assertThat(it.throwableProxy?.message).isEqualTo(cause)
+        }
+    }
+
+    @Test
+    fun `a window that keeps failing to store is logged at error with its source each time`() {
+        // The failure that reaches the caller may belong to another queued event and need not name
+        // its source, so the log is how a host finds the stuck source and decides to skip it.
+        val harness = harness(repository = FlakyRepository(failingSaves = setOf(1, 2)))
+
+        val logged = errors {
+            repeat(2) {
+                assertThatThrownBy { harness.extraction.extractPropositions(event()) }
+                    .hasMessage("store is down")
+            }
+        }
+
+        assertStuckWindowLogged(logged, times = 2, cause = "store is down")
+        assertThat(harness.bookmark()).isNull()
+    }
+
+    @Test
+    fun `a window whose record fails is logged at error with its source`() {
+        val inner = InMemoryChunkHistoryStore()
+        val history = object : ChunkHistoryStore by inner {
+            override fun recordProcessed(record: ProcessedChunkRecord) =
+                throw IllegalStateException("disk full")
+        }
+        val harness = harness(history = history)
+
+        val logged = errors {
+            assertThatThrownBy { harness.extraction.extractPropositions(event()) }
+                .hasMessage("disk full")
+        }
+
+        assertStuckWindowLogged(logged, times = 1, cause = "disk full")
+        assertThat(harness.bookmark()).isNull()
+    }
 }
