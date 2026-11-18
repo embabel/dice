@@ -60,6 +60,7 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 import java.time.Instant
 import java.util.Collections
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -358,6 +359,64 @@ class WindowRecordedAfterStoreTest {
         assertThat(harness.extraction.isIdle).isTrue()
     }
 
+    @Test
+    fun `a caller interrupted while waiting for the lock throws and keeps the flag`() {
+        val harness = harness()
+        val firstEntered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        every { harness.pipeline.processChunk(any(), any()) } answers {
+            firstEntered.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            harness.chunkResult
+        }
+        val first = Thread({ harness.extraction.extractPropositions(event(source = "source-a")) }, "first-caller")
+        first.start()
+        assertThat(firstEntered.await(5, TimeUnit.SECONDS)).isTrue()
+
+        val waiterFailure = AtomicReference<Throwable?>()
+        val waiterInterrupted = AtomicBoolean()
+        val waiter = Thread({
+            try {
+                harness.extraction.extractPropositions(event(source = "source-b"))
+            } catch (t: Throwable) {
+                waiterFailure.set(t)
+            }
+            waiterInterrupted.set(Thread.currentThread().isInterrupted)
+        }, "waiting-caller")
+        waiter.start()
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (waiter.state != Thread.State.WAITING && System.nanoTime() < deadline) Thread.onSpinWait()
+        assertThat(waiter.state).isEqualTo(Thread.State.WAITING)
+        waiter.interrupt()
+        waiter.join(10_000)
+        release.countDown()
+        first.join(10_000)
+
+        assertThat(waiterFailure.get()).isInstanceOf(CancellationException::class.java)
+        assertThat(waiterInterrupted.get()).isTrue()
+        verify(exactly = 1) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.extraction.isIdle).isTrue()
+    }
+
+    @Test
+    fun `an interrupted direct call does not hide a published event that has not run yet`() {
+        val harness = harness()
+        try {
+            Thread.currentThread().interrupt()
+            assertThatThrownBy { harness.extraction.extractPropositions(event()) }
+                .isInstanceOf(CancellationException::class.java)
+        } finally {
+            Thread.interrupted()
+        }
+
+        // Published, so counted, but still waiting in the application's executor.
+        harness.extraction.trackEvent(event(source = "source-b"))
+
+        assertThat(harness.extraction.isIdle)
+            .describedAs("the published event has not run")
+            .isFalse()
+    }
+
     private class DrainRun(val surfaced: Throwable?, val stillInterrupted: Boolean)
 
     /**
@@ -455,11 +514,12 @@ class WindowRecordedAfterStoreTest {
     }
 
     @Test
-    fun `a call that starts interrupted stores nothing and keeps the flag`() {
+    fun `a call that starts interrupted stores nothing, keeps the flag and reports the cancellation`() {
         val harness = harness()
         try {
             Thread.currentThread().interrupt()
-            harness.extraction.extractPropositions(event())
+            assertThatThrownBy { harness.extraction.extractPropositions(event()) }
+                .isInstanceOf(CancellationException::class.java)
 
             assertThat(Thread.currentThread().isInterrupted).isTrue()
         } finally {

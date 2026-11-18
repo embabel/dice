@@ -132,8 +132,11 @@ at that moment run. A failure while building the context
 or analysing a window is logged, and that window is retried on the next event. A
 `LineageNotRecordedException` that reaches the drain is thrown, also when it comes before the store
 step. One thrown by a provider while the context is built is logged like any other provider failure.
-If the thread's interrupt flag is set, the run stops and the events still queued are dropped. The
-next event for the same source analyses the window again. A store or pipeline that catches an interrupt must set the flag again, as is the Java convention.
+Callers waiting for the lock run in the order they arrived.
+If the thread's interrupt flag is set, the run stops and the events still queued are dropped. If the
+caller's own event never ran, because the thread was interrupted before or while it waited, the call
+throws a `CancellationException` and the flag stays set, so a surrounding transaction can roll back.
+The next event for the same source analyses the window again. A store or pipeline that catches an interrupt must set the flag again, as is the Java convention.
 
 A failure that reaches the caller lets a host transaction roll back. To make a failed write leave no
 trace, keep the chunk history in the same transactional store as the claims, as the Drivine stores

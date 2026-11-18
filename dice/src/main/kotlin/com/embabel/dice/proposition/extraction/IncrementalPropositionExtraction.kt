@@ -41,6 +41,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Async
 import java.io.InputStream
+import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -318,7 +319,9 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         )
 
     private val windowConfig = WindowConfig(properties.windowSize, properties.overlapSize, properties.triggerInterval)
-    private val extractionLock = ReentrantLock()
+    // Fair, so callers already waiting run in the order they arrived, as the old queue ran them.
+    // A newer snapshot of a source can then never move the bookmark past an older one still waiting.
+    private val extractionLock = ReentrantLock(true)
     private val pendingEvents = ConcurrentLinkedQueue<SourceAnalysisRequestEvent>()
     private val inFlightCount = AtomicInteger(0)
 
@@ -339,7 +342,13 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     @Async
     @EventListener
     open fun onSourceAnalysisRequestEvent(event: SourceAnalysisRequestEvent) {
-        extractPropositions(event)
+        try {
+            extractPropositions(event)
+        } finally {
+            // Releases the count [trackEvent] took when the event was published. The call above
+            // takes its own, so the event is never counted as done before it is.
+            inFlightCount.decrementAndGet()
+        }
     }
 
     /**
@@ -349,7 +358,15 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     open val isIdle: Boolean
         get() = inFlightCount.get() <= 0 && pendingEvents.isEmpty() && !extractionLock.isLocked
 
+    /**
+     * Runs [event] on the calling thread, after any extraction already running.
+     *
+     * @param event The event to run.
+     * @throws CancellationException if the thread is interrupted before [event] runs. The event is
+     *         dropped and the interrupt flag stays set.
+     */
     open fun extractPropositions(event: SourceAnalysisRequestEvent) {
+        inFlightCount.incrementAndGet()
         if (extractionLock.isHeldByCurrentThread) {
             pendingEvents.add(event)
             logger.debug("Extraction requested from inside a drain, {} event(s) queued", pendingEvents.size)
@@ -535,7 +552,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * `warn`, and the first is rethrown unchanged.
      *
      * The thread's interrupt flag stops the run before the next event, and also stops a caller that
-     * is waiting for the lock. Events that do not run are dropped, and so are any events this run
+     * is waiting for the lock. If the caller's own event never ran, a [CancellationException] is
+     * thrown so a host transaction can roll back. Events that do not run are dropped, and so are any events this run
      * queued but did not reach, so none of them runs on another caller's thread. Dropping one loses
      * nothing: an event only asks for the next window to be analysed, and the next event for that
      * source does the same, because a window is recorded only after its claims are stored.
@@ -547,9 +565,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             extractionLock.lockInterruptibly()
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
-            logger.info("Extraction interrupted while waiting for another run, dropping its event")
             countDropped(1)
-            return
+            throw CancellationException("Extraction interrupted while waiting for another run; its event was dropped")
         }
         var firstFailure: Exception? = null
         try {
@@ -558,8 +575,12 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             var next: SourceAnalysisRequestEvent? = event
             while (next != null) {
                 if (Thread.currentThread().isInterrupted) {
-                    logger.info("Extraction interrupted, dropping the next event")
                     countDropped(1)
+                    if (next === event) {
+                        firstFailure = CancellationException("Extraction interrupted before its event ran; the event was dropped")
+                    } else {
+                        logger.info("Extraction interrupted, dropping the next event")
+                    }
                     break
                 }
                 try {
@@ -587,8 +608,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     }
 
     /**
-     * Balances the in-flight count for events that were dropped without being processed, since
-     * only processing an event counts it as done.
+     * Balances the in-flight count for events that were dropped without being processed. Each call
+     * to [extractPropositions] counts its event once, and processing or dropping it releases that.
      *
      * @param events How many events were dropped.
      */
