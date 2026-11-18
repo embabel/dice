@@ -95,6 +95,12 @@ class RaceWindowPersistenceManager(private val delegate: PersistenceManager) : P
     }
 
     override fun <T : Any> maybeGetOne(spec: QuerySpecification<T>): T? {
+        // A save first checks, outside any transaction, whether it only repeats a stored fact. That
+        // read never leads to a write, so it is not the existence check this hook pins: only reads
+        // inside the save's dedup transaction count, for the writer and the sibling alike.
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            return delegate.maybeGetOne(spec)
+        }
         if (armed.compareAndSet(false, true)) {
             writerThread.set(Thread.currentThread())
             TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
