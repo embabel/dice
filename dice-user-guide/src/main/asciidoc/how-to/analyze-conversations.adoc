@@ -123,6 +123,9 @@ write.
 `extractPropositions` runs the caller's event on the caller's thread and throws its failure. Every
 exception it throws is unchecked. A call from another thread waits for the running one to finish
 instead of handing its event over, so one caller's failure never rolls back another caller's work.
+Published events run through `@Async` on your application's executor, so while one extraction is
+calling the LLM, each other published event holds one of that executor's threads. If you publish
+bursts of events, give `@Async` a dedicated executor.
 A call made from inside a running extraction on the same thread, such as from a save listener, is
 queued and run after the current window is recorded. After the first failure only the events queued
 at that moment run. A failure while building the context

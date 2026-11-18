@@ -664,21 +664,4 @@ class WindowRecordedAfterStoreTest {
         assertThat(warned.filter { it.throwableProxy?.message == "store is down" }).hasSize(1)
         verify(exactly = 2) { harness.pipeline.processChunk(any(), any()) }
     }
-
-    @Test
-    fun `a published event runs on DICE's own extraction thread and the listener returns at once`() {
-        val harness = harness()
-        val ran = CountDownLatch(1)
-        val thread = AtomicReference<String>()
-        every { harness.pipeline.processChunk(any(), any()) } answers {
-            thread.set(Thread.currentThread().name)
-            ran.countDown()
-            harness.chunkResult
-        }
-
-        harness.extraction.onSourceAnalysisRequestEvent(event())
-
-        assertThat(ran.await(5, TimeUnit.SECONDS)).isTrue()
-        assertThat(thread.get()).isEqualTo("dice-incremental-extraction")
-    }
 }

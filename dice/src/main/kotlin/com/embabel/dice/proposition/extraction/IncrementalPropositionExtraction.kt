@@ -39,9 +39,9 @@ import com.embabel.dice.proposition.PropositionRepository
 import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
+import org.springframework.scheduling.annotation.Async
 import java.io.InputStream
 import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
@@ -52,8 +52,10 @@ import java.util.function.Function
  * Uses [IncrementalAnalyzer] for windowed, deduplicated processing.
  *
  * This is not a Spring component. An application creates it as a `@Bean` so that its
- * `@EventListener` methods are registered. Published events run one at a time on a thread of
- * DICE's own, not on the application's async executor.
+ * `@EventListener` and `@Async` methods are honoured. Published events run on the application's
+ * async executor, so its shutdown, task decorator and queue limits apply. While one extraction
+ * runs, each other published event waits for it on a thread of that executor; an application that
+ * publishes bursts of events should give `@Async` a dedicated executor.
  *
  * @param contextIdProvider maps the event's [NamedEntity] user to the context ID
  *        used for proposition storage. Defaults to [NamedEntity.getId].
@@ -331,27 +333,13 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     }
 
     /**
-     * Runs published events one at a time on a thread of DICE's own. Each extraction waits for the
-     * previous one to finish, so waiting here never ties up a thread of the application's shared
-     * async executor while another extraction is calling the LLM.
+     * Runs a published event on the application's async executor. It waits there for any
+     * extraction already running, then runs in that thread's own transaction.
      */
-    private val listenerWorker = Executors.newSingleThreadExecutor { task ->
-        Thread(task, "dice-incremental-extraction").apply { isDaemon = true }
-    }
-
-    /**
-     * Hands a published event to DICE's own extraction thread and returns at once. A failure is
-     * logged at `error`, because no caller is waiting on it.
-     */
+    @Async
     @EventListener
     open fun onSourceAnalysisRequestEvent(event: SourceAnalysisRequestEvent) {
-        listenerWorker.execute {
-            try {
-                extractPropositions(event)
-            } catch (e: Exception) {
-                logger.error("Extraction failed for a published SourceAnalysisRequestEvent", e)
-            }
-        }
+        extractPropositions(event)
     }
 
     /**

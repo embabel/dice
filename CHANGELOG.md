@@ -2523,7 +2523,8 @@ and the consumer PRs that deliver it).
   extraction moves from `info` to `debug`, and a failure in that listing no longer fails the
   extraction. It now lists only the propositions that extraction stored, from memory, without reading
   the store again. The per-extraction summary at `info` still names the claims it extracted. A
-  published `SourceAnalysisRequestEvent` now runs on a single extraction thread that DICE owns
-  instead of through `@Async`, so events waiting for the lock never hold threads of the application's
-  async executor.
+  published `SourceAnalysisRequestEvent` still runs through `@Async`, but while one extraction runs,
+  each other published event now waits for it on a thread of the application's async executor
+  instead of being queued. An application that publishes bursts of events should give `@Async` a
+  dedicated executor.
   **Compatibility: behavioral.**
