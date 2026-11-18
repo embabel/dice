@@ -349,6 +349,16 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     /** Guards creating and closing [ownEventExecutor], and binding with [withEventExecutor]. */
     private val eventExecutorGuard = Any()
 
+    /**
+     * How long a direct caller waits for another extraction before giving up with
+     * [ExtractionBusyException]: 30 seconds, matching SQLite's default busy timeout. A field rather
+     * than a constant only so a test can shorten it.
+     */
+    private var directCallLockWaitMillis: Long = 30_000L
+
+    /** True on a thread while it runs a published event, which may wait for the lock without limit. */
+    private val runningPublishedEvent = ThreadLocal<Boolean>()
+
     /** Set by [close]. Once set, published events are refused instead of starting a new thread. */
     private var eventExecutorClosed = false
 
@@ -384,6 +394,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * ```java
      * ThreadPoolTaskExecutor events = new ThreadPoolTaskExecutor();
      * events.setCorePoolSize(1);
+     * events.setMaxPoolSize(1);
      * events.setQueueCapacity(500);
      * events.setTaskDecorator(tenantDecorator);
      * events.initialize();
@@ -427,28 +438,42 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     @EventListener
     open fun onSourceAnalysisRequestEvent(event: SourceAnalysisRequestEvent) {
         trackEvent(event)
+        // Releases the count [trackEvent] took, exactly once, whichever path ends the event: it runs,
+        // the decorator around it fails, or it is never submitted.
+        val released = AtomicBoolean(false)
+        val release = { if (released.compareAndSet(false, true)) inFlightCount.decrementAndGet() }
+        val task = Runnable {
+            runningPublishedEvent.set(true)
+            try {
+                extractPropositions(event)
+            } catch (e: Exception) {
+                logger.error("Extraction failed for a published SourceAnalysisRequestEvent", e)
+            } finally {
+                runningPublishedEvent.remove()
+                release()
+            }
+        }
         try {
-            eventExecutor().execute {
+            val executor = eventExecutor()
+            val decorated = if (executor === boundEventExecutor) task else taskDecorator?.decorate(task) ?: task
+            executor.execute {
                 try {
-                    extractPropositions(event)
-                } catch (e: Exception) {
-                    logger.error("Extraction failed for a published SourceAnalysisRequestEvent", e)
+                    decorated.run()
                 } finally {
-                    // Releases the count [trackEvent] took. The call above counted the event too,
-                    // so it is never counted as done before it is.
-                    inFlightCount.decrementAndGet()
+                    release()
                 }
             }
-        } catch (e: RejectedExecutionException) {
-            inFlightCount.decrementAndGet()
-            logger.error("The event executor refused a SourceAnalysisRequestEvent, so it was dropped", e)
+        } catch (e: Exception) {
+            release()
+            logger.error("A SourceAnalysisRequestEvent could not be handed to the event executor, so it was dropped", e)
         }
     }
 
     /**
-     * Stops DICE's own event thread, if it was started. Events already queued get up to
-     * 30 seconds to finish, then the thread is interrupted. A bound executor
-     * is left alone. Spring calls this when the context closes.
+     * Stops handing published events off, and stops DICE's own event thread if it was started.
+     * Events already queued there get up to 30 seconds to finish, then the thread is interrupted.
+     * A bound executor is not shut down, but no new events go to it. Spring calls this when the
+     * context closes.
      */
     override fun close() {
         val own = synchronized(eventExecutorGuard) {
@@ -474,24 +499,18 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         inFlightCount.addAndGet(-discarded.size)
     }
 
-    private fun eventExecutor(): Executor {
-        boundEventExecutor?.let { return it }
-        val pool = synchronized(eventExecutorGuard) {
-            boundEventExecutor?.let { return it }
-            if (eventExecutorClosed) throw RejectedExecutionException("the extractor is closed")
-            ownEventExecutor ?: ThreadPoolExecutor(
-                1,
-                1,
-                0L,
-                TimeUnit.MILLISECONDS,
-                LinkedBlockingQueue(EVENT_QUEUE_CAPACITY),
-                { task -> Thread(task, "dice-incremental-extraction").apply { isDaemon = true } },
-            ).also { ownEventExecutor = it }
-        }
-        val decorator = taskDecorator ?: return pool
-        // Decorated here, on the publisher's thread, so the context the decorator captures is the
-        // publisher's.
-        return Executor { task -> pool.execute(decorator.decorate(task)) }
+    private fun eventExecutor(): Executor = synchronized(eventExecutorGuard) {
+        if (eventExecutorClosed) throw RejectedExecutionException("the extractor is closed")
+        boundEventExecutor ?: ownEventExecutor ?: ThreadPoolExecutor(
+            1,
+            1,
+            0L,
+            TimeUnit.MILLISECONDS,
+            LinkedBlockingQueue(EVENT_QUEUE_CAPACITY),
+            // No inherited thread-locals: the first publisher's context must not stick to the thread
+            // and leak into later events. The decorator carries each publisher's context per event.
+            { task -> Thread(null, task, "dice-incremental-extraction", 0, false).apply { isDaemon = true } },
+        ).also { ownEventExecutor = it }
     }
 
     /**
@@ -505,6 +524,8 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * Runs [event] on the calling thread, after any extraction already running.
      *
      * @param event The event to run.
+     * @throws ExtractionBusyException if another extraction runs for more than 30 seconds while this
+     *         call waits. The event was not run and can be retried.
      * @throws CancellationException if the thread is interrupted before [event] runs. The event is
      *         dropped and the interrupt flag stays set.
      */
@@ -705,7 +726,16 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      */
     private fun processOnThisThread(event: SourceAnalysisRequestEvent) {
         try {
-            extractionLock.lockInterruptibly()
+            if (runningPublishedEvent.get() == true) {
+                // A published event holds no caller's transaction, so it can wait as long as it takes.
+                extractionLock.lockInterruptibly()
+            } else if (!extractionLock.tryLock(directCallLockWaitMillis, TimeUnit.MILLISECONDS)) {
+                countDropped(1)
+                throw ExtractionBusyException(
+                    "Another extraction ran for more than ${directCallLockWaitMillis / 1000} seconds; " +
+                        "this event was not run and can be retried",
+                )
+            }
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
             countDropped(1)

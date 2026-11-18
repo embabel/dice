@@ -134,6 +134,7 @@ yourself, bind your own executor before the first event:
 ----
 ThreadPoolTaskExecutor events = new ThreadPoolTaskExecutor();
 events.setCorePoolSize(1);
+events.setMaxPoolSize(1);
 events.setQueueCapacity(500);
 events.setTaskDecorator(tenantDecorator);
 events.initialize();
@@ -149,7 +150,10 @@ at that moment run. A failure while building the context
 or analysing a window is logged, and that window is retried on the next event. A
 `LineageNotRecordedException` that reaches the drain is thrown, also when it comes before the store
 step. One thrown by a provider while the context is built is logged like any other provider failure.
-Callers waiting for the lock run in the order they arrived.
+Callers waiting for the lock run in the order they arrived. A direct call waits at most 30 seconds
+and then throws `ExtractionBusyException`. Nothing of its event was stored, so roll back and try
+again later. The limit exists because a caller inside a transaction may hold a database lock the
+running extraction needs, which on SQLite is the whole file's write lock.
 If the thread's interrupt flag is set, the run stops and the events still queued are dropped. If the
 caller's own event never ran, because the thread was interrupted before or while it waited, the call
 throws a `CancellationException` and the flag stays set, so a surrounding transaction can roll back.

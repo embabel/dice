@@ -351,8 +351,8 @@ class WindowRecordedAfterStoreTest {
         second.start()
         // Hold the first caller until the second is parked on the lock, so the two really contend.
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
-        while (second.state != Thread.State.WAITING && System.nanoTime() < deadline) Thread.onSpinWait()
-        assertThat(second.state).isEqualTo(Thread.State.WAITING)
+        while (second.state != Thread.State.TIMED_WAITING && System.nanoTime() < deadline) Thread.onSpinWait()
+        assertThat(second.state).isEqualTo(Thread.State.TIMED_WAITING)
         release.countDown()
         first.join(10_000)
         second.join(10_000)
@@ -408,8 +408,8 @@ class WindowRecordedAfterStoreTest {
         }, "waiting-caller")
         waiter.start()
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
-        while (waiter.state != Thread.State.WAITING && System.nanoTime() < deadline) Thread.onSpinWait()
-        assertThat(waiter.state).isEqualTo(Thread.State.WAITING)
+        while (waiter.state != Thread.State.TIMED_WAITING && System.nanoTime() < deadline) Thread.onSpinWait()
+        assertThat(waiter.state).isEqualTo(Thread.State.TIMED_WAITING)
         waiter.interrupt()
         waiter.join(10_000)
         release.countDown()
@@ -578,6 +578,89 @@ class WindowRecordedAfterStoreTest {
 
         harness.publish(event(source = "source-b"))
 
+        verify(exactly = 1) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.extraction.isIdle).isTrue()
+    }
+
+    @Test
+    fun `DICE's event thread does not keep the first publisher's inherited context`() {
+        val tenant = InheritableThreadLocal<String?>()
+        val harness = harness()
+        val seen = Collections.synchronizedList(mutableListOf<String?>())
+        every { harness.pipeline.processChunk(any(), any()) } answers {
+            seen.add(tenant.get())
+            harness.chunkResult
+        }
+
+        tenant.set("first-tenant")
+        try {
+            harness.publish(event(source = "source-a"))
+        } finally {
+            tenant.remove()
+        }
+        harness.awaitIdle()
+        harness.publish(event(source = "source-b"))
+        harness.awaitIdle()
+
+        assertThat(seen).containsExactly(null, null)
+        harness.extraction.close()
+    }
+
+    @Test
+    fun `a decorator that fails does not leave the extractor busy`() {
+        val harness = harness()
+        harness.extraction.setBeanFactory(
+            StaticListableBeanFactory(mapOf("decorator" to TaskDecorator { throw IllegalStateException("no context") })),
+        )
+
+        harness.publish(event())
+
+        verify(exactly = 0) { harness.pipeline.processChunk(any(), any()) }
+        assertThat(harness.extraction.isIdle).isTrue()
+        harness.extraction.close()
+    }
+
+    @Test
+    fun `a closed extractor sends no new events to a bound executor`() {
+        val harness = harness()
+        val submitted = AtomicInteger()
+        harness.extraction.withEventExecutor { task ->
+            submitted.incrementAndGet()
+            task.run()
+        }
+        harness.extraction.close()
+
+        harness.publish(event())
+
+        assertThat(submitted.get()).isZero()
+        assertThat(harness.extraction.isIdle).isTrue()
+    }
+
+    @Test
+    fun `a direct caller that waits too long gives up with a retryable exception`() {
+        val harness = harness()
+        IncrementalPropositionExtraction::class.java.getDeclaredField("directCallLockWaitMillis").apply {
+            isAccessible = true
+            setLong(harness.extraction, 100L)
+        }
+        val firstEntered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        every { harness.pipeline.processChunk(any(), any()) } answers {
+            firstEntered.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            harness.chunkResult
+        }
+        val first = Thread({ harness.extraction.extractPropositions(event(source = "source-a")) }, "first-caller")
+        first.start()
+        assertThat(firstEntered.await(5, TimeUnit.SECONDS)).isTrue()
+
+        try {
+            assertThatThrownBy { harness.extraction.extractPropositions(event(source = "source-b")) }
+                .isInstanceOf(ExtractionBusyException::class.java)
+        } finally {
+            release.countDown()
+            first.join(10_000)
+        }
         verify(exactly = 1) { harness.pipeline.processChunk(any(), any()) }
         assertThat(harness.extraction.isIdle).isTrue()
     }

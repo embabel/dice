@@ -569,6 +569,10 @@ public final class com/embabel/dice/proposition/extraction/ExtractionActorRef : 
 	public fun <init> (Ljava/lang/String;)V
 }
 
+public final class com/embabel/dice/proposition/extraction/ExtractionBusyException : java/lang/RuntimeException {
+	public fun <init> (Ljava/lang/String;)V
+}
+
 public final class com/embabel/dice/proposition/extraction/ExtractionCohortRef : com/embabel/dice/proposition/extraction/ExtractionOpaqueRef {
 	public fun <init> (Ljava/lang/String;)V
 }

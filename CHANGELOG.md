@@ -2513,7 +2513,10 @@ and the consumer PRs that deliver it).
   thread's interrupt flag is set, the run stops, the flag stays set and queued events are dropped.
   A caller whose own event never ran, because it was interrupted before or while waiting for the
   lock, gets a `CancellationException` so a host transaction can roll back. Callers waiting for the
-  lock run in the order they arrived. The next event for the source analyses the window again. A store or pipeline that catches an
+  lock run in the order they arrived. A direct caller waits at most 30 seconds for another extraction
+  and then gets the new, experimental `ExtractionBusyException`, which is safe to retry, so a caller
+  inside a transaction releases its database locks instead of waiting on an extraction that needs
+  them. Published events wait without a limit, because they hold no caller's transaction. The next event for the source analyses the window again. A store or pipeline that catches an
   interrupt must set the flag again. With the default writer, a run link failure that leaves the
   claims stored records the window, so the claims are not stored again, and then throws. Any other
   failed write leaves the window unrecorded. `analyze` still records the window before it returns. A
@@ -2531,7 +2534,9 @@ and the consumer PRs that deliver it).
   dropped, and the next event for the source analyses the window again. If the application defines
   exactly one `TaskDecorator` bean, each event is decorated with it on the publisher's thread, so a
   tenant or no-logging context still reaches the extraction. Bind your own executor with the
-  experimental `withEventExecutor(Executor)` for any other decorator or a different queue size. The extractor is now `AutoCloseable`,
+  experimental `withEventExecutor(Executor)` for any other decorator or a different queue size.
+  DICE's thread does not inherit thread-locals, so one publisher's context never carries over to
+  later events, and once `close()` runs no new events go to either executor. The extractor is now `AutoCloseable`,
   and `close()` gives queued events 30 seconds to finish when the Spring context shuts down.
   **Compatibility: behavioral.**
 
