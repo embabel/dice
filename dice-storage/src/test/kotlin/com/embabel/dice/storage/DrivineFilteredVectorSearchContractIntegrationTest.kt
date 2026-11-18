@@ -39,10 +39,10 @@ import org.springframework.test.context.DynamicPropertySource
 
 /**
  * Declares a [ConformanceEmbeddingService] as the primary `EmbeddingService` of the Spring context
- * that [DrivineFilteredVectorSearchContractIntegrationTest] starts. The repository and the vector
+ * that each [DrivineFilteredVectorSearchContractCases] subclass starts. The repository and the vector
  * index of that context are built from this service. The service has the same width as
- * [FakeEmbeddingService], because every context ensures the same vector index on the shared
- * container. Every other test class keeps the fake service that [TestApplication] supplies.
+ * [FakeEmbeddingService], because every Neo4j context ensures the same vector index on the
+ * shared container. Every other test class keeps the fake service that [TestApplication] supplies.
  */
 @TestConfiguration
 open class ConformanceEmbeddingConfig {
@@ -54,8 +54,8 @@ open class ConformanceEmbeddingConfig {
 }
 
 /**
- * Runs the filtered vector search suite against the Neo4j-backed [DrivinePropositionRepository]
- * (testcontainer). The graph store publishes no capability descriptor, so the suite checks that it
+ * Runs the filtered vector search suite against [DrivinePropositionRepository] on a real graph
+ * store: Neo4j here, SQLite in the `sqlite` package. The graph store publishes no capability descriptor, so the suite checks that it
  * declares [VectorFiltering.UNDECLARED] and skips the cases that need a filtering mode.
  *
  * The store of this class embeds with [ConformanceEmbeddingService] through
@@ -63,13 +63,7 @@ open class ConformanceEmbeddingConfig {
  * and only that service puts it there.
  */
 @SpringBootTest(classes = [TestApplication::class, ConformanceEmbeddingConfig::class])
-class DrivineFilteredVectorSearchContractIntegrationTest : AbstractFilteredVectorSearchContractTest() {
-
-    companion object {
-        @JvmStatic
-        @DynamicPropertySource
-        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
-    }
+abstract class DrivineFilteredVectorSearchContractCases : AbstractFilteredVectorSearchContractTest() {
 
     @Autowired
     private lateinit var repository: DrivinePropositionRepository
@@ -117,7 +111,7 @@ class DrivineFilteredVectorSearchContractIntegrationTest : AbstractFilteredVecto
      */
     private fun storedVectorMatches(id: String, dimensions: Int, x: Double, y: Double): Long =
         persistenceManager.getOne(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MATCH (p:Proposition {id: ${'$'}id})
                 RETURN CASE
@@ -134,6 +128,16 @@ class DrivineFilteredVectorSearchContractIntegrationTest : AbstractFilteredVecto
     @AfterEach
     fun cleanUp() {
         repository.clearAll()
-        persistenceManager.execute(QuerySpecification.withStatement("MATCH (s:Source) DETACH DELETE s"))
+        persistenceManager.execute(cypherQuery("MATCH (s:Source) DETACH DELETE s"))
+    }
+}
+
+/** Runs the [DrivineFilteredVectorSearchContractCases] on the shared Neo4j testcontainer. */
+class DrivineFilteredVectorSearchContractIntegrationTest : DrivineFilteredVectorSearchContractCases() {
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
     }
 }

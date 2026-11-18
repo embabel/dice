@@ -76,7 +76,7 @@ class DrivineCollectorRecordStore(
     override fun record(record: CollectorRecord) {
         logger.debug("Recording collector record proposition={} run={} outcome={}", record.propositionId.take(8), record.runId.take(8), record.outcome)
         persistenceManager.execute(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MERGE ${LineageSchema.mergePattern("n", LineageSchema.COLLECTOR_RECORD)}
                 SET n.reason         = ${'$'}reason,
@@ -97,7 +97,7 @@ class DrivineCollectorRecordStore(
     override fun recordRun(run: CollectorRun) {
         logger.debug("Recording collector run {} (dryRun={})", run.runId.take(8), run.dryRun)
         persistenceManager.execute(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MERGE ${LineageSchema.mergePattern("n", LineageSchema.COLLECTOR_RUN)}
                 ON CREATE SET n.sequence = 0
@@ -136,7 +136,7 @@ class DrivineCollectorRecordStore(
     override fun findRun(runId: String): CollectorRun? {
         @Suppress("UNCHECKED_CAST")
         val rows = persistenceManager.query(
-            QuerySpecification.withStatement("MATCH (n:CollectorRun {runId: ${'$'}runId}) RETURN n")
+            cypherQuery("MATCH (n:CollectorRun {runId: ${'$'}runId}) RETURN n")
                 .bind(mapOf("runId" to runId)) as QuerySpecification<Any>,
         )
         return rows.filterIsInstance<Map<*, *>>().map(CollectorRunRowMapper::fromRow).firstOrNull()
@@ -148,7 +148,7 @@ class DrivineCollectorRecordStore(
      */
     private fun queryRecords(statement: String, params: Map<String, Any?>): List<CollectorRecord> {
         @Suppress("UNCHECKED_CAST")
-        val spec = QuerySpecification.withStatement(statement).let {
+        val spec = cypherQuery(statement).let {
             if (params.isEmpty()) it else it.bind(params)
         } as QuerySpecification<Any>
         return persistenceManager.query(spec).filterIsInstance<Map<*, *>>().mapNotNull { row ->
@@ -162,7 +162,7 @@ class DrivineCollectorRecordStore(
     override fun runs(): List<CollectorRun> {
         @Suppress("UNCHECKED_CAST")
         val rows = persistenceManager.query(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MATCH (n:CollectorRun)
                 RETURN n

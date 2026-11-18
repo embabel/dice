@@ -27,17 +27,11 @@ import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 
 /**
- * Runs the [AbstractProjectionRecordStoreContractTest] suite against [DrivineProjectionRecordStore] on
- * the shared Neo4j testcontainer. Each case starts and ends with no projection records.
+ * Runs the [AbstractProjectionRecordStoreContractTest] suite against [DrivineProjectionRecordStore].
+ * The subclasses pick the store: Neo4j here, SQLite in the `sqlite` package. Each case starts and ends with no projection records.
  */
 @SpringBootTest(classes = [TestApplication::class])
-class DrivineProjectionRecordStoreContractIntegrationTest : AbstractProjectionRecordStoreContractTest() {
-
-    companion object {
-        @JvmStatic
-        @DynamicPropertySource
-        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
-    }
+abstract class DrivineProjectionRecordStoreContractCases : AbstractProjectionRecordStoreContractTest() {
 
     @Autowired
     private lateinit var projectionRecordStore: DrivineProjectionRecordStore
@@ -50,6 +44,16 @@ class DrivineProjectionRecordStoreContractIntegrationTest : AbstractProjectionRe
     @BeforeEach
     @AfterEach
     fun clearProjectionRecords() {
-        persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:ProjectionRecord) DETACH DELETE n"))
+        persistenceManager.execute(cypherQuery("MATCH (n:ProjectionRecord) DETACH DELETE n"))
+    }
+}
+
+/** Runs the [DrivineProjectionRecordStoreContractCases] on the shared Neo4j testcontainer. */
+class DrivineProjectionRecordStoreContractIntegrationTest : DrivineProjectionRecordStoreContractCases() {
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
     }
 }

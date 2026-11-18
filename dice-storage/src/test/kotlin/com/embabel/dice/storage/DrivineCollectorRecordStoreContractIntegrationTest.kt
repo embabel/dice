@@ -27,17 +27,11 @@ import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 
 /**
- * Runs the [AbstractCollectorRecordStoreContractTest] suite against [DrivineCollectorRecordStore] on
- * the shared Neo4j testcontainer. Each case starts and ends with no collector records or runs.
+ * Runs the [AbstractCollectorRecordStoreContractTest] suite against [DrivineCollectorRecordStore].
+ * The subclasses pick the store: Neo4j here, SQLite in the `sqlite` package. Each case starts and ends with no collector records or runs.
  */
 @SpringBootTest(classes = [TestApplication::class])
-class DrivineCollectorRecordStoreContractIntegrationTest : AbstractCollectorRecordStoreContractTest() {
-
-    companion object {
-        @JvmStatic
-        @DynamicPropertySource
-        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
-    }
+abstract class DrivineCollectorRecordStoreContractCases : AbstractCollectorRecordStoreContractTest() {
 
     @Autowired
     private lateinit var collectorRecordStore: DrivineCollectorRecordStore
@@ -51,9 +45,19 @@ class DrivineCollectorRecordStoreContractIntegrationTest : AbstractCollectorReco
     @AfterEach
     fun clearCollectorNodes() {
         persistenceManager.execute(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 "MATCH (n) WHERE n:CollectorRecord OR n:CollectorRun OR n:CollectorRunCounter DETACH DELETE n",
             ),
         )
+    }
+}
+
+/** Runs the [DrivineCollectorRecordStoreContractCases] on the shared Neo4j testcontainer. */
+class DrivineCollectorRecordStoreContractIntegrationTest : DrivineCollectorRecordStoreContractCases() {
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
     }
 }

@@ -363,7 +363,7 @@ class DrivinePropositionRepository(
     @Suppress("UNCHECKED_CAST")
     private fun storedSourceIdentity(sourceKey: String): Map<String, Any?>? =
         (persistenceManager.query(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MATCH (s:Source {key: ${'$'}sourceKey})
                 RETURN {
@@ -492,26 +492,26 @@ class DrivinePropositionRepository(
      * whole value. Drivine spreads the bag over `metadata.<key>` node properties and only ever adds
      * or overwrites, so a key the caller took out of the map (a released quarantine's
      * `previousStatus` and reason, say) stayed on the node. This removes every `metadata.*`
-     * property the saved map no longer carries. Needs dynamic property removal (`REMOVE n[k]`),
-     * which Neo4j has had since 5.24.
+     * property the saved map no longer carries.
+     *
+     * The node's keys are read first and the stale ones are set to null, which removes them. Cypher
+     * only removes a property it can name, and the names here come from data, so the removal goes
+     * through a map rather than `REMOVE n[k]`, which Neo4j alone accepts. Nothing is written, and
+     * the stamp is left alone, when no key is stale.
+     *
+     * @param proposition the proposition just saved, whose metadata map is the one to keep
      */
     private fun dropMetadataKeysNotIn(proposition: Proposition) {
+        val kept = proposition.metadata.keys.mapTo(HashSet()) { "metadata.$it" }
+        val stale = persistenceManager.query(
+            cypherQuery("MATCH (p:Proposition {id: ${'$'}id}) UNWIND keys(p) AS key RETURN key")
+                .bind(mapOf("id" to proposition.id))
+                .transform(String::class.java),
+        ).filter { it.startsWith("metadata.") && it !in kept }
+        if (stale.isEmpty()) return
         persistenceManager.execute(
-            QuerySpecification
-                .withStatement(
-                    """
-                    MATCH (p:Proposition {id: ${'$'}id})
-                    UNWIND [k IN keys(p) WHERE k STARTS WITH 'metadata.' AND NONE(x IN ${'$'}kept WHERE x = k)] AS k
-                    REMOVE p[k]
-                    SET ${Stamps.setClause("p")}
-                    """.trimIndent(),
-                )
-                .bind(
-                    mapOf(
-                        "id" to proposition.id,
-                        "kept" to proposition.metadata.keys.map { "metadata.$it" },
-                    ),
-                ),
+            cypherQuery("MATCH (p:Proposition {id: ${'$'}id}) SET p += ${'$'}removed, ${Stamps.setClause("p")}")
+                .bind(mapOf("id" to proposition.id, "removed" to stale.associateWith { null })),
         )
     }
 
@@ -526,7 +526,7 @@ class DrivinePropositionRepository(
             upsertSource(edge.source, params)
             if (edge.sourceRevision == null && adoptExactLegacyEdge(params)) return@forEach
             persistenceManager.execute(
-                QuerySpecification.withStatement(
+                cypherQuery(
                     """
                     MATCH (p:Proposition {id: ${'$'}propositionId})
                     MATCH (s:Source {key: ${'$'}sourceKey})
@@ -565,7 +565,7 @@ class DrivinePropositionRepository(
     @Suppress("UNCHECKED_CAST")
     private fun upsertSource(source: SourceNode, params: Map<String, Any?>) {
         val stored = (persistenceManager.query(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MERGE (s:Source {key: ${'$'}sourceKey})
                 ON CREATE SET s.kind = ${'$'}sourceKind,
@@ -598,7 +598,7 @@ class DrivinePropositionRepository(
      */
     private fun adoptExactLegacyEdge(params: Map<String, Any?>): Boolean {
         val adopted = persistenceManager.maybeGetOne(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MATCH (p:Proposition {id: ${'$'}propositionId})-[r:DERIVED_FROM]->(s:Source {key: ${'$'}sourceKey})
                 WHERE r.entryKey IS NULL
@@ -671,7 +671,7 @@ class DrivinePropositionRepository(
         if (provenanceRefs.isEmpty() && grounding.isEmpty() && sourceIds.isEmpty()) return findById(propositionId)
         val (encodedRefs, legacyKeys) = provenanceRefs.partition { it.startsWith(EVIDENCE_KEY_PREFIX) }
         persistenceManager.execute(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MATCH (p:Proposition {id: ${'$'}propositionId})
                 OPTIONAL MATCH (p)-[r:DERIVED_FROM]->(s:Source)
@@ -724,7 +724,7 @@ class DrivinePropositionRepository(
         appendProvenance(propositionId, entries)
         val entryKeys = entries.map(::provenanceStorageEntryKey)
         persistenceManager.execute(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MATCH (p:Proposition {id: ${'$'}propositionId})-[r:DERIVED_FROM]->(s:Source)
                 WHERE r.entryKey IS NULL OR NOT r.entryKey IN ${'$'}entryKeys
@@ -767,8 +767,7 @@ class DrivinePropositionRepository(
      */
     private fun findDuplicateId(contextId: String, text: String, excludeId: String): String? =
         persistenceManager.maybeGetOne(
-            QuerySpecification
-                .withStatement(
+            cypherQuery(
                     "MATCH (p:Proposition {contextId: \$contextId}) " +
                         "WHERE p.text = \$text AND p.id <> \$excludeId " +
                         "RETURN p.id AS id LIMIT 1"
@@ -780,8 +779,7 @@ class DrivinePropositionRepository(
     /** True if a proposition with this exact id is already stored, so a [save] is an update, not an insert. */
     private fun existsById(id: String): Boolean =
         persistenceManager.maybeGetOne(
-            QuerySpecification
-                .withStatement("MATCH (p:Proposition {id: \$id}) RETURN p.id AS id LIMIT 1")
+            cypherQuery("MATCH (p:Proposition {id: \$id}) RETURN p.id AS id LIMIT 1")
                 .bind(mapOf("id" to id))
                 .transform(String::class.java)
         ) != null
@@ -871,7 +869,7 @@ class DrivinePropositionRepository(
     @Suppress("UNCHECKED_CAST")
     private fun executeSourceQuery(statement: String, params: Map<String, Any>): List<Proposition> {
         val ids = persistenceManager.query(
-            QuerySpecification.withStatement(statement).bind(params)
+            cypherQuery(statement).bind(params)
         ) as List<String>
         val byId = hydrate(ids)
         return enrichWithProvenance(ids.distinct().mapNotNull { byId[it] })
@@ -978,7 +976,7 @@ class DrivinePropositionRepository(
     private fun withRawProvenance(lean: List<Proposition>): List<Proposition> {
         if (lean.isEmpty()) return lean
         val rows = persistenceManager.query(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MATCH (p:Proposition)-[r:DERIVED_FROM]->(s:Source)
                 WHERE p.id IN ${'$'}ids
@@ -1142,8 +1140,7 @@ class DrivinePropositionRepository(
         // in-memory store returns. COSINE-only: a EUCLIDEAN index normalizes differently.
         @Suppress("UNCHECKED_CAST")
         val rows = persistenceManager.query(
-            QuerySpecification
-                .withStatement(
+            cypherQuery(
                     """
                     UNWIND ${'$'}ids AS sid
                     MATCH (seed:Proposition {id: sid}) WHERE seed.embedding IS NOT NULL
@@ -1221,8 +1218,7 @@ class DrivinePropositionRepository(
     override fun touchAccessed(ids: Collection<String>) {
         if (ids.isEmpty()) return
         persistenceManager.execute(
-            QuerySpecification
-                .withStatement("MATCH (p:Proposition) WHERE p.id IN \$ids SET p.lastAccessed = \$now, ${Stamps.setClause("p")}")
+            cypherQuery("MATCH (p:Proposition) WHERE p.id IN \$ids SET p.lastAccessed = \$now, ${Stamps.setClause("p")}")
                 .bind(mapOf("ids" to ids.distinct(), "now" to Instant.now())),
         )
     }
@@ -1281,7 +1277,7 @@ class DrivinePropositionRepository(
         // A single-column RETURN yields the raw column values (here proposition ids), not row maps.
         @Suppress("UNCHECKED_CAST")
         val ids = persistenceManager.query(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MATCH (p:Proposition)
                 $whereHead
@@ -1475,15 +1471,13 @@ class DrivinePropositionRepository(
     private fun rewriteOf(id: String, result: Result<FloatArray>?, dimensions: Int): QuerySpecification<*> {
         val vector = result?.getOrNull()
         if (vector != null) {
-            return QuerySpecification
-                .withStatement("MATCH (p:Proposition {id: \$id}) SET p.embedding = \$embedding, ${Stamps.setClause("p")}")
+            return cypherQuery("MATCH (p:Proposition {id: \$id}) SET p.embedding = \$embedding, ${Stamps.setClause("p")}")
                 .bind(mapOf("id" to id, "embedding" to vector.toList()))
         }
         result?.exceptionOrNull()?.let {
             logger.warn("reembedAll: could not embed proposition {}; it keeps no vector of the wrong width: {}", id, it.message)
         }
-        return QuerySpecification
-            .withStatement(CLEAR_MISMATCHED_EMBEDDING)
+        return cypherQuery(CLEAR_MISMATCHED_EMBEDDING)
             .bind(mapOf("id" to id, "dimensions" to dimensions))
     }
 
@@ -1556,7 +1550,7 @@ class DrivinePropositionRepository(
         contextId?.let { params["ctx"] = it.value }
         @Suppress("UNCHECKED_CAST")
         val rows = persistenceManager.query(
-            QuerySpecification.withStatement(GraphProjectionCypher.neighborhood(bound, contextId))
+            cypherQuery(GraphProjectionCypher.neighborhood(bound, contextId))
                 .bind(params) as QuerySpecification<Any>,
         ).filterIsInstance<Map<*, *>>()
 
@@ -1603,7 +1597,7 @@ class DrivinePropositionRepository(
         contextId?.let { params["ctx"] = it.value }
         @Suppress("UNCHECKED_CAST")
         val row = persistenceManager.query(
-            QuerySpecification.withStatement(GraphProjectionCypher.pathBetween(ceiling, contextId))
+            cypherQuery(GraphProjectionCypher.pathBetween(ceiling, contextId))
                 .bind(params) as QuerySpecification<Any>,
         ).filterIsInstance<Map<*, *>>().firstOrNull() ?: return emptyList()
 

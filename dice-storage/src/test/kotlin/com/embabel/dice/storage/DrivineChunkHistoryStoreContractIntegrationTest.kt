@@ -34,17 +34,11 @@ import org.springframework.test.context.DynamicPropertySource
 import java.time.Instant
 
 /**
- * Runs the [AbstractChunkHistoryStoreContractTest] suite against [DrivineChunkHistoryStore] on the
- * shared Neo4j testcontainer. Each case starts and ends with an empty set of processed chunks.
+ * Runs the [AbstractChunkHistoryStoreContractTest] suite against [DrivineChunkHistoryStore]. The subclasses
+ * pick the store: Neo4j here, SQLite in the `sqlite` package. Each case starts and ends with an empty set of processed chunks.
  */
 @SpringBootTest(classes = [TestApplication::class])
-class DrivineChunkHistoryStoreContractIntegrationTest : AbstractChunkHistoryStoreContractTest() {
-
-    companion object {
-        @JvmStatic
-        @DynamicPropertySource
-        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
-    }
+abstract class DrivineChunkHistoryStoreContractCases : AbstractChunkHistoryStoreContractTest() {
 
     @Autowired
     private lateinit var chunkHistoryStore: DrivineChunkHistoryStore
@@ -57,7 +51,7 @@ class DrivineChunkHistoryStoreContractIntegrationTest : AbstractChunkHistoryStor
     @BeforeEach
     @AfterEach
     fun clearProcessedChunks() {
-        persistenceManager.execute(QuerySpecification.withStatement("MATCH (c:ProcessedChunk) DETACH DELETE c"))
+        persistenceManager.execute(cypherQuery("MATCH (c:ProcessedChunk) DETACH DELETE c"))
     }
 
     @Test
@@ -73,7 +67,7 @@ class DrivineChunkHistoryStoreContractIntegrationTest : AbstractChunkHistoryStor
             ),
         )
         persistenceManager.execute(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 "CREATE (:ProcessedChunk {id: 'raw-chunk', contextId: 'raw-ctx'}), (:ChunkClearBystander {id: 'keep'})",
             ),
         )
@@ -84,7 +78,7 @@ class DrivineChunkHistoryStoreContractIntegrationTest : AbstractChunkHistoryStor
             assertEquals(1L, countNodes("ChunkClearBystander"))
         } finally {
             persistenceManager.execute(
-                QuerySpecification.withStatement("MATCH (n:ChunkClearBystander) DETACH DELETE n"),
+                cypherQuery("MATCH (n:ChunkClearBystander) DETACH DELETE n"),
             )
         }
     }
@@ -96,7 +90,17 @@ class DrivineChunkHistoryStoreContractIntegrationTest : AbstractChunkHistoryStor
      * @return how many nodes carry the label
      */
     private fun countNodes(label: String): Long? = persistenceManager.maybeGetOne(
-        QuerySpecification.withStatement("MATCH (n:$label) RETURN count(n) AS count")
+        cypherQuery("MATCH (n:$label) RETURN count(n) AS count")
             .transform(Long::class.java),
     )
+}
+
+/** Runs the [DrivineChunkHistoryStoreContractCases] on the shared Neo4j testcontainer. */
+class DrivineChunkHistoryStoreContractIntegrationTest : DrivineChunkHistoryStoreContractCases() {
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
+    }
 }

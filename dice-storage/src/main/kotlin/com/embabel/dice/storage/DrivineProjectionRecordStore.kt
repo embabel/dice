@@ -50,7 +50,7 @@ class DrivineProjectionRecordStore(
     override fun record(record: ProjectionRecord) {
         logger.debug("Recording projection record proposition={} target={} lifecycle={}", record.propositionId.take(8), record.target, record.lifecycle)
         persistenceManager.execute(
-            QuerySpecification.withStatement(
+            cypherQuery(
                 """
                 MERGE ${LineageSchema.mergePattern("n", LineageSchema.PROJECTION_RECORD)}
                 SET n.targetRef = ${'$'}targetRef,
@@ -102,7 +102,7 @@ class DrivineProjectionRecordStore(
      */
     private fun query(statement: String, params: Map<String, Any?>): List<ProjectionRecord> {
         @Suppress("UNCHECKED_CAST")
-        val spec = QuerySpecification.withStatement(statement).let {
+        val spec = cypherQuery(statement).let {
             if (params.isEmpty()) it else it.bind(params)
         } as QuerySpecification<Any>
         return persistenceManager.query(spec).filterIsInstance<Map<*, *>>().mapNotNull { row ->
@@ -122,8 +122,7 @@ class DrivineProjectionRecordStore(
     override fun markStaleByProposition(propositionId: String): Int {
         val stale = ProjectionLifecycle.STALE.name
         val updated = persistenceManager.maybeGetOne(
-            QuerySpecification
-                .withStatement(
+            cypherQuery(
                     """
                     MATCH (n:ProjectionRecord {propositionId: ${'$'}propositionId})
                     WHERE n.lifecycle <> ${'$'}stale
