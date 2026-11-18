@@ -697,13 +697,14 @@ class WindowRecordedAfterStoreTest {
         logged: List<ILoggingEvent>,
         times: Int,
         cause: String,
+        step: String = "store",
         range: String = "[0, 1)",
     ) {
         val stuck = logged.filter { it.formattedMessage.contains("source $sourceId") }
         assertThat(stuck).hasSize(times)
         assertThat(stuck).allSatisfy {
             assertThat(it.formattedMessage)
-                .contains("items $range")
+                .startsWith("Could not $step items $range")
                 .contains("context ${tenant.value}")
             assertThat(it.throwableProxy?.message).isEqualTo(cause)
         }
@@ -740,7 +741,7 @@ class WindowRecordedAfterStoreTest {
                 .hasMessage("disk full")
         }
 
-        assertStuckWindowLogged(logged, times = 1, cause = "disk full")
+        assertStuckWindowLogged(logged, times = 1, cause = "disk full", step = "record")
         assertThat(harness.bookmark()).isNull()
     }
 
