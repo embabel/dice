@@ -1,0 +1,14 @@
+{
+  "propositions": [
+    {
+      "text": "Acme prefers email over phone",
+      "mentions": [
+        { "span": "Acme", "type": "Customer", "role": "SUBJECT" }
+      ],
+      "confidence": 0.8,
+      "decay": 0.0,
+      "importance": 0.7,
+      "reasoning": "A stated preference"
+    }
+  ]
+}

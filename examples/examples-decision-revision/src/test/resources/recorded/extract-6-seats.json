@@ -1,0 +1,15 @@
+{
+  "propositions": [
+    {
+      "text": "Acme has 40 seats on the Enterprise plan",
+      "mentions": [
+        { "span": "Acme", "type": "Customer", "role": "SUBJECT" },
+        { "span": "Enterprise plan", "type": "Plan", "role": "OBJECT" }
+      ],
+      "confidence": 0.9,
+      "decay": 0.05,
+      "importance": 0.7,
+      "reasoning": "Seat counts change as the account grows"
+    }
+  ]
+}

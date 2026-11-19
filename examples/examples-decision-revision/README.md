@@ -45,3 +45,20 @@ to verify its structure, as the other examples do.
 
 | Test | Behaviour |
 |---|---|
+| `aFirstFactAboutAcmeHasNothingToCompareWithSoItIsNewAndNoDecisionIsAsked` | "Acme is on the Team plan" has no stored fact about Acme to compare with. It is stored as new with confidence 0.6, and the only model call is the extraction. |
+| `sayingTheSamePlanAgainMergesIntoTheFirstFactAndRaisesItsConfidence` | "Acme uses the Team plan" is answered `duplicate`. The first fact keeps its id and text, its confidence goes from 0.6 to 0.78, its decay from 0.1 to 0.07, its reinforce count to 1, and it is grounded in both messages. The duplicate is not stored on its own. |
+| `aRenewalOfThePlanReinforcesTheFirstFact` | "Acme renewed the Team plan for a year" is answered `reinforces`. The first fact's confidence goes from 0.78 to 0.84. |
+| `movingToAnotherPlanContradictsTheFirstFactAndStoresTheNewOne` | "Acme moved to the Enterprise plan" is answered `contradicts`. The first fact becomes `CONTRADICTED` with confidence 0.252, and the new fact is stored `ACTIVE`. |
+| `aPreferenceIsUnrelatedToThePlanSoItIsNewAndTheContradictedFactIsNotAskedAbout` | "Acme prefers email over phone" is answered `unrelated` and stored as new. Its only candidate is the Enterprise plan fact, because a contradicted fact is no longer active. |
+| `aDecisionReplyThatIsNotJsonStoresTheFactAsNewAndChangesNothingStored` | "Acme has 40 seats on the Enterprise plan" has two candidates, and the reply `this is not json` fails the whole decision. The fact is stored as new, no stored fact changes, and a warning naming the fact is logged. |
+
+Each of the last five messages makes exactly one decision call. Candidate ids are random, so
+the tests never assume which candidate comes first.
+
+## Compared with the built-in reviser
+
+DICE's `LlmPropositionReviser` finds candidates by embedding similarity and asks its own prompt.
+This reviser needs no embeddings: a candidate is any active fact that names one of the same
+entities. The question is yours too, so the options, their wording and what each one does are
+rules you can read in `DecisionReviser`. The confidence and decay arithmetic is the built-in
+reviser's, and like it, a change of confidence records a content revision on the stored fact.
