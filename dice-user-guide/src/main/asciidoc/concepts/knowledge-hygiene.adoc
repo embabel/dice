@@ -36,6 +36,39 @@ intervention, because nothing has been written yet.
 Compose them with `ExtractionGatePipeline`, and wrap any of them in `ObservableGate` to see what is
 being rejected and why. A gate you cannot observe is a gate you will eventually mis-tune.
 
+===== Applying the verdicts
+
+A pipeline only says what it thinks of each claim. `GateApplier` acts on that: it runs the pipeline
+over one chunk result and hands back the part that is allowed in, which you persist in place of the
+original.
+
+[source,java]
+----
+GateApplier applier = GateApplier.of(pipeline)
+        .withReviewSink(verdict -> reviewInbox.add(verdict));
+
+for (ChunkPropositionResult chunk : results.getChunkResults()) {
+    GatedChunk gated = applier.apply(chunk);
+    gated.getAdmitted().persist(propositionRepository, namedEntityDataRepository);
+}
+----
+
+[source,kotlin]
+----
+val applier = GateApplier.of(pipeline)
+    .withReviewSink { verdict -> reviewInbox.add(verdict) }
+
+for (chunk in results.chunkResults) {
+    applier.apply(chunk).admitted.persist(propositionRepository, namedEntityDataRepository)
+}
+----
+
+A verdict covers a whole revision result, so rejecting the new side of a contradiction also drops
+the demoted original that came with it. A result routed to review goes to your review sink once,
+while `apply` runs, and is left out of what gets persisted. The applier is experimental and opt-in:
+nothing in extraction calls it, so your gates only decide what gets written when you apply them
+yourself, one chunk at a time.
+
 ==== 2. Reclamation — the collector
 
 Reclamation is mark-and-sweep over what is already stored. `CollectorRunner` walks the store, a
