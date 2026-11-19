@@ -10,51 +10,6 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
-- `dice-storage` marks the stores' hand-written statements as Cypher. On Drivine's SQL stores a
-  statement without a language runs as SQL. The store conformance suites pass on SQLite as they
-  do on Neo4j. A save that drops metadata keys sets the stale keys to null in place of
-  `REMOVE p[k]`, which needed Neo4j 5.24. Each save makes one extra read, which returns only the
-  stale keys. On SQLite a save inside a caller's transaction does not take the in-process dedup
-  lock, because that transaction already holds the file's write lock. It no longer stalls a
-  standalone save of the same text. **Compatibility: behavioral.**
-
-- The graph stores run on Drivine's SQL stores where they used Neo4j-only Cypher.
-  `findClusters` measures the candidates in the database instead of through Neo4j's vector index
-  procedure. On SQLite each anchor is one search by Drivine's own cosine, cut to its best `topK`
-  among later ids in the database, so no more than that is read back. The whole-graph `observe()` reads the labels the nodes wear. The decay sweep commits
-  a page of propositions at a time, and a scoped sweep leaves alone a proposition that left the
-  context while it ran, on Neo4j as well. **Compatibility: behavioral.**
-- A save embeds its text before it opens a transaction, so a slow embedding service no longer
-  holds the store's locks. A save that only repeats a fact the store already holds, evidence and
-  all, in the same context, is answered from reads and needs no embedding.
-  **Compatibility: behavioral.**
-- On SQLite, `touchAccessed` and `reembedAll` called inside a caller's transaction join it. Each
-  used to open a transaction of its own, which waited on the caller's write lock until SQLite's
-  busy timeout failed it. Inside a caller's transaction on SQLite, a `reembedAll` that has to
-  change the vector index is refused at once, since Drivine changes an index on a connection of
-  its own. Inside a caller's transaction `reembedAll` writes one statement at a time, so a
-  rollback of that transaction undoes them. Both can be called from a read-only transaction. A
-  touch that a read-only SQLite connection refuses is left out. **Compatibility: behavioral.**
-- When the host brings its own transaction manager, the autoconfigured proposition and
-  extraction-run stores still run their transactions on Drivine's, and a save or run transition
-  inside the host's transaction runs in a Drivine transaction of its own. Before, each statement
-  committed on its own. A host JDBC manager whose data source Drivine reads through Spring's
-  `TransactionAwareDataSourceProxy`, wrapping that data source directly, is kept; a JPA manager's
-  data source counts. Any other way of sharing Drivine's SQLite file with
-  the host's manager, such as one raw pool for both or two pools over one file, is refused at
-  startup, however the file is spelt or linked. Drivine's transaction state and registry come from its beans
-  or from Drivine's persistence manager.
-  With neither, the host's manager is used and a warning is logged. A run transition the store
-  committed itself is announced at once. **Compatibility: behavioral.**
-- A uniqueness violation on SQLite is recognised as one, so a save that loses a dedup race reuses
-  the winner, as on Neo4j. **Compatibility: behavioral.**
-- The latest chunk bookmark among records with the same time is the one whose window ends
-  furthest on, including two spellings of one instant on SQLite. **Compatibility: behavioral.**
-- The autoconfiguration refuses a SQLite datasource whose transactions do not take the write lock
-  as they begin, or whose transaction mode cannot be read, naming the datasource. Drivine's own
-  SQLite provider passes.
-  **Compatibility: behavioral.**
-
 - A `VectorSearchRequest` must name a context. `forText` and the Kotlin block throw
   `IllegalArgumentException` when the filter has none. Before, such a request was accepted and a
   store that implements `FilteredVectorSearch` could search every context with it. To search
