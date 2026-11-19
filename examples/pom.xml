@@ -34,6 +34,7 @@
         <module>examples-java</module>
         <module>examples-kotlin</module>
         <module>examples-decision-revision</module>
+        <module>examples-backend-swap</module>
     </modules>
 
     <properties>
