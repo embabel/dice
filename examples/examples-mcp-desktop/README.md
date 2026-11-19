@@ -23,7 +23,8 @@ Then start the server:
 ./mvnw -B -f examples/pom.xml -pl examples-mcp-desktop spring-boot:run
 ```
 
-The server listens at `http://localhost:8080/mcp` and keeps running until you stop it.
+The server listens at `http://localhost:8080/mcp` and keeps running until you stop it. It binds
+`127.0.0.1` by default, so only clients on the same machine can reach it.
 
 To turn on `dice_store`, start it with writes enabled:
 
@@ -74,8 +75,10 @@ By default recall and list leave out facts below confidence 0.5.
 ## Keep it on this machine
 
 `contextId` is a scope the caller picks, not a credential. It keeps one call inside one context,
-but any caller can name any context. This server checks no identity. Do not expose it beyond
-the local machine unless the host puts its own authorization in front of it.
+but any caller can name any context. This server checks no identity, so it binds `127.0.0.1` by
+default and only accepts connections from this machine. Listening wider, for example with
+`--server.address=0.0.0.0`, lets anyone who can reach the port list the memories and, with writes
+on, store new ones. Only do that when the host puts its own authorization in front of it.
 
 ## Behaviour the tests assert
 
@@ -92,4 +95,6 @@ The tests start the app on a random local port and talk to it with a real MCP cl
 | `WritableServerTests.introducesItselfAsDiceMemory` | With writes on, the server still names itself `dice-memory`. |
 | `WritableServerTests.offersStoreAlongsideTheReadTools` | With `embabel.dice.mcp.writes-enabled=true` the client sees `dice_store` as well as the three read tools. |
 | `WritableServerTests.aStoredFactComesBackFromRecallAndGet` | A fact stored in its own context with confidence 0.9 comes back from `dice_recall` and from `dice_get` by the id the store returned. |
+| `LoopbackBindTests.isConfiguredToListenOnLoopbackOnly` | With the app's own settings `server.address` is set to a loopback address. |
+| `LoopbackBindTests.theRunningServerListensOnLoopbackOnly` | The running Tomcat connector is bound to a loopback address, not every interface. |
 | `ModularityTests.verifiesModuleStructure` | Spring Modulith finds no broken module rule in the app's packages. |
