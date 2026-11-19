@@ -22,6 +22,7 @@ import com.embabel.dice.proposition.PropositionRepository
 import org.drivine.manager.DelegatingPersistenceManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.transaction.Transactions
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.drivine.model.Stamps
 import org.drivine.query.QuerySpecification
 import java.time.Instant
@@ -116,8 +117,13 @@ class GraphDecayManager(
     /**
      * Runs [page] in a Drivine transaction, when the persistence manager is Drivine's own and so
      * carries its transaction state. Otherwise each statement commits on its own.
+     *
+     * Inside a transaction a caller already has, the page joins it instead. A host whose JDBC
+     * transaction lends Drivine its connection would otherwise have that transaction committed by
+     * the page's, and its own work with it.
      */
     private fun <T> inPageTransaction(page: () -> T): T {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) return page()
         val holder = (persistenceManager as? DelegatingPersistenceManager)?.contextHolder ?: return page()
         return Transactions(holder).transaction { page() }
     }

@@ -23,6 +23,7 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionReembedIncompleteException
 import com.embabel.dice.storage.DrivinePropositionRepository
 import com.embabel.dice.storage.FakeEmbeddingService
+import com.embabel.dice.storage.GraphDecayManager
 import com.embabel.dice.storage.TestApplication
 import com.embabel.dice.storage.cypherQuery
 import org.drivine.connection.ConnectionProvider
@@ -184,6 +185,32 @@ class SqliteHostJdbcTransactionIntegrationTest {
 
         assertEquals(1, host.queryForObject("SELECT count(*) FROM host_rows", Int::class.java))
         assertNotEquals(before, embeddingOf(kept.id))
+    }
+
+    /**
+     * A decay sweep inside a host transaction that rolls back leaves nothing behind: the pages join
+     * the host's transaction instead of committing it with transactions of their own.
+     */
+    @Test
+    fun `a decay sweep inside a host transaction that rolls back leaves the host's work and the decay as they were`() {
+        val saved = repository().save(ghost("The ghost fades slowly"))
+        host.execute("CREATE TABLE host_rows (x INTEGER)")
+
+        TransactionTemplate(hostManager).executeWithoutResult { status ->
+            host.update("INSERT INTO host_rows (x) VALUES (1)")
+            GraphDecayManager(repository(), persistenceManager).materializeAll()
+            status.setRollbackOnly()
+        }
+
+        assertEquals(0, host.queryForObject("SELECT count(*) FROM host_rows", Int::class.java))
+        assertEquals(
+            emptyList<String>(),
+            persistenceManager.query(
+                cypherQuery("MATCH (p:Proposition {id: ${'$'}id}) WHERE p.decayUpdatedAt IS NOT NULL RETURN p.id")
+                    .bind(mapOf("id" to saved.id))
+                    .transform(String::class.java),
+            ),
+        )
     }
 
     private fun embeddingOf(id: String): List<*>? = persistenceManager.maybeGetOne(

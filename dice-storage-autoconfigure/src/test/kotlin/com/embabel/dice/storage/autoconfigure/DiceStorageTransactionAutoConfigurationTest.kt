@@ -45,6 +45,7 @@ import org.springframework.boot.transaction.autoconfigure.TransactionAutoConfigu
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.jdbc.datasource.ConnectionHandle
+import org.springframework.jdbc.datasource.SimpleConnectionHandle
 import org.springframework.jdbc.datasource.DataSourceTransactionManager
 import org.springframework.jdbc.datasource.LazyConnectionDataSourceProxy
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy
@@ -290,7 +291,7 @@ class DiceStorageTransactionAutoConfigurationTest {
         val target = sqliteDataSource(Files.createTempFile("dice-host-jpa-", ".db"))
         val jpa = JpaTransactionManager(mock<EntityManagerFactory>()).apply {
             dataSource = target
-            setJpaDialect(JdbcExposingDialect())
+            setJpaDialect(JdbcExposingDialect(target))
         }
 
         sharedFileRunner(TransactionAwareDataSourceProxy(target), jpa).run { ctx ->
@@ -338,6 +339,24 @@ class DiceStorageTransactionAutoConfigurationTest {
 
                 assertThat(ReflectionTestUtils.getField(saves.transactionManager!!, "contextHolder")).isSameAs(own)
             }
+    }
+
+    /**
+     * A dialect that overrides the connection hook but returns no handle cannot be told from one
+     * that returns a real handle until a transaction runs, so startup accepts it. The KDoc on the
+     * check says a custom dialect has to return a real handle; this pins what startup can see.
+     */
+    @Test
+    fun `a JPA dialect that returns no handle cannot be told apart at startup`() {
+        val target = sqliteDataSource(Files.createTempFile("dice-host-jpa-null-", ".db"))
+        val jpa = JpaTransactionManager(mock<EntityManagerFactory>()).apply {
+            dataSource = target
+            setJpaDialect(NullHandleDialect())
+        }
+
+        sharedFileRunner(TransactionAwareDataSourceProxy(target), jpa).run { ctx ->
+            assertThat(ctx).hasNotFailed()
+        }
     }
 
     /** A JPA manager and Drivine on one raw pool is the same second connection, and the same refusal. */
@@ -446,6 +465,12 @@ class DiceStorageTransactionAutoConfigurationTest {
 }
 
 /** A JPA dialect that hands out the JDBC connection, as Hibernate's does. */
-private class JdbcExposingDialect : DefaultJpaDialect() {
+private class JdbcExposingDialect(private val dataSource: DataSource) : DefaultJpaDialect() {
+    override fun getJdbcConnection(entityManager: EntityManager, readOnly: Boolean): ConnectionHandle =
+        SimpleConnectionHandle(dataSource.connection)
+}
+
+/** A JPA dialect that overrides the connection hook and still hands out nothing. */
+private class NullHandleDialect : DefaultJpaDialect() {
     override fun getJdbcConnection(entityManager: EntityManager, readOnly: Boolean): ConnectionHandle? = null
 }

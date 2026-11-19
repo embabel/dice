@@ -184,7 +184,10 @@ class DiceStorageAutoConfiguration {
     /**
      * Whether [manager]'s transactions bind a JDBC connection for its data source, so a proxy over
      * that data source hands it out. A JDBC manager always does. A JPA manager does only when its
-     * dialect exposes the JDBC connection: Hibernate's does, Spring's default dialect does not.
+     * dialect exposes the JDBC connection: Hibernate's and EclipseLink's do, Spring's default dialect
+     * does not. Only a live transaction shows the handle itself, so at startup this can see only
+     * that the dialect overrides `getJdbcConnection`. A custom dialect has to return a real handle
+     * from it; one that returns null passes this check and leaves Drivine on a connection of its own.
      */
     private fun bindsJdbcConnection(manager: PlatformTransactionManager): Boolean {
         val dialect = runCatching { manager.javaClass.getMethod("getJpaDialect").invoke(manager) }.getOrNull() ?: return true
