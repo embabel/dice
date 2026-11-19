@@ -313,8 +313,9 @@ public class DecisionReviser implements PropositionReviser {
 
     /**
      * The stored fact after a contradiction: its confidence drops to three tenths, but not below
-     * 0.05, it decays faster and is marked contradicted. A pinned fact is kept as it is, so the
-     * clash waits for someone to resolve it.
+     * 0.05, it decays faster and is marked contradicted. The change of status counts as a
+     * revision even when the confidence was already at 0.05, so queries for recent changes see
+     * it. A pinned fact is kept as it is, so the clash waits for someone to resolve it.
      */
     private static Proposition contradict(Proposition original) {
         if (original.getPinned()) {
@@ -324,6 +325,7 @@ public class DecisionReviser implements PropositionReviser {
                 .withConfidence(Math.max(original.getConfidence() * 0.3, 0.05))
                 .withDecay(Math.min(original.getDecay() + 0.15, 1.0))
                 .withStatus(PropositionStatus.CONTRADICTED)
+                .withMetadataRevised(Instant.now())
                 .toProposition();
     }
 }

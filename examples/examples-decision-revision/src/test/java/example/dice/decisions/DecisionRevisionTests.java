@@ -17,6 +17,7 @@ package example.dice.decisions;
 
 import com.embabel.dice.proposition.EntityMention;
 import com.embabel.dice.proposition.Proposition;
+import com.embabel.dice.proposition.PropositionQuery;
 import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.proposition.revision.RevisionResult;
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository;
@@ -50,8 +51,9 @@ import static org.assertj.core.api.Assertions.within;
  * <p>The model's replies are recorded. Every Team and Enterprise plan fact is extracted with
  * confidence 0.6, so the confidence of the first fact moves by exact amounts.
  *
- * <p>The last two tests ask the reviser directly, against a store of their own, about a
- * message told twice and about fresh support for a fact that has sat unused for a month.
+ * <p>The last three tests ask the reviser directly, against a store of their own, about a
+ * message told twice, about fresh support for a fact that has sat unused for a month, and
+ * about contradicting a fact that is already as doubtful as a fact gets.
  */
 @SpringBootTest
 @Import(ScriptedModel.class)
@@ -300,6 +302,37 @@ class DecisionRevisionTests {
         assertThat(Duration.between(revised.getLastAccessed(), now).abs()).isLessThan(Duration.ofMinutes(1));
         assertThat(Duration.between(revised.getContentRevised(), now).abs()).isLessThan(Duration.ofMinutes(1));
         assertThat(revised.effectiveConfidence()).isCloseTo(0.99, within(0.001));
+    }
+
+    @Test
+    @Order(9)
+    void contradictingAFactAlreadyAtTheConfidenceFloorStillCountsAsARecentChange() {
+
+        var monthAgo = Instant.now().minus(Duration.ofDays(30));
+        // Already as doubtful as a fact gets, so the contradiction cannot lower its confidence.
+        var doubtful = Proposition.draft(RevisionDesk.ACCOUNT, TEAM, 0.05)
+                .withMentions(List.of(acme()))
+                .withGrounding(List.of("message-1"))
+                .withCreated(monthAgo)
+                .withContentRevised(monthAgo)
+                .withMetadataRevised(monthAgo)
+                .withLastAccessed(monthAgo)
+                .toProposition();
+        var incoming = Proposition.draft(RevisionDesk.ACCOUNT, ENTERPRISE, 0.6)
+                .withMentions(List.of(acme()))
+                .withGrounding(List.of("message-4"))
+                .toProposition();
+        var startedAt = Instant.now();
+
+        var result = reviser.revise(incoming, storeHolding(doubtful));
+
+        assertThat(result).isInstanceOf(RevisionResult.Contradicted.class);
+        var contradicted = ((RevisionResult.Contradicted) result).getOriginal();
+        assertThat(contradicted.getStatus()).isEqualTo(PropositionStatus.CONTRADICTED);
+        assertThat(contradicted.getConfidence()).isCloseTo(0.05, within(EXACT));
+        var changedSince = storeHolding(contradicted).query(PropositionQuery.againstContext(RevisionDesk.ACCOUNT)
+                .withRevisedAfter(startedAt.minus(Duration.ofSeconds(1))));
+        assertThat(changedSince).extracting(Proposition::getId).containsExactly(doubtful.getId());
     }
 
     /**
