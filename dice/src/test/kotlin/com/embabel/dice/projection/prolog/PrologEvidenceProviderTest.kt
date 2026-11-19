@@ -247,6 +247,100 @@ class PrologEvidenceProviderTest {
     }
 
     @Nested
+    inner class BindingTerms {
+
+        @Test
+        fun `a number in the rule head is written back unquoted and the rule still traces`() {
+            // Projected fact args are always atoms, so the number comes from the confidence metadata the
+            // projection writes next to each fact, here confidence(expert_in('alice', 'kubernetes'), 0.9).
+            val rules = "rated(X, C) :- expert_in(X, T), confidence(expert_in(X, T), C), C > 0.5."
+            val rated = RuleDeclaration.of("rated(X, C)")
+                .withInput("expert_in(X, T)")
+                .withGuard("confidence(expert_in(X, T), C), C > 0.5")
+
+            val derived = only(provider(rules = rules).withDeclaration(rated).conclusions(RuleGoal.of("rated('alice', C)")))
+
+            assertEquals("rated('alice', 0.9)", derived.conclusion)
+            assertEquals("0.9", derived.rule.parameters["binding.C"])
+            assertEquals(listOf("prop-1"), derived.inputIds)
+        }
+
+        @Test
+        fun `an atom that looks like a number stays a quoted atom`() {
+            val facts = listOf(fact("founded_in", "acme", "2024", confidence = 0.9, ids = listOf("prop-y")))
+            val founded = RuleDeclaration.of("founded(C, Y)").withInput("founded_in(C, Y)")
+
+            val derived = only(
+                provider(facts, "founded(C, Y) :- founded_in(C, Y).")
+                    .withDeclaration(founded)
+                    .conclusions(RuleGoal.of("founded('acme', Y)"))
+            )
+
+            assertEquals("founded('acme', '2024')", derived.conclusion)
+            assertEquals(listOf("prop-y"), derived.inputIds)
+        }
+
+        @Test
+        fun `a compound term in the rule head is written back as its term text and the rule still traces`() {
+            val rules = "pair_of(X, pair(X, T)) :- expert_in(X, T)."
+            val pairOf = RuleDeclaration.of("pair_of(X, pair(X, T))").withInput("expert_in(X, T)")
+
+            val derived = only(provider(rules = rules).withDeclaration(pairOf).conclusions(RuleGoal.of("pair_of('alice', P)")))
+
+            assertEquals("pair_of('alice', pair(alice, kubernetes))", derived.conclusion)
+            assertEquals(listOf("prop-1"), derived.inputIds)
+        }
+
+        @Test
+        fun `a mixed-case atom binding round-trips into the conclusion unchanged, quotes escaped`() {
+            val rules = "title(X, 'Alice''s Mentor') :- expert_in(X, _)."
+            val title = RuleDeclaration.of("title(X, 'Alice''s Mentor')").withInput("expert_in(X, T)")
+
+            val derived = only(provider(rules = rules).withDeclaration(title).conclusions(RuleGoal.of("title('alice', L)")))
+
+            assertEquals("title('alice', 'Alice\\'s Mentor')", derived.conclusion)
+            assertEquals("Alice's Mentor", derived.rule.parameters["binding.L"])
+            assertEquals(listOf("prop-1"), derived.inputIds)
+        }
+
+        @Test
+        fun `an anonymous variable in a declared input cites the exact fact and only that fact`() {
+            val facts = listOf(
+                fact("works_at", "alice", "acme", confidence = 0.9, ids = listOf("prop-a")),
+                fact("works_at", "bob", "acme", confidence = 0.8, ids = listOf("prop-b")),
+                fact("works_at", "carol", "globex", confidence = 0.7, ids = listOf("prop-c")),
+            )
+            val employed = RuleDeclaration.of("employed(X)").withInput("works_at(X, _)")
+
+            val derived = only(
+                provider(facts, "employed(X) :- works_at(X, _).")
+                    .withDeclaration(employed)
+                    .conclusions(RuleGoal.of("employed('alice')"))
+            )
+
+            assertEquals("employed('alice')", derived.conclusion)
+            assertEquals(listOf("prop-a"), derived.inputIds)
+            assertEquals(0.9, derived.confidence)
+        }
+
+        @Test
+        fun `the fresh name for an anonymous variable never clashes with the declaration's own variables`() {
+            // If the anonymous variable became Anon_1 it would be forced equal to the person, and nothing would match.
+            val facts = listOf(fact("works_at", "alice", "acme", confidence = 0.9, ids = listOf("prop-a")))
+            val employed = RuleDeclaration.of("employed(Anon_1)").withInput("works_at(Anon_1, _)")
+
+            val derived = only(
+                provider(facts, "employed(X) :- works_at(X, _).")
+                    .withDeclaration(employed)
+                    .conclusions(RuleGoal.of("employed(P)"))
+            )
+
+            assertEquals("employed('alice')", derived.conclusion)
+            assertEquals(listOf("prop-a"), derived.inputIds)
+        }
+    }
+
+    @Nested
     inner class NoDeclaration {
 
         @Test

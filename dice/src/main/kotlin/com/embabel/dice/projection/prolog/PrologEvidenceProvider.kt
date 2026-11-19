@@ -52,10 +52,16 @@ import java.time.ZoneOffset
  * and arity returns nothing without running a query, but a declared rule that loops would loop here too, because
  * every answer is worked out before the goal's limit is applied. Only ask declared rules that don't recurse.
  *
+ * **Answers go back in as real terms.** Each answer's values are written into the goal and the declared clause the
+ * way Prolog holds them: numbers bare, compound terms as their term text, and atoms in single quotes exactly as
+ * they are, case included. Prolog tells the provider which kind each value is, so an atom that looks like a number,
+ * such as `'2024'`, stays an atom. A lone `_` in a declared input or guard gets its own variable name before the
+ * clause runs, so the fact it matched is known and only that fact is cited.
+ *
  * **Matching is by normalised atom.** Facts are written to Prolog through [PrologFact.quoteAtom], which lower-cases
- * and replaces anything outside `a-z`, `0-9` and `_`. Arguments are matched the same way, so two facts whose
- * arguments only differ in case or punctuation, such as `Alice-Smith` and `alice smith`, are the same fact here
- * and both are cited.
+ * and replaces anything outside `a-z`, `0-9` and `_`. Only the comparison of an input with the recorded facts uses
+ * that normalisation, so two facts whose arguments only differ in case or punctuation, such as `Alice-Smith` and
+ * `alice smith`, are the same fact here and both are cited.
  *
  * **Confidence** is the weakest input: each matched fact counts at the highest decayed confidence among its source
  * propositions found in the repository (an invalidated one counts at 0.0), or its own confidence when none is found
@@ -148,12 +154,19 @@ class PrologEvidenceProvider private constructor(
         if (declared.isEmpty()) return emptyList()
 
         val goalVariables = variablesIn(goal.goal)
+        // The engine hands back every value as text, so the goal also asks Prolog what kind each value is.
+        val kindOf = goalVariables.asSequence().zip(freshNames("Kind_", goalVariables.toSet())).toMap()
+        val probedGoal = (listOf("(${goal.goal})") + kindOf.map { (name, kind) -> kindProbe(name, kind) })
+            .joinToString(", ")
+
         val seen = HashSet<String>()
         val conclusions = ArrayList<Evidence.Derived>()
-        for (answer in engine.queryAll(goal.goal)) {
+        for (answer in engine.queryAll(probedGoal)) {
             if (conclusions.size >= goal.limit) break
             if (!answer.success) continue
-            val groundGoal = ground(goal.goal, answer.bindings)
+            val groundGoal = rewriteVariables(goal.goal) { name ->
+                kindOf[name]?.let { kind -> answer.bindings[name]?.let { termText(it, answer.bindings[kind]) } }
+            }
             if (!seen.add(groundGoal)) continue
             val facts = declared.firstNotNullOfOrNull { trace(it, groundGoal) } ?: continue
             conclusions += derive(goal, groundGoal, goalVariables, answer.bindings, facts)
@@ -164,16 +177,28 @@ class PrologEvidenceProvider private constructor(
     // Runs the declared clause against one ground answer and returns the recorded facts behind it, or null when
     // the clause doesn't prove it or some input has no citable fact.
     private fun trace(declaration: RuleDeclaration, groundGoal: String): List<CitableFact>? {
+        // Each lone _ gets a fresh name, unused anywhere in the query, so its value comes back and the exact fact
+        // can be cited instead of the anonymous variable matching nothing.
+        val taken = (listOf(declaration.head, groundGoal) + declaration.inputs + declaration.guards)
+            .flatMap(::variablesIn).toSet()
+        val fresh = freshNames("Anon_", taken).iterator()
+        val name: (String) -> String = { text -> rewriteVariables(text) { if (it == "_") fresh.next() else null } }
+        val inputs = declaration.inputs.map(name)
+        val guards = declaration.guards.map(name)
+
         val query = buildList {
             add("${declaration.head} = ($groundGoal)")
-            addAll(declaration.inputs)
+            addAll(inputs)
             // Bracketed so a guard using ; or -> can't swallow the goals around it.
-            declaration.guards.forEach { add("($it)") }
+            guards.forEach { add("($it)") }
         }.joinToString(", ")
 
         for (proof in engine.queryAll(query)) {
             if (!proof.success) continue
-            val perInput = declaration.inputs.map { citableFactsFor(ground(it, proof.bindings)) }
+            // Inputs read recorded facts, which Prolog only holds as atoms, so every value is written back as one.
+            val perInput = inputs.map { input ->
+                citableFactsFor(rewriteVariables(input) { proof.bindings[it]?.let(::quotedAtom) })
+            }
             if (perInput.any { it.isEmpty() }) continue
             val facts = perInput.flatten()
             if (facts.isNotEmpty()) return facts
@@ -243,7 +268,7 @@ class PrologEvidenceProvider private constructor(
         private fun isNameChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_'
 
         // Rewrites every variable in a Prolog term with the value [replace] gives it, leaving quoted text alone.
-        // A variable is a name starting with an upper-case letter or `_`; the anonymous `_` is never rewritten.
+        // A variable is a name starting with an upper-case letter or `_`, the anonymous `_` included.
         private fun rewriteVariables(text: String, replace: (String) -> String?): String = buildString {
             var quote: Char? = null
             var i = 0
@@ -265,7 +290,7 @@ class PrologEvidenceProvider private constructor(
                     var end = i
                     while (end < text.length && isNameChar(text[end])) end++
                     val name = text.substring(i, end)
-                    val isVariable = (name[0].isUpperCase() || name[0] == '_') && name != "_"
+                    val isVariable = name[0].isUpperCase() || name[0] == '_'
                     append(if (isVariable) replace(name) ?: name else name)
                     i = end
                 } else {
@@ -275,12 +300,27 @@ class PrologEvidenceProvider private constructor(
             }
         }
 
-        private fun ground(template: String, bindings: Map<String, String>): String =
-            rewriteVariables(template) { name -> bindings[name]?.let(PrologFact::quoteAtom) }
+        // Asks Prolog what kind of value a variable holds: n for a number, a for an atom, anything else for the rest.
+        private fun kindProbe(variable: String, kind: String): String =
+            "(number($variable) -> $kind = n ; atom($variable) -> $kind = a ; $kind = t)"
 
+        // Writes one answer value back as Prolog reads it. Numbers and compound terms come from the engine as
+        // valid term text already; an atom comes back bare, so it's quoted again, or when its kind is unknown.
+        private fun termText(value: String, kind: String?): String =
+            if (kind == "n" || kind == "t") value else quotedAtom(value)
+
+        // Quotes an atom exactly as it is, escaping only the backslash and the quote.
+        private fun quotedAtom(value: String): String =
+            "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+        // Names not in [taken], such as Anon_1, Anon_2 and so on.
+        private fun freshNames(prefix: String, taken: Set<String>): Sequence<String> =
+            generateSequence(1) { it + 1 }.map { "$prefix$it" }.filter { it !in taken }
+
+        // The named variables in a term, in order of first appearance; the anonymous `_` doesn't count.
         private fun variablesIn(text: String): List<String> {
             val names = LinkedHashSet<String>()
-            rewriteVariables(text) { name -> names += name; null }
+            rewriteVariables(text) { name -> if (name != "_") names += name; null }
             return names.toList()
         }
 
@@ -316,10 +356,18 @@ class PrologEvidenceProvider private constructor(
         // Puts one argument in the form the projection wrote it: a quoted atom loses its quotes, then both kinds go
         // through quoteAtom, which is how every fact argument reached Prolog.
         private fun normaliseArgument(arg: String): String {
-            val bare = if (arg.length >= 2 && arg.startsWith('\'') && arg.endsWith('\'')) {
-                arg.substring(1, arg.length - 1).replace("''", "'").replace("\\'", "'")
-            } else {
-                arg
+            if (arg.length < 2 || !arg.startsWith('\'') || !arg.endsWith('\'')) return PrologFact.quoteAtom(arg)
+            val inner = arg.substring(1, arg.length - 1)
+            val bare = buildString {
+                var i = 0
+                while (i < inner.length) {
+                    val c = inner[i]
+                    when {
+                        c == '\\' && i + 1 < inner.length -> { append(inner[i + 1]); i += 2 }
+                        c == '\'' && inner.getOrNull(i + 1) == '\'' -> { append(c); i += 2 }
+                        else -> { append(c); i++ }
+                    }
+                }
             }
             return PrologFact.quoteAtom(bare)
         }
